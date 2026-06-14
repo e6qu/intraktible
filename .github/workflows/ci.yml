@@ -1,0 +1,52 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
+      - name: format check
+        run: make fmtcheck
+      - name: vet
+        run: make vet
+      - name: test (race)
+        run: make test
+      - name: lint
+        run: make lint
+      - name: dead code
+        run: make deadcode
+      - name: copy-paste detection
+        run: make dupl
+      - name: vulnerability scan
+        run: make vuln
+      - name: license compliance (AGPL-compatible only)
+        run: make licenses
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: install
+        working-directory: web
+        run: npm ci
+      - name: build
+        working-directory: web
+        run: npm run build
+      - name: license compliance (web)
+        working-directory: web
+        run: npx --yes license-checker --production --onlyAllow "MIT;BSD-2-Clause;BSD-3-Clause;ISC;0BSD;Apache-2.0;MPL-2.0;Unlicense;CC0-1.0"

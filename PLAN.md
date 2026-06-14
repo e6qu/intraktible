@@ -191,12 +191,18 @@ intraktible/
 ---
 
 ## 8. Phased roadmap
-- **Phase 0 — Core & scaffolding:** AGPL `LICENSE` + SPDX headers + license-CI (`go-licenses`,
-  `license-checker`), Go workspace, `platform/eventlog` (Badger) + bus, store adapters
-  (SQLite/Postgres), projection runtime, schema validation, `httpx`, auth (API keys + session),
-  org/workspace scoping, AI provider interface (stub + Claude adapter), CI
-  (lint/deadcode/dupl/vuln/license/test), docker-compose, SvelteKit shell embedded via `embed.FS`.
-  Exit: an end-to-end "hello event → projection → API → UI" vertical slice + green license gate.
+- **Phase 0 — Core & scaffolding — ✅ DONE.** Shipped: AGPL `LICENSE` + SPDX headers on every file
+  + license CI (`go-licenses`/`license-checker`); single Go module; `platform/eventlog` (pure-Go
+  file WAL + in-proc bus, durable & replayable); `platform/store` (in-memory JSONB projection store);
+  `platform/projection` (rebuild-from-offset-0 + live consumer); `platform/identity` (org/workspace
+  scoping); `platform/auth` (API keys sandbox/prod + minimal sessions); `platform/httpx` (server,
+  request-id, recover, logger, auth middleware); `platform/ai` (pluggable provider + Stub);
+  `platform/web` (`embed.FS` UI); the **`hello`** vertical slice (domain/events/command/stats/service)
+  proving command→event→projection→API→UI with restart-replay; tests (race) green; `cmd/intraktible
+  serve --modules`; Makefile + golangci-lint + CI workflow; Dockerfile + docker-compose; SvelteKit
+  scaffold. **Deferred from Phase 0** (tracked in `BUGS.md`): Badger backend (WAL used instead — open
+  Q1), durable SQLite/Postgres projection stores, JSON-Schema validation lib, Claude AI adapter
+  (Stub only), and running the SvelteKit build into the embed dir (Go placeholder UI serves for now).
 - **Phase 1 — Decision Engine:** flow model + versioning, node engines (CEL/expr/Starlark),
   execution runtime emitting the decision event stream, decide API, decision history, Svelte Flow
   builder + test runs, A/B + analytics-lite.

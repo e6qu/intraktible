@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>intraktible — hello slice</title>
+<style>
+  :root { color-scheme: light dark; font-family: ui-sans-serif, system-ui, sans-serif; }
+  body { max-width: 40rem; margin: 3rem auto; padding: 0 1rem; line-height: 1.5; }
+  h1 { font-size: 1.4rem; } code { background: color-mix(in srgb, currentColor 12%, transparent); padding: .1rem .3rem; border-radius: .3rem; }
+  input, button { font: inherit; padding: .4rem .6rem; border-radius: .4rem; border: 1px solid gray; }
+  button { cursor: pointer; } .row { display: flex; gap: .5rem; margin: .6rem 0; flex-wrap: wrap; }
+  pre { background: color-mix(in srgb, currentColor 8%, transparent); padding: .8rem; border-radius: .5rem; overflow:auto; }
+</style>
+</head>
+<body>
+  <h1>intraktible — Phase 0 vertical slice</h1>
+  <p>command → event log → projection → API → this UI. Replace the placeholder builder with
+     SvelteKit + Svelte Flow in Phase 1.</p>
+  <div class="row">
+    <input id="key" value="dev-sandbox-key" aria-label="API key" />
+    <input id="name" placeholder="name" value="world" aria-label="name" />
+    <button id="say">Say hello</button>
+    <button id="refresh">Refresh stats</button>
+  </div>
+  <pre id="out">stats will appear here…</pre>
+<script>
+const $ = (id) => document.getElementById(id);
+const out = $("out");
+async function stats() {
+  const r = await fetch("/v1/hello/stats", { headers: { "X-Api-Key": $("key").value } });
+  out.textContent = JSON.stringify(await r.json(), null, 2);
+}
+$("say").onclick = async () => {
+  const r = await fetch("/v1/hello", {
+    method: "POST",
+    headers: { "X-Api-Key": $("key").value, "Content-Type": "application/json" },
+    body: JSON.stringify({ name: $("name").value }),
+  });
+  out.textContent = "POST /v1/hello → " + r.status + "\n" + JSON.stringify(await r.json(), null, 2);
+  await stats();
+};
+$("refresh").onclick = stats;
+stats().catch((e) => (out.textContent = String(e)));
+</script>
+</body>
+</html>

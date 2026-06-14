@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Monolith profile (default): one container runs all modules.
+# Postgres profile (future durable projection store): `docker compose --profile pg up`.
+services:
+  intraktible:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: intraktible:dev
+    ports: ["8080:8080"]
+    volumes: ["itk-data:/data"]
+
+  postgres:
+    image: postgres:17-alpine   # PostgreSQL License (AGPL-compatible)
+    profiles: ["pg"]
+    environment:
+      POSTGRES_PASSWORD: intraktible
+      POSTGRES_DB: intraktible
+    ports: ["5432:5432"]
+    volumes: ["pg-data:/var/lib/postgresql/data"]
+
+volumes:
+  itk-data: {}
+  pg-data: {}

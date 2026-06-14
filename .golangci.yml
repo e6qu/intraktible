@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused        # dead-code / unused identifiers
+    - misspell
+    - revive
+    - gocritic
+    - gosec
+    - bodyclose
+    - nilerr
+    - errorlint
+    - unconvert
+    - copyloopvar
+
+linters-settings:
+  revive:
+    rules:
+      - name: exported
+        disabled: false
+  gocritic:
+    enabled-tags: [diagnostic, style, performance]
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  exclude-rules:
+    - path: _test\.go
+      linters: [gosec, errcheck]
