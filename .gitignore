@@ -1,0 +1,39 @@
+# Binaries & build output
+/bin/
+/dist/
+*.test
+*.out
+*.exe
+
+# Go
+/vendor/
+coverage.out
+
+# Node / SvelteKit (web/)
+node_modules/
+.svelte-kit/
+web/build/
+web/.svelte-kit/
+web/node_modules/
+
+# Generated embedded assets
+**/embedded_web/
+
+# Local data / event log / databases
+/data/
+*.db
+*.sqlite
+*.sqlite3
+*.badger/
+*.wal
+
+# Secrets / env
+.env
+.env.*
+!.env.example
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
