@@ -41,18 +41,19 @@ type AgentView struct {
 
 // RunView is one recorded agent invocation.
 type RunView struct {
-	Org        string          `json:"org"`
-	Workspace  string          `json:"workspace"`
-	RunID      string          `json:"run_id"`
-	Agent      string          `json:"agent"`
-	Model      string          `json:"model,omitempty"`
-	Prompt     string          `json:"prompt"`
-	Status     string          `json:"status"`
-	Text       string          `json:"text,omitempty"`
-	Structured json.RawMessage `json:"structured,omitempty"`
-	Error      string          `json:"error,omitempty"`
-	Seq        uint64          `json:"seq"`
-	At         time.Time       `json:"at"`
+	Org        string            `json:"org"`
+	Workspace  string            `json:"workspace"`
+	RunID      string            `json:"run_id"`
+	Agent      string            `json:"agent"`
+	Model      string            `json:"model,omitempty"`
+	Prompt     string            `json:"prompt"`
+	Status     string            `json:"status"`
+	Text       string            `json:"text,omitempty"`
+	Structured json.RawMessage   `json:"structured,omitempty"`
+	ToolCalls  []events.ToolCall `json:"tool_calls,omitempty"`
+	Error      string            `json:"error,omitempty"`
+	Seq        uint64            `json:"seq"`
+	At         time.Time         `json:"at"`
 }
 
 // Projector folds agent events into the registry + run-log read models.
@@ -102,7 +103,7 @@ func applyRun(ctx context.Context, e eventlog.Envelope, s store.Store) error {
 	run := RunView{
 		Org: e.Org, Workspace: e.Workspace,
 		RunID: p.RunID, Agent: p.Agent, Model: p.Model, Prompt: p.Prompt,
-		Status: p.Status, Text: p.Text, Structured: p.Structured, Error: p.Error,
+		Status: p.Status, Text: p.Text, Structured: p.Structured, ToolCalls: p.ToolCalls, Error: p.Error,
 		Seq: e.Seq, At: p.At,
 	}
 	if err := store.PutDoc(ctx, s, CollectionRuns, store.Key(e.Org, e.Workspace, p.RunID), run); err != nil {
@@ -167,18 +168,43 @@ func SummarizeRuns(runs []RunView) RunSummary {
 
 // Outcome is the result of invoking an agent: the resolved model, the run status,
 // and the provider's text or structured output (or an error message on failure).
+// ToolCalls is the tool-calling trace when the agent used tools.
 type Outcome struct {
 	Model      string
 	Status     string
 	Text       string
 	Structured json.RawMessage
+	ToolCalls  []events.ToolCall
 	Error      string
 }
 
-// Invoke runs the named agent against prompt via its configured AI provider. A
-// provider failure is captured as a failed Outcome (not an error); only an unknown
-// agent or a misconfigured provider returns an error.
+// Toolbox resolves an agent's declared tool names to provider tool specs and
+// executes a tool call. It is supplied by the composition root (e.g. backed by
+// Context Layer connectors); when nil, agents run without tools.
+type Toolbox interface {
+	// Spec returns the provider-facing description of a named tool.
+	Spec(name string) (ai.Tool, bool)
+	// Call executes the named tool with JSON arguments and returns its JSON result.
+	Call(ctx context.Context, id identity.Identity, name string, args json.RawMessage) (json.RawMessage, error)
+}
+
+// maxToolSteps bounds the tool-calling loop so a model that keeps requesting
+// tools (or a tool that always provokes another call) terminates loudly.
+const maxToolSteps = 8
+
+// Invoke runs the named agent against prompt via its configured AI provider,
+// without tools. See InvokeWithTools.
 func Invoke(ctx context.Context, s store.Store, reg *ai.Registry, id identity.Identity, agent, prompt string) (Outcome, error) {
+	return InvokeWithTools(ctx, s, reg, nil, id, agent, prompt)
+}
+
+// InvokeWithTools runs the named agent. When the agent declares tools and a
+// Toolbox is supplied, it drives a tool-calling loop: the provider may answer
+// with tool calls, each is executed via the Toolbox and fed back, until the model
+// returns a final answer or maxToolSteps is exceeded. A provider failure is
+// captured as a failed Outcome (not an error); only an unknown agent or a
+// misconfigured provider/tool returns an error... save where noted.
+func InvokeWithTools(ctx context.Context, s store.Store, reg *ai.Registry, tb Toolbox, id identity.Identity, agent, prompt string) (Outcome, error) {
 	def, ok, err := Read(ctx, s, id, agent)
 	if err != nil {
 		return Outcome{}, err
@@ -190,27 +216,88 @@ func Invoke(ctx context.Context, s store.Store, reg *ai.Registry, id identity.Id
 	if err != nil {
 		return Outcome{}, err
 	}
-	resp, perr := p.Complete(ctx, ai.Request{Model: def.Model, System: def.System, Prompt: prompt, Schema: def.Schema})
-	// A provider failure is converted into a recorded "failed" outcome, not a
-	// call error — the caller records the run either way.
+	tools, err := resolveTools(def.Tools, tb)
+	if err != nil {
+		// A declared tool with no Toolbox entry is a misconfiguration, not a run
+		// outcome — fail loudly so it is fixed.
+		return Outcome{}, err
+	}
+
+	// The run state is mutated in place; every terminal branch sets the status and
+	// error then falls through to a single `return out, nil` — a provider failure
+	// is a recorded failed run, not a call error (so the linter's err-then-nil
+	// guard does not apply).
 	out := Outcome{Model: def.Model, Status: domainRunCompleted}
-	switch {
-	case perr != nil:
-		out.Status = domainRunFailed
-		out.Error = perr.Error()
-	default:
-		out.Text = resp.Text
-		out.Structured = resp.Structured
+	var history []ai.Message
+	for step := 0; ; step++ {
+		if step > maxToolSteps {
+			out.Status, out.Error = domainRunFailed, fmt.Sprintf("agent-manager: tool-calling exceeded %d steps", maxToolSteps)
+			break
+		}
+		resp, perr := p.Complete(ctx, ai.Request{
+			Model: def.Model, System: def.System, Prompt: prompt, Schema: def.Schema, Tools: tools, History: history,
+		})
 		if resp.Model != "" {
 			out.Model = resp.Model
 		}
-		// When the agent declares a structured-output schema, the response must
-		// satisfy it; a mismatch is a recorded failed run (fail loudly).
-		if verr := validateStructured(def.Schema, resp.Structured); verr != nil {
-			out = Outcome{Model: out.Model, Status: domainRunFailed, Error: verr.Error()}
+		switch {
+		case perr != nil:
+			out.Status, out.Error = domainRunFailed, perr.Error()
+		case len(resp.ToolCalls) == 0:
+			out.Text, out.Structured = resp.Text, resp.Structured
+			if verr := validateStructured(def.Schema, resp.Structured); verr != nil {
+				out.Status, out.Error, out.Text, out.Structured = domainRunFailed, verr.Error(), "", nil
+			}
+		case len(tools) == 0:
+			out.Status, out.Error = domainRunFailed, "agent-manager: model requested a tool but the agent declares none"
+		default:
+			// The model wants tools: execute them, feed the results back, and loop.
+			history = append(history, ai.Message{Role: "assistant", ToolCalls: resp.ToolCalls})
+			history = appendToolResults(ctx, tb, id, resp.ToolCalls, history, &out)
+			continue
 		}
+		break
 	}
 	return out, nil
+}
+
+// resolveTools maps an agent's declared tool names to provider tool specs via the
+// Toolbox, erroring if a declared tool is unknown. No declared tools (or no
+// Toolbox) yields no tools — a plain completion.
+func resolveTools(names []string, tb Toolbox) ([]ai.Tool, error) {
+	if len(names) == 0 || tb == nil {
+		return nil, nil
+	}
+	tools := make([]ai.Tool, 0, len(names))
+	for _, name := range names {
+		spec, ok := tb.Spec(name)
+		if !ok {
+			return nil, fmt.Errorf("agent-manager: agent declares unknown tool %q", name)
+		}
+		tools = append(tools, spec)
+	}
+	return tools, nil
+}
+
+// appendToolResults executes each tool call, records it in the outcome trace, and
+// appends a tool-result message to the conversation. A tool error is fed back to
+// the model (and recorded) rather than aborting — the model may recover.
+func appendToolResults(ctx context.Context, tb Toolbox, id identity.Identity, calls []ai.ToolCall, history []ai.Message, out *Outcome) []ai.Message {
+	for _, call := range calls {
+		rec := events.ToolCall{Name: call.Name, Arguments: call.Arguments}
+		result, terr := tb.Call(ctx, id, call.Name, call.Arguments)
+		content := ""
+		if terr != nil {
+			rec.Error = terr.Error()
+			content = terr.Error()
+		} else {
+			rec.Result = result
+			content = string(result)
+		}
+		out.ToolCalls = append(out.ToolCalls, rec)
+		history = append(history, ai.Message{Role: "tool", ToolCallID: call.ID, Content: content})
+	}
+	return history
 }
 
 // validateStructured checks a schema-constrained response against the agent's
@@ -235,11 +322,12 @@ func validateStructured(agentSchema, structured json.RawMessage) error {
 type Provider struct {
 	Store    store.Store
 	Registry *ai.Registry
+	Tools    Toolbox
 }
 
 // RunAgent runs the named agent against prompt and returns its output as JSON.
 func (p Provider) RunAgent(ctx context.Context, id identity.Identity, agent, prompt string) (json.RawMessage, error) {
-	out, err := Invoke(ctx, p.Store, p.Registry, id, agent, prompt)
+	out, err := InvokeWithTools(ctx, p.Store, p.Registry, p.Tools, id, agent, prompt)
 	if err != nil {
 		return nil, err
 	}

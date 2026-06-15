@@ -32,6 +32,8 @@ type AgentDefined struct {
 
 // AgentRunRecorded records one agent invocation and its outcome. Text is set for a
 // plain completion; Structured for a schema-constrained one; Error for a failure.
+// ToolCalls records the tool-calling trace (the tools the model invoked and their
+// results) so a run that used tools is fully auditable and replay-stable.
 type AgentRunRecorded struct {
 	RunID      string          `json:"run_id"`
 	Agent      string          `json:"agent"`
@@ -40,6 +42,15 @@ type AgentRunRecorded struct {
 	Status     string          `json:"status"`
 	Text       string          `json:"text,omitempty"`
 	Structured json.RawMessage `json:"structured,omitempty"`
+	ToolCalls  []ToolCall      `json:"tool_calls,omitempty"`
 	Error      string          `json:"error,omitempty"`
 	At         time.Time       `json:"at"`
+}
+
+// ToolCall is one recorded tool invocation made during a run.
+type ToolCall struct {
+	Name      string          `json:"name"`
+	Arguments json.RawMessage `json:"arguments,omitempty"`
+	Result    json.RawMessage `json:"result,omitempty"`
+	Error     string          `json:"error,omitempty"`
 }

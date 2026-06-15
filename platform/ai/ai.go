@@ -14,19 +14,50 @@ import (
 )
 
 // Request is a single completion. When Schema is set, providers must return
-// Structured JSON conforming to it (the AI node's structured-output mode).
+// Structured JSON conforming to it (the AI node's structured-output mode). When
+// Tools is set the provider may answer with ToolCalls instead of a final reply;
+// History carries the prior assistant/tool turns of an in-progress tool-calling
+// loop so each call reconstructs the full conversation.
 type Request struct {
-	Model  string          `json:"model,omitempty"`
-	System string          `json:"system,omitempty"`
-	Prompt string          `json:"prompt"`
-	Schema json.RawMessage `json:"schema,omitempty"`
+	Model   string          `json:"model,omitempty"`
+	System  string          `json:"system,omitempty"`
+	Prompt  string          `json:"prompt"`
+	Schema  json.RawMessage `json:"schema,omitempty"`
+	Tools   []Tool          `json:"tools,omitempty"`
+	History []Message       `json:"history,omitempty"`
 }
 
-// Response is the provider's reply. Structured is set when a Schema was given.
+// Response is the provider's reply. Structured is set when a Schema was given;
+// ToolCalls is set when the model wants to call tools before answering.
 type Response struct {
 	Text       string          `json:"text,omitempty"`
 	Structured json.RawMessage `json:"structured,omitempty"`
+	ToolCalls  []ToolCall      `json:"tool_calls,omitempty"`
 	Model      string          `json:"model,omitempty"`
+}
+
+// Tool is a function the model may call during a completion. Parameters is a JSON
+// Schema describing the arguments object.
+type Tool struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description,omitempty"`
+	Parameters  json.RawMessage `json:"parameters,omitempty"`
+}
+
+// ToolCall is the model's request to invoke a tool with JSON arguments.
+type ToolCall struct {
+	ID        string          `json:"id,omitempty"`
+	Name      string          `json:"name"`
+	Arguments json.RawMessage `json:"arguments,omitempty"`
+}
+
+// Message is one prior turn fed back to the model during a tool-calling loop:
+// an assistant turn that issued ToolCalls, or a tool turn carrying a call result.
+type Message struct {
+	Role       string     `json:"role"` // "assistant" or "tool"
+	Content    string     `json:"content,omitempty"`
+	ToolCallID string     `json:"tool_call_id,omitempty"`
+	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
 }
 
 // Provider is one LLM backend.

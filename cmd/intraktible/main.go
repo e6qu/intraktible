@@ -24,6 +24,7 @@ import (
 	"github.com/e6qu/intraktible/agent-manager/agents"
 	agentcmd "github.com/e6qu/intraktible/agent-manager/command"
 	agentservice "github.com/e6qu/intraktible/agent-manager/service"
+	"github.com/e6qu/intraktible/agent-manager/tools"
 	"github.com/e6qu/intraktible/case-manager/cases"
 	casecmd "github.com/e6qu/intraktible/case-manager/command"
 	caseservice "github.com/e6qu/intraktible/case-manager/service"
@@ -145,6 +146,10 @@ func run(addr, dataDir, modules, devKey, storeKind string) error {
 		slog.Warn("connectors: egress to private/loopback targets is ALLOWED (INTRAKTIBLE_CONNECTOR_ALLOW_PRIVATE)")
 	}
 
+	// Agents that declare tools call Context Layer connectors through this toolbox
+	// during a tool-calling run (shared by the Agent Manager and the engine's AI node).
+	toolbox := tools.ConnectorToolbox{Fetcher: connectors.Provider{Store: st, Egress: egress}}
+
 	if enabled(modules, "hello") {
 		helloservice.New(hellocmd.NewHandler(log), st).Routes(api)
 	}
@@ -156,7 +161,7 @@ func run(addr, dataDir, modules, devKey, storeKind string) error {
 		decide := enginecmd.NewDecideHandler(log, st,
 			enginecmd.WithFeatures(features.Provider{Store: st}),
 			enginecmd.WithConnectors(connectors.Provider{Store: st, Egress: egress}),
-			enginecmd.WithAgents(agents.Provider{Store: st, Registry: aiRegistry}))
+			enginecmd.WithAgents(agents.Provider{Store: st, Registry: aiRegistry, Tools: toolbox}))
 		engineservice.New(enginecmd.NewHandler(log), decide, st).Routes(api)
 	}
 	if enabled(modules, "case-manager") {
@@ -166,7 +171,7 @@ func run(addr, dataDir, modules, devKey, storeKind string) error {
 		contextservice.New(contextcmd.NewHandler(log), st, contextservice.WithEgress(egress)).Routes(api)
 	}
 	if enabled(modules, "agent-manager") {
-		agentservice.New(agentcmd.NewHandler(log, st, aiRegistry), st).Routes(api)
+		agentservice.New(agentcmd.NewHandler(log, st, aiRegistry, agentcmd.WithToolbox(toolbox)), st).Routes(api)
 	}
 
 	// Authenticated caller introspection (inside the /v1 auth chain).

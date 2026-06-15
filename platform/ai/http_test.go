@@ -89,6 +89,84 @@ func TestHTTPProviderErrorStatus(t *testing.T) {
 	}
 }
 
+func TestHTTPProviderToolCall(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var req map[string]any
+		_ = json.Unmarshal(body, &req)
+		// The request must advertise the tool to the model.
+		toolsArr, ok := req["tools"].([]any)
+		if !ok || len(toolsArr) != 1 {
+			t.Errorf("request tools = %v", req["tools"])
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"model":"gpt-test","choices":[{"message":{"role":"assistant","content":null,` +
+			`"tool_calls":[{"id":"c1","type":"function","function":{"name":"bureau","arguments":"{\"subject\":\"acme\"}"}}]}}]}`))
+	}))
+	defer srv.Close()
+
+	p := ai.NewHTTP("openai", srv.URL, "sk-test", "gpt-test")
+	resp, err := p.Complete(context.Background(), ai.Request{
+		Prompt: "assess acme",
+		Tools:  []ai.Tool{{Name: "bureau", Description: "credit bureau", Parameters: json.RawMessage(`{"type":"object"}`)}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.ToolCalls) != 1 || resp.ToolCalls[0].Name != "bureau" {
+		t.Fatalf("tool calls: %+v", resp.ToolCalls)
+	}
+	if string(resp.ToolCalls[0].Arguments) != `{"subject":"acme"}` {
+		t.Fatalf("tool args: %s", resp.ToolCalls[0].Arguments)
+	}
+}
+
+func TestHTTPProviderToolResultRoundTrip(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var req struct {
+			Messages []struct {
+				Role       string `json:"role"`
+				ToolCallID string `json:"tool_call_id"`
+				ToolCalls  []any  `json:"tool_calls"`
+			} `json:"messages"`
+		}
+		_ = json.Unmarshal(body, &req)
+		// Expect: user, assistant(with tool_calls), tool(with tool_call_id).
+		var sawAssistantCall, sawToolResult bool
+		for _, m := range req.Messages {
+			if m.Role == "assistant" && len(m.ToolCalls) == 1 {
+				sawAssistantCall = true
+			}
+			if m.Role == "tool" && m.ToolCallID == "c1" {
+				sawToolResult = true
+			}
+		}
+		if !sawAssistantCall || !sawToolResult {
+			t.Errorf("conversation not reconstructed: %+v", req.Messages)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"model":"gpt-test","choices":[{"message":{"role":"assistant","content":"risk is 42"}}]}`))
+	}))
+	defer srv.Close()
+
+	p := ai.NewHTTP("openai", srv.URL, "sk-test", "gpt-test")
+	resp, err := p.Complete(context.Background(), ai.Request{
+		Prompt: "assess acme",
+		Tools:  []ai.Tool{{Name: "bureau"}},
+		History: []ai.Message{
+			{Role: "assistant", ToolCalls: []ai.ToolCall{{ID: "c1", Name: "bureau", Arguments: json.RawMessage(`{"subject":"acme"}`)}}},
+			{Role: "tool", ToolCallID: "c1", Content: `{"risk":42}`},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Text != "risk is 42" {
+		t.Fatalf("final answer: %q", resp.Text)
+	}
+}
+
 // The provider plugs into the registry like any other.
 func TestHTTPProviderInRegistry(t *testing.T) {
 	r := ai.NewRegistry()

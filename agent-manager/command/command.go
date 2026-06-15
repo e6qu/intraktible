@@ -29,18 +29,31 @@ type Handler struct {
 	log   eventlog.Log
 	store store.Store
 	reg   *ai.Registry
+	tools agents.Toolbox
 	now   func() time.Time
 	newID func() string
 }
 
+// Option configures a Handler.
+type Option func(*Handler)
+
+// WithToolbox supplies the toolbox used to execute an agent's declared tools.
+func WithToolbox(tb agents.Toolbox) Option {
+	return func(h *Handler) { h.tools = tb }
+}
+
 // NewHandler builds a Handler over the log, the read store (to resolve agent
 // definitions at run time), and the AI provider registry.
-func NewHandler(log eventlog.Log, st store.Store, reg *ai.Registry) *Handler {
-	return &Handler{
+func NewHandler(log eventlog.Log, st store.Store, reg *ai.Registry, opts ...Option) *Handler {
+	h := &Handler{
 		log: log, store: st, reg: reg,
 		now:   func() time.Time { return time.Now().UTC() },
 		newID: newID,
 	}
+	for _, o := range opts {
+		o(h)
+	}
+	return h
 }
 
 // RunResult is the outcome of a run returned to the caller.
@@ -73,14 +86,14 @@ func (h *Handler) RunAgent(ctx context.Context, id identity.Identity, agent, pro
 	if err := id.Valid(); err != nil {
 		return RunResult{}, err
 	}
-	out, err := agents.Invoke(ctx, h.store, h.reg, id, agent, prompt)
+	out, err := agents.InvokeWithTools(ctx, h.store, h.reg, h.tools, id, agent, prompt)
 	if err != nil {
 		return RunResult{}, err
 	}
 	runID := h.newID()
 	if _, err := h.append(ctx, id, events.TypeAgentRunRecorded, events.AgentRunRecorded{
 		RunID: runID, Agent: agent, Model: out.Model, Prompt: prompt,
-		Status: out.Status, Text: out.Text, Structured: out.Structured, Error: out.Error, At: h.now(),
+		Status: out.Status, Text: out.Text, Structured: out.Structured, ToolCalls: out.ToolCalls, Error: out.Error, At: h.now(),
 	}); err != nil {
 		return RunResult{}, err
 	}

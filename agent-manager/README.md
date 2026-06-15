@@ -23,7 +23,12 @@ Done — agent definitions + runs (command→event→projection→API, durable &
   model call is the only effect — recording the response makes a run auditable and means **replay
   reads the recorded output** rather than re-calling the (non-deterministic) model. A provider failure
   is a recorded `failed` run, not an API error. The run log doubles as the monitoring projection.
-  (Only the deterministic **Stub** provider is wired today; real adapters are tracked in `BUGS.md`.)
+- **Tool-calling**: when an agent declares `tools` and a `Toolbox` is wired, running it drives a
+  bounded tool-calling loop — the model may answer with tool calls, each is executed via the Toolbox
+  and fed back, until it returns a final answer (or the step limit trips, a recorded `failed` run).
+  Every tool call (name, arguments, result/error) is recorded on the run, so a tool-using run is fully
+  auditable and replay-stable. The reference `tools.ConnectorToolbox` exposes Context Layer connectors
+  as tools. The OpenAI-compatible HTTP provider supports tool-calling; the **Stub** answers directly.
 - HTTP (under `/v1/`, X-Api-Key / session auth, org+workspace scoped):
   - `POST /v1/agents` — define `{name, provider?, model?, system?, schema?, tools?}`
   - `GET /v1/agents` · `GET /v1/agents/{name}` — the agent registry
@@ -46,6 +51,7 @@ Consumed by the decision engine: a flow's **AI node** runs an agent (the shell p
 `{"text": …}` — under `ai.<output>`), through an `AgentProvider` port so the engine never imports this
 layer.
 
-Deferred (see [../BUGS.md](../BUGS.md)): tools are declared but not executed (D16); runs are
-synchronous (no async/queued/streaming runs) (D17). A schema-constrained agent's structured output is validated against its schema (a mismatch is a recorded failed run). A real OpenAI-compatible HTTP
-provider exists (`ai.NewHTTP`, configured via `INTRAKTIBLE_AI_*` env vars); the Stub is the default fallback.
+A schema-constrained agent's structured output is validated against its schema (a mismatch is a
+recorded failed run). A real OpenAI-compatible HTTP provider exists (`ai.NewHTTP`, configured via
+`INTRAKTIBLE_AI_*` env vars); the Stub is the default fallback.
+Deferred (see [../BUGS.md](../BUGS.md)): runs are synchronous — no async/queued/streaming runs (D17).
