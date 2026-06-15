@@ -42,3 +42,21 @@ func TestKey(t *testing.T) {
 		t.Fatalf("Key = %q", got)
 	}
 }
+
+func TestMemoryCollections(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemory()
+	if got := m.Collections(); len(got) != 0 {
+		t.Fatalf("empty store collections = %v", got)
+	}
+	_ = m.Put(ctx, "beta", "k", json.RawMessage(`1`))
+	_ = m.Put(ctx, "alpha", "k", json.RawMessage(`1`))
+	// An emptied collection is not reported.
+	_ = m.Put(ctx, "gone", "k", json.RawMessage(`1`))
+	_ = m.Delete(ctx, "gone", "k")
+
+	got := m.Collections()
+	if len(got) != 2 || got[0] != "alpha" || got[1] != "beta" {
+		t.Fatalf("Collections = %v, want [alpha beta] sorted", got)
+	}
+}

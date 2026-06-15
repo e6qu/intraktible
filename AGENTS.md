@@ -10,7 +10,7 @@ reimplementation of a commercial Agentic Decision Platform.
 4. Research basis (why the design looks like this): `../specs/openapi-current.yaml`, `../ENDPOINTS.md`, `../docs/`. (That parent tree is research only — **do not** mix it into this repo.)
 
 ## Status
-**Phases 0–4 DONE (shared core, Decision Engine, Case Manager, Context Layer, Agent Manager). Phase 5 (Harden) NEXT — all four product components are built.**
+**Phases 0–4 DONE (shared core, Decision Engine, Case Manager, Context Layer, Agent Manager). Phase 5 (Harden) IN PROGRESS — replay/rollback operator tooling (`intraktible log`/`replay`) shipped; split-services profile + docs/examples remain.**
 Roadmap & exit criteria: [PLAN.md §8](PLAN.md#8-phased-roadmap); deferrals tracked in [BUGS.md](BUGS.md).
 Working today: `platform/{eventlog,store,projection,identity,auth,httpx,ai,web}` + the `hello`
 slice; and the **Decision Engine** — flow model + versioning, a deterministic execution runtime
@@ -79,6 +79,10 @@ Pluggable storage (SQLite/Postgres) and pluggable AI provider. Details: [PLAN.md
 - `make build` — embed UI, single binary; `make check` — fast gate (fmt + vet + typecheck + tests);
   `make ci` — full gate (everything CI runs); `make web` — build + embed the SvelteKit UI.
 - Run: `intraktible serve --modules=all` (monolith) or `--modules=decision-engine` (split).
+- Operate (Phase 5): `intraktible log` prints the event log (audit) + per-stream summary;
+  `intraktible replay [--modules] [--as-of <seq>]` rebuilds projections from the log into a fresh
+  store and reports the rebuilt collections — `--as-of` is a read-only **log-based rollback** to that
+  seq (the append-only log is never mutated).
 
 ## Testing & quality gates (enforced, not optional)
 - **Test pyramid, per module:** pure **unit** tests (`domain/`, platform pkgs) → **integration**

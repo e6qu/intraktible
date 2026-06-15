@@ -77,3 +77,18 @@ func (m *Memory) Reset(_ context.Context, collection string) error {
 }
 
 func (m *Memory) Close() error { return nil }
+
+// Collections returns the names of the non-empty collections, sorted. It backs
+// operator tooling that reports rebuilt projection state.
+func (m *Memory) Collections() []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]string, 0, len(m.collections))
+	for name, docs := range m.collections {
+		if len(docs) > 0 {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}

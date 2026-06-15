@@ -275,7 +275,14 @@ intraktible/
   escalates a run. Full test pyramid (unit/integration/API-e2e/Playwright); all CI gates green.
   **Deferred from Phase 4** (in `BUGS.md`): tools are declared but not executed (D16); runs are
   synchronous and structured output is not schema-validated (D17); real (non-Stub) AI providers (D5).
-- **Phase 5 — Harden:** replay/rollback tooling, split-services profile, docs, examples.
+- **Phase 5 — Harden — 🚧 IN PROGRESS.** Done: **replay/rollback operator tooling** — `intraktible
+  log` prints the durable event log (one line per event) + a per-stream summary (the audit view), and
+  `intraktible replay [--modules] [--as-of <seq>]` rebuilds the enabled modules' projections from the
+  log into a fresh store and reports the rebuilt collections. `--as-of` is a read-only **log-based
+  rollback** (rebuild as of an earlier seq), backed by `projection.RebuildTo(ctx, upTo)`; the
+  append-only log is never mutated. The CLI dispatches `serve|log|replay`, and `serve`/`replay` share
+  one `moduleProjectors` list. Remaining: the split-services deploy profile (modules already run via
+  `--modules=`; needs the multi-service compose/story), and docs + worked examples.
 
 > Per project convention: at the **end of every phase**, update `PLAN.md` and `BUGS.md` in the same
 > PR as the phase's code.

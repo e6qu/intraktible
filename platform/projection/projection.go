@@ -70,22 +70,32 @@ func (r *Runtime) Start(ctx context.Context) error {
 }
 
 func (r *Runtime) rebuild(ctx context.Context) error {
-	for _, p := range r.projectors {
-		// Reset is collection-scoped and owned by each projector via Apply;
-		// for the MVP the store is ephemeral and empty at boot, so a full
-		// re-read reconstructs state deterministically.
-		_ = p
-	}
+	_, err := r.RebuildTo(ctx, 0)
+	return err
+}
+
+// RebuildTo replays the durable log into the projections, applying only events
+// with Seq <= upTo (upTo 0 means all), and returns the number applied. It is the
+// basis for operator rebuild and log-based rollback: rebuilding into a fresh store
+// as of an earlier seq yields the exact state at that point without mutating the
+// append-only log. (The MVP store is empty at boot, so a full re-read reconstructs
+// state deterministically; durable stores Reset per collection first.)
+func (r *Runtime) RebuildTo(ctx context.Context, upTo uint64) (int, error) {
 	events, err := r.log.Read(ctx, 0)
 	if err != nil {
-		return fmt.Errorf("projection: read log: %w", err)
+		return 0, fmt.Errorf("projection: read log: %w", err)
 	}
+	applied := 0
 	for _, e := range events {
-		if err := r.applyAll(ctx, e); err != nil {
-			return fmt.Errorf("projection: rebuild at seq %d: %w", e.Seq, err)
+		if upTo != 0 && e.Seq > upTo {
+			break
 		}
+		if err := r.applyAll(ctx, e); err != nil {
+			return applied, fmt.Errorf("projection: rebuild at seq %d: %w", e.Seq, err)
+		}
+		applied++
 	}
-	return nil
+	return applied, nil
 }
 
 func (r *Runtime) applyAll(ctx context.Context, e eventlog.Envelope) error {

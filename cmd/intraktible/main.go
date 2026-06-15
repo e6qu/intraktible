@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sort"
 	"syscall"
 	"time"
 
@@ -48,23 +49,40 @@ import (
 )
 
 func main() {
-	if len(os.Args) < 2 || os.Args[1] != "serve" {
-		fmt.Fprintln(os.Stderr, "usage: intraktible serve [flags]")
-		os.Exit(2)
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	if len(os.Args) < 2 {
+		usage()
 	}
+	var err error
+	switch os.Args[1] {
+	case "serve":
+		err = serveCmd(os.Args[2:])
+	case "log":
+		err = logCmd(os.Args[2:])
+	case "replay":
+		err = replayCmd(os.Args[2:])
+	default:
+		usage()
+	}
+	if err != nil {
+		slog.Error("fatal", "err", err)
+		os.Exit(1)
+	}
+}
+
+func usage() {
+	fmt.Fprintln(os.Stderr, "usage: intraktible <serve|log|replay> [flags]")
+	os.Exit(2)
+}
+
+func serveCmd(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	addr := fs.String("addr", ":8080", "listen address")
 	dataDir := fs.String("data-dir", "./data", "event-log data directory")
 	modules := fs.String("modules", "all", "comma-separated modules (or 'all')")
 	devKey := fs.String("dev-api-key", "dev-sandbox-key", "seed a sandbox API key for local dev (empty to disable)")
-	_ = fs.Parse(os.Args[2:])
-
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
-
-	if err := run(*addr, *dataDir, *modules, *devKey); err != nil {
-		slog.Error("fatal", "err", err)
-		os.Exit(1)
-	}
+	_ = fs.Parse(args)
+	return run(*addr, *dataDir, *modules, *devKey)
 }
 
 func run(addr, dataDir, modules, devKey string) error {
@@ -96,7 +114,6 @@ func run(addr, dataDir, modules, devKey string) error {
 	root.Handle("/", web.Handler())
 
 	api := http.NewServeMux()
-	var projectors []projection.Projector
 
 	// The AI provider registry is shared by the Agent Manager and the decision
 	// engine's AI node. Only the Stub is wired today (real adapters → BUGS D5).
@@ -104,11 +121,8 @@ func run(addr, dataDir, modules, devKey string) error {
 	aiRegistry.Register(ai.Stub{})
 
 	if enabled(modules, "hello") {
-		helloSvc := helloservice.New(hellocmd.NewHandler(log), st)
-		helloSvc.Routes(api)
-		projectors = append(projectors, stats.Projector{})
+		helloservice.New(hellocmd.NewHandler(log), st).Routes(api)
 	}
-
 	if enabled(modules, "decision-engine") {
 		// A decision can fold in a Context Layer entity's features, call Context
 		// Layer connectors from Connect nodes, and run Agent Manager agents from AI
@@ -118,30 +132,19 @@ func run(addr, dataDir, modules, devKey string) error {
 			enginecmd.WithFeatures(features.Provider{Store: st}),
 			enginecmd.WithConnectors(connectors.Provider{Store: st}),
 			enginecmd.WithAgents(agents.Provider{Store: st, Registry: aiRegistry}))
-		engineSvc := engineservice.New(enginecmd.NewHandler(log), decide, st)
-		engineSvc.Routes(api)
-		projectors = append(projectors, flows.Projector{}, history.Projector{}, analytics.Projector{})
+		engineservice.New(enginecmd.NewHandler(log), decide, st).Routes(api)
 	}
-
 	if enabled(modules, "case-manager") {
-		caseSvc := caseservice.New(casecmd.NewHandler(log), st)
-		caseSvc.Routes(api)
-		projectors = append(projectors, cases.Projector{})
+		caseservice.New(casecmd.NewHandler(log), st).Routes(api)
 	}
-
 	if enabled(modules, "context-layer") {
-		contextSvc := contextservice.New(contextcmd.NewHandler(log), st)
-		contextSvc.Routes(api)
-		projectors = append(projectors, entities.Projector{}, features.Projector{}, connectors.Projector{})
+		contextservice.New(contextcmd.NewHandler(log), st).Routes(api)
 	}
-
 	if enabled(modules, "agent-manager") {
-		agentSvc := agentservice.New(agentcmd.NewHandler(log, st, aiRegistry), st)
-		agentSvc.Routes(api)
-		projectors = append(projectors, agents.Projector{})
+		agentservice.New(agentcmd.NewHandler(log, st, aiRegistry), st).Routes(api)
 	}
 
-	rt := projection.New(log, st, projectors...)
+	rt := projection.New(log, st, moduleProjectors(modules)...)
 	if err := rt.Start(ctx); err != nil {
 		return fmt.Errorf("projection start: %w", err)
 	}
@@ -167,6 +170,105 @@ func run(addr, dataDir, modules, devKey string) error {
 	shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	return srv.Shutdown(shutCtx)
+}
+
+// moduleProjectors returns the read-model projectors for the enabled modules —
+// the single source of truth shared by `serve` (live projections) and `replay`
+// (rebuild from the log).
+func moduleProjectors(modules string) []projection.Projector {
+	var ps []projection.Projector
+	if enabled(modules, "hello") {
+		ps = append(ps, stats.Projector{})
+	}
+	if enabled(modules, "decision-engine") {
+		ps = append(ps, flows.Projector{}, history.Projector{}, analytics.Projector{})
+	}
+	if enabled(modules, "case-manager") {
+		ps = append(ps, cases.Projector{})
+	}
+	if enabled(modules, "context-layer") {
+		ps = append(ps, entities.Projector{}, features.Projector{}, connectors.Projector{})
+	}
+	if enabled(modules, "agent-manager") {
+		ps = append(ps, agents.Projector{})
+	}
+	return ps
+}
+
+// logCmd prints the durable event log (one line per event) and a summary —
+// the operator's audit view of the backbone.
+func logCmd(args []string) error {
+	fs := flag.NewFlagSet("log", flag.ExitOnError)
+	dataDir := fs.String("data-dir", "./data", "event-log data directory")
+	_ = fs.Parse(args)
+
+	log, err := eventlog.OpenWAL(*dataDir)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = log.Close() }()
+
+	events, err := log.Read(context.Background(), 0)
+	if err != nil {
+		return err
+	}
+	byStream := map[string]int{}
+	for _, e := range events {
+		byStream[e.Stream]++
+		fmt.Printf("%6d  %-26s  %-30s  %s/%s  %s\n",
+			e.Seq, e.Time.UTC().Format(time.RFC3339), e.Type, e.Org, e.Workspace, e.Actor)
+	}
+	fmt.Printf("\n%d events, head seq %d\n", len(events), log.Head())
+	for _, s := range sortedKeys(byStream) {
+		fmt.Printf("  %-16s %d\n", s, byStream[s])
+	}
+	return nil
+}
+
+// replayCmd rebuilds the enabled modules' projections from the log into a fresh
+// store — optionally as of an earlier seq (log-based rollback / time-travel) — and
+// reports the rebuilt state. It mutates nothing: the append-only log is read-only.
+func replayCmd(args []string) error {
+	fs := flag.NewFlagSet("replay", flag.ExitOnError)
+	dataDir := fs.String("data-dir", "./data", "event-log data directory")
+	modules := fs.String("modules", "all", "comma-separated modules (or 'all')")
+	asOf := fs.Uint64("as-of", 0, "rebuild as of this event seq (0 = the whole log)")
+	_ = fs.Parse(args)
+
+	log, err := eventlog.OpenWAL(*dataDir)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = log.Close() }()
+
+	st := store.NewMemory()
+	rt := projection.New(log, st, moduleProjectors(*modules)...)
+	applied, err := rt.RebuildTo(context.Background(), *asOf)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("replayed %d events (as-of seq %d, head %d); rebuilt collections:\n", applied, *asOf, log.Head())
+	cols := st.Collections()
+	if len(cols) == 0 {
+		fmt.Println("  (none)")
+	}
+	for _, c := range cols {
+		recs, err := st.List(context.Background(), c)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("  %-26s %d docs\n", c, len(recs))
+	}
+	return nil
+}
+
+func sortedKeys(m map[string]int) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // enabled reports whether module m should run given the --modules selection.

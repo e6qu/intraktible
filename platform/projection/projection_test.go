@@ -105,6 +105,39 @@ func TestRebuildThenLive(t *testing.T) {
 	}
 }
 
+func TestRebuildToSeqIsBounded(t *testing.T) {
+	ctx := context.Background()
+	log, err := eventlog.OpenWAL(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = log.Close() }()
+
+	for _, typ := range []string{"a", "b", "c", "d"} { // seqs 1..4
+		appendEvent(t, log, typ)
+	}
+
+	// Rebuild as of seq 2 (log-based rollback): only the first two events apply.
+	st := store.NewMemory()
+	applied, err := projection.New(log, st, counter{}).RebuildTo(ctx, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if applied != 2 || readCount(t, st) != 2 {
+		t.Fatalf("as-of seq 2: applied=%d count=%d, want 2/2", applied, readCount(t, st))
+	}
+
+	// upTo 0 replays the whole log.
+	full := store.NewMemory()
+	applied, err = projection.New(log, full, counter{}).RebuildTo(ctx, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if applied != 4 || readCount(t, full) != 4 {
+		t.Fatalf("full replay: applied=%d count=%d, want 4/4", applied, readCount(t, full))
+	}
+}
+
 func TestLiveApplyErrorSurfaced(t *testing.T) {
 	ctx := context.Background()
 	log, err := eventlog.OpenWAL(t.TempDir())
