@@ -29,6 +29,25 @@ type Store interface {
 	Close() error
 }
 
+// Tx is a Store scoped to a transaction: its writes are atomic — they all commit
+// together or roll back together. It satisfies Store, so a projector can write
+// through it unchanged. The projection runtime uses a Tx to apply one event AND
+// advance its checkpoint atomically, which makes crash-safe incremental resume
+// possible without requiring every projector to be idempotent.
+type Tx interface {
+	Store
+	Commit() error
+	Rollback() error
+}
+
+// TxStore is a Store whose writes can be grouped into an atomic transaction —
+// the durable backends (SQLite, Postgres). A Store that does not implement it
+// (the ephemeral in-memory store) is always fully rebuilt from the log at boot.
+type TxStore interface {
+	Store
+	Begin(ctx context.Context) (Tx, error)
+}
+
 // Key namespaces a document by tenant so collections stay per-(org,workspace).
 func Key(org, workspace, id string) string {
 	return org + "/" + workspace + "/" + id

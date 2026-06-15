@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"path/filepath"
 	"testing"
 
 	"github.com/e6qu/intraktible/platform/eventlog"
@@ -165,6 +166,83 @@ func TestRebuildIsIdempotent(t *testing.T) {
 	}
 	if got := readCount(t, st); got != 2 {
 		t.Fatalf("after two rebuilds: count=%d, want 2 (reset makes rebuild idempotent)", got)
+	}
+}
+
+// TestIncrementalResumeWithDurableStore is the point of D21b: a durable
+// (transactional) store resumes from its checkpoint instead of fully rebuilding,
+// so a non-idempotent projector (the counter) is not re-applied — and no reset
+// wipes data the log did not produce.
+func TestIncrementalResumeWithDurableStore(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	logDir := filepath.Join(dir, "log")
+	dbPath := filepath.Join(dir, "p.db")
+
+	log1, err := eventlog.OpenWAL(logDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st1, err := store.NewSQLite(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	appendEvent(t, log1, "a")
+	appendEvent(t, log1, "b")
+
+	ctx1, cancel1 := context.WithCancel(ctx)
+	rt1 := projection.New(log1, st1, counter{})
+	if err := rt1.Start(ctx1); err != nil {
+		t.Fatal(err)
+	}
+	if got := readCount(t, st1); got != 2 {
+		t.Fatalf("after first build: count=%d, want 2", got)
+	}
+	appendEvent(t, log1, "c") // live → checkpoint advances to 3
+	if !testutil.Eventually(t, func() bool { return readCount(t, st1) == 3 }) {
+		t.Fatal("live event did not reach the projection")
+	}
+	cancel1()
+	_ = st1.Close()
+	_ = log1.Close()
+
+	// Restart against the SAME durable store + log. Seed a sentinel the log can
+	// never produce: it survives a resume (no reset) but a full rebuild would wipe it.
+	log2, err := eventlog.OpenWAL(logDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = log2.Close() }()
+	st2, err := store.NewSQLite(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = st2.Close() }()
+	sentinelKey := store.Key("demo", "main", "sentinel")
+	if err := st2.Put(ctx, countCollection, sentinelKey, json.RawMessage(`true`)); err != nil {
+		t.Fatal(err)
+	}
+
+	rt2 := projection.New(log2, st2, counter{})
+	ctx2, cancel2 := context.WithCancel(ctx)
+	defer cancel2()
+	if err := rt2.Start(ctx2); err != nil {
+		t.Fatal(err)
+	}
+	// Resume applied nothing new (checkpoint == head): the count is unchanged
+	// (not re-applied to 6, not reset to 0) and the sentinel survived (no reset).
+	if got := readCount(t, st2); got != 3 {
+		t.Fatalf("after resume: count=%d, want 3 (no re-apply, no reset)", got)
+	}
+	if _, ok, _ := st2.Get(ctx, countCollection, sentinelKey); !ok {
+		t.Fatal("resume must NOT reset the collection (the sentinel was wiped → a full rebuild ran)")
+	}
+
+	// A new live event advances from the resumed state, counted exactly once.
+	appendEvent(t, log2, "d")
+	if !testutil.Eventually(t, func() bool { return readCount(t, st2) == 4 }) {
+		t.Fatalf("new event after resume: count=%d, want 4", readCount(t, st2))
 	}
 }
 

@@ -26,28 +26,47 @@ type Projector interface {
 	Apply(ctx context.Context, e eventlog.Envelope, s store.Store) error
 }
 
+// checkpointCollection / checkpointKey store the highest seq applied to the
+// store. It is NOT owned by any projector (RebuildTo never resets it), so it
+// survives a rebuild and drives incremental resume.
+const (
+	checkpointCollection = "_projection"
+	checkpointKey        = "applied_head"
+)
+
+type checkpoint struct {
+	Seq uint64 `json:"seq"`
+}
+
 // Runtime applies a set of projectors to the log.
 type Runtime struct {
 	log        eventlog.Log
 	store      store.Store
+	tx         store.TxStore // non-nil when the store supports atomic transactions
 	projectors []Projector
 
-	mu  sync.Mutex
-	err error
+	mu      sync.Mutex
+	err     error
+	applied uint64 // highest seq applied this run (guards against re-apply)
 }
 
 // New builds a Runtime.
 func New(log eventlog.Log, st store.Store, projectors ...Projector) *Runtime {
-	return &Runtime{log: log, store: st, projectors: projectors}
+	r := &Runtime{log: log, store: st, projectors: projectors}
+	if txs, ok := st.(store.TxStore); ok {
+		r.tx = txs
+	}
+	return r
 }
 
-// Start rebuilds projections from offset 0, then consumes live events until ctx
-// is cancelled. It returns after the initial rebuild so the server starts with
-// current state. A live apply error stops the consumer and is surfaced via Err
-// (fail loudly — we never silently drop an event).
+// Start brings the projections up to date — incrementally resuming from the
+// stored checkpoint when the durable store has one, else fully rebuilding from
+// offset 0 — then consumes live events until ctx is cancelled. It returns after
+// the initial catch-up so the server starts with current state. A live apply
+// error stops the consumer and is surfaced via Err (fail loudly).
 func (r *Runtime) Start(ctx context.Context) error {
 	sub, cancel := r.log.Subscribe()
-	if err := r.rebuild(ctx); err != nil {
+	if err := r.bootstrap(ctx); err != nil {
 		cancel()
 		return err
 	}
@@ -61,7 +80,7 @@ func (r *Runtime) Start(ctx context.Context) error {
 				if !ok {
 					return
 				}
-				if err := r.applyAll(ctx, e); err != nil {
+				if err := r.applyOne(ctx, e); err != nil {
 					r.setErr(err)
 					slog.Error("projection: live apply failed; consumer stopped",
 						"seq", e.Seq, "type", e.Type, "err", err)
@@ -73,9 +92,92 @@ func (r *Runtime) Start(ctx context.Context) error {
 	return nil
 }
 
-func (r *Runtime) rebuild(ctx context.Context) error {
-	_, err := r.RebuildTo(ctx, 0)
-	return err
+// bootstrap either resumes from the checkpoint (a transactional durable store
+// that has applied events before) or fully rebuilds from offset 0.
+func (r *Runtime) bootstrap(ctx context.Context) error {
+	cp, _, err := store.GetDoc[checkpoint](ctx, r.store, checkpointCollection, checkpointKey)
+	if err != nil {
+		return fmt.Errorf("projection: read checkpoint: %w", err)
+	}
+	head := r.log.Head()
+	// Incremental resume: only when the store can apply transactionally (so the
+	// checkpoint advances atomically with each event) and the checkpoint is a
+	// valid prefix of the log.
+	if r.tx != nil && cp.Seq > 0 && cp.Seq <= head {
+		r.setApplied(cp.Seq)
+		evs, rerr := r.log.Read(ctx, cp.Seq+1)
+		if rerr != nil {
+			return fmt.Errorf("projection: read log for resume: %w", rerr)
+		}
+		for _, e := range evs {
+			if err := r.applyOne(ctx, e); err != nil {
+				return fmt.Errorf("projection: resume at seq %d: %w", e.Seq, err)
+			}
+		}
+		return nil
+	}
+	// Full rebuild from scratch.
+	if _, err := r.RebuildTo(ctx, 0); err != nil {
+		return err
+	}
+	r.setApplied(head)
+	return r.writeCheckpoint(ctx, r.store, head)
+}
+
+// applyOne applies a single event and advances the checkpoint, atomically when
+// the store supports transactions. It skips events already applied this run (so
+// the boot-rebuild/live-bus overlap and resume can never double-apply).
+func (r *Runtime) applyOne(ctx context.Context, e eventlog.Envelope) error {
+	r.mu.Lock()
+	already := e.Seq <= r.applied
+	r.mu.Unlock()
+	if already {
+		return nil
+	}
+	if r.tx == nil {
+		// Ephemeral store (memory): no atomicity needed — a crash loses everything
+		// and the next boot fully rebuilds.
+		if err := r.applyAll(ctx, e, r.store); err != nil {
+			return err
+		}
+		if err := r.writeCheckpoint(ctx, r.store, e.Seq); err != nil {
+			return err
+		}
+		r.setApplied(e.Seq)
+		return nil
+	}
+	tx, err := r.tx.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("projection: begin tx: %w", err)
+	}
+	if err := r.applyAll(ctx, e, tx); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if err := r.writeCheckpoint(ctx, tx, e.Seq); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("projection: commit seq %d: %w", e.Seq, err)
+	}
+	r.setApplied(e.Seq)
+	return nil
+}
+
+func (r *Runtime) writeCheckpoint(ctx context.Context, s store.Store, seq uint64) error {
+	if err := store.PutDoc(ctx, s, checkpointCollection, checkpointKey, checkpoint{Seq: seq}); err != nil {
+		return fmt.Errorf("projection: write checkpoint: %w", err)
+	}
+	return nil
+}
+
+func (r *Runtime) setApplied(seq uint64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if seq > r.applied {
+		r.applied = seq
+	}
 }
 
 // RebuildTo replays the durable log into the projections, applying only events
@@ -103,7 +205,7 @@ func (r *Runtime) RebuildTo(ctx context.Context, upTo uint64) (int, error) {
 		if upTo != 0 && e.Seq > upTo {
 			break
 		}
-		if err := r.applyAll(ctx, e); err != nil {
+		if err := r.applyAll(ctx, e, r.store); err != nil {
 			return applied, fmt.Errorf("projection: rebuild at seq %d: %w", e.Seq, err)
 		}
 		applied++
@@ -111,9 +213,9 @@ func (r *Runtime) RebuildTo(ctx context.Context, upTo uint64) (int, error) {
 	return applied, nil
 }
 
-func (r *Runtime) applyAll(ctx context.Context, e eventlog.Envelope) error {
+func (r *Runtime) applyAll(ctx context.Context, e eventlog.Envelope, s store.Store) error {
 	for _, p := range r.projectors {
-		if err := p.Apply(ctx, e, r.store); err != nil {
+		if err := p.Apply(ctx, e, s); err != nil {
 			return fmt.Errorf("projector %q: %w", p.Name(), err)
 		}
 	}
