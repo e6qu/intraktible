@@ -288,13 +288,15 @@ intraktible/
   durable **SQLite event log** (`serve --log=sqlite`) so cross-component flows work across processes (D18).
 
 **MVP roadmap complete (Phases 0–5), plus a post-MVP hardening pass.** The hardening pass closed the
-bulk of the `BUGS.md` backlog: durable SQLite projection store + a shared SQLite event log, a real
-OpenAI-compatible AI provider with agent **tool-calling**, the production UI embedded as an SPA,
+bulk of the `BUGS.md` backlog: durable SQLite projection store + a shared SQLite event log + a
+**Postgres** store adapter, a streaming (offset-indexed) file WAL, a real OpenAI-compatible AI provider
+with agent **tool-calling** and **async/queued runs**, the production UI embedded as an SPA,
 login/durable sessions, a recursive JSON-Schema validator, an SSRF egress policy + a SQL connector for
 the Context Layer, pushed SLA-breach events, and full builder config panels (incl. the nested-table
-node types) + canvas drag-to-connect. What remains in `BUGS.md` is genuinely post-MVP: WAL
-snapshots/compaction (D1), async/queued agent runs (D17), a verified Postgres `store.Store` adapter
-(D21, env-blocked), and the §9 non-goals (SSO/RBAC, billing, 200+ real connectors, ONNX serving, HA).
+node types) + canvas drag-to-connect. What remains in `BUGS.md` is the small tail: incremental
+resume-from-Head for durable stores (D21b, a consistency project), the closed-by-decision items
+(D9 CEL, D11 batched events), and the §9 non-goals (SSO/RBAC, billing, 200+ real connectors, ONNX
+serving, HA).
 
 > Per project convention: at the **end of every phase**, update `PLAN.md` and `BUGS.md` in the same
 > PR as the phase's code.

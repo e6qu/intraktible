@@ -87,7 +87,7 @@ func serveCmd(args []string) error {
 	dataDir := fs.String("data-dir", "./data", "event-log data directory")
 	modules := fs.String("modules", "all", "comma-separated modules (or 'all')")
 	devKey := fs.String("dev-api-key", "dev-sandbox-key", "seed a sandbox API key for local dev (empty to disable)")
-	storeKind := fs.String("store", "memory", "projection store: memory | sqlite (sqlite persists to <data-dir>/projections.db)")
+	storeKind := fs.String("store", "memory", "projection store: memory | sqlite (<data-dir>/projections.db) | postgres (INTRAKTIBLE_POSTGRES_DSN)")
 	logKind := fs.String("log", "file", "event log: file (single-process WAL) | sqlite (shared across processes, for the split profile)")
 	_ = fs.Parse(args)
 	return run(*addr, *dataDir, *modules, *devKey, *storeKind, *logKind)
@@ -103,7 +103,7 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 	}
 	defer func() { _ = log.Close() }()
 
-	st, err := openStore(storeKind, dataDir)
+	st, err := openStore(ctx, storeKind, dataDir)
 	if err != nil {
 		return err
 	}
@@ -235,15 +235,22 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 
 // openStore builds the projection store. memory is ephemeral (rebuilt from the
 // log at boot); sqlite persists to <data-dir>/projections.db and survives restarts
-// (still rebuilt from the log, which resets collections first so it stays correct).
-func openStore(kind, dataDir string) (store.Store, error) {
+// (still rebuilt from the log, which resets collections first so it stays correct);
+// postgres is the durable/shared option (DSN from INTRAKTIBLE_POSTGRES_DSN).
+func openStore(ctx context.Context, kind, dataDir string) (store.Store, error) {
 	switch kind {
 	case "", "memory":
 		return store.NewMemory(), nil
 	case "sqlite":
 		return store.NewSQLite(filepath.Join(dataDir, "projections.db"))
+	case "postgres":
+		dsn := os.Getenv("INTRAKTIBLE_POSTGRES_DSN")
+		if dsn == "" {
+			return nil, fmt.Errorf("--store=postgres requires INTRAKTIBLE_POSTGRES_DSN")
+		}
+		return store.NewPostgres(ctx, dsn)
 	default:
-		return nil, fmt.Errorf("unknown --store %q (memory|sqlite)", kind)
+		return nil, fmt.Errorf("unknown --store %q (memory|sqlite|postgres)", kind)
 	}
 }
 

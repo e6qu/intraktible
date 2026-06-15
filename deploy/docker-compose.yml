@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Monolith profile (default): one container runs all modules — `docker compose up`.
 # Split profile: one container per module — `docker compose --profile split up`.
-# Postgres profile (future durable projection store): `docker compose --profile pg up`.
+# Postgres profile (durable projection store): `docker compose --profile pg up`. Point a service at
+# it with `--store=postgres` + INTRAKTIBLE_POSTGRES_DSN (e.g. postgres://postgres:intraktible@postgres:5432/intraktible).
 #
 # The same image runs every module; `serve --modules=<name>` selects which one.
 # Split profile: every module service shares ONE data volume and runs with
