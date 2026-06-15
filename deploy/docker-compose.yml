@@ -1,6 +1,16 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-# Monolith profile (default): one container runs all modules.
+# Monolith profile (default): one container runs all modules — `docker compose up`.
+# Split profile: one container per module — `docker compose --profile split up`.
 # Postgres profile (future durable projection store): `docker compose --profile pg up`.
+#
+# The same image runs every module; `serve --modules=<name>` selects which one.
+# NOTE on the split profile: each service below uses its own data volume, so it has
+# an independent event log. A module runs fully standalone that way, but the
+# cross-component flows that travel through the shared log — escalation
+# (manual_review → Case Manager), and the Rule/Connect/AI nodes that read another
+# layer — need a *shared* log backend, which the single-process file WAL is not
+# (tracked in BUGS as D18). Until that lands, treat the split profile as the deploy
+# topology; run the monolith for the full cross-component experience.
 services:
   intraktible:
     build:
@@ -9,6 +19,32 @@ services:
     image: intraktible:dev
     ports: ["8080:8080"]
     volumes: ["itk-data:/data"]
+
+  # --- split profile: one service per module (same image, different --modules) ---
+  decision-engine:
+    image: intraktible:dev
+    profiles: ["split"]
+    command: ["--modules=decision-engine"]
+    ports: ["8081:8080"]
+    volumes: ["de-data:/data"]
+  case-manager:
+    image: intraktible:dev
+    profiles: ["split"]
+    command: ["--modules=case-manager"]
+    ports: ["8082:8080"]
+    volumes: ["cm-data:/data"]
+  context-layer:
+    image: intraktible:dev
+    profiles: ["split"]
+    command: ["--modules=context-layer"]
+    ports: ["8083:8080"]
+    volumes: ["cl-data:/data"]
+  agent-manager:
+    image: intraktible:dev
+    profiles: ["split"]
+    command: ["--modules=agent-manager"]
+    ports: ["8084:8080"]
+    volumes: ["am-data:/data"]
 
   postgres:
     image: postgres:17-alpine   # PostgreSQL License (AGPL-compatible)
@@ -21,4 +57,8 @@ services:
 
 volumes:
   itk-data: {}
+  de-data: {}
+  cm-data: {}
+  cl-data: {}
+  am-data: {}
   pg-data: {}

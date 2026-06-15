@@ -275,14 +275,22 @@ intraktible/
   escalates a run. Full test pyramid (unit/integration/API-e2e/Playwright); all CI gates green.
   **Deferred from Phase 4** (in `BUGS.md`): tools are declared but not executed (D16); runs are
   synchronous and structured output is not schema-validated (D17); real (non-Stub) AI providers (D5).
-- **Phase 5 — Harden — 🚧 IN PROGRESS.** Done: **replay/rollback operator tooling** — `intraktible
+- **Phase 5 — Harden — ✅ DONE.** Shipped: **replay/rollback operator tooling** — `intraktible
   log` prints the durable event log (one line per event) + a per-stream summary (the audit view), and
   `intraktible replay [--modules] [--as-of <seq>]` rebuilds the enabled modules' projections from the
   log into a fresh store and reports the rebuilt collections. `--as-of` is a read-only **log-based
   rollback** (rebuild as of an earlier seq), backed by `projection.RebuildTo(ctx, upTo)`; the
   append-only log is never mutated. The CLI dispatches `serve|log|replay`, and `serve`/`replay` share
-  one `moduleProjectors` list. Remaining: the split-services deploy profile (modules already run via
-  `--modules=`; needs the multi-service compose/story), and docs + worked examples.
+  one `moduleProjectors` list. The **split-services** deploy profile (`deploy/docker-compose.yml`
+  `--profile split`) runs one container per module (same image, `serve --modules=<name>`). A worked
+  end-to-end **example** ([`examples/demo.sh`](examples/demo.sh) + [`docs/EXAMPLE.md`](docs/EXAMPLE.md))
+  exercises all four components + the operator tooling. **Deferred from Phase 5** (in `BUGS.md`): the
+  file WAL is single-process, so the split profile gives each module an independent log — full
+  cross-component split needs a shared/networked log backend behind the existing `Log` interface (D18).
+
+**MVP roadmap complete (Phases 0–5).** Post-MVP backlog lives in `BUGS.md` (D1–D18): durable SQLite/
+Postgres projection stores, a shared log backend, real AI provider adapters, embedding the production
+UI build, and the §9 non-goals (SSO/RBAC, billing, 200+ real connectors, ONNX serving, HA).
 
 > Per project convention: at the **end of every phase**, update `PLAN.md` and `BUGS.md` in the same
 > PR as the phase's code.

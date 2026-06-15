@@ -11,7 +11,13 @@ Open-source MVPs of a commercial **Agentic Decision Platform**, in four componen
 pure-Go embedded append-only **event log** with **hybrid event sourcing** + JSONB projections
 (pluggable SQLite/Postgres) · modular monolith that also splits into services · pluggable AI provider.
 
-See **[PLAN.md](PLAN.md)** for the full architecture and roadmap. Status: **planning**.
+See **[PLAN.md](PLAN.md)** for the full architecture and roadmap. Status: **MVP complete** — all four
+components plus the shared core are built (Phases 0–5: PLAN §8), with replay/rollback operator tooling
+and a split-services profile. Start at **[AGENTS.md](AGENTS.md)**; a runnable end-to-end walkthrough is
+in **[docs/EXAMPLE.md](docs/EXAMPLE.md)**. Post-MVP backlog: **[BUGS.md](BUGS.md)**.
+
+Run it: `go run ./cmd/intraktible serve` then open http://localhost:8080 (dev key `dev-sandbox-key`),
+or `./examples/demo.sh`. Inspect/rebuild the log with `intraktible log` / `intraktible replay`.
 
 ## License
 **AGPL-3.0-or-later** — see [LICENSE](LICENSE). Every dependency must be AGPL-compatible

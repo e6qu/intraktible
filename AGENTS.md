@@ -10,7 +10,10 @@ reimplementation of a commercial Agentic Decision Platform.
 4. Research basis (why the design looks like this): `../specs/openapi-current.yaml`, `../ENDPOINTS.md`, `../docs/`. (That parent tree is research only — **do not** mix it into this repo.)
 
 ## Status
-**Phases 0–4 DONE (shared core, Decision Engine, Case Manager, Context Layer, Agent Manager). Phase 5 (Harden) IN PROGRESS — replay/rollback operator tooling (`intraktible log`/`replay`) shipped; split-services profile + docs/examples remain.**
+**MVP roadmap complete — Phases 0–5 all DONE** (shared core, Decision Engine, Case Manager, Context
+Layer, Agent Manager, and Harden: replay/rollback tooling + split-services profile + a worked example).
+See a full end-to-end walkthrough in [docs/EXAMPLE.md](docs/EXAMPLE.md) (runnable: [examples/demo.sh](examples/demo.sh)).
+Post-MVP backlog is tracked in [BUGS.md](BUGS.md) (D1–D18).
 Roadmap & exit criteria: [PLAN.md §8](PLAN.md#8-phased-roadmap); deferrals tracked in [BUGS.md](BUGS.md).
 Working today: `platform/{eventlog,store,projection,identity,auth,httpx,ai,web}` + the `hello`
 slice; and the **Decision Engine** — flow model + versioning, a deterministic execution runtime
@@ -54,7 +57,8 @@ agents (with a run-summary banner) and, per agent, runs it, shows the run log, a
 Run it: `go run ./cmd/intraktible serve` then open http://localhost:8080 (dev key `dev-sandbox-key`);
 for UI dev use `make dev` (Vite + Go API). Phase 1 deferrals (CEL, builder UI polish, …) and other
 limitations are tracked in [BUGS.md](BUGS.md).
-Build order from here: Harden (Phase 5 — replay/rollback tooling, split-services profile, docs/examples).
+All five phases are built; further work is the post-MVP backlog in [BUGS.md](BUGS.md) (durable stores, a
+shared log backend for true split-services, real AI providers, embedding the prod UI build, …).
 
 ## The design in one breath
 Go backend (**functional core / imperative shell**) + **SvelteKit + Svelte Flow** UI embedded in the
