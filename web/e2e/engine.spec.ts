@@ -158,6 +158,54 @@ test('the assignment panel edits target/expr rows without raw JSON', async ({ pa
   );
 });
 
+test('a scorecard panel edits factors and output without raw JSON', async ({ page, request }) => {
+  const slug = uniqueSlug();
+  const created = await request.post('/v1/flows', {
+    headers: { 'X-Api-Key': KEY },
+    data: { slug, name: 'Score' }
+  });
+  const { flow_id } = await created.json();
+
+  await page.goto(`/engine/${flow_id}`);
+  await expect(page.getByLabel('new node type')).toBeVisible();
+
+  await page.getByLabel('new node type').selectOption('scorecard');
+  await page.getByRole('button', { name: 'Add', exact: true }).click();
+  await page.getByLabel('scorecard output').fill('risk');
+  await page.getByRole('button', { name: 'Add factor' }).click();
+  await page.getByLabel('factor 0 when').fill('fico < 600');
+  await page.getByLabel('factor 0 weight').fill('25');
+
+  // The structured edits round-trip into the advanced JSON view.
+  await expect(page.getByLabel('node config')).toHaveValue(
+    '{"output":"risk","factors":[{"when":"fico < 600","weight":25}]}'
+  );
+});
+
+test('a rule panel edits when/then clauses without raw JSON', async ({ page, request }) => {
+  const slug = uniqueSlug();
+  const created = await request.post('/v1/flows', {
+    headers: { 'X-Api-Key': KEY },
+    data: { slug, name: 'Rule' }
+  });
+  const { flow_id } = await created.json();
+
+  await page.goto(`/engine/${flow_id}`);
+  await expect(page.getByLabel('new node type')).toBeVisible();
+
+  await page.getByLabel('new node type').selectOption('rule');
+  await page.getByRole('button', { name: 'Add', exact: true }).click();
+  await page.getByRole('button', { name: 'Add rule' }).click();
+  await page.getByLabel('rule 0 when').fill('amount > 1000');
+  await page.getByRole('button', { name: 'Add then' }).click();
+  await page.getByLabel('rule 0 then 0 target').fill('flag');
+  await page.getByLabel('rule 0 then 0 expr').fill("'high'");
+
+  await expect(page.getByLabel('node config')).toHaveValue(
+    '{"rules":[{"when":"amount > 1000","then":[{"target":"flag","expr":"\'high\'"}]}]}'
+  );
+});
+
 test('shows the backend validation error when publishing an invalid graph', async ({
   page,
   request

@@ -12,9 +12,49 @@ export function asText(v: unknown): string {
   return String(v);
 }
 
+// asNum renders a numeric config value as an input string ('' when unset).
+export function asNum(v: unknown): string {
+  return typeof v === 'number' && !Number.isNaN(v) ? String(v) : '';
+}
+
 // asCsv renders a string-array config value as a comma-separated input string.
 export function asCsv(v: unknown): string {
   return Array.isArray(v) ? v.join(', ') : '';
+}
+
+// asCellText renders a matrix cell's literal value as editable text: a string
+// shows unquoted, other JSON values show as compact JSON, unset shows ''.
+export function asCellText(v: unknown): string {
+  if (v === undefined || v === null) return '';
+  if (typeof v === 'string') return v;
+  return JSON.stringify(v);
+}
+
+// parseCell turns cell input text into a literal: valid JSON parses (so `7`,
+// `true`, `"x"` keep their type), anything else is kept as a plain string.
+export function parseCell(s: string): unknown {
+  const t = s.trim();
+  if (t === '') return '';
+  try {
+    return JSON.parse(t);
+  } catch {
+    return s;
+  }
+}
+
+// An edge in the builder model.
+export interface BuilderEdge {
+  from: string;
+  to: string;
+  branch?: string;
+}
+
+// addUniqueEdge appends from→to (drag-to-connect) unless an identical edge with
+// the same branch already exists; it returns a new array (never mutates).
+export function addUniqueEdge(edges: BuilderEdge[], from: string, to: string): BuilderEdge[] {
+  if (!from || !to) return edges;
+  if (edges.some((e) => e.from === from && e.to === to && !e.branch)) return edges;
+  return [...edges, { from, to }];
 }
 
 // fromCsv parses a comma-separated input into a trimmed, non-empty string array.

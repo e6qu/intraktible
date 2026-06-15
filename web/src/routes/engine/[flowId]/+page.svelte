@@ -2,7 +2,14 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { page } from '$app/stores';
-  import { SvelteFlow, Background, Controls, type Node, type Edge } from '@xyflow/svelte';
+  import {
+    SvelteFlow,
+    Background,
+    Controls,
+    type Node,
+    type Edge,
+    type Connection
+  } from '@xyflow/svelte';
   import '@xyflow/svelte/dist/style.css';
   import {
     getFlow,
@@ -13,7 +20,16 @@
     type GraphEdge
   } from '$lib/api';
   import { layout } from '$lib/layout';
-  import { asText, asCsv, fromCsv, cleanConfig } from '$lib/nodeconfig';
+  import {
+    asText,
+    asNum,
+    asCsv,
+    fromCsv,
+    cleanConfig,
+    asCellText,
+    parseCell,
+    addUniqueEdge
+  } from '$lib/nodeconfig';
 
   const NODE_TYPES = [
     'input',
@@ -117,9 +133,166 @@
     editNodes = editNodes.map((n) => (n.id === selectedId ? { ...n, ...patch } : n));
   }
 
-  // Node types with a flat config that gets a structured panel; the rest keep the
-  // raw-JSON textarea (which stays available for every type as the advanced view).
-  const STRUCTURED = ['split', 'connect', 'ai', 'manual_review', 'output', 'assignment', 'code'];
+  // Node types with a structured panel; the raw-JSON textarea stays available for
+  // every type as the advanced view.
+  const STRUCTURED = [
+    'split',
+    'connect',
+    'ai',
+    'manual_review',
+    'output',
+    'assignment',
+    'code',
+    'rule',
+    'scorecard',
+    'decision_table',
+    '2d_matrix'
+  ];
+
+  // --- Rule node: rules[] = {when, then:[{target,expr}]} (two-level repeater) ---
+  type Assign = { target?: string; expr?: string };
+  type RuleClause = { when?: string; then?: Assign[] };
+  function ruleClauses(): RuleClause[] {
+    const r = nodeCfg().rules;
+    return Array.isArray(r) ? (r as RuleClause[]) : [];
+  }
+  function ruleThen(i: number): Assign[] {
+    const t = ruleClauses().at(i)?.then;
+    return Array.isArray(t) ? t : [];
+  }
+  function addRule() {
+    patchCfg({ rules: [...ruleClauses(), { when: '', then: [] }] });
+  }
+  function removeRule(i: number) {
+    patchCfg({ rules: ruleClauses().filter((_, j) => j !== i) });
+  }
+  function setRuleWhen(i: number, when: string) {
+    patchCfg({ rules: ruleClauses().map((c, j) => (j === i ? { ...c, when } : c)) });
+  }
+  function addRuleThen(i: number) {
+    patchCfg({
+      rules: ruleClauses().map((c, j) =>
+        j === i ? { ...c, then: [...ruleThen(i), { target: '', expr: '' }] } : c
+      )
+    });
+  }
+  function removeRuleThen(i: number, k: number) {
+    patchCfg({
+      rules: ruleClauses().map((c, j) =>
+        j === i ? { ...c, then: ruleThen(i).filter((_, m) => m !== k) } : c
+      )
+    });
+  }
+  function setRuleThen(i: number, k: number, patch: Assign) {
+    patchCfg({
+      rules: ruleClauses().map((c, j) =>
+        j === i ? { ...c, then: ruleThen(i).map((t, m) => (m === k ? { ...t, ...patch } : t)) } : c
+      )
+    });
+  }
+
+  // --- Scorecard node: factors[] = {when, weight}, output? ---
+  type Factor = { when?: string; weight?: number };
+  function factors(): Factor[] {
+    const f = nodeCfg().factors;
+    return Array.isArray(f) ? (f as Factor[]) : [];
+  }
+  function addFactor() {
+    patchCfg({ factors: [...factors(), { when: '', weight: 0 }] });
+  }
+  function removeFactor(i: number) {
+    patchCfg({ factors: factors().filter((_, j) => j !== i) });
+  }
+  function setFactor(i: number, patch: Factor) {
+    patchCfg({ factors: factors().map((f, j) => (j === i ? { ...f, ...patch } : f)) });
+  }
+
+  // --- Decision table: rows[] = {when, outputs:[{target,expr}]}, mode? ---
+  type TableRow = { when?: string; outputs?: Assign[] };
+  function tableRows(): TableRow[] {
+    const r = nodeCfg().rows;
+    return Array.isArray(r) ? (r as TableRow[]) : [];
+  }
+  function rowOutputs(i: number): Assign[] {
+    const o = tableRows().at(i)?.outputs;
+    return Array.isArray(o) ? o : [];
+  }
+  function addTableRow() {
+    patchCfg({ rows: [...tableRows(), { when: '', outputs: [] }] });
+  }
+  function removeTableRow(i: number) {
+    patchCfg({ rows: tableRows().filter((_, j) => j !== i) });
+  }
+  function setRowWhen(i: number, when: string) {
+    patchCfg({ rows: tableRows().map((r, j) => (j === i ? { ...r, when } : r)) });
+  }
+  function addRowOutput(i: number) {
+    patchCfg({
+      rows: tableRows().map((r, j) =>
+        j === i ? { ...r, outputs: [...rowOutputs(i), { target: '', expr: '' }] } : r
+      )
+    });
+  }
+  function removeRowOutput(i: number, k: number) {
+    patchCfg({
+      rows: tableRows().map((r, j) =>
+        j === i ? { ...r, outputs: rowOutputs(i).filter((_, m) => m !== k) } : r
+      )
+    });
+  }
+  function setRowOutput(i: number, k: number, patch: Assign) {
+    patchCfg({
+      rows: tableRows().map((r, j) =>
+        j === i
+          ? { ...r, outputs: rowOutputs(i).map((o, m) => (m === k ? { ...o, ...patch } : o)) }
+          : r
+      )
+    });
+  }
+
+  // --- 2D matrix: rows[]/cols[] = {when}, cells[r][c] = literal, output? ---
+  type AxisCond = { when?: string };
+  function matrixRows(): AxisCond[] {
+    const r = nodeCfg().rows;
+    return Array.isArray(r) ? (r as AxisCond[]) : [];
+  }
+  function matrixCols(): AxisCond[] {
+    const c = nodeCfg().cols;
+    return Array.isArray(c) ? (c as AxisCond[]) : [];
+  }
+  function matrixCells(): unknown[][] {
+    const c = nodeCfg().cells;
+    return Array.isArray(c) ? (c as unknown[][]) : [];
+  }
+  function cellText(r: number, c: number): string {
+    const row = matrixCells().at(r);
+    return asCellText(Array.isArray(row) ? row.at(c) : undefined);
+  }
+  function addMatrixRow() {
+    patchCfg({ rows: [...matrixRows(), { when: '' }] });
+  }
+  function addMatrixCol() {
+    patchCfg({ cols: [...matrixCols(), { when: '' }] });
+  }
+  function setMatrixRowWhen(i: number, when: string) {
+    patchCfg({ rows: matrixRows().map((a, j) => (j === i ? { when } : a)) });
+  }
+  function setMatrixColWhen(i: number, when: string) {
+    patchCfg({ cols: matrixCols().map((a, j) => (j === i ? { when } : a)) });
+  }
+  // Rebuild a rectangular rows×cols cell grid, preserving existing values and
+  // setting [r][c] to the parsed literal — no dynamic key writes.
+  function setCell(r: number, c: number, raw: string) {
+    const cur = matrixCells();
+    const grid = matrixRows().map((_, ri) =>
+      matrixCols().map((_, ci) => {
+        if (ri === r && ci === c) return parseCell(raw);
+        const row = cur.at(ri);
+        return Array.isArray(row) ? row.at(ci) : undefined;
+      })
+    );
+    patchCfg({ cells: grid });
+  }
 
   // The selected assignment node's {target, expr} rows (empty when none/invalid).
   function assignmentRows(): { target?: string; expr?: string }[] {
@@ -155,6 +328,11 @@
     if (!edgeFrom || !edgeTo) return;
     editEdges = [...editEdges, { from: edgeFrom, to: edgeTo, branch: edgeBranch || undefined }];
     edgeFrom = edgeTo = edgeBranch = '';
+  }
+  // Drag-to-connect on the canvas: dragging from a node's handle to another adds
+  // an (unbranched) edge, deduplicated against the existing ones.
+  function onConnect(conn: Connection) {
+    editEdges = addUniqueEdge(editEdges, conn.source, conn.target);
   }
   function deleteEdge(i: number) {
     editEdges = editEdges.filter((_, j) => j !== i);
@@ -209,7 +387,7 @@
 
   <div class="grid">
     <div class="canvas" data-testid="flow-canvas">
-      <SvelteFlow bind:nodes bind:edges fitView>
+      <SvelteFlow bind:nodes bind:edges onconnect={onConnect} fitView>
         <Background />
         <Controls />
       </SvelteFlow>
@@ -370,6 +548,181 @@
             </div>
           {/each}
           <button onclick={addAssignment}>Add assignment</button>
+        {:else if selected.type === 'rule'}
+          <p class="muted">rules (when → then assignments)</p>
+          {#each ruleClauses() as clause, i (i)}
+            <div class="clause">
+              <div class="row">
+                <input
+                  value={asText(clause.when)}
+                  oninput={(e) => setRuleWhen(i, e.currentTarget.value)}
+                  aria-label={`rule ${i} when`}
+                  placeholder="when"
+                />
+                <button class="x" aria-label={`remove rule ${i}`} onclick={() => removeRule(i)}
+                  >✕</button
+                >
+              </div>
+              {#each ruleThen(i) as t, k (k)}
+                <div class="row indent">
+                  <input
+                    value={asText(t.target)}
+                    oninput={(e) => setRuleThen(i, k, { target: e.currentTarget.value })}
+                    aria-label={`rule ${i} then ${k} target`}
+                    placeholder="target"
+                  />
+                  <input
+                    value={asText(t.expr)}
+                    oninput={(e) => setRuleThen(i, k, { expr: e.currentTarget.value })}
+                    aria-label={`rule ${i} then ${k} expr`}
+                    placeholder="expr"
+                  />
+                  <button
+                    class="x"
+                    aria-label={`remove rule ${i} then ${k}`}
+                    onclick={() => removeRuleThen(i, k)}>✕</button
+                  >
+                </div>
+              {/each}
+              <button onclick={() => addRuleThen(i)}>Add then</button>
+            </div>
+          {/each}
+          <button onclick={addRule}>Add rule</button>
+        {:else if selected.type === 'scorecard'}
+          <label
+            >output key <input
+              value={asText(nodeCfg().output)}
+              oninput={(e) => patchCfg({ output: e.currentTarget.value })}
+              aria-label="scorecard output"
+            /></label
+          >
+          <p class="muted">factors (when → weight)</p>
+          {#each factors() as f, i (i)}
+            <div class="row">
+              <input
+                value={asText(f.when)}
+                oninput={(e) => setFactor(i, { when: e.currentTarget.value })}
+                aria-label={`factor ${i} when`}
+                placeholder="when"
+              />
+              <input
+                type="number"
+                step="any"
+                value={asNum(f.weight)}
+                oninput={(e) =>
+                  setFactor(i, {
+                    weight: e.currentTarget.value === '' ? 0 : Number(e.currentTarget.value)
+                  })}
+                aria-label={`factor ${i} weight`}
+                placeholder="weight"
+                size="6"
+              />
+              <button class="x" aria-label={`remove factor ${i}`} onclick={() => removeFactor(i)}
+                >✕</button
+              >
+            </div>
+          {/each}
+          <button onclick={addFactor}>Add factor</button>
+        {:else if selected.type === 'decision_table'}
+          <label
+            >mode
+            <select
+              value={asText(nodeCfg().mode) || 'first'}
+              onchange={(e) => patchCfg({ mode: e.currentTarget.value })}
+              aria-label="decision table mode"
+            >
+              <option value="first">first match</option>
+              <option value="all">all matches</option>
+            </select>
+          </label>
+          <p class="muted">rows (when → outputs)</p>
+          {#each tableRows() as row, i (i)}
+            <div class="clause">
+              <div class="row">
+                <input
+                  value={asText(row.when)}
+                  oninput={(e) => setRowWhen(i, e.currentTarget.value)}
+                  aria-label={`row ${i} when`}
+                  placeholder="when"
+                />
+                <button class="x" aria-label={`remove row ${i}`} onclick={() => removeTableRow(i)}
+                  >✕</button
+                >
+              </div>
+              {#each rowOutputs(i) as o, k (k)}
+                <div class="row indent">
+                  <input
+                    value={asText(o.target)}
+                    oninput={(e) => setRowOutput(i, k, { target: e.currentTarget.value })}
+                    aria-label={`row ${i} output ${k} target`}
+                    placeholder="target"
+                  />
+                  <input
+                    value={asText(o.expr)}
+                    oninput={(e) => setRowOutput(i, k, { expr: e.currentTarget.value })}
+                    aria-label={`row ${i} output ${k} expr`}
+                    placeholder="expr"
+                  />
+                  <button
+                    class="x"
+                    aria-label={`remove row ${i} output ${k}`}
+                    onclick={() => removeRowOutput(i, k)}>✕</button
+                  >
+                </div>
+              {/each}
+              <button onclick={() => addRowOutput(i)}>Add output</button>
+            </div>
+          {/each}
+          <button onclick={addTableRow}>Add row</button>
+        {:else if selected.type === '2d_matrix'}
+          <label
+            >output key <input
+              value={asText(nodeCfg().output)}
+              oninput={(e) => patchCfg({ output: e.currentTarget.value })}
+              aria-label="matrix output"
+            /></label
+          >
+          <p class="muted">row conditions</p>
+          {#each matrixRows() as r, i (i)}
+            <div class="row">
+              <input
+                value={asText(r.when)}
+                oninput={(e) => setMatrixRowWhen(i, e.currentTarget.value)}
+                aria-label={`matrix row ${i} when`}
+                placeholder="row when"
+              />
+            </div>
+          {/each}
+          <button onclick={addMatrixRow}>Add row</button>
+          <p class="muted">column conditions</p>
+          {#each matrixCols() as c, i (i)}
+            <div class="row">
+              <input
+                value={asText(c.when)}
+                oninput={(e) => setMatrixColWhen(i, e.currentTarget.value)}
+                aria-label={`matrix col ${i} when`}
+                placeholder="col when"
+              />
+            </div>
+          {/each}
+          <button onclick={addMatrixCol}>Add column</button>
+          {#if matrixRows().length && matrixCols().length}
+            <p class="muted">cells [row][col] (literal values)</p>
+            {#each matrixRows() as r, i (i)}
+              <div class="row">
+                <span class="cellrow">{asText(r.when) || `row ${i}`}</span>
+                {#each matrixCols() as c, j (j)}
+                  <input
+                    value={cellText(i, j)}
+                    oninput={(e) => setCell(i, j, e.currentTarget.value)}
+                    aria-label={`matrix cell ${i} ${j}`}
+                    title={asText(c.when)}
+                    size="6"
+                  />
+                {/each}
+              </div>
+            {/each}
+          {/if}
         {/if}
         <label
           >{STRUCTURED.includes(selected.type) ? 'config (JSON, advanced)' : 'config (JSON)'}
@@ -528,5 +881,23 @@
   }
   .ok {
     color: #080;
+  }
+  .muted {
+    font-size: 0.8rem;
+    color: #888;
+    margin: 0.5rem 0 0.2rem;
+  }
+  .clause {
+    border-left: 2px solid #8883;
+    padding-left: 0.5rem;
+    margin: 0.3rem 0;
+  }
+  .row.indent {
+    margin-left: 1rem;
+  }
+  .cellrow {
+    font-size: 0.75rem;
+    color: #888;
+    min-width: 5rem;
   }
 </style>
