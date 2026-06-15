@@ -39,8 +39,10 @@ func (s *Service) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/flows/{flow_id}/versions", s.publish)
 	mux.HandleFunc("POST /v1/flows/{flow_id}/deployments", s.deploy)
 	mux.HandleFunc("POST /v1/flows/{slug}/{env}/decide", s.runDecide)
+	mux.HandleFunc("GET /v1/flows/{flow_id}/export", s.exportFlow)
 	mux.HandleFunc("GET /v1/decisions", s.listDecisions)
 	mux.HandleFunc("GET /v1/decisions/{decision_id}", s.getDecision)
+	mux.HandleFunc("GET /v1/decisions/{decision_id}/export", s.exportDecision)
 }
 
 type createRequest struct {

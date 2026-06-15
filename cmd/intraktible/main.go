@@ -35,6 +35,7 @@ import (
 	contextservice "github.com/e6qu/intraktible/context-layer/service"
 	"github.com/e6qu/intraktible/decision-engine/analytics"
 	enginecmd "github.com/e6qu/intraktible/decision-engine/command"
+	"github.com/e6qu/intraktible/decision-engine/export"
 	"github.com/e6qu/intraktible/decision-engine/flows"
 	"github.com/e6qu/intraktible/decision-engine/history"
 	engineservice "github.com/e6qu/intraktible/decision-engine/service"
@@ -67,6 +68,8 @@ func main() {
 		err = logCmd(os.Args[2:])
 	case "replay":
 		err = replayCmd(os.Args[2:])
+	case "export":
+		err = exportCmd(os.Args[2:])
 	default:
 		usage()
 	}
@@ -77,7 +80,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: intraktible <serve|log|replay> [flags]")
+	fmt.Fprintln(os.Stderr, "usage: intraktible <serve|log|replay|export> [flags]")
 	os.Exit(2)
 }
 
@@ -356,6 +359,95 @@ func replayCmd(args []string) error {
 		fmt.Printf("  %-26s %d docs\n", c, len(recs))
 	}
 	return nil
+}
+
+// exportCmd rebuilds the decision-engine flow projection from the log and renders
+// one flow (by id or slug) to a diagram on stdout: mermaid | mermaid-state | bpmn.
+func exportCmd(args []string) error {
+	fs := flag.NewFlagSet("export", flag.ExitOnError)
+	dataDir := fs.String("data-dir", "./data", "event-log data directory")
+	org := fs.String("org", "demo", "tenant org")
+	workspace := fs.String("workspace", "main", "tenant workspace")
+	flow := fs.String("flow", "", "flow id or slug to export (required)")
+	format := fs.String("format", "mermaid", "mermaid | mermaid-state | bpmn")
+	version := fs.Int("version", 0, "flow version to export (0 = latest)")
+	_ = fs.Parse(args)
+	if *flow == "" {
+		return fmt.Errorf("export: --flow <id-or-slug> is required")
+	}
+
+	ctx := context.Background()
+	log, err := eventlog.OpenWAL(*dataDir)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = log.Close() }()
+
+	st := store.NewMemory()
+	if _, err := projection.New(log, st, flows.Projector{}).RebuildTo(ctx, 0); err != nil {
+		return err
+	}
+	id := identity.Identity{Org: *org, Workspace: *workspace, Actor: "export"}
+	fv, found, err := findFlow(ctx, st, id, *flow)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return fmt.Errorf("export: no flow with id or slug %q for %s/%s", *flow, *org, *workspace)
+	}
+	ver, err := pickFlowVersion(fv, *version)
+	if err != nil {
+		return err
+	}
+	out, err := renderFlow(fv, ver, *format)
+	if err != nil {
+		return err
+	}
+	fmt.Print(out)
+	return nil
+}
+
+// findFlow looks a flow up by id, falling back to a slug match.
+func findFlow(ctx context.Context, st store.Store, id identity.Identity, ref string) (flows.FlowView, bool, error) {
+	if fv, ok, err := flows.Read(ctx, st, id, ref); err != nil || ok {
+		return fv, ok, err
+	}
+	all, err := flows.List(ctx, st, id)
+	if err != nil {
+		return flows.FlowView{}, false, err
+	}
+	for _, fv := range all {
+		if fv.Slug == ref {
+			return fv, true, nil
+		}
+	}
+	return flows.FlowView{}, false, nil
+}
+
+func pickFlowVersion(fv flows.FlowView, version int) (flows.VersionView, error) {
+	want := fv.Latest
+	if version != 0 {
+		want = version
+	}
+	for _, v := range fv.Versions {
+		if v.Version == want {
+			return v, nil
+		}
+	}
+	return flows.VersionView{}, fmt.Errorf("export: flow %q has no version %d", fv.Slug, want)
+}
+
+func renderFlow(fv flows.FlowView, ver flows.VersionView, format string) (string, error) {
+	switch format {
+	case "mermaid", "flowchart":
+		return export.MermaidFlowchart(ver.Graph), nil
+	case "mermaid-state", "state":
+		return export.MermaidState(ver.Graph), nil
+	case "bpmn":
+		return export.BPMN(ver.Graph, fv.Name), nil
+	default:
+		return "", fmt.Errorf("export: unknown format %q (mermaid|mermaid-state|bpmn)", format)
+	}
 }
 
 func sortedKeys(m map[string]int) []string {

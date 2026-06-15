@@ -6,7 +6,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/e6qu/intraktible/decision-engine/analytics"
@@ -19,6 +21,69 @@ import (
 	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/testutil"
 )
+
+// rawGet does an authed GET and returns the body (export endpoints return
+// text/xml, not JSON, so api.Request's JSON decode does not fit).
+func rawGet(t *testing.T, api *testutil.API, path string) (int, string) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, api.Server.URL+path, http.NoBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("X-Api-Key", api.Key)
+	resp, err := api.Server.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	b, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, string(b)
+}
+
+func TestExportFlowOverHTTP(t *testing.T) {
+	api := startEngine(t)
+	var created struct {
+		FlowID string `json:"flow_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows", map[string]any{"slug": "exp", "name": "Exp Flow"}, http.StatusCreated, &created)
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/versions", map[string]any{
+		"graph": map[string]any{
+			"nodes": []map[string]any{
+				{"id": "in", "type": "input"},
+				{"id": "s", "type": "split", "name": "score"},
+				{"id": "out", "type": "output"},
+			},
+			"edges": []map[string]any{
+				{"from": "in", "to": "s"},
+				{"from": "s", "to": "out", "branch": "yes"},
+			},
+		},
+	}, http.StatusCreated, nil)
+
+	// Mermaid flowchart (waits for the async flow projection to catch up).
+	var mermaid string
+	if !testutil.Eventually(t, func() bool {
+		code, body := rawGet(t, api, "/v1/flows/"+created.FlowID+"/export?format=mermaid")
+		mermaid = body
+		return code == http.StatusOK && strings.Contains(body, "s{") // the split node rendered
+	}) {
+		t.Fatalf("mermaid export never reflected the published graph:\n%s", mermaid)
+	}
+	if !strings.Contains(mermaid, "flowchart TD") || !strings.Contains(mermaid, "s -->|yes| out") {
+		t.Fatalf("mermaid flowchart incomplete:\n%s", mermaid)
+	}
+
+	// BPMN with diagram interchange.
+	code, bpmn := rawGet(t, api, "/v1/flows/"+created.FlowID+"/export?format=bpmn")
+	if code != http.StatusOK || !strings.Contains(bpmn, "<bpmn:definitions") || !strings.Contains(bpmn, "<bpmndi:BPMNDiagram") {
+		t.Fatalf("bpmn export incomplete (status %d):\n%s", code, bpmn)
+	}
+
+	// Unknown format → 400.
+	if code, _ := rawGet(t, api, "/v1/flows/"+created.FlowID+"/export?format=svg"); code != http.StatusBadRequest {
+		t.Fatalf("unknown format → %d, want 400", code)
+	}
+}
 
 func startEngine(t *testing.T, opts ...command.DecideOption) *testutil.API {
 	t.Helper()
