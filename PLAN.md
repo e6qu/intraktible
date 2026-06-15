@@ -203,17 +203,18 @@ intraktible/
   scaffold. **Deferred from Phase 0** (tracked in `BUGS.md`): Badger backend (WAL used instead — open
   Q1), durable SQLite/Postgres projection stores, JSON-Schema validation lib, Claude AI adapter
   (Stub only), and running the SvelteKit build into the embed dir (Go placeholder UI serves for now).
-- **Phase 1 — Decision Engine — 🚧 IN PROGRESS.** Done: flow model + versioning (immutable etag'd
-  versions); a deterministic execution runtime (Input/Assignment/Rule/Split/Scorecard/Decision
-  Table/2D Matrix/Code/Output — expr-lang for expressions, Starlark for the Code node) emitting the
-  decision event stream (DecisionStarted→NodeEvaluated→Completed/Failed); the `…/{env}/decide` API
-  with per-environment version pinning + A/B (champion/challenger) routing; decision history;
-  analytics-lite (per-flow metrics with champion/challenger breakdown); and the **Svelte Flow builder
-  UI** (`web/src/routes/engine`) — flow list/create, graph editing (add nodes, wire edges, per-node
-  config, publish with backend validation), canvas view (auto-layout), and inline test runs. Remaining:
-  CEL conditions (optional alternative engine; expr-lang already serves conditions). Nice-to-have UI
-  polish: drag-to-connect and bespoke per-node config panels. (Full PLAN/BUGS close-out lands with the
-  phase-ending PR, per the docs-cadence rule.)
+- **Phase 1 — Decision Engine — ✅ DONE.** Shipped: flow model + immutable etag'd versioning; a
+  deterministic execution runtime over nine node engines (Input/Assignment/Rule/Split/Scorecard/
+  Decision Table/2D Matrix/Code/Output — expr-lang for expressions, Starlark for the Code node)
+  emitting the decision event stream (DecisionStarted→NodeEvaluated→Completed/Failed); the
+  `…/{env}/decide` API; decision history; per-environment version pinning + A/B (champion/challenger)
+  routing; analytics-lite (per-flow metrics with variant breakdown); and the Svelte Flow builder UI
+  (`web/src/routes/engine`) — flow list/create, graph editing (palette, edges, per-node config,
+  publish with backend validation), canvas view (auto-layout), and inline test runs. Full test
+  pyramid (unit/integration/API-e2e/Playwright); all CI gates green. **Deferred from Phase 1** (in
+  `BUGS.md`): CEL conditions (expr-lang + Starlark already cover conditions — D9), builder UI polish
+  (drag-connect + bespoke config panels — D10), per-node decide appends (D11); still open from before:
+  embedding the production UI build (D6) and decide-input schema validation (D4).
 - **Phase 2 — Case Manager:** case events, queues/dashboard/detail UI, escalation hook from flows.
 - **Phase 3 — Context Layer:** entities/events/features + feature engine, connector interface +
   reference connectors + Custom Connect Node, wired into Rule/Connect nodes.
