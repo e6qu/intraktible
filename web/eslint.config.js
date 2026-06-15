@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { defineConfig } from 'eslint/config';
 import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
 import svelte from 'eslint-plugin-svelte';
@@ -8,7 +9,7 @@ import globals from 'globals';
 // Strict lint + JS/TS SAST for the web app. Type checking is handled separately
 // by svelte-check (strict tsconfig); eslint here enforces correctness/style and,
 // via eslint-plugin-security, static security analysis.
-export default tseslint.config(
+export default defineConfig(
   {
     ignores: [
       '.svelte-kit/',

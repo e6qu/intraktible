@@ -32,8 +32,11 @@ test('refresh shows current stats', async ({ page }) => {
 test('a rejected api key surfaces an error, not silent success', async ({ page }) => {
   await page.goto('/');
   await page.getByLabel('API key').fill('not-a-valid-key');
-  // The client throws on non-2xx; the unhandled rejection must not be swallowed
-  // into a fake success — the output stays at its placeholder.
+  // The client fails loudly on non-2xx; the UI must display the error (not a
+  // fake success and not an unhandled rejection).
   await page.getByRole('button', { name: 'Refresh' }).click();
-  await expect(page.locator('pre')).not.toContainText('"count"');
+  const output = page.locator('pre');
+  await expect(output).toContainText('Error:');
+  await expect(output).toContainText('401');
+  await expect(output).not.toContainText('"count"');
 });

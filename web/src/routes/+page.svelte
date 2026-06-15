@@ -7,12 +7,20 @@
   let out = $state('stats will appear here…');
 
   async function stats() {
-    out = JSON.stringify(await getStats(key), null, 2);
+    try {
+      out = JSON.stringify(await getStats(key), null, 2);
+    } catch (err) {
+      out = `Error: ${err instanceof Error ? err.message : String(err)}`;
+    }
   }
   async function say() {
-    const result = await sayHello(key, name);
-    out = `POST /v1/hello → seq ${result.seq}\n` + JSON.stringify(result, null, 2);
-    await stats();
+    try {
+      const result = await sayHello(key, name);
+      out = `POST /v1/hello → seq ${result.seq}\n` + JSON.stringify(result, null, 2);
+      await stats();
+    } catch (err) {
+      out = `Error: ${err instanceof Error ? err.message : String(err)}`;
+    }
   }
 </script>
 

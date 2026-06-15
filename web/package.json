@@ -19,7 +19,8 @@
     "@playwright/test": "^1.49.1",
     "@sveltejs/adapter-static": "^3.0.6",
     "@sveltejs/kit": "^2.8.0",
-    "@sveltejs/vite-plugin-svelte": "^4.0.0",
+    "@sveltejs/vite-plugin-svelte": "^7.1.2",
+    "@types/eslint-plugin-security": "^3.0.1",
     "@types/node": "^22.10.5",
     "eslint": "^9.18.0",
     "eslint-plugin-security": "^3.0.1",
@@ -31,8 +32,11 @@
     "svelte-check": "^4.0.0",
     "typescript": "^5.6.0",
     "typescript-eslint": "^8.20.0",
-    "vite": "^5.4.0",
-    "vitest": "^2.1.8"
+    "vite": "^8.0.0",
+    "vitest": "^4.1.0"
   },
-  "dependencies": {}
+  "dependencies": {},
+  "overrides": {
+    "cookie": "^0.7.2"
+  }
 }
