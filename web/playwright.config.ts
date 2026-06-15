@@ -4,6 +4,12 @@ import { defineConfig, devices } from '@playwright/test';
 // End-to-end UI tests. Two servers are started: the Go backend (API + seeded dev
 // key) on :8080, and the Vite dev server on :5173 which proxies /v1 and /healthz
 // to the backend. Tests drive a real browser against the SvelteKit app.
+//
+// The `test:e2e` npm script sets NODE_OPTIONS=--disable-warning=DEP0205 to silence
+// ONE upstream notice: Playwright's own ESM loader (registerESMLoader) still calls
+// the Node-deprecated module.register(). It is code-targeted, so every other
+// warning/deprecation still surfaces. Remove it once Playwright migrates to
+// module.registerHooks().
 export default defineConfig({
   testDir: './e2e',
   fullyParallel: true,
