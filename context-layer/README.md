@@ -63,4 +63,8 @@ resolution through a `net.Dialer` Control hook that refuses loopback / private (
 link-local / unspecified / multicast targets — so it guards every redirect hop and resists DNS
 rebinding. Operators whose connectors legitimately reach internal hosts opt in with
 `INTRAKTIBLE_CONNECTOR_ALLOW_PRIVATE` (logged at boot).
-Deferred (see [../BUGS.md](../BUGS.md)): a **SQL** reference connector (D14).
+
+Reference connectors: **http** (Custom Connect), **sql** (a parameterized query against a
+configured database — `{dsn, query, args[]}`; the pure-Go sqlite driver is built in, args bind as
+named parameters so caller params cannot inject SQL, results bounded to 1000 rows), and a
+deterministic **mock_bureau**.

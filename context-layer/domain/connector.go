@@ -10,19 +10,22 @@ import (
 )
 
 // Connector types. HTTP calls an arbitrary configured REST endpoint (the "Custom
-// Connect" case); MockBureau is a deterministic in-process reference connector.
+// Connect" case); SQL runs a parameterized query against a configured database;
+// MockBureau is a deterministic in-process reference connector.
 const (
 	ConnectorHTTP       = "http"
+	ConnectorSQL        = "sql"
 	ConnectorMockBureau = "mock_bureau"
 )
 
-var connectorTypes = map[string]bool{ConnectorHTTP: true, ConnectorMockBureau: true}
+var connectorTypes = map[string]bool{ConnectorHTTP: true, ConnectorSQL: true, ConnectorMockBureau: true}
 
 // ValidConnectorType reports whether t is a known connector type.
 func ValidConnectorType(t string) bool { return connectorTypes[t] }
 
 // DefineConnector registers (or redefines) a named connector. Config is
-// type-specific JSON (http: {"url","method"}; mock_bureau: optional {"dataset"}).
+// type-specific JSON (http: {"url","method"}; sql: {"dsn","query","args"};
+// mock_bureau: optional {"dataset"}).
 type DefineConnector struct {
 	Name   string
 	Type   string
@@ -35,7 +38,7 @@ func (c DefineConnector) Validate() error {
 		return errors.New("context-layer: connector name is required")
 	}
 	if !ValidConnectorType(c.Type) {
-		return fmt.Errorf("context-layer: unknown connector type %q (http|mock_bureau)", c.Type)
+		return fmt.Errorf("context-layer: unknown connector type %q (http|sql|mock_bureau)", c.Type)
 	}
 	return validJSONObject("config", c.Config)
 }

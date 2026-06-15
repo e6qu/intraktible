@@ -4,10 +4,13 @@ package connectors_test
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	_ "modernc.org/sqlite"
 
 	"github.com/e6qu/intraktible/context-layer/connectors"
 	"github.com/e6qu/intraktible/context-layer/domain"
@@ -123,6 +126,67 @@ func TestHTTPConnectorBlocksLoopbackByDefault(t *testing.T) {
 	if _, err := connectors.InvokeWith(ctx, s, id, "internal", nil, connectors.EgressPolicy{AllowPrivate: true}); err != nil {
 		t.Fatalf("AllowPrivate should permit loopback: %v", err)
 	}
+}
+
+func TestSQLConnector(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	dsn := "file:" + dir + "/bureau.db"
+
+	// Seed a tiny database the connector will read.
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `CREATE TABLE scores(subject TEXT PRIMARY KEY, risk INTEGER)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO scores VALUES('acme', 73),('globex', 12)`); err != nil {
+		t.Fatal(err)
+	}
+	_ = db.Close()
+
+	s := store.NewMemory()
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "dev"}
+	cfg := `{"dsn":"` + dsn + `","query":"SELECT subject, risk FROM scores WHERE subject = :subject","args":["subject"]}`
+	define(ctx, t, s, id, connectors.ConnectorView{
+		Name: "scores", Type: domain.ConnectorSQL, Config: json.RawMessage(cfg),
+	})
+
+	resp, err := connectors.Invoke(ctx, s, id, "scores", json.RawMessage(`{"subject":"acme"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out struct {
+		Rows []struct {
+			Subject string `json:"subject"`
+			Risk    int    `json:"risk"`
+		} `json:"rows"`
+	}
+	if err := json.Unmarshal(resp, &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Rows) != 1 || out.Rows[0].Subject != "acme" || out.Rows[0].Risk != 73 {
+		t.Fatalf("unexpected sql connector response: %s", resp)
+	}
+}
+
+func TestSQLConnectorRejectsUnknownDriver(t *testing.T) {
+	if _, err := connectors.Invoke(context.Background(), seedSQLDef(t, `{"driver":"postgres","dsn":"x","query":"SELECT 1"}`),
+		identity.Identity{Org: "demo", Workspace: "main"}, "pg", nil); err == nil {
+		t.Fatal("expected an unavailable driver to fail loudly")
+	}
+}
+
+// seedSQLDef stores a sql connector definition named "pg" and returns the store.
+func seedSQLDef(t *testing.T, cfg string) store.Store {
+	t.Helper()
+	s := store.NewMemory()
+	id := identity.Identity{Org: "demo", Workspace: "main"}
+	define(context.Background(), t, s, id, connectors.ConnectorView{
+		Name: "pg", Type: domain.ConnectorSQL, Config: json.RawMessage(cfg),
+	})
+	return s
 }
 
 func TestInvokeUnknownConnector(t *testing.T) {

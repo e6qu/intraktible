@@ -12,6 +12,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -22,6 +23,8 @@ import (
 	"sort"
 	"syscall"
 	"time"
+
+	_ "modernc.org/sqlite" // pure-Go SQLite driver (CGO-free); registers "sqlite"
 
 	"github.com/e6qu/intraktible/context-layer/domain"
 	"github.com/e6qu/intraktible/context-layer/events"
@@ -222,6 +225,8 @@ func build(def ConnectorView, egress EgressPolicy) (Connector, error) {
 	switch def.Type {
 	case domain.ConnectorHTTP:
 		return newHTTP(def.Config, egress)
+	case domain.ConnectorSQL:
+		return newSQL(def.Config)
 	case domain.ConnectorMockBureau:
 		return mockBureau{}, nil
 	default:
@@ -299,6 +304,132 @@ func (h httpConnector) Fetch(ctx context.Context, params json.RawMessage) (json.
 		return nil, fmt.Errorf("context-layer: http connector returned non-JSON body")
 	}
 	return json.RawMessage(b), nil
+}
+
+// --- SQL connector ---
+
+// maxSQLRows bounds how many rows a SQL connector returns, so a broad query can
+// never blow up memory or the recorded event.
+const maxSQLRows = 1000
+
+type sqlConfig struct {
+	Driver string   `json:"driver"` // database/sql driver name; only "sqlite" is built in
+	DSN    string   `json:"dsn"`    // driver-specific data source name
+	Query  string   `json:"query"`  // a SELECT with named placeholders (:name)
+	Args   []string `json:"args"`   // param names bound positionally from the params object
+}
+
+type sqlConnector struct {
+	cfg sqlConfig
+}
+
+func newSQL(config json.RawMessage) (sqlConnector, error) {
+	var cfg sqlConfig
+	if len(config) > 0 {
+		if err := json.Unmarshal(config, &cfg); err != nil {
+			return sqlConnector{}, fmt.Errorf("context-layer: sql connector config: %w", err)
+		}
+	}
+	if cfg.Driver == "" {
+		cfg.Driver = "sqlite"
+	}
+	if cfg.Driver != "sqlite" {
+		// Only the pure-Go sqlite driver is compiled in; other drivers need a build
+		// that imports them. Fail loudly rather than open a nil driver.
+		return sqlConnector{}, fmt.Errorf("context-layer: sql connector driver %q is not available (only \"sqlite\" is built in)", cfg.Driver)
+	}
+	if cfg.DSN == "" || cfg.Query == "" {
+		return sqlConnector{}, fmt.Errorf("context-layer: sql connector needs a dsn and a query")
+	}
+	return sqlConnector{cfg: cfg}, nil
+}
+
+// Fetch opens the configured database, runs the parameterized query (binding the
+// declared args from the params object as values — never string-interpolated, so
+// caller params cannot inject SQL), and returns {"rows": [...]} as JSON.
+func (c sqlConnector) Fetch(ctx context.Context, params json.RawMessage) (json.RawMessage, error) {
+	db, err := sql.Open(c.cfg.Driver, c.cfg.DSN)
+	if err != nil {
+		return nil, fmt.Errorf("context-layer: sql connector open: %w", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	args, err := bindArgs(c.cfg.Args, params)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, fetchTimeout)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, c.cfg.Query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("context-layer: sql connector query: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out, err := scanRows(rows)
+	if err != nil {
+		return nil, err
+	}
+	b, err := json.Marshal(map[string]any{"rows": out})
+	if err != nil {
+		return nil, fmt.Errorf("context-layer: sql connector marshal: %w", err)
+	}
+	return b, nil
+}
+
+// bindArgs maps each declared arg name to a named query parameter, reading its
+// value from the params object (a missing name binds to nil).
+func bindArgs(names []string, params json.RawMessage) ([]any, error) {
+	if len(names) == 0 {
+		return nil, nil
+	}
+	var p map[string]any
+	if len(params) > 0 {
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, fmt.Errorf("context-layer: sql connector params: %w", err)
+		}
+	}
+	args := make([]any, 0, len(names))
+	for _, name := range names {
+		args = append(args, sql.Named(name, p[name]))
+	}
+	return args, nil
+}
+
+// scanRows reads up to maxSQLRows rows into a slice of column→value maps.
+func scanRows(rows *sql.Rows) ([]map[string]any, error) {
+	cols, err := rows.Columns()
+	if err != nil {
+		return nil, fmt.Errorf("context-layer: sql connector columns: %w", err)
+	}
+	var out []map[string]any
+	for rows.Next() {
+		if len(out) >= maxSQLRows {
+			return nil, fmt.Errorf("context-layer: sql connector query returned more than %d rows", maxSQLRows)
+		}
+		cells := make([]any, len(cols))
+		ptrs := make([]any, len(cols))
+		for i := range cells {
+			ptrs[i] = &cells[i]
+		}
+		if err := rows.Scan(ptrs...); err != nil {
+			return nil, fmt.Errorf("context-layer: sql connector scan: %w", err)
+		}
+		row := make(map[string]any, len(cols))
+		for i, name := range cols {
+			// []byte (text/blob) decodes to a JSON string, not a base64 blob.
+			if b, ok := cells[i].([]byte); ok {
+				row[name] = string(b)
+			} else {
+				row[name] = cells[i]
+			}
+		}
+		out = append(out, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("context-layer: sql connector rows: %w", err)
+	}
+	return out, nil
 }
 
 // --- Mock bureau connector ---
