@@ -67,12 +67,24 @@ func (s *Service) runAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	var req struct {
 		Prompt string `json:"prompt"`
+		Async  bool   `json:"async,omitempty"`
 	}
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.Error(w, http.StatusBadRequest, err)
 		return
 	}
-	res, err := s.cmd.RunAgent(r.Context(), id, r.PathValue("name"), req.Prompt)
+	name := r.PathValue("name")
+	// Async: queue the run and return 202 immediately; the caller polls the run.
+	if req.Async {
+		runID, err := s.cmd.StartRun(r.Context(), id, name, req.Prompt)
+		if err != nil {
+			httpx.Error(w, http.StatusBadRequest, err)
+			return
+		}
+		httpx.JSON(w, http.StatusAccepted, map[string]any{"run_id": runID, "status": "running"})
+		return
+	}
+	res, err := s.cmd.RunAgent(r.Context(), id, name, req.Prompt)
 	if err != nil {
 		httpx.Error(w, http.StatusBadRequest, err)
 		return

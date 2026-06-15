@@ -12,6 +12,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/e6qu/intraktible/agent-manager/agents"
@@ -24,6 +26,14 @@ import (
 	"github.com/e6qu/intraktible/platform/store"
 )
 
+// asyncJob is a queued agent run picked up by a worker.
+type asyncJob struct {
+	id     identity.Identity
+	runID  string
+	agent  string
+	prompt string
+}
+
 // Handler records agent definitions and runs.
 type Handler struct {
 	log   eventlog.Log
@@ -32,7 +42,14 @@ type Handler struct {
 	tools agents.Toolbox
 	now   func() time.Time
 	newID func() string
+
+	jobs chan asyncJob // async run queue (drained by workers)
+	wg   sync.WaitGroup
 }
+
+// asyncQueueSize bounds the in-flight async run queue; a full queue makes
+// StartRun fall back to running the agent synchronously rather than dropping it.
+const asyncQueueSize = 256
 
 // Option configures a Handler.
 type Option func(*Handler)
@@ -49,6 +66,7 @@ func NewHandler(log eventlog.Log, st store.Store, reg *ai.Registry, opts ...Opti
 		log: log, store: st, reg: reg,
 		now:   func() time.Time { return time.Now().UTC() },
 		newID: newID,
+		jobs:  make(chan asyncJob, asyncQueueSize),
 	}
 	for _, o := range opts {
 		o(h)
@@ -98,6 +116,128 @@ func (h *Handler) RunAgent(ctx context.Context, id identity.Identity, agent, pro
 		return RunResult{}, err
 	}
 	return RunResult{RunID: runID, Status: out.Status, Text: out.Text, Structured: out.Structured, Error: out.Error}, nil
+}
+
+// StartRun accepts an agent run for asynchronous execution: it records an
+// AgentRunStarted (status "running") and queues the work, returning the run id
+// immediately. A worker later invokes the provider and records the terminal
+// AgentRunRecorded; callers poll GET /v1/agent-runs/{run_id} for the outcome. An
+// unknown agent is rejected up front (the read model is the same one RunAgent uses).
+func (h *Handler) StartRun(ctx context.Context, id identity.Identity, agent, prompt string) (string, error) {
+	if err := id.Valid(); err != nil {
+		return "", err
+	}
+	if _, ok, err := agents.Read(ctx, h.store, id, agent); err != nil {
+		return "", err
+	} else if !ok {
+		return "", fmt.Errorf("agent-manager: unknown agent %q", agent)
+	}
+	runID := h.newID()
+	if _, err := h.append(ctx, id, events.TypeAgentRunStarted, events.AgentRunStarted{
+		RunID: runID, Agent: agent, Prompt: prompt, At: h.now(),
+	}); err != nil {
+		return "", err
+	}
+	job := asyncJob{id: id, runID: runID, agent: agent, prompt: prompt}
+	select {
+	case h.jobs <- job:
+		// queued for a worker
+	default:
+		// Queue full: run it inline rather than drop it (slower, but never lost).
+		h.process(ctx, job)
+	}
+	return runID, nil
+}
+
+// StartWorkers launches n goroutines that drain the async run queue until ctx is
+// cancelled; an in-flight run finishes (so shutdown never corrupts it into a
+// failure) while a queued-but-unstarted run stays "running" and is recovered on
+// the next boot. Pair with DrainWorkers to wait for them before closing the log.
+func (h *Handler) StartWorkers(ctx context.Context, n int) {
+	for i := 0; i < n; i++ {
+		h.wg.Add(1)
+		// The worker deliberately processes an in-flight run on a background context
+		// (not ctx) so a graceful shutdown lets it finish rather than aborting it
+		// into a spurious failure; DrainWorkers bounds the wait. The provider's own
+		// timeout caps a hung call.
+		go h.worker(ctx) // #nosec G118 -- intentional: in-flight runs survive shutdown
+	}
+}
+
+// DrainWorkers blocks until all workers have stopped (after ctx cancellation).
+func (h *Handler) DrainWorkers() { h.wg.Wait() }
+
+func (h *Handler) worker(ctx context.Context) {
+	defer h.wg.Done()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case job := <-h.jobs:
+			// Process with a background context so a shutdown signal does not abort
+			// (and thus fail) a run already in flight.
+			h.process(context.Background(), job)
+		}
+	}
+}
+
+// process invokes the agent and records the terminal run event.
+func (h *Handler) process(ctx context.Context, job asyncJob) {
+	out, err := agents.InvokeWithTools(ctx, h.store, h.reg, h.tools, job.id, job.agent, job.prompt)
+	if err != nil {
+		// An unexpected resolution error (e.g. the agent was deleted mid-flight):
+		// record it as a failed run so the run does not hang "running" forever.
+		out = agents.Outcome{Status: domain.RunFailed, Error: err.Error()}
+	}
+	if _, aerr := h.append(ctx, job.id, events.TypeAgentRunRecorded, events.AgentRunRecorded{
+		RunID: job.runID, Agent: job.agent, Model: out.Model, Prompt: job.prompt,
+		Status: out.Status, Text: out.Text, Structured: out.Structured, ToolCalls: out.ToolCalls, Error: out.Error, At: h.now(),
+	}); aerr != nil {
+		slog.Error("agent-manager: failed to record async run", "run_id", job.runID, "err", aerr)
+	}
+}
+
+// RecoverRunning re-enqueues runs left "running" by a crash or shutdown — those
+// with an AgentRunStarted but no matching AgentRunRecorded — across all tenants.
+// It folds the log (the source of truth), so it is safe to call at boot before
+// the projections are rebuilt. Returns the number re-enqueued.
+func (h *Handler) RecoverRunning(ctx context.Context) (int, error) {
+	evs, err := h.log.Read(ctx, 0)
+	if err != nil {
+		return 0, fmt.Errorf("agent-manager: read log: %w", err)
+	}
+	type pending struct {
+		id     identity.Identity
+		agent  string
+		prompt string
+	}
+	started := map[string]pending{}
+	for _, e := range evs {
+		if e.Stream != events.StreamAgents {
+			continue
+		}
+		switch e.Type {
+		case events.TypeAgentRunStarted:
+			var p events.AgentRunStarted
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				return 0, fmt.Errorf("agent-manager: decode run_started seq %d: %w", e.Seq, err)
+			}
+			started[p.RunID] = pending{
+				id:    identity.Identity{Org: e.Org, Workspace: e.Workspace, Actor: e.Actor},
+				agent: p.Agent, prompt: p.Prompt,
+			}
+		case events.TypeAgentRunRecorded:
+			var p events.AgentRunRecorded
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				return 0, fmt.Errorf("agent-manager: decode run_recorded seq %d: %w", e.Seq, err)
+			}
+			delete(started, p.RunID) // terminal reached — not pending
+		}
+	}
+	for runID, p := range started {
+		h.jobs <- asyncJob{id: p.id, runID: runID, agent: p.agent, prompt: p.prompt}
+	}
+	return len(started), nil
 }
 
 // EscalateRun opens a human-review case from an existing agent run. It emits the

@@ -29,10 +29,15 @@ Done — agent definitions + runs (command→event→projection→API, durable &
   Every tool call (name, arguments, result/error) is recorded on the run, so a tool-using run is fully
   auditable and replay-stable. The reference `tools.ConnectorToolbox` exposes Context Layer connectors
   as tools. The OpenAI-compatible HTTP provider supports tool-calling; the **Stub** answers directly.
+- **Async runs** (event-sourced): `run {async:true}` records an `AgentRunStarted` (status `running`)
+  and queues the work, returning `202 {run_id, status:"running"}` immediately; a worker pool invokes
+  the provider and records the terminal `AgentRunRecorded` (poll the run for the outcome). In-flight
+  runs finish on graceful shutdown, and a run left `running` by a crash is re-enqueued at boot
+  (`RecoverRunning` folds the log). The synchronous path is unchanged.
 - HTTP (under `/v1/`, X-Api-Key / session auth, org+workspace scoped):
   - `POST /v1/agents` — define `{name, provider?, model?, system?, schema?, tools?}`
   - `GET /v1/agents` · `GET /v1/agents/{name}` — the agent registry
-  - `POST /v1/agents/{name}/run` — run `{prompt}` → `{run_id, status, text?, structured?, error?}`
+  - `POST /v1/agents/{name}/run` — run `{prompt, async?}` → sync `{run_id, status, text?, structured?, error?}` or async `202 {run_id, status:"running"}`
   - `GET /v1/agents/{name}/runs` — the agent's run log · `GET /v1/agent-runs/{run_id}` — one run
   - `POST /v1/agents/{name}/runs/{run_id}/escalate` — open a case from a run → `{case_id}`
   - `GET /v1/agent-runs` — all runs · `GET /v1/agent-runs/summary` — run monitoring roll-up
@@ -53,5 +58,5 @@ layer.
 
 A schema-constrained agent's structured output is validated against its schema (a mismatch is a
 recorded failed run). A real OpenAI-compatible HTTP provider exists (`ai.NewHTTP`, configured via
-`INTRAKTIBLE_AI_*` env vars); the Stub is the default fallback.
-Deferred (see [../BUGS.md](../BUGS.md)): runs are synchronous — no async/queued/streaming runs (D17).
+`INTRAKTIBLE_AI_*` env vars); the Stub is the default fallback. Runs can be synchronous or async
+(D17); token-level **streaming** of a run's output is not implemented.

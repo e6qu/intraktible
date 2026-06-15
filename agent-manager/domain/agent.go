@@ -13,6 +13,7 @@ import (
 
 // Agent run statuses.
 const (
+	RunRunning   = "running" // an async run that has started but not yet finished
 	RunCompleted = "completed"
 	RunFailed    = "failed"
 )

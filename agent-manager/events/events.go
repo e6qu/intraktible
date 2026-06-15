@@ -17,6 +17,7 @@ const StreamAgents = "agents"
 // Agent Manager event types.
 const (
 	TypeAgentDefined     = "agents.defined"
+	TypeAgentRunStarted  = "agents.run_started"
 	TypeAgentRunRecorded = "agents.run_recorded"
 )
 
@@ -28,6 +29,17 @@ type AgentDefined struct {
 	System   string          `json:"system,omitempty"`
 	Schema   json.RawMessage `json:"schema,omitempty"`
 	Tools    []string        `json:"tools,omitempty"`
+}
+
+// AgentRunStarted records that an async run has been accepted and queued (status
+// "running"), before the provider is called. It carries the prompt so a run left
+// running by a crash/shutdown can be recovered (re-enqueued) on boot. A
+// subsequent AgentRunRecorded for the same RunID folds it to its terminal state.
+type AgentRunStarted struct {
+	RunID  string    `json:"run_id"`
+	Agent  string    `json:"agent"`
+	Prompt string    `json:"prompt"`
+	At     time.Time `json:"at"`
 }
 
 // AgentRunRecorded records one agent invocation and its outcome. Text is set for a

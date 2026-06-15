@@ -70,11 +70,28 @@ func (Projector) Apply(ctx context.Context, e eventlog.Envelope, s store.Store) 
 	switch e.Type {
 	case events.TypeAgentDefined:
 		return applyDefined(ctx, e, s)
+	case events.TypeAgentRunStarted:
+		return applyRunStarted(ctx, e, s)
 	case events.TypeAgentRunRecorded:
 		return applyRun(ctx, e, s)
 	default:
 		return nil
 	}
+}
+
+// applyRunStarted materializes an in-flight (async) run as a "running" RunView. A
+// later AgentRunRecorded for the same run id overwrites it with the outcome.
+func applyRunStarted(ctx context.Context, e eventlog.Envelope, s store.Store) error {
+	var p events.AgentRunStarted
+	if err := decode(e, &p); err != nil {
+		return err
+	}
+	run := RunView{
+		Org: e.Org, Workspace: e.Workspace,
+		RunID: p.RunID, Agent: p.Agent, Prompt: p.Prompt,
+		Status: domainRunRunning, Seq: e.Seq, At: p.At,
+	}
+	return store.PutDoc(ctx, s, CollectionRuns, store.Key(e.Org, e.Workspace, p.RunID), run)
 }
 
 func applyDefined(ctx context.Context, e eventlog.Envelope, s store.Store) error {
@@ -347,6 +364,7 @@ func (p Provider) RunAgent(ctx context.Context, id identity.Identity, agent, pro
 // Mirror the domain run-status constants without importing the domain package
 // (this read-model package stays free of the command/domain write side).
 const (
+	domainRunRunning   = "running"
 	domainRunCompleted = "completed"
 	domainRunFailed    = "failed"
 )

@@ -51,6 +51,9 @@ import (
 	"github.com/e6qu/intraktible/platform/web"
 )
 
+// asyncRunWorkers is the size of the Agent Manager's async-run worker pool.
+const asyncRunWorkers = 4
+
 func main() {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
 	if len(os.Args) < 2 {
@@ -171,8 +174,15 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 	if enabled(modules, "context-layer") {
 		contextservice.New(contextcmd.NewHandler(log), st, contextservice.WithEgress(egress)).Routes(api)
 	}
+	var agentHandler *agentcmd.Handler
 	if enabled(modules, "agent-manager") {
-		agentservice.New(agentcmd.NewHandler(log, st, aiRegistry, agentcmd.WithToolbox(toolbox)), st).Routes(api)
+		agentHandler = agentcmd.NewHandler(log, st, aiRegistry, agentcmd.WithToolbox(toolbox))
+		// Async agent runs: a worker pool drains the queue. DrainWorkers is deferred
+		// so (LIFO, after the log-close defer) it runs first — in-flight runs finish
+		// on shutdown before the log closes.
+		agentHandler.StartWorkers(ctx, asyncRunWorkers)
+		defer agentHandler.DrainWorkers()
+		agentservice.New(agentHandler, st).Routes(api)
 	}
 
 	// Authenticated caller introspection (inside the /v1 auth chain).
@@ -181,6 +191,15 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 	rt := projection.New(log, st, moduleProjectors(modules)...)
 	if err := rt.Start(ctx); err != nil {
 		return fmt.Errorf("projection start: %w", err)
+	}
+	// Recover async runs left "running" by a previous crash/shutdown — only after
+	// the projections are rebuilt, so a worker can resolve the agent from the store.
+	if agentHandler != nil {
+		if n, err := agentHandler.RecoverRunning(ctx); err != nil {
+			return fmt.Errorf("agent-manager: recover running runs: %w", err)
+		} else if n > 0 {
+			slog.Info("agent-manager: re-enqueued interrupted runs", "count", n)
+		}
 	}
 	// /healthz reflects projection health: degraded (503) if a live apply error
 	// stopped the consumer, so an orchestrator does not keep routing to a node
