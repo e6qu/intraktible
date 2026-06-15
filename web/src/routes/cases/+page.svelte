@@ -85,27 +85,29 @@
   {#if list.length === 0}
     <p class="muted">No cases.</p>
   {:else}
-    <table>
-      <thead>
-        <tr
-          ><th>Company</th><th>Type</th><th>Status</th><th>Assignee</th><th>SLA</th><th
-            >Days left</th
-          ></tr
-        >
-      </thead>
-      <tbody>
-        {#each list as c (c.case_id)}
-          <tr>
-            <td><a href={`/cases/${c.case_id}`}>{c.company_name}</a></td>
-            <td>{c.case_type}</td>
-            <td>{c.status}</td>
-            <td>{c.assignee || '—'}</td>
-            <td>{c.sla_days}d</td>
-            <td class={`sla-${c.sla_state ?? ''}`}>{c.days_left}d</td>
-          </tr>
-        {/each}
-      </tbody>
-    </table>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr
+            ><th>Company</th><th>Type</th><th>Status</th><th>Assignee</th><th>SLA</th><th
+              >Days left</th
+            ></tr
+          >
+        </thead>
+        <tbody>
+          {#each list as c (c.case_id)}
+            <tr>
+              <td><a href={`/cases/${c.case_id}`}>{c.company_name}</a></td>
+              <td>{c.case_type}</td>
+              <td>{c.status}</td>
+              <td>{c.assignee || '—'}</td>
+              <td>{c.sla_days}d</td>
+              <td class={`sla-${c.sla_state ?? ''}`}>{c.days_left}d</td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    </div>
   {/if}
 </main>
 

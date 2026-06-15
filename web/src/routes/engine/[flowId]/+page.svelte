@@ -24,6 +24,7 @@
     type GraphNode,
     type GraphEdge
   } from '$lib/api';
+  import { toast } from '$lib/toast';
   import { layout } from '$lib/layout';
   import { theme } from '$lib/theme';
   import Icon from '$lib/Icon.svelte';
@@ -63,7 +64,6 @@
   const key = '';
   let flow = $state<Flow | null>(null);
   let error = $state('');
-  let publishMsg = $state('');
   let metrics = $state<FlowMetrics | null>(null);
 
   // loadMetrics fetches the flow's analytics roll-up (non-fatal if none yet).
@@ -357,7 +357,6 @@
   }
 
   async function publish() {
-    publishMsg = '';
     error = '';
     try {
       const gnodes: GraphNode[] = editNodes.map((n) => ({
@@ -367,7 +366,7 @@
         config: n.config.trim() ? JSON.parse(n.config) : undefined
       }));
       const r = await publishVersion(key, flowId, { nodes: gnodes, edges: editEdges });
-      publishMsg = `Published v${r.version}`;
+      toast.success(`Published v${r.version}`);
       await load();
     } catch (e) {
       error = msg(e);
@@ -390,7 +389,6 @@
     }
   }
   async function downloadTrace() {
-    exportMsg = '';
     try {
       const text = await exportDecision(key, lastDecisionId);
       const url = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
@@ -399,29 +397,26 @@
       a.download = `${lastDecisionId}-trace.mmd`;
       a.click();
       URL.revokeObjectURL(url);
-      exportMsg = 'Downloaded run trace';
+      toast.success('Downloaded run trace');
     } catch (e) {
       error = msg(e);
     }
   }
   async function copyTrace() {
-    exportMsg = '';
     try {
       await navigator.clipboard.writeText(await exportDecision(key, lastDecisionId));
-      exportMsg = 'Copied run trace to clipboard';
+      toast.success('Copied run trace to clipboard');
     } catch (e) {
       error = msg(e);
     }
   }
 
-  let exportMsg = $state('');
   function exportFilename(format: ExportFormat): string {
     const base = flow?.slug ?? flowId;
     if (format === 'bpmn') return `${base}.bpmn`;
     return format === 'mermaid-state' ? `${base}-state.mmd` : `${base}.mmd`;
   }
   async function downloadExport(format: ExportFormat) {
-    exportMsg = '';
     try {
       const text = await exportFlow(key, flowId, format);
       const url = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
@@ -430,16 +425,15 @@
       a.download = exportFilename(format);
       a.click();
       URL.revokeObjectURL(url);
-      exportMsg = `Downloaded ${exportFilename(format)}`;
+      toast.success(`Downloaded ${exportFilename(format)}`);
     } catch (e) {
       error = msg(e);
     }
   }
   async function copyExport(format: ExportFormat) {
-    exportMsg = '';
     try {
       await navigator.clipboard.writeText(await exportFlow(key, flowId, format));
-      exportMsg = `Copied ${format} to clipboard`;
+      toast.success(`Copied ${format} to clipboard`);
     } catch (e) {
       error = msg(e);
     }
@@ -459,7 +453,6 @@
     <button class="primary" onclick={publish}
       ><Icon name="check" size={15} /> Publish version</button
     >
-    {#if publishMsg}<span class="ok">{publishMsg}</span>{/if}
   </div>
   <div class="row export">
     <span class="exportlabel"><Icon name="diagram" size={15} /> Export</span>
@@ -492,7 +485,6 @@
         <Icon name="copy" size={14} />
       </button>
     </div>
-    {#if exportMsg}<span class="ok">{exportMsg}</span>{/if}
   </div>
   {#if metrics && metrics.total > 0}
     <div class="metrics">
@@ -942,6 +934,11 @@
     display: grid;
     grid-template-columns: 1fr 22rem;
     gap: 1rem;
+  }
+  @media (max-width: 860px) {
+    .grid {
+      grid-template-columns: 1fr;
+    }
   }
   .row {
     display: flex;

@@ -38,28 +38,29 @@
       No decisions yet. Run a flow from the <a href="/engine">Decision Engine</a>.
     </p>
   {:else}
-    <table>
-      <thead>
-        <tr
-          ><th>Status</th><th>Flow</th><th>Env</th><th>Ver</th><th>Variant</th><th>Duration</th><th
-            >When</th
-          ></tr
-        >
-      </thead>
-      <tbody>
-        {#each list as d (d.decision_id)}
-          <tr>
-            <td><span class="badge {d.status}">{d.status}</span></td>
-            <td><a href={`/decisions/${d.decision_id}`}>{d.slug}</a></td>
-            <td>{d.environment}</td>
-            <td>v{d.version}</td>
-            <td class="muted">{d.variant ?? '—'}</td>
-            <td>{d.duration_ms ?? 0} ms</td>
-            <td class="muted">{when(d.started_at)}</td>
-          </tr>
-        {/each}
-      </tbody>
-    </table>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr
+            ><th>Status</th><th>Flow</th><th>Env</th><th>Ver</th><th>Variant</th><th>Duration</th
+            ><th>When</th></tr
+          >
+        </thead>
+        <tbody>
+          {#each list as d (d.decision_id)}
+            <tr>
+              <td><span class="badge {d.status}">{d.status}</span></td>
+              <td><a href={`/decisions/${d.decision_id}`}>{d.slug}</a></td>
+              <td>{d.environment}</td>
+              <td>v{d.version}</td>
+              <td class="muted">{d.variant ?? '—'}</td>
+              <td>{d.duration_ms ?? 0} ms</td>
+              <td class="muted">{when(d.started_at)}</td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    </div>
   {/if}
 </main>
 

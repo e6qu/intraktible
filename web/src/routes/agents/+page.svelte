@@ -69,20 +69,22 @@
   {#if list.length === 0}
     <p class="muted">No agents.</p>
   {:else}
-    <table>
-      <thead>
-        <tr><th>Name</th><th>Model</th><th>Runs</th></tr>
-      </thead>
-      <tbody>
-        {#each list as a (a.name)}
-          <tr>
-            <td><a href={`/agents/${a.name}`}>{a.name}</a></td>
-            <td>{a.model || '—'}</td>
-            <td>{a.runs}</td>
-          </tr>
-        {/each}
-      </tbody>
-    </table>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Name</th><th>Model</th><th>Runs</th></tr>
+        </thead>
+        <tbody>
+          {#each list as a (a.name)}
+            <tr>
+              <td><a href={`/agents/${a.name}`}>{a.name}</a></td>
+              <td>{a.model || '—'}</td>
+              <td>{a.runs}</td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    </div>
   {/if}
 </main>
 

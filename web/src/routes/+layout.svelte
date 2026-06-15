@@ -8,6 +8,7 @@
   import Icon from '$lib/Icon.svelte';
   import { initTheme, toggleTheme, theme as themeStore } from '$lib/theme';
   import { user, refreshUser, signOut } from '$lib/session';
+  import Toasts from '$lib/Toasts.svelte';
 
   let { children } = $props();
   let theme = $state<'light' | 'dark'>('light');
@@ -31,16 +32,22 @@
   }
 </script>
 
+<a class="skip-link" href="#main">Skip to content</a>
 <header>
   <a class="brand" href="/">
     <span class="mark"><Icon name="logo" size={20} /></span>
     intraktible
   </a>
-  <nav>
+  <nav aria-label="Primary">
     {#each nav as item (item.href)}
-      <a href={item.href} class="navlink" class:active={active(item.href)}>
+      <a
+        href={item.href}
+        class="navlink"
+        class:active={active(item.href)}
+        aria-current={active(item.href) ? 'page' : undefined}
+      >
         <Icon name={item.icon} size={16} />
-        <span>{item.label}</span>
+        <span class="navlabel">{item.label}</span>
       </a>
     {/each}
   </nav>
@@ -63,9 +70,10 @@
   </button>
 </header>
 
-<div class="page">
+<div id="main" class="page" tabindex="-1">
   {@render children()}
 </div>
+<Toasts />
 
 <style>
   header {
@@ -79,6 +87,25 @@
     background: color-mix(in srgb, var(--surface) 86%, transparent);
     backdrop-filter: blur(8px);
     border-bottom: 1px solid var(--border);
+  }
+  /* On narrow screens, condense the nav to icons and hide the brand wordmark. */
+  @media (max-width: 720px) {
+    header {
+      gap: 0.6rem;
+      padding: 0.55rem 0.75rem;
+    }
+    .navlabel {
+      display: none;
+    }
+    .navlink {
+      padding: 0.4rem 0.5rem;
+    }
+  }
+  @media (max-width: 460px) {
+    .brand {
+      font-size: 0;
+      gap: 0;
+    }
   }
   .brand {
     display: inline-flex;

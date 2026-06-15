@@ -91,6 +91,20 @@ test.beforeAll(async ({ request }) => {
   }).toPass({ timeout: 5000 });
 });
 
+test('screenshots — mobile', async ({ page }) => {
+  await page.context().request.post('/v1/login', { data: { api_key: KEY } });
+  await page.setViewportSize({ width: 390, height: 844 });
+  for (const [label, path] of Object.entries({
+    home: '/',
+    cases: '/cases',
+    builder: `/engine/${flowId}`
+  })) {
+    await page.goto(path);
+    await page.waitForTimeout(600);
+    await page.screenshot({ path: `${SHOTS}/m-${label}.png`, fullPage: true });
+  }
+});
+
 for (const themeMode of ['light', 'dark']) {
   test(`screenshots — ${themeMode}`, async ({ page }) => {
     await page.context().request.post('/v1/login', { data: { api_key: KEY } });

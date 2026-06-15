@@ -4,13 +4,13 @@
   import { page } from '$app/stores';
   import Icon from '$lib/Icon.svelte';
   import { getDecision, exportDecision, type Decision } from '$lib/api';
+  import { toast } from '$lib/toast';
 
   // API calls authenticate via the session cookie (empty key → no X-Api-Key).
   const key = '';
   const id = $page.params.decisionId ?? '';
   let d = $state<Decision | null>(null);
   let error = $state('');
-  let exportMsg = $state('');
 
   function msg(e: unknown): string {
     return e instanceof Error ? e.message : String(e);
@@ -27,7 +27,6 @@
     }
   }
   async function downloadTrace() {
-    exportMsg = '';
     try {
       const text = await exportDecision(key, id);
       const url = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
@@ -36,16 +35,15 @@
       a.download = `${id}-trace.mmd`;
       a.click();
       URL.revokeObjectURL(url);
-      exportMsg = 'Downloaded sequence diagram';
+      toast.success('Downloaded sequence diagram');
     } catch (e) {
       error = msg(e);
     }
   }
   async function copyTrace() {
-    exportMsg = '';
     try {
       await navigator.clipboard.writeText(await exportDecision(key, id));
-      exportMsg = 'Copied sequence diagram';
+      toast.success('Copied sequence diagram');
     } catch (e) {
       error = msg(e);
     }
@@ -111,7 +109,6 @@
       <button class="icon" aria-label="Copy sequence diagram" onclick={copyTrace}>
         <Icon name="copy" size={14} />
       </button>
-      {#if exportMsg}<span class="ok">{exportMsg}</span>{/if}
     </div>
   {:else if !error}
     <p class="muted">Loading…</p>

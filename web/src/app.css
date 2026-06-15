@@ -171,3 +171,43 @@ hr {
 ::selection {
   background: color-mix(in srgb, var(--accent) 35%, transparent);
 }
+
+/* Visible keyboard focus on every interactive element (a11y). */
+a:focus-visible,
+button:focus-visible,
+select:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* Scroll wrapper so wide tables never break narrow layouts. */
+.table-wrap {
+  width: 100%;
+  overflow-x: auto;
+}
+
+/* Skip-to-content link, visible only when focused. */
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 200;
+  padding: 0.5rem 0.9rem;
+  background: var(--accent);
+  color: var(--on-accent);
+  border-radius: var(--radius-sm);
+}
+.skip-link:focus {
+  left: 0.5rem;
+  top: 0.5rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+    scroll-behavior: auto !important;
+  }
+}
