@@ -35,6 +35,42 @@ func (s stubFeatures) Features(_ context.Context, _ identity.Identity, _, _ stri
 	return s, nil
 }
 
+func TestDecideValidatesInputSchema(t *testing.T) {
+	api := startEngine(t)
+
+	var created struct {
+		FlowID string `json:"flow_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows", map[string]any{"slug": "scored", "name": "Scored"}, http.StatusCreated, &created)
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/versions", map[string]any{
+		"graph": flowtest.LinearGraph(),
+		"input_schema": map[string]any{
+			"type":       "object",
+			"required":   []string{"customer"},
+			"properties": map[string]any{"customer": map[string]any{"type": "string"}},
+		},
+	}, http.StatusCreated, nil)
+
+	// Valid input runs once the version is visible.
+	if !testutil.Eventually(t, func() bool {
+		var res struct {
+			Status string `json:"status"`
+		}
+		api.Request(t, http.MethodPost, "/v1/flows/scored/production/decide",
+			map[string]any{"data": map[string]any{"customer": "acme"}}, http.StatusOK, &res)
+		return res.Status == "completed"
+	}) {
+		t.Fatal("valid input never decided")
+	}
+
+	// Missing the required field is a bad request (not a recorded decision).
+	api.Request(t, http.MethodPost, "/v1/flows/scored/production/decide",
+		map[string]any{"data": map[string]any{}}, http.StatusBadRequest, nil)
+	// Wrong type is also rejected.
+	api.Request(t, http.MethodPost, "/v1/flows/scored/production/decide",
+		map[string]any{"data": map[string]any{"customer": 42}}, http.StatusBadRequest, nil)
+}
+
 func TestDecideWithEntityFeaturesOverHTTP(t *testing.T) {
 	api := startEngine(t, command.WithFeatures(stubFeatures{"txn_count_24h": 5}))
 

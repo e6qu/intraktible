@@ -19,6 +19,9 @@ Done — flow model + versioning (vertical slice, command→event→projection�
   monotonically (1, 2, …) and stamped with a content `etag` over `(graph, input_schema)`.
 - `ValidateGraph` fails loudly: unique node IDs of known types, exactly one Input + ≥1 Output,
   edges reference existing distinct nodes, acyclic (Kahn).
+- A version may carry an `input_schema`; `decide` validates the caller's input against it (a supported
+  JSON-Schema subset: object `type`, `required`, per-property `type`) before recording — a contract
+  violation is a 400, not a recorded decision.
 - HTTP (under `/v1/`, X-Api-Key / session auth, org+workspace scoped):
   - `POST /v1/flows` — create `{slug, name}` → `{flow_id}`
   - `POST /v1/flows/{flow_id}/versions` — publish `{graph, input_schema}` → `{version, etag}`

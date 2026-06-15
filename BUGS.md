@@ -7,7 +7,6 @@ Format: `ID | severity | component | description | status`.
 - `D1 | low | eventlog | WAL holds all events in memory and re-reads the whole file on open; fine for MVP, revisit with segments/Badger | open`
 - `D2 | med | store | projection store is in-memory only; projections rebuild from the log at boot. Durable SQLite/Postgres JSONB adapters not yet implemented | open`
 - `D3 | med | projection | a live-apply error stops the consumer (surfaced via Err) but the HTTP server keeps running; no auto-restart/dead-letter yet | open`
-- `D4 | low | schema | no JSON-Schema validation lib yet; decide input is not validated against the per-flow input_schema (stored opaquely on each version) | open`
 - `D5 | med | ai | only the Stub provider exists; Claude/OpenAI/Gemini/Ollama adapters not yet wired | open`
 - `D7 | low | auth | sessions are in-memory with no login endpoint/expiry yet; only the seeded dev API key is usable end-to-end | open`
 - `D8 | low | projection | rebuild does not Reset collections (store empty at boot); needed once durable stores land so re-runs are idempotent | open`
@@ -30,7 +29,9 @@ Format: `ID | severity | component | description | status`.
 - `D17 | low | agent-manager | runs are synchronous (call the provider, record the result); no async/queued runs, streaming, or in-flight status. A structured-output schema is passed to the provider but the response is not validated against it (the Stub returns {}) | deferred`
 
 ## Open (deferred / limitations during Phase 5)
+- `D19 | low | decision-engine | decide input is validated against a supported subset of JSON Schema (object type, required, per-property type incl. integer/number/boolean/array/object/null); nested schemas, $ref, enum, format, allOf/anyOf etc. are accepted but not enforced. Swap in a full validator if richer contracts are needed | open`
 - `D18 | med | eventlog | the file WAL is single-process (each process holds its own in-memory copy + appends locally). The split-services compose profile therefore gives each module an independent log; full cross-component split (escalation, Rule/Connect/AI nodes reading another layer) needs a shared/networked log backend (Badger/Postgres/gRPC) behind the existing Log interface. The monolith profile is unaffected | open`
 
 ## Fixed
+- `D4 | decision-engine | decide input is now validated against the version's input_schema before the run is recorded — a contract violation is a 400, not a recorded decision. Pure domain.ValidateInput enforces a JSON-Schema subset (object type / required / per-property type) with no new dependency; the unenforced keywords are tracked as D19. | fixed`
 - `D6 | web | the production SvelteKit build now embeds and serves correctly: web.Handler does SPA fallback (a real embedded file is served as-is; any other path returns index.html 200) so client-side routes like /engine and /cases/{id} work from the binary. make dist (web + build) and the Dockerfile produce the single self-contained artifact; a fresh checkout still embeds the committed placeholder so go build always works, and the build output is gitignored. | fixed`

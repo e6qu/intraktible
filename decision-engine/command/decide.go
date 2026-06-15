@@ -147,6 +147,13 @@ func (h *DecideHandler) Decide(ctx context.Context, id identity.Identity, slug, 
 		return DecideResult{}, fmt.Errorf("decision-engine: flow %q has no version %d", slug, versionNo)
 	}
 
+	// Validate the caller's input against the version's contract before anything
+	// is injected or recorded — a contract violation is a bad request, not a
+	// recorded decision.
+	if err := domain.ValidateInput(version.InputSchema, data); err != nil {
+		return DecideResult{}, err
+	}
+
 	// Features and connector calls are resolved at decide time and merged into the
 	// input (under "features" and "connect"); the augmented input is what gets
 	// recorded and executed, so the run stays replay-stable from the recorded data
