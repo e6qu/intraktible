@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import { describe, it, expect, vi } from 'vitest';
-import { getStats, sayHello, listFlows, createFlow, decide } from './api';
+import { getStats, sayHello, listFlows, createFlow, decide, publishVersion } from './api';
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -70,6 +70,22 @@ describe('flows', () => {
     expect(url).toBe('/v1/flows');
     expect(init?.method).toBe('POST');
     expect(init?.body).toBe(JSON.stringify({ slug: 'my-flow', name: 'My Flow' }));
+  });
+
+  it('publishVersion posts the graph and returns the version', async () => {
+    const fetcher = fetcherReturning(201, { version: 2, etag: 'abc' });
+    const res = await publishVersion('k', 'f1', { nodes: [], edges: [] }, fetcher);
+    expect(res.version).toBe(2);
+    const [url, init] = fetcher.mock.calls[0];
+    expect(url).toBe('/v1/flows/f1/versions');
+    expect(init?.body).toBe(JSON.stringify({ graph: { nodes: [], edges: [] } }));
+  });
+
+  it('publishVersion surfaces the backend validation error', async () => {
+    const fetcher = fetcherReturning(400, { error: 'graph needs exactly one input node' });
+    await expect(publishVersion('k', 'f1', { nodes: [], edges: [] }, fetcher)).rejects.toThrow(
+      /exactly one input/
+    );
   });
 
   it('decide targets the slug/env path', async () => {

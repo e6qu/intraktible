@@ -128,6 +128,25 @@ export async function getFlow(
   return (await res.json()) as Flow;
 }
 
+export async function publishVersion(
+  key: string,
+  flowId: string,
+  graph: FlowGraph,
+  fetcher: typeof fetch = fetch
+): Promise<{ version: number; etag: string }> {
+  const res = await fetcher(`/v1/flows/${flowId}/versions`, {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify({ graph })
+  });
+  if (!res.ok) {
+    // Surface the backend's validation message (fail loudly, visibly).
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error ?? `publish version failed: ${res.status}`);
+  }
+  return (await res.json()) as { version: number; etag: string };
+}
+
 export async function decide(
   key: string,
   slug: string,
