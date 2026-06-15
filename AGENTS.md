@@ -84,7 +84,9 @@ Pluggable storage (SQLite/Postgres) and pluggable AI provider. Details: [PLAN.md
   the real UI if `make web` ran); `make web` — build the SvelteKit UI + copy it into the embed dir;
   `make dist` — the full self-contained artifact (`web` + `build`). The binary serves the SPA with
   client-side-route fallback. `make check` — fast gate; `make ci` — full gate (everything CI runs).
-- Run: `intraktible serve --modules=all` (monolith) or `--modules=decision-engine` (split).
+- Run: `intraktible serve --modules=all` (monolith) or `--modules=decision-engine` (split). The
+  projection store is `--store=memory` (default, ephemeral) or `--store=sqlite` (durable, persists to
+  `<data-dir>/projections.db`); either way projections rebuild from the log on boot.
 - Operate (Phase 5): `intraktible log` prints the event log (audit) + per-stream summary;
   `intraktible replay [--modules] [--as-of <seq>]` rebuilds projections from the log into a fresh
   store and reports the rebuilt collections — `--as-of` is a read-only **log-based rollback** to that

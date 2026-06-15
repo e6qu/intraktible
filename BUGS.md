@@ -5,7 +5,6 @@ Format: `ID | severity | component | description | status`.
 
 ## Open (deferred / limitations after Phase 0)
 - `D1 | low | eventlog | WAL holds all events in memory and re-reads the whole file on open; fine for MVP, revisit with segments/Badger | open`
-- `D2 | med | store | projection store is in-memory only; projections rebuild from the log at boot. Durable SQLite/Postgres JSONB adapters not yet implemented | open`
 - `D3 | med | projection | a live-apply error stops the consumer (surfaced via Err) but the HTTP server keeps running; no auto-restart/dead-letter yet | open`
 - `D5 | med | ai | only the Stub provider exists; Claude/OpenAI/Gemini/Ollama adapters not yet wired | open`
 
@@ -28,10 +27,12 @@ Format: `ID | severity | component | description | status`.
 
 ## Open (deferred / limitations during Phase 5)
 - `D19 | low | decision-engine | decide input is validated against a supported subset of JSON Schema (object type, required, per-property type incl. integer/number/boolean/array/object/null); nested schemas, $ref, enum, format, allOf/anyOf etc. are accepted but not enforced. Swap in a full validator if richer contracts are needed | open`
+- `D21 | low | store | only the SQLite durable adapter exists (plus in-memory); a Postgres store.Store adapter (pgx) is not implemented yet — useful for large/shared projections. On a restart the SQLite store is still fully rebuilt from the log rather than resumed incrementally from Head (correct but not optimized) | open`
 - `D20 | low | auth | sessions are still in-memory (lost on restart) and the builder UI still sends X-Api-Key per request rather than using the new POST /v1/login cookie flow; durable session storage + UI adoption (a login page) are follow-ups | open`
 - `D18 | med | eventlog | the file WAL is single-process (each process holds its own in-memory copy + appends locally). The split-services compose profile therefore gives each module an independent log; full cross-component split (escalation, Rule/Connect/AI nodes reading another layer) needs a shared/networked log backend (Badger/Postgres/gRPC) behind the existing Log interface. The monolith profile is unaffected | open`
 
 ## Fixed
+- `D2 | store | added a durable SQLite projection store (store.NewSQLite, pure-Go modernc.org/sqlite — no CGO) behind the existing store.Store interface, selectable with serve --store=sqlite (persists to <data-dir>/projections.db, WAL + busy_timeout for one writer / many readers). Verified data survives a restart. Postgres adapter split out as D21. | fixed`
 - `D7 | auth | added a login flow: POST /v1/login exchanges a valid API key for an HttpOnly session cookie (the Authenticate middleware already accepted it), POST /v1/logout revokes it, GET /v1/me returns the caller; sessions now expire (DefaultSessionTTL) and can be revoked. Remaining follow-ups split out as D20. | fixed`
 - `D8 | projection | rebuild is now idempotent: the Projector interface gained Collections(), and RebuildTo resets each projector's collections before replaying — so rebuilding into a non-empty store (a durable store, or a repeated replay) no longer double-applies. Verified by replaying the same store twice (counts unchanged). | fixed`
 - `D4 | decision-engine | decide input is now validated against the version's input_schema before the run is recorded — a contract violation is a 400, not a recorded decision. Pure domain.ValidateInput enforces a JSON-Schema subset (object type / required / per-property type) with no new dependency; the unenforced keywords are tracked as D19. | fixed`

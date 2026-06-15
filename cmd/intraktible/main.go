@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sort"
 	"syscall"
 	"time"
@@ -81,11 +82,12 @@ func serveCmd(args []string) error {
 	dataDir := fs.String("data-dir", "./data", "event-log data directory")
 	modules := fs.String("modules", "all", "comma-separated modules (or 'all')")
 	devKey := fs.String("dev-api-key", "dev-sandbox-key", "seed a sandbox API key for local dev (empty to disable)")
+	storeKind := fs.String("store", "memory", "projection store: memory | sqlite (sqlite persists to <data-dir>/projections.db)")
 	_ = fs.Parse(args)
-	return run(*addr, *dataDir, *modules, *devKey)
+	return run(*addr, *dataDir, *modules, *devKey, *storeKind)
 }
 
-func run(addr, dataDir, modules, devKey string) error {
+func run(addr, dataDir, modules, devKey, storeKind string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -95,7 +97,11 @@ func run(addr, dataDir, modules, devKey string) error {
 	}
 	defer func() { _ = log.Close() }()
 
-	st := store.NewMemory()
+	st, err := openStore(storeKind, dataDir)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = st.Close() }()
 	keyring := auth.NewKeyring()
 	sessions := auth.NewSessions()
 	if devKey != "" {
@@ -177,6 +183,20 @@ func run(addr, dataDir, modules, devKey string) error {
 	shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	return srv.Shutdown(shutCtx)
+}
+
+// openStore builds the projection store. memory is ephemeral (rebuilt from the
+// log at boot); sqlite persists to <data-dir>/projections.db and survives restarts
+// (still rebuilt from the log, which resets collections first so it stays correct).
+func openStore(kind, dataDir string) (store.Store, error) {
+	switch kind {
+	case "", "memory":
+		return store.NewMemory(), nil
+	case "sqlite":
+		return store.NewSQLite(filepath.Join(dataDir, "projections.db"))
+	default:
+		return nil, fmt.Errorf("unknown --store %q (memory|sqlite)", kind)
+	}
 }
 
 // moduleProjectors returns the read-model projectors for the enabled modules —

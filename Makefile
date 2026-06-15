@@ -73,8 +73,12 @@ vuln:
 	$(GO) run golang.org/x/vuln/cmd/govulncheck@latest $(GO_PKGS)
 
 ## licenses: fail the build on any non-AGPL-compatible dependency
+# --ignore modernc.org/mathutil: its LICENSE is plainly BSD-3-Clause (manually
+# vetted; see docs/LICENSING.md) but go-licenses' classifier cannot match its
+# Go-project wording. Every other modernc/SQLite dep classifies cleanly.
 licenses:
-	$(GO) run github.com/google/go-licenses@latest check $(GO_PKGS) --allowed_licenses="$(ALLOWED_LICENSES)"
+	$(GO) run github.com/google/go-licenses@latest check $(GO_PKGS) \
+		--allowed_licenses="$(ALLOWED_LICENSES)" --ignore modernc.org/mathutil
 
 ## web: build the SvelteKit UI and embed it (requires npm)
 web:

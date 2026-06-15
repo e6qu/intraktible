@@ -64,6 +64,12 @@ pluggable interfaces; each must be license-checked at add time (all currently MI
 ## Enforcement (CI)
 - **Go:** `go-licenses check ./...` against the allowlist; fail the build on any disallowed/unknown
   license. Generate `THIRD_PARTY_NOTICES.md` via `go-licenses report`.
+  - **Manually vetted exception:** `modernc.org/mathutil` (a transitive dep of the pure-Go SQLite
+    driver) is `--ignore`d in the `licenses` make target. Its `LICENSE` is plainly **BSD-3-Clause**
+    (three clauses + the standard disclaimer) but go-licenses' classifier cannot match its
+    Go-project wording, so it reports "Unknown". Every other modernc / SQLite dependency
+    (`sqlite`, `libc`, `memory`, `bigfft`, `uuid`, `go-humanize`, `go-isatty`, `go-strftime`)
+    classifies cleanly as BSD-3-Clause / MIT.
 - **Web:** `license-checker`/`jscpd`'s allowlist (or `npx license-checker --onlyAllow "MIT;BSD-2-Clause;BSD-3-Clause;ISC;Apache-2.0;0BSD;MPL-2.0"`).
 - A short **`ADDING-A-DEPENDENCY` checklist** in CONTRIBUTING: confirm SPDX license ∈ allowlist,
   record it, regenerate notices.
