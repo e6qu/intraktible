@@ -53,6 +53,7 @@ type CaseView struct {
 	SLADays     int             `json:"sla_days"`
 	DaysLeft    int             `json:"days_left"`
 	SLAState    string          `json:"sla_state,omitempty"`
+	SLABreached bool            `json:"sla_breached,omitempty"`
 	Context     json.RawMessage `json:"context,omitempty"`
 	SourceID    string          `json:"source_decision_id,omitempty"`
 	Notes       []Note          `json:"notes"`
@@ -129,9 +130,27 @@ func (Projector) Apply(ctx context.Context, e eventlog.Envelope, s store.Store) 
 		return applyStatus(ctx, e, s)
 	case events.TypeCaseNoteAdded:
 		return applyNote(ctx, e, s)
+	case events.TypeCaseSLABreached:
+		return applySLABreached(ctx, e, s)
 	default:
 		return nil
 	}
+}
+
+// applySLABreached marks a case breached and audits it. It is idempotent: a case
+// already breached is left unchanged, so a re-emitted sweep event is a no-op.
+func applySLABreached(ctx context.Context, e eventlog.Envelope, s store.Store) error {
+	var p events.CaseSLABreached
+	if err := decode(e, &p); err != nil {
+		return err
+	}
+	return update(ctx, s, e, p.CaseID, func(c *CaseView) {
+		if c.SLABreached {
+			return
+		}
+		c.SLABreached = true
+		c.Audit = append(c.Audit, audit(e, "sla_breached", "SLA deadline passed"))
+	})
 }
 
 // applyEscalated opens a case from a decision flow's manual_review node (the

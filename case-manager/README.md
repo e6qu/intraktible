@@ -25,16 +25,22 @@ Done — case lifecycle + queues + flow escalation + SLA tracking (command→eve
   boundary** (the `domain.SLAState`/`DaysLeft` pure functions) so the stored projection stays
   clock-free and replay-stable. A queue **summary** rolls these up (totals by status, unassigned,
   due-soon, overdue) over the same filtered set as the list.
+- **SLA-breach events** (pushed, not only derived): an **SLA sweep** (`POST /v1/cases/sla-sweep`, for
+  a scheduler/cron to call) finds open cases past their deadline as of now and emits a
+  `CaseSLABreached` event for each — an effect computed against the clock and then *recorded* (so
+  replay stays stable), idempotent (a breached case is skipped). The projection marks `sla_breached`
+  and audits it; read-time `days_left`/`sla_state` are unchanged.
 - HTTP (under `/v1/`, X-Api-Key / session auth, org+workspace scoped):
   - `POST /v1/cases` — open `{company_name, case_type, sla_days, context?}` → `{case_id}`
   - `GET /v1/cases?status=&type=&assignee=` — the queue, filtered (each case includes `days_left`/`sla_state`)
   - `GET /v1/cases/summary?status=&type=&assignee=` — the queue roll-up
   - `GET /v1/cases/{case_id}` — detail + notes + audit
   - `POST /v1/cases/{case_id}/assign|status|notes`
+  - `POST /v1/cases/sla-sweep` — emit SLA-breach events for overdue open cases → `{breached, count}`
 - **Dashboard UI** (`web/src/routes/cases`): a queue (status filter + open-case form, a summary
   banner, and per-row days-left) and a case-detail view (fields incl. days-left, notes, **audit
   log**, and assign / set-status / add-note actions).
 - Run it: `intraktible serve --modules=case-manager` (UI dev: `make dev`).
 
-Deferred (see [../BUGS.md](../BUGS.md)): no SLA-breach events/alerts — overdue is derived on read,
-not pushed (D12); no rich/schema-aware context view in case detail (D13).
+SLA breaches are now pushed via the sweep (D12) and the case context renders as a key-value view
+(D13).

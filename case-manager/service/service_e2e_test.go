@@ -82,6 +82,42 @@ func TestCaseAPIEndToEnd(t *testing.T) {
 	}
 }
 
+func TestCaseSLASweepBreachesOverdue(t *testing.T) {
+	api := start(t)
+
+	// A case due immediately (sla_days 0) is overdue the moment it opens.
+	var opened struct {
+		CaseID string `json:"case_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/cases",
+		map[string]any{"company_name": "Acme Corp", "case_type": "aml", "sla_days": 0},
+		http.StatusCreated, &opened)
+
+	// The sweep emits a breach event for it.
+	var sweep struct {
+		Count int `json:"count"`
+	}
+	api.Request(t, http.MethodPost, "/v1/cases/sla-sweep", nil, http.StatusOK, &sweep)
+	if sweep.Count != 1 {
+		t.Fatalf("sweep breached %d, want 1", sweep.Count)
+	}
+
+	// The projection now marks the case breached with an audit entry.
+	if !testutil.Eventually(t, func() bool {
+		var c cases.CaseView
+		api.Request(t, http.MethodGet, "/v1/cases/"+opened.CaseID, nil, http.StatusOK, &c)
+		breachAudited := false
+		for _, a := range c.Audit {
+			if a.Type == "sla_breached" {
+				breachAudited = true
+			}
+		}
+		return c.SLABreached && breachAudited
+	}) {
+		t.Fatal("case never reflected the SLA breach")
+	}
+}
+
 func TestCaseAPIValidationAndAuth(t *testing.T) {
 	api := start(t)
 

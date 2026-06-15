@@ -16,6 +16,7 @@ const (
 	TypeCaseAssigned      = "cases.assigned"
 	TypeCaseStatusChanged = "cases.status_changed"
 	TypeCaseNoteAdded     = "cases.note_added"
+	TypeCaseSLABreached   = "cases.sla_breached"
 )
 
 // ReviewRequested opens a case for human review.
@@ -44,4 +45,11 @@ type CaseStatusChanged struct {
 type CaseNoteAdded struct {
 	CaseID string `json:"case_id"`
 	Text   string `json:"text"`
+}
+
+// CaseSLABreached records that a case passed its SLA deadline. It is emitted by
+// the SLA sweep (an effect performed in the shell against the wall clock, then
+// recorded so replay is stable). The breach time is the envelope time.
+type CaseSLABreached struct {
+	CaseID string `json:"case_id"`
 }

@@ -38,6 +38,22 @@ func (s *Service) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/cases/{case_id}/assign", s.assign)
 	mux.HandleFunc("POST /v1/cases/{case_id}/status", s.status)
 	mux.HandleFunc("POST /v1/cases/{case_id}/notes", s.note)
+	mux.HandleFunc("POST /v1/cases/sla-sweep", s.slaSweep)
+}
+
+// slaSweep emits SLA-breach events for the tenant's overdue open cases (the push
+// side of SLA tracking — a scheduler/cron calls it). It returns the breached ids.
+func (s *Service) slaSweep(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	breached, err := s.cmd.SweepSLA(r.Context(), id, time.Now().UTC())
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"breached": breached, "count": len(breached)})
 }
 
 type reviewRequest struct {
