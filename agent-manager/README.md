@@ -47,5 +47,5 @@ Consumed by the decision engine: a flow's **AI node** runs an agent (the shell p
 layer.
 
 Deferred (see [../BUGS.md](../BUGS.md)): tools are declared but not executed (D16); runs are
-synchronous and structured output isn't schema-validated (D17). A real OpenAI-compatible HTTP
+synchronous (no async/queued/streaming runs) (D17). A schema-constrained agent's structured output is validated against its schema (a mismatch is a recorded failed run). A real OpenAI-compatible HTTP
 provider exists (`ai.NewHTTP`, configured via `INTRAKTIBLE_AI_*` env vars); the Stub is the default fallback.

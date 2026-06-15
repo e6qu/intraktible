@@ -21,7 +21,7 @@ Format: `ID | severity | component | description | status`.
 
 ## Open (deferred / limitations after Phase 4)
 - `D16 | low | agent-manager | an agent's tool set is declared and stored but tools are not executed yet (no tool-calling loop); the Stub provider ignores them. Real tool-calling lands with a non-Stub provider | deferred`
-- `D17 | low | agent-manager | runs are synchronous (call the provider, record the result); no async/queued runs, streaming, or in-flight status. A structured-output schema is passed to the provider but the response is not validated against it (the Stub returns {}) | deferred`
+- `D17 | low | agent-manager | runs are synchronous (call the provider, record the result); no async/queued runs, streaming, or in-flight status — adequate for the MVP | deferred`
 
 ## Open (deferred / limitations during Phase 5)
 - `D19 | low | decision-engine | decide input is validated against a supported subset of JSON Schema (object type, required, per-property type incl. integer/number/boolean/array/object/null); nested schemas, $ref, enum, format, allOf/anyOf etc. are accepted but not enforced. Swap in a full validator if richer contracts are needed | open`
@@ -30,6 +30,7 @@ Format: `ID | severity | component | description | status`.
 - `D18 | med | eventlog | the file WAL is single-process (each process holds its own in-memory copy + appends locally). The split-services compose profile therefore gives each module an independent log; full cross-component split (escalation, Rule/Connect/AI nodes reading another layer) needs a shared/networked log backend (Badger/Postgres/gRPC) behind the existing Log interface. The monolith profile is unaffected | open`
 
 ## Fixed
+- `D17 (partial) | agent-manager | a schema-constrained agent's structured output is now validated against the agent's schema (shared platform/schema.ValidateObject, the same JSON-Schema subset the decide-input check uses); a mismatch is a recorded failed run (fail loudly). Remaining (async/queued/streaming runs) stays open as D17. | fixed`
 - `D5 | ai | added a real OpenAI-compatible HTTP provider (ai.NewHTTP — POST {base}/chat/completions, Bearer auth, json_object response_format when a schema is requested) behind the existing ai.Provider interface. It works with OpenAI/Ollama/vLLM/gateways and Anthropic-compatible endpoints. Wired in via INTRAKTIBLE_AI_BASE_URL/_API_KEY/_MODEL/_PROVIDER (Stub stays the fallback). Verified text + structured + error paths against a mock server and end-to-end on the real binary. | fixed`
 - `D22 | eventlog | crash safety: WAL.load now recovers a torn final record (a crash mid-Append leaves a trailing line with no newline) by truncating it on reopen, instead of failing to open and bricking the log. No acknowledged event is dropped (Append fsyncs before returning), and a corrupt complete record mid-file still fails loudly. (D1's in-memory/segmentation scaling is still open.) | fixed`
 - `D3 | projection | a stalled projection (a live-apply error stopped the consumer) is now surfaced: GET /healthz returns 503 "degraded" with the error when the runtime's Err() is set, so an orchestrator can restart/depool the node (a fresh boot rebuilds the projections). Dead-lettering/auto-skip is intentionally NOT added — silently dropping an event would violate fail-loudly and leave projections inconsistent. | fixed`

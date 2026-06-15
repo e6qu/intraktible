@@ -105,3 +105,33 @@ func TestRunAgentStructuredAndUnknown(t *testing.T) {
 		t.Fatal("expected error running an unknown agent")
 	}
 }
+
+func TestRunAgentStructuredOutputValidatedAgainstSchema(t *testing.T) {
+	ctx := context.Background()
+	log, err := eventlog.OpenWAL(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = log.Close() }()
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "dev"}
+	st := store.NewMemory()
+
+	h := command.NewHandler(log, st, registry())
+	// The agent requires a "risk" field, but the Stub returns {} for schema
+	// requests — so the run must be recorded as failed (output violates schema).
+	if _, err := h.DefineAgent(ctx, id, domain.DefineAgent{
+		Name: "strict", Schema: json.RawMessage(`{"type":"object","required":["risk"]}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := projection.New(log, st, agents.Projector{}).Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	res, err := h.RunAgent(ctx, id, "strict", "assess")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Status != "failed" || res.Error == "" {
+		t.Fatalf("schema-violating output should be a failed run, got %+v", res)
+	}
+}

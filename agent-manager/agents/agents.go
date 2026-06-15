@@ -15,6 +15,7 @@ import (
 	"github.com/e6qu/intraktible/platform/ai"
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/identity"
+	"github.com/e6qu/intraktible/platform/schema"
 	"github.com/e6qu/intraktible/platform/store"
 )
 
@@ -203,8 +204,26 @@ func Invoke(ctx context.Context, s store.Store, reg *ai.Registry, id identity.Id
 		if resp.Model != "" {
 			out.Model = resp.Model
 		}
+		// When the agent declares a structured-output schema, the response must
+		// satisfy it; a mismatch is a recorded failed run (fail loudly).
+		if verr := validateStructured(def.Schema, resp.Structured); verr != nil {
+			out = Outcome{Model: out.Model, Status: domainRunFailed, Error: verr.Error()}
+		}
 	}
 	return out, nil
+}
+
+// validateStructured checks a schema-constrained response against the agent's
+// schema. It is a no-op when the agent has no schema.
+func validateStructured(agentSchema, structured json.RawMessage) error {
+	if len(agentSchema) == 0 {
+		return nil
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(structured, &obj); err != nil {
+		return fmt.Errorf("agent-manager: structured output is not a JSON object: %w", err)
+	}
+	return schema.ValidateObject(agentSchema, obj)
 }
 
 // Provider adapts agent invocation to a prompt→JSON lookup, suitable as a
