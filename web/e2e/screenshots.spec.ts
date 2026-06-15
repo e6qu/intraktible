@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Design review helper: seeds a little data, then captures every route in light
 // and dark mode to /tmp/itk-shots for visual review. Not a correctness test.
-import { test } from '@playwright/test';
+import { test, expect } from '@playwright/test';
 
 const KEY = 'dev-sandbox-key';
 const SHOTS = process.env.ITK_SHOTS_DIR ?? '/tmp/itk-shots';
@@ -12,6 +12,7 @@ test.skip(!process.env.ITK_SHOTS, 'set ITK_SHOTS=1 to capture design-review scre
 
 let flowId = '';
 let caseId = '';
+let decisionId = '';
 
 test.beforeAll(async ({ request }) => {
   const flow = await request.post('/v1/flows', {
@@ -53,6 +54,41 @@ test.beforeAll(async ({ request }) => {
     headers: { 'X-Api-Key': KEY },
     data: { prompt: 'screen this applicant' }
   });
+  // A simple decideable flow + a run so /decisions has content.
+  const simple = await request.post('/v1/flows', {
+    headers: { 'X-Api-Key': KEY },
+    data: { slug: 'shot-simple', name: 'Approval' }
+  });
+  const simpleId = (await simple.json()).flow_id;
+  await request.post(`/v1/flows/${simpleId}/versions`, {
+    headers: { 'X-Api-Key': KEY },
+    data: {
+      graph: {
+        nodes: [
+          { id: 'in', type: 'input' },
+          {
+            id: 'a',
+            type: 'assignment',
+            config: { assignments: [{ target: 'decision', expr: "'APPROVE'" }] }
+          },
+          { id: 'out', type: 'output', config: { fields: ['decision'] } }
+        ],
+        edges: [
+          { from: 'in', to: 'a' },
+          { from: 'a', to: 'out' }
+        ]
+      }
+    }
+  });
+  await expect(async () => {
+    const r = await request.post('/v1/flows/shot-simple/production/decide', {
+      headers: { 'X-Api-Key': KEY },
+      data: { data: {} }
+    });
+    const body = await r.json();
+    expect(body.status).toBe('completed');
+    decisionId = body.decision_id;
+  }).toPass({ timeout: 5000 });
 });
 
 for (const themeMode of ['light', 'dark']) {
@@ -64,6 +100,8 @@ for (const themeMode of ['light', 'dark']) {
       login: '/login',
       engine: '/engine',
       builder: `/engine/${flowId}`,
+      decisions: '/decisions',
+      'decision-detail': `/decisions/${decisionId}`,
       cases: '/cases',
       'case-detail': `/cases/${caseId}`,
       agents: '/agents',

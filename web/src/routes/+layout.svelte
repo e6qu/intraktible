@@ -20,6 +20,7 @@
 
   const nav = [
     { href: '/engine', label: 'Engine', icon: 'engine' },
+    { href: '/decisions', label: 'Decisions', icon: 'diagram' },
     { href: '/cases', label: 'Cases', icon: 'cases' },
     { href: '/agents', label: 'Agents', icon: 'agents' }
   ];

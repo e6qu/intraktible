@@ -17,8 +17,10 @@
     decide,
     exportFlow,
     exportDecision,
+    getFlowMetrics,
     type ExportFormat,
     type Flow,
+    type FlowMetrics,
     type GraphNode,
     type GraphEdge
   } from '$lib/api';
@@ -62,6 +64,16 @@
   let flow = $state<Flow | null>(null);
   let error = $state('');
   let publishMsg = $state('');
+  let metrics = $state<FlowMetrics | null>(null);
+
+  // loadMetrics fetches the flow's analytics roll-up (non-fatal if none yet).
+  async function loadMetrics() {
+    try {
+      metrics = await getFlowMetrics(key, flowId);
+    } catch {
+      metrics = null;
+    }
+  }
 
   // Engine-level editor model (the source of truth) and its Svelte Flow render.
   let editNodes = $state<EditNode[]>([]);
@@ -372,6 +384,7 @@
       const res = await decide(key, flow.slug, env, JSON.parse(dataText), entity);
       lastDecisionId = res.decision_id ?? '';
       result = JSON.stringify(res, null, 2);
+      void loadMetrics();
     } catch (e) {
       result = `Error: ${msg(e)}`;
     }
@@ -432,7 +445,10 @@
     }
   }
 
-  onMount(load);
+  onMount(() => {
+    void load();
+    void loadMetrics();
+  });
 </script>
 
 <main>
@@ -478,6 +494,19 @@
     </div>
     {#if exportMsg}<span class="ok">{exportMsg}</span>{/if}
   </div>
+  {#if metrics && metrics.total > 0}
+    <div class="metrics">
+      <span class="exportlabel"><Icon name="diagram" size={15} /> Analytics</span>
+      <span><b>{metrics.total}</b> decisions</span>
+      <span class="ok">{metrics.completed} completed</span>
+      <span class="err">{metrics.failed} failed</span>
+      <span class="muted">avg {metrics.avg_duration_ms} ms</span>
+      {#each Object.entries(metrics.by_variant) as [variant, v] (variant)}
+        <span class="muted">{variant}: {v.completed}/{v.started}</span>
+      {/each}
+      <a href="/decisions">view runs →</a>
+    </div>
+  {/if}
   {#if error}<p class="err">{error}</p>{/if}
 
   <div class="grid">
@@ -1023,6 +1052,21 @@
     font-size: 0.8rem;
     color: var(--fg-muted);
     font-weight: 550;
+  }
+  .metrics {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.9rem;
+    margin: 0.5rem 0;
+    padding: 0.5rem 0.7rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    font-size: 0.88rem;
+  }
+  .metrics .muted {
+    color: var(--fg-subtle);
   }
   .export .grp {
     display: inline-flex;

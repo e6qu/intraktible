@@ -162,6 +162,84 @@ export async function exportDecision(
   return res.text();
 }
 
+// ---- Decision history + analytics ----
+
+export interface NodeRecord {
+  node_id: string;
+  type: string;
+  output?: unknown;
+}
+
+export interface Decision {
+  decision_id: string;
+  flow_id: string;
+  slug: string;
+  version: number;
+  environment: string;
+  variant?: string;
+  status: string;
+  data?: unknown;
+  output?: unknown;
+  error?: string;
+  nodes?: NodeRecord[];
+  started_at: string;
+  ended_at?: string;
+  duration_ms?: number;
+}
+
+export async function listDecisions(
+  key: string,
+  fetcher: typeof fetch = fetch
+): Promise<Decision[]> {
+  const res = await fetcher('/v1/decisions', { headers: authHeaders(key) });
+  if (!res.ok) {
+    throw new Error(`GET /v1/decisions failed: ${res.status}`);
+  }
+  return ((await res.json()) as { decisions: Decision[] }).decisions ?? [];
+}
+
+export async function getDecision(
+  key: string,
+  id: string,
+  fetcher: typeof fetch = fetch
+): Promise<Decision> {
+  const res = await fetcher(`/v1/decisions/${id}`, { headers: authHeaders(key) });
+  if (!res.ok) {
+    throw new Error(`GET /v1/decisions/${id} failed: ${res.status}`);
+  }
+  return (await res.json()) as Decision;
+}
+
+export interface VariantStats {
+  started: number;
+  completed: number;
+  failed: number;
+}
+
+export interface FlowMetrics {
+  flow_id: string;
+  total: number;
+  completed: number;
+  failed: number;
+  total_duration_ms: number;
+  avg_duration_ms: number;
+  by_environment: Record<string, number>;
+  by_version: Record<string, number>;
+  by_variant: Record<string, VariantStats>;
+}
+
+export async function getFlowMetrics(
+  key: string,
+  flowId: string,
+  fetcher: typeof fetch = fetch
+): Promise<FlowMetrics> {
+  const res = await fetcher(`/v1/flows/${flowId}/metrics`, { headers: authHeaders(key) });
+  if (!res.ok) {
+    throw new Error(`GET /v1/flows/${flowId}/metrics failed: ${res.status}`);
+  }
+  return (await res.json()) as FlowMetrics;
+}
+
 export async function publishVersion(
   key: string,
   flowId: string,

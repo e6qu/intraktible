@@ -10,6 +10,9 @@ import {
   publishVersion,
   exportFlow,
   exportDecision,
+  listDecisions,
+  getDecision,
+  getFlowMetrics,
   listCases,
   getCaseSummary,
   requestReview,
@@ -64,6 +67,41 @@ describe('export', () => {
 
   it('throws loudly on a non-2xx export', async () => {
     await expect(exportFlow('k', 'f1', 'mermaid', textFetcher(404, ''))).rejects.toThrow(/404/);
+  });
+});
+
+describe('decisions + analytics', () => {
+  it('listDecisions unwraps the decisions array', async () => {
+    const fetcher = fetcherReturning(200, {
+      decisions: [{ decision_id: 'd1', slug: 's', status: 'completed' }]
+    });
+    const ds = await listDecisions('k', fetcher);
+    expect(ds).toHaveLength(1);
+    expect(ds[0].decision_id).toBe('d1');
+    expect(fetcher.mock.calls[0][0]).toBe('/v1/decisions');
+  });
+
+  it('getDecision fetches one decision by id', async () => {
+    const fetcher = fetcherReturning(200, { decision_id: 'd9', status: 'failed' });
+    const d = await getDecision('k', 'd9', fetcher);
+    expect(d.status).toBe('failed');
+    expect(fetcher.mock.calls[0][0]).toBe('/v1/decisions/d9');
+  });
+
+  it('getFlowMetrics hits the flow metrics endpoint', async () => {
+    const fetcher = fetcherReturning(200, {
+      total: 5,
+      completed: 4,
+      failed: 1,
+      avg_duration_ms: 12
+    });
+    const m = await getFlowMetrics('k', 'f1', fetcher);
+    expect(m.total).toBe(5);
+    expect(fetcher.mock.calls[0][0]).toBe('/v1/flows/f1/metrics');
+  });
+
+  it('listDecisions throws loudly on a non-2xx', async () => {
+    await expect(listDecisions('k', fetcherReturning(401, {}))).rejects.toThrow(/401/);
   });
 });
 
