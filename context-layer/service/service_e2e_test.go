@@ -9,6 +9,7 @@ import (
 
 	"github.com/e6qu/intraktible/context-layer/command"
 	"github.com/e6qu/intraktible/context-layer/entities"
+	"github.com/e6qu/intraktible/context-layer/features"
 	"github.com/e6qu/intraktible/context-layer/service"
 	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/testutil"
@@ -19,7 +20,7 @@ func start(t *testing.T) *testutil.API {
 	log, st := testutil.NewLogStore(t)
 	svc := service.New(command.NewHandler(log), st)
 	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "dev"}
-	return testutil.StartAPI(t, log, st, "test-key", id, svc.Routes, entities.Projector{})
+	return testutil.StartAPI(t, log, st, "test-key", id, svc.Routes, entities.Projector{}, features.Projector{})
 }
 
 func TestContextAPIEndToEnd(t *testing.T) {
@@ -76,6 +77,49 @@ func TestContextAPIEndToEnd(t *testing.T) {
 	}
 }
 
+func TestFeatureEngineEndToEnd(t *testing.T) {
+	api := start(t)
+
+	// Define two features over the customer's transaction stream.
+	api.Request(t, http.MethodPost, "/v1/context/features",
+		map[string]any{"name": "txn_count_24h", "entity_type": "customer", "event_name": "transaction", "aggregation": "count", "window_hours": 24},
+		http.StatusAccepted, nil)
+	api.Request(t, http.MethodPost, "/v1/context/features",
+		map[string]any{"name": "txn_sum_24h", "entity_type": "customer", "event_name": "transaction", "aggregation": "sum", "field": "amount", "window_hours": 24},
+		http.StatusAccepted, nil)
+
+	// Two transactions just now.
+	for _, amt := range []int{100, 250} {
+		api.Request(t, http.MethodPost, "/v1/context/events",
+			map[string]any{"entity_type": "customer", "entity_id": "c1", "event_name": "transaction", "data": map[string]any{"amount": amt}},
+			http.StatusAccepted, nil)
+	}
+
+	// Compute reflects both features (async projection of the definitions + events).
+	if !testutil.Eventually(t, func() bool {
+		var out struct {
+			Features []features.Value `json:"features"`
+		}
+		api.Request(t, http.MethodGet, "/v1/context/entities/customer/c1/features", nil, http.StatusOK, &out)
+		got := map[string]float64{}
+		for _, v := range out.Features {
+			got[v.Name] = v.Value
+		}
+		return got["txn_count_24h"] == 2 && got["txn_sum_24h"] == 350
+	}) {
+		t.Fatal("features never computed to count=2 / sum=350")
+	}
+
+	// The definitions list, filtered by entity type.
+	var defs struct {
+		Features []features.FeatureView `json:"features"`
+	}
+	api.Request(t, http.MethodGet, "/v1/context/features?type=customer", nil, http.StatusOK, &defs)
+	if len(defs.Features) != 2 {
+		t.Fatalf("feature defs: %d, want 2", len(defs.Features))
+	}
+}
+
 func TestContextAPIValidationAndAuth(t *testing.T) {
 	api := start(t)
 
@@ -86,6 +130,9 @@ func TestContextAPIValidationAndAuth(t *testing.T) {
 		map[string]any{"entity_type": "customer", "entity_id": "c1", "attributes": []int{1, 2}}, http.StatusBadRequest, nil)
 	// Event without a name -> 400.
 	api.Request(t, http.MethodPost, "/v1/context/events", map[string]any{"entity_type": "customer", "entity_id": "c1"}, http.StatusBadRequest, nil)
+	// Sum feature without a field -> 400.
+	api.Request(t, http.MethodPost, "/v1/context/features",
+		map[string]any{"name": "f", "entity_type": "customer", "event_name": "t", "aggregation": "sum", "window_hours": 24}, http.StatusBadRequest, nil)
 	// Unknown entity -> 404.
 	api.Request(t, http.MethodGet, "/v1/context/entities/customer/ghost", nil, http.StatusNotFound, nil)
 	// Unauthenticated -> 401.

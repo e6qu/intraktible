@@ -231,10 +231,15 @@ intraktible/
 - **Phase 3 — Context Layer — 🚧 IN PROGRESS.** Done: **custom entities** (dynamic JSONB keyed by
   type+id; re-recording patches via a pure top-level attribute merge) and **custom events** about an
   entity (per-entity event log + a running event count; an event auto-creates a shell entity;
-  `occurred_at` is a recorded effect for replay stability) — command→event→projection→API
-  (`/v1/context/entities`, `…/{type}/{id}[/events]`, `/v1/context/events`), module `context-layer`.
-  Remaining: the **feature engine** (windowed counts/sums over the event stream, consumed by Rule
-  nodes); **connectors** (a `Connect` interface + reference connectors + the Custom Connect Node,
+  `occurred_at` is a recorded effect for replay stability); and a **feature engine** — windowed
+  `count`/`sum` aggregates over an entity type's event stream (definition =
+  `{name, entity_type, event_name, aggregation, field?, window_hours}`; the pure `domain.Compute`
+  folds events in `(now-window, now]`; missing sum-field contributes 0, non-numeric fails loudly),
+  computed read-time so the log stays clock-free — command→event→projection→API
+  (`/v1/context/entities`, `…/{type}/{id}[/events|/features]`, `/v1/context/events`,
+  `/v1/context/features`), module `context-layer`. Remaining: wire features into decision-engine
+  **Rule nodes** (a feature-provider port + context-backed adapter, preserving build-order dependency
+  direction); **connectors** (a `Connect` interface + reference connectors + the Custom Connect Node,
   results recorded as events) wired into Rule/Connect nodes.
 - **Phase 4 — Agent Manager:** agent config + AI-node execution, structured output, run monitoring,
   human-in-the-loop → Case Manager.

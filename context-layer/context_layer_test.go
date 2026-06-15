@@ -6,10 +6,12 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/e6qu/intraktible/context-layer/command"
 	"github.com/e6qu/intraktible/context-layer/domain"
 	"github.com/e6qu/intraktible/context-layer/entities"
+	"github.com/e6qu/intraktible/context-layer/features"
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/projection"
@@ -101,5 +103,53 @@ func TestEntityAndEventReplay(t *testing.T) {
 	}
 	if len(customers) != 1 {
 		t.Fatalf("customers = %d, want 1", len(customers))
+	}
+}
+
+// TestFeatureReplay defines features and records events, then rebuilds from the
+// log and computes the features — proving the feature engine reads a pure fold.
+func TestFeatureReplay(t *testing.T) {
+	ctx := context.Background()
+	log, err := eventlog.OpenWAL(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = log.Close() }()
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "dev"}
+
+	h := command.NewHandler(log)
+	if _, err := h.DefineFeature(ctx, id, domain.DefineFeature{
+		Name: "txn_count_24h", EntityType: "customer", EventName: "transaction", Aggregation: "count", WindowHours: 24,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.DefineFeature(ctx, id, domain.DefineFeature{
+		Name: "txn_sum_24h", EntityType: "customer", EventName: "transaction", Aggregation: "sum", Field: "amount", WindowHours: 24,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, amt := range []string{`{"amount":100}`, `{"amount":250}`} {
+		if _, err := h.RecordEvent(ctx, id, domain.RecordEvent{
+			EntityType: "customer", EntityID: "c1", EventName: "transaction", Data: json.RawMessage(amt),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	st := store.NewMemory()
+	if err := projection.New(log, st, entities.Projector{}, features.Projector{}).Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	vals, err := features.Compute(ctx, st, id, "customer", "c1", time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]float64{}
+	for _, v := range vals {
+		got[v.Name] = v.Value
+	}
+	if got["txn_count_24h"] != 2 || got["txn_sum_24h"] != 350 {
+		t.Fatalf("features = %v, want count 2 / sum 350", got)
 	}
 }

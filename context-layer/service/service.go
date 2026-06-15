@@ -12,6 +12,7 @@ import (
 	"github.com/e6qu/intraktible/context-layer/command"
 	"github.com/e6qu/intraktible/context-layer/domain"
 	"github.com/e6qu/intraktible/context-layer/entities"
+	"github.com/e6qu/intraktible/context-layer/features"
 	"github.com/e6qu/intraktible/platform/httpx"
 	"github.com/e6qu/intraktible/platform/store"
 )
@@ -33,7 +34,10 @@ func (s *Service) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/context/entities", s.listEntities)
 	mux.HandleFunc("GET /v1/context/entities/{type}/{id}", s.getEntity)
 	mux.HandleFunc("GET /v1/context/entities/{type}/{id}/events", s.listEvents)
+	mux.HandleFunc("GET /v1/context/entities/{type}/{id}/features", s.computeFeatures)
 	mux.HandleFunc("POST /v1/context/events", s.recordEvent)
+	mux.HandleFunc("POST /v1/context/features", s.defineFeature)
+	mux.HandleFunc("GET /v1/context/features", s.listFeatures)
 }
 
 type entityRequest struct {
@@ -121,4 +125,56 @@ func (s *Service) listEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	recs, err := entities.ListEvents(r.Context(), s.store, id, r.PathValue("type"), r.PathValue("id"))
 	httpx.WriteList(w, "events", recs, err)
+}
+
+type featureRequest struct {
+	Name        string `json:"name"`
+	EntityType  string `json:"entity_type"`
+	EventName   string `json:"event_name"`
+	Aggregation string `json:"aggregation"`
+	Field       string `json:"field,omitempty"`
+	WindowHours int    `json:"window_hours"`
+}
+
+func (s *Service) defineFeature(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	var req featureRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	e, err := s.cmd.DefineFeature(r.Context(), id, domain.DefineFeature{
+		Name:        req.Name,
+		EntityType:  req.EntityType,
+		EventName:   req.EventName,
+		Aggregation: req.Aggregation,
+		Field:       req.Field,
+		WindowHours: req.WindowHours,
+	})
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	httpx.JSON(w, http.StatusAccepted, map[string]any{"event_id": e.ID, "seq": e.Seq})
+}
+
+func (s *Service) listFeatures(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	recs, err := features.List(r.Context(), s.store, id, r.URL.Query().Get("type"))
+	httpx.WriteList(w, "features", recs, err)
+}
+
+func (s *Service) computeFeatures(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	vals, err := features.Compute(r.Context(), s.store, id, r.PathValue("type"), r.PathValue("id"), time.Now().UTC())
+	httpx.WriteList(w, "features", vals, err)
 }

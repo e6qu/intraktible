@@ -18,6 +18,7 @@ const StreamContext = "context"
 const (
 	TypeEntityRecorded = "context.entity_recorded"
 	TypeEventRecorded  = "context.event_recorded"
+	TypeFeatureDefined = "context.feature_defined"
 )
 
 // EntityRecorded records (or patches) a custom entity's attributes.
@@ -36,4 +37,15 @@ type EventRecorded struct {
 	EventName  string          `json:"event_name"`
 	Data       json.RawMessage `json:"data,omitempty"`
 	OccurredAt time.Time       `json:"occurred_at"`
+}
+
+// FeatureDefined defines (or redefines) a windowed feature over an entity type's
+// event stream.
+type FeatureDefined struct {
+	Name        string `json:"name"`
+	EntityType  string `json:"entity_type"`
+	EventName   string `json:"event_name"`
+	Aggregation string `json:"aggregation"`
+	Field       string `json:"field,omitempty"`
+	WindowHours int    `json:"window_hours"`
 }

@@ -65,6 +65,25 @@ func (h *Handler) RecordEvent(ctx context.Context, id identity.Identity, cmd dom
 	})
 }
 
+// DefineFeature defines (or redefines) a windowed feature over an entity type's
+// event stream.
+func (h *Handler) DefineFeature(ctx context.Context, id identity.Identity, cmd domain.DefineFeature) (eventlog.Envelope, error) {
+	if err := id.Valid(); err != nil {
+		return eventlog.Envelope{}, err
+	}
+	if err := cmd.Validate(); err != nil {
+		return eventlog.Envelope{}, err
+	}
+	return h.append(ctx, id, events.TypeFeatureDefined, events.FeatureDefined{
+		Name:        cmd.Name,
+		EntityType:  cmd.EntityType,
+		EventName:   cmd.EventName,
+		Aggregation: cmd.Aggregation,
+		Field:       cmd.Field,
+		WindowHours: cmd.WindowHours,
+	})
+}
+
 func (h *Handler) append(ctx context.Context, id identity.Identity, typ string, payload any) (eventlog.Envelope, error) {
 	b, err := json.Marshal(payload)
 	if err != nil {

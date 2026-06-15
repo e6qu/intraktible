@@ -30,8 +30,10 @@ stays clock-free) and a **queue summary** roll-up (`GET /v1/cases/summary`); its
 case-detail view with those actions.
 The **Context Layer** (`context-layer/`) records **custom entities** (dynamic JSONB, keyed by
 type+id, re-records patch via top-level attribute merge) and **custom events** about them (per-entity
-event log + an event count; an event auto-creates a shell entity; `occurred_at` is a recorded effect)
-— the raw signals a feature engine will later aggregate; all command→event→projection→API.
+event log + an event count; an event auto-creates a shell entity; `occurred_at` is a recorded effect),
+and runs a **feature engine** — windowed `count`/`sum` aggregates over an entity type's event stream
+(`pure domain.Compute`, computed read-time against now so the log stays clock-free), to feed Rule
+nodes; all command→event→projection→API.
 Run it: `go run ./cmd/intraktible serve` then open http://localhost:8080 (dev key `dev-sandbox-key`);
 for UI dev use `make dev` (Vite + Go API). Phase 1 deferrals (CEL, builder UI polish, …) and other
 limitations are tracked in [BUGS.md](BUGS.md).

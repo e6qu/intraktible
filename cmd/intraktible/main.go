@@ -23,6 +23,7 @@ import (
 	caseservice "github.com/e6qu/intraktible/case-manager/service"
 	contextcmd "github.com/e6qu/intraktible/context-layer/command"
 	"github.com/e6qu/intraktible/context-layer/entities"
+	"github.com/e6qu/intraktible/context-layer/features"
 	contextservice "github.com/e6qu/intraktible/context-layer/service"
 	"github.com/e6qu/intraktible/decision-engine/analytics"
 	enginecmd "github.com/e6qu/intraktible/decision-engine/command"
@@ -113,7 +114,7 @@ func run(addr, dataDir, modules, devKey string) error {
 	if enabled(modules, "context-layer") {
 		contextSvc := contextservice.New(contextcmd.NewHandler(log), st)
 		contextSvc.Routes(api)
-		projectors = append(projectors, entities.Projector{})
+		projectors = append(projectors, entities.Projector{}, features.Projector{})
 	}
 
 	rt := projection.New(log, st, projectors...)
