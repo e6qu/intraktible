@@ -95,6 +95,12 @@ func evalNode(n events.Node, ctx map[string]any, edges []events.Edge) (any, stri
 		return evalRule(n, ctx, edges)
 	case events.NodeSplit:
 		return evalSplit(n, ctx, edges)
+	case events.NodeScorecard:
+		return evalScorecard(n, ctx, edges)
+	case events.NodeDecisionTable:
+		return evalDecisionTable(n, ctx, edges)
+	case events.NodeMatrix2D:
+		return evalMatrix(n, ctx, edges)
 	case events.NodeOutput:
 		return evalOutput(n, ctx)
 	default:
@@ -163,6 +169,101 @@ func evalSplit(n events.Node, ctx map[string]any, edges []events.Edge) (any, str
 		return nil, "", fmt.Errorf("decision-engine: node %q split has no %q branch edge", n.ID, branch)
 	}
 	return map[string]any{"branch": branch}, next, nil
+}
+
+func evalScorecard(n events.Node, ctx map[string]any, edges []events.Edge) (any, string, error) {
+	var cfg scorecardConfig
+	if err := decodeConfig(n, &cfg); err != nil {
+		return nil, "", err
+	}
+	output := cfg.Output
+	if output == "" {
+		output = "score"
+	}
+	var score float64
+	for i, f := range cfg.Factors {
+		match, err := evalBool(f.When, ctx)
+		if err != nil {
+			return nil, "", fmt.Errorf("decision-engine: node %q factor %d: %w", n.ID, i, err)
+		}
+		if match {
+			score += f.Weight
+		}
+	}
+	ctx[output] = score
+	return map[string]any{output: score}, firstEdge(edges), nil
+}
+
+func evalDecisionTable(n events.Node, ctx map[string]any, edges []events.Edge) (any, string, error) {
+	var cfg decisionTableConfig
+	if err := decodeConfig(n, &cfg); err != nil {
+		return nil, "", err
+	}
+	applied := make(map[string]any)
+	for i, row := range cfg.Rows {
+		match, err := evalBool(row.When, ctx)
+		if err != nil {
+			return nil, "", fmt.Errorf("decision-engine: node %q row %d condition: %w", n.ID, i, err)
+		}
+		if !match {
+			continue
+		}
+		for _, a := range row.Outputs {
+			v, err := evalAny(a.Expr, ctx)
+			if err != nil {
+				return nil, "", fmt.Errorf("decision-engine: node %q row %d output %q: %w", n.ID, i, a.Target, err)
+			}
+			ctx[a.Target] = v
+			applied[a.Target] = v
+		}
+		if cfg.Mode != "all" {
+			break
+		}
+	}
+	return applied, firstEdge(edges), nil
+}
+
+func evalMatrix(n events.Node, ctx map[string]any, edges []events.Edge) (any, string, error) {
+	var cfg matrixConfig
+	if err := decodeConfig(n, &cfg); err != nil {
+		return nil, "", err
+	}
+	output := cfg.Output
+	if output == "" {
+		output = "result"
+	}
+	row, err := matchAxis(n, "row", cfg.Rows, ctx)
+	if err != nil {
+		return nil, "", err
+	}
+	col, err := matchAxis(n, "col", cfg.Cols, ctx)
+	if err != nil {
+		return nil, "", err
+	}
+	if row >= len(cfg.Cells) || col >= len(cfg.Cells[row]) {
+		return nil, "", fmt.Errorf("decision-engine: node %q matrix cell [%d][%d] out of range", n.ID, row, col)
+	}
+	var v any
+	if err := json.Unmarshal(cfg.Cells[row][col], &v); err != nil {
+		return nil, "", fmt.Errorf("decision-engine: node %q matrix cell [%d][%d]: %w", n.ID, row, col, err)
+	}
+	ctx[output] = v
+	return map[string]any{output: v}, firstEdge(edges), nil
+}
+
+// matchAxis returns the index of the first axis condition that holds, failing
+// loudly when none match (a 2D matrix must cover the input).
+func matchAxis(n events.Node, axis string, conds []axisCond, ctx map[string]any) (int, error) {
+	for i, c := range conds {
+		match, err := evalBool(c.When, ctx)
+		if err != nil {
+			return 0, fmt.Errorf("decision-engine: node %q %s %d: %w", n.ID, axis, i, err)
+		}
+		if match {
+			return i, nil
+		}
+	}
+	return 0, fmt.Errorf("decision-engine: node %q matrix has no matching %s", n.ID, axis)
 }
 
 func evalOutput(n events.Node, ctx map[string]any) (any, string, error) {

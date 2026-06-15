@@ -41,6 +41,43 @@ type outputConfig struct {
 	Fields []string `json:"fields"`
 }
 
+// scorecardConfig is the config of a Scorecard node: a score is the sum of the
+// weights of the factors whose condition holds, written to Output (default
+// "score").
+type scorecardConfig struct {
+	Output  string `json:"output"`
+	Factors []struct {
+		When   string  `json:"when"`
+		Weight float64 `json:"weight"`
+	} `json:"factors"`
+}
+
+// decisionTableConfig is the config of a Decision Table node: ordered rows, each
+// a condition with its output assignments. Mode "first" (default) applies the
+// first matching row; "all" applies every matching row in order.
+type decisionTableConfig struct {
+	Mode string `json:"mode"`
+	Rows []struct {
+		When    string   `json:"when"`
+		Outputs []assign `json:"outputs"`
+	} `json:"rows"`
+}
+
+// axisCond is one bucket of a matrix axis, selected when its condition holds.
+type axisCond struct {
+	When string `json:"when"`
+}
+
+// matrixConfig is the config of a 2D Matrix node: the first matching Rows
+// condition and first matching Cols condition select Cells[row][col], a literal
+// value written to Output (default "result").
+type matrixConfig struct {
+	Output string              `json:"output"`
+	Rows   []axisCond          `json:"rows"`
+	Cols   []axisCond          `json:"cols"`
+	Cells  [][]json.RawMessage `json:"cells"`
+}
+
 // decodeConfig strictly decodes a node's Config into v (unknown fields rejected
 // — fail loudly on a misconfigured node). An empty Config decodes to the zero
 // value, which each evaluator treats as "no-op / defaults".

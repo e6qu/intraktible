@@ -40,10 +40,14 @@ func outputJSON(t *testing.T, run domain.Run) string {
 
 func TestExecuteLinear(t *testing.T) {
 	const (
-		ruleCfg = `{"rules":[{"when":"fico < 600","then":[{"target":"tier","expr":"'low'"}]}]}`
-		twoCfg  = `{"assignments":[{"target":"x","expr":"a + b"},{"target":"y","expr":"x * 2"}]}`
+		ruleCfg   = `{"rules":[{"when":"fico < 600","then":[{"target":"tier","expr":"'low'"}]}]}`
+		twoCfg    = `{"assignments":[{"target":"x","expr":"a + b"},{"target":"y","expr":"x * 2"}]}`
+		scoreCfg  = `{"output":"score","factors":[{"when":"fico < 700","weight":10},{"when":"defaults > 0","weight":25}]}`
+		tableCfg  = `{"rows":[{"when":"score >= 80","outputs":[{"target":"grade","expr":"'A'"}]},{"when":"score >= 60","outputs":[{"target":"grade","expr":"'B'"}]}]}`
+		matrixCfg = `{"output":"tier","rows":[{"when":"income >= 50000"},{"when":"true"}],"cols":[{"when":"score >= 700"},{"when":"true"}],"cells":[["PRIME","NEAR"],["SUB","DECLINE"]]}`
 	)
 	rule := cfgNode("m", events.NodeRule, ruleCfg)
+	gradeOut := cfgNode("out", events.NodeOutput, `{"fields":["grade"]}`)
 	cases := []struct {
 		name  string
 		graph events.Graph
@@ -58,6 +62,10 @@ func TestExecuteLinear(t *testing.T) {
 		{"rule fires", linear(rule, cfgNode("out", events.NodeOutput, `{"fields":["tier"]}`)), map[string]any{"fico": 550}, `{"tier":"low"}`},
 		{"rule skips", linear(rule, cfgNode("out", events.NodeOutput, `{"fields":["tier"]}`)), map[string]any{"fico": 800}, `{"tier":null}`},
 		{"chained deterministically", linear(cfgNode("m", events.NodeAssignment, twoCfg), cfgNode("out", events.NodeOutput, "")), map[string]any{"a": 3, "b": 4}, `{"a":3,"b":4,"x":7,"y":14}`},
+		{"scorecard", linear(cfgNode("m", events.NodeScorecard, scoreCfg), cfgNode("out", events.NodeOutput, `{"fields":["score"]}`)), map[string]any{"fico": 650, "defaults": 1}, `{"score":35}`},
+		{"decision table first row", linear(cfgNode("m", events.NodeDecisionTable, tableCfg), gradeOut), map[string]any{"score": 85}, `{"grade":"A"}`},
+		{"decision table second row", linear(cfgNode("m", events.NodeDecisionTable, tableCfg), gradeOut), map[string]any{"score": 70}, `{"grade":"B"}`},
+		{"2d matrix", linear(cfgNode("m", events.NodeMatrix2D, matrixCfg), cfgNode("out", events.NodeOutput, `{"fields":["tier"]}`)), map[string]any{"income": 60000, "score": 720}, `{"tier":"PRIME"}`},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -123,6 +131,11 @@ func TestExecuteFailsLoudly(t *testing.T) {
 			"unsupported node type",
 			linear(cfgNode("ai", events.NodeAI, ""), cfgNode("out", events.NodeOutput, "")),
 			"ai",
+		},
+		{
+			"matrix with no covering bucket",
+			linear(cfgNode("m", events.NodeMatrix2D, `{"rows":[{"when":"false"}],"cols":[{"when":"true"}],"cells":[["X"]]}`), cfgNode("out", events.NodeOutput, "")),
+			"m",
 		},
 	}
 	for _, c := range cases {
