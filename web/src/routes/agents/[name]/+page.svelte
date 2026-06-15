@@ -130,7 +130,7 @@
     gap: 0.2rem 1rem;
   }
   dt {
-    color: #888;
+    color: var(--fg-subtle);
   }
   .actions {
     margin: 1rem 0;
@@ -150,9 +150,9 @@
     border-radius: 0.3rem;
   }
   .err {
-    color: #b00;
+    color: var(--danger);
   }
   .muted {
-    color: #888;
+    color: var(--fg-subtle);
   }
 </style>

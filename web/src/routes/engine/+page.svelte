@@ -98,9 +98,9 @@
     border-radius: 0.3rem;
   }
   .err {
-    color: #b00;
+    color: var(--danger);
   }
   .muted {
-    color: #888;
+    color: var(--fg-subtle);
   }
 </style>

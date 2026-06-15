@@ -68,7 +68,8 @@ events), and the §9 non-goals.
 
 ## The design in one breath
 Go backend (**functional core / imperative shell**) + **SvelteKit + Svelte Flow** UI embedded in the
-binary. A **pure-Go embedded append-only event log** is the backbone; **hybrid event sourcing**
+binary — a shared layout with **light/dark theming** (toggleable, persisted, OS-default), an inline-SVG
+icon set, and flow **diagram export** (Mermaid / BPMN) from the builder. A **pure-Go embedded append-only event log** is the backbone; **hybrid event sourcing**
 (events are truth, **JSONB projections** are rebuilt views) gives **perfect replay + log-based
 rollback**. **Modular monolith** that also splits into services. **Org+workspace scoped** from day 1.
 Pluggable storage (SQLite/Postgres) and pluggable AI provider. Details: [PLAN.md §3](PLAN.md#3-architecture).

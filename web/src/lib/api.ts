@@ -128,6 +128,25 @@ export async function getFlow(
   return (await res.json()) as Flow;
 }
 
+// ExportFormat is a diagram export the builder offers.
+export type ExportFormat = 'mermaid' | 'mermaid-state' | 'bpmn';
+
+// exportFlow fetches a flow version rendered as a diagram (text), failing loudly.
+export async function exportFlow(
+  key: string,
+  flowId: string,
+  format: ExportFormat,
+  fetcher: typeof fetch = fetch
+): Promise<string> {
+  const res = await fetcher(`/v1/flows/${flowId}/export?format=${format}`, {
+    headers: authHeaders(key)
+  });
+  if (!res.ok) {
+    throw new Error(`export (${format}) failed: ${res.status}`);
+  }
+  return res.text();
+}
+
 export async function publishVersion(
   key: string,
   flowId: string,

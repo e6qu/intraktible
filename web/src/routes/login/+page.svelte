@@ -52,6 +52,6 @@
     padding: 0.4rem 0.6rem;
   }
   .err {
-    color: #b00;
+    color: var(--danger);
   }
 </style>

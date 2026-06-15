@@ -144,7 +144,7 @@
     gap: 0.2rem 1rem;
   }
   dt {
-    color: #888;
+    color: var(--fg-subtle);
   }
   .actions {
     margin: 1rem 0;
@@ -161,16 +161,16 @@
     border-radius: 0.3rem;
   }
   .err {
-    color: #b00;
+    color: var(--danger);
   }
   .muted {
-    color: #888;
+    color: var(--fg-subtle);
   }
   .sla-due_soon {
-    color: #b26a00;
+    color: var(--warn);
   }
   .sla-overdue {
-    color: #b00;
+    color: var(--danger);
     font-weight: 600;
   }
 </style>

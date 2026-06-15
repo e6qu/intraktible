@@ -137,13 +137,13 @@
   td {
     text-align: left;
     padding: 0.4rem 0.6rem;
-    border-bottom: 1px solid #eee;
+    border-bottom: 1px solid var(--border);
   }
   .err {
-    color: #b00;
+    color: var(--danger);
   }
   .muted {
-    color: #888;
+    color: var(--fg-subtle);
   }
   .summary {
     display: flex;
@@ -151,28 +151,28 @@
     flex-wrap: wrap;
     margin: 0.6rem 0 1rem;
     padding: 0.6rem 0.8rem;
-    background: #f6f7f9;
+    background: var(--surface-2);
     border-radius: 6px;
   }
   .stat {
-    color: #555;
+    color: var(--fg-muted);
     font-size: 0.9rem;
   }
   .stat b {
-    color: #111;
+    color: var(--fg);
     font-size: 1.05rem;
   }
   .stat.due b {
-    color: #b26a00;
+    color: var(--warn);
   }
   .stat.over b {
-    color: #b00;
+    color: var(--danger);
   }
   .sla-due_soon {
-    color: #b26a00;
+    color: var(--warn);
   }
   .sla-overdue {
-    color: #b00;
+    color: var(--danger);
     font-weight: 600;
   }
 </style>

@@ -15,11 +15,15 @@
     getFlow,
     publishVersion,
     decide,
+    exportFlow,
+    type ExportFormat,
     type Flow,
     type GraphNode,
     type GraphEdge
   } from '$lib/api';
   import { layout } from '$lib/layout';
+  import { theme } from '$lib/theme';
+  import Icon from '$lib/Icon.svelte';
   import {
     asText,
     asNum,
@@ -371,6 +375,37 @@
     }
   }
 
+  let exportMsg = $state('');
+  function exportFilename(format: ExportFormat): string {
+    const base = flow?.slug ?? flowId;
+    if (format === 'bpmn') return `${base}.bpmn`;
+    return format === 'mermaid-state' ? `${base}-state.mmd` : `${base}.mmd`;
+  }
+  async function downloadExport(format: ExportFormat) {
+    exportMsg = '';
+    try {
+      const text = await exportFlow(key, flowId, format);
+      const url = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = exportFilename(format);
+      a.click();
+      URL.revokeObjectURL(url);
+      exportMsg = `Downloaded ${exportFilename(format)}`;
+    } catch (e) {
+      error = msg(e);
+    }
+  }
+  async function copyExport(format: ExportFormat) {
+    exportMsg = '';
+    try {
+      await navigator.clipboard.writeText(await exportFlow(key, flowId, format));
+      exportMsg = `Copied ${format} to clipboard`;
+    } catch (e) {
+      error = msg(e);
+    }
+  }
+
   onMount(load);
 </script>
 
@@ -379,15 +414,50 @@
   <h1>{flow?.name ?? flowId}</h1>
   <div class="row">
     <input bind:value={key} aria-label="API key" />
-    <button onclick={load}>Reload</button>
-    <button onclick={publish}>Publish version</button>
+    <button onclick={load}><Icon name="reload" size={15} /> Reload</button>
+    <button class="primary" onclick={publish}
+      ><Icon name="check" size={15} /> Publish version</button
+    >
     {#if publishMsg}<span class="ok">{publishMsg}</span>{/if}
+  </div>
+  <div class="row export">
+    <span class="exportlabel"><Icon name="diagram" size={15} /> Export</span>
+    <div class="grp">
+      <button onclick={() => downloadExport('mermaid')} title="Download Mermaid flowchart">
+        <Icon name="download" size={14} /> Mermaid
+      </button>
+      <button
+        class="icon"
+        aria-label="Copy Mermaid"
+        title="Copy Mermaid"
+        onclick={() => copyExport('mermaid')}
+      >
+        <Icon name="copy" size={14} />
+      </button>
+    </div>
+    <button onclick={() => downloadExport('mermaid-state')} title="Download Mermaid state diagram">
+      <Icon name="download" size={14} /> State
+    </button>
+    <div class="grp">
+      <button onclick={() => downloadExport('bpmn')} title="Download BPMN 2.0 XML">
+        <Icon name="download" size={14} /> BPMN
+      </button>
+      <button
+        class="icon"
+        aria-label="Copy BPMN"
+        title="Copy BPMN"
+        onclick={() => copyExport('bpmn')}
+      >
+        <Icon name="copy" size={14} />
+      </button>
+    </div>
+    {#if exportMsg}<span class="ok">{exportMsg}</span>{/if}
   </div>
   {#if error}<p class="err">{error}</p>{/if}
 
   <div class="grid">
     <div class="canvas" data-testid="flow-canvas">
-      <SvelteFlow bind:nodes bind:edges onconnect={onConnect} fitView>
+      <SvelteFlow bind:nodes bind:edges onconnect={onConnect} colorMode={$theme} fitView>
         <Background />
         <Controls />
       </SvelteFlow>
@@ -406,12 +476,14 @@
       <ul class="nodes">
         {#each editNodes as n (n.id)}
           <li class:sel={n.id === selectedId}>
-            <button class="link" onclick={() => (selectedId = n.id)}
-              >{n.name || n.id} · {n.type}</button
-            >
-            <button class="x" aria-label={`delete ${n.id}`} onclick={() => deleteNode(n.id)}
-              >✕</button
-            >
+            <button class="link" onclick={() => (selectedId = n.id)}>
+              <span class="nodeicon" title={n.type}><Icon name={n.type} size={15} /></span>
+              <span>{n.name || n.id}</span>
+              <span class="nodetype">{n.type}</span>
+            </button>
+            <button class="x" aria-label={`delete ${n.id}`} onclick={() => deleteNode(n.id)}>
+              <Icon name="trash" size={14} />
+            </button>
           </li>
         {/each}
       </ul>
@@ -823,11 +895,11 @@
     display: block;
     margin: 0.4rem 0;
     font-size: 0.85rem;
-    color: #555;
+    color: var(--fg-muted);
   }
   .canvas {
     height: 460px;
-    border: 1px solid #ccc;
+    border: 1px solid var(--border-strong);
     border-radius: 0.5rem;
   }
   aside {
@@ -838,7 +910,7 @@
     margin: 0.8rem 0 0.3rem;
     text-transform: uppercase;
     letter-spacing: 0.03em;
-    color: #888;
+    color: var(--fg-subtle);
   }
   ul.nodes,
   ul.edges {
@@ -859,16 +931,70 @@
   button.link {
     background: none;
     border: none;
-    padding: 0;
-    color: #06c;
+    padding: 0.15rem 0.2rem;
+    color: var(--fg);
     cursor: pointer;
     text-align: left;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    flex: 1;
+    min-width: 0;
+    justify-content: flex-start;
+  }
+  button.link:hover {
+    color: var(--link);
+    background: none;
+  }
+  .nodeicon {
+    display: inline-flex;
+    color: var(--accent);
+  }
+  .nodetype {
+    margin-left: auto;
+    font-size: 0.7rem;
+    color: var(--fg-subtle);
+    font-family: ui-monospace, monospace;
   }
   button.x {
     border: none;
     background: none;
-    color: #b00;
+    color: var(--fg-subtle);
     cursor: pointer;
+    padding: 0.15rem;
+  }
+  button.x:hover {
+    color: var(--danger);
+    background: none;
+  }
+  .export {
+    align-items: center;
+    gap: 0.4rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.35rem 0.6rem;
+    background: var(--surface);
+  }
+  .exportlabel {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.8rem;
+    color: var(--fg-muted);
+    font-weight: 550;
+  }
+  .export .grp {
+    display: inline-flex;
+  }
+  .export .grp button:first-child {
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+  }
+  .export .grp button.icon {
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+    border-left: none;
+    padding: 0.4rem 0.5rem;
   }
   pre {
     background: #8881;
@@ -877,14 +1003,14 @@
     min-height: 2rem;
   }
   .err {
-    color: #b00;
+    color: var(--danger);
   }
   .ok {
-    color: #080;
+    color: var(--ok);
   }
   .muted {
     font-size: 0.8rem;
-    color: #888;
+    color: var(--fg-subtle);
     margin: 0.5rem 0 0.2rem;
   }
   .clause {
@@ -897,7 +1023,7 @@
   }
   .cellrow {
     font-size: 0.75rem;
-    color: #888;
+    color: var(--fg-subtle);
     min-width: 5rem;
   }
 </style>
