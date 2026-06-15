@@ -9,6 +9,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
@@ -47,21 +49,49 @@ func OpenWAL(dir string) (*WAL, error) {
 	return w, nil
 }
 
+// load replays the file into memory. Each record is a newline-terminated JSON
+// line. A complete line that fails to parse is real corruption and fails loudly.
+// A trailing line WITHOUT a newline is a torn write — a crash interrupted an
+// Append before it fsync'd and acknowledged — so it is truncated and recovered
+// (no acknowledged event is dropped). It also leaves the write offset at the end
+// of the last good record so subsequent appends are clean.
 func (w *WAL) load() error {
-	sc := bufio.NewScanner(w.f)
-	sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
-	for sc.Scan() {
-		line := sc.Bytes()
-		if len(line) == 0 {
+	r := bufio.NewReaderSize(w.f, 64*1024)
+	var offset int64 // bytes of complete, valid records
+	for {
+		line, err := r.ReadBytes('\n')
+		complete := len(line) > 0 && line[len(line)-1] == '\n'
+		if complete {
+			if rec := line[:len(line)-1]; len(rec) > 0 {
+				var e Envelope
+				if uerr := json.Unmarshal(rec, &e); uerr != nil {
+					return fmt.Errorf("eventlog: corrupt record at seq %d: %w", len(w.events)+1, uerr)
+				}
+				w.events = append(w.events, e)
+			}
+			offset += int64(len(line))
 			continue
 		}
-		var e Envelope
-		if err := json.Unmarshal(line, &e); err != nil {
-			return fmt.Errorf("eventlog: corrupt record at seq %d: %w", len(w.events)+1, err)
+		// No trailing newline: either clean EOF (offset==size, no-op) or a torn
+		// final write to drop.
+		if err == io.EOF {
+			if len(line) > 0 {
+				slog.Warn("eventlog: discarding torn final record (crash during append)",
+					"bytes", len(line), "after_seq", len(w.events))
+			}
+			break
 		}
-		w.events = append(w.events, e)
+		if err != nil {
+			return fmt.Errorf("eventlog: read log: %w", err)
+		}
 	}
-	return sc.Err()
+	if err := w.f.Truncate(offset); err != nil {
+		return fmt.Errorf("eventlog: truncate to last good record: %w", err)
+	}
+	if _, err := w.f.Seek(offset, io.SeekStart); err != nil {
+		return fmt.Errorf("eventlog: seek to append position: %w", err)
+	}
+	return nil
 }
 
 // Append assigns the next Seq, persists durably, then publishes. Caller-supplied
