@@ -254,8 +254,18 @@ intraktible/
   Layer. Full test pyramid (unit/integration/API-e2e); all CI gates green. **Deferred from Phase 3**
   (in `BUGS.md`): a **SQL** reference connector (D14); an SSRF/egress policy for the HTTP connector
   (D15).
-- **Phase 4 — Agent Manager:** agent config + AI-node execution, structured output, run monitoring,
-  human-in-the-loop → Case Manager.
+- **Phase 4 — Agent Manager — 🚧 IN PROGRESS.** Done: **agent definitions** (a config over the
+  pluggable AI provider — `name`, optional `provider`/`model`, `system` prompt, optional
+  structured-output JSON `schema`, declared `tools`) and **agent runs** (invoking the provider with
+  that config + a prompt; the response — text or schema-constrained structured output — is captured in
+  an `AgentRunRecorded` event so a run is auditable and replay reads the recorded output, not a re-call
+  of the non-deterministic model; a provider failure is a recorded `failed` run). Command→event→
+  projection→API: `/v1/agents` (+`/{name}`), `/v1/agents/{name}/run`, `/v1/agents/{name}/runs`,
+  `/v1/agent-runs/{run_id}`; module `agent-manager`; only the Stub AI provider is wired (D5).
+  Enabling refactor: hoisted `eventlog.AppendJSON` (the marshal→append spine). Remaining to close the
+  phase: a decision-engine **AI node** that runs an agent in a flow (provider port + adapter, like
+  features/connectors); **human-in-the-loop** escalation to the Case Manager; richer run monitoring;
+  and an agents UI.
 - **Phase 5 — Harden:** replay/rollback tooling, split-services profile, docs, examples.
 
 > Per project convention: at the **end of every phase**, update `PLAN.md` and `BUGS.md` in the same

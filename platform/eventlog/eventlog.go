@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -43,4 +44,18 @@ type Log interface {
 	// Head returns the highest assigned Seq (0 when empty).
 	Head() uint64
 	Close() error
+}
+
+// AppendJSON marshals payload and appends it as a typed event for the given
+// tenant + stream — the shared write-side spine that command handlers wrap with
+// their stream constant and clock.
+func AppendJSON(ctx context.Context, log Log, org, workspace, actor, stream, typ string, at time.Time, payload any) (Envelope, error) {
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return Envelope{}, fmt.Errorf("eventlog: marshal %s: %w", typ, err)
+	}
+	return log.Append(ctx, Envelope{
+		Org: org, Workspace: workspace, Actor: actor,
+		Stream: stream, Type: typ, Time: at, Payload: b,
+	})
 }

@@ -18,6 +18,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/e6qu/intraktible/agent-manager/agents"
+	agentcmd "github.com/e6qu/intraktible/agent-manager/command"
+	agentservice "github.com/e6qu/intraktible/agent-manager/service"
 	"github.com/e6qu/intraktible/case-manager/cases"
 	casecmd "github.com/e6qu/intraktible/case-manager/command"
 	caseservice "github.com/e6qu/intraktible/case-manager/service"
@@ -34,6 +37,7 @@ import (
 	hellocmd "github.com/e6qu/intraktible/hello/command"
 	helloservice "github.com/e6qu/intraktible/hello/service"
 	"github.com/e6qu/intraktible/hello/stats"
+	"github.com/e6qu/intraktible/platform/ai"
 	"github.com/e6qu/intraktible/platform/auth"
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/httpx"
@@ -123,6 +127,16 @@ func run(addr, dataDir, modules, devKey string) error {
 		contextSvc := contextservice.New(contextcmd.NewHandler(log), st)
 		contextSvc.Routes(api)
 		projectors = append(projectors, entities.Projector{}, features.Projector{}, connectors.Projector{})
+	}
+
+	if enabled(modules, "agent-manager") {
+		// Agents run over the pluggable AI provider; only the Stub is wired today
+		// (real Claude/OpenAI/… adapters are tracked in BUGS).
+		registry := ai.NewRegistry()
+		registry.Register(ai.Stub{})
+		agentSvc := agentservice.New(agentcmd.NewHandler(log, st, registry), st)
+		agentSvc.Routes(api)
+		projectors = append(projectors, agents.Projector{})
 	}
 
 	rt := projection.New(log, st, projectors...)
