@@ -1,7 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import { describe, it, expect, vi } from 'vitest';
-import { getStats, sayHello, listFlows, createFlow, decide, publishVersion } from './api';
+import {
+  getStats,
+  sayHello,
+  listFlows,
+  createFlow,
+  decide,
+  publishVersion,
+  listCases,
+  requestReview,
+  assignCase,
+  setCaseStatus
+} from './api';
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -99,5 +110,43 @@ describe('flows', () => {
     const [url, init] = fetcher.mock.calls[0];
     expect(url).toBe('/v1/flows/scoring/production/decide');
     expect(init?.body).toBe(JSON.stringify({ data: { fico: 700 } }));
+  });
+});
+
+describe('cases', () => {
+  it('listCases applies filters as query params and unwraps the array', async () => {
+    const fetcher = fetcherReturning(200, { cases: [{ case_id: 'c1', status: 'needs_review' }] });
+    const cs = await listCases('k', { status: 'needs_review', type: 'aml' }, fetcher);
+    expect(cs).toHaveLength(1);
+    const [url] = fetcher.mock.calls[0];
+    expect(url).toBe('/v1/cases?status=needs_review&type=aml');
+  });
+
+  it('requestReview posts the case fields', async () => {
+    const fetcher = fetcherReturning(201, { case_id: 'c1' });
+    const res = await requestReview(
+      'k',
+      { company_name: 'Acme', case_type: 'aml', sla_days: 5 },
+      fetcher
+    );
+    expect(res.case_id).toBe('c1');
+    const [url, init] = fetcher.mock.calls[0];
+    expect(url).toBe('/v1/cases');
+    expect(init?.body).toBe(
+      JSON.stringify({ company_name: 'Acme', case_type: 'aml', sla_days: 5 })
+    );
+  });
+
+  it('assignCase posts to the assign action', async () => {
+    const fetcher = fetcherReturning(202, {});
+    await assignCase('k', 'c1', 'adam', fetcher);
+    const [url, init] = fetcher.mock.calls[0];
+    expect(url).toBe('/v1/cases/c1/assign');
+    expect(init?.body).toBe(JSON.stringify({ assignee: 'adam' }));
+  });
+
+  it('setCaseStatus surfaces the backend error', async () => {
+    const fetcher = fetcherReturning(400, { error: 'unknown case' });
+    await expect(setCaseStatus('k', 'ghost', 'completed', fetcher)).rejects.toThrow(/unknown case/);
   });
 });

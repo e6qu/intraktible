@@ -220,7 +220,9 @@ intraktible/
   built from events; queue listing filtered by status/type/assignee; and the **escalation hook** — a
   decision flow's `manual_review` node makes the engine emit `decision.manual_review_requested`,
   which the Case Manager consumes to open a case linked by `source_decision_id` (cross-component via
-  the event log only). Remaining: the dashboard/detail UI in `web/`; SLA "days left".
+  the event log only); and the **dashboard UI** (`web/src/routes/cases`) — queue with filters +
+  case-detail with assign/status/note actions and the audit log. Remaining: SLA "days left" and queue
+  summary metrics.
 - **Phase 3 — Context Layer:** entities/events/features + feature engine, connector interface +
   reference connectors + Custom Connect Node, wired into Rule/Connect nodes.
 - **Phase 4 — Agent Manager:** agent config + AI-node execution, structured output, run monitoring,

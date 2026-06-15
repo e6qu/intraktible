@@ -23,7 +23,8 @@ The **Svelte Flow builder UI** (`web/src/routes/engine`) lists/creates flows and
 validation surfaced), renders it on a canvas (auto-layout), and runs inline test decisions.
 The **Case Manager** (`case-manager/`) opens cases — manually or **escalated from a decision flow's
 `manual_review` node** (cross-component via the event log, linked by `source_decision_id`) — with
-assignment / status / notes, a queue with filters, and a per-case audit log built from events.
+assignment / status / notes, a queue with filters, and a per-case audit log built from events; its
+**dashboard UI** (`web/src/routes/cases`) has the queue + case-detail view with those actions.
 Run it: `go run ./cmd/intraktible serve` then open http://localhost:8080 (dev key `dev-sandbox-key`);
 for UI dev use `make dev` (Vite + Go API). Phase 1 deferrals (CEL, builder UI polish, …) and other
 limitations are tracked in [BUGS.md](BUGS.md).

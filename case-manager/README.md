@@ -25,7 +25,8 @@ Done — case lifecycle + queues + flow escalation (command→event→projection
   - `GET /v1/cases?status=&type=&assignee=` — the queue, filtered
   - `GET /v1/cases/{case_id}` — detail + notes + audit
   - `POST /v1/cases/{case_id}/assign|status|notes`
-- Run it: `intraktible serve --modules=case-manager`.
+- **Dashboard UI** (`web/src/routes/cases`): a queue (with a status filter + open-case form) and a
+  case-detail view (fields, notes, **audit log**, and assign / set-status / add-note actions).
+- Run it: `intraktible serve --modules=case-manager` (UI dev: `make dev`).
 
-Next (PLAN §4.2): the dashboard UI (queue metrics + case detail) in `web/`; SLA "days left"
-computation.
+Next (PLAN §4.2): SLA "days left" computation; queue summary metrics; richer case detail (context view).

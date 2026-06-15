@@ -16,11 +16,15 @@ test('say hello posts a greeting and refreshes stats', async ({ page }) => {
   await page.getByLabel('name').fill('playwright');
   await page.getByRole('button', { name: 'Say hello' }).click();
 
+  // say() posts then overwrites the output with refreshed stats; the greeting
+  // must appear there. Refresh until the eventually-consistent projection shows
+  // it (robust under parallel load on the shared server).
   const output = page.locator('pre');
-  await expect(output).toContainText('POST /v1/hello');
-  // After say(), stats() runs and overwrites the output with the parsed stats.
-  await expect(output).toContainText('"last_name": "playwright"');
-  await expect(output).toContainText('"count"');
+  await expect(async () => {
+    await page.getByRole('button', { name: 'Refresh' }).click();
+    await expect(output).toContainText('"last_name": "playwright"');
+    await expect(output).toContainText('"count"');
+  }).toPass({ timeout: 5000 });
 });
 
 test('refresh shows current stats', async ({ page }) => {

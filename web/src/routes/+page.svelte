@@ -26,9 +26,11 @@
 
 <main>
   <h1>intraktible — Phase 0 vertical slice</h1>
+  <p>command → event log → projection → API → this UI.</p>
   <p>
-    command → event log → projection → API → this UI.
-    <a href="/engine">Open the Decision Engine builder →</a>
+    <a href="/engine">Decision Engine builder →</a>
+    &nbsp;·&nbsp;
+    <a href="/cases">Case Manager queue →</a>
   </p>
   <div class="row">
     <input bind:value={key} aria-label="API key" />

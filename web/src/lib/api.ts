@@ -164,3 +164,134 @@ export async function decide(
   }
   return (await res.json()) as DecideResult;
 }
+
+// ---- Case Manager ----
+
+export interface CaseNote {
+  author: string;
+  text: string;
+  at: string;
+}
+
+export interface CaseAudit {
+  type: string;
+  actor: string;
+  at: string;
+  detail?: string;
+}
+
+export interface Case {
+  case_id: string;
+  company_name: string;
+  case_type: string;
+  status: string;
+  assignee?: string;
+  sla_days: number;
+  source_decision_id?: string;
+  context?: unknown;
+  notes: CaseNote[];
+  audit: CaseAudit[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CaseFilter {
+  status?: string;
+  type?: string;
+  assignee?: string;
+}
+
+// errorOrStatus throws the backend's error message (or a status fallback).
+async function errorOrStatus(res: Response, label: string): Promise<never> {
+  const body = (await res.json().catch(() => ({}))) as { error?: string };
+  throw new Error(body.error ?? `${label}: ${res.status}`);
+}
+
+export async function listCases(
+  key: string,
+  filter: CaseFilter = {},
+  fetcher: typeof fetch = fetch
+): Promise<Case[]> {
+  const q = new URLSearchParams();
+  if (filter.status) q.set('status', filter.status);
+  if (filter.type) q.set('type', filter.type);
+  if (filter.assignee) q.set('assignee', filter.assignee);
+  const qs = q.toString();
+  const res = await fetcher(`/v1/cases${qs ? '?' + qs : ''}`, { headers: authHeaders(key) });
+  if (!res.ok) {
+    return errorOrStatus(res, 'GET /v1/cases');
+  }
+  return ((await res.json()) as { cases: Case[] }).cases ?? [];
+}
+
+export async function getCase(
+  key: string,
+  caseID: string,
+  fetcher: typeof fetch = fetch
+): Promise<Case> {
+  const res = await fetcher(`/v1/cases/${caseID}`, { headers: authHeaders(key) });
+  if (!res.ok) {
+    return errorOrStatus(res, `GET /v1/cases/${caseID}`);
+  }
+  return (await res.json()) as Case;
+}
+
+export async function requestReview(
+  key: string,
+  body: { company_name: string; case_type: string; sla_days: number },
+  fetcher: typeof fetch = fetch
+): Promise<{ case_id: string }> {
+  const res = await fetcher('/v1/cases', {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'POST /v1/cases');
+  }
+  return (await res.json()) as { case_id: string };
+}
+
+async function caseAction(
+  key: string,
+  caseID: string,
+  action: string,
+  body: Record<string, unknown>,
+  fetcher: typeof fetch
+): Promise<void> {
+  const res = await fetcher(`/v1/cases/${caseID}/${action}`, {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) {
+    await errorOrStatus(res, `POST /v1/cases/${caseID}/${action}`);
+  }
+}
+
+export function assignCase(
+  key: string,
+  caseID: string,
+  assignee: string,
+  fetcher: typeof fetch = fetch
+): Promise<void> {
+  return caseAction(key, caseID, 'assign', { assignee }, fetcher);
+}
+
+export function setCaseStatus(
+  key: string,
+  caseID: string,
+  status: string,
+  fetcher: typeof fetch = fetch
+): Promise<void> {
+  return caseAction(key, caseID, 'status', { status }, fetcher);
+}
+
+export function addCaseNote(
+  key: string,
+  caseID: string,
+  text: string,
+  fetcher: typeof fetch = fetch
+): Promise<void> {
+  return caseAction(key, caseID, 'notes', { text }, fetcher);
+}
