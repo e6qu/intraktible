@@ -17,8 +17,10 @@ export interface SayHelloResult {
   seq: number;
 }
 
+// authHeaders adds the API-key header only when a key is given; with an empty key
+// the request authenticates via the session cookie (sent automatically same-origin).
 function authHeaders(key: string): Record<string, string> {
-  return { 'X-Api-Key': key };
+  return key ? { 'X-Api-Key': key } : {};
 }
 
 export async function getStats(key: string, fetcher: typeof fetch = fetch): Promise<HelloStats> {

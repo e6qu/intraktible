@@ -3,7 +3,8 @@
   import { onMount } from 'svelte';
   import { listAgents, defineAgent, getRunSummary, type Agent, type RunSummary } from '$lib/api';
 
-  let key = $state('dev-sandbox-key');
+  // API calls authenticate via the session cookie (empty key -> no X-Api-Key header).
+  const key = '';
   let list = $state<Agent[]>([]);
   let summary = $state<RunSummary | null>(null);
   let error = $state('');
@@ -39,7 +40,6 @@
 <main>
   <h1>Agent Manager</h1>
   <div class="row">
-    <input bind:value={key} aria-label="API key" />
     <button onclick={load}>Reload</button>
   </div>
 

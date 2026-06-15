@@ -2,6 +2,7 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { login } from '$lib/api';
+  import { user } from '$lib/session';
 
   let apiKey = $state('dev-sandbox-key');
   let error = $state('');
@@ -9,7 +10,7 @@
   async function submit() {
     error = '';
     try {
-      await login(apiKey);
+      user.set(await login(apiKey));
       await goto('/');
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);

@@ -3,6 +3,11 @@ import { test, expect } from '@playwright/test';
 
 const KEY = 'dev-sandbox-key';
 
+// The UI authenticates via the session cookie; sign the page context in first.
+test.beforeEach(async ({ page }) => {
+  await page.context().request.post('/v1/login', { data: { api_key: KEY } });
+});
+
 test('opens a case from the queue and shows SLA + summary', async ({ page }) => {
   await page.goto('/cases');
   await expect(page.getByRole('heading', { name: /Case Manager/i })).toBeVisible();

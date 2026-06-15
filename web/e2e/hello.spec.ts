@@ -1,8 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { test, expect } from '@playwright/test';
 
-// Covers every UI flow currently exposed by the app (the Phase 0 hello slice).
-// As the Decision Engine builder UI lands, its flows get their own specs here.
+const KEY = 'dev-sandbox-key';
+
+// Covers the Phase 0 hello slice on the landing page. The UI authenticates via the
+// session cookie now, so the demo tests sign in first; the error test does not.
+async function signIn(page: import('@playwright/test').Page) {
+  await page.context().request.post('/v1/login', { data: { api_key: KEY } });
+}
 
 test('landing page renders', async ({ page }) => {
   await page.goto('/');
@@ -12,13 +17,13 @@ test('landing page renders', async ({ page }) => {
 });
 
 test('say hello posts a greeting and refreshes stats', async ({ page }) => {
+  await signIn(page);
   await page.goto('/');
   await page.getByLabel('name').fill('playwright');
   await page.getByRole('button', { name: 'Say hello' }).click();
 
   // say() posts then overwrites the output with refreshed stats; the greeting
-  // must appear there. Refresh until the eventually-consistent projection shows
-  // it (robust under parallel load on the shared server).
+  // must appear there. Refresh until the eventually-consistent projection shows it.
   const output = page.locator('pre');
   await expect(async () => {
     await page.getByRole('button', { name: 'Refresh' }).click();
@@ -28,16 +33,16 @@ test('say hello posts a greeting and refreshes stats', async ({ page }) => {
 });
 
 test('refresh shows current stats', async ({ page }) => {
+  await signIn(page);
   await page.goto('/');
   await page.getByRole('button', { name: 'Refresh' }).click();
   await expect(page.locator('pre')).toContainText('"count"');
 });
 
-test('a rejected api key surfaces an error, not silent success', async ({ page }) => {
+test('an unauthenticated request surfaces an error, not silent success', async ({ page }) => {
+  // No sign-in: the session cookie is absent, so the call must fail loudly (401)
+  // and the UI must display the error (not a fake success).
   await page.goto('/');
-  await page.getByLabel('API key').fill('not-a-valid-key');
-  // The client fails loudly on non-2xx; the UI must display the error (not a
-  // fake success and not an unhandled rejection).
   await page.getByRole('button', { name: 'Refresh' }).click();
   const output = page.locator('pre');
   await expect(output).toContainText('Error:');

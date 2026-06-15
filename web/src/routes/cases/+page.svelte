@@ -3,7 +3,8 @@
   import { onMount } from 'svelte';
   import { listCases, getCaseSummary, requestReview, type Case, type CaseSummary } from '$lib/api';
 
-  let key = $state('dev-sandbox-key');
+  // API calls authenticate via the session cookie (empty key -> no X-Api-Key header).
+  const key = '';
   let statusFilter = $state('');
   let list = $state<Case[]>([]);
   let summary = $state<CaseSummary | null>(null);
@@ -43,7 +44,6 @@
 <main>
   <h1>Case Manager — Queue</h1>
   <div class="row">
-    <input bind:value={key} aria-label="API key" />
     <label
       >status
       <select bind:value={statusFilter} onchange={load} aria-label="status filter">

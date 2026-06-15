@@ -7,12 +7,14 @@
   import { page } from '$app/stores';
   import Icon from '$lib/Icon.svelte';
   import { initTheme, toggleTheme, theme as themeStore } from '$lib/theme';
+  import { user, refreshUser, signOut } from '$lib/session';
 
   let { children } = $props();
   let theme = $state<'light' | 'dark'>('light');
 
   onMount(() => {
     theme = initTheme();
+    void refreshUser();
     return themeStore.subscribe((t) => (theme = t));
   });
 
@@ -41,6 +43,15 @@
       </a>
     {/each}
   </nav>
+  <span class="auth" data-testid="auth-status">
+    {#if $user}
+      <span class="who">Signed in as <b>{$user.actor}</b></span>
+      <button class="ghost" onclick={signOut}><Icon name="signout" size={14} /> Sign out</button>
+    {:else}
+      <span class="who muted">Not signed in</span>
+      <a class="navlink" href="/login">Sign in</a>
+    {/if}
+  </span>
   <button
     class="toggle"
     onclick={() => (theme = toggleTheme(theme))}
@@ -113,6 +124,33 @@
   .navlink.active {
     background: color-mix(in srgb, var(--accent) 14%, transparent);
     color: var(--accent);
+  }
+  .auth {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.6rem;
+    font-size: 0.85rem;
+  }
+  .auth .who {
+    color: var(--fg-muted);
+  }
+  .auth .muted {
+    color: var(--fg-subtle);
+  }
+  .auth .ghost {
+    border-color: transparent;
+    background: none;
+    color: var(--fg-muted);
+    padding: 0.3rem 0.5rem;
+  }
+  .auth .ghost:hover {
+    background: var(--surface-2);
+    color: var(--fg);
+  }
+  @media (max-width: 640px) {
+    .auth .who {
+      display: none;
+    }
   }
   .toggle {
     display: inline-flex;

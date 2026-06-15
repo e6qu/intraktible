@@ -57,6 +57,7 @@ test.beforeAll(async ({ request }) => {
 
 for (const themeMode of ['light', 'dark']) {
   test(`screenshots — ${themeMode}`, async ({ page }) => {
+    await page.context().request.post('/v1/login', { data: { api_key: KEY } });
     await page.addInitScript((t) => localStorage.setItem('intraktible-theme', t), themeMode);
     const routes: Record<string, string> = {
       home: '/',

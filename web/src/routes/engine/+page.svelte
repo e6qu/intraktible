@@ -3,7 +3,8 @@
   import { onMount } from 'svelte';
   import { listFlows, createFlow, type Flow } from '$lib/api';
 
-  let key = $state('dev-sandbox-key');
+  // API calls authenticate via the session cookie (empty key -> no X-Api-Key header).
+  const key = '';
   let flows = $state<Flow[]>([]);
   let slug = $state('');
   let name = $state('');
@@ -36,7 +37,6 @@
 <main>
   <h1>Decision Engine — Flows</h1>
   <div class="row">
-    <input bind:value={key} aria-label="API key" />
     <button onclick={load}>Reload</button>
   </div>
 

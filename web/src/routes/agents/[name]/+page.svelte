@@ -11,7 +11,8 @@
     type AgentRun
   } from '$lib/api';
 
-  let key = $state('dev-sandbox-key');
+  // API calls authenticate via the session cookie (empty key -> no X-Api-Key header).
+  const key = '';
   let agent = $state<Agent | null>(null);
   let runs = $state<AgentRun[]>([]);
   let error = $state('');
@@ -76,7 +77,6 @@
   {#if error}<p class="err">{error}</p>{/if}
 
   <div class="row">
-    <input bind:value={key} aria-label="API key" />
     <button onclick={load}>Reload</button>
   </div>
 

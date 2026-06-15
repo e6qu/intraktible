@@ -1,8 +1,11 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
-  import { onMount } from 'svelte';
   import Icon from '$lib/Icon.svelte';
-  import { getStats, sayHello, currentUser, logout, type Identity } from '$lib/api';
+  import { getStats, sayHello } from '$lib/api';
+  import { user } from '$lib/session';
+
+  // API calls authenticate via the session cookie (empty key → no X-Api-Key).
+  const key = '';
 
   const components = [
     {
@@ -25,23 +28,8 @@
     }
   ];
 
-  let key = $state('dev-sandbox-key');
   let name = $state('world');
   let out = $state('stats will appear here…');
-  let user = $state<Identity | null>(null);
-
-  async function refreshUser() {
-    try {
-      user = await currentUser();
-    } catch {
-      user = null;
-    }
-  }
-  async function signOut() {
-    await logout();
-    await refreshUser();
-  }
-  onMount(refreshUser);
 
   async function stats() {
     try {
@@ -67,14 +55,11 @@
     <p class="tagline">
       An open-source agentic decision platform — event-sourced, replayable, fully self-hosted.
     </p>
-    <p data-testid="auth-status" class="auth">
-      {#if user}
-        Signed in as <b>{user.actor}</b> <span class="muted">({user.org}/{user.workspace})</span>
-        <button onclick={signOut}><Icon name="signout" size={14} /> Sign out</button>
-      {:else}
-        Not signed in — <a href="/login">sign in →</a>
-      {/if}
-    </p>
+    {#if !$user}
+      <p class="muted">
+        <a href="/login">Sign in</a> to use the components below.
+      </p>
+    {/if}
   </section>
 
   <section class="cards">
@@ -91,7 +76,6 @@
     <h2>Phase 0 vertical slice</h2>
     <p class="muted">command → event log → projection → API → this UI.</p>
     <div class="row">
-      <input bind:value={key} aria-label="API key" placeholder="API key" />
       <input bind:value={name} aria-label="name" placeholder="name" />
       <button class="primary" onclick={say}>Say hello</button>
       <button onclick={stats}><Icon name="reload" size={14} /> Refresh</button>
@@ -113,12 +97,6 @@
     color: var(--fg-muted);
     font-size: 1.05rem;
     margin-top: 0.25rem;
-  }
-  .auth {
-    margin-top: 0.75rem;
-  }
-  .auth .muted {
-    color: var(--fg-subtle);
   }
   .cards {
     display: grid;

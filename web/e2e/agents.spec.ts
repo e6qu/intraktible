@@ -7,6 +7,11 @@ function uniqueName(): string {
   return 'agent-' + Math.random().toString(36).slice(2, 8);
 }
 
+// The UI authenticates via the session cookie; sign the page context in first.
+test.beforeEach(async ({ page }) => {
+  await page.context().request.post('/v1/login', { data: { api_key: KEY } });
+});
+
 test('defines an agent from the registry and shows the run summary', async ({ page }) => {
   await page.goto('/agents');
   await expect(page.getByRole('heading', { name: /Agent Manager/i })).toBeVisible();

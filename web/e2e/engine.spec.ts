@@ -4,6 +4,11 @@ import { test, expect } from '@playwright/test';
 const KEY = 'dev-sandbox-key';
 const uniqueSlug = () => 'ui-' + Math.random().toString(36).slice(2, 9);
 
+// The UI authenticates via the session cookie; sign the page context in first.
+test.beforeEach(async ({ page }) => {
+  await page.context().request.post('/v1/login', { data: { api_key: KEY } });
+});
+
 test('lists and creates a flow', async ({ page }) => {
   const slug = uniqueSlug();
   await page.goto('/engine');

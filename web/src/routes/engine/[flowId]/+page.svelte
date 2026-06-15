@@ -57,7 +57,8 @@
     config: string;
   }
 
-  let key = $state('dev-sandbox-key');
+  // API calls authenticate via the session cookie (empty key -> no X-Api-Key header).
+  const key = '';
   let flow = $state<Flow | null>(null);
   let error = $state('');
   let publishMsg = $state('');
@@ -438,7 +439,6 @@
   <p><a href="/engine">← all flows</a></p>
   <h1>{flow?.name ?? flowId}</h1>
   <div class="row">
-    <input bind:value={key} aria-label="API key" />
     <button onclick={load}><Icon name="reload" size={15} /> Reload</button>
     <button class="primary" onclick={publish}
       ><Icon name="check" size={15} /> Publish version</button
