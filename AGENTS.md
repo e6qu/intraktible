@@ -10,8 +10,8 @@ reimplementation of a commercial Agentic Decision Platform.
 4. Research basis (why the design looks like this): `../specs/openapi-current.yaml`, `../ENDPOINTS.md`, `../docs/`. (That parent tree is research only — **do not** mix it into this repo.)
 
 ## Status
-**Phase 0 (shared core) and Phase 1 (Decision Engine) DONE. Phase 2 (Case Manager) next.** Roadmap &
-exit criteria: [PLAN.md §8](PLAN.md#8-phased-roadmap); deferrals tracked in [BUGS.md](BUGS.md).
+**Phase 0 (shared core) and Phase 1 (Decision Engine) DONE. Phase 2 (Case Manager) IN PROGRESS.**
+Roadmap & exit criteria: [PLAN.md §8](PLAN.md#8-phased-roadmap); deferrals tracked in [BUGS.md](BUGS.md).
 Working today: `platform/{eventlog,store,projection,identity,auth,httpx,ai,web}` + the `hello`
 slice; and the **Decision Engine** — flow model + versioning, a deterministic execution runtime
 (Input/Assignment/Rule/Split/Scorecard/Decision Table/2D Matrix/Code/Output; expr-lang for
@@ -21,9 +21,11 @@ metrics with champion/challenger breakdown) — all command→event→projection
 The **Svelte Flow builder UI** (`web/src/routes/engine`) lists/creates flows and edits a flow's graph
 (add nodes from a palette, wire edges, edit per-node config, publish a new version — with backend
 validation surfaced), renders it on a canvas (auto-layout), and runs inline test decisions.
+The **Case Manager** (`case-manager/`) opens cases (ReviewRequested), with assignment / status /
+notes, a queue with filters, and a per-case audit log built from events (`--modules=case-manager`).
 Run it: `go run ./cmd/intraktible serve` then open http://localhost:8080 (dev key `dev-sandbox-key`);
-for UI dev use `make dev` (Vite + Go API). Next: Phase 2 (Case Manager). Phase 1 deferrals (CEL,
-builder UI polish, …) are tracked in [BUGS.md](BUGS.md).
+for UI dev use `make dev` (Vite + Go API). Phase 1 deferrals (CEL, builder UI polish, …) and other
+limitations are tracked in [BUGS.md](BUGS.md).
 Build order after Phase 1: Case Manager → Context Layer → Agent Manager.
 
 ## The design in one breath

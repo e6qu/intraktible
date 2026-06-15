@@ -6,7 +6,6 @@ package service
 
 import (
 	"encoding/json"
-	"errors"
 	"net/http"
 
 	"github.com/e6qu/intraktible/decision-engine/analytics"
@@ -16,7 +15,6 @@ import (
 	"github.com/e6qu/intraktible/decision-engine/flows"
 	"github.com/e6qu/intraktible/decision-engine/history"
 	"github.com/e6qu/intraktible/platform/httpx"
-	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/store"
 )
 
@@ -30,40 +28,6 @@ type Service struct {
 // New builds the service.
 func New(cmd *command.Handler, decide *command.DecideHandler, st store.Store) *Service {
 	return &Service{cmd: cmd, decide: decide, store: st}
-}
-
-// caller resolves the authenticated identity, writing a 401 and returning
-// ok=false when absent.
-func (s *Service) caller(w http.ResponseWriter, r *http.Request) (identity.Identity, bool) {
-	id, ok := identity.From(r.Context())
-	if !ok {
-		httpx.Error(w, http.StatusUnauthorized, errors.New("authentication required"))
-	}
-	return id, ok
-}
-
-// writeList responds with a read-model listing under the given JSON key, mapping
-// a store error to 500.
-func writeList[T any](w http.ResponseWriter, key string, items []T, err error) {
-	if err != nil {
-		httpx.Error(w, http.StatusInternalServerError, err)
-		return
-	}
-	httpx.JSON(w, http.StatusOK, map[string]any{key: items})
-}
-
-// writeOne responds with a single read-model document, mapping a store error to
-// 500 and a missing document to 404 with notFound.
-func writeOne[T any](w http.ResponseWriter, item T, found bool, err error, notFound string) {
-	if err != nil {
-		httpx.Error(w, http.StatusInternalServerError, err)
-		return
-	}
-	if !found {
-		httpx.Error(w, http.StatusNotFound, errors.New(notFound))
-		return
-	}
-	httpx.JSON(w, http.StatusOK, item)
 }
 
 // Routes registers the flow-management, decide, and decision-history endpoints.
@@ -85,7 +49,7 @@ type createRequest struct {
 }
 
 func (s *Service) create(w http.ResponseWriter, r *http.Request) {
-	id, ok := s.caller(w, r)
+	id, ok := httpx.Caller(w, r)
 	if !ok {
 		return
 	}
@@ -108,7 +72,7 @@ type publishRequest struct {
 }
 
 func (s *Service) publish(w http.ResponseWriter, r *http.Request) {
-	id, ok := s.caller(w, r)
+	id, ok := httpx.Caller(w, r)
 	if !ok {
 		return
 	}
@@ -132,21 +96,21 @@ func (s *Service) publish(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) list(w http.ResponseWriter, r *http.Request) {
-	id, ok := s.caller(w, r)
+	id, ok := httpx.Caller(w, r)
 	if !ok {
 		return
 	}
 	fvs, err := flows.List(r.Context(), s.store, id)
-	writeList(w, "flows", fvs, err)
+	httpx.WriteList(w, "flows", fvs, err)
 }
 
 func (s *Service) get(w http.ResponseWriter, r *http.Request) {
-	id, ok := s.caller(w, r)
+	id, ok := httpx.Caller(w, r)
 	if !ok {
 		return
 	}
 	fv, found, err := flows.Read(r.Context(), s.store, id, r.PathValue("flow_id"))
-	writeOne(w, fv, found, err, "flow not found")
+	httpx.WriteOne(w, fv, found, err, "flow not found")
 }
 
 type deployRequest struct {
@@ -158,7 +122,7 @@ type deployRequest struct {
 
 // deploy makes a flow version (and optional A/B challenger) live in an environment.
 func (s *Service) deploy(w http.ResponseWriter, r *http.Request) {
-	id, ok := s.caller(w, r)
+	id, ok := httpx.Caller(w, r)
 	if !ok {
 		return
 	}
@@ -201,7 +165,7 @@ type decideResponse struct {
 // "failed" decision returned with HTTP 200 and status "failed" (the call
 // succeeded; the decision outcome did not); only lookup/validation problems 4xx.
 func (s *Service) runDecide(w http.ResponseWriter, r *http.Request) {
-	id, ok := s.caller(w, r)
+	id, ok := httpx.Caller(w, r)
 	if !ok {
 		return
 	}
@@ -221,25 +185,25 @@ func (s *Service) runDecide(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) listDecisions(w http.ResponseWriter, r *http.Request) {
-	id, ok := s.caller(w, r)
+	id, ok := httpx.Caller(w, r)
 	if !ok {
 		return
 	}
 	recs, err := history.List(r.Context(), s.store, id)
-	writeList(w, "decisions", recs, err)
+	httpx.WriteList(w, "decisions", recs, err)
 }
 
 func (s *Service) getDecision(w http.ResponseWriter, r *http.Request) {
-	id, ok := s.caller(w, r)
+	id, ok := httpx.Caller(w, r)
 	if !ok {
 		return
 	}
 	rec, found, err := history.Read(r.Context(), s.store, id, r.PathValue("decision_id"))
-	writeOne(w, rec, found, err, "decision not found")
+	httpx.WriteOne(w, rec, found, err, "decision not found")
 }
 
 func (s *Service) metrics(w http.ResponseWriter, r *http.Request) {
-	id, ok := s.caller(w, r)
+	id, ok := httpx.Caller(w, r)
 	if !ok {
 		return
 	}

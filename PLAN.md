@@ -215,7 +215,11 @@ intraktible/
   `BUGS.md`): CEL conditions (expr-lang + Starlark already cover conditions — D9), builder UI polish
   (drag-connect + bespoke config panels — D10), per-node decide appends (D11); still open from before:
   embedding the production UI build (D6) and decide-input schema validation (D4).
-- **Phase 2 — Case Manager:** case events, queues/dashboard/detail UI, escalation hook from flows.
+- **Phase 2 — Case Manager — 🚧 IN PROGRESS.** Done: case lifecycle (ReviewRequested → assign /
+  status / notes) as command→event→projection→API; the `cases` read model with a per-case audit log
+  built from events; queue listing filtered by status/type/assignee (`case-manager/`). Remaining:
+  the escalation hook (a decision flow emits `ManualReviewRequested` → opens a case, linked by
+  `source_decision_id`); the dashboard/detail UI in `web/`; SLA "days left".
 - **Phase 3 — Context Layer:** entities/events/features + feature engine, connector interface +
   reference connectors + Custom Connect Node, wired into Rule/Connect nodes.
 - **Phase 4 — Agent Manager:** agent config + AI-node execution, structured output, run monitoring,

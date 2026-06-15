@@ -18,6 +18,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/e6qu/intraktible/case-manager/cases"
+	casecmd "github.com/e6qu/intraktible/case-manager/command"
+	caseservice "github.com/e6qu/intraktible/case-manager/service"
 	"github.com/e6qu/intraktible/decision-engine/analytics"
 	enginecmd "github.com/e6qu/intraktible/decision-engine/command"
 	"github.com/e6qu/intraktible/decision-engine/flows"
@@ -96,6 +99,12 @@ func run(addr, dataDir, modules, devKey string) error {
 		engineSvc := engineservice.New(enginecmd.NewHandler(log), enginecmd.NewDecideHandler(log, st), st)
 		engineSvc.Routes(api)
 		projectors = append(projectors, flows.Projector{}, history.Projector{}, analytics.Projector{})
+	}
+
+	if enabled(modules, "case-manager") {
+		caseSvc := caseservice.New(casecmd.NewHandler(log), st)
+		caseSvc.Routes(api)
+		projectors = append(projectors, cases.Projector{})
 	}
 
 	rt := projection.New(log, st, projectors...)
