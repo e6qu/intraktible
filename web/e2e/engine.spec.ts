@@ -137,6 +137,27 @@ test('a structured config panel edits a node without raw JSON', async ({ page, r
   await expect(page.getByLabel('node config')).toHaveValue('{"condition":"score >= 700"}');
 });
 
+test('the assignment panel edits target/expr rows without raw JSON', async ({ page, request }) => {
+  const slug = uniqueSlug();
+  const created = await request.post('/v1/flows', {
+    headers: { 'X-Api-Key': KEY },
+    data: { slug, name: 'Assign' }
+  });
+  const { flow_id } = await created.json();
+
+  await page.goto(`/engine/${flow_id}`);
+  await expect(page.getByLabel('new node type')).toBeVisible();
+
+  await page.getByLabel('new node type').selectOption('assignment');
+  await page.getByRole('button', { name: 'Add', exact: true }).click();
+  await page.getByRole('button', { name: 'Add assignment' }).click();
+  await page.getByLabel('assignment 0 target').fill('decision');
+  await page.getByLabel('assignment 0 expr').fill("'APPROVE'");
+  await expect(page.getByLabel('node config')).toHaveValue(
+    '{"assignments":[{"target":"decision","expr":"\'APPROVE\'"}]}'
+  );
+});
+
 test('shows the backend validation error when publishing an invalid graph', async ({
   page,
   request

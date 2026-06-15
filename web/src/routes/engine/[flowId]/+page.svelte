@@ -119,7 +119,24 @@
 
   // Node types with a flat config that gets a structured panel; the rest keep the
   // raw-JSON textarea (which stays available for every type as the advanced view).
-  const STRUCTURED = ['split', 'connect', 'ai', 'manual_review', 'output'];
+  const STRUCTURED = ['split', 'connect', 'ai', 'manual_review', 'output', 'assignment', 'code'];
+
+  // The selected assignment node's {target, expr} rows (empty when none/invalid).
+  function assignmentRows(): { target?: string; expr?: string }[] {
+    const a = nodeCfg().assignments;
+    return Array.isArray(a) ? (a as { target?: string; expr?: string }[]) : [];
+  }
+  function setAssignment(i: number, patch: { target?: string; expr?: string }) {
+    patchCfg({
+      assignments: assignmentRows().map((row, j) => (j === i ? { ...row, ...patch } : row))
+    });
+  }
+  function addAssignment() {
+    patchCfg({ assignments: [...assignmentRows(), { target: '', expr: '' }] });
+  }
+  function removeAssignment(i: number) {
+    patchCfg({ assignments: assignmentRows().filter((_, j) => j !== i) });
+  }
 
   // The selected node's config as an object (empty on blank/invalid JSON).
   function nodeCfg(): Record<string, unknown> {
@@ -319,6 +336,40 @@
               aria-label="output fields"
             /></label
           >
+        {:else if selected.type === 'code'}
+          <label
+            >code (Starlark)
+            <textarea
+              value={asText(nodeCfg().code)}
+              oninput={(e) => patchCfg({ code: e.currentTarget.value })}
+              aria-label="code"
+              rows="4"
+            ></textarea>
+          </label>
+        {:else if selected.type === 'assignment'}
+          <p class="muted">assignments</p>
+          {#each assignmentRows() as row, i (i)}
+            <div class="row">
+              <input
+                value={asText(row.target)}
+                oninput={(e) => setAssignment(i, { target: e.currentTarget.value })}
+                aria-label={`assignment ${i} target`}
+                placeholder="target"
+              />
+              <input
+                value={asText(row.expr)}
+                oninput={(e) => setAssignment(i, { expr: e.currentTarget.value })}
+                aria-label={`assignment ${i} expr`}
+                placeholder="expr"
+              />
+              <button
+                class="x"
+                aria-label={`remove assignment ${i}`}
+                onclick={() => removeAssignment(i)}>✕</button
+              >
+            </div>
+          {/each}
+          <button onclick={addAssignment}>Add assignment</button>
         {/if}
         <label
           >{STRUCTURED.includes(selected.type) ? 'config (JSON, advanced)' : 'config (JSON)'}

@@ -62,7 +62,8 @@ Done — execution runtime + decide API + decision history (the decision event s
   root — so the dependency direction stays one-way. `WithFeatures` / `WithConnectors` / `WithAgents`
   enable them; without a provider, a flow using those nodes fails loudly.
 
-The builder has **structured config panels** for the flat-config node types (split, connect, ai,
-manual_review, output); other types still use a raw-JSON textarea. Deferred (see
+The builder has **structured config panels** for split, connect, ai, manual_review, output, code, and
+assignment; the nested-table types (rule, scorecard, decision_table, 2d_matrix) still use a raw-JSON
+textarea. Deferred (see
 [../BUGS.md](../BUGS.md)): builder drag-to-connect + structured panels for the complex node types (D10).
 (CEL as a second condition engine was closed by decision — expr-lang + Starlark already cover it.)

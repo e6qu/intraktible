@@ -7,7 +7,7 @@ Format: `ID | severity | component | description | status`.
 - `D1 | low | eventlog | WAL holds all events in memory and re-reads the whole file on open; fine for MVP, revisit with segments/Badger | open`
 
 ## Open (deferred / limitations after Phase 1)
-- `D10 | low | web | partly done: structured config panels now cover the flat-config node types (split, connect, ai, manual_review, output); the complex types (rule, scorecard, decision_table, 2d_matrix, assignment, code) still use the raw-JSON textarea, and the canvas still has no drag-to-connect (edges are added via the from/to form) | deferred`
+- `D10 | low | web | partly done: structured config panels now cover split, connect, ai, manual_review, output, code, and assignment (a target/expr repeater); the remaining nested-table types (rule, scorecard, decision_table, 2d_matrix) still use the raw-JSON textarea, and the canvas still has no drag-to-connect (edges are added via the from/to form). Those need richer nested-form UI / Svelte Flow connect-handler work | deferred`
 
 ## Open (deferred / limitations after Phase 2)
 - `D12 | low | case-manager | SLA days-left and SLA state are computed at read time from created_at + sla_days against the wall clock; the stored projection stays clock-free (replay-stable). No SLA-breach events/alerts are emitted — overdue is derived on read, not pushed | deferred`
