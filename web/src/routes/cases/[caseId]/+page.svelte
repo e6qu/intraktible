@@ -3,6 +3,7 @@
   import { onMount } from 'svelte';
   import { page } from '$app/stores';
   import { getCase, assignCase, setCaseStatus, addCaseNote, type Case } from '$lib/api';
+  import { displayEntries } from '$lib/kv';
 
   let key = $state('dev-sandbox-key');
   let c = $state<Case | null>(null);
@@ -58,6 +59,16 @@
       {#if c.source_decision_id}<dt>source decision</dt>
         <dd><code>{c.source_decision_id}</code></dd>{/if}
     </dl>
+
+    {#if displayEntries(c.context).length > 0}
+      <h2>Context</h2>
+      <dl class="ctx" data-testid="context">
+        {#each displayEntries(c.context) as [k, v] (k)}
+          <dt>{k}</dt>
+          <dd>{v}</dd>
+        {/each}
+      </dl>
+    {/if}
   {:else}
     <h1>{caseID}</h1>
   {/if}

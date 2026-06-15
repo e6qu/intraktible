@@ -61,3 +61,24 @@ test('assigns, transitions, and notes a case', async ({ page, request }) => {
     await expect(page.getByTestId('audit').locator('li')).toHaveCount(4);
   }).toPass({ timeout: 5000 });
 });
+
+test('case detail renders the context as a key-value view', async ({ page, request }) => {
+  // Seed a case with context (as a decision/agent escalation would carry).
+  const created = await request.post('/v1/cases', {
+    headers: { 'X-Api-Key': KEY },
+    data: {
+      company_name: 'Context Co',
+      case_type: 'aml',
+      sla_days: 5,
+      context: { subject: 'Acme Corp', fico: 700 }
+    }
+  });
+  expect(created.ok()).toBeTruthy();
+  const { case_id } = await created.json();
+
+  await page.goto(`/cases/${case_id}`);
+  const ctx = page.getByTestId('context');
+  await expect(ctx).toContainText('subject');
+  await expect(ctx).toContainText('Acme Corp');
+  await expect(ctx).toContainText('fico');
+});

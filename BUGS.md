@@ -11,7 +11,6 @@ Format: `ID | severity | component | description | status`.
 
 ## Open (deferred / limitations after Phase 2)
 - `D12 | low | case-manager | SLA days-left and SLA state are computed at read time from created_at + sla_days against the wall clock; the stored projection stays clock-free (replay-stable). No SLA-breach events/alerts are emitted — overdue is derived on read, not pushed | deferred`
-- `D13 | low | web | case detail shows the raw context JSON inline; no schema-aware/rich context view (e.g. rendering the source decision's inputs/outputs) yet | deferred`
 
 ## Open (deferred / limitations during Phase 3)
 - `D14 | low | context-layer | reference connectors cover http + a deterministic mock_bureau; a SQL connector is not implemented (needs a driver/DB). The Connect interface + registry make it pluggable when a backend lands | deferred`
@@ -32,6 +31,7 @@ Format: `ID | severity | component | description | status`.
 - `D11 | decision-engine | batching the per-node decision events — won't implement. The per-node DecisionStarted → NodeEvaluated… → Completed/Failed stream IS the replayable, node-by-node decision history (PLAN §3.3); batching would trade that granularity for throughput the MVP does not need. A future high-volume optimization, not a bug.`
 
 ## Fixed
+- `D13 | web | the case-detail page now renders the case context (the source decision's inputs / agent escalation reference) as a readable key-value view (lib/kv.displayEntries: primitives as text, nested values as compact JSON) instead of nothing. A fully schema-aware decision-inputs view remains a possible future polish. | fixed`
 - `D17 (partial) | agent-manager | a schema-constrained agent's structured output is now validated against the agent's schema (shared platform/schema.ValidateObject, the same JSON-Schema subset the decide-input check uses); a mismatch is a recorded failed run (fail loudly). Remaining (async/queued/streaming runs) stays open as D17. | fixed`
 - `D5 | ai | added a real OpenAI-compatible HTTP provider (ai.NewHTTP — POST {base}/chat/completions, Bearer auth, json_object response_format when a schema is requested) behind the existing ai.Provider interface. It works with OpenAI/Ollama/vLLM/gateways and Anthropic-compatible endpoints. Wired in via INTRAKTIBLE_AI_BASE_URL/_API_KEY/_MODEL/_PROVIDER (Stub stays the fallback). Verified text + structured + error paths against a mock server and end-to-end on the real binary. | fixed`
 - `D22 | eventlog | crash safety: WAL.load now recovers a torn final record (a crash mid-Append leaves a trailing line with no newline) by truncating it on reopen, instead of failing to open and bricking the log. No acknowledged event is dropped (Append fsyncs before returning), and a corrupt complete record mid-file still fails loudly. (D1's in-memory/segmentation scaling is still open.) | fixed`
