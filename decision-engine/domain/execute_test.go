@@ -45,6 +45,9 @@ func TestExecuteLinear(t *testing.T) {
 		scoreCfg  = `{"output":"score","factors":[{"when":"fico < 700","weight":10},{"when":"defaults > 0","weight":25}]}`
 		tableCfg  = `{"rows":[{"when":"score >= 80","outputs":[{"target":"grade","expr":"'A'"}]},{"when":"score >= 60","outputs":[{"target":"grade","expr":"'B'"}]}]}`
 		matrixCfg = `{"output":"tier","rows":[{"when":"income >= 50000"},{"when":"true"}],"cols":[{"when":"score >= 700"},{"when":"true"}],"cells":[["PRIME","NEAR"],["SUB","DECLINE"]]}`
+		codeArith = `{"code":"score = data[\"fico\"] + 10"}`
+		codeIf    = `{"code":"if data[\"amount\"] > 1000:\n    decision = \"APPROVE\"\nelse:\n    decision = \"DECLINE\""}`
+		codeFunc  = `{"code":"def f():\n    return 7\nresult = f()"}`
 	)
 	rule := cfgNode("m", events.NodeRule, ruleCfg)
 	gradeOut := cfgNode("out", events.NodeOutput, `{"fields":["grade"]}`)
@@ -66,6 +69,9 @@ func TestExecuteLinear(t *testing.T) {
 		{"decision table first row", linear(cfgNode("m", events.NodeDecisionTable, tableCfg), gradeOut), map[string]any{"score": 85}, `{"grade":"A"}`},
 		{"decision table second row", linear(cfgNode("m", events.NodeDecisionTable, tableCfg), gradeOut), map[string]any{"score": 70}, `{"grade":"B"}`},
 		{"2d matrix", linear(cfgNode("m", events.NodeMatrix2D, matrixCfg), cfgNode("out", events.NodeOutput, `{"fields":["tier"]}`)), map[string]any{"income": 60000, "score": 720}, `{"tier":"PRIME"}`},
+		{"code arithmetic", linear(cfgNode("m", events.NodeCode, codeArith), cfgNode("out", events.NodeOutput, `{"fields":["score"]}`)), map[string]any{"fico": 700}, `{"score":710}`},
+		{"code top-level if", linear(cfgNode("m", events.NodeCode, codeIf), cfgNode("out", events.NodeOutput, `{"fields":["decision"]}`)), map[string]any{"amount": 5000}, `{"decision":"APPROVE"}`},
+		{"code skips functions", linear(cfgNode("m", events.NodeCode, codeFunc), cfgNode("out", events.NodeOutput, "")), map[string]any{}, `{"result":7}`},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -135,6 +141,16 @@ func TestExecuteFailsLoudly(t *testing.T) {
 		{
 			"matrix with no covering bucket",
 			linear(cfgNode("m", events.NodeMatrix2D, `{"rows":[{"when":"false"}],"cols":[{"when":"true"}],"cells":[["X"]]}`), cfgNode("out", events.NodeOutput, "")),
+			"m",
+		},
+		{
+			"code syntax error",
+			linear(cfgNode("m", events.NodeCode, `{"code":"x = "}`), cfgNode("out", events.NodeOutput, "")),
+			"m",
+		},
+		{
+			"code exceeds the step bound",
+			linear(cfgNode("m", events.NodeCode, `{"code":"for i in range(100000000):\n    pass"}`), cfgNode("out", events.NodeOutput, "")),
 			"m",
 		},
 	}

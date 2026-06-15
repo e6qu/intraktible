@@ -27,14 +27,15 @@ Done — flow model + versioning (vertical slice, command→event→projection�
 
 Done — execution runtime + decide API + decision history (the decision event stream, PLAN.md §3.3):
 - `domain.Execute` is a **pure, deterministic** DAG traversal (input → … → output) over a published
-  graph; expressions use **expr-lang** (side-effect free). MVP node engines: Input, Assignment, Rule,
-  Split, Output (others fail loudly until their engine lands).
+  graph. Node engines: **Input, Assignment, Rule, Split, Scorecard, Decision Table, 2D Matrix, Code,
+  Output**. Conditions/expressions use **expr-lang**; the **Code** node runs **Starlark** (no
+  clock/random/IO, recursion off, bounded by a step limit) with the context as a `data` dict and its
+  top-level assignments merged back. Unsupported node types (AI, Connect) fail loudly.
 - Each `/decide` records a stream — `DecisionStarted` → `NodeEvaluated`…  → `DecisionCompleted` /
   `DecisionFailed` — so a run is replayable node-by-node; a flow-logic error is a recorded **failed**
   decision (HTTP 200, `status: "failed"`), not a swallowed error.
 - HTTP: `POST /v1/flows/{slug}/{env}/decide` → `{decision_id, status, data}`;
   `GET /v1/decisions` · `GET /v1/decisions/{decision_id}` — history with the full node trace.
 
-Next in Phase 1 (see [../PLAN.md](../PLAN.md) §4.1, §8): CEL conditions + Starlark Code node, the
-remaining node types (Scorecard / Decision Table / 2D Matrix), env-pinned versions + A/B routing,
-analytics-lite, and the Svelte Flow builder + inline test runs.
+Next in Phase 1 (see [../PLAN.md](../PLAN.md) §4.1, §8): CEL conditions (alternative engine),
+env-pinned versions + A/B routing, analytics-lite, and the Svelte Flow builder + inline test runs.

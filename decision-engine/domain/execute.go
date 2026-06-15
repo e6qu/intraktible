@@ -101,6 +101,8 @@ func evalNode(n events.Node, ctx map[string]any, edges []events.Edge) (any, stri
 		return evalDecisionTable(n, ctx, edges)
 	case events.NodeMatrix2D:
 		return evalMatrix(n, ctx, edges)
+	case events.NodeCode:
+		return evalCode(n, ctx, edges)
 	case events.NodeOutput:
 		return evalOutput(n, ctx)
 	default:

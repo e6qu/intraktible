@@ -205,11 +205,11 @@ intraktible/
   (Stub only), and running the SvelteKit build into the embed dir (Go placeholder UI serves for now).
 - **Phase 1 — Decision Engine — 🚧 IN PROGRESS.** Done: flow model + versioning (immutable etag'd
   versions); a deterministic execution runtime (Input/Assignment/Rule/Split/Scorecard/Decision
-  Table/2D Matrix/Output, expr-lang) emitting the decision event stream
-  (DecisionStarted→NodeEvaluated→Completed/Failed); the `…/{env}/decide` API; and decision history.
-  Remaining: Starlark Code node + CEL conditions, env-pinned versions + A/B routing, analytics-lite,
-  and the Svelte Flow builder + inline test runs. (Full PLAN/BUGS close-out lands with the
-  phase-ending PR, per the docs-cadence rule.)
+  Table/2D Matrix/Code/Output — expr-lang for expressions, Starlark for the Code node) emitting the
+  decision event stream (DecisionStarted→NodeEvaluated→Completed/Failed); the `…/{env}/decide` API;
+  and decision history. Remaining: CEL conditions (alternative engine), env-pinned versions + A/B
+  routing, analytics-lite, and the Svelte Flow builder + inline test runs. (Full PLAN/BUGS close-out
+  lands with the phase-ending PR, per the docs-cadence rule.)
 - **Phase 2 — Case Manager:** case events, queues/dashboard/detail UI, escalation hook from flows.
 - **Phase 3 — Context Layer:** entities/events/features + feature engine, connector interface +
   reference connectors + Custom Connect Node, wired into Rule/Connect nodes.

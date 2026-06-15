@@ -41,6 +41,13 @@ type outputConfig struct {
 	Fields []string `json:"fields"`
 }
 
+// codeConfig is the config of a Code node: a Starlark script with the decision
+// context predeclared as the `data` dict; its top-level assignments merge back
+// into the context.
+type codeConfig struct {
+	Code string `json:"code"`
+}
+
 // scorecardConfig is the config of a Scorecard node: a score is the sum of the
 // weights of the factors whose condition holds, written to Output (default
 // "score").
