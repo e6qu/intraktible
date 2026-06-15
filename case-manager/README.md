@@ -13,9 +13,11 @@ service/     # HTTP handlers + wiring (imperative shell)
 
 Status: **in progress (Phase 2).**
 
-Done — case lifecycle + queues (command→event→projection→API, durable & replayable):
-- A case is opened by **ReviewRequested** (raised via the API now; escalation from a decision flow's
-  `ManualReviewRequested` is the next slice) and evolves through assignment, status
+Done — case lifecycle + queues + flow escalation (command→event→projection→API, durable & replayable):
+- A case is opened either via the API (**ReviewRequested**) or by a **decision flow** — a
+  `manual_review` node makes the engine emit `decision.manual_review_requested`, which the `cases`
+  projector consumes to open a case linked by `source_decision_id` (the components talk only through
+  the event log). It then evolves through assignment, status
   (`needs_review`/`in_progress`/`completed`), and notes. Every change emits an event and appends to
   the case's **audit log** — the detail view is reconstructed entirely from the stream.
 - HTTP (under `/v1/`, X-Api-Key / session auth, org+workspace scoped):
@@ -25,6 +27,5 @@ Done — case lifecycle + queues (command→event→projection→API, durable & 
   - `POST /v1/cases/{case_id}/assign|status|notes`
 - Run it: `intraktible serve --modules=case-manager`.
 
-Next (PLAN §4.2): the escalation hook (a decision flow emits `ManualReviewRequested` → a case is
-opened, linked by `source_decision_id`); the dashboard UI (queue metrics + case detail) in `web/`;
-SLA "days left" computation.
+Next (PLAN §4.2): the dashboard UI (queue metrics + case detail) in `web/`; SLA "days left"
+computation.

@@ -28,7 +28,8 @@ Done — flow model + versioning (vertical slice, command→event→projection�
 Done — execution runtime + decide API + decision history (the decision event stream, PLAN.md §3.3):
 - `domain.Execute` is a **pure, deterministic** DAG traversal (input → … → output) over a published
   graph. Node engines: **Input, Assignment, Rule, Split, Scorecard, Decision Table, 2D Matrix, Code,
-  Output**. Conditions/expressions use **expr-lang**; the **Code** node runs **Starlark** (no
+  ManualReview, Output** (a ManualReview node escalates to the Case Manager — opens a case).
+  Conditions/expressions use **expr-lang**; the **Code** node runs **Starlark** (no
   clock/random/IO, recursion off, bounded by a step limit) with the context as a `data` dict and its
   top-level assignments merged back. Unsupported node types (AI, Connect) fail loudly.
 - Each `/decide` records a stream — `DecisionStarted` → `NodeEvaluated`…  → `DecisionCompleted` /

@@ -122,6 +122,31 @@ func TestExecuteSplit(t *testing.T) {
 	}
 }
 
+func TestExecuteManualReview(t *testing.T) {
+	g := linear(
+		cfgNode("mr", events.NodeManualReview, `{"company_name":"company","case_type":"'aml'","sla_days":7}`),
+		cfgNode("out", events.NodeOutput, ""),
+	)
+	run := domain.Execute(g, map[string]any{"company": "Acme"})
+	if run.Status != domain.StatusCompleted {
+		t.Fatalf("status=%s err=%s", run.Status, run.Err)
+	}
+	// manual_review is pass-through: the final output is unchanged.
+	if got := outputJSON(t, run); got != `{"company":"Acme"}` {
+		t.Fatalf("final output=%s", got)
+	}
+	// …but the node records the escalation fields (the decide shell emits these).
+	var mrOut string
+	for _, r := range run.Results {
+		if r.NodeID == "mr" {
+			mrOut = string(r.Output)
+		}
+	}
+	if mrOut != `{"case_type":"aml","company_name":"Acme","sla_days":7}` {
+		t.Fatalf("manual_review output=%s", mrOut)
+	}
+}
+
 func TestExecuteFailsLoudly(t *testing.T) {
 	cases := []struct {
 		name       string

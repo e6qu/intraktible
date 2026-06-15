@@ -14,6 +14,7 @@ import (
 
 	"github.com/e6qu/intraktible/case-manager/domain"
 	"github.com/e6qu/intraktible/case-manager/events"
+	decisionevents "github.com/e6qu/intraktible/decision-engine/events"
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/store"
@@ -75,6 +76,8 @@ func (Projector) Apply(ctx context.Context, e eventlog.Envelope, s store.Store) 
 	switch e.Type {
 	case events.TypeReviewRequested:
 		return applyRequested(ctx, e, s)
+	case decisionevents.TypeManualReviewRequested:
+		return applyEscalated(ctx, e, s)
 	case events.TypeCaseAssigned:
 		return applyAssigned(ctx, e, s)
 	case events.TypeCaseStatusChanged:
@@ -86,19 +89,35 @@ func (Projector) Apply(ctx context.Context, e eventlog.Envelope, s store.Store) 
 	}
 }
 
+// applyEscalated opens a case from a decision flow's manual_review node (the
+// escalation hook), linked back to the decision by SourceID.
+func applyEscalated(ctx context.Context, e eventlog.Envelope, s store.Store) error {
+	var p decisionevents.ManualReviewRequested
+	if err := decode(e, &p); err != nil {
+		return err
+	}
+	return openCase(ctx, e, s, p.CaseID, p.CompanyName, p.CaseType, p.SLADays, p.Context, p.DecisionID, "escalated from decision "+p.DecisionID)
+}
+
 func applyRequested(ctx context.Context, e eventlog.Envelope, s store.Store) error {
 	var p events.ReviewRequested
 	if err := decode(e, &p); err != nil {
 		return err
 	}
+	return openCase(ctx, e, s, p.CaseID, p.CompanyName, p.CaseType, p.SLADays, p.Context, p.SourceDecisionID, "opened for "+p.CompanyName)
+}
+
+// openCase materializes a freshly opened case (status needs_review) with its
+// first audit entry. Used by both the manual and flow-escalation open paths.
+func openCase(ctx context.Context, e eventlog.Envelope, s store.Store, caseID, company, caseType string, slaDays int, context json.RawMessage, sourceID, detail string) error {
 	c := CaseView{
-		Org: e.Org, Workspace: e.Workspace, CaseID: p.CaseID,
-		CompanyName: p.CompanyName, CaseType: p.CaseType, Status: domain.StatusNeedsReview,
-		SLADays: p.SLADays, Context: p.Context, SourceID: p.SourceDecisionID,
+		Org: e.Org, Workspace: e.Workspace, CaseID: caseID,
+		CompanyName: company, CaseType: caseType, Status: domain.StatusNeedsReview,
+		SLADays: slaDays, Context: context, SourceID: sourceID,
 		Notes: []Note{}, Audit: []AuditEntry{}, CreatedAt: e.Time, UpdatedAt: e.Time,
 	}
-	c.Audit = append(c.Audit, audit(e, "requested", "opened for "+p.CompanyName))
-	return store.PutDoc(ctx, s, Collection, store.Key(e.Org, e.Workspace, p.CaseID), c)
+	c.Audit = append(c.Audit, audit(e, "requested", detail))
+	return store.PutDoc(ctx, s, Collection, store.Key(e.Org, e.Workspace, caseID), c)
 }
 
 func applyAssigned(ctx context.Context, e eventlog.Envelope, s store.Store) error {

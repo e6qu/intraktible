@@ -103,6 +103,8 @@ func evalNode(n events.Node, ctx map[string]any, edges []events.Edge) (any, stri
 		return evalMatrix(n, ctx, edges)
 	case events.NodeCode:
 		return evalCode(n, ctx, edges)
+	case events.NodeManualReview:
+		return evalManualReview(n, ctx, edges)
 	case events.NodeOutput:
 		return evalOutput(n, ctx)
 	default:
@@ -266,6 +268,41 @@ func matchAxis(n events.Node, axis string, conds []axisCond, ctx map[string]any)
 		}
 	}
 	return 0, fmt.Errorf("decision-engine: node %q matrix has no matching %s", n.ID, axis)
+}
+
+// evalManualReview evaluates the case fields for an escalation. It is pass-through
+// (the flow continues); the decide shell turns the recorded output into a
+// ManualReviewRequested event.
+func evalManualReview(n events.Node, ctx map[string]any, edges []events.Edge) (any, string, error) {
+	var cfg manualReviewConfig
+	if err := decodeConfig(n, &cfg); err != nil {
+		return nil, "", err
+	}
+	company, err := evalString(cfg.CompanyName, ctx)
+	if err != nil {
+		return nil, "", fmt.Errorf("decision-engine: node %q company_name: %w", n.ID, err)
+	}
+	caseType, err := evalString(cfg.CaseType, ctx)
+	if err != nil {
+		return nil, "", fmt.Errorf("decision-engine: node %q case_type: %w", n.ID, err)
+	}
+	return map[string]any{
+		"company_name": company,
+		"case_type":    caseType,
+		"sla_days":     cfg.SLADays,
+	}, firstEdge(edges), nil
+}
+
+func evalString(code string, env map[string]any) (string, error) {
+	v, err := evalAny(code, env)
+	if err != nil {
+		return "", err
+	}
+	s, ok := v.(string)
+	if !ok {
+		return "", fmt.Errorf("expression %q did not evaluate to a string", code)
+	}
+	return s, nil
 }
 
 func evalOutput(n events.Node, ctx map[string]any) (any, string, error) {

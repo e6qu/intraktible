@@ -121,27 +121,59 @@ func (h *DecideHandler) Decide(ctx context.Context, id identity.Identity, slug, 
 	}
 
 	dur := h.now().Sub(start).Milliseconds()
+	var terminalType string
+	var terminalPayload any
+	var result DecideResult
 	if run.Status == domain.StatusFailed {
-		if err := h.emit(ctx, id, events.TypeDecisionFailed, events.DecisionFailed{
+		terminalType = events.TypeDecisionFailed
+		terminalPayload = events.DecisionFailed{
 			DecisionID: decisionID, FlowID: fv.FlowID, Version: version.Version, Variant: variant,
 			NodeID: run.FailedNode, Error: run.Err, DurationMS: dur,
-		}); err != nil {
-			return DecideResult{}, err
 		}
-		return DecideResult{DecisionID: decisionID, Status: domain.StatusFailed, Error: run.Err}, nil
+		result = DecideResult{DecisionID: decisionID, Status: domain.StatusFailed, Error: run.Err}
+	} else {
+		outJSON, err := json.Marshal(run.Output)
+		if err != nil {
+			return DecideResult{}, fmt.Errorf("decision-engine: marshal output: %w", err)
+		}
+		terminalType = events.TypeDecisionCompleted
+		terminalPayload = events.DecisionCompleted{
+			DecisionID: decisionID, FlowID: fv.FlowID, Version: version.Version, Variant: variant,
+			Output: outJSON, DurationMS: dur,
+		}
+		result = DecideResult{DecisionID: decisionID, Status: domain.StatusCompleted, Output: run.Output}
 	}
-
-	outJSON, err := json.Marshal(run.Output)
-	if err != nil {
-		return DecideResult{}, fmt.Errorf("decision-engine: marshal output: %w", err)
-	}
-	if err := h.emit(ctx, id, events.TypeDecisionCompleted, events.DecisionCompleted{
-		DecisionID: decisionID, FlowID: fv.FlowID, Version: version.Version, Variant: variant,
-		Output: outJSON, DurationMS: dur,
-	}); err != nil {
+	if err := h.emit(ctx, id, terminalType, terminalPayload); err != nil {
 		return DecideResult{}, err
 	}
-	return DecideResult{DecisionID: decisionID, Status: domain.StatusCompleted, Output: run.Output}, nil
+	// A manual_review node that ran escalates to a case (consumed by the Case Manager).
+	if err := h.emitEscalations(ctx, id, decisionID, dataJSON, run); err != nil {
+		return DecideResult{}, err
+	}
+	return result, nil
+}
+
+func (h *DecideHandler) emitEscalations(ctx context.Context, id identity.Identity, decisionID string, dataJSON json.RawMessage, run domain.Run) error {
+	for _, res := range run.Results {
+		if res.Type != events.NodeManualReview {
+			continue
+		}
+		var out struct {
+			CompanyName string `json:"company_name"`
+			CaseType    string `json:"case_type"`
+			SLADays     int    `json:"sla_days"`
+		}
+		if err := json.Unmarshal(res.Output, &out); err != nil {
+			return fmt.Errorf("decision-engine: decode manual_review output: %w", err)
+		}
+		if err := h.emit(ctx, id, events.TypeManualReviewRequested, events.ManualReviewRequested{
+			CaseID: h.newID(), DecisionID: decisionID, NodeID: res.NodeID,
+			CompanyName: out.CompanyName, CaseType: out.CaseType, SLADays: out.SLADays, Context: dataJSON,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // resolveVersion selects the version to run for an environment: the deployed

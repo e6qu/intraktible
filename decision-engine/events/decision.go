@@ -16,6 +16,9 @@ const (
 	TypeNodeEvaluated     = "decision.run.node_evaluated"
 	TypeDecisionCompleted = "decision.run.completed"
 	TypeDecisionFailed    = "decision.run.failed"
+	// TypeManualReviewRequested is emitted when a decision reaches a manual_review
+	// node; the Case Manager consumes it to open a case (escalation hook).
+	TypeManualReviewRequested = "decision.manual_review_requested"
 )
 
 // DecisionStarted records the start of a decision: which flow version ran against
@@ -48,6 +51,20 @@ type DecisionCompleted struct {
 	Variant    string          `json:"variant,omitempty"`
 	Output     json.RawMessage `json:"output"`
 	DurationMS int64           `json:"duration_ms"`
+}
+
+// ManualReviewRequested is raised when a decision runs a manual_review node. It
+// carries a recorded case_id (so replay is stable) and the case fields evaluated
+// from the node, plus the decision's input as context. The Case Manager opens a
+// case from it, linked by DecisionID.
+type ManualReviewRequested struct {
+	CaseID      string          `json:"case_id"`
+	DecisionID  string          `json:"decision_id"`
+	NodeID      string          `json:"node_id"`
+	CompanyName string          `json:"company_name"`
+	CaseType    string          `json:"case_type"`
+	SLADays     int             `json:"sla_days"`
+	Context     json.RawMessage `json:"context,omitempty"`
 }
 
 // DecisionFailed records a decision that errored during evaluation (fail loudly:

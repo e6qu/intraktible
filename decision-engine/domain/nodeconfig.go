@@ -41,6 +41,15 @@ type outputConfig struct {
 	Fields []string `json:"fields"`
 }
 
+// manualReviewConfig is the config of a manual_review node: the case fields to
+// open. CompanyName and CaseType are expressions evaluated against the context
+// (use quotes for a literal, e.g. "'aml'"); SLADays is a literal.
+type manualReviewConfig struct {
+	CompanyName string `json:"company_name"`
+	CaseType    string `json:"case_type"`
+	SLADays     int    `json:"sla_days"`
+}
+
 // codeConfig is the config of a Code node: a Starlark script with the decision
 // context predeclared as the `data` dict; its top-level assignments merge back
 // into the context.
