@@ -4,6 +4,7 @@ package eventlog
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -16,20 +17,30 @@ import (
 	"sync"
 )
 
-// WAL is a pure-Go, file-backed, append-only event log: one JSON object per
-// line, durably fsync'd. Events are also held in memory for fast Read/replay
-// (MVP assumption: the log fits in memory). The Log interface lets a segmented
-// backend or BadgerDB replace this later.
+// WAL is a pure-Go, file-backed, append-only event log: one JSON object per line,
+// durably fsync'd. It keeps only a compact in-memory byte-offset index (one int64
+// per record) — NOT the events themselves — and streams records from disk on
+// demand via ReadAt. Retained memory is therefore O(events) small offsets rather
+// than O(events × envelope size), and opening the log scans for record boundaries
+// without decoding every record.
+//
+// Records are validated lazily, when Read decodes them: a corrupt complete record
+// fails loudly there. The projection runtime Reads the whole log at boot (to
+// rebuild), so corruption still stops startup — it just surfaces at Read, not at
+// open. A torn final write (a crash mid-Append, before fsync) has no trailing
+// newline and is dropped on open. For O(1)-open durability and indexed reads at
+// large scale, the SQLite-backed Log (SQLiteLog) is the alternative backend.
 type WAL struct {
-	mu     sync.Mutex
-	f      *os.File
-	w      *bufio.Writer
-	events []Envelope
-	bus    *bus
-	closed bool
+	mu      sync.Mutex
+	f       *os.File
+	w       *bufio.Writer
+	offsets []int64 // byte offset where each record (seq = index+1) begins
+	size    int64   // total bytes of complete records (= the append position)
+	bus     *bus
+	closed  bool
 }
 
-// OpenWAL opens (or creates) the log file at dir/events.log and loads it.
+// OpenWAL opens (or creates) the log file at dir/events.log and indexes it.
 func OpenWAL(dir string) (*WAL, error) {
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return nil, fmt.Errorf("eventlog: mkdir %q: %w", dir, err)
@@ -49,35 +60,31 @@ func OpenWAL(dir string) (*WAL, error) {
 	return w, nil
 }
 
-// load replays the file into memory. Each record is a newline-terminated JSON
-// line. A complete line that fails to parse is real corruption and fails loudly.
-// A trailing line WITHOUT a newline is a torn write — a crash interrupted an
-// Append before it fsync'd and acknowledged — so it is truncated and recovered
-// (no acknowledged event is dropped). It also leaves the write offset at the end
-// of the last good record so subsequent appends are clean.
+// load scans the file to build the offset index. Records are NOT decoded here
+// (that happens lazily in Read), so a malformed-but-complete record is caught
+// when it is read, not at open. A trailing line WITHOUT a newline is a torn write
+// — a crash interrupted an Append before it fsync'd and acknowledged — so it is
+// truncated and recovered (no acknowledged event is dropped). The file is always
+// truncated and the write head seeked to the end of the last complete record, so
+// subsequent appends are clean.
 func (w *WAL) load() error {
 	r := bufio.NewReaderSize(w.f, 64*1024)
-	var offset int64 // bytes of complete, valid records
+	var pos int64 // bytes of complete records
 	for {
 		line, err := r.ReadBytes('\n')
 		complete := len(line) > 0 && line[len(line)-1] == '\n'
 		if complete {
-			if rec := line[:len(line)-1]; len(rec) > 0 {
-				var e Envelope
-				if uerr := json.Unmarshal(rec, &e); uerr != nil {
-					return fmt.Errorf("eventlog: corrupt record at seq %d: %w", len(w.events)+1, uerr)
-				}
-				w.events = append(w.events, e)
+			if len(line) > 1 { // a non-empty record (skip stray blank lines)
+				w.offsets = append(w.offsets, pos)
 			}
-			offset += int64(len(line))
+			pos += int64(len(line))
 			continue
 		}
-		// No trailing newline: either clean EOF (offset==size, no-op) or a torn
-		// final write to drop.
+		// No trailing newline: clean EOF (no-op) or a torn final write to drop.
 		if err == io.EOF {
 			if len(line) > 0 {
 				slog.Warn("eventlog: discarding torn final record (crash during append)",
-					"bytes", len(line), "after_seq", len(w.events))
+					"bytes", len(line), "after_seq", len(w.offsets))
 			}
 			break
 		}
@@ -85,10 +92,11 @@ func (w *WAL) load() error {
 			return fmt.Errorf("eventlog: read log: %w", err)
 		}
 	}
-	if err := w.f.Truncate(offset); err != nil {
+	w.size = pos
+	if err := w.f.Truncate(pos); err != nil {
 		return fmt.Errorf("eventlog: truncate to last good record: %w", err)
 	}
-	if _, err := w.f.Seek(offset, io.SeekStart); err != nil {
+	if _, err := w.f.Seek(pos, io.SeekStart); err != nil {
 		return fmt.Errorf("eventlog: seek to append position: %w", err)
 	}
 	return nil
@@ -108,12 +116,16 @@ func (w *WAL) Append(_ context.Context, e Envelope) (Envelope, error) {
 	if e.ID == "" {
 		e.ID = newID()
 	}
-	e.Seq = uint64(len(w.events)) + 1
+	e.Seq = uint64(len(w.offsets)) + 1
 	b, err := json.Marshal(e)
 	if err != nil {
 		return Envelope{}, fmt.Errorf("eventlog: marshal: %w", err)
 	}
-	if _, err := w.w.Write(append(b, '\n')); err != nil {
+	// One record = the JSON line + a newline terminator.
+	if _, err := w.w.Write(b); err != nil {
+		return Envelope{}, fmt.Errorf("eventlog: write: %w", err)
+	}
+	if err := w.w.WriteByte('\n'); err != nil {
 		return Envelope{}, fmt.Errorf("eventlog: write: %w", err)
 	}
 	if err := w.w.Flush(); err != nil {
@@ -122,12 +134,14 @@ func (w *WAL) Append(_ context.Context, e Envelope) (Envelope, error) {
 	if err := w.f.Sync(); err != nil {
 		return Envelope{}, fmt.Errorf("eventlog: fsync: %w", err)
 	}
-	w.events = append(w.events, e)
+	w.offsets = append(w.offsets, w.size)
+	w.size += int64(len(b)) + 1
 	w.bus.publish(e)
 	return e, nil
 }
 
-// Read returns all events with Seq >= fromSeq, in order.
+// Read returns all events with Seq >= fromSeq, in order, decoding them from disk
+// (one ReadAt for the contiguous tail). A corrupt record fails loudly here.
 func (w *WAL) Read(_ context.Context, fromSeq uint64) ([]Envelope, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -137,11 +151,28 @@ func (w *WAL) Read(_ context.Context, fromSeq uint64) ([]Envelope, error) {
 	if fromSeq == 0 {
 		fromSeq = 1
 	}
-	if fromSeq > uint64(len(w.events)) {
+	n := uint64(len(w.offsets))
+	if fromSeq > n {
 		return nil, nil
 	}
-	out := make([]Envelope, len(w.events[fromSeq-1:]))
-	copy(out, w.events[fromSeq-1:])
+	start := w.offsets[fromSeq-1]
+	buf := make([]byte, w.size-start)
+	if _, err := w.f.ReadAt(buf, start); err != nil && err != io.EOF {
+		return nil, fmt.Errorf("eventlog: read from seq %d: %w", fromSeq, err)
+	}
+	out := make([]Envelope, 0, n-fromSeq+1)
+	seq := fromSeq
+	for _, rec := range bytes.Split(buf, []byte{'\n'}) {
+		if len(rec) == 0 {
+			continue // trailing newline / blank line
+		}
+		var e Envelope
+		if err := json.Unmarshal(rec, &e); err != nil {
+			return nil, fmt.Errorf("eventlog: corrupt record at seq %d: %w", seq, err)
+		}
+		out = append(out, e)
+		seq++
+	}
 	return out, nil
 }
 
@@ -152,7 +183,7 @@ func (w *WAL) Subscribe() (<-chan Envelope, func()) { return w.bus.subscribe() }
 func (w *WAL) Head() uint64 {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	return uint64(len(w.events))
+	return uint64(len(w.offsets))
 }
 
 // Close flushes and closes the log and all subscriptions.

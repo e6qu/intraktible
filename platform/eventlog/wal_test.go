@@ -69,15 +69,22 @@ func TestWALRecoversTornFinalWrite(t *testing.T) {
 }
 
 // TestWALFailsOnMidFileCorruption confirms a corrupt complete record (not a torn
-// tail) still fails loudly rather than being silently skipped.
+// tail) still fails loudly rather than being silently skipped. Records are now
+// validated lazily, so the failure surfaces on Read — which the projection
+// runtime performs over the whole log at boot, so corruption still stops startup.
 func TestWALFailsOnMidFileCorruption(t *testing.T) {
 	dir := t.TempDir()
 	bad := "not valid json\n" + `{"org":"o","workspace":"w","type":"a","seq":2}` + "\n"
 	if err := os.WriteFile(filepath.Join(dir, "events.log"), []byte(bad), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := OpenWAL(dir); err == nil {
-		t.Fatal("a corrupt complete record should fail loudly")
+	w, err := OpenWAL(dir)
+	if err != nil {
+		t.Fatalf("open indexes lazily and should not decode/fail: %v", err)
+	}
+	defer func() { _ = w.Close() }()
+	if _, err := w.Read(context.Background(), 0); err == nil {
+		t.Fatal("a corrupt complete record should fail loudly on Read")
 	}
 }
 
