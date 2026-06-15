@@ -284,13 +284,17 @@ intraktible/
   one `moduleProjectors` list. The **split-services** deploy profile (`deploy/docker-compose.yml`
   `--profile split`) runs one container per module (same image, `serve --modules=<name>`). A worked
   end-to-end **example** ([`examples/demo.sh`](examples/demo.sh) + [`docs/EXAMPLE.md`](docs/EXAMPLE.md))
-  exercises all four components + the operator tooling. **Deferred from Phase 5** (in `BUGS.md`): the
-  file WAL is single-process, so the split profile gives each module an independent log — full
-  cross-component split needs a shared/networked log backend behind the existing `Log` interface (D18).
+  exercises all four components + the operator tooling. The split-services profile now shares one
+  durable **SQLite event log** (`serve --log=sqlite`) so cross-component flows work across processes (D18).
 
-**MVP roadmap complete (Phases 0–5).** Post-MVP backlog lives in `BUGS.md` (D1–D18): durable SQLite/
-Postgres projection stores, a shared log backend, real AI provider adapters, embedding the production
-UI build, and the §9 non-goals (SSO/RBAC, billing, 200+ real connectors, ONNX serving, HA).
+**MVP roadmap complete (Phases 0–5), plus a post-MVP hardening pass.** The hardening pass closed the
+bulk of the `BUGS.md` backlog: durable SQLite projection store + a shared SQLite event log, a real
+OpenAI-compatible AI provider with agent **tool-calling**, the production UI embedded as an SPA,
+login/durable sessions, a recursive JSON-Schema validator, an SSRF egress policy + a SQL connector for
+the Context Layer, pushed SLA-breach events, and full builder config panels (incl. the nested-table
+node types) + canvas drag-to-connect. What remains in `BUGS.md` is genuinely post-MVP: WAL
+snapshots/compaction (D1), async/queued agent runs (D17), a verified Postgres `store.Store` adapter
+(D21, env-blocked), and the §9 non-goals (SSO/RBAC, billing, 200+ real connectors, ONNX serving, HA).
 
 > Per project convention: at the **end of every phase**, update `PLAN.md` and `BUGS.md` in the same
 > PR as the phase's code.
