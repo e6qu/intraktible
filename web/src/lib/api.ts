@@ -187,6 +187,8 @@ export interface Case {
   status: string;
   assignee?: string;
   sla_days: number;
+  days_left: number;
+  sla_state?: string;
   source_decision_id?: string;
   context?: unknown;
   notes: CaseNote[];
@@ -195,10 +197,27 @@ export interface Case {
   updated_at: string;
 }
 
+export interface CaseSummary {
+  total: number;
+  by_status: Record<string, number>;
+  unassigned: number;
+  due_soon: number;
+  overdue: number;
+}
+
 export interface CaseFilter {
   status?: string;
   type?: string;
   assignee?: string;
+}
+
+function caseQuery(filter: CaseFilter): string {
+  const q = new URLSearchParams();
+  if (filter.status) q.set('status', filter.status);
+  if (filter.type) q.set('type', filter.type);
+  if (filter.assignee) q.set('assignee', filter.assignee);
+  const qs = q.toString();
+  return qs ? '?' + qs : '';
 }
 
 // errorOrStatus throws the backend's error message (or a status fallback).
@@ -212,16 +231,23 @@ export async function listCases(
   filter: CaseFilter = {},
   fetcher: typeof fetch = fetch
 ): Promise<Case[]> {
-  const q = new URLSearchParams();
-  if (filter.status) q.set('status', filter.status);
-  if (filter.type) q.set('type', filter.type);
-  if (filter.assignee) q.set('assignee', filter.assignee);
-  const qs = q.toString();
-  const res = await fetcher(`/v1/cases${qs ? '?' + qs : ''}`, { headers: authHeaders(key) });
+  const res = await fetcher(`/v1/cases${caseQuery(filter)}`, { headers: authHeaders(key) });
   if (!res.ok) {
     return errorOrStatus(res, 'GET /v1/cases');
   }
   return ((await res.json()) as { cases: Case[] }).cases ?? [];
+}
+
+export async function getCaseSummary(
+  key: string,
+  filter: CaseFilter = {},
+  fetcher: typeof fetch = fetch
+): Promise<CaseSummary> {
+  const res = await fetcher(`/v1/cases/summary${caseQuery(filter)}`, { headers: authHeaders(key) });
+  if (!res.ok) {
+    return errorOrStatus(res, 'GET /v1/cases/summary');
+  }
+  return (await res.json()) as CaseSummary;
 }
 
 export async function getCase(

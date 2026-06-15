@@ -39,8 +39,9 @@ type AuditEntry struct {
 }
 
 // CaseView is the materialized read model for one case. SLADays is the SLA window
-// at open time; "days left" is SLADays minus elapsed days (left to the consumer
-// so the read stays clock-free).
+// at open time. DaysLeft and SLAState are clock-derived: the projector leaves them
+// zero (the stored model stays clock-free + replay-stable) and the read layer fills
+// them via AnnotateSLA against the current time.
 type CaseView struct {
 	Org         string          `json:"org"`
 	Workspace   string          `json:"workspace"`
@@ -50,12 +51,53 @@ type CaseView struct {
 	Status      string          `json:"status"`
 	Assignee    string          `json:"assignee,omitempty"`
 	SLADays     int             `json:"sla_days"`
+	DaysLeft    int             `json:"days_left"`
+	SLAState    string          `json:"sla_state,omitempty"`
 	Context     json.RawMessage `json:"context,omitempty"`
 	SourceID    string          `json:"source_decision_id,omitempty"`
 	Notes       []Note          `json:"notes"`
 	Audit       []AuditEntry    `json:"audit"`
 	CreatedAt   time.Time       `json:"created_at"`
 	UpdatedAt   time.Time       `json:"updated_at"`
+}
+
+// AnnotateSLA fills a view's clock-derived SLA fields from now. The read layer
+// calls this so the stored projection itself stays clock-free.
+func AnnotateSLA(c *CaseView, now time.Time) {
+	c.DaysLeft = domain.DaysLeft(c.CreatedAt, c.SLADays, now)
+	c.SLAState = domain.SLAState(c.CreatedAt, c.SLADays, now)
+}
+
+// Summary is an at-a-glance roll-up of a tenant's case queue.
+type Summary struct {
+	Total      int            `json:"total"`
+	ByStatus   map[string]int `json:"by_status"`
+	Unassigned int            `json:"unassigned"`
+	DueSoon    int            `json:"due_soon"`
+	Overdue    int            `json:"overdue"`
+}
+
+// Summarize rolls up cases for the queue dashboard, bucketing SLA state against
+// now. Completed cases no longer count against the SLA clock.
+func Summarize(views []CaseView, now time.Time) Summary {
+	s := Summary{ByStatus: map[string]int{}, Total: len(views)}
+	for i := range views {
+		c := views[i]
+		s.ByStatus[c.Status]++
+		if c.Assignee == "" {
+			s.Unassigned++
+		}
+		if c.Status == domain.StatusCompleted {
+			continue
+		}
+		switch domain.SLAState(c.CreatedAt, c.SLADays, now) {
+		case domain.SLAOverdue:
+			s.Overdue++
+		case domain.SLADueSoon:
+			s.DueSoon++
+		}
+	}
+	return s
 }
 
 // Filter narrows a case listing; empty fields do not filter.

@@ -51,6 +51,10 @@
       <dd>{c.assignee || '—'}</dd>
       <dt>SLA</dt>
       <dd>{c.sla_days} days</dd>
+      <dt>days left</dt>
+      <dd class={`sla-${c.sla_state ?? ''}`} data-testid="days-left">
+        {c.days_left}{#if c.sla_state}<span class="muted"> ({c.sla_state})</span>{/if}
+      </dd>
       {#if c.source_decision_id}<dt>source decision</dt>
         <dd><code>{c.source_decision_id}</code></dd>{/if}
     </dl>
@@ -150,5 +154,12 @@
   }
   .muted {
     color: #888;
+  }
+  .sla-due_soon {
+    color: #b26a00;
+  }
+  .sla-overdue {
+    color: #b00;
+    font-weight: 600;
   }
 </style>

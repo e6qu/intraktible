@@ -1,11 +1,12 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { listCases, requestReview, type Case } from '$lib/api';
+  import { listCases, getCaseSummary, requestReview, type Case, type CaseSummary } from '$lib/api';
 
   let key = $state('dev-sandbox-key');
   let statusFilter = $state('');
   let list = $state<Case[]>([]);
+  let summary = $state<CaseSummary | null>(null);
   let error = $state('');
 
   // new-case form
@@ -16,7 +17,10 @@
   async function load() {
     error = '';
     try {
-      list = await listCases(key, { status: statusFilter });
+      [list, summary] = await Promise.all([
+        listCases(key, { status: statusFilter }),
+        getCaseSummary(key)
+      ]);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     }
@@ -67,12 +71,27 @@
 
   {#if error}<p class="err">{error}</p>{/if}
 
+  {#if summary}
+    <div class="summary" aria-label="queue summary">
+      <span class="stat">Total <b>{summary.total}</b></span>
+      <span class="stat">Needs review <b>{summary.by_status?.needs_review ?? 0}</b></span>
+      <span class="stat">In progress <b>{summary.by_status?.in_progress ?? 0}</b></span>
+      <span class="stat">Unassigned <b>{summary.unassigned}</b></span>
+      <span class="stat due">Due soon <b>{summary.due_soon}</b></span>
+      <span class="stat over">Overdue <b>{summary.overdue}</b></span>
+    </div>
+  {/if}
+
   {#if list.length === 0}
     <p class="muted">No cases.</p>
   {:else}
     <table>
       <thead>
-        <tr><th>Company</th><th>Type</th><th>Status</th><th>Assignee</th><th>SLA</th></tr>
+        <tr
+          ><th>Company</th><th>Type</th><th>Status</th><th>Assignee</th><th>SLA</th><th
+            >Days left</th
+          ></tr
+        >
       </thead>
       <tbody>
         {#each list as c (c.case_id)}
@@ -82,6 +101,7 @@
             <td>{c.status}</td>
             <td>{c.assignee || '—'}</td>
             <td>{c.sla_days}d</td>
+            <td class={`sla-${c.sla_state ?? ''}`}>{c.days_left}d</td>
           </tr>
         {/each}
       </tbody>
@@ -124,5 +144,35 @@
   }
   .muted {
     color: #888;
+  }
+  .summary {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+    margin: 0.6rem 0 1rem;
+    padding: 0.6rem 0.8rem;
+    background: #f6f7f9;
+    border-radius: 6px;
+  }
+  .stat {
+    color: #555;
+    font-size: 0.9rem;
+  }
+  .stat b {
+    color: #111;
+    font-size: 1.05rem;
+  }
+  .stat.due b {
+    color: #b26a00;
+  }
+  .stat.over b {
+    color: #b00;
+  }
+  .sla-due_soon {
+    color: #b26a00;
+  }
+  .sla-overdue {
+    color: #b00;
+    font-weight: 600;
   }
 </style>

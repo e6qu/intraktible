@@ -7,6 +7,7 @@ package service
 import (
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/e6qu/intraktible/case-manager/cases"
 	"github.com/e6qu/intraktible/case-manager/command"
@@ -32,6 +33,7 @@ func New(cmd *command.Handler, st store.Store) *Service {
 func (s *Service) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/cases", s.requestReview)
 	mux.HandleFunc("GET /v1/cases", s.list)
+	mux.HandleFunc("GET /v1/cases/summary", s.summary)
 	mux.HandleFunc("GET /v1/cases/{case_id}", s.get)
 	mux.HandleFunc("POST /v1/cases/{case_id}/assign", s.assign)
 	mux.HandleFunc("POST /v1/cases/{case_id}/status", s.status)
@@ -75,13 +77,36 @@ func (s *Service) list(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	recs, err := cases.List(r.Context(), s.store, id, filterFrom(r))
+	now := time.Now().UTC()
+	for i := range recs {
+		cases.AnnotateSLA(&recs[i], now)
+	}
+	httpx.WriteList(w, "cases", recs, err)
+}
+
+// summary returns the queue roll-up (counts by status, unassigned, SLA buckets)
+// over the same filtered set as the list endpoint.
+func (s *Service) summary(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	recs, err := cases.List(r.Context(), s.store, id, filterFrom(r))
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, cases.Summarize(recs, time.Now().UTC()))
+}
+
+func filterFrom(r *http.Request) cases.Filter {
 	q := r.URL.Query()
-	recs, err := cases.List(r.Context(), s.store, id, cases.Filter{
+	return cases.Filter{
 		Status:   q.Get("status"),
 		CaseType: q.Get("type"),
 		Assignee: q.Get("assignee"),
-	})
-	httpx.WriteList(w, "cases", recs, err)
+	}
 }
 
 func (s *Service) get(w http.ResponseWriter, r *http.Request) {
@@ -90,6 +115,9 @@ func (s *Service) get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	c, found, err := cases.Read(r.Context(), s.store, id, r.PathValue("case_id"))
+	if found {
+		cases.AnnotateSLA(&c, time.Now().UTC())
+	}
 	httpx.WriteOne(w, c, found, err, "case not found")
 }
 

@@ -69,6 +69,24 @@ func TestCaseAPIEndToEnd(t *testing.T) {
 	if len(list.Cases) != 0 {
 		t.Fatalf("completed filter: %d cases, want 0", len(list.Cases))
 	}
+
+	// SLA fields are computed at read time: a 5-day case opened just now has
+	// roughly its full window left and is on track.
+	var c cases.CaseView
+	api.Request(t, http.MethodGet, "/v1/cases/"+opened.CaseID, nil, http.StatusOK, &c)
+	if c.SLAState != "on_track" {
+		t.Fatalf("sla_state = %q, want on_track", c.SLAState)
+	}
+	if c.DaysLeft < 4 || c.DaysLeft > 5 {
+		t.Fatalf("days_left = %d, want 4-5 for a freshly opened 5-day case", c.DaysLeft)
+	}
+
+	// The queue summary rolls up the (filtered) set.
+	var sum cases.Summary
+	api.Request(t, http.MethodGet, "/v1/cases/summary", nil, http.StatusOK, &sum)
+	if sum.Total != 1 || sum.ByStatus["in_progress"] != 1 {
+		t.Fatalf("summary = %+v, want total 1 / in_progress 1", sum)
+	}
 }
 
 func TestCaseAPIValidationAndAuth(t *testing.T) {

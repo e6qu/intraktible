@@ -10,7 +10,7 @@ reimplementation of a commercial Agentic Decision Platform.
 4. Research basis (why the design looks like this): `../specs/openapi-current.yaml`, `../ENDPOINTS.md`, `../docs/`. (That parent tree is research only — **do not** mix it into this repo.)
 
 ## Status
-**Phase 0 (shared core) and Phase 1 (Decision Engine) DONE. Phase 2 (Case Manager) IN PROGRESS.**
+**Phase 0 (shared core), Phase 1 (Decision Engine), and Phase 2 (Case Manager) DONE. Phase 3 (Context Layer) NEXT.**
 Roadmap & exit criteria: [PLAN.md §8](PLAN.md#8-phased-roadmap); deferrals tracked in [BUGS.md](BUGS.md).
 Working today: `platform/{eventlog,store,projection,identity,auth,httpx,ai,web}` + the `hello`
 slice; and the **Decision Engine** — flow model + versioning, a deterministic execution runtime
@@ -23,12 +23,15 @@ The **Svelte Flow builder UI** (`web/src/routes/engine`) lists/creates flows and
 validation surfaced), renders it on a canvas (auto-layout), and runs inline test decisions.
 The **Case Manager** (`case-manager/`) opens cases — manually or **escalated from a decision flow's
 `manual_review` node** (cross-component via the event log, linked by `source_decision_id`) — with
-assignment / status / notes, a queue with filters, and a per-case audit log built from events; its
-**dashboard UI** (`web/src/routes/cases`) has the queue + case-detail view with those actions.
+assignment / status / notes, a queue with filters, a per-case audit log built from events, **SLA
+tracking** (days-left + on_track/due_soon/overdue computed at the read boundary so the projection
+stays clock-free) and a **queue summary** roll-up (`GET /v1/cases/summary`); its **dashboard UI**
+(`web/src/routes/cases`) has the queue (filters + summary banner + per-row days-left) and a
+case-detail view with those actions.
 Run it: `go run ./cmd/intraktible serve` then open http://localhost:8080 (dev key `dev-sandbox-key`);
 for UI dev use `make dev` (Vite + Go API). Phase 1 deferrals (CEL, builder UI polish, …) and other
 limitations are tracked in [BUGS.md](BUGS.md).
-Build order after Phase 1: Case Manager → Context Layer → Agent Manager.
+Build order from here: Context Layer → Agent Manager → Harden.
 
 ## The design in one breath
 Go backend (**functional core / imperative shell**) + **SvelteKit + Svelte Flow** UI embedded in the

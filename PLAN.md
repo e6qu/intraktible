@@ -215,14 +215,19 @@ intraktible/
   `BUGS.md`): CEL conditions (expr-lang + Starlark already cover conditions — D9), builder UI polish
   (drag-connect + bespoke config panels — D10), per-node decide appends (D11); still open from before:
   embedding the production UI build (D6) and decide-input schema validation (D4).
-- **Phase 2 — Case Manager — 🚧 IN PROGRESS.** Done: case lifecycle (ReviewRequested → assign /
+- **Phase 2 — Case Manager — ✅ DONE.** Shipped: case lifecycle (ReviewRequested → assign /
   status / notes) as command→event→projection→API; the `cases` read model with a per-case audit log
-  built from events; queue listing filtered by status/type/assignee; and the **escalation hook** — a
+  built from events; queue listing filtered by status/type/assignee; the **escalation hook** — a
   decision flow's `manual_review` node makes the engine emit `decision.manual_review_requested`,
   which the Case Manager consumes to open a case linked by `source_decision_id` (cross-component via
-  the event log only); and the **dashboard UI** (`web/src/routes/cases`) — queue with filters +
-  case-detail with assign/status/note actions and the audit log. Remaining: SLA "days left" and queue
-  summary metrics.
+  the event log only); **SLA tracking** — days-left + on_track/due_soon/overdue state computed at the
+  read boundary (the stored projection stays clock-free + replay-stable) plus a **queue summary**
+  roll-up (`GET /v1/cases/summary`: totals by status, unassigned, due-soon, overdue); and the
+  **dashboard UI** (`web/src/routes/cases`) — queue with filters, a summary banner, and per-row
+  days-left, plus case-detail with assign/status/note actions and the audit log. Full test pyramid
+  (unit/integration/API-e2e/Playwright); all CI gates green. **Deferred from Phase 2** (in `BUGS.md`):
+  no SLA-breach events/alerts — overdue is derived on read (D12); no rich/schema-aware context view in
+  case detail (D13).
 - **Phase 3 — Context Layer:** entities/events/features + feature engine, connector interface +
   reference connectors + Custom Connect Node, wired into Rule/Connect nodes.
 - **Phase 4 — Agent Manager:** agent config + AI-node execution, structured output, run monitoring,

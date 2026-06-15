@@ -9,6 +9,7 @@ import {
   decide,
   publishVersion,
   listCases,
+  getCaseSummary,
   requestReview,
   assignCase,
   setCaseStatus
@@ -148,5 +149,20 @@ describe('cases', () => {
   it('setCaseStatus surfaces the backend error', async () => {
     const fetcher = fetcherReturning(400, { error: 'unknown case' });
     await expect(setCaseStatus('k', 'ghost', 'completed', fetcher)).rejects.toThrow(/unknown case/);
+  });
+
+  it('getCaseSummary hits the summary endpoint with filters', async () => {
+    const fetcher = fetcherReturning(200, {
+      total: 3,
+      by_status: { needs_review: 2, in_progress: 1 },
+      unassigned: 1,
+      due_soon: 1,
+      overdue: 1
+    });
+    const sum = await getCaseSummary('k', { assignee: 'adam' }, fetcher);
+    expect(sum.total).toBe(3);
+    expect(sum.overdue).toBe(1);
+    const [url] = fetcher.mock.calls[0];
+    expect(url).toBe('/v1/cases/summary?assignee=adam');
   });
 });

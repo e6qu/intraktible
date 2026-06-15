@@ -18,5 +18,9 @@ Format: `ID | severity | component | description | status`.
 - `D10 | low | web | builder UI lacks drag-to-connect on the canvas and bespoke per-node config panels (raw JSON config textarea for now) | deferred`
 - `D11 | low | decision-engine | each decide appends one event per node (started + N node-evaluated + completed/failed); fine for MVP, could batch for high-volume flows | deferred`
 
+## Open (deferred / limitations after Phase 2)
+- `D12 | low | case-manager | SLA days-left and SLA state are computed at read time from created_at + sla_days against the wall clock; the stored projection stays clock-free (replay-stable). No SLA-breach events/alerts are emitted — overdue is derived on read, not pushed | deferred`
+- `D13 | low | web | case detail shows the raw context JSON inline; no schema-aware/rich context view (e.g. rendering the source decision's inputs/outputs) yet | deferred`
+
 ## Fixed
 _None yet._

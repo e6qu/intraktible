@@ -13,7 +13,9 @@ test('lists and creates a flow', async ({ page }) => {
   await page.getByLabel('name').fill('UI Flow');
   await page.getByRole('button', { name: 'Create flow' }).click();
 
-  await expect(page.getByRole('link', { name: 'UI Flow' })).toBeVisible();
+  // .first(): a reused dev server may carry flows named "UI Flow" from prior
+  // runs; the unique slug below pins down the one this test created.
+  await expect(page.getByRole('link', { name: 'UI Flow' }).first()).toBeVisible();
   await expect(page.getByText(slug)).toBeVisible();
 });
 

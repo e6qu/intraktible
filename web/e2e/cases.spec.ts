@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test';
 
 const KEY = 'dev-sandbox-key';
 
-test('opens a case from the queue', async ({ page }) => {
+test('opens a case from the queue and shows SLA + summary', async ({ page }) => {
   await page.goto('/cases');
   await expect(page.getByRole('heading', { name: /Case Manager/i })).toBeVisible();
 
@@ -12,7 +12,27 @@ test('opens a case from the queue', async ({ page }) => {
   await page.getByLabel('sla days').fill('5');
   await page.getByRole('button', { name: 'Open case' }).click();
 
-  await expect(page.getByRole('link', { name: 'Acme UI' })).toBeVisible();
+  // .first(): a reused dev server may carry "Acme UI" cases from prior runs.
+  await expect(page.getByRole('link', { name: 'Acme UI' }).first()).toBeVisible();
+  // The queue summary banner reflects the open case(s).
+  const summary = page.getByLabel('queue summary');
+  await expect(summary).toContainText('Total');
+  await expect(summary).toContainText('Overdue');
+});
+
+test('case detail shows computed days-left', async ({ page, request }) => {
+  // A freshly opened 5-day case is on track with ~5 days left.
+  const created = await request.post('/v1/cases', {
+    headers: { 'X-Api-Key': KEY },
+    data: { company_name: 'Initech UI', case_type: 'aml', sla_days: 5 }
+  });
+  expect(created.ok()).toBeTruthy();
+  const { case_id } = await created.json();
+
+  await page.goto(`/cases/${case_id}`);
+  const daysLeft = page.getByTestId('days-left');
+  await expect(daysLeft).toContainText('on_track');
+  await expect(daysLeft).toContainText(/[45]/);
 });
 
 test('assigns, transitions, and notes a case', async ({ page, request }) => {
