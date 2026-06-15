@@ -228,7 +228,7 @@ intraktible/
   (unit/integration/API-e2e/Playwright); all CI gates green. **Deferred from Phase 2** (in `BUGS.md`):
   no SLA-breach events/alerts — overdue is derived on read (D12); no rich/schema-aware context view in
   case detail (D13).
-- **Phase 3 — Context Layer — 🚧 IN PROGRESS.** Done: **custom entities** (dynamic JSONB keyed by
+- **Phase 3 — Context Layer — ✅ DONE.** Shipped: **custom entities** (dynamic JSONB keyed by
   type+id; re-recording patches via a pure top-level attribute merge) and **custom events** about an
   entity (per-entity event log + a running event count; an event auto-creates a shell entity;
   `occurred_at` is a recorded effect for replay stability); and a **feature engine** — windowed
@@ -247,9 +247,13 @@ intraktible/
   reference connectors (an arbitrary-HTTP one and a deterministic `mock_bureau`); a definition is
   `{name, type, config}` and invoking a connector is an effect recorded as a `ConnectorFetched`
   event (the stored response, not a re-fetch, is what replay reads) — API `/v1/context/connectors`
-  + `…/{name}/fetch` + `…/{name}/fetches`. Remaining to close the phase: a decision-engine **Custom
-  Connect Node** consuming connectors in a flow (port/adapter, like features); a **SQL** reference
-  connector is deferred (BUGS).
+  + `…/{name}/fetch` + `…/{name}/fetches`. A flow's **Connect node** is wired the same way as features:
+  the shell pre-resolves each connector (params = the current input), injects the response under
+  `connect.<output>`, and records it in `DecisionStarted` — via a `ConnectorProvider` port +
+  `connectors.Provider` adapter, so the pure core does no I/O and the engine never imports the Context
+  Layer. Full test pyramid (unit/integration/API-e2e); all CI gates green. **Deferred from Phase 3**
+  (in `BUGS.md`): a **SQL** reference connector (D14); an SSRF/egress policy for the HTTP connector
+  (D15).
 - **Phase 4 — Agent Manager:** agent config + AI-node execution, structured output, run monitoring,
   human-in-the-loop → Case Manager.
 - **Phase 5 — Harden:** replay/rollback tooling, split-services profile, docs, examples.

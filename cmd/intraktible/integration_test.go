@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	contextcmd "github.com/e6qu/intraktible/context-layer/command"
+	"github.com/e6qu/intraktible/context-layer/connectors"
 	contextdomain "github.com/e6qu/intraktible/context-layer/domain"
 	"github.com/e6qu/intraktible/context-layer/entities"
 	"github.com/e6qu/intraktible/context-layer/features"
@@ -75,6 +76,66 @@ func TestFeaturesDriveDecision(t *testing.T) {
 	if res.Status != enginedomain.StatusCompleted || res.Output["tier"] != "high" {
 		out, _ := json.Marshal(res)
 		t.Fatalf("feature did not drive the decision: %s", out)
+	}
+}
+
+// TestConnectorDrivesDecision wires the real Context Layer connector provider into
+// the decision engine and proves a flow's Connect node fetches from a defined
+// connector, with the response injected into the flow.
+func TestConnectorDrivesDecision(t *testing.T) {
+	ctx := context.Background()
+	log, err := eventlog.OpenWAL(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = log.Close() }()
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "dev"}
+	st := store.NewMemory()
+
+	cc := contextcmd.NewHandler(log)
+	if _, err := cc.DefineConnector(ctx, id, contextdomain.DefineConnector{Name: "bureau", Type: "mock_bureau"}); err != nil {
+		t.Fatal(err)
+	}
+
+	ec := enginecmd.NewHandler(log)
+	flowID, _, err := ec.CreateFlow(ctx, id, enginedomain.CreateFlow{Slug: "screen", Name: "Screen"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := ec.PublishVersion(ctx, id, enginedomain.PublishVersion{FlowID: flowID, Graph: connectGraph()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := projection.New(log, st, flows.Projector{}, connectors.Projector{}).Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	dh := enginecmd.NewDecideHandler(log, st, enginecmd.WithConnectors(connectors.Provider{Store: st}))
+	res, err := dh.Decide(ctx, id, "screen", "production", map[string]any{"subject": "Acme Corp"}, enginecmd.EntityRef{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Status != enginedomain.StatusCompleted {
+		t.Fatalf("status=%s err=%s", res.Status, res.Error)
+	}
+	conn, ok := res.Output["connect"].(map[string]any)
+	if !ok {
+		t.Fatalf("no connect data in output: %+v", res.Output)
+	}
+	bureau, ok := conn["bureau"].(map[string]any)
+	if !ok || bureau["risk_score"] == nil {
+		t.Fatalf("bureau response not injected: %+v", conn)
+	}
+}
+
+// connectGraph: input -> connect(bureau) -> output(whole context, incl. connect.*).
+func connectGraph() engineevents.Graph {
+	return engineevents.Graph{
+		Nodes: []engineevents.Node{
+			{ID: "in", Type: engineevents.NodeInput},
+			{ID: "c", Type: engineevents.NodeConnect, Config: json.RawMessage(`{"connector":"bureau","output":"bureau"}`)},
+			{ID: "out", Type: engineevents.NodeOutput},
+		},
+		Edges: []engineevents.Edge{{From: "in", To: "c"}, {From: "c", To: "out"}},
 	}
 }
 

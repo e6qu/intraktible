@@ -75,24 +75,45 @@ func DecisionGraph() events.Graph {
 	}
 }
 
-// FeatureGraph is a flow whose Split reads an injected Context Layer feature
-// (features.txn_count_24h): input -> split(>= 3) -> high/low -> output(tier).
-func FeatureGraph() events.Graph {
+// tierBranch is the shared tail of the feature/connect fixtures: a split on cond
+// into high/low assignments of `tier`, ending at an output of just `tier`. head is
+// the node the input connects to and the split's predecessor.
+func tierBranch(cond, head string) events.Graph {
 	cfg := func(s string) json.RawMessage { return json.RawMessage(s) }
 	return events.Graph{
 		Nodes: []events.Node{
-			{ID: "in", Type: events.NodeInput},
-			{ID: "s", Type: events.NodeSplit, Config: cfg(`{"condition":"features.txn_count_24h >= 3"}`)},
+			{ID: "s", Type: events.NodeSplit, Config: cfg(`{"condition":"` + cond + `"}`)},
 			{ID: "high", Type: events.NodeAssignment, Config: cfg(`{"assignments":[{"target":"tier","expr":"'high'"}]}`)},
 			{ID: "low", Type: events.NodeAssignment, Config: cfg(`{"assignments":[{"target":"tier","expr":"'low'"}]}`)},
 			{ID: "out", Type: events.NodeOutput, Config: cfg(`{"fields":["tier"]}`)},
 		},
 		Edges: []events.Edge{
-			{From: "in", To: "s"},
+			{From: head, To: "s"},
 			{From: "s", To: "high", Branch: "yes"},
 			{From: "s", To: "low", Branch: "no"},
 			{From: "high", To: "out"},
 			{From: "low", To: "out"},
 		},
 	}
+}
+
+// ConnectGraph is a flow that calls a connector then branches on its response:
+// input -> connect(bureau) -> split(connect.bureau.score >= 50) -> high/low ->
+// output(tier). The connector call is pre-resolved by the shell.
+func ConnectGraph() events.Graph {
+	g := tierBranch("connect.bureau.score >= 50", "c")
+	g.Nodes = append([]events.Node{
+		{ID: "in", Type: events.NodeInput},
+		{ID: "c", Type: events.NodeConnect, Config: json.RawMessage(`{"connector":"bureau","output":"bureau"}`)},
+	}, g.Nodes...)
+	g.Edges = append([]events.Edge{{From: "in", To: "c"}}, g.Edges...)
+	return g
+}
+
+// FeatureGraph is a flow whose Split reads an injected Context Layer feature
+// (features.txn_count_24h): input -> split(>= 3) -> high/low -> output(tier).
+func FeatureGraph() events.Graph {
+	g := tierBranch("features.txn_count_24h >= 3", "in")
+	g.Nodes = append([]events.Node{{ID: "in", Type: events.NodeInput}}, g.Nodes...)
+	return g
 }

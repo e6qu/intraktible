@@ -50,6 +50,14 @@ type manualReviewConfig struct {
 	SLADays     int    `json:"sla_days"`
 }
 
+// connectConfig is the config of a Connect node: it names a Context Layer
+// connector to call and the key its response is injected under (read downstream
+// as connect.<output>).
+type connectConfig struct {
+	Connector string `json:"connector"`
+	Output    string `json:"output"`
+}
+
 // codeConfig is the config of a Code node: a Starlark script with the decision
 // context predeclared as the `data` dict; its top-level assignments merge back
 // into the context.

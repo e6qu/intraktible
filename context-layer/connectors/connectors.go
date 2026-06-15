@@ -148,6 +148,20 @@ func Invoke(ctx context.Context, s store.Store, id identity.Identity, name strin
 	return c.Fetch(ctx, params)
 }
 
+// Provider adapts the connector subsystem to a name+params→response lookup,
+// suitable as a decision-engine connector source (it satisfies that engine's
+// ConnectorProvider port structurally, without this package importing it). The
+// fetch is performed but not recorded here — the decision records the response in
+// its own event stream (in DecisionStarted's data and the Connect node's output).
+type Provider struct {
+	Store store.Store
+}
+
+// Fetch invokes the named connector with params.
+func (p Provider) Fetch(ctx context.Context, id identity.Identity, connector string, params json.RawMessage) (json.RawMessage, error) {
+	return Invoke(ctx, p.Store, id, connector, params)
+}
+
 // build constructs a Connector from its definition.
 func build(def ConnectorView) (Connector, error) {
 	switch def.Type {

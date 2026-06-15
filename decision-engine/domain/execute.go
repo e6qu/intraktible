@@ -103,6 +103,8 @@ func evalNode(n events.Node, ctx map[string]any, edges []events.Edge) (any, stri
 		return evalMatrix(n, ctx, edges)
 	case events.NodeCode:
 		return evalCode(n, ctx, edges)
+	case events.NodeConnect:
+		return evalConnect(n, ctx, edges)
 	case events.NodeManualReview:
 		return evalManualReview(n, ctx, edges)
 	case events.NodeOutput:
@@ -268,6 +270,53 @@ func matchAxis(n events.Node, axis string, conds []axisCond, ctx map[string]any)
 		}
 	}
 	return 0, fmt.Errorf("decision-engine: node %q matrix has no matching %s", n.ID, axis)
+}
+
+// ConnectSpec names a Connect node's connector + the key its response lands under.
+type ConnectSpec struct {
+	NodeID    string
+	Connector string
+	Output    string
+}
+
+// ConnectSpecs extracts the Connect nodes from a graph so the shell can pre-resolve
+// their connector calls before execution (keeping Execute pure). It fails loudly on
+// a Connect node missing its connector or output.
+func ConnectSpecs(g events.Graph) ([]ConnectSpec, error) {
+	var out []ConnectSpec
+	for _, n := range g.Nodes {
+		if n.Type != events.NodeConnect {
+			continue
+		}
+		var cfg connectConfig
+		if err := decodeConfig(n, &cfg); err != nil {
+			return nil, err
+		}
+		if cfg.Connector == "" || cfg.Output == "" {
+			return nil, fmt.Errorf("decision-engine: connect node %q needs a connector and an output", n.ID)
+		}
+		out = append(out, ConnectSpec{NodeID: n.ID, Connector: cfg.Connector, Output: cfg.Output})
+	}
+	return out, nil
+}
+
+// evalConnect is pass-through: the shell pre-resolves the connector call and
+// injects the response under connect.<output>; the node echoes that into its
+// recorded output and fails loudly if it was not resolved.
+func evalConnect(n events.Node, ctx map[string]any, edges []events.Edge) (any, string, error) {
+	var cfg connectConfig
+	if err := decodeConfig(n, &cfg); err != nil {
+		return nil, "", err
+	}
+	conn, ok := ctx["connect"].(map[string]any)
+	if !ok {
+		return nil, "", fmt.Errorf("decision-engine: connect node %q has no resolved connector data (no connector provider configured?)", n.ID)
+	}
+	v, ok := conn[cfg.Output]
+	if !ok {
+		return nil, "", fmt.Errorf("decision-engine: connect node %q output %q was not resolved", n.ID, cfg.Output)
+	}
+	return map[string]any{cfg.Output: v}, firstEdge(edges), nil
 }
 
 // evalManualReview evaluates the case fields for an escalation. It is pass-through

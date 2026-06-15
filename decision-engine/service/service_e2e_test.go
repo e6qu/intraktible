@@ -4,6 +4,8 @@ package service_test
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"testing"
 
@@ -55,6 +57,39 @@ func TestDecideWithEntityFeaturesOverHTTP(t *testing.T) {
 		return res.Status == "completed" && res.Data["tier"] == "high"
 	}) {
 		t.Fatal("decide never reflected the injected feature (tier=high)")
+	}
+}
+
+// stubConnector is a fixed connector source for the decide HTTP test.
+type stubConnector map[string]string
+
+func (s stubConnector) Fetch(_ context.Context, _ identity.Identity, connector string, _ json.RawMessage) (json.RawMessage, error) {
+	r, ok := s[connector]
+	if !ok {
+		return nil, fmt.Errorf("no stub for connector %q", connector)
+	}
+	return json.RawMessage(r), nil
+}
+
+func TestDecideWithConnectorOverHTTP(t *testing.T) {
+	api := startEngine(t, command.WithConnectors(stubConnector{"bureau": `{"score":80}`}))
+
+	var created struct {
+		FlowID string `json:"flow_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows", map[string]any{"slug": "screen", "name": "Screen"}, http.StatusCreated, &created)
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/versions",
+		map[string]any{"graph": flowtest.ConnectGraph()}, http.StatusCreated, nil)
+
+	if !testutil.Eventually(t, func() bool {
+		var res struct {
+			Status string         `json:"status"`
+			Data   map[string]any `json:"data"`
+		}
+		api.Request(t, http.MethodPost, "/v1/flows/screen/production/decide", map[string]any{}, http.StatusOK, &res)
+		return res.Status == "completed" && res.Data["tier"] == "high"
+	}) {
+		t.Fatal("decide never reflected the connector response (tier=high)")
 	}
 }
 

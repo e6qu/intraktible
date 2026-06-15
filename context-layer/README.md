@@ -13,7 +13,7 @@ connectors/  # the Connect interface + reference connectors + def/fetch read mod
 service/     # HTTP handlers + wiring (imperative shell)
 ```
 
-Status: **in progress (Phase 3).**
+Status: **done (Phase 3).**
 
 Done — custom entities + events + feature engine + connectors (command→event→projection→API, durable & replayable):
 - **Entities** are dynamic-JSONB records keyed by `(entity_type, entity_id)`. Recording the same
@@ -54,6 +54,8 @@ Done — custom entities + events + feature engine + connectors (command→event
   - `GET /v1/context/connectors/{name}/fetches` — the recorded fetch history, newest first
 - Run it: `intraktible serve --modules=context-layer`.
 
-Next (PLAN §4.3, to close the phase): a decision-engine **Custom Connect Node** that calls a connector
-during a flow (mirroring the feature provider port/adapter so the engine stays import-free of this
-layer), and a **SQL** reference connector (deferred — see [../BUGS.md](../BUGS.md)).
+Consumed by the decision engine: a flow's **Connect node** calls a defined connector (the shell
+pre-resolves it via the `connectors.Provider` adapter and injects the response under `connect.<output>`),
+and Rule nodes read computed features — both through ports so the engine never imports this layer.
+Deferred (see [../BUGS.md](../BUGS.md)): a **SQL** reference connector (D14) and an SSRF/egress policy
+for the HTTP connector (D15).

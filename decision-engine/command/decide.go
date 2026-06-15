@@ -32,16 +32,24 @@ type EntityRef struct {
 	ID   string
 }
 
+// ConnectorProvider invokes a named Context Layer connector with params and returns
+// its JSON response. As with FeatureProvider, the port lives here so the engine
+// never imports the (later-built) Context Layer.
+type ConnectorProvider interface {
+	Fetch(ctx context.Context, id identity.Identity, connector string, params json.RawMessage) (json.RawMessage, error)
+}
+
 // DecideHandler executes published flows. It reads the flow registry read model
 // for the version to run, evaluates it with the pure core, and records the
 // decision as an event stream (started -> node-evaluated… -> completed/failed).
 type DecideHandler struct {
-	log      eventlog.Log
-	store    store.Store
-	now      func() time.Time
-	newID    func() string
-	roll     func() int // A/B routing draw in [0,100); recorded via the chosen version+variant
-	features FeatureProvider
+	log        eventlog.Log
+	store      store.Store
+	now        func() time.Time
+	newID      func() string
+	roll       func() int // A/B routing draw in [0,100); recorded via the chosen version+variant
+	features   FeatureProvider
+	connectors ConnectorProvider
 }
 
 // DecideOption customizes a DecideHandler (used by tests to make A/B routing
@@ -54,6 +62,13 @@ func WithRoll(roll func() int) DecideOption { return func(h *DecideHandler) { h.
 // WithFeatures supplies the feature provider that resolves an EntityRef's
 // features at decide time. Without it, EntityRef is ignored.
 func WithFeatures(p FeatureProvider) DecideOption { return func(h *DecideHandler) { h.features = p } }
+
+// WithConnectors supplies the connector provider that pre-resolves a flow's
+// Connect nodes at decide time. Without it, a flow containing Connect nodes fails
+// loudly (it cannot reach any connector backend).
+func WithConnectors(p ConnectorProvider) DecideOption {
+	return func(h *DecideHandler) { h.connectors = p }
+}
 
 // NewDecideHandler builds a DecideHandler using the system clock and random id +
 // routing sources. id generation, timing, and the routing draw are the only
@@ -118,10 +133,15 @@ func (h *DecideHandler) Decide(ctx context.Context, id identity.Identity, slug, 
 		return DecideResult{}, fmt.Errorf("decision-engine: flow %q has no version %d", slug, versionNo)
 	}
 
-	// Features are computed at decide time and merged into the input under
-	// "features"; the augmented input is what gets recorded and executed, so the
-	// run stays replay-stable from the recorded data alone.
+	// Features and connector calls are resolved at decide time and merged into the
+	// input (under "features" and "connect"); the augmented input is what gets
+	// recorded and executed, so the run stays replay-stable from the recorded data
+	// alone and the pure core never performs I/O.
 	data, err = h.injectFeatures(ctx, id, ref, data)
+	if err != nil {
+		return DecideResult{}, err
+	}
+	data, err = h.injectConnectors(ctx, id, version.Graph, data)
 	if err != nil {
 		return DecideResult{}, err
 	}
@@ -202,6 +222,43 @@ func (h *DecideHandler) injectFeatures(ctx context.Context, id identity.Identity
 		fm[k] = v
 	}
 	out["features"] = fm
+	return out, nil
+}
+
+// injectConnectors pre-resolves a flow's Connect nodes: it invokes each named
+// connector with the current input as params and injects the responses under
+// "connect" (keyed by each node's output). The fetch is the only I/O; doing it
+// here keeps domain.Execute pure. When no provider is set this is a no-op and any
+// Connect node will fail loudly during execution.
+func (h *DecideHandler) injectConnectors(ctx context.Context, id identity.Identity, graph events.Graph, data map[string]any) (map[string]any, error) {
+	specs, err := domain.ConnectSpecs(graph)
+	if err != nil {
+		return nil, err
+	}
+	if h.connectors == nil || len(specs) == 0 {
+		return data, nil
+	}
+	params, err := json.Marshal(data)
+	if err != nil {
+		return nil, fmt.Errorf("decision-engine: marshal connector params: %w", err)
+	}
+	resolved := make(map[string]any, len(specs))
+	for _, sp := range specs {
+		resp, err := h.connectors.Fetch(ctx, id, sp.Connector, params)
+		if err != nil {
+			return nil, fmt.Errorf("decision-engine: connect node %q (connector %q): %w", sp.NodeID, sp.Connector, err)
+		}
+		var v any
+		if err := json.Unmarshal(resp, &v); err != nil {
+			return nil, fmt.Errorf("decision-engine: connect node %q response: %w", sp.NodeID, err)
+		}
+		resolved[sp.Output] = v
+	}
+	out := make(map[string]any, len(data)+1)
+	for k, v := range data {
+		out[k] = v
+	}
+	out["connect"] = resolved
 	return out, nil
 }
 

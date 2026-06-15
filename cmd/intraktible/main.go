@@ -102,9 +102,12 @@ func run(addr, dataDir, modules, devKey string) error {
 
 	if enabled(modules, "decision-engine") {
 		// Decisions can reference a Context Layer entity to fold its features into
-		// the input; the provider reads the shared store (empty when no features
-		// are defined / the context-layer module is not running).
-		decide := enginecmd.NewDecideHandler(log, st, enginecmd.WithFeatures(features.Provider{Store: st}))
+		// the input, and a flow's Connect nodes call Context Layer connectors; both
+		// providers read the shared store (no-ops when the context-layer module is
+		// not running / nothing is defined).
+		decide := enginecmd.NewDecideHandler(log, st,
+			enginecmd.WithFeatures(features.Provider{Store: st}),
+			enginecmd.WithConnectors(connectors.Provider{Store: st}))
 		engineSvc := engineservice.New(enginecmd.NewHandler(log), decide, st)
 		engineSvc.Routes(api)
 		projectors = append(projectors, flows.Projector{}, history.Projector{}, analytics.Projector{})

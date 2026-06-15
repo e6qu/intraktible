@@ -10,7 +10,7 @@ reimplementation of a commercial Agentic Decision Platform.
 4. Research basis (why the design looks like this): `../specs/openapi-current.yaml`, `../ENDPOINTS.md`, `../docs/`. (That parent tree is research only — **do not** mix it into this repo.)
 
 ## Status
-**Phase 0 (shared core), Phase 1 (Decision Engine), and Phase 2 (Case Manager) DONE. Phase 3 (Context Layer) IN PROGRESS.**
+**Phase 0 (shared core), Phase 1 (Decision Engine), Phase 2 (Case Manager), and Phase 3 (Context Layer) DONE. Phase 4 (Agent Manager) NEXT.**
 Roadmap & exit criteria: [PLAN.md §8](PLAN.md#8-phased-roadmap); deferrals tracked in [BUGS.md](BUGS.md).
 Working today: `platform/{eventlog,store,projection,identity,auth,httpx,ai,web}` + the `hello`
 slice; and the **Decision Engine** — flow model + versioning, a deterministic execution runtime
@@ -43,7 +43,7 @@ event (so replay reads the stored response, never a re-fetch).
 Run it: `go run ./cmd/intraktible serve` then open http://localhost:8080 (dev key `dev-sandbox-key`);
 for UI dev use `make dev` (Vite + Go API). Phase 1 deferrals (CEL, builder UI polish, …) and other
 limitations are tracked in [BUGS.md](BUGS.md).
-Build order from here: Context Layer → Agent Manager → Harden.
+Build order from here: Agent Manager → Harden.
 
 ## The design in one breath
 Go backend (**functional core / imperative shell**) + **SvelteKit + Svelte Flow** UI embedded in the

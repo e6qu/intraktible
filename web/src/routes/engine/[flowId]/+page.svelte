@@ -23,6 +23,7 @@
     'decision_table',
     '2d_matrix',
     'code',
+    'connect',
     'output'
   ];
 
