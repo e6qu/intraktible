@@ -4,7 +4,7 @@ Tracked alongside `PLAN.md`; updated in the same PR at the end of every phase.
 Format: `ID | severity | component | description | status`.
 
 ## Open (deferred / limitations after Phase 0)
-- `D1 | low | eventlog | WAL holds all events in memory and re-reads the whole file on open; fine for MVP, revisit with segments/Badger | open`
+- `D1 | low | eventlog | WAL holds all events in memory and re-reads the whole file on open — a scale limit, not a correctness bug. Deliberately deferred: segment rotation alone would not reduce memory or open time (everything is still loaded); the real fix is snapshots/compaction or a Badger backend, which the Log interface is designed to accept without touching domain code. The load path is crash-safe (D22). Fine for MVP scale | deferred (post-MVP scaling) |`
 
 ## Open (deferred / limitations after Phase 1)
 - `D10 | low | web | partly done: structured config panels now cover split, connect, ai, manual_review, output, code, and assignment (a target/expr repeater); the remaining nested-table types (rule, scorecard, decision_table, 2d_matrix) still use the raw-JSON textarea, and the canvas still has no drag-to-connect (edges are added via the from/to form). Those need richer nested-form UI / Svelte Flow connect-handler work | deferred`
@@ -22,7 +22,7 @@ Format: `ID | severity | component | description | status`.
 
 ## Open (deferred / limitations during Phase 5)
 - `D19 | low | decision-engine | decide input is validated against a supported subset of JSON Schema (object type, required, per-property type incl. integer/number/boolean/array/object/null); nested schemas, $ref, enum, format, allOf/anyOf etc. are accepted but not enforced. Swap in a full validator if richer contracts are needed | open`
-- `D21 | low | store | only the SQLite durable adapter exists (plus in-memory); a Postgres store.Store adapter (pgx) is not implemented yet — useful for large/shared projections. On a restart the SQLite store is still fully rebuilt from the log rather than resumed incrementally from Head (correct but not optimized) | open`
+- `D21 | low | store | a Postgres store.Store adapter (pgx) for large/shared projections is not implemented — deliberately deferred: it cannot be verified in this environment (no Postgres/test container), and shipping unverified DB code is against the project's testing bar. The store.Store interface makes it a drop-in once a test Postgres is available; SQLite (D2) already provides durable storage. Separately, resuming the durable store incrementally from Head instead of a full rebuild on boot needs per-event idempotency or transactional apply+marker (the stats counter is not idempotent) — a consistency project, not a quick win | deferred (env-blocked / consistency) |`
 - `D18 | med | eventlog | the file WAL is single-process (each process holds its own in-memory copy + appends locally). The split-services compose profile therefore gives each module an independent log; full cross-component split (escalation, Rule/Connect/AI nodes reading another layer) needs a shared/networked log backend (Badger/Postgres/gRPC) behind the existing Log interface. The monolith profile is unaffected | open`
 
 ## Closed by decision (won't implement)
