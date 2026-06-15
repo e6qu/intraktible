@@ -13,7 +13,7 @@ reimplementation of a commercial Agentic Decision Platform.
 **MVP roadmap complete — Phases 0–5 all DONE** (shared core, Decision Engine, Case Manager, Context
 Layer, Agent Manager, and Harden: replay/rollback tooling + split-services profile + a worked example).
 See a full end-to-end walkthrough in [docs/EXAMPLE.md](docs/EXAMPLE.md) (runnable: [examples/demo.sh](examples/demo.sh)).
-Post-MVP backlog is tracked in [BUGS.md](BUGS.md) (D1–D18).
+Post-MVP backlog is tracked in [BUGS.md](BUGS.md).
 Roadmap & exit criteria: [PLAN.md §8](PLAN.md#8-phased-roadmap); deferrals tracked in [BUGS.md](BUGS.md).
 Working today: `platform/{eventlog,store,projection,identity,auth,httpx,ai,web}` + the `hello`
 slice; and the **Decision Engine** — flow model + versioning, a deterministic execution runtime
@@ -47,8 +47,8 @@ event (so replay reads the stored response, never a re-fetch).
 The **Agent Manager** (`agent-manager/`) defines **agents** — configs over the pluggable AI provider
 (`platform/ai`: system prompt, model, optional structured-output schema, tool set) — and **runs**
 them: the provider call is an effect captured in an `AgentRunRecorded` event (so replay reads the
-recorded output, not a re-call), with an agent registry + run-log/monitoring projection. Only the Stub
-provider is wired so far (real adapters tracked in BUGS). A flow's **AI node** runs an agent during a
+recorded output, not a re-call), with an agent registry + run-log/monitoring projection. An OpenAI-compatible HTTP
+provider ships (`ai.NewHTTP`, enabled via `INTRAKTIBLE_AI_BASE_URL`/`_API_KEY`/`_MODEL`); the Stub is the default fallback. A flow's **AI node** runs an agent during a
 decision (shell pre-resolves it via an `AgentProvider` port + `agents.Provider` adapter, injecting the
 output under `ai.<output>`) — the same one-way wiring as features/connectors. **Human-in-the-loop**:
 escalating a run opens a **Case Manager** case (the Agent Manager, built later, emits the Case

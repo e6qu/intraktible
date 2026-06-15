@@ -119,8 +119,18 @@ func run(addr, dataDir, modules, devKey, storeKind string) error {
 	api := http.NewServeMux()
 
 	// The AI provider registry is shared by the Agent Manager and the decision
-	// engine's AI node. Only the Stub is wired today (real adapters → BUGS D5).
+	// engine's AI node. When INTRAKTIBLE_AI_BASE_URL is set, a real OpenAI-compatible
+	// HTTP provider is registered (and becomes the default); the Stub is always
+	// available as a fallback for dev/tests.
 	aiRegistry := ai.NewRegistry()
+	if base := os.Getenv("INTRAKTIBLE_AI_BASE_URL"); base != "" {
+		name := os.Getenv("INTRAKTIBLE_AI_PROVIDER")
+		if name == "" {
+			name = "openai"
+		}
+		aiRegistry.Register(ai.NewHTTP(name, base, os.Getenv("INTRAKTIBLE_AI_API_KEY"), os.Getenv("INTRAKTIBLE_AI_MODEL")))
+		slog.Info("ai: registered HTTP provider", "name", name, "model", os.Getenv("INTRAKTIBLE_AI_MODEL"))
+	}
 	aiRegistry.Register(ai.Stub{})
 
 	if enabled(modules, "hello") {

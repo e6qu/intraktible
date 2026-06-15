@@ -261,7 +261,7 @@ intraktible/
   an `AgentRunRecorded` event so a run is auditable and replay reads the recorded output, not a re-call
   of the non-deterministic model; a provider failure is a recorded `failed` run). Command→event→
   projection→API: `/v1/agents` (+`/{name}`), `/v1/agents/{name}/run`, `/v1/agents/{name}/runs`,
-  `/v1/agent-runs/{run_id}`; module `agent-manager`; only the Stub AI provider is wired (D5).
+  `/v1/agent-runs/{run_id}`; module `agent-manager`. A real OpenAI-compatible HTTP AI provider ships (env-configured); the Stub is the default fallback.
   Enabling refactor: hoisted `eventlog.AppendJSON` (the marshal→append spine). A flow's **AI node** runs
   an agent during a decision: the shell pre-resolves it (the node's literal prompt, or the current
   input) and injects the output under `ai.<output>`, recorded in `DecisionStarted` — via an

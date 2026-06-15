@@ -5,7 +5,6 @@ Format: `ID | severity | component | description | status`.
 
 ## Open (deferred / limitations after Phase 0)
 - `D1 | low | eventlog | WAL holds all events in memory and re-reads the whole file on open; fine for MVP, revisit with segments/Badger | open`
-- `D5 | med | ai | only the Stub provider exists; Claude/OpenAI/Gemini/Ollama adapters not yet wired | open`
 
 ## Open (deferred / limitations after Phase 1)
 - `D9 | low | decision-engine | CEL conditions not implemented; expr-lang serves Rule/Split conditions + Assignment and Starlark serves the Code node, so conditions work — CEL is an optional alternative engine | deferred`
@@ -31,6 +30,7 @@ Format: `ID | severity | component | description | status`.
 - `D18 | med | eventlog | the file WAL is single-process (each process holds its own in-memory copy + appends locally). The split-services compose profile therefore gives each module an independent log; full cross-component split (escalation, Rule/Connect/AI nodes reading another layer) needs a shared/networked log backend (Badger/Postgres/gRPC) behind the existing Log interface. The monolith profile is unaffected | open`
 
 ## Fixed
+- `D5 | ai | added a real OpenAI-compatible HTTP provider (ai.NewHTTP — POST {base}/chat/completions, Bearer auth, json_object response_format when a schema is requested) behind the existing ai.Provider interface. It works with OpenAI/Ollama/vLLM/gateways and Anthropic-compatible endpoints. Wired in via INTRAKTIBLE_AI_BASE_URL/_API_KEY/_MODEL/_PROVIDER (Stub stays the fallback). Verified text + structured + error paths against a mock server and end-to-end on the real binary. | fixed`
 - `D22 | eventlog | crash safety: WAL.load now recovers a torn final record (a crash mid-Append leaves a trailing line with no newline) by truncating it on reopen, instead of failing to open and bricking the log. No acknowledged event is dropped (Append fsyncs before returning), and a corrupt complete record mid-file still fails loudly. (D1's in-memory/segmentation scaling is still open.) | fixed`
 - `D3 | projection | a stalled projection (a live-apply error stopped the consumer) is now surfaced: GET /healthz returns 503 "degraded" with the error when the runtime's Err() is set, so an orchestrator can restart/depool the node (a fresh boot rebuilds the projections). Dead-lettering/auto-skip is intentionally NOT added — silently dropping an event would violate fail-loudly and leave projections inconsistent. | fixed`
 - `D2 | store | added a durable SQLite projection store (store.NewSQLite, pure-Go modernc.org/sqlite — no CGO) behind the existing store.Store interface, selectable with serve --store=sqlite (persists to <data-dir>/projections.db, WAL + busy_timeout for one writer / many readers). Verified data survives a restart. Postgres adapter split out as D21. | fixed`
