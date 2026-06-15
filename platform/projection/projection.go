@@ -19,6 +19,10 @@ import (
 // applying the same events in order always yields the same state.
 type Projector interface {
 	Name() string
+	// Collections lists the store collections this projector owns; the runtime
+	// resets them before a rebuild so replaying into a non-empty store is
+	// idempotent. May be empty for a projector that writes nothing.
+	Collections() []string
 	Apply(ctx context.Context, e eventlog.Envelope, s store.Store) error
 }
 
@@ -81,6 +85,15 @@ func (r *Runtime) rebuild(ctx context.Context) error {
 // append-only log. (The MVP store is empty at boot, so a full re-read reconstructs
 // state deterministically; durable stores Reset per collection first.)
 func (r *Runtime) RebuildTo(ctx context.Context, upTo uint64) (int, error) {
+	// Reset each projector's collections first so a rebuild into a non-empty
+	// store (a durable store, or a repeated rebuild) is idempotent.
+	for _, p := range r.projectors {
+		for _, c := range p.Collections() {
+			if err := r.store.Reset(ctx, c); err != nil {
+				return 0, fmt.Errorf("projection: reset %s: %w", c, err)
+			}
+		}
+	}
 	events, err := r.log.Read(ctx, 0)
 	if err != nil {
 		return 0, fmt.Errorf("projection: read log: %w", err)

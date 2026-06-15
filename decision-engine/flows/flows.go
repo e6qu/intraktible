@@ -58,6 +58,9 @@ type Projector struct{}
 // Name identifies the projector.
 func (Projector) Name() string { return "decision_flows" }
 
+// Collections lists the store collection this projector owns.
+func (Projector) Collections() []string { return []string{Collection} }
+
 // Apply maintains the flow document. Events of other types are not this
 // projector's concern and are skipped (correct routing, not error-swallowing).
 func (Projector) Apply(ctx context.Context, e eventlog.Envelope, s store.Store) error {

@@ -113,6 +113,9 @@ type Projector struct{}
 // Name identifies the projector.
 func (Projector) Name() string { return "cases" }
 
+// Collections lists the store collection this projector owns.
+func (Projector) Collections() []string { return []string{Collection} }
+
 // Apply maintains the case document and its audit log.
 func (Projector) Apply(ctx context.Context, e eventlog.Envelope, s store.Store) error {
 	switch e.Type {

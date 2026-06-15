@@ -60,6 +60,9 @@ type Projector struct{}
 // Name identifies the projector.
 func (Projector) Name() string { return "agents" }
 
+// Collections lists the store collections this projector owns.
+func (Projector) Collections() []string { return []string{CollectionAgents, CollectionRuns} }
+
 // Apply maintains the agent registry and the run log.
 func (Projector) Apply(ctx context.Context, e eventlog.Envelope, s store.Store) error {
 	switch e.Type {

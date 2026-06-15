@@ -57,6 +57,9 @@ type Projector struct{}
 // Name identifies the projector.
 func (Projector) Name() string { return "context" }
 
+// Collections lists the store collections this projector owns.
+func (Projector) Collections() []string { return []string{CollectionEntities, CollectionEvents} }
+
 // Apply maintains the entity document and the per-entity event log.
 func (Projector) Apply(ctx context.Context, e eventlog.Envelope, s store.Store) error {
 	switch e.Type {

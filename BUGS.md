@@ -9,7 +9,6 @@ Format: `ID | severity | component | description | status`.
 - `D3 | med | projection | a live-apply error stops the consumer (surfaced via Err) but the HTTP server keeps running; no auto-restart/dead-letter yet | open`
 - `D5 | med | ai | only the Stub provider exists; Claude/OpenAI/Gemini/Ollama adapters not yet wired | open`
 - `D7 | low | auth | sessions are in-memory with no login endpoint/expiry yet; only the seeded dev API key is usable end-to-end | open`
-- `D8 | low | projection | rebuild does not Reset collections (store empty at boot); needed once durable stores land so re-runs are idempotent | open`
 
 ## Open (deferred / limitations after Phase 1)
 - `D9 | low | decision-engine | CEL conditions not implemented; expr-lang serves Rule/Split conditions + Assignment and Starlark serves the Code node, so conditions work — CEL is an optional alternative engine | deferred`
@@ -33,5 +32,6 @@ Format: `ID | severity | component | description | status`.
 - `D18 | med | eventlog | the file WAL is single-process (each process holds its own in-memory copy + appends locally). The split-services compose profile therefore gives each module an independent log; full cross-component split (escalation, Rule/Connect/AI nodes reading another layer) needs a shared/networked log backend (Badger/Postgres/gRPC) behind the existing Log interface. The monolith profile is unaffected | open`
 
 ## Fixed
+- `D8 | projection | rebuild is now idempotent: the Projector interface gained Collections(), and RebuildTo resets each projector's collections before replaying — so rebuilding into a non-empty store (a durable store, or a repeated replay) no longer double-applies. Verified by replaying the same store twice (counts unchanged). | fixed`
 - `D4 | decision-engine | decide input is now validated against the version's input_schema before the run is recorded — a contract violation is a 400, not a recorded decision. Pure domain.ValidateInput enforces a JSON-Schema subset (object type / required / per-property type) with no new dependency; the unenforced keywords are tracked as D19. | fixed`
 - `D6 | web | the production SvelteKit build now embeds and serves correctly: web.Handler does SPA fallback (a real embedded file is served as-is; any other path returns index.html 200) so client-side routes like /engine and /cases/{id} work from the binary. make dist (web + build) and the Dockerfile produce the single self-contained artifact; a fresh checkout still embeds the committed placeholder so go build always works, and the build output is gitignored. | fixed`

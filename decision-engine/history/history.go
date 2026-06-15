@@ -56,6 +56,9 @@ type Projector struct{}
 // Name identifies the projector.
 func (Projector) Name() string { return "decision_history" }
 
+// Collections lists the store collection this projector owns.
+func (Projector) Collections() []string { return []string{Collection} }
+
 // Apply maintains the decision record across its lifecycle events.
 func (Projector) Apply(ctx context.Context, e eventlog.Envelope, s store.Store) error {
 	switch e.Type {

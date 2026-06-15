@@ -21,6 +21,8 @@ type counter struct{}
 
 func (counter) Name() string { return "counter" }
 
+func (counter) Collections() []string { return []string{countCollection} }
+
 func (counter) Apply(ctx context.Context, e eventlog.Envelope, s store.Store) error {
 	key := store.Key(e.Org, e.Workspace, "n")
 	var n int
@@ -42,7 +44,9 @@ func (counter) Apply(ctx context.Context, e eventlog.Envelope, s store.Store) er
 // boomer fails on a specific event type, to exercise the fail-loudly path.
 type boomer struct{}
 
-func (boomer) Name() string { return "boomer" }
+func (boomer) Name() string { return "boomer" } // writes nothing, owns no collections
+
+func (boomer) Collections() []string { return nil }
 
 func (boomer) Apply(_ context.Context, e eventlog.Envelope, _ store.Store) error {
 	if e.Type == "boom" {
@@ -135,6 +139,32 @@ func TestRebuildToSeqIsBounded(t *testing.T) {
 	}
 	if applied != 4 || readCount(t, full) != 4 {
 		t.Fatalf("full replay: applied=%d count=%d, want 4/4", applied, readCount(t, full))
+	}
+}
+
+func TestRebuildIsIdempotent(t *testing.T) {
+	ctx := context.Background()
+	log, err := eventlog.OpenWAL(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = log.Close() }()
+
+	appendEvent(t, log, "a")
+	appendEvent(t, log, "b")
+
+	// Rebuild twice into the SAME store: the runtime resets the projector's
+	// collections first, so the second pass does not double-count.
+	st := store.NewMemory()
+	rt := projection.New(log, st, counter{})
+	if _, err := rt.RebuildTo(ctx, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.RebuildTo(ctx, 0); err != nil {
+		t.Fatal(err)
+	}
+	if got := readCount(t, st); got != 2 {
+		t.Fatalf("after two rebuilds: count=%d, want 2 (reset makes rebuild idempotent)", got)
 	}
 }
 

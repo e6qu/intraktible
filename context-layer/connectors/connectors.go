@@ -70,6 +70,9 @@ type Projector struct{}
 // Name identifies the projector.
 func (Projector) Name() string { return "context_connectors" }
 
+// Collections lists the store collections this projector owns.
+func (Projector) Collections() []string { return []string{CollectionConnectors, CollectionFetches} }
+
 // Apply maintains the connector definition + fetch-history read models.
 func (Projector) Apply(ctx context.Context, e eventlog.Envelope, s store.Store) error {
 	switch e.Type {

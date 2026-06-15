@@ -48,6 +48,9 @@ type Projector struct{}
 // Name identifies the projector.
 func (Projector) Name() string { return "context_features" }
 
+// Collections lists the store collection this projector owns.
+func (Projector) Collections() []string { return []string{Collection} }
+
 // Apply maintains the feature-definition read model.
 func (Projector) Apply(ctx context.Context, e eventlog.Envelope, s store.Store) error {
 	if e.Type != events.TypeFeatureDefined {
