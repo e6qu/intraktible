@@ -35,7 +35,9 @@
     "vite": "^8.0.0",
     "vitest": "^4.1.0"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@xyflow/svelte": "^1.6.0"
+  },
   "overrides": {
     "cookie": "^0.7.2"
   }

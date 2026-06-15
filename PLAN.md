@@ -207,10 +207,12 @@ intraktible/
   versions); a deterministic execution runtime (Input/Assignment/Rule/Split/Scorecard/Decision
   Table/2D Matrix/Code/Output — expr-lang for expressions, Starlark for the Code node) emitting the
   decision event stream (DecisionStarted→NodeEvaluated→Completed/Failed); the `…/{env}/decide` API
-  with per-environment version pinning + A/B (champion/challenger) routing; decision history; and
-  analytics-lite (per-flow metrics with champion/challenger breakdown). Remaining: CEL conditions
-  (alternative engine) and the Svelte Flow builder + inline test runs. (Full PLAN/BUGS close-out
-  lands with the phase-ending PR, per the docs-cadence rule.)
+  with per-environment version pinning + A/B (champion/challenger) routing; decision history;
+  analytics-lite (per-flow metrics with champion/challenger breakdown); and the **Svelte Flow builder
+  UI** (`web/src/routes/engine`) — flow list/create, graph view (auto-layout), and inline test runs.
+  Remaining: CEL conditions (alternative engine) and builder graph editing (drag/connect/config-panels
+  + publish from the UI). (Full PLAN/BUGS close-out lands with the phase-ending PR, per the
+  docs-cadence rule.)
 - **Phase 2 — Case Manager:** case events, queues/dashboard/detail UI, escalation hook from flows.
 - **Phase 3 — Context Layer:** entities/events/features + feature engine, connector interface +
   reference connectors + Custom Connect Node, wired into Rule/Connect nodes.

@@ -27,8 +27,8 @@
 <main>
   <h1>intraktible — Phase 0 vertical slice</h1>
   <p>
-    command → event log → projection → API → this UI. The Decision Engine builder (SvelteKit +
-    Svelte Flow) lands in Phase 1.
+    command → event log → projection → API → this UI.
+    <a href="/engine">Open the Decision Engine builder →</a>
   </p>
   <div class="row">
     <input bind:value={key} aria-label="API key" />

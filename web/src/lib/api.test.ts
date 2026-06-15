@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import { describe, it, expect, vi } from 'vitest';
-import { getStats, sayHello } from './api';
+import { getStats, sayHello, listFlows, createFlow, decide } from './api';
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -49,5 +49,39 @@ describe('sayHello', () => {
 
   it('throws loudly on a non-2xx response', async () => {
     await expect(sayHello('k', 'x', fetcherReturning(400, {}))).rejects.toThrow(/400/);
+  });
+});
+
+describe('flows', () => {
+  it('unwraps the flows array', async () => {
+    const fetcher = fetcherReturning(200, {
+      flows: [{ flow_id: 'f1', slug: 's', name: 'N', latest: 1 }]
+    });
+    const flows = await listFlows('k', fetcher);
+    expect(flows).toHaveLength(1);
+    expect(flows[0].slug).toBe('s');
+  });
+
+  it('createFlow posts slug and name', async () => {
+    const fetcher = fetcherReturning(201, { flow_id: 'f1' });
+    const res = await createFlow('k', 'my-flow', 'My Flow', fetcher);
+    expect(res.flow_id).toBe('f1');
+    const [url, init] = fetcher.mock.calls[0];
+    expect(url).toBe('/v1/flows');
+    expect(init?.method).toBe('POST');
+    expect(init?.body).toBe(JSON.stringify({ slug: 'my-flow', name: 'My Flow' }));
+  });
+
+  it('decide targets the slug/env path', async () => {
+    const fetcher = fetcherReturning(200, {
+      decision_id: 'd1',
+      status: 'completed',
+      data: { x: 1 }
+    });
+    const res = await decide('k', 'scoring', 'production', { fico: 700 }, fetcher);
+    expect(res.status).toBe('completed');
+    const [url, init] = fetcher.mock.calls[0];
+    expect(url).toBe('/v1/flows/scoring/production/decide');
+    expect(init?.body).toBe(JSON.stringify({ data: { fico: 700 } }));
   });
 });

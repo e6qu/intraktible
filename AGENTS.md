@@ -18,8 +18,10 @@ slice; and the **Decision Engine** — flow model + versioning, a deterministic 
 expressions, Starlark for the Code node), the `…/{env}/decide` API with **per-environment version
 pinning + A/B (champion/challenger) routing**, decision history, and **analytics-lite** (per-flow
 metrics with champion/challenger breakdown) — all command→event→projection→API, durable & replayable.
-Run it: `go run ./cmd/intraktible serve` then open http://localhost:8080 (dev key `dev-sandbox-key`).
-Phase 1 remaining: CEL conditions, Svelte Flow builder UI.
+The **Svelte Flow builder UI** (`web/src/routes/engine`) lists/creates flows, renders a version's
+graph on a canvas (auto-layout), and runs inline test decisions.
+Run it: `go run ./cmd/intraktible serve` then open http://localhost:8080 (dev key `dev-sandbox-key`);
+for UI dev use `make dev` (Vite + Go API). Phase 1 remaining: CEL conditions, builder graph editing.
 Build order after Phase 1: Case Manager → Context Layer → Agent Manager.
 
 ## The design in one breath
