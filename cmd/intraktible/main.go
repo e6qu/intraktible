@@ -17,6 +17,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"sort"
+	"strings"
 	"syscall"
 	"time"
 
@@ -136,6 +137,14 @@ func run(addr, dataDir, modules, devKey, storeKind string) error {
 	}
 	aiRegistry.Register(ai.Stub{})
 
+	// HTTP connectors dial operator-configured URLs; the default egress policy
+	// blocks loopback/private targets (SSRF guard). Operators whose connectors
+	// legitimately reach internal hosts opt in with INTRAKTIBLE_CONNECTOR_ALLOW_PRIVATE.
+	egress := connectors.EgressPolicy{AllowPrivate: truthy(os.Getenv("INTRAKTIBLE_CONNECTOR_ALLOW_PRIVATE"))}
+	if egress.AllowPrivate {
+		slog.Warn("connectors: egress to private/loopback targets is ALLOWED (INTRAKTIBLE_CONNECTOR_ALLOW_PRIVATE)")
+	}
+
 	if enabled(modules, "hello") {
 		helloservice.New(hellocmd.NewHandler(log), st).Routes(api)
 	}
@@ -146,7 +155,7 @@ func run(addr, dataDir, modules, devKey, storeKind string) error {
 		// not running / nothing is defined).
 		decide := enginecmd.NewDecideHandler(log, st,
 			enginecmd.WithFeatures(features.Provider{Store: st}),
-			enginecmd.WithConnectors(connectors.Provider{Store: st}),
+			enginecmd.WithConnectors(connectors.Provider{Store: st, Egress: egress}),
 			enginecmd.WithAgents(agents.Provider{Store: st, Registry: aiRegistry}))
 		engineservice.New(enginecmd.NewHandler(log), decide, st).Routes(api)
 	}
@@ -154,7 +163,7 @@ func run(addr, dataDir, modules, devKey, storeKind string) error {
 		caseservice.New(casecmd.NewHandler(log), st).Routes(api)
 	}
 	if enabled(modules, "context-layer") {
-		contextservice.New(contextcmd.NewHandler(log), st).Routes(api)
+		contextservice.New(contextcmd.NewHandler(log), st, contextservice.WithEgress(egress)).Routes(api)
 	}
 	if enabled(modules, "agent-manager") {
 		agentservice.New(agentcmd.NewHandler(log, st, aiRegistry), st).Routes(api)
@@ -323,6 +332,16 @@ func enabled(modules, m string) bool {
 		}
 	}
 	return false
+}
+
+// truthy reports whether an env value reads as enabled (1/true/yes/on).
+func truthy(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func splitComma(s string) []string {

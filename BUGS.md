@@ -14,7 +14,6 @@ Format: `ID | severity | component | description | status`.
 
 ## Open (deferred / limitations during Phase 3)
 - `D14 | low | context-layer | reference connectors cover http + a deterministic mock_bureau; a SQL connector is not implemented (needs a driver/DB). The Connect interface + registry make it pluggable when a backend lands | deferred`
-- `D15 | low | context-layer | the http connector fetches an operator-configured URL (the intended Custom Connect feature); it validates the scheme + bounds time/size but has no allow-list/SSRF policy — add egress controls before exposing it to untrusted config | open`
 
 ## Open (deferred / limitations after Phase 4)
 - `D16 | low | agent-manager | an agent's tool set is declared and stored but tools are not executed yet (no tool-calling loop); the Stub provider ignores them. Real tool-calling lands with a non-Stub provider | deferred`
@@ -30,6 +29,7 @@ Format: `ID | severity | component | description | status`.
 - `D11 | decision-engine | batching the per-node decision events — won't implement. The per-node DecisionStarted → NodeEvaluated… → Completed/Failed stream IS the replayable, node-by-node decision history (PLAN §3.3); batching would trade that granularity for throughput the MVP does not need. A future high-volume optimization, not a bug.`
 
 ## Fixed
+- `D15 | context-layer | the http connector dialed an operator-configured URL with no SSRF protection. It now enforces an egress policy at dial time (a net.Dialer Control hook that inspects the resolved IP, so it guards every redirect hop and resists DNS rebinding): loopback, RFC1918/ULA private, link-local, unspecified, and multicast targets are refused by default. Operators whose connectors legitimately reach internal hosts opt in with INTRAKTIBLE_CONNECTOR_ALLOW_PRIVATE (logged loudly at boot). connectors.InvokeWith / Provider.Egress / service.WithEgress thread the policy; the scheme + time + size bounds remain. | fixed`
 - `D20 | web/auth | the UI has a login page (web/src/routes/login): an API key is exchanged for a session cookie, the home page shows the signed-in identity (via GET /v1/me) with sign-out, and sessions are durable (see the D7/storesessions work) so they survive a restart under --store=sqlite. The module pages still offer an API-key input as well — both auth methods work; a full migration of those pages to cookie-only is optional future polish. | fixed`
 - `D13 | web | the case-detail page now renders the case context (the source decision's inputs / agent escalation reference) as a readable key-value view (lib/kv.displayEntries: primitives as text, nested values as compact JSON) instead of nothing. A fully schema-aware decision-inputs view remains a possible future polish. | fixed`
 - `D17 (partial) | agent-manager | a schema-constrained agent's structured output is now validated against the agent's schema (shared platform/schema.ValidateObject, the same JSON-Schema subset the decide-input check uses); a mismatch is a recorded failed run (fail loudly). Remaining (async/queued/streaming runs) stays open as D17. | fixed`

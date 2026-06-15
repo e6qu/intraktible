@@ -67,7 +67,8 @@ func TestHTTPConnector(t *testing.T) {
 		Name: "rest", Type: domain.ConnectorHTTP, Config: json.RawMessage(`{"url":"` + srv.URL + `"}`),
 	})
 
-	resp, err := connectors.Invoke(ctx, s, id, "rest", nil)
+	// httptest binds loopback, which the default egress policy blocks — opt in.
+	resp, err := connectors.InvokeWith(ctx, s, id, "rest", nil, connectors.EgressPolicy{AllowPrivate: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,8 +96,32 @@ func TestHTTPConnectorNon2xxFailsLoudly(t *testing.T) {
 	define(ctx, t, s, id, connectors.ConnectorView{
 		Name: "rest", Type: domain.ConnectorHTTP, Config: json.RawMessage(`{"url":"` + srv.URL + `"}`),
 	})
-	if _, err := connectors.Invoke(ctx, s, id, "rest", nil); err == nil {
+	if _, err := connectors.InvokeWith(ctx, s, id, "rest", nil, connectors.EgressPolicy{AllowPrivate: true}); err == nil {
 		t.Fatal("expected a non-2xx fetch to error")
+	}
+}
+
+func TestHTTPConnectorBlocksLoopbackByDefault(t *testing.T) {
+	ctx := context.Background()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"secret":true}`))
+	}))
+	defer srv.Close()
+
+	s := store.NewMemory()
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "dev"}
+	define(ctx, t, s, id, connectors.ConnectorView{
+		Name: "internal", Type: domain.ConnectorHTTP, Config: json.RawMessage(`{"url":"` + srv.URL + `"}`),
+	})
+
+	// Default policy (zero value) must refuse to dial a loopback target — SSRF guard.
+	if _, err := connectors.Invoke(ctx, s, id, "internal", nil); err == nil {
+		t.Fatal("expected the default egress policy to block a loopback fetch")
+	}
+	// With the operator opt-in, the same fetch succeeds.
+	if _, err := connectors.InvokeWith(ctx, s, id, "internal", nil, connectors.EgressPolicy{AllowPrivate: true}); err != nil {
+		t.Fatalf("AllowPrivate should permit loopback: %v", err)
 	}
 }
 

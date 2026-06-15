@@ -22,13 +22,27 @@ import (
 
 // Service wires the Context Layer commands and read model to HTTP.
 type Service struct {
-	cmd   *command.Handler
-	store store.Store
+	cmd    *command.Handler
+	store  store.Store
+	egress connectors.EgressPolicy
+}
+
+// Option configures a Service.
+type Option func(*Service)
+
+// WithEgress sets the HTTP connector's egress policy (SSRF guard). The default
+// (zero value) blocks loopback/private targets.
+func WithEgress(p connectors.EgressPolicy) Option {
+	return func(s *Service) { s.egress = p }
 }
 
 // New builds the service.
-func New(cmd *command.Handler, st store.Store) *Service {
-	return &Service{cmd: cmd, store: st}
+func New(cmd *command.Handler, st store.Store, opts ...Option) *Service {
+	s := &Service{cmd: cmd, store: st}
+	for _, o := range opts {
+		o(s)
+	}
+	return s
 }
 
 // Routes registers the Context Layer endpoints.
@@ -181,7 +195,7 @@ func (s *Service) fetchConnector(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := r.PathValue("name")
-	resp, err := connectors.Invoke(r.Context(), s.store, id, name, req.Params)
+	resp, err := connectors.InvokeWith(r.Context(), s.store, id, name, req.Params, s.egress)
 	if err != nil {
 		httpx.Error(w, http.StatusBadGateway, err)
 		return

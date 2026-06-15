@@ -16,9 +16,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"sort"
+	"syscall"
 	"time"
 
 	"github.com/e6qu/intraktible/context-layer/domain"
@@ -62,6 +64,49 @@ type FetchView struct {
 // Connector fetches external data for a set of params, returning a JSON document.
 type Connector interface {
 	Fetch(ctx context.Context, params json.RawMessage) (json.RawMessage, error)
+}
+
+// EgressPolicy governs which network targets the HTTP connector may reach. The
+// HTTP connector dials an operator-configured URL (the Custom Connect feature),
+// so without controls it is a server-side request forgery (SSRF) vector: a
+// malicious or mistaken config could make the server fetch internal metadata
+// endpoints (169.254.169.254), localhost admin ports, or RFC1918 hosts.
+//
+// The zero value is fail-safe: it blocks loopback, private, link-local,
+// unspecified, and multicast targets. AllowPrivate is the operator's explicit
+// opt-in for deployments whose connectors legitimately reach internal hosts.
+type EgressPolicy struct {
+	// AllowPrivate permits dialing loopback/private/link-local addresses. Default
+	// false. Set via INTRAKTIBLE_CONNECTOR_ALLOW_PRIVATE at the composition root.
+	AllowPrivate bool
+}
+
+// control is a net.Dialer Control hook: it runs after DNS resolution with the
+// concrete IP about to be dialed, so it also defeats DNS-rebinding (a name that
+// resolves to a public IP on validation but a private one at connect time).
+func (p EgressPolicy) control(_, address string, _ syscall.RawConn) error {
+	if p.AllowPrivate {
+		return nil
+	}
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return fmt.Errorf("context-layer: http connector egress: parse address %q: %w", address, err)
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return fmt.Errorf("context-layer: http connector egress: unresolved address %q", address)
+	}
+	if blockedIP(ip) {
+		return fmt.Errorf("context-layer: http connector blocked egress to %s "+
+			"(loopback/private/link-local); set INTRAKTIBLE_CONNECTOR_ALLOW_PRIVATE to allow", ip)
+	}
+	return nil
+}
+
+// blockedIP reports whether ip is in a range the default policy refuses to dial.
+func blockedIP(ip net.IP) bool {
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified() ||
+		ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast()
 }
 
 // Projector folds connector definitions + fetches into read models.
@@ -135,8 +180,14 @@ func ListFetches(ctx context.Context, s store.Store, id identity.Identity, name 
 }
 
 // Invoke looks up a connector definition, builds the connector, and fetches —
-// performing the external effect. Recording the result is the caller's job.
+// performing the external effect. Recording the result is the caller's job. It
+// uses the fail-safe default egress policy; use InvokeWith for a custom one.
 func Invoke(ctx context.Context, s store.Store, id identity.Identity, name string, params json.RawMessage) (json.RawMessage, error) {
+	return InvokeWith(ctx, s, id, name, params, EgressPolicy{})
+}
+
+// InvokeWith is Invoke with an explicit egress policy for the HTTP connector.
+func InvokeWith(ctx context.Context, s store.Store, id identity.Identity, name string, params json.RawMessage, egress EgressPolicy) (json.RawMessage, error) {
 	def, ok, err := Read(ctx, s, id, name)
 	if err != nil {
 		return nil, err
@@ -144,7 +195,7 @@ func Invoke(ctx context.Context, s store.Store, id identity.Identity, name strin
 	if !ok {
 		return nil, fmt.Errorf("context-layer: unknown connector %q", name)
 	}
-	c, err := build(def)
+	c, err := build(def, egress)
 	if err != nil {
 		return nil, err
 	}
@@ -157,19 +208,20 @@ func Invoke(ctx context.Context, s store.Store, id identity.Identity, name strin
 // fetch is performed but not recorded here — the decision records the response in
 // its own event stream (in DecisionStarted's data and the Connect node's output).
 type Provider struct {
-	Store store.Store
+	Store  store.Store
+	Egress EgressPolicy
 }
 
-// Fetch invokes the named connector with params.
+// Fetch invokes the named connector with params under the provider's egress policy.
 func (p Provider) Fetch(ctx context.Context, id identity.Identity, connector string, params json.RawMessage) (json.RawMessage, error) {
-	return Invoke(ctx, p.Store, id, connector, params)
+	return InvokeWith(ctx, p.Store, id, connector, params, p.Egress)
 }
 
 // build constructs a Connector from its definition.
-func build(def ConnectorView) (Connector, error) {
+func build(def ConnectorView, egress EgressPolicy) (Connector, error) {
 	switch def.Type {
 	case domain.ConnectorHTTP:
-		return newHTTP(def.Config)
+		return newHTTP(def.Config, egress)
 	case domain.ConnectorMockBureau:
 		return mockBureau{}, nil
 	default:
@@ -190,7 +242,7 @@ type httpConnector struct {
 	client *http.Client
 }
 
-func newHTTP(config json.RawMessage) (httpConnector, error) {
+func newHTTP(config json.RawMessage, egress EgressPolicy) (httpConnector, error) {
 	var cfg httpConfig
 	if len(config) > 0 {
 		if err := json.Unmarshal(config, &cfg); err != nil {
@@ -205,7 +257,14 @@ func newHTTP(config json.RawMessage) (httpConnector, error) {
 	if method == "" {
 		method = http.MethodGet
 	}
-	return httpConnector{url: cfg.URL, method: method, client: &http.Client{Timeout: fetchTimeout}}, nil
+	// The egress policy is enforced at dial time (after DNS resolution) so it
+	// guards every redirect hop and resists DNS rebinding.
+	dialer := &net.Dialer{Timeout: fetchTimeout, Control: egress.control}
+	client := &http.Client{
+		Timeout:   fetchTimeout,
+		Transport: &http.Transport{DialContext: dialer.DialContext},
+	}
+	return httpConnector{url: cfg.URL, method: method, client: client}, nil
 }
 
 // Fetch calls the configured endpoint (sending params as the JSON body for

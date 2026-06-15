@@ -57,5 +57,10 @@ Done — custom entities + events + feature engine + connectors (command→event
 Consumed by the decision engine: a flow's **Connect node** calls a defined connector (the shell
 pre-resolves it via the `connectors.Provider` adapter and injects the response under `connect.<output>`),
 and Rule nodes read computed features — both through ports so the engine never imports this layer.
-Deferred (see [../BUGS.md](../BUGS.md)): a **SQL** reference connector (D14) and an SSRF/egress policy
-for the HTTP connector (D15).
+
+The HTTP connector enforces an **egress policy** (SSRF guard, D15): it dials only after DNS
+resolution through a `net.Dialer` Control hook that refuses loopback / private (RFC1918, ULA) /
+link-local / unspecified / multicast targets — so it guards every redirect hop and resists DNS
+rebinding. Operators whose connectors legitimately reach internal hosts opt in with
+`INTRAKTIBLE_CONNECTOR_ALLOW_PRIVATE` (logged at boot).
+Deferred (see [../BUGS.md](../BUGS.md)): a **SQL** reference connector (D14).
