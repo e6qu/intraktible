@@ -75,12 +75,18 @@ test('builds a flow in the editor and publishes it', async ({ page, request }) =
   const { flow_id } = await created.json();
 
   await page.goto(`/engine/${flow_id}`);
+  // Wait for the editor to be interactive before driving it (the page loads the
+  // flow on mount; under parallel load the dev server can be slow to hydrate).
+  await expect(page.getByLabel('new node type')).toBeVisible();
 
   // Add input (n1), assignment (n2), output (n3) via the palette.
   for (const type of ['input', 'assignment', 'output']) {
     await page.getByLabel('new node type').selectOption(type);
     await page.getByRole('button', { name: 'Add', exact: true }).click();
   }
+  // Barrier: all three nodes (and thus the edge-select options) are rendered
+  // before we wire edges, so selectOption can't race the render.
+  await expect(page.locator('aside ul.nodes li')).toHaveCount(3);
 
   // Configure the assignment and output nodes.
   await page.locator('aside ul.nodes button.link').filter({ hasText: 'n2' }).click();
@@ -90,12 +96,15 @@ test('builds a flow in the editor and publishes it', async ({ page, request }) =
   await page.locator('aside ul.nodes button.link').filter({ hasText: 'n3' }).click();
   await page.getByLabel('node config').fill('{"fields":["decision"]}');
 
-  // Wire in -> assignment -> output.
-  await page.getByLabel('edge from').selectOption('n1');
-  await page.getByLabel('edge to').selectOption('n2');
+  // Wire in -> assignment -> output. Match the select labels exactly: Svelte Flow
+  // renders each edge with a default aria-label "Edge from <a> to <b>", which a
+  // substring getByLabel('edge from') would also match once an edge is on the
+  // canvas (a render race) — exact:true pins the locator to the form control.
+  await page.getByLabel('edge from', { exact: true }).selectOption('n1');
+  await page.getByLabel('edge to', { exact: true }).selectOption('n2');
   await page.getByRole('button', { name: 'Add edge' }).click();
-  await page.getByLabel('edge from').selectOption('n2');
-  await page.getByLabel('edge to').selectOption('n3');
+  await page.getByLabel('edge from', { exact: true }).selectOption('n2');
+  await page.getByLabel('edge to', { exact: true }).selectOption('n3');
   await page.getByRole('button', { name: 'Add edge' }).click();
 
   // Publish -> v1, and the canvas now shows the three nodes.
