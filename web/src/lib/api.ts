@@ -334,3 +334,136 @@ export function addCaseNote(
 ): Promise<void> {
   return caseAction(key, caseID, 'notes', { text }, fetcher);
 }
+
+// ---- Agent Manager ----
+
+export interface Agent {
+  name: string;
+  provider?: string;
+  model?: string;
+  system?: string;
+  schema?: unknown;
+  tools?: string[];
+  runs: number;
+  updated_at: string;
+}
+
+export interface AgentRun {
+  run_id: string;
+  agent: string;
+  model?: string;
+  prompt: string;
+  status: string;
+  text?: string;
+  structured?: unknown;
+  error?: string;
+  at: string;
+}
+
+export interface RunResult {
+  run_id: string;
+  status: string;
+  text?: string;
+  structured?: unknown;
+  error?: string;
+}
+
+export interface RunSummary {
+  total: number;
+  completed: number;
+  failed: number;
+  by_agent: Record<string, number>;
+}
+
+export async function listAgents(key: string, fetcher: typeof fetch = fetch): Promise<Agent[]> {
+  const res = await fetcher('/v1/agents', { headers: authHeaders(key) });
+  if (!res.ok) {
+    return errorOrStatus(res, 'GET /v1/agents');
+  }
+  return ((await res.json()) as { agents: Agent[] }).agents ?? [];
+}
+
+export async function getAgent(
+  key: string,
+  name: string,
+  fetcher: typeof fetch = fetch
+): Promise<Agent> {
+  const res = await fetcher(`/v1/agents/${name}`, { headers: authHeaders(key) });
+  if (!res.ok) {
+    return errorOrStatus(res, `GET /v1/agents/${name}`);
+  }
+  return (await res.json()) as Agent;
+}
+
+export async function defineAgent(
+  key: string,
+  body: { name: string; model?: string; system?: string },
+  fetcher: typeof fetch = fetch
+): Promise<void> {
+  const res = await fetcher('/v1/agents', {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) {
+    await errorOrStatus(res, 'POST /v1/agents');
+  }
+}
+
+export async function runAgent(
+  key: string,
+  name: string,
+  prompt: string,
+  fetcher: typeof fetch = fetch
+): Promise<RunResult> {
+  const res = await fetcher(`/v1/agents/${name}/run`, {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify({ prompt })
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, `POST /v1/agents/${name}/run`);
+  }
+  return (await res.json()) as RunResult;
+}
+
+export async function listAgentRuns(
+  key: string,
+  name: string,
+  fetcher: typeof fetch = fetch
+): Promise<AgentRun[]> {
+  const res = await fetcher(`/v1/agents/${name}/runs`, { headers: authHeaders(key) });
+  if (!res.ok) {
+    return errorOrStatus(res, `GET /v1/agents/${name}/runs`);
+  }
+  return ((await res.json()) as { runs: AgentRun[] }).runs ?? [];
+}
+
+export async function getRunSummary(
+  key: string,
+  fetcher: typeof fetch = fetch
+): Promise<RunSummary> {
+  const res = await fetcher('/v1/agent-runs/summary', { headers: authHeaders(key) });
+  if (!res.ok) {
+    return errorOrStatus(res, 'GET /v1/agent-runs/summary');
+  }
+  return (await res.json()) as RunSummary;
+}
+
+export async function escalateRun(
+  key: string,
+  name: string,
+  runID: string,
+  body: { company_name: string; case_type: string; sla_days: number },
+  fetcher: typeof fetch = fetch
+): Promise<{ case_id: string }> {
+  const res = await fetcher(`/v1/agents/${name}/runs/${runID}/escalate`, {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, `POST /v1/agents/${name}/runs/${runID}/escalate`);
+  }
+  return (await res.json()) as { case_id: string };
+}

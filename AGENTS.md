@@ -10,7 +10,7 @@ reimplementation of a commercial Agentic Decision Platform.
 4. Research basis (why the design looks like this): `../specs/openapi-current.yaml`, `../ENDPOINTS.md`, `../docs/`. (That parent tree is research only — **do not** mix it into this repo.)
 
 ## Status
-**Phase 0 (shared core), Phase 1 (Decision Engine), Phase 2 (Case Manager), and Phase 3 (Context Layer) DONE. Phase 4 (Agent Manager) IN PROGRESS.**
+**Phases 0–4 DONE (shared core, Decision Engine, Case Manager, Context Layer, Agent Manager). Phase 5 (Harden) NEXT — all four product components are built.**
 Roadmap & exit criteria: [PLAN.md §8](PLAN.md#8-phased-roadmap); deferrals tracked in [BUGS.md](BUGS.md).
 Working today: `platform/{eventlog,store,projection,identity,auth,httpx,ai,web}` + the `hello`
 slice; and the **Decision Engine** — flow model + versioning, a deterministic execution runtime
@@ -49,11 +49,12 @@ decision (shell pre-resolves it via an `AgentProvider` port + `agents.Provider` 
 output under `ai.<output>`) — the same one-way wiring as features/connectors. **Human-in-the-loop**:
 escalating a run opens a **Case Manager** case (the Agent Manager, built later, emits the Case
 Manager's own `ReviewRequested` event the `cases` projector already consumes — one-way direction), and
-`GET /v1/agent-runs/summary` gives run monitoring.
+`GET /v1/agent-runs/summary` gives run monitoring. Its **UI** (`web/src/routes/agents`) lists/defines
+agents (with a run-summary banner) and, per agent, runs it, shows the run log, and escalates a run.
 Run it: `go run ./cmd/intraktible serve` then open http://localhost:8080 (dev key `dev-sandbox-key`);
 for UI dev use `make dev` (Vite + Go API). Phase 1 deferrals (CEL, builder UI polish, …) and other
 limitations are tracked in [BUGS.md](BUGS.md).
-Build order from here: finish Agent Manager → Harden.
+Build order from here: Harden (Phase 5 — replay/rollback tooling, split-services profile, docs/examples).
 
 ## The design in one breath
 Go backend (**functional core / imperative shell**) + **SvelteKit + Svelte Flow** UI embedded in the

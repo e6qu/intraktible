@@ -11,7 +11,7 @@ agents/      # events -> JSONB read models (agent registry + run log) + the run 
 service/     # HTTP handlers + wiring (imperative shell)
 ```
 
-Status: **in progress (Phase 4).**
+Status: **done (Phase 4).**
 
 Done — agent definitions + runs (command→event→projection→API, durable & replayable):
 - An **agent** is a configuration over the pluggable AI provider (`platform/ai`): a `name`, an
@@ -37,11 +37,14 @@ Done — agent definitions + runs (command→event→projection→API, durable &
   direction stays one-way (this module imports case-manager, never the reverse) and no `cases` change
   is needed.
 - **Monitoring**: `GET /v1/agent-runs/summary` rolls up the run log (totals, completed/failed, by agent).
-- Run it: `intraktible serve --modules=agent-manager`.
+- **UI** (`web/src/routes/agents`): the registry (list/define agents + a run-summary banner) and a
+  per-agent view that runs the agent, shows the run log, and escalates a run to a case.
+- Run it: `intraktible serve --modules=agent-manager` (UI dev: `make dev`).
 
 Consumed by the decision engine: a flow's **AI node** runs an agent (the shell pre-resolves it via the
 `agents.Provider` adapter and injects the output — structured when the agent has a schema, else
 `{"text": …}` — under `ai.<output>`), through an `AgentProvider` port so the engine never imports this
 layer.
 
-Next (PLAN §4.4, to close the phase): an **agents UI** (`web/src/routes/agents`).
+Deferred (see [../BUGS.md](../BUGS.md)): tools are declared but not executed (D16); runs are
+synchronous and structured output isn't schema-validated (D17); only the Stub AI provider is wired (D5).

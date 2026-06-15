@@ -254,7 +254,7 @@ intraktible/
   Layer. Full test pyramid (unit/integration/API-e2e); all CI gates green. **Deferred from Phase 3**
   (in `BUGS.md`): a **SQL** reference connector (D14); an SSRF/egress policy for the HTTP connector
   (D15).
-- **Phase 4 — Agent Manager — 🚧 IN PROGRESS.** Done: **agent definitions** (a config over the
+- **Phase 4 — Agent Manager — ✅ DONE.** Shipped: **agent definitions** (a config over the
   pluggable AI provider — `name`, optional `provider`/`model`, `system` prompt, optional
   structured-output JSON `schema`, declared `tools`) and **agent runs** (invoking the provider with
   that config + a prompt; the response — text or schema-constrained structured output — is captured in
@@ -270,7 +270,11 @@ intraktible/
   escalating a run opens a Case Manager case — the Agent Manager (built later) emits the Case Manager's
   own `ReviewRequested` event the `cases` projector already consumes, with the run in the case context
   (one-way direction, no `cases` change). **Monitoring**: `GET /v1/agent-runs/summary` rolls up the run
-  log (totals, completed/failed, by agent). Remaining to close the phase: an **agents UI**.
+  log (totals, completed/failed, by agent). The **agents UI** (`web/src/routes/agents`) lists/defines
+  agents with a run-summary banner, and a per-agent view runs the agent, shows the run log, and
+  escalates a run. Full test pyramid (unit/integration/API-e2e/Playwright); all CI gates green.
+  **Deferred from Phase 4** (in `BUGS.md`): tools are declared but not executed (D16); runs are
+  synchronous and structured output is not schema-validated (D17); real (non-Stub) AI providers (D5).
 - **Phase 5 — Harden:** replay/rollback tooling, split-services profile, docs, examples.
 
 > Per project convention: at the **end of every phase**, update `PLAN.md` and `BUGS.md` in the same

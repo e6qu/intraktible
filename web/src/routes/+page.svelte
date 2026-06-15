@@ -31,6 +31,8 @@
     <a href="/engine">Decision Engine builder →</a>
     &nbsp;·&nbsp;
     <a href="/cases">Case Manager queue →</a>
+    &nbsp;·&nbsp;
+    <a href="/agents">Agent Manager →</a>
   </p>
   <div class="row">
     <input bind:value={key} aria-label="API key" />

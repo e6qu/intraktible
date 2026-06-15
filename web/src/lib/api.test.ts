@@ -12,7 +12,11 @@ import {
   getCaseSummary,
   requestReview,
   assignCase,
-  setCaseStatus
+  setCaseStatus,
+  listAgents,
+  runAgent,
+  escalateRun,
+  getRunSummary
 } from './api';
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -171,5 +175,51 @@ describe('cases', () => {
     expect(sum.overdue).toBe(1);
     const [url] = fetcher.mock.calls[0];
     expect(url).toBe('/v1/cases/summary?assignee=adam');
+  });
+});
+
+describe('agents', () => {
+  it('listAgents unwraps the agents array', async () => {
+    const fetcher = fetcherReturning(200, { agents: [{ name: 'triage', runs: 0 }] });
+    const a = await listAgents('k', fetcher);
+    expect(a).toHaveLength(1);
+    expect(a[0].name).toBe('triage');
+  });
+
+  it('runAgent posts the prompt to the run endpoint', async () => {
+    const fetcher = fetcherReturning(200, { run_id: 'r1', status: 'completed', text: 'stub: hi' });
+    const res = await runAgent('k', 'triage', 'hi', fetcher);
+    expect(res.run_id).toBe('r1');
+    const [url, init] = fetcher.mock.calls[0];
+    expect(url).toBe('/v1/agents/triage/run');
+    expect(init?.body).toBe(JSON.stringify({ prompt: 'hi' }));
+  });
+
+  it('escalateRun posts the case fields and returns the case id', async () => {
+    const fetcher = fetcherReturning(202, { case_id: 'c1' });
+    const res = await escalateRun(
+      'k',
+      'triage',
+      'r1',
+      { company_name: 'Acme', case_type: 'aml', sla_days: 3 },
+      fetcher
+    );
+    expect(res.case_id).toBe('c1');
+    const [url] = fetcher.mock.calls[0];
+    expect(url).toBe('/v1/agents/triage/runs/r1/escalate');
+  });
+
+  it('getRunSummary hits the summary endpoint', async () => {
+    const fetcher = fetcherReturning(200, {
+      total: 2,
+      completed: 1,
+      failed: 1,
+      by_agent: { triage: 2 }
+    });
+    const sum = await getRunSummary('k', fetcher);
+    expect(sum.total).toBe(2);
+    expect(sum.failed).toBe(1);
+    const [url] = fetcher.mock.calls[0];
+    expect(url).toBe('/v1/agent-runs/summary');
   });
 });

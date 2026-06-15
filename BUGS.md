@@ -26,5 +26,9 @@ Format: `ID | severity | component | description | status`.
 - `D14 | low | context-layer | reference connectors cover http + a deterministic mock_bureau; a SQL connector is not implemented (needs a driver/DB). The Connect interface + registry make it pluggable when a backend lands | deferred`
 - `D15 | low | context-layer | the http connector fetches an operator-configured URL (the intended Custom Connect feature); it validates the scheme + bounds time/size but has no allow-list/SSRF policy — add egress controls before exposing it to untrusted config | open`
 
+## Open (deferred / limitations after Phase 4)
+- `D16 | low | agent-manager | an agent's tool set is declared and stored but tools are not executed yet (no tool-calling loop); the Stub provider ignores them. Real tool-calling lands with a non-Stub provider | deferred`
+- `D17 | low | agent-manager | runs are synchronous (call the provider, record the result); no async/queued runs, streaming, or in-flight status. A structured-output schema is passed to the provider but the response is not validated against it (the Stub returns {}) | deferred`
+
 ## Fixed
 _None yet._

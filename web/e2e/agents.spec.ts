@@ -1,0 +1,52 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+import { test, expect } from '@playwright/test';
+
+const KEY = 'dev-sandbox-key';
+
+function uniqueName(): string {
+  return 'agent-' + Math.random().toString(36).slice(2, 8);
+}
+
+test('defines an agent from the registry and shows the run summary', async ({ page }) => {
+  await page.goto('/agents');
+  await expect(page.getByRole('heading', { name: /Agent Manager/i })).toBeVisible();
+
+  const name = uniqueName();
+  await page.getByLabel('agent name').fill(name);
+  await page.getByLabel('system prompt').fill('be terse');
+  await page.getByRole('button', { name: 'Define agent' }).click();
+
+  // .first(): a reused dev server may carry agents from prior runs.
+  await expect(page.getByRole('link', { name }).first()).toBeVisible();
+  await expect(page.getByLabel('run summary')).toContainText('Runs');
+});
+
+test('runs an agent and escalates the run to a case', async ({ page, request }) => {
+  // Seed an agent through the API.
+  const name = uniqueName();
+  const created = await request.post('/v1/agents', {
+    headers: { 'X-Api-Key': KEY },
+    data: { name, system: 'assess' }
+  });
+  expect(created.ok()).toBeTruthy();
+
+  await page.goto(`/agents/${name}`);
+  await expect(page.getByLabel('prompt')).toBeVisible();
+
+  await page.getByLabel('prompt').fill('is this suspicious?');
+  await page.getByRole('button', { name: 'Run', exact: true }).click();
+
+  // The run appears in the log (the stub echoes the prompt) and run count updates.
+  await expect(async () => {
+    await page.getByRole('button', { name: 'Reload' }).click();
+    await expect(page.getByTestId('runs').locator('li')).toHaveCount(1);
+    await expect(page.getByTestId('run-count')).toHaveText('1');
+  }).toPass({ timeout: 5000 });
+
+  // Escalate the run; it opens a case (no UI error surfaces).
+  await page
+    .getByRole('button', { name: /escalate/i })
+    .first()
+    .click();
+  await expect(page.locator('p.err')).toHaveCount(0);
+});
