@@ -53,6 +53,8 @@
 
   let env = $state('production');
   let dataText = $state('{}');
+  let entityType = $state('');
+  let entityID = $state('');
   let result = $state('');
 
   const flowId = $page.params.flowId ?? '';
@@ -142,7 +144,12 @@
     result = '';
     if (!flow) return;
     try {
-      result = JSON.stringify(await decide(key, flow.slug, env, JSON.parse(dataText)), null, 2);
+      const entity = entityType && entityID ? { type: entityType, id: entityID } : undefined;
+      result = JSON.stringify(
+        await decide(key, flow.slug, env, JSON.parse(dataText), entity),
+        null,
+        2
+      );
     } catch (e) {
       result = `Error: ${msg(e)}`;
     }
@@ -257,6 +264,20 @@
         <option value="production">production</option>
       </select>
       <button onclick={run} disabled={!flow}>Run</button>
+    </div>
+    <div class="row">
+      <input
+        bind:value={entityType}
+        placeholder="entity type (optional)"
+        aria-label="entity type"
+        size="16"
+      />
+      <input
+        bind:value={entityID}
+        placeholder="entity id (optional)"
+        aria-label="entity id"
+        size="16"
+      />
     </div>
     <textarea bind:value={dataText} aria-label="input data" rows="3"></textarea>
     <pre data-testid="run-result">{result}</pre>

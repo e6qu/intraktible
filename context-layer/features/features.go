@@ -117,6 +117,32 @@ func Compute(ctx context.Context, s store.Store, id identity.Identity, entityTyp
 	return out, nil
 }
 
+// Provider adapts the feature engine to a flat name->value lookup for one entity,
+// suitable as a decision engine feature source (it satisfies that engine's
+// FeatureProvider port structurally, without this package importing it). Now
+// defaults to the system clock.
+type Provider struct {
+	Store store.Store
+	Now   func() time.Time
+}
+
+// Features computes the entity's feature values as a name->value map.
+func (p Provider) Features(ctx context.Context, id identity.Identity, entityType, entityID string) (map[string]float64, error) {
+	now := time.Now().UTC()
+	if p.Now != nil {
+		now = p.Now()
+	}
+	vals, err := Compute(ctx, p.Store, id, entityType, entityID, now)
+	if err != nil {
+		return nil, err
+	}
+	m := make(map[string]float64, len(vals))
+	for _, v := range vals {
+		m[v.Name] = v.Value
+	}
+	return m, nil
+}
+
 func key(org, workspace, entityType, name string) string {
 	return store.Key(org, workspace, entityType+"/"+name)
 }

@@ -147,17 +147,30 @@ export async function publishVersion(
   return (await res.json()) as { version: number; etag: string };
 }
 
+// EntityRef optionally points a decision at a Context Layer entity so its
+// features are folded into the input (referenced in expressions as features.*).
+export interface EntityRef {
+  type: string;
+  id: string;
+}
+
 export async function decide(
   key: string,
   slug: string,
   env: string,
   data: Record<string, unknown>,
+  entity?: EntityRef,
   fetcher: typeof fetch = fetch
 ): Promise<DecideResult> {
+  const body: Record<string, unknown> = { data };
+  if (entity?.type && entity?.id) {
+    body.entity_type = entity.type;
+    body.entity_id = entity.id;
+  }
   const res = await fetcher(`/v1/flows/${slug}/${env}/decide`, {
     method: 'POST',
     headers: jsonHeaders(key),
-    body: JSON.stringify({ data })
+    body: JSON.stringify(body)
   });
   if (!res.ok) {
     throw new Error(`POST decide failed: ${res.status}`);

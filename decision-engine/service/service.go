@@ -148,10 +148,12 @@ func (s *Service) deploy(w http.ResponseWriter, r *http.Request) {
 }
 
 type decideRequest struct {
-	Data     map[string]any  `json:"data"`
-	MockData map[string]any  `json:"mock_data,omitempty"`
-	Metadata json.RawMessage `json:"metadata,omitempty"`
-	Control  json.RawMessage `json:"control,omitempty"`
+	Data       map[string]any  `json:"data"`
+	EntityType string          `json:"entity_type,omitempty"`
+	EntityID   string          `json:"entity_id,omitempty"`
+	MockData   map[string]any  `json:"mock_data,omitempty"`
+	Metadata   json.RawMessage `json:"metadata,omitempty"`
+	Control    json.RawMessage `json:"control,omitempty"`
 }
 
 type decideResponse struct {
@@ -174,7 +176,8 @@ func (s *Service) runDecide(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, err)
 		return
 	}
-	result, err := s.decide.Decide(r.Context(), id, r.PathValue("slug"), r.PathValue("env"), req.Data)
+	result, err := s.decide.Decide(r.Context(), id, r.PathValue("slug"), r.PathValue("env"), req.Data,
+		command.EntityRef{Type: req.EntityType, ID: req.EntityID})
 	if err != nil {
 		httpx.Error(w, http.StatusBadRequest, err)
 		return

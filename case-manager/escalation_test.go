@@ -53,7 +53,7 @@ func TestEscalationFromFlowOpensCase(t *testing.T) {
 	if err := projection.New(log, rm, decisionflows.Projector{}).Start(ctx); err != nil {
 		t.Fatal(err)
 	}
-	res, err := decisioncmd.NewDecideHandler(log, rm).Decide(ctx, id, "escalate", "production", map[string]any{"company": "Acme Corp"})
+	res, err := decisioncmd.NewDecideHandler(log, rm).Decide(ctx, id, "escalate", "production", map[string]any{"company": "Acme Corp"}, decisioncmd.EntityRef{})
 	if err != nil {
 		t.Fatal(err)
 	}

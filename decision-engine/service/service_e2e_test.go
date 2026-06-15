@@ -3,6 +3,7 @@
 package service_test
 
 import (
+	"context"
 	"net/http"
 	"testing"
 
@@ -17,12 +18,44 @@ import (
 	"github.com/e6qu/intraktible/platform/testutil"
 )
 
-func startEngine(t *testing.T) *testutil.API {
+func startEngine(t *testing.T, opts ...command.DecideOption) *testutil.API {
 	t.Helper()
 	log, st := testutil.NewLogStore(t)
-	svc := service.New(command.NewHandler(log), command.NewDecideHandler(log, st), st)
+	svc := service.New(command.NewHandler(log), command.NewDecideHandler(log, st, opts...), st)
 	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "author"}
 	return testutil.StartAPI(t, log, st, "test-key", id, svc.Routes, flows.Projector{}, history.Projector{}, analytics.Projector{})
+}
+
+// stubFeatures is a fixed feature source for the decide HTTP test.
+type stubFeatures map[string]float64
+
+func (s stubFeatures) Features(_ context.Context, _ identity.Identity, _, _ string) (map[string]float64, error) {
+	return s, nil
+}
+
+func TestDecideWithEntityFeaturesOverHTTP(t *testing.T) {
+	api := startEngine(t, command.WithFeatures(stubFeatures{"txn_count_24h": 5}))
+
+	var created struct {
+		FlowID string `json:"flow_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows", map[string]any{"slug": "risk", "name": "Risk"}, http.StatusCreated, &created)
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/versions",
+		map[string]any{"graph": flowtest.FeatureGraph()}, http.StatusCreated, nil)
+
+	// The flow registry read model is eventually consistent; retry the decide
+	// until the published version is visible, then assert the feature drove it.
+	if !testutil.Eventually(t, func() bool {
+		var res struct {
+			Status string         `json:"status"`
+			Data   map[string]any `json:"data"`
+		}
+		api.Request(t, http.MethodPost, "/v1/flows/risk/production/decide",
+			map[string]any{"entity_type": "customer", "entity_id": "c1"}, http.StatusOK, &res)
+		return res.Status == "completed" && res.Data["tier"] == "high"
+	}) {
+		t.Fatal("decide never reflected the injected feature (tier=high)")
+	}
 }
 
 func TestEngineAPIEndToEnd(t *testing.T) {

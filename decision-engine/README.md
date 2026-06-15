@@ -12,7 +12,7 @@ history/     # events -> JSONB read model (decision history: request, node trace
 service/     # HTTP handlers + wiring (imperative shell)
 ```
 
-Status: **in progress (Phase 1).**
+Status: **done (Phase 1).** (Phase 3 wired Context Layer features in — see below.)
 
 Done — flow model + versioning (vertical slice, command→event→projection→API, durable & replayable):
 - Flow = versioned DAG of typed nodes/edges; each `FlowVersionPublished` is immutable, numbered
@@ -45,6 +45,12 @@ Done — execution runtime + decide API + decision history (the decision event s
   /v1/flows/{flow_id}/metrics`.
 - HTTP: `POST /v1/flows/{slug}/{env}/decide` → `{decision_id, status, data}`;
   `GET /v1/decisions` · `GET /v1/decisions/{decision_id}` — history with the full node trace + variant.
+- **Context features (Phase 3):** a decide call may carry `{entity_type, entity_id}`; the shell folds
+  that entity's computed features into the input under `features.*` (so a Rule/Split expression can
+  read `features.txn_count_24h`), recording them in `DecisionStarted` for replay stability. The engine
+  reaches the (later-built) Context Layer only through a `FeatureProvider` **port** in `command/`,
+  satisfied by a `features.Provider` adapter wired at the composition root — so the dependency
+  direction stays one-way. `WithFeatures` enables it; without a ref/provider, decisions run unchanged.
 
-Next in Phase 1 (see [../PLAN.md](../PLAN.md) §4.1, §8): CEL conditions (alternative engine) and the
-Svelte Flow builder + inline test runs.
+Deferred (see [../BUGS.md](../BUGS.md)): CEL as an alternative condition engine (D9), builder UI
+drag-to-connect + bespoke per-node config panels (D10).

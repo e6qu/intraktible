@@ -17,15 +17,31 @@ import (
 	"github.com/e6qu/intraktible/platform/store"
 )
 
+// FeatureProvider computes a Context Layer entity's feature values (name->value)
+// for a tenant. The Context Layer supplies the implementation; defining the port
+// here keeps the decision engine (built earlier) from importing it.
+type FeatureProvider interface {
+	Features(ctx context.Context, id identity.Identity, entityType, entityID string) (map[string]float64, error)
+}
+
+// EntityRef optionally points a decision at a Context Layer entity so its computed
+// features are injected into the input under "features" (e.g. a Rule can test
+// `features.txn_count_24h > 5`). An empty Type or ID means no features are added.
+type EntityRef struct {
+	Type string
+	ID   string
+}
+
 // DecideHandler executes published flows. It reads the flow registry read model
 // for the version to run, evaluates it with the pure core, and records the
 // decision as an event stream (started -> node-evaluated… -> completed/failed).
 type DecideHandler struct {
-	log   eventlog.Log
-	store store.Store
-	now   func() time.Time
-	newID func() string
-	roll  func() int // A/B routing draw in [0,100); recorded via the chosen version+variant
+	log      eventlog.Log
+	store    store.Store
+	now      func() time.Time
+	newID    func() string
+	roll     func() int // A/B routing draw in [0,100); recorded via the chosen version+variant
+	features FeatureProvider
 }
 
 // DecideOption customizes a DecideHandler (used by tests to make A/B routing
@@ -34,6 +50,10 @@ type DecideOption func(*DecideHandler)
 
 // WithRoll overrides the A/B routing draw (a value in [0,100)).
 func WithRoll(roll func() int) DecideOption { return func(h *DecideHandler) { h.roll = roll } }
+
+// WithFeatures supplies the feature provider that resolves an EntityRef's
+// features at decide time. Without it, EntityRef is ignored.
+func WithFeatures(p FeatureProvider) DecideOption { return func(h *DecideHandler) { h.features = p } }
 
 // NewDecideHandler builds a DecideHandler using the system clock and random id +
 // routing sources. id generation, timing, and the routing draw are the only
@@ -75,7 +95,7 @@ type DecideResult struct {
 // the given environment against data. A run that errors during evaluation is a
 // recorded "failed" decision (returned with Status failed), not an API error;
 // only infrastructure/lookup problems return an error.
-func (h *DecideHandler) Decide(ctx context.Context, id identity.Identity, slug, env string, data map[string]any) (DecideResult, error) {
+func (h *DecideHandler) Decide(ctx context.Context, id identity.Identity, slug, env string, data map[string]any, ref EntityRef) (DecideResult, error) {
 	if err := id.Valid(); err != nil {
 		return DecideResult{}, err
 	}
@@ -98,6 +118,14 @@ func (h *DecideHandler) Decide(ctx context.Context, id identity.Identity, slug, 
 		return DecideResult{}, fmt.Errorf("decision-engine: flow %q has no version %d", slug, versionNo)
 	}
 
+	// Features are computed at decide time and merged into the input under
+	// "features"; the augmented input is what gets recorded and executed, so the
+	// run stays replay-stable from the recorded data alone.
+	data, err = h.injectFeatures(ctx, id, ref, data)
+	if err != nil {
+		return DecideResult{}, err
+	}
+
 	decisionID := h.newID()
 	start := h.now()
 	dataJSON, err := json.Marshal(data)
@@ -106,7 +134,8 @@ func (h *DecideHandler) Decide(ctx context.Context, id identity.Identity, slug, 
 	}
 	if err := h.emit(ctx, id, events.TypeDecisionStarted, events.DecisionStarted{
 		DecisionID: decisionID, FlowID: fv.FlowID, Slug: slug,
-		Version: version.Version, Environment: env, Variant: variant, Data: dataJSON,
+		Version: version.Version, Environment: env, Variant: variant,
+		EntityType: ref.Type, EntityID: ref.ID, Data: dataJSON,
 	}); err != nil {
 		return DecideResult{}, err
 	}
@@ -151,6 +180,29 @@ func (h *DecideHandler) Decide(ctx context.Context, id identity.Identity, slug, 
 		return DecideResult{}, err
 	}
 	return result, nil
+}
+
+// injectFeatures returns data augmented with a "features" map of the referenced
+// entity's computed feature values. It is a no-op when no provider is configured
+// or the reference is empty; a provider error fails the decision loudly.
+func (h *DecideHandler) injectFeatures(ctx context.Context, id identity.Identity, ref EntityRef, data map[string]any) (map[string]any, error) {
+	if h.features == nil || ref.Type == "" || ref.ID == "" {
+		return data, nil
+	}
+	feats, err := h.features.Features(ctx, id, ref.Type, ref.ID)
+	if err != nil {
+		return nil, fmt.Errorf("decision-engine: features for %s/%s: %w", ref.Type, ref.ID, err)
+	}
+	out := make(map[string]any, len(data)+1)
+	for k, v := range data {
+		out[k] = v
+	}
+	fm := make(map[string]any, len(feats))
+	for k, v := range feats {
+		fm[k] = v
+	}
+	out["features"] = fm
+	return out, nil
 }
 
 func (h *DecideHandler) emitEscalations(ctx context.Context, id identity.Identity, decisionID string, dataJSON json.RawMessage, run domain.Run) error {

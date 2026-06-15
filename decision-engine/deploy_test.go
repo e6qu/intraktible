@@ -48,7 +48,7 @@ func TestVersionPinningAndABRouting(t *testing.T) {
 	}
 	decide := func(s store.Store, roll int) string {
 		dh := command.NewDecideHandler(log, s, command.WithRoll(func() int { return roll }))
-		res, err := dh.Decide(ctx, id, "router", "production", nil)
+		res, err := dh.Decide(ctx, id, "router", "production", nil, command.EntityRef{})
 		if err != nil {
 			t.Fatal(err)
 		}

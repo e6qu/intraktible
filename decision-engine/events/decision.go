@@ -30,7 +30,9 @@ type DecisionStarted struct {
 	Version     int             `json:"version"`
 	Environment string          `json:"environment"`
 	Variant     string          `json:"variant,omitempty"` // champion | challenger
-	Data        json.RawMessage `json:"data"`
+	EntityType  string          `json:"entity_type,omitempty"`
+	EntityID    string          `json:"entity_id,omitempty"`
+	Data        json.RawMessage `json:"data"` // includes injected "features" when an entity was referenced
 }
 
 // NodeEvaluated records one node's evaluation and its output, in execution order.

@@ -106,11 +106,18 @@ describe('flows', () => {
       status: 'completed',
       data: { x: 1 }
     });
-    const res = await decide('k', 'scoring', 'production', { fico: 700 }, fetcher);
+    const res = await decide('k', 'scoring', 'production', { fico: 700 }, undefined, fetcher);
     expect(res.status).toBe('completed');
     const [url, init] = fetcher.mock.calls[0];
     expect(url).toBe('/v1/flows/scoring/production/decide');
     expect(init?.body).toBe(JSON.stringify({ data: { fico: 700 } }));
+  });
+
+  it('decide includes the entity ref when provided', async () => {
+    const fetcher = fetcherReturning(200, { decision_id: 'd1', status: 'completed', data: {} });
+    await decide('k', 'risk', 'production', {}, { type: 'customer', id: 'c1' }, fetcher);
+    const [, init] = fetcher.mock.calls[0];
+    expect(init?.body).toBe(JSON.stringify({ data: {}, entity_type: 'customer', entity_id: 'c1' }));
   });
 });
 

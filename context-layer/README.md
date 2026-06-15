@@ -28,7 +28,10 @@ Done — custom entities + events + feature engine (command→event→projection
   matches and whose `occurred_at` falls in `(now-window, now]` — into a `count` or a `sum` of a
   numeric top-level `field` (a matching event missing the field contributes nothing; a present
   non-numeric field fails loudly). Computation is **read-time** (windowed against now), so the stored
-  log stays clock-free. These feed the decision engine's Rule nodes (the wiring lands next slice).
+  log stays clock-free. `features.Provider` adapts the engine to a `name->value` lookup for one
+  entity; the **decision engine** consumes it through a port so a decide call carrying an
+  `{entity_type, entity_id}` ref gets these folded into its input under `features.*` (read by Rule
+  nodes).
 - HTTP (under `/v1/`, X-Api-Key / session auth, org+workspace scoped):
   - `POST /v1/context/entities` — record/patch `{entity_type, entity_id, attributes?}`
   - `GET /v1/context/entities?type=` — the entity list, optionally filtered by type
@@ -40,6 +43,5 @@ Done — custom entities + events + feature engine (command→event→projection
   - `GET /v1/context/features?type=` — the feature definitions, optionally filtered by type
 - Run it: `intraktible serve --modules=context-layer`.
 
-Next (PLAN §4.3): wire features into the decision engine's **Rule nodes** (a feature-provider port on
-the engine + a context-backed adapter, keeping the build-order dependency direction); then
-**connectors** (a `Connect` interface + reference connectors + the Custom Connect Node).
+Next (PLAN §4.3): **connectors** — a `Connect` interface + reference connectors (HTTP/REST, SQL, a
+mock bureau) + a Custom Connect Node, with connector results recorded as events.

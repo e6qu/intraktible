@@ -237,10 +237,14 @@ intraktible/
   folds events in `(now-window, now]`; missing sum-field contributes 0, non-numeric fails loudly),
   computed read-time so the log stays clock-free — command→event→projection→API
   (`/v1/context/entities`, `…/{type}/{id}[/events|/features]`, `/v1/context/events`,
-  `/v1/context/features`), module `context-layer`. Remaining: wire features into decision-engine
-  **Rule nodes** (a feature-provider port + context-backed adapter, preserving build-order dependency
-  direction); **connectors** (a `Connect` interface + reference connectors + the Custom Connect Node,
-  results recorded as events) wired into Rule/Connect nodes.
+  `/v1/context/features`), module `context-layer`. Features are **wired into the decision engine**: a
+  decide call may carry an `{entity_type, entity_id}` ref; the shell computes that entity's features
+  and folds them into the input under `features.*` (so any Rule/Split/etc. expression can read
+  `features.txn_count_24h`), recorded in `DecisionStarted` for replay stability. The engine stays
+  free of a context-layer import via a `FeatureProvider` **port** (in `decision-engine/command`)
+  satisfied by a `features.Provider` **adapter** wired at the composition root — preserving the
+  build-order dependency direction. Remaining: **connectors** (a `Connect` interface + reference
+  connectors + the Custom Connect Node, results recorded as events) wired into Rule/Connect nodes.
 - **Phase 4 — Agent Manager:** agent config + AI-node execution, structured output, run monitoring,
   human-in-the-loop → Case Manager.
 - **Phase 5 — Harden:** replay/rollback tooling, split-services profile, docs, examples.

@@ -74,3 +74,25 @@ func DecisionGraph() events.Graph {
 		},
 	}
 }
+
+// FeatureGraph is a flow whose Split reads an injected Context Layer feature
+// (features.txn_count_24h): input -> split(>= 3) -> high/low -> output(tier).
+func FeatureGraph() events.Graph {
+	cfg := func(s string) json.RawMessage { return json.RawMessage(s) }
+	return events.Graph{
+		Nodes: []events.Node{
+			{ID: "in", Type: events.NodeInput},
+			{ID: "s", Type: events.NodeSplit, Config: cfg(`{"condition":"features.txn_count_24h >= 3"}`)},
+			{ID: "high", Type: events.NodeAssignment, Config: cfg(`{"assignments":[{"target":"tier","expr":"'high'"}]}`)},
+			{ID: "low", Type: events.NodeAssignment, Config: cfg(`{"assignments":[{"target":"tier","expr":"'low'"}]}`)},
+			{ID: "out", Type: events.NodeOutput, Config: cfg(`{"fields":["tier"]}`)},
+		},
+		Edges: []events.Edge{
+			{From: "in", To: "s"},
+			{From: "s", To: "high", Branch: "yes"},
+			{From: "s", To: "low", Branch: "no"},
+			{From: "high", To: "out"},
+			{From: "low", To: "out"},
+		},
+	}
+}

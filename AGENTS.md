@@ -32,8 +32,11 @@ The **Context Layer** (`context-layer/`) records **custom entities** (dynamic JS
 type+id, re-records patch via top-level attribute merge) and **custom events** about them (per-entity
 event log + an event count; an event auto-creates a shell entity; `occurred_at` is a recorded effect),
 and runs a **feature engine** — windowed `count`/`sum` aggregates over an entity type's event stream
-(`pure domain.Compute`, computed read-time against now so the log stays clock-free), to feed Rule
-nodes; all command→event→projection→API.
+(`pure domain.Compute`, computed read-time against now so the log stays clock-free); all
+command→event→projection→API. Decisions can carry an `{entity_type, entity_id}` ref so the engine
+folds that entity's features into the input under `features.*` (read by Rule/Split expressions,
+recorded in `DecisionStarted`); the engine reaches the Context Layer through a `FeatureProvider` port
++ adapter wired at the composition root (so the earlier-built engine never imports it).
 Run it: `go run ./cmd/intraktible serve` then open http://localhost:8080 (dev key `dev-sandbox-key`);
 for UI dev use `make dev` (Vite + Go API). Phase 1 deferrals (CEL, builder UI polish, …) and other
 limitations are tracked in [BUGS.md](BUGS.md).

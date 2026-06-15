@@ -59,7 +59,7 @@ func TestAnalyticsMetrics(t *testing.T) {
 		}
 	}
 	decide := func(wantStatus string) {
-		res, err := dh.Decide(ctx, id, "metrics", "production", nil)
+		res, err := dh.Decide(ctx, id, "metrics", "production", nil, command.EntityRef{})
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -9,7 +9,6 @@ import (
 
 	"github.com/e6qu/intraktible/decision-engine/command"
 	"github.com/e6qu/intraktible/decision-engine/domain"
-	"github.com/e6qu/intraktible/decision-engine/flows"
 	"github.com/e6qu/intraktible/decision-engine/history"
 	"github.com/e6qu/intraktible/decision-engine/internal/flowtest"
 	"github.com/e6qu/intraktible/platform/eventlog"
@@ -18,22 +17,11 @@ import (
 	"github.com/e6qu/intraktible/platform/store"
 )
 
-// publishDecisionFlow creates and publishes the executable decision flow,
-// returning its slug. Projections are rebuilt by the caller.
+// publishDecisionFlow creates and publishes the executable decision flow.
+// Projections are rebuilt inside publishFlow.
 func publishDecisionFlow(t *testing.T, ctx context.Context, log eventlog.Log, st store.Store, id identity.Identity) {
 	t.Helper()
-	h := command.NewHandler(log)
-	flowID, _, err := h.CreateFlow(ctx, id, domain.CreateFlow{Slug: "scoring", Name: "Scoring"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, _, _, err := h.PublishVersion(ctx, id, domain.PublishVersion{FlowID: flowID, Graph: flowtest.DecisionGraph()}); err != nil {
-		t.Fatal(err)
-	}
-	// The decide path reads the flow registry read model, so it must be current.
-	if err := projection.New(log, st, flows.Projector{}).Start(ctx); err != nil {
-		t.Fatal(err)
-	}
+	publishFlow(t, ctx, log, st, id, "scoring", "Scoring", flowtest.DecisionGraph())
 }
 
 func TestDecideAndHistoryReplay(t *testing.T) {
@@ -49,7 +37,7 @@ func TestDecideAndHistoryReplay(t *testing.T) {
 	publishDecisionFlow(t, ctx, log, st, id)
 
 	dh := command.NewDecideHandler(log, st)
-	res, err := dh.Decide(ctx, id, "scoring", "production", map[string]any{"fico": 680, "bonus": 40})
+	res, err := dh.Decide(ctx, id, "scoring", "production", map[string]any{"fico": 680, "bonus": 40}, command.EntityRef{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +92,7 @@ func TestDecideFailureIsRecorded(t *testing.T) {
 
 	dh := command.NewDecideHandler(log, st)
 	// "fico" is absent from the data -> the assignment expression fails loudly.
-	res, err := dh.Decide(ctx, id, "scoring", "sandbox", map[string]any{"bonus": 40})
+	res, err := dh.Decide(ctx, id, "scoring", "sandbox", map[string]any{"bonus": 40}, command.EntityRef{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,10 +122,10 @@ func TestDecideUnknownFlowAndEnv(t *testing.T) {
 	publishDecisionFlow(t, ctx, log, st, id)
 	dh := command.NewDecideHandler(log, st)
 
-	if _, err := dh.Decide(ctx, id, "ghost", "production", nil); err == nil {
+	if _, err := dh.Decide(ctx, id, "ghost", "production", nil, command.EntityRef{}); err == nil {
 		t.Fatal("expected error for unknown flow")
 	}
-	if _, err := dh.Decide(ctx, id, "scoring", "staging", nil); err == nil {
+	if _, err := dh.Decide(ctx, id, "scoring", "staging", nil, command.EntityRef{}); err == nil {
 		t.Fatal("expected error for invalid environment")
 	}
 }
