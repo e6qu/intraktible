@@ -203,9 +203,13 @@ intraktible/
   scaffold. **Deferred from Phase 0** (tracked in `BUGS.md`): Badger backend (WAL used instead — open
   Q1), durable SQLite/Postgres projection stores, JSON-Schema validation lib, Claude AI adapter
   (Stub only), and running the SvelteKit build into the embed dir (Go placeholder UI serves for now).
-- **Phase 1 — Decision Engine:** flow model + versioning, node engines (CEL/expr/Starlark),
-  execution runtime emitting the decision event stream, decide API, decision history, Svelte Flow
-  builder + test runs, A/B + analytics-lite.
+- **Phase 1 — Decision Engine — 🚧 IN PROGRESS.** Done: flow model + versioning (immutable etag'd
+  versions); a deterministic execution runtime (Input/Assignment/Rule/Split/Scorecard/Decision
+  Table/2D Matrix/Output, expr-lang) emitting the decision event stream
+  (DecisionStarted→NodeEvaluated→Completed/Failed); the `…/{env}/decide` API; and decision history.
+  Remaining: Starlark Code node + CEL conditions, env-pinned versions + A/B routing, analytics-lite,
+  and the Svelte Flow builder + inline test runs. (Full PLAN/BUGS close-out lands with the
+  phase-ending PR, per the docs-cadence rule.)
 - **Phase 2 — Case Manager:** case events, queues/dashboard/detail UI, escalation hook from flows.
 - **Phase 3 — Context Layer:** entities/events/features + feature engine, connector interface +
   reference connectors + Custom Connect Node, wired into Rule/Connect nodes.

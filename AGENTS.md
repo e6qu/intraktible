@@ -10,12 +10,15 @@ reimplementation of a commercial Agentic Decision Platform.
 4. Research basis (why the design looks like this): `../specs/openapi-current.yaml`, `../ENDPOINTS.md`, `../docs/`. (That parent tree is research only — **do not** mix it into this repo.)
 
 ## Status
-**Phase 0 (shared core) DONE; Phase 1 (Decision Engine) next.** Roadmap & exit criteria:
+**Phase 0 (shared core) DONE. Phase 1 (Decision Engine) IN PROGRESS.** Roadmap & exit criteria:
 [PLAN.md §8](PLAN.md#8-phased-roadmap); deferrals tracked in [BUGS.md](BUGS.md).
 Working today: `platform/{eventlog,store,projection,identity,auth,httpx,ai,web}` + the `hello`
-vertical slice (command→event→projection→API→UI, durable & replayable). Run it:
-`go run ./cmd/intraktible serve` then open http://localhost:8080 (dev key `dev-sandbox-key`).
-Build order remaining: Decision Engine → Case Manager → Context Layer → Agent Manager.
+slice; and the **Decision Engine** — flow model + versioning, a deterministic execution runtime
+(Input/Assignment/Rule/Split/Scorecard/Decision Table/2D Matrix/Output via expr-lang), the
+`…/{env}/decide` API, and decision history (all command→event→projection→API, durable & replayable).
+Run it: `go run ./cmd/intraktible serve` then open http://localhost:8080 (dev key `dev-sandbox-key`).
+Phase 1 remaining: Starlark Code node + CEL conditions, env-pinned/A-B routing, analytics-lite,
+Svelte Flow builder UI. Build order after Phase 1: Case Manager → Context Layer → Agent Manager.
 
 ## The design in one breath
 Go backend (**functional core / imperative shell**) + **SvelteKit + Svelte Flow** UI embedded in the
