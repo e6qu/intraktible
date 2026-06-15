@@ -73,7 +73,7 @@ func Logger(next http.Handler) http.Handler {
 
 // Authenticate resolves an identity from an X-Api-Key header or a session
 // cookie and rejects unauthenticated requests with 401 (fail loudly).
-func Authenticate(keyring *auth.Keyring, sessions *auth.Sessions) Middleware {
+func Authenticate(keyring *auth.Keyring, sessions auth.SessionStore) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if secret := r.Header.Get("X-Api-Key"); secret != "" {

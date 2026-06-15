@@ -103,7 +103,10 @@ func run(addr, dataDir, modules, devKey, storeKind string) error {
 	}
 	defer func() { _ = st.Close() }()
 	keyring := auth.NewKeyring()
-	sessions := auth.NewSessions()
+	// Sessions live in the projection store, so they persist across restarts when
+	// --store=sqlite (and stay in-memory with --store=memory). It is not a
+	// projection, so a rebuild never touches it.
+	sessions := auth.NewStoreSessions(st)
 	if devKey != "" {
 		keyring.Add(devKey, auth.APIKey{
 			ID:       "dev",

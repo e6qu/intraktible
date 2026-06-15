@@ -16,7 +16,7 @@ const sessionCookie = "session"
 // LoginHandler exchanges a valid API key for a session cookie, so the builder UI
 // can authenticate once instead of sending the key on every request. It is a
 // public endpoint (mounted outside the authenticated chain).
-func LoginHandler(keyring *auth.Keyring, sessions *auth.Sessions) http.HandlerFunc {
+func LoginHandler(keyring *auth.Keyring, sessions auth.SessionStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			APIKey string `json:"api_key"`
@@ -48,7 +48,7 @@ func LoginHandler(keyring *auth.Keyring, sessions *auth.Sessions) http.HandlerFu
 
 // LogoutHandler revokes the request's session and clears the cookie. It is public
 // (clearing a cookie needs no auth) and idempotent.
-func LogoutHandler(sessions *auth.Sessions) http.HandlerFunc {
+func LogoutHandler(sessions auth.SessionStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if c, err := r.Cookie(sessionCookie); err == nil {
 			sessions.Revoke(c.Value)
