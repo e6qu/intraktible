@@ -29,6 +29,14 @@ Done — agent definitions + runs (command→event→projection→API, durable &
   - `GET /v1/agents` · `GET /v1/agents/{name}` — the agent registry
   - `POST /v1/agents/{name}/run` — run `{prompt}` → `{run_id, status, text?, structured?, error?}`
   - `GET /v1/agents/{name}/runs` — the agent's run log · `GET /v1/agent-runs/{run_id}` — one run
+  - `POST /v1/agents/{name}/runs/{run_id}/escalate` — open a case from a run → `{case_id}`
+  - `GET /v1/agent-runs` — all runs · `GET /v1/agent-runs/summary` — run monitoring roll-up
+- **Human-in-the-loop**: escalating a run opens a **Case Manager** case. Because the Agent Manager is
+  built *after* the Case Manager, it emits the Case Manager's own `ReviewRequested` event (which the
+  `cases` projector already consumes) with the run referenced in the case context — so the dependency
+  direction stays one-way (this module imports case-manager, never the reverse) and no `cases` change
+  is needed.
+- **Monitoring**: `GET /v1/agent-runs/summary` rolls up the run log (totals, completed/failed, by agent).
 - Run it: `intraktible serve --modules=agent-manager`.
 
 Consumed by the decision engine: a flow's **AI node** runs an agent (the shell pre-resolves it via the
@@ -36,5 +44,4 @@ Consumed by the decision engine: a flow's **AI node** runs an agent (the shell p
 `{"text": …}` — under `ai.<output>`), through an `AgentProvider` port so the engine never imports this
 layer.
 
-Next (PLAN §4.4, to close the phase): **human-in-the-loop** escalation to the Case Manager; richer
-monitoring metrics; and an agents UI.
+Next (PLAN §4.4, to close the phase): an **agents UI** (`web/src/routes/agents`).

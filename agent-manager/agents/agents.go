@@ -138,6 +138,29 @@ func ListRuns(ctx context.Context, s store.Store, id identity.Identity, agent st
 		func(a, b RunView) bool { return a.Seq > b.Seq })
 }
 
+// RunSummary is an at-a-glance roll-up of the run log for monitoring.
+type RunSummary struct {
+	Total     int            `json:"total"`
+	Completed int            `json:"completed"`
+	Failed    int            `json:"failed"`
+	ByAgent   map[string]int `json:"by_agent"`
+}
+
+// SummarizeRuns rolls up a set of runs (counts by status and by agent).
+func SummarizeRuns(runs []RunView) RunSummary {
+	s := RunSummary{Total: len(runs), ByAgent: map[string]int{}}
+	for _, r := range runs {
+		s.ByAgent[r.Agent]++
+		switch r.Status {
+		case domainRunCompleted:
+			s.Completed++
+		case domainRunFailed:
+			s.Failed++
+		}
+	}
+	return s
+}
+
 // Outcome is the result of invoking an agent: the resolved model, the run status,
 // and the provider's text or structured output (or an error message on failure).
 type Outcome struct {

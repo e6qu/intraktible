@@ -29,6 +29,31 @@ type DefineAgent struct {
 	Tools    []string
 }
 
+// EscalateRun opens a human-review case from an agent run (human-in-the-loop).
+type EscalateRun struct {
+	RunID       string
+	CompanyName string
+	CaseType    string
+	SLADays     int
+}
+
+// Validate requires the run + the case fields the Case Manager needs.
+func (c EscalateRun) Validate() error {
+	if strings.TrimSpace(c.RunID) == "" {
+		return errors.New("agent-manager: run_id is required")
+	}
+	if strings.TrimSpace(c.CompanyName) == "" {
+		return errors.New("agent-manager: company_name is required")
+	}
+	if strings.TrimSpace(c.CaseType) == "" {
+		return errors.New("agent-manager: case_type is required")
+	}
+	if c.SLADays < 0 {
+		return fmt.Errorf("agent-manager: sla_days must be >= 0, got %d", c.SLADays)
+	}
+	return nil
+}
+
 // Validate requires a name and, if present, a JSON-object schema and non-blank
 // tool names.
 func (c DefineAgent) Validate() error {

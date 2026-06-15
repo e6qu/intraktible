@@ -49,6 +49,22 @@ func Caller(w http.ResponseWriter, r *http.Request) (identity.Identity, bool) {
 	return id, ok
 }
 
+// Route is one declarative endpoint: an HTTP method, a 1.22-mux pattern, and its
+// handler. A service registers a []Route via Register instead of repeating
+// mux.HandleFunc lines.
+type Route struct {
+	Method  string
+	Pattern string
+	Handler http.HandlerFunc
+}
+
+// Register wires each route into the mux as "METHOD pattern".
+func Register(mux *http.ServeMux, routes []Route) {
+	for _, rt := range routes {
+		mux.HandleFunc(rt.Method+" "+rt.Pattern, rt.Handler)
+	}
+}
+
 // Emit is the shared write-endpoint shape: authenticate, decode the request body
 // into req, run the command, and respond 202 with the resulting event id + seq.
 // run is invoked after req is decoded, so its closure can read the decoded fields.

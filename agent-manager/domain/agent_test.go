@@ -31,3 +31,20 @@ func TestDefineAgentValidate(t *testing.T) {
 		}
 	}
 }
+
+func TestEscalateRunValidate(t *testing.T) {
+	if err := (domain.EscalateRun{RunID: "r1", CompanyName: "Acme", CaseType: "aml", SLADays: 3}).Validate(); err != nil {
+		t.Fatalf("valid escalation rejected: %v", err)
+	}
+	bad := []domain.EscalateRun{
+		{CompanyName: "Acme", CaseType: "aml"},                           // no run
+		{RunID: "r1", CaseType: "aml"},                                   // no company
+		{RunID: "r1", CompanyName: "Acme"},                               // no type
+		{RunID: "r1", CompanyName: "Acme", CaseType: "aml", SLADays: -1}, // negative sla
+	}
+	for i, c := range bad {
+		if err := c.Validate(); err == nil {
+			t.Fatalf("bad %d accepted: %+v", i, c)
+		}
+	}
+}

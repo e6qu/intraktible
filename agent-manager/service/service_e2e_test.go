@@ -67,6 +67,23 @@ func TestAgentAPIEndToEnd(t *testing.T) {
 	if got.Agent != "triage" || got.Status != "completed" {
 		t.Fatalf("run by id: %+v", got)
 	}
+
+	// Escalate the run to a case (human-in-the-loop).
+	var esc struct {
+		CaseID string `json:"case_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/agents/triage/runs/"+run.RunID+"/escalate",
+		map[string]any{"company_name": "Acme Corp", "case_type": "aml", "sla_days": 3}, http.StatusAccepted, &esc)
+	if esc.CaseID == "" {
+		t.Fatal("escalation returned no case id")
+	}
+
+	// Run monitoring summary.
+	var sum agents.RunSummary
+	api.Request(t, http.MethodGet, "/v1/agent-runs/summary", nil, http.StatusOK, &sum)
+	if sum.Total != 1 || sum.Completed != 1 || sum.ByAgent["triage"] != 1 {
+		t.Fatalf("run summary: %+v", sum)
+	}
 }
 
 func TestAgentAPIValidationAndAuth(t *testing.T) {

@@ -46,7 +46,10 @@ them: the provider call is an effect captured in an `AgentRunRecorded` event (so
 recorded output, not a re-call), with an agent registry + run-log/monitoring projection. Only the Stub
 provider is wired so far (real adapters tracked in BUGS). A flow's **AI node** runs an agent during a
 decision (shell pre-resolves it via an `AgentProvider` port + `agents.Provider` adapter, injecting the
-output under `ai.<output>`) — the same one-way wiring as features/connectors.
+output under `ai.<output>`) — the same one-way wiring as features/connectors. **Human-in-the-loop**:
+escalating a run opens a **Case Manager** case (the Agent Manager, built later, emits the Case
+Manager's own `ReviewRequested` event the `cases` projector already consumes — one-way direction), and
+`GET /v1/agent-runs/summary` gives run monitoring.
 Run it: `go run ./cmd/intraktible serve` then open http://localhost:8080 (dev key `dev-sandbox-key`);
 for UI dev use `make dev` (Vite + Go API). Phase 1 deferrals (CEL, builder UI polish, …) and other
 limitations are tracked in [BUGS.md](BUGS.md).

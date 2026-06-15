@@ -266,8 +266,11 @@ intraktible/
   an agent during a decision: the shell pre-resolves it (the node's literal prompt, or the current
   input) and injects the output under `ai.<output>`, recorded in `DecisionStarted` — via an
   `AgentProvider` port + `agents.Provider` adapter wired at the composition root, so the engine never
-  imports the Agent Manager (same one-way wiring as features/connectors). Remaining to close the phase:
-  **human-in-the-loop** escalation to the Case Manager; richer run monitoring; and an agents UI.
+  imports the Agent Manager (same one-way wiring as features/connectors). **Human-in-the-loop**:
+  escalating a run opens a Case Manager case — the Agent Manager (built later) emits the Case Manager's
+  own `ReviewRequested` event the `cases` projector already consumes, with the run in the case context
+  (one-way direction, no `cases` change). **Monitoring**: `GET /v1/agent-runs/summary` rolls up the run
+  log (totals, completed/failed, by agent). Remaining to close the phase: an **agents UI**.
 - **Phase 5 — Harden:** replay/rollback tooling, split-services profile, docs, examples.
 
 > Per project convention: at the **end of every phase**, update `PLAN.md` and `BUGS.md` in the same

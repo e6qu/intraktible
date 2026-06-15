@@ -30,12 +30,17 @@ func New(cmd *command.Handler, st store.Store) *Service {
 
 // Routes registers the agent-management endpoints.
 func (s *Service) Routes(mux *http.ServeMux) {
-	mux.HandleFunc("POST /v1/agents", s.defineAgent)
-	mux.HandleFunc("GET /v1/agents", s.listAgents)
-	mux.HandleFunc("GET /v1/agents/{name}", s.getAgent)
-	mux.HandleFunc("POST /v1/agents/{name}/run", s.runAgent)
-	mux.HandleFunc("GET /v1/agents/{name}/runs", s.listAgentRuns)
-	mux.HandleFunc("GET /v1/agent-runs/{run_id}", s.getRun)
+	httpx.Register(mux, []httpx.Route{
+		{Method: "POST", Pattern: "/v1/agents", Handler: s.defineAgent},
+		{Method: "GET", Pattern: "/v1/agents", Handler: s.listAgents},
+		{Method: "GET", Pattern: "/v1/agents/{name}", Handler: s.getAgent},
+		{Method: "POST", Pattern: "/v1/agents/{name}/run", Handler: s.runAgent},
+		{Method: "GET", Pattern: "/v1/agents/{name}/runs", Handler: s.listAgentRuns},
+		{Method: "POST", Pattern: "/v1/agents/{name}/runs/{run_id}/escalate", Handler: s.escalateRun},
+		{Method: "GET", Pattern: "/v1/agent-runs", Handler: s.listRuns},
+		{Method: "GET", Pattern: "/v1/agent-runs/summary", Handler: s.runSummary},
+		{Method: "GET", Pattern: "/v1/agent-runs/{run_id}", Handler: s.getRun},
+	})
 }
 
 type agentRequest struct {
@@ -112,4 +117,50 @@ func (s *Service) getRun(w http.ResponseWriter, r *http.Request) {
 	}
 	run, found, err := agents.GetRun(r.Context(), s.store, id, r.PathValue("run_id"))
 	httpx.WriteOne(w, run, found, err, "run not found")
+}
+
+func (s *Service) escalateRun(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		CompanyName string `json:"company_name"`
+		CaseType    string `json:"case_type"`
+		SLADays     int    `json:"sla_days"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	caseID, _, err := s.cmd.EscalateRun(r.Context(), id, domain.EscalateRun{
+		RunID: r.PathValue("run_id"), CompanyName: req.CompanyName, CaseType: req.CaseType, SLADays: req.SLADays,
+	})
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	httpx.JSON(w, http.StatusAccepted, map[string]any{"case_id": caseID})
+}
+
+func (s *Service) listRuns(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	recs, err := agents.ListRuns(r.Context(), s.store, id, "")
+	httpx.WriteList(w, "runs", recs, err)
+}
+
+func (s *Service) runSummary(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	recs, err := agents.ListRuns(r.Context(), s.store, id, "")
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, agents.SummarizeRuns(recs))
 }
