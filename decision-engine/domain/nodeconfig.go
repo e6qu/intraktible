@@ -58,6 +58,15 @@ type connectConfig struct {
 	Output    string `json:"output"`
 }
 
+// aiConfig is the config of an AI node: it names an Agent Manager agent to run and
+// the key its output is injected under (read downstream as ai.<output>). Prompt is
+// the literal prompt; when empty the node sends the current input as the prompt.
+type aiConfig struct {
+	Agent  string `json:"agent"`
+	Output string `json:"output"`
+	Prompt string `json:"prompt,omitempty"`
+}
+
 // codeConfig is the config of a Code node: a Starlark script with the decision
 // context predeclared as the `data` dict; its top-level assignments merge back
 // into the context.

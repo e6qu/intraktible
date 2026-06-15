@@ -82,7 +82,12 @@ func TestDecidePreResolvesConnectNode(t *testing.T) {
 	}
 }
 
-func TestDecideConnectNodeWithoutProviderFailsLoudly(t *testing.T) {
+// decideFailsWithoutProvider publishes a flow whose node depends on a pre-resolved
+// provider, then decides with NO provider configured and asserts the run fails
+// loudly (the pure core cannot perform the I/O itself). Shared by the Connect and
+// AI node tests.
+func decideFailsWithoutProvider(t *testing.T, slug string, graph events.Graph) {
+	t.Helper()
 	ctx := context.Background()
 	log, err := eventlog.OpenWAL(t.TempDir())
 	if err != nil {
@@ -91,15 +96,17 @@ func TestDecideConnectNodeWithoutProviderFailsLoudly(t *testing.T) {
 	defer func() { _ = log.Close() }()
 	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "caller"}
 	st := store.NewMemory()
-	publishFlow(t, ctx, log, st, id, "screen", "Screen", flowtest.ConnectGraph())
+	publishFlow(t, ctx, log, st, id, slug, slug, graph)
 
-	// No connector provider: the Connect node cannot be resolved and the run fails.
-	dh := command.NewDecideHandler(log, st)
-	res, err := dh.Decide(ctx, id, "screen", "production", nil, command.EntityRef{})
+	res, err := command.NewDecideHandler(log, st).Decide(ctx, id, slug, "production", nil, command.EntityRef{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if res.Status != domain.StatusFailed {
-		t.Fatalf("expected a failed decision without a connector provider, got %+v", res)
+		t.Fatalf("expected a failed decision without a provider, got %+v", res)
 	}
+}
+
+func TestDecideConnectNodeWithoutProviderFailsLoudly(t *testing.T) {
+	decideFailsWithoutProvider(t, "screen", flowtest.ConnectGraph())
 }

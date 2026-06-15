@@ -105,6 +105,8 @@ func evalNode(n events.Node, ctx map[string]any, edges []events.Edge) (any, stri
 		return evalCode(n, ctx, edges)
 	case events.NodeConnect:
 		return evalConnect(n, ctx, edges)
+	case events.NodeAI:
+		return evalAI(n, ctx, edges)
 	case events.NodeManualReview:
 		return evalManualReview(n, ctx, edges)
 	case events.NodeOutput:
@@ -308,15 +310,61 @@ func evalConnect(n events.Node, ctx map[string]any, edges []events.Edge) (any, s
 	if err := decodeConfig(n, &cfg); err != nil {
 		return nil, "", err
 	}
-	conn, ok := ctx["connect"].(map[string]any)
-	if !ok {
-		return nil, "", fmt.Errorf("decision-engine: connect node %q has no resolved connector data (no connector provider configured?)", n.ID)
+	return preResolved(n, ctx, edges, "connect", cfg.Output, "connector")
+}
+
+// AISpec names an AI node's agent + the key its output lands under (and the literal
+// prompt, empty meaning "send the current input").
+type AISpec struct {
+	NodeID string
+	Agent  string
+	Output string
+	Prompt string
+}
+
+// AISpecs extracts the AI nodes from a graph so the shell can pre-resolve their
+// agent runs before execution (keeping Execute pure). It fails loudly on an AI
+// node missing its agent or output.
+func AISpecs(g events.Graph) ([]AISpec, error) {
+	var out []AISpec
+	for _, n := range g.Nodes {
+		if n.Type != events.NodeAI {
+			continue
+		}
+		var cfg aiConfig
+		if err := decodeConfig(n, &cfg); err != nil {
+			return nil, err
+		}
+		if cfg.Agent == "" || cfg.Output == "" {
+			return nil, fmt.Errorf("decision-engine: ai node %q needs an agent and an output", n.ID)
+		}
+		out = append(out, AISpec{NodeID: n.ID, Agent: cfg.Agent, Output: cfg.Output, Prompt: cfg.Prompt})
 	}
-	v, ok := conn[cfg.Output]
-	if !ok {
-		return nil, "", fmt.Errorf("decision-engine: connect node %q output %q was not resolved", n.ID, cfg.Output)
+	return out, nil
+}
+
+// evalAI is pass-through: the shell pre-resolves the agent run and injects the
+// output under ai.<output>; the node echoes that into its recorded output.
+func evalAI(n events.Node, ctx map[string]any, edges []events.Edge) (any, string, error) {
+	var cfg aiConfig
+	if err := decodeConfig(n, &cfg); err != nil {
+		return nil, "", err
 	}
-	return map[string]any{cfg.Output: v}, firstEdge(edges), nil
+	return preResolved(n, ctx, edges, "ai", cfg.Output, "agent")
+}
+
+// preResolved echoes a shell-injected value at ctx[bucket][output] as the node's
+// output, failing loudly when the bucket or key is absent (no provider wired).
+func preResolved(n events.Node, ctx map[string]any, edges []events.Edge, bucket, output, kind string) (any, string, error) {
+	b, ok := ctx[bucket].(map[string]any)
+	if !ok {
+		return nil, "", fmt.Errorf("decision-engine: %s node %q has no resolved data (no %s provider configured?)", bucket, n.ID, kind)
+	}
+	v, ok := b[output]
+	if !ok {
+		return nil, "", fmt.Errorf("decision-engine: %s node %q output %q was not resolved", bucket, n.ID, output)
+	}
+	return map[string]any{output: v}, firstEdge(edges), nil
 }
 
 // evalManualReview evaluates the case fields for an escalation. It is pass-through

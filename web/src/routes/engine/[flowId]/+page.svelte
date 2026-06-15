@@ -24,6 +24,7 @@
     '2d_matrix',
     'code',
     'connect',
+    'ai',
     'output'
   ];
 

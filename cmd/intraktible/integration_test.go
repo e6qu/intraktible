@@ -7,6 +7,9 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/e6qu/intraktible/agent-manager/agents"
+	agentcmd "github.com/e6qu/intraktible/agent-manager/command"
+	agentdomain "github.com/e6qu/intraktible/agent-manager/domain"
 	contextcmd "github.com/e6qu/intraktible/context-layer/command"
 	"github.com/e6qu/intraktible/context-layer/connectors"
 	contextdomain "github.com/e6qu/intraktible/context-layer/domain"
@@ -16,6 +19,7 @@ import (
 	enginedomain "github.com/e6qu/intraktible/decision-engine/domain"
 	engineevents "github.com/e6qu/intraktible/decision-engine/events"
 	"github.com/e6qu/intraktible/decision-engine/flows"
+	"github.com/e6qu/intraktible/platform/ai"
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/projection"
@@ -136,6 +140,69 @@ func connectGraph() engineevents.Graph {
 			{ID: "out", Type: engineevents.NodeOutput},
 		},
 		Edges: []engineevents.Edge{{From: "in", To: "c"}, {From: "c", To: "out"}},
+	}
+}
+
+// TestAgentDrivesDecision wires the real Agent Manager provider into the decision
+// engine and proves a flow's AI node runs a defined agent, with its output
+// injected into the flow.
+func TestAgentDrivesDecision(t *testing.T) {
+	ctx := context.Background()
+	log, err := eventlog.OpenWAL(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = log.Close() }()
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "dev"}
+	st := store.NewMemory()
+
+	reg := ai.NewRegistry()
+	reg.Register(ai.Stub{})
+
+	ac := agentcmd.NewHandler(log, st, reg)
+	if _, err := ac.DefineAgent(ctx, id, agentdomain.DefineAgent{Name: "assess", System: "assess risk"}); err != nil {
+		t.Fatal(err)
+	}
+
+	ec := enginecmd.NewHandler(log)
+	flowID, _, err := ec.CreateFlow(ctx, id, enginedomain.CreateFlow{Slug: "assess", Name: "Assess"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := ec.PublishVersion(ctx, id, enginedomain.PublishVersion{FlowID: flowID, Graph: aiGraph()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := projection.New(log, st, flows.Projector{}, agents.Projector{}).Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	dh := enginecmd.NewDecideHandler(log, st, enginecmd.WithAgents(agents.Provider{Store: st, Registry: reg}))
+	res, err := dh.Decide(ctx, id, "assess", "production", map[string]any{"q": "why flagged?"}, enginecmd.EntityRef{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Status != enginedomain.StatusCompleted {
+		t.Fatalf("status=%s err=%s", res.Status, res.Error)
+	}
+	aiOut, ok := res.Output["ai"].(map[string]any)
+	if !ok {
+		t.Fatalf("no ai data in output: %+v", res.Output)
+	}
+	assess, ok := aiOut["assess"].(map[string]any)
+	if !ok || assess["text"] == nil {
+		t.Fatalf("agent output not injected: %+v", aiOut)
+	}
+}
+
+// aiGraph: input -> ai(assess) -> output(whole context, incl. ai.*).
+func aiGraph() engineevents.Graph {
+	return engineevents.Graph{
+		Nodes: []engineevents.Node{
+			{ID: "in", Type: engineevents.NodeInput},
+			{ID: "a", Type: engineevents.NodeAI, Config: json.RawMessage(`{"agent":"assess","output":"assess"}`)},
+			{ID: "out", Type: engineevents.NodeOutput},
+		},
+		Edges: []engineevents.Edge{{From: "in", To: "a"}, {From: "a", To: "out"}},
 	}
 }
 

@@ -32,6 +32,37 @@ func TestConnectSpecs(t *testing.T) {
 	}
 }
 
+func TestAISpecs(t *testing.T) {
+	g := events.Graph{Nodes: []events.Node{{ID: "a", Type: events.NodeAI, Config: json.RawMessage(`{"agent":"assess","output":"x","prompt":"go"}`)}}}
+	specs, err := domain.AISpecs(g)
+	want := domain.AISpec{NodeID: "a", Agent: "assess", Output: "x", Prompt: "go"}
+	if err != nil || len(specs) != 1 || specs[0] != want {
+		t.Fatalf("AISpecs = %+v, err = %v", specs, err)
+	}
+	// An AI node missing its agent is rejected.
+	if _, err := domain.AISpecs(events.Graph{Nodes: []events.Node{{ID: "a", Type: events.NodeAI}}}); err == nil {
+		t.Fatal("expected error for ai node without an agent/output")
+	}
+}
+
+func TestExecuteAINode(t *testing.T) {
+	g := events.Graph{
+		Nodes: []events.Node{
+			{ID: "in", Type: events.NodeInput},
+			{ID: "a", Type: events.NodeAI, Config: json.RawMessage(`{"agent":"assess","output":"assess"}`)},
+			{ID: "out", Type: events.NodeOutput},
+		},
+		Edges: []events.Edge{{From: "in", To: "a"}, {From: "a", To: "out"}},
+	}
+	input := map[string]any{"ai": map[string]any{"assess": map[string]any{"score": 80}}}
+	if run := domain.Execute(g, input); run.Status != domain.StatusCompleted {
+		t.Fatalf("status=%s err=%s", run.Status, run.Err)
+	}
+	if run := domain.Execute(g, map[string]any{}); run.Status != domain.StatusFailed || run.FailedNode != "a" {
+		t.Fatalf("expected failure at node a, got %+v", run)
+	}
+}
+
 func TestExecuteConnectNode(t *testing.T) {
 	g := events.Graph{
 		Nodes: []events.Node{

@@ -31,6 +31,10 @@ Done — agent definitions + runs (command→event→projection→API, durable &
   - `GET /v1/agents/{name}/runs` — the agent's run log · `GET /v1/agent-runs/{run_id}` — one run
 - Run it: `intraktible serve --modules=agent-manager`.
 
-Next (PLAN §4.4, to close the phase): wire the decision engine's **AI node** to run an agent during a
-flow (a provider port + adapter, like features/connectors); **human-in-the-loop** escalation to the
-Case Manager; richer monitoring metrics; and an agents UI.
+Consumed by the decision engine: a flow's **AI node** runs an agent (the shell pre-resolves it via the
+`agents.Provider` adapter and injects the output — structured when the agent has a schema, else
+`{"text": …}` — under `ai.<output>`), through an `AgentProvider` port so the engine never imports this
+layer.
+
+Next (PLAN §4.4, to close the phase): **human-in-the-loop** escalation to the Case Manager; richer
+monitoring metrics; and an agents UI.

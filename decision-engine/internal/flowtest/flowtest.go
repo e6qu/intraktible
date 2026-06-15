@@ -110,6 +110,18 @@ func ConnectGraph() events.Graph {
 	return g
 }
 
+// AIGraph is a flow that runs an agent then branches on its structured output:
+// input -> ai(assess) -> split(ai.assess.score >= 50) -> high/low -> output(tier).
+func AIGraph() events.Graph {
+	g := tierBranch("ai.assess.score >= 50", "a")
+	g.Nodes = append([]events.Node{
+		{ID: "in", Type: events.NodeInput},
+		{ID: "a", Type: events.NodeAI, Config: json.RawMessage(`{"agent":"assess","output":"assess"}`)},
+	}, g.Nodes...)
+	g.Edges = append([]events.Edge{{From: "in", To: "a"}}, g.Edges...)
+	return g
+}
+
 // FeatureGraph is a flow whose Split reads an injected Context Layer feature
 // (features.txn_count_24h): input -> split(>= 3) -> high/low -> output(tier).
 func FeatureGraph() events.Graph {

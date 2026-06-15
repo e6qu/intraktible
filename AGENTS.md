@@ -44,7 +44,9 @@ The **Agent Manager** (`agent-manager/`) defines **agents** — configs over the
 (`platform/ai`: system prompt, model, optional structured-output schema, tool set) — and **runs**
 them: the provider call is an effect captured in an `AgentRunRecorded` event (so replay reads the
 recorded output, not a re-call), with an agent registry + run-log/monitoring projection. Only the Stub
-provider is wired so far (real adapters tracked in BUGS).
+provider is wired so far (real adapters tracked in BUGS). A flow's **AI node** runs an agent during a
+decision (shell pre-resolves it via an `AgentProvider` port + `agents.Provider` adapter, injecting the
+output under `ai.<output>`) — the same one-way wiring as features/connectors.
 Run it: `go run ./cmd/intraktible serve` then open http://localhost:8080 (dev key `dev-sandbox-key`);
 for UI dev use `make dev` (Vite + Go API). Phase 1 deferrals (CEL, builder UI polish, …) and other
 limitations are tracked in [BUGS.md](BUGS.md).

@@ -39,6 +39,13 @@ type ConnectorProvider interface {
 	Fetch(ctx context.Context, id identity.Identity, connector string, params json.RawMessage) (json.RawMessage, error)
 }
 
+// AgentProvider runs a named Agent Manager agent against a prompt and returns its
+// output as JSON. The port lives here so the engine never imports the Agent
+// Manager; a failed run is returned as an error so the decision fails loudly.
+type AgentProvider interface {
+	RunAgent(ctx context.Context, id identity.Identity, agent, prompt string) (json.RawMessage, error)
+}
+
 // DecideHandler executes published flows. It reads the flow registry read model
 // for the version to run, evaluates it with the pure core, and records the
 // decision as an event stream (started -> node-evaluated… -> completed/failed).
@@ -50,6 +57,7 @@ type DecideHandler struct {
 	roll       func() int // A/B routing draw in [0,100); recorded via the chosen version+variant
 	features   FeatureProvider
 	connectors ConnectorProvider
+	agentsP    AgentProvider
 }
 
 // DecideOption customizes a DecideHandler (used by tests to make A/B routing
@@ -68,6 +76,12 @@ func WithFeatures(p FeatureProvider) DecideOption { return func(h *DecideHandler
 // loudly (it cannot reach any connector backend).
 func WithConnectors(p ConnectorProvider) DecideOption {
 	return func(h *DecideHandler) { h.connectors = p }
+}
+
+// WithAgents supplies the agent provider that pre-resolves a flow's AI nodes at
+// decide time. Without it, a flow containing AI nodes fails loudly.
+func WithAgents(p AgentProvider) DecideOption {
+	return func(h *DecideHandler) { h.agentsP = p }
 }
 
 // NewDecideHandler builds a DecideHandler using the system clock and random id +
@@ -142,6 +156,10 @@ func (h *DecideHandler) Decide(ctx context.Context, id identity.Identity, slug, 
 		return DecideResult{}, err
 	}
 	data, err = h.injectConnectors(ctx, id, version.Graph, data)
+	if err != nil {
+		return DecideResult{}, err
+	}
+	data, err = h.injectAI(ctx, id, version.Graph, data)
 	if err != nil {
 		return DecideResult{}, err
 	}
@@ -259,6 +277,47 @@ func (h *DecideHandler) injectConnectors(ctx context.Context, id identity.Identi
 		out[k] = v
 	}
 	out["connect"] = resolved
+	return out, nil
+}
+
+// injectAI pre-resolves a flow's AI nodes: it runs each named agent (with the
+// node's literal prompt, or the current input serialized when none is set) and
+// injects the outputs under "ai" (keyed by each node's output). As with
+// connectors, this is the only I/O, keeping domain.Execute pure; without a
+// provider it is a no-op and any AI node fails loudly during execution.
+func (h *DecideHandler) injectAI(ctx context.Context, id identity.Identity, graph events.Graph, data map[string]any) (map[string]any, error) {
+	specs, err := domain.AISpecs(graph)
+	if err != nil {
+		return nil, err
+	}
+	if h.agentsP == nil || len(specs) == 0 {
+		return data, nil
+	}
+	resolved := make(map[string]any, len(specs))
+	for _, sp := range specs {
+		prompt := sp.Prompt
+		if prompt == "" {
+			b, err := json.Marshal(data)
+			if err != nil {
+				return nil, fmt.Errorf("decision-engine: marshal ai prompt: %w", err)
+			}
+			prompt = string(b)
+		}
+		resp, err := h.agentsP.RunAgent(ctx, id, sp.Agent, prompt)
+		if err != nil {
+			return nil, fmt.Errorf("decision-engine: ai node %q (agent %q): %w", sp.NodeID, sp.Agent, err)
+		}
+		var v any
+		if err := json.Unmarshal(resp, &v); err != nil {
+			return nil, fmt.Errorf("decision-engine: ai node %q response: %w", sp.NodeID, err)
+		}
+		resolved[sp.Output] = v
+	}
+	out := make(map[string]any, len(data)+1)
+	for k, v := range data {
+		out[k] = v
+	}
+	out["ai"] = resolved
 	return out, nil
 }
 

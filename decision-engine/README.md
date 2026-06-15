@@ -31,9 +31,9 @@ Done — execution runtime + decide API + decision history (the decision event s
   ManualReview, Output** (a ManualReview node escalates to the Case Manager — opens a case).
   Conditions/expressions use **expr-lang**; the **Code** node runs **Starlark** (no
   clock/random/IO, recursion off, bounded by a step limit) with the context as a `data` dict and its
-  top-level assignments merged back. A **Connect** node calls a Context Layer connector (pre-resolved
-  by the shell, response injected under `connect.<output>`; see below). The AI node fails loudly until
-  Phase 4.
+  top-level assignments merged back. A **Connect** node calls a Context Layer connector and an **AI**
+  node runs an Agent Manager agent — both pre-resolved by the shell, with the result injected under
+  `connect.<output>` / `ai.<output>` (see below).
 - Each `/decide` records a stream — `DecisionStarted` → `NodeEvaluated`…  → `DecisionCompleted` /
   `DecisionFailed` — so a run is replayable node-by-node; a flow-logic error is a recorded **failed**
   decision (HTTP 200, `status: "failed"`), not a swallowed error.
@@ -47,15 +47,17 @@ Done — execution runtime + decide API + decision history (the decision event s
   /v1/flows/{flow_id}/metrics`.
 - HTTP: `POST /v1/flows/{slug}/{env}/decide` → `{decision_id, status, data}`;
   `GET /v1/decisions` · `GET /v1/decisions/{decision_id}` — history with the full node trace + variant.
-- **Context features + connectors (Phase 3):** a decide call may carry `{entity_type, entity_id}`; the
-  shell folds that entity's computed features into the input under `features.*` (so a Rule/Split
-  expression can read `features.txn_count_24h`). A flow's **Connect** nodes are likewise pre-resolved:
-  the shell invokes each named connector (params = the current input) and injects the response under
-  `connect.<output>`. Both are recorded in `DecisionStarted` for replay stability, and the pure core
-  performs no I/O. The engine reaches the (later-built) Context Layer only through `FeatureProvider` /
-  `ConnectorProvider` **ports** in `command/`, satisfied by `features.Provider` / `connectors.Provider`
-  adapters wired at the composition root — so the dependency direction stays one-way. `WithFeatures` /
-  `WithConnectors` enable them; without a provider, a flow using Connect nodes fails loudly.
+- **Context + agents (Phase 3/4):** a decide call may carry `{entity_type, entity_id}`; the shell folds
+  that entity's computed features into the input under `features.*` (so a Rule/Split expression can
+  read `features.txn_count_24h`). A flow's **Connect** nodes are likewise pre-resolved (the shell
+  invokes each named connector with the current input and injects the response under `connect.<output>`)
+  and its **AI** nodes run an Agent Manager agent (the node's literal prompt, or the current input,
+  injected under `ai.<output>`). All are recorded in `DecisionStarted` for replay stability, and the
+  pure core performs no I/O. The engine reaches the (later-built) Context Layer / Agent Manager only
+  through `FeatureProvider` / `ConnectorProvider` / `AgentProvider` **ports** in `command/`, satisfied
+  by `features.Provider` / `connectors.Provider` / `agents.Provider` adapters wired at the composition
+  root — so the dependency direction stays one-way. `WithFeatures` / `WithConnectors` / `WithAgents`
+  enable them; without a provider, a flow using those nodes fails loudly.
 
 Deferred (see [../BUGS.md](../BUGS.md)): CEL as an alternative condition engine (D9), builder UI
 drag-to-connect + bespoke per-node config panels (D10).

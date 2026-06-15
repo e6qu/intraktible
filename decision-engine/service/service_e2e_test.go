@@ -93,6 +93,35 @@ func TestDecideWithConnectorOverHTTP(t *testing.T) {
 	}
 }
 
+// stubAgent is a fixed agent source for the decide HTTP test.
+type stubAgent string
+
+func (s stubAgent) RunAgent(_ context.Context, _ identity.Identity, _, _ string) (json.RawMessage, error) {
+	return json.RawMessage(s), nil
+}
+
+func TestDecideWithAINodeOverHTTP(t *testing.T) {
+	api := startEngine(t, command.WithAgents(stubAgent(`{"score":80}`)))
+
+	var created struct {
+		FlowID string `json:"flow_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows", map[string]any{"slug": "assess", "name": "Assess"}, http.StatusCreated, &created)
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/versions",
+		map[string]any{"graph": flowtest.AIGraph()}, http.StatusCreated, nil)
+
+	if !testutil.Eventually(t, func() bool {
+		var res struct {
+			Status string         `json:"status"`
+			Data   map[string]any `json:"data"`
+		}
+		api.Request(t, http.MethodPost, "/v1/flows/assess/production/decide", map[string]any{}, http.StatusOK, &res)
+		return res.Status == "completed" && res.Data["tier"] == "high"
+	}) {
+		t.Fatal("decide never reflected the AI node output (tier=high)")
+	}
+}
+
 func TestEngineAPIEndToEnd(t *testing.T) {
 	api := startEngine(t)
 

@@ -98,6 +98,11 @@ func run(addr, dataDir, modules, devKey string) error {
 	api := http.NewServeMux()
 	var projectors []projection.Projector
 
+	// The AI provider registry is shared by the Agent Manager and the decision
+	// engine's AI node. Only the Stub is wired today (real adapters → BUGS D5).
+	aiRegistry := ai.NewRegistry()
+	aiRegistry.Register(ai.Stub{})
+
 	if enabled(modules, "hello") {
 		helloSvc := helloservice.New(hellocmd.NewHandler(log), st)
 		helloSvc.Routes(api)
@@ -105,13 +110,14 @@ func run(addr, dataDir, modules, devKey string) error {
 	}
 
 	if enabled(modules, "decision-engine") {
-		// Decisions can reference a Context Layer entity to fold its features into
-		// the input, and a flow's Connect nodes call Context Layer connectors; both
-		// providers read the shared store (no-ops when the context-layer module is
+		// A decision can fold in a Context Layer entity's features, call Context
+		// Layer connectors from Connect nodes, and run Agent Manager agents from AI
+		// nodes; each provider reads the shared store (a no-op when that module is
 		// not running / nothing is defined).
 		decide := enginecmd.NewDecideHandler(log, st,
 			enginecmd.WithFeatures(features.Provider{Store: st}),
-			enginecmd.WithConnectors(connectors.Provider{Store: st}))
+			enginecmd.WithConnectors(connectors.Provider{Store: st}),
+			enginecmd.WithAgents(agents.Provider{Store: st, Registry: aiRegistry}))
 		engineSvc := engineservice.New(enginecmd.NewHandler(log), decide, st)
 		engineSvc.Routes(api)
 		projectors = append(projectors, flows.Projector{}, history.Projector{}, analytics.Projector{})
@@ -130,11 +136,7 @@ func run(addr, dataDir, modules, devKey string) error {
 	}
 
 	if enabled(modules, "agent-manager") {
-		// Agents run over the pluggable AI provider; only the Stub is wired today
-		// (real Claude/OpenAI/… adapters are tracked in BUGS).
-		registry := ai.NewRegistry()
-		registry.Register(ai.Stub{})
-		agentSvc := agentservice.New(agentcmd.NewHandler(log, st, registry), st)
+		agentSvc := agentservice.New(agentcmd.NewHandler(log, st, aiRegistry), st)
 		agentSvc.Routes(api)
 		projectors = append(projectors, agents.Projector{})
 	}

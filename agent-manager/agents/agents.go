@@ -181,6 +181,36 @@ func Invoke(ctx context.Context, s store.Store, reg *ai.Registry, id identity.Id
 	return out, nil
 }
 
+// Provider adapts agent invocation to a prompt→JSON lookup, suitable as a
+// decision-engine agent source (it satisfies that engine's AgentProvider port
+// structurally, without this package importing it). It returns the agent's
+// structured output when it has a schema, else {"text": …}; a failed run is an
+// error so the calling decision fails loudly. The run is not recorded here — the
+// decision records the output in its own event stream.
+type Provider struct {
+	Store    store.Store
+	Registry *ai.Registry
+}
+
+// RunAgent runs the named agent against prompt and returns its output as JSON.
+func (p Provider) RunAgent(ctx context.Context, id identity.Identity, agent, prompt string) (json.RawMessage, error) {
+	out, err := Invoke(ctx, p.Store, p.Registry, id, agent, prompt)
+	if err != nil {
+		return nil, err
+	}
+	if out.Status != domainRunCompleted {
+		return nil, fmt.Errorf("agent-manager: agent %q run failed: %s", agent, out.Error)
+	}
+	if len(out.Structured) > 0 {
+		return out.Structured, nil
+	}
+	b, err := json.Marshal(map[string]string{"text": out.Text})
+	if err != nil {
+		return nil, fmt.Errorf("agent-manager: marshal agent text: %w", err)
+	}
+	return b, nil
+}
+
 // Mirror the domain run-status constants without importing the domain package
 // (this read-model package stays free of the command/domain write side).
 const (
