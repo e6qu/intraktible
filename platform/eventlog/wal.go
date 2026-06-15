@@ -32,8 +32,10 @@ func OpenWAL(dir string) (*WAL, error) {
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return nil, fmt.Errorf("eventlog: mkdir %q: %w", dir, err)
 	}
+	// dir is operator-provided config (the --data-dir flag), not request input,
+	// and the filename is constant, so the joined path is not attacker-controlled.
 	path := filepath.Join(dir, "events.log")
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o640)
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600) // #nosec G304 -- operator config path, not request input
 	if err != nil {
 		return nil, fmt.Errorf("eventlog: open %q: %w", path, err)
 	}

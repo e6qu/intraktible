@@ -7,6 +7,11 @@ export default {
   preprocess: vitePreprocess(),
   kit: {
     // Static SPA, embedded into the Go binary at platform/web/assets.
-    adapter: adapter({ pages: 'build', assets: 'build', fallback: 'index.html', precompress: false })
+    adapter: adapter({
+      pages: 'build',
+      assets: 'build',
+      fallback: 'index.html',
+      precompress: false
+    })
   }
 };

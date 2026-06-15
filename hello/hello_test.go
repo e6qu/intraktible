@@ -5,7 +5,6 @@ package hello_test
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/e6qu/intraktible/hello/command"
 	"github.com/e6qu/intraktible/hello/domain"
@@ -14,6 +13,7 @@ import (
 	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/projection"
 	"github.com/e6qu/intraktible/platform/store"
+	"github.com/e6qu/intraktible/platform/testutil"
 )
 
 func TestHelloSliceReplay(t *testing.T) {
@@ -51,7 +51,7 @@ func TestHelloSliceReplay(t *testing.T) {
 	if _, err := h.SayHello(ctx, id, domain.SayHello{Name: "grace"}); err != nil {
 		t.Fatal(err)
 	}
-	if !eventually(t, func() bool {
+	if !testutil.Eventually(t, func() bool {
 		s, _ := stats.Read(ctx, st, id)
 		return s.Count == 3 && s.LastName == "grace"
 	}) {
@@ -96,16 +96,4 @@ func TestSayHelloValidation(t *testing.T) {
 		domain.SayHello{Name: "  "}); err == nil {
 		t.Fatal("expected validation error for blank name")
 	}
-}
-
-func eventually(t *testing.T, cond func() bool) bool {
-	t.Helper()
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
-		if cond() {
-			return true
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	return false
 }

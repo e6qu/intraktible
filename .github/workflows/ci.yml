@@ -21,10 +21,14 @@ jobs:
         run: make fmtcheck
       - name: vet
         run: make vet
+      - name: typecheck
+        run: make typecheck
       - name: test (race)
         run: make test
       - name: lint
         run: make lint
+      - name: sast (gosec)
+        run: make sast
       - name: dead code
         run: make deadcode
       - name: copy-paste detection
@@ -36,17 +40,46 @@ jobs:
 
   web:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
       - name: install
-        working-directory: web
         run: npm ci
+      - name: format check (prettier)
+        run: npm run format:check
+      - name: lint + sast (eslint + security)
+        run: npm run lint
+      - name: typecheck (svelte-check, strict)
+        run: npm run check
+      - name: unit tests (vitest)
+        run: npm run test:unit
       - name: build
-        working-directory: web
         run: npm run build
       - name: license compliance (web)
-        working-directory: web
         run: npx --yes license-checker --production --onlyAllow "MIT;BSD-2-Clause;BSD-3-Clause;ISC;0BSD;Apache-2.0;MPL-2.0;Unlicense;CC0-1.0"
+
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: install
+        working-directory: web
+        run: npm ci
+      - name: install Playwright browser
+        working-directory: web
+        run: npx playwright install --with-deps chromium
+      - name: e2e (Playwright — all UI flows)
+        working-directory: web
+        run: npm run test:e2e

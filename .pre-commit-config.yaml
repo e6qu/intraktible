@@ -1,0 +1,135 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Pre-commit pipeline (https://pre-commit.com). One-time setup:
+#
+#     pre-commit install            # installs the pre-commit AND pre-push git hooks
+#
+# Fast checks gate every commit; slow/thorough checks (race detector, dead-code,
+# copy-paste, vuln + license scans, Playwright UI e2e) gate every push. The hooks
+# call the same Makefile targets / npm scripts as CI (.github/workflows/ci.yml),
+# so local and CI gates stay in lock-step. Run the whole thing manually with:
+#
+#     pre-commit run --all-files            # commit-stage hooks
+#     pre-commit run --all-files --hook-stage pre-push
+#
+minimum_pre_commit_version: '3.2.0'
+default_install_hook_types: [pre-commit, pre-push]
+default_stages: [pre-commit]
+
+repos:
+  - repo: local
+    hooks:
+      # ---------------- Go — every commit ----------------
+      - id: go-fmt
+        name: 'go · autoformat (gofmt)'
+        entry: gofmt -w
+        language: system
+        types: [go]
+
+      - id: go-typecheck
+        name: 'go · typecheck (go build, strict)'
+        entry: make typecheck
+        language: system
+        types: [go]
+        pass_filenames: false
+
+      - id: go-lint
+        name: 'go · lint (golangci-lint, strict)'
+        entry: make lint
+        language: system
+        types: [go]
+        pass_filenames: false
+
+      - id: go-sast
+        name: 'go · sast (gosec, strict)'
+        entry: make sast
+        language: system
+        types: [go]
+        pass_filenames: false
+
+      - id: go-test
+        name: 'go · unit + integration + API e2e tests'
+        entry: make test-short
+        language: system
+        types: [go]
+        pass_filenames: false
+
+      # ---------------- Web — every commit ----------------
+      - id: web-format
+        name: 'web · autoformat (prettier)'
+        entry: bash -c 'cd web && npm run format'
+        language: system
+        files: ^web/
+        exclude: ^web/(build|\.svelte-kit|node_modules)/
+        pass_filenames: false
+
+      - id: web-lint
+        name: 'web · lint + sast (eslint + security, strict)'
+        entry: bash -c 'cd web && npm run lint'
+        language: system
+        files: ^web/
+        pass_filenames: false
+
+      - id: web-typecheck
+        name: 'web · typecheck (svelte-check, strict)'
+        entry: bash -c 'cd web && npm run check'
+        language: system
+        files: ^web/
+        pass_filenames: false
+
+      - id: web-test-unit
+        name: 'web · unit tests (vitest)'
+        entry: bash -c 'cd web && npm run test:unit'
+        language: system
+        files: ^web/
+        pass_filenames: false
+
+      # ---------------- Go — every push (thorough) ----------------
+      - id: go-test-race
+        name: 'go · full test suite (race detector)'
+        entry: make test
+        language: system
+        types: [go]
+        pass_filenames: false
+        stages: [pre-push]
+
+      - id: go-deadcode
+        name: 'go · dead-code detection'
+        entry: make deadcode
+        language: system
+        types: [go]
+        pass_filenames: false
+        stages: [pre-push]
+
+      - id: go-dupl
+        name: 'go · copy-paste detection'
+        entry: make dupl
+        language: system
+        types: [go]
+        pass_filenames: false
+        stages: [pre-push]
+
+      - id: go-vuln
+        name: 'go · vulnerability scan (govulncheck)'
+        entry: make vuln
+        language: system
+        types: [go]
+        pass_filenames: false
+        stages: [pre-push]
+
+      - id: go-licenses
+        name: 'go · license compliance (AGPL-compatible only)'
+        entry: make licenses
+        language: system
+        types: [go]
+        pass_filenames: false
+        stages: [pre-push]
+
+      # ---------------- Web — every push (thorough) ----------------
+      - id: web-test-e2e
+        name: 'web · UI e2e (Playwright — all flows)'
+        entry: bash -c 'cd web && npm run test:e2e'
+        language: system
+        files: ^web/
+        pass_filenames: false
+        stages: [pre-push]

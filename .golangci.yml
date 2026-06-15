@@ -27,6 +27,11 @@ linters-settings:
         disabled: false
   gocritic:
     enabled-tags: [diagnostic, style, performance]
+    # The event-sourcing core passes the immutable eventlog.Envelope (and read
+    # models) by value on purpose — events are values, not shared pointers. The
+    # by-value idiom is mandated by the Projector.Apply interface, so these
+    # size/style nits would fire pervasively and add only noise.
+    disabled-checks: [hugeParam, rangeValCopy, unnamedResult]
 
 issues:
   max-issues-per-linter: 0

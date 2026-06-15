@@ -1,3 +1,3 @@
 module github.com/e6qu/intraktible
 
-go 1.26
+go 1.26.4

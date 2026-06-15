@@ -36,9 +36,22 @@ Pluggable storage (SQLite/Postgres) and pluggable AI provider. Details: [PLAN.md
 ## Per-component layout (every component)
 `domain/` (pure) · `events/` (event payloads) · `command/` (validate→emit) · `projection/` (events→JSONB) · `service/` (HTTP + wiring).
 
-## Build / run (targets to exist after Phase 0)
-- `make dev` — Vite dev server + Go API; `make build` — embed UI, single binary; `make check` — lint + deadcode + dupl + vuln + license + tests.
+## Build / run
+- `make build` — embed UI, single binary; `make check` — fast gate (fmt + vet + typecheck + tests);
+  `make ci` — full gate (everything CI runs); `make web` — build + embed the SvelteKit UI.
 - Run: `intraktible serve --modules=all` (monolith) or `--modules=decision-engine` (split).
+
+## Testing & quality gates (enforced, not optional)
+- **Test pyramid, per module:** pure **unit** tests (`domain/`, platform pkgs) → **integration**
+  (command→event→projection→replay) → **API HTTP e2e** (`*_e2e_test.go` via the
+  `platform/testutil.StartAPI` httptest harness) → **UI e2e** (`web/e2e/*.spec.ts`, Playwright over the
+  real Go API + Vite). Shared Go test fixtures live in `internal/.../*test` and `platform/testutil`.
+- **Pre-commit pipeline** ([`.pre-commit-config.yaml`](.pre-commit-config.yaml), framework:
+  [pre-commit.com](https://pre-commit.com)) — run `pre-commit install` once. **Commit** stage:
+  autoformat (gofmt/prettier), strict lint (golangci-lint / eslint), strict typecheck (go build /
+  svelte-check), strict SAST (gosec / eslint-security), unit+integration+API-e2e tests. **Push**
+  stage: race tests, dead-code, copy-paste, vuln, license, Playwright UI e2e. Hooks call the same
+  `make` targets / npm scripts as CI, so local == CI. Go tooling excludes `web/node_modules`.
 
 ## Git / identity (this repo)
 Author **Adrian Mârza**, committer email `2966430+e6qu@users.noreply.github.com`, pushes use the
