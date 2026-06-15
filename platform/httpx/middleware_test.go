@@ -104,11 +104,55 @@ func TestAuthenticateAPIKey(t *testing.T) {
 	}
 }
 
+func TestAuthorizeRBAC(t *testing.T) {
+	kr := auth.NewKeyring()
+	id := identity.Identity{Org: "o", Workspace: "w", Actor: "u"}
+	for secret, role := range map[string]auth.Role{
+		"viewer-k": auth.RoleViewer, "operator-k": auth.RoleOperator,
+		"editor-k": auth.RoleEditor, "approver-k": auth.RoleApprover, "admin-k": auth.RoleAdmin,
+	} {
+		kr.Add(secret, auth.APIKey{ID: secret, Identity: id, Role: role})
+	}
+	ok := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	h := httpx.Chain(ok, httpx.Authenticate(kr, auth.NewSessions()), httpx.Authorize)
+
+	do := func(secret, method, path string) int {
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(method, path, http.NoBody)
+		r.Header.Set("X-Api-Key", secret)
+		h.ServeHTTP(w, r)
+		return w.Code
+	}
+
+	cases := []struct {
+		secret, method, path string
+		want                 int
+	}{
+		{"viewer-k", "GET", "/v1/flows", 200},                        // reads open to viewer
+		{"viewer-k", "POST", "/v1/flows", 403},                       // authoring needs editor role
+		{"editor-k", "POST", "/v1/flows", 200},                       // editor may author
+		{"editor-k", "POST", "/v1/flows/f1/versions", 200},           // publish needs editor
+		{"editor-k", "POST", "/v1/flows/f1/deployments", 403},        // deploy needs approver role
+		{"approver-k", "POST", "/v1/flows/f1/deployments", 200},      // approver may deploy
+		{"viewer-k", "POST", "/v1/flows/s/production/decide", 403},   // decide needs operator role
+		{"operator-k", "POST", "/v1/flows/s/production/decide", 200}, // operator may decide
+		{"operator-k", "POST", "/v1/cases", 200},                     // case ops need operator
+		{"operator-k", "POST", "/v1/agents", 403},                    // defining an agent needs editor
+		{"editor-k", "POST", "/v1/agents", 200},                      // editor may define
+		{"admin-k", "POST", "/v1/flows/f1/deployments", 200},         // admin may do anything
+	}
+	for _, c := range cases {
+		if got := do(c.secret, c.method, c.path); got != c.want {
+			t.Errorf("%s %s as %s -> %d, want %d", c.method, c.path, c.secret, got, c.want)
+		}
+	}
+}
+
 func TestAuthenticateSession(t *testing.T) {
 	kr := auth.NewKeyring()
 	sessions := auth.NewSessions()
 	id := identity.Identity{Org: "o", Workspace: "w", Actor: "u"}
-	tok := sessions.Issue(id)
+	tok := sessions.Issue(id, auth.RoleEditor)
 
 	h := httpx.Authenticate(kr, sessions)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got, ok := identity.From(r.Context()); !ok || got != id {

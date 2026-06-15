@@ -47,7 +47,7 @@ func StartAPI(t *testing.T, log eventlog.Log, st store.Store, key string, id ide
 	t.Helper()
 
 	keyring := auth.NewKeyring()
-	keyring.Add(key, auth.APIKey{ID: "test", Identity: id, Scope: auth.Sandbox})
+	keyring.Add(key, auth.APIKey{ID: "test", Identity: id, Scope: auth.Sandbox, Role: auth.RoleAdmin})
 	sessions := auth.NewSessions()
 
 	api := http.NewServeMux()
@@ -60,7 +60,7 @@ func StartAPI(t *testing.T, log eventlog.Log, st store.Store, key string, id ide
 	}
 
 	root := http.NewServeMux()
-	root.Handle("/v1/", httpx.Chain(api, httpx.Authenticate(keyring, sessions)))
+	root.Handle("/v1/", httpx.Chain(api, httpx.Authenticate(keyring, sessions), httpx.Authorize))
 	handler := httpx.Chain(root, httpx.Recover, httpx.RequestID, httpx.Logger)
 
 	srv := httptest.NewServer(handler)

@@ -30,7 +30,7 @@ func LoginHandler(keyring *auth.Keyring, sessions auth.SessionStore) http.Handle
 			Error(w, http.StatusUnauthorized, errors.New("invalid api key"))
 			return
 		}
-		tok := sessions.Issue(key.Identity)
+		tok := sessions.Issue(key.Identity, key.Role)
 		// HttpOnly + SameSite are always set; Secure is gated on TLS so the cookie
 		// still works over plain http in local dev and is Secure behind TLS in prod.
 		http.SetCookie(w, &http.Cookie{ // #nosec G124 -- Secure is set when serving over TLS

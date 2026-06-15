@@ -27,11 +27,43 @@ const (
 	Production Scope = "production"
 )
 
-// APIKey binds a secret to a tenant-scoped identity and a scope.
+// Role is the authorization level of an authenticated principal. Roles are
+// ordered — each includes the capabilities of the ones below it:
+// viewer < operator < editor < approver < admin.
+type Role string
+
+const (
+	RoleViewer   Role = "viewer"   // read everything
+	RoleOperator Role = "operator" // + run the platform: /decide, cases, agent runs, context ingest
+	RoleEditor   Role = "editor"   // + author flows/agents/connectors/features
+	RoleApprover Role = "approver" // + approve & deploy versions (the maker-checker checker)
+	RoleAdmin    Role = "admin"    // everything
+)
+
+var roleRank = map[Role]int{
+	RoleViewer: 1, RoleOperator: 2, RoleEditor: 3, RoleApprover: 4, RoleAdmin: 5,
+}
+
+// Rank returns the role's level (0 for empty/unknown).
+func (r Role) Rank() int { return roleRank[r] }
+
+// AtLeast reports whether r meets or exceeds the required role.
+func (r Role) AtLeast(want Role) bool { return r.Rank() > 0 && r.Rank() >= want.Rank() }
+
+// ParseRole maps a string to a Role, defaulting to viewer for empty/unknown input.
+func ParseRole(s string) Role {
+	if r := Role(s); r.Rank() > 0 {
+		return r
+	}
+	return RoleViewer
+}
+
+// APIKey binds a secret to a tenant-scoped identity, a scope, and a role.
 type APIKey struct {
 	ID       string
 	Identity identity.Identity
 	Scope    Scope
+	Role     Role
 }
 
 // Keyring resolves API-key secrets to identities. Secrets are stored hashed.
@@ -74,6 +106,7 @@ type Sessions struct {
 
 type session struct {
 	id      identity.Identity
+	role    Role
 	expires time.Time
 }
 
@@ -89,24 +122,24 @@ func NewSessions() *Sessions {
 // TTL returns the session lifetime (used to align the cookie's max-age).
 func (s *Sessions) TTL() time.Duration { return s.ttl }
 
-// Issue creates a session token for id, valid for the TTL.
-func (s *Sessions) Issue(id identity.Identity) string {
+// Issue creates a session token for id with role, valid for the TTL.
+func (s *Sessions) Issue(id identity.Identity, role Role) string {
 	tok := newToken()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.sessions[tok] = session{id: id, expires: s.now().Add(s.ttl)}
+	s.sessions[tok] = session{id: id, role: role, expires: s.now().Add(s.ttl)}
 	return tok
 }
 
-// Resolve returns the identity for a token, treating an expired one as absent.
-func (s *Sessions) Resolve(tok string) (identity.Identity, bool) {
+// Resolve returns the identity + role for a token, treating an expired one as absent.
+func (s *Sessions) Resolve(tok string) (identity.Identity, Role, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	sess, ok := s.sessions[tok]
 	if !ok || s.now().After(sess.expires) {
-		return identity.Identity{}, false
+		return identity.Identity{}, "", false
 	}
-	return sess.id, true
+	return sess.id, sess.role, true
 }
 
 // Revoke invalidates a session token (logout); unknown tokens are a no-op.

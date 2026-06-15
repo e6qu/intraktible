@@ -15,8 +15,8 @@ import (
 // in-memory Sessions and the store-backed StoreSessions satisfy it, so the auth
 // middleware and login handlers depend on the interface.
 type SessionStore interface {
-	Issue(id identity.Identity) string
-	Resolve(tok string) (identity.Identity, bool)
+	Issue(id identity.Identity, role Role) string
+	Resolve(tok string) (identity.Identity, Role, bool)
 	Revoke(tok string)
 	TTL() time.Duration // session lifetime, used to align the cookie max-age
 }
@@ -26,6 +26,7 @@ const sessionCollection = "auth_sessions"
 
 type storedSession struct {
 	Identity identity.Identity `json:"identity"`
+	Role     Role              `json:"role,omitempty"`
 	Expires  time.Time         `json:"expires"`
 }
 
@@ -48,27 +49,27 @@ func (s *StoreSessions) TTL() time.Duration { return s.ttl }
 
 // Issue creates a session token for id, valid for the TTL. A store error is logged
 // (the interface cannot return one); the token is still returned but won't resolve.
-func (s *StoreSessions) Issue(id identity.Identity) string {
+func (s *StoreSessions) Issue(id identity.Identity, role Role) string {
 	tok := newToken()
-	rec := storedSession{Identity: id, Expires: s.now().Add(s.ttl)}
+	rec := storedSession{Identity: id, Role: role, Expires: s.now().Add(s.ttl)}
 	if err := store.PutDoc(context.Background(), s.store, sessionCollection, hash(tok), rec); err != nil {
 		slog.Error("auth: persist session failed", "err", err)
 	}
 	return tok
 }
 
-// Resolve returns the identity for a token, treating an expired/missing one — or a
-// store error — as not authenticated.
-func (s *StoreSessions) Resolve(tok string) (identity.Identity, bool) {
+// Resolve returns the identity + role for a token, treating an expired/missing one
+// — or a store error — as not authenticated.
+func (s *StoreSessions) Resolve(tok string) (identity.Identity, Role, bool) {
 	rec, ok, err := store.GetDoc[storedSession](context.Background(), s.store, sessionCollection, hash(tok))
 	if err != nil {
 		slog.Error("auth: resolve session failed", "err", err)
-		return identity.Identity{}, false
+		return identity.Identity{}, "", false
 	}
 	if !ok || s.now().After(rec.Expires) {
-		return identity.Identity{}, false
+		return identity.Identity{}, "", false
 	}
-	return rec.Identity, true
+	return rec.Identity, rec.Role, true
 }
 
 // Revoke invalidates a session token (logout); unknown tokens are a no-op.

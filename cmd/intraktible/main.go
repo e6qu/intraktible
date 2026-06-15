@@ -121,8 +121,9 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 			ID:       "dev",
 			Identity: identity.Identity{Org: "demo", Workspace: "main", Actor: "dev"},
 			Scope:    auth.Sandbox,
+			Role:     auth.RoleAdmin,
 		})
-		slog.Warn("seeded dev API key — do not use in production", "scope", auth.Sandbox)
+		slog.Warn("seeded dev API key — do not use in production", "scope", auth.Sandbox, "role", auth.RoleAdmin)
 	}
 
 	root := http.NewServeMux()
@@ -213,7 +214,7 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 	// it). Registered on root with exact patterns so they win over the /v1/ chain.
 	root.HandleFunc("POST /v1/login", httpx.LoginHandler(keyring, sessions))
 	root.HandleFunc("POST /v1/logout", httpx.LogoutHandler(sessions))
-	root.Handle("/v1/", httpx.Chain(api, httpx.Authenticate(keyring, sessions)))
+	root.Handle("/v1/", httpx.Chain(api, httpx.Authenticate(keyring, sessions), httpx.Authorize))
 	handler := httpx.Chain(root, httpx.Recover, httpx.RequestID, httpx.Logger)
 
 	srv := &http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: 5 * time.Second}

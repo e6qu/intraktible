@@ -17,22 +17,22 @@ func TestSessionExpiryAndRevoke(t *testing.T) {
 	s.ttl = time.Hour
 	id := identity.Identity{Org: "o", Workspace: "w", Actor: "a"}
 
-	tok := s.Issue(id)
-	if _, ok := s.Resolve(tok); !ok {
+	tok := s.Issue(id, RoleEditor)
+	if _, _, ok := s.Resolve(tok); !ok {
 		t.Fatal("a fresh session should resolve")
 	}
 
 	clock = clock.Add(2 * time.Hour) // past the TTL
-	if _, ok := s.Resolve(tok); ok {
+	if _, _, ok := s.Resolve(tok); ok {
 		t.Fatal("an expired session should not resolve")
 	}
 
-	tok2 := s.Issue(id) // issued at the advanced clock, still valid
-	if _, ok := s.Resolve(tok2); !ok {
+	tok2 := s.Issue(id, RoleEditor) // issued at the advanced clock, still valid
+	if _, _, ok := s.Resolve(tok2); !ok {
 		t.Fatal("a freshly issued session should resolve")
 	}
 	s.Revoke(tok2)
-	if _, ok := s.Resolve(tok2); ok {
+	if _, _, ok := s.Resolve(tok2); ok {
 		t.Fatal("a revoked session should not resolve")
 	}
 }

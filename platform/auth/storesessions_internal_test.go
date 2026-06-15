@@ -24,8 +24,8 @@ func TestStoreSessions(t *testing.T) {
 	s.ttl = time.Hour
 	id := identity.Identity{Org: "o", Workspace: "w", Actor: "a"}
 
-	tok := s.Issue(id)
-	if got, ok := s.Resolve(tok); !ok || got != id {
+	tok := s.Issue(id, RoleEditor)
+	if got, _, ok := s.Resolve(tok); !ok || got != id {
 		t.Fatalf("resolve fresh session: got=%v ok=%v", got, ok)
 	}
 
@@ -33,23 +33,23 @@ func TestStoreSessions(t *testing.T) {
 	// makes sessions survive a restart when the store is durable.
 	s2 := NewStoreSessions(st)
 	s2.now = func() time.Time { return clock }
-	if _, ok := s2.Resolve(tok); !ok {
+	if _, _, ok := s2.Resolve(tok); !ok {
 		t.Fatal("session should be readable from a second store-backed instance")
 	}
 
 	// Expiry.
 	clock = clock.Add(2 * time.Hour)
-	if _, ok := s.Resolve(tok); ok {
+	if _, _, ok := s.Resolve(tok); ok {
 		t.Fatal("expired session should not resolve")
 	}
 
 	// Revoke.
-	tok2 := s.Issue(id)
-	if _, ok := s.Resolve(tok2); !ok {
+	tok2 := s.Issue(id, RoleEditor)
+	if _, _, ok := s.Resolve(tok2); !ok {
 		t.Fatal("fresh session should resolve")
 	}
 	s.Revoke(tok2)
-	if _, ok := s.Resolve(tok2); ok {
+	if _, _, ok := s.Resolve(tok2); ok {
 		t.Fatal("revoked session should not resolve")
 	}
 }

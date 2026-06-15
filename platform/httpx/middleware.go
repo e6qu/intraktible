@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/e6qu/intraktible/platform/auth"
@@ -34,6 +35,7 @@ type ctxKey int
 const (
 	reqIDKey ctxKey = iota
 	scopeKey
+	roleKey
 )
 
 // RequestID assigns a request id and echoes it in the X-Request-Id header.
@@ -83,6 +85,7 @@ func Authenticate(keyring *auth.Keyring, sessions auth.SessionStore) Middleware 
 				if key, ok := keyring.Resolve(secret); ok {
 					ctx := identity.With(r.Context(), key.Identity)
 					ctx = context.WithValue(ctx, scopeKey, key.Scope)
+					ctx = context.WithValue(ctx, roleKey, auth.ParseRole(string(key.Role)))
 					next.ServeHTTP(w, r.WithContext(ctx))
 					return
 				}
@@ -90,8 +93,9 @@ func Authenticate(keyring *auth.Keyring, sessions auth.SessionStore) Middleware 
 				return
 			}
 			if c, err := r.Cookie("session"); err == nil {
-				if id, ok := sessions.Resolve(c.Value); ok {
-					next.ServeHTTP(w, r.WithContext(identity.With(r.Context(), id)))
+				if id, role, ok := sessions.Resolve(c.Value); ok {
+					ctx := context.WithValue(identity.With(r.Context(), id), roleKey, auth.ParseRole(string(role)))
+					next.ServeHTTP(w, r.WithContext(ctx))
 					return
 				}
 			}
@@ -104,6 +108,58 @@ func Authenticate(keyring *auth.Keyring, sessions auth.SessionStore) Middleware 
 func Scope(ctx context.Context) (auth.Scope, bool) {
 	s, ok := ctx.Value(scopeKey).(auth.Scope)
 	return s, ok
+}
+
+// RoleOf returns the authenticated principal's role (viewer when unset).
+func RoleOf(ctx context.Context) auth.Role {
+	if r, ok := ctx.Value(roleKey).(auth.Role); ok {
+		return r
+	}
+	return auth.RoleViewer
+}
+
+// Authorize enforces the minimum role for the request (derived from method+path),
+// returning 403 when the principal's role is insufficient. It runs after
+// Authenticate, so a role is always present in context.
+func Authorize(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		need := requiredRole(r.Method, r.URL.Path)
+		if !RoleOf(r.Context()).AtLeast(need) {
+			Error(w, http.StatusForbidden, fmt.Errorf("requires at least the %q role", need))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// requiredRole maps a request to the minimum role it needs. Reads are open to any
+// authenticated viewer; deploying/approving a version is the highest bar; authoring
+// (defining flows/agents/connectors/features) needs editor; all other mutations are
+// runtime operations (decide, cases, agent runs, context ingest) at operator level.
+func requiredRole(method, path string) auth.Role {
+	if method == http.MethodGet || method == http.MethodHead || method == http.MethodOptions {
+		return auth.RoleViewer
+	}
+	switch {
+	case strings.Contains(path, "/deployments"),
+		strings.HasSuffix(path, "/approve"),
+		strings.HasSuffix(path, "/reject"):
+		return auth.RoleApprover
+	case isAuthoringPath(path):
+		return auth.RoleEditor
+	default:
+		return auth.RoleOperator
+	}
+}
+
+// isAuthoringPath reports whether a mutating path defines/edits decision logic
+// (vs. running it). These are the create/publish endpoints.
+func isAuthoringPath(path string) bool {
+	return path == "/v1/flows" || // create a flow
+		strings.HasSuffix(path, "/versions") || // publish a version
+		path == "/v1/agents" || // define an agent
+		path == "/v1/context/features" || // define a feature
+		path == "/v1/context/connectors" // define a connector
 }
 
 type statusWriter struct {
