@@ -9,7 +9,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/e6qu/intraktible/decision-engine/events"
@@ -77,7 +76,7 @@ func applyCreated(ctx context.Context, e eventlog.Envelope, s store.Store) error
 		CreatedAt: e.Time,
 		UpdatedAt: e.Time,
 	}
-	return put(ctx, s, e.Org, e.Workspace, p.FlowID, fv)
+	return store.PutDoc(ctx, s, Collection, store.Key(e.Org, e.Workspace, p.FlowID), fv)
 }
 
 func applyPublished(ctx context.Context, e eventlog.Envelope, s store.Store) error {
@@ -85,7 +84,8 @@ func applyPublished(ctx context.Context, e eventlog.Envelope, s store.Store) err
 	if err := json.Unmarshal(e.Payload, &p); err != nil {
 		return fmt.Errorf("decision_flows: decode published seq %d: %w", e.Seq, err)
 	}
-	fv, ok, err := load(ctx, s, e.Org, e.Workspace, p.FlowID)
+	key := store.Key(e.Org, e.Workspace, p.FlowID)
+	fv, ok, err := store.GetDoc[FlowView](ctx, s, Collection, key)
 	if err != nil {
 		return err
 	}
@@ -102,51 +102,30 @@ func applyPublished(ctx context.Context, e eventlog.Envelope, s store.Store) err
 	})
 	fv.Latest = p.Version
 	fv.UpdatedAt = e.Time
-	return put(ctx, s, e.Org, e.Workspace, p.FlowID, fv)
+	return store.PutDoc(ctx, s, Collection, key, fv)
 }
 
 // Read returns the flow with the given id for id's tenant.
 func Read(ctx context.Context, s store.Store, id identity.Identity, flowID string) (FlowView, bool, error) {
-	return load(ctx, s, id.Org, id.Workspace, flowID)
+	return store.GetDoc[FlowView](ctx, s, Collection, store.Key(id.Org, id.Workspace, flowID))
+}
+
+// BySlug returns the flow with the given slug for id's tenant. Slugs are unique
+// per tenant, so at most one matches; it is the decide path's flow lookup.
+func BySlug(ctx context.Context, s store.Store, id identity.Identity, slug string) (FlowView, bool, error) {
+	fvs, err := List(ctx, s, id)
+	if err != nil {
+		return FlowView{}, false, err
+	}
+	for _, fv := range fvs {
+		if fv.Slug == slug {
+			return fv, true, nil
+		}
+	}
+	return FlowView{}, false, nil
 }
 
 // List returns all flows for id's tenant, ordered by store key.
 func List(ctx context.Context, s store.Store, id identity.Identity) ([]FlowView, error) {
-	recs, err := s.List(ctx, Collection)
-	if err != nil {
-		return nil, err
-	}
-	prefix := store.Key(id.Org, id.Workspace, "")
-	out := make([]FlowView, 0, len(recs))
-	for _, rec := range recs {
-		if !strings.HasPrefix(rec.Key, prefix) {
-			continue
-		}
-		var fv FlowView
-		if err := json.Unmarshal(rec.Doc, &fv); err != nil {
-			return nil, fmt.Errorf("decision_flows: decode %q: %w", rec.Key, err)
-		}
-		out = append(out, fv)
-	}
-	return out, nil
-}
-
-func load(ctx context.Context, s store.Store, org, workspace, flowID string) (FlowView, bool, error) {
-	doc, ok, err := s.Get(ctx, Collection, store.Key(org, workspace, flowID))
-	if err != nil || !ok {
-		return FlowView{}, ok, err
-	}
-	var fv FlowView
-	if err := json.Unmarshal(doc, &fv); err != nil {
-		return FlowView{}, false, fmt.Errorf("decision_flows: decode %q: %w", flowID, err)
-	}
-	return fv, true, nil
-}
-
-func put(ctx context.Context, s store.Store, org, workspace, flowID string, fv FlowView) error {
-	doc, err := json.Marshal(fv)
-	if err != nil {
-		return fmt.Errorf("decision_flows: marshal %q: %w", flowID, err)
-	}
-	return s.Put(ctx, Collection, store.Key(org, workspace, flowID), doc)
+	return store.ListDocs[FlowView](ctx, s, Collection, store.Key(id.Org, id.Workspace, ""))
 }

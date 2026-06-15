@@ -9,6 +9,7 @@ import (
 	"github.com/e6qu/intraktible/decision-engine/command"
 	"github.com/e6qu/intraktible/decision-engine/events"
 	"github.com/e6qu/intraktible/decision-engine/flows"
+	"github.com/e6qu/intraktible/decision-engine/history"
 	"github.com/e6qu/intraktible/decision-engine/internal/flowtest"
 	"github.com/e6qu/intraktible/decision-engine/service"
 	"github.com/e6qu/intraktible/platform/eventlog"
@@ -25,9 +26,9 @@ func startEngine(t *testing.T) *testutil.API {
 	}
 	t.Cleanup(func() { _ = log.Close() })
 	st := store.NewMemory()
-	svc := service.New(command.NewHandler(log), st)
+	svc := service.New(command.NewHandler(log), command.NewDecideHandler(log, st), st)
 	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "author"}
-	return testutil.StartAPI(t, log, st, "test-key", id, svc.Routes, flows.Projector{})
+	return testutil.StartAPI(t, log, st, "test-key", id, svc.Routes, flows.Projector{}, history.Projector{})
 }
 
 func TestEngineAPIEndToEnd(t *testing.T) {
@@ -95,6 +96,60 @@ func TestEngineAPIValidationErrors(t *testing.T) {
 
 	// Unknown flow GET -> 404.
 	api.Request(t, http.MethodGet, "/v1/flows/ghost", nil, http.StatusNotFound, nil)
+}
+
+func TestDecideAPIEndToEnd(t *testing.T) {
+	api := startEngine(t)
+
+	// Publish an executable flow over HTTP.
+	var created struct {
+		FlowID string `json:"flow_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows",
+		map[string]string{"slug": "scoring", "name": "Scoring"}, http.StatusCreated, &created)
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/versions",
+		map[string]any{"graph": flowtest.DecisionGraph()}, http.StatusCreated, nil)
+
+	// decide reads the (async) flow registry projection; wait for it to catch up
+	// via the GET endpoint (which is always 200) before deciding.
+	if !testutil.Eventually(t, func() bool {
+		var fv flows.FlowView
+		api.Request(t, http.MethodGet, "/v1/flows/"+created.FlowID, nil, http.StatusOK, &fv)
+		return fv.Latest == 1
+	}) {
+		t.Fatal("flow registry projection never caught up")
+	}
+
+	var decision struct {
+		DecisionID string         `json:"decision_id"`
+		Status     string         `json:"status"`
+		Data       map[string]any `json:"data"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows/scoring/production/decide",
+		map[string]any{"data": map[string]any{"fico": 680, "bonus": 40}}, http.StatusOK, &decision)
+	if decision.Status != "completed" || decision.Data["decision"] != "APPROVE" {
+		t.Fatalf("decide result: %+v", decision)
+	}
+
+	// The decision shows up in history with its full node trace.
+	if !testutil.Eventually(t, func() bool {
+		var rec history.Record
+		api.Request(t, http.MethodGet, "/v1/decisions/"+decision.DecisionID, nil, http.StatusOK, &rec)
+		return rec.Status == "completed" && len(rec.TimeOrdered) == 5
+	}) {
+		t.Fatal("decision history never reflected the run")
+	}
+	var list struct {
+		Decisions []history.Record `json:"decisions"`
+	}
+	api.Request(t, http.MethodGet, "/v1/decisions", nil, http.StatusOK, &list)
+	if len(list.Decisions) == 0 {
+		t.Fatal("decision list is empty")
+	}
+
+	// Invalid environment -> 400.
+	api.Request(t, http.MethodPost, "/v1/flows/scoring/staging/decide",
+		map[string]any{"data": map[string]any{}}, http.StatusBadRequest, nil)
 }
 
 func TestEngineAPIRequiresAuth(t *testing.T) {

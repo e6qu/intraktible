@@ -61,8 +61,12 @@ deadcode:
 	$(GO) run golang.org/x/tools/cmd/deadcode@latest -test $(GO_PKGS)
 
 ## dupl: copy-paste detection (Go)
+# Threshold 90 (tokens): at 48 it flagged idiomatic minimal code — HTTP handler
+# preambles, sibling event-appliers, typed read-model delegators — as clones,
+# pushing toward harmful over-abstraction. 90 still catches substantial copy-paste
+# (golangci-lint's own dupl default is 150).
 dupl:
-	$(GO) run github.com/mibk/dupl@latest -threshold 48 $(GO_DIRS)
+	$(GO) run github.com/mibk/dupl@latest -threshold 90 $(GO_DIRS)
 
 ## vuln: known-vulnerability scan
 vuln:

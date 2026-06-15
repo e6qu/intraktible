@@ -20,6 +20,7 @@ import (
 
 	enginecmd "github.com/e6qu/intraktible/decision-engine/command"
 	"github.com/e6qu/intraktible/decision-engine/flows"
+	"github.com/e6qu/intraktible/decision-engine/history"
 	engineservice "github.com/e6qu/intraktible/decision-engine/service"
 	hellocmd "github.com/e6qu/intraktible/hello/command"
 	helloservice "github.com/e6qu/intraktible/hello/service"
@@ -91,9 +92,9 @@ func run(addr, dataDir, modules, devKey string) error {
 	}
 
 	if enabled(modules, "decision-engine") {
-		engineSvc := engineservice.New(enginecmd.NewHandler(log), st)
+		engineSvc := engineservice.New(enginecmd.NewHandler(log), enginecmd.NewDecideHandler(log, st), st)
 		engineSvc.Routes(api)
-		projectors = append(projectors, flows.Projector{})
+		projectors = append(projectors, flows.Projector{}, history.Projector{})
 	}
 
 	rt := projection.New(log, st, projectors...)
