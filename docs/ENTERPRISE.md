@@ -65,11 +65,13 @@ enterprise buyers; **P2** = differentiators / scale.
   packaged.
 - **P2 — Data residency / region pinning.**
 
-### Testing, validation & safety  (status: a single test-run in the builder)
-- **P0 — Backtesting / replay-on-dataset.** Run a candidate version against a set
-  of historical inputs and compare outcomes to the live version *before* deploying.
-  The deterministic engine makes this natural; it is the highest-value missing
-  capability for the actual user.
+### Testing, validation & safety  (status: backtesting + a test-run in the builder)
+- **P0 — Backtesting / replay-on-dataset — ✅ done.** `POST /v1/flows/{id}/backtest`
+  replays a dataset of inputs through a published version (and optionally diffs it
+  against another version) using the pure engine — no decision is recorded and no
+  I/O is performed. The builder exposes it as a panel that flags the records whose
+  outcome changed. The deterministic engine makes this a natural, safe pre-deploy
+  confidence check.
 - **P1 — Shadow / canary deploys** (the A/B challenger is a start).
 - **P1 — Flow unit tests / assertions** stored with the flow (given input → expect
   output), run in CI and pre-deploy.
@@ -113,7 +115,7 @@ enterprise buyers; **P2** = differentiators / scale.
 |---|------|-----|--------|
 | 1 | **RBAC** (roles + authZ) — ✅ done | P0 — nothing else is safe without it | M |
 | 2 | **Maker-checker approvals** — ✅ done | P0 — change control on decision logic | M |
-| 3 | **Backtesting on a dataset** | P0 — the user's #1 confidence tool | M |
+| 3 | **Backtesting on a dataset** — ✅ done | P0 — the user's #1 confidence tool | M |
 | 4 | **Audit API + UI** | P0 — surface the lineage we already record | S |
 | 5 | **Reason codes** | P0 — adverse-action / explainability | S–M |
 | 6 | **Secrets management** for connectors | P1 | M |
@@ -130,9 +132,11 @@ decisioning core — it is the **governance, access-control, testing, and compli
 envelope** around it. Those are well-scoped, mostly tractable on the existing
 architecture (events + ports), and are what this roadmap front-loads.
 
-The first two P0 items are implemented: **RBAC** (`platform/auth` roles +
-`platform/httpx` per-request authorization) and **maker-checker approvals** (the
+Three P0 items are implemented: **RBAC** (`platform/auth` roles +
+`platform/httpx` per-request authorization), **maker-checker approvals** (the
 Decision Engine refuses direct production deploys; a deployment must be *proposed*
 by one user and *approved* by a different one — four-eyes — via
-`/v1/flows/{id}/deployment-requests` + `…/approve`). The rest are sequenced above;
-none requires re-architecting — they extend the same event-sourced core.
+`/v1/flows/{id}/deployment-requests` + `…/approve`), and **backtesting**
+(`/v1/flows/{id}/backtest` replays a dataset through the pure engine and diffs two
+versions before deploy). The rest are sequenced above; none requires
+re-architecting — they extend the same event-sourced core.

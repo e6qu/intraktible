@@ -65,7 +65,7 @@ test('renders a flow graph and runs a test decision', async ({ page, request }) 
 
   // Inline test run -> a completed decision.
   await page.getByLabel('input data').fill('{}');
-  await page.getByRole('button', { name: 'Run' }).click();
+  await page.getByRole('button', { name: 'Run', exact: true }).click();
   const result = page.getByTestId('run-result');
   await expect(result).toContainText('"status": "completed"');
   await expect(result).toContainText('SEEDED');
@@ -119,7 +119,7 @@ test('builds a flow in the editor and publishes it', async ({ page, request }) =
 
   // The built flow decides.
   await page.getByLabel('input data').fill('{}');
-  await page.getByRole('button', { name: 'Run' }).click();
+  await page.getByRole('button', { name: 'Run', exact: true }).click();
   await expect(page.getByTestId('run-result')).toContainText('BUILT');
 });
 
@@ -209,6 +209,51 @@ test('a rule panel edits when/then clauses without raw JSON', async ({ page, req
   await expect(page.getByLabel('node config')).toHaveValue(
     '{"rules":[{"when":"amount > 1000","then":[{"target":"flag","expr":"\'high\'"}]}]}'
   );
+});
+
+test('backtests a dataset and diffs two versions', async ({ page, request }) => {
+  const slug = uniqueSlug();
+  const created = await request.post('/v1/flows', {
+    headers: { 'X-Api-Key': KEY },
+    data: { slug, name: 'Backtested' }
+  });
+  const { flow_id } = await created.json();
+
+  // v1 always decides A; v2 decides A or B depending on the score.
+  const constGraph = (expr: string) => ({
+    nodes: [
+      { id: 'in', type: 'input' },
+      { id: 'a', type: 'assignment', config: { assignments: [{ target: 'decision', expr }] } },
+      { id: 'out', type: 'output', config: { fields: ['decision'] } }
+    ],
+    edges: [
+      { from: 'in', to: 'a' },
+      { from: 'a', to: 'out' }
+    ]
+  });
+  for (const expr of ["'A'", 'score > 5 ? "A" : "B"']) {
+    const pub = await request.post(`/v1/flows/${flow_id}/versions`, {
+      headers: { 'X-Api-Key': KEY },
+      data: { graph: constGraph(expr) }
+    });
+    expect(pub.ok()).toBeTruthy();
+  }
+
+  await page.goto(`/engine/${flow_id}`);
+  await expect(page.locator('.svelte-flow__node')).toHaveCount(3);
+
+  // Backtest the latest version (v2) against v1 over a two-row dataset: one row
+  // keeps the same outcome, the other flips A -> B.
+  await page.getByLabel('compare version').fill('1');
+  await page.getByLabel('backtest dataset').fill('[{"score": 10}, {"score": 1}]');
+  await page.getByTestId('run-backtest').click();
+
+  const summary = page.getByTestId('backtest-summary');
+  await expect(summary).toContainText('2 records');
+  await expect(summary).toContainText('1 changed');
+  // The changed row shows the candidate flipping to B.
+  await expect(page.locator('.bt-table tbody tr')).toHaveCount(1);
+  await expect(page.locator('.bt-table tbody tr')).toContainText('B');
 });
 
 test('shows the backend validation error when publishing an invalid graph', async ({

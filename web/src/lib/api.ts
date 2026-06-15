@@ -240,6 +240,52 @@ export async function getFlowMetrics(
   return (await res.json()) as FlowMetrics;
 }
 
+// ---- Backtesting ----
+
+export interface BacktestOutcome {
+  status: string;
+  output?: Record<string, unknown>;
+  error?: string;
+}
+
+export interface BacktestRecord {
+  index: number;
+  baseline: BacktestOutcome;
+  candidate?: BacktestOutcome;
+  changed?: boolean;
+}
+
+export interface BacktestReport {
+  summary: {
+    total: number;
+    compare: boolean;
+    baseline_completed: number;
+    baseline_failed: number;
+    candidate_completed?: number;
+    candidate_failed?: number;
+    changed: number;
+  };
+  records: BacktestRecord[];
+}
+
+export async function backtestFlow(
+  key: string,
+  flowId: string,
+  body: { version?: number; compare_version?: number; dataset: Record<string, unknown>[] },
+  fetcher: typeof fetch = fetch
+): Promise<BacktestReport> {
+  const res = await fetcher(`/v1/flows/${flowId}/backtest`, {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) {
+    const err = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(err.error ?? `backtest failed: ${res.status}`);
+  }
+  return (await res.json()) as BacktestReport;
+}
+
 export async function publishVersion(
   key: string,
   flowId: string,

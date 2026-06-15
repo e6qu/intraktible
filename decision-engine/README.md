@@ -30,6 +30,7 @@ Done — flow model + versioning (vertical slice, command→event→projection�
   - `POST /v1/flows` — create `{slug, name}` → `{flow_id}`
   - `POST /v1/flows/{flow_id}/versions` — publish `{graph, input_schema}` → `{version, etag}`
   - `GET /v1/flows` · `GET /v1/flows/{flow_id}` — registry read model
+  - `POST /v1/flows/{flow_id}/backtest` — replay `{version?, compare_version?, dataset}` → outcome diff
 - Run it: `intraktible serve --modules=decision-engine`.
 
 Done — execution runtime + decide API + decision history (the decision event stream, PLAN.md §3.3):
@@ -55,6 +56,12 @@ Done — execution runtime + decide API + decision history (the decision event s
   deploys. The proposer cannot approve their own request; every request + decision is recorded on the
   flow (an auditable approval trail). Combined with RBAC, proposing needs the `editor` role and
   approving needs `approver`.
+- **Backtesting (`decision-engine/backtest`, pure):** `POST /v1/flows/{flow_id}/backtest` with
+  `{version?, compare_version?, dataset}` replays a dataset of inputs through a published version —
+  and optionally diffs it against another version — over `domain.Execute` only. It records **no**
+  decision and performs **no** I/O, so it is a safe pre-deploy confidence check; the report gives an
+  exact outcome summary (completed/failed/changed counts) plus the changed records. The builder UI
+  exposes it as a panel. Datasets are capped (2000 inputs; 200 returned records).
 - **Analytics-lite:** a metrics projection folds the decision stream into per-flow counters
   (volume, completed/failed, average duration, and breakdowns by environment, version, and
   **variant** — so champion vs challenger outcome rates are directly comparable). `GET

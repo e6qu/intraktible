@@ -43,6 +43,7 @@ func (s *Service) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/flows/{flow_id}/deployment-requests/{req_id}/reject", s.rejectDeployment)
 	mux.HandleFunc("POST /v1/flows/{slug}/{env}/decide", s.runDecide)
 	mux.HandleFunc("GET /v1/flows/{flow_id}/export", s.exportFlow)
+	mux.HandleFunc("POST /v1/flows/{flow_id}/backtest", s.backtestFlow)
 	mux.HandleFunc("GET /v1/decisions", s.listDecisions)
 	mux.HandleFunc("GET /v1/decisions/{decision_id}", s.getDecision)
 	mux.HandleFunc("GET /v1/decisions/{decision_id}/export", s.exportDecision)

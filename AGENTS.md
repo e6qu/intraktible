@@ -65,6 +65,13 @@ SQLite **and Postgres** projection stores (`--store=sqlite|postgres`), a shared 
 a SQL connector, a recursive JSON-Schema validator, and pushed SLA-breach events. The small tail left in
 [BUGS.md](BUGS.md): incremental resume-from-Head (D21b), the closed-by-decision items (CEL, batched
 events), and the §9 non-goals.
+An **enterprise-readiness track** (tracked in [docs/ENTERPRISE.md](docs/ENTERPRISE.md)) then began on
+top of the MVP: **RBAC** (a `platform/auth` role hierarchy viewer→operator→editor→approver→admin with
+per-request authorization in `platform/httpx`), **maker-checker / four-eyes** production deploys
+(propose-by-one + approve-by-a-different-user via `…/deployment-requests` + `…/approve`, recorded on the
+flow), and **backtesting** — `POST /v1/flows/{flow_id}/backtest` (`decision-engine/backtest`, pure)
+replays a dataset through a published version and optionally diffs two versions over `domain.Execute`
+only (no recorded decision, no I/O), surfaced in the builder as a panel that flags the changed records.
 
 ## The design in one breath
 Go backend (**functional core / imperative shell**) + **SvelteKit + Svelte Flow** UI embedded in the

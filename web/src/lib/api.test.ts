@@ -13,6 +13,7 @@ import {
   listDecisions,
   getDecision,
   getFlowMetrics,
+  backtestFlow,
   listCases,
   getCaseSummary,
   requestReview,
@@ -102,6 +103,48 @@ describe('decisions + analytics', () => {
 
   it('listDecisions throws loudly on a non-2xx', async () => {
     await expect(listDecisions('k', fetcherReturning(401, {}))).rejects.toThrow(/401/);
+  });
+});
+
+describe('backtest', () => {
+  it('posts the dataset and compare version, returns the report', async () => {
+    const fetcher = fetcherReturning(200, {
+      summary: { total: 2, compare: true, baseline_completed: 2, baseline_failed: 0, changed: 1 },
+      records: [
+        {
+          index: 1,
+          baseline: { status: 'completed' },
+          candidate: { status: 'completed' },
+          changed: true
+        }
+      ]
+    });
+    const rep = await backtestFlow(
+      'k',
+      'f1',
+      { compare_version: 1, dataset: [{ score: 720 }, { score: 540 }] },
+      fetcher
+    );
+    expect(rep.summary.changed).toBe(1);
+    expect(rep.records[0].changed).toBe(true);
+    const [url, init] = fetcher.mock.calls[0];
+    expect(url).toBe('/v1/flows/f1/backtest');
+    expect(init?.method).toBe('POST');
+    expect(JSON.parse(String(init?.body))).toMatchObject({
+      compare_version: 1,
+      dataset: [{ score: 720 }, { score: 540 }]
+    });
+  });
+
+  it('surfaces the server error message on a non-2xx', async () => {
+    await expect(
+      backtestFlow(
+        'k',
+        'f1',
+        { dataset: [] },
+        fetcherReturning(400, { error: 'dataset is required' })
+      )
+    ).rejects.toThrow(/dataset is required/);
   });
 });
 

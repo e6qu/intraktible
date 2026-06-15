@@ -18,9 +18,11 @@
     exportFlow,
     exportDecision,
     getFlowMetrics,
+    backtestFlow,
     type ExportFormat,
     type Flow,
     type FlowMetrics,
+    type BacktestReport,
     type GraphNode,
     type GraphEdge
   } from '$lib/api';
@@ -436,6 +438,30 @@
       toast.success(`Copied ${format} to clipboard`);
     } catch (e) {
       error = msg(e);
+    }
+  }
+
+  // --- Backtesting: replay a dataset through the published version(s) ---
+  let btDataset = $state('[\n  {}\n]');
+  let btCompare = $state('');
+  let btReport = $state<BacktestReport | null>(null);
+  let btRunning = $state(false);
+  async function runBacktest() {
+    error = '';
+    btReport = null;
+    if (!flow) return;
+    btRunning = true;
+    try {
+      const dataset = JSON.parse(btDataset) as Record<string, unknown>[];
+      const body: { compare_version?: number; dataset: Record<string, unknown>[] } = { dataset };
+      const cv = parseInt(btCompare, 10);
+      if (!Number.isNaN(cv) && cv > 0) body.compare_version = cv;
+      btReport = await backtestFlow(key, flowId, body);
+      toast.success(`Backtested ${btReport.summary.total} records`);
+    } catch (e) {
+      error = msg(e);
+    } finally {
+      btRunning = false;
     }
   }
 
@@ -921,6 +947,60 @@
       </div>
     {/if}
   </section>
+
+  <section>
+    <h2>Backtest</h2>
+    <p class="muted">
+      Replay a dataset of inputs through the published flow — nothing is recorded. Leave the compare
+      version blank to check the latest version, or set it to diff two versions before deploying.
+    </p>
+    <div class="row">
+      <input
+        bind:value={btCompare}
+        placeholder="compare version (optional)"
+        aria-label="compare version"
+        size="20"
+        inputmode="numeric"
+      />
+      <button onclick={runBacktest} disabled={!flow || btRunning} data-testid="run-backtest">
+        {btRunning ? 'Running…' : 'Run backtest'}
+      </button>
+    </div>
+    <textarea
+      bind:value={btDataset}
+      aria-label="backtest dataset"
+      rows="4"
+      placeholder={'[\n  {"score": 720},\n  {"score": 540}\n]'}
+    ></textarea>
+    {#if btReport}
+      <div class="metrics" data-testid="backtest-summary">
+        <span>{btReport.summary.total} records</span>
+        <span class="ok">{btReport.summary.baseline_completed} completed</span>
+        {#if btReport.summary.baseline_failed > 0}
+          <span class="err">{btReport.summary.baseline_failed} failed</span>
+        {/if}
+        {#if btReport.summary.compare}
+          <span class="changed">{btReport.summary.changed} changed</span>
+        {/if}
+      </div>
+      {#if btReport.summary.compare && btReport.records.length > 0}
+        <table class="bt-table">
+          <thead>
+            <tr><th>#</th><th>Baseline</th><th>Candidate</th></tr>
+          </thead>
+          <tbody>
+            {#each btReport.records as rec (rec.index)}
+              <tr>
+                <td>{rec.index}</td>
+                <td>{rec.baseline.error || JSON.stringify(rec.baseline.output)}</td>
+                <td>{rec.candidate?.error || JSON.stringify(rec.candidate?.output)}</td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      {/if}
+    {/if}
+  </section>
 </main>
 
 <style>
@@ -1089,6 +1169,28 @@
   }
   .ok {
     color: var(--ok);
+  }
+  .changed {
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .bt-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 0.5rem;
+    font-size: 0.82rem;
+  }
+  .bt-table th,
+  .bt-table td {
+    border: 1px solid var(--border);
+    padding: 0.35rem 0.5rem;
+    text-align: left;
+    vertical-align: top;
+    word-break: break-word;
+  }
+  .bt-table th {
+    color: var(--fg-subtle);
+    font-weight: 600;
   }
   .muted {
     font-size: 0.8rem;

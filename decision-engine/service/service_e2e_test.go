@@ -442,6 +442,57 @@ func TestDeployAPIPinsVersion(t *testing.T) {
 		map[string]any{"environment": "sandbox", "version": 9}, http.StatusBadRequest, nil)
 }
 
+func TestBacktestComparesVersions(t *testing.T) {
+	api := startEngine(t)
+	var created struct {
+		FlowID string `json:"flow_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows",
+		map[string]string{"slug": "bt", "name": "BT"}, http.StatusCreated, &created)
+	// v1 outputs "A", v2 outputs "B" (the constant marker differs per version).
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/versions",
+		map[string]any{"graph": flowtest.ConstGraph("A")}, http.StatusCreated, nil)
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/versions",
+		map[string]any{"graph": flowtest.ConstGraph("B")}, http.StatusCreated, nil)
+
+	// Backtest v1 (baseline) vs v2 (candidate) over two inputs: every record changes.
+	var rep struct {
+		Summary struct {
+			Total              int  `json:"total"`
+			Changed            int  `json:"changed"`
+			BaselineCompleted  int  `json:"baseline_completed"`
+			CandidateCompleted int  `json:"candidate_completed"`
+			Compare            bool `json:"compare"`
+		} `json:"summary"`
+		Records []struct {
+			Changed   bool `json:"changed"`
+			Candidate struct {
+				Output map[string]any `json:"output"`
+			} `json:"candidate"`
+		} `json:"records"`
+	}
+	if !testutil.Eventually(t, func() bool {
+		rep.Summary.Total = 0
+		api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/backtest", map[string]any{
+			"version": 1, "compare_version": 2, "dataset": []map[string]any{{}, {}},
+		}, http.StatusOK, &rep)
+		return rep.Summary.Total == 2 && rep.Summary.CandidateCompleted == 2
+	}) {
+		t.Fatalf("backtest never reflected both versions: %+v", rep.Summary)
+	}
+	if !rep.Summary.Compare || rep.Summary.Changed != 2 || rep.Summary.BaselineCompleted != 2 {
+		t.Fatalf("summary = %+v", rep.Summary)
+	}
+	// Only changed records are returned (both here), and the candidate output is "B".
+	if len(rep.Records) != 2 || !rep.Records[0].Changed || rep.Records[0].Candidate.Output["decision"] != "B" {
+		t.Fatalf("records = %+v", rep.Records)
+	}
+
+	// An empty dataset is rejected.
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/backtest",
+		map[string]any{"version": 1, "dataset": []map[string]any{}}, http.StatusBadRequest, nil)
+}
+
 func TestMakerCheckerDeploymentAPI(t *testing.T) {
 	api := startEngine(t)
 	var created struct {
