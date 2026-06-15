@@ -58,7 +58,7 @@ Run it: `go run ./cmd/intraktible serve` then open http://localhost:8080 (dev ke
 for UI dev use `make dev` (Vite + Go API). Phase 1 deferrals (CEL, builder UI polish, …) and other
 limitations are tracked in [BUGS.md](BUGS.md).
 All five phases are built; further work is the post-MVP backlog in [BUGS.md](BUGS.md) (durable stores, a
-shared log backend for true split-services, real AI providers, embedding the prod UI build, …).
+shared log backend for true split-services, real AI providers, …).
 
 ## The design in one breath
 Go backend (**functional core / imperative shell**) + **SvelteKit + Svelte Flow** UI embedded in the
@@ -80,8 +80,10 @@ Pluggable storage (SQLite/Postgres) and pluggable AI provider. Details: [PLAN.md
 `domain/` (pure) · `events/` (event payloads) · `command/` (validate→emit) · `projection/` (events→JSONB) · `service/` (HTTP + wiring).
 
 ## Build / run
-- `make build` — embed UI, single binary; `make check` — fast gate (fmt + vet + typecheck + tests);
-  `make ci` — full gate (everything CI runs); `make web` — build + embed the SvelteKit UI.
+- `make build` — Go binary (embeds whatever is in `platform/web/assets`: the committed placeholder, or
+  the real UI if `make web` ran); `make web` — build the SvelteKit UI + copy it into the embed dir;
+  `make dist` — the full self-contained artifact (`web` + `build`). The binary serves the SPA with
+  client-side-route fallback. `make check` — fast gate; `make ci` — full gate (everything CI runs).
 - Run: `intraktible serve --modules=all` (monolith) or `--modules=decision-engine` (split).
 - Operate (Phase 5): `intraktible log` prints the event log (audit) + per-stream summary;
   `intraktible replay [--modules] [--as-of <seq>]` rebuilds projections from the log into a fresh

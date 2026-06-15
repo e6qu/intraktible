@@ -12,7 +12,7 @@ PostgreSQL,LGPL-2.1,LGPL-3.0,GPL-2.0,GPL-3.0,AGPL-3.0
 GO_PKGS := $(shell $(GO) list ./... | grep -v /node_modules)
 GO_DIRS := $(shell $(GO) list -f '{{.Dir}}' ./... | grep -v /node_modules)
 
-.PHONY: all build run test test-short fmt fmtcheck vet typecheck lint sast deadcode dupl vuln licenses check ci precommit web clean
+.PHONY: all build run test test-short fmt fmtcheck vet typecheck lint sast deadcode dupl vuln licenses check ci precommit web dist clean
 
 all: build
 
@@ -80,6 +80,9 @@ licenses:
 web:
 	cd web && npm ci && npm run build
 	rm -rf platform/web/assets && cp -r web/build platform/web/assets
+
+## dist: the single self-contained artifact — build + embed the real UI, then the binary
+dist: web build
 
 ## check: fast local gate
 check: fmtcheck vet typecheck test

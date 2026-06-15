@@ -9,7 +9,6 @@ Format: `ID | severity | component | description | status`.
 - `D3 | med | projection | a live-apply error stops the consumer (surfaced via Err) but the HTTP server keeps running; no auto-restart/dead-letter yet | open`
 - `D4 | low | schema | no JSON-Schema validation lib yet; decide input is not validated against the per-flow input_schema (stored opaquely on each version) | open`
 - `D5 | med | ai | only the Stub provider exists; Claude/OpenAI/Gemini/Ollama adapters not yet wired | open`
-- `D6 | med | web | the Svelte Flow builder UI is built (web/src/routes/engine) and runs via `make dev` + Playwright, but the production SvelteKit build is not auto-embedded into platform/web/assets — the binary serves a hand-written placeholder until `make web` runs | open`
 - `D7 | low | auth | sessions are in-memory with no login endpoint/expiry yet; only the seeded dev API key is usable end-to-end | open`
 - `D8 | low | projection | rebuild does not Reset collections (store empty at boot); needed once durable stores land so re-runs are idempotent | open`
 
@@ -34,4 +33,4 @@ Format: `ID | severity | component | description | status`.
 - `D18 | med | eventlog | the file WAL is single-process (each process holds its own in-memory copy + appends locally). The split-services compose profile therefore gives each module an independent log; full cross-component split (escalation, Rule/Connect/AI nodes reading another layer) needs a shared/networked log backend (Badger/Postgres/gRPC) behind the existing Log interface. The monolith profile is unaffected | open`
 
 ## Fixed
-_None yet._
+- `D6 | web | the production SvelteKit build now embeds and serves correctly: web.Handler does SPA fallback (a real embedded file is served as-is; any other path returns index.html 200) so client-side routes like /engine and /cases/{id} work from the binary. make dist (web + build) and the Dockerfile produce the single self-contained artifact; a fresh checkout still embeds the committed placeholder so go build always works, and the build output is gitignored. | fixed`
