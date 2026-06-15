@@ -152,6 +152,48 @@ func TestDecideAPIEndToEnd(t *testing.T) {
 		map[string]any{"data": map[string]any{}}, http.StatusBadRequest, nil)
 }
 
+func TestDeployAPIPinsVersion(t *testing.T) {
+	api := startEngine(t)
+
+	var created struct {
+		FlowID string `json:"flow_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows",
+		map[string]string{"slug": "router", "name": "Router"}, http.StatusCreated, &created)
+	// Publish v1 and v2 (each outputs a marker).
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/versions",
+		map[string]any{"graph": flowtest.ConstGraph("v1")}, http.StatusCreated, nil)
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/versions",
+		map[string]any{"graph": flowtest.ConstGraph("v2")}, http.StatusCreated, nil)
+
+	// Pin production to v1; wait for the registry projection to show it.
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/deployments",
+		map[string]any{"environment": "production", "version": 1}, http.StatusCreated, nil)
+	if !testutil.Eventually(t, func() bool {
+		var fv flows.FlowView
+		api.Request(t, http.MethodGet, "/v1/flows/"+created.FlowID, nil, http.StatusOK, &fv)
+		dep, ok := fv.Deployments["production"]
+		return ok && dep.Version == 1
+	}) {
+		t.Fatal("deployment never reached the registry projection")
+	}
+
+	// Decide production -> the pinned v1, not the latest v2.
+	var decision struct {
+		Status string         `json:"status"`
+		Data   map[string]any `json:"data"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows/router/production/decide",
+		map[string]any{"data": map[string]any{}}, http.StatusOK, &decision)
+	if decision.Status != "completed" || decision.Data["decision"] != "v1" {
+		t.Fatalf("pinned decide: %+v", decision)
+	}
+
+	// Deploying an unpublished version is rejected.
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/deployments",
+		map[string]any{"environment": "production", "version": 9}, http.StatusBadRequest, nil)
+}
+
 func TestEngineAPIRequiresAuth(t *testing.T) {
 	api := startEngine(t)
 	resp, err := http.Get(api.Server.URL + "/v1/flows")

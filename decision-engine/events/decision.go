@@ -26,6 +26,7 @@ type DecisionStarted struct {
 	Slug        string          `json:"slug"`
 	Version     int             `json:"version"`
 	Environment string          `json:"environment"`
+	Variant     string          `json:"variant,omitempty"` // champion | challenger
 	Data        json.RawMessage `json:"data"`
 }
 

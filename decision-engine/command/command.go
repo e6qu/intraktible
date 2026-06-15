@@ -121,6 +121,45 @@ func (h *Handler) PublishVersion(ctx context.Context, id identity.Identity, cmd 
 	return version, etag, e, nil
 }
 
+// Deploy makes a version (and optional challenger) live in an environment. It
+// fails loudly if the flow or a referenced version does not exist.
+func (h *Handler) Deploy(ctx context.Context, id identity.Identity, cmd domain.DeployVersion) (eventlog.Envelope, error) {
+	if err := id.Valid(); err != nil {
+		return eventlog.Envelope{}, err
+	}
+	if err := cmd.Validate(); err != nil {
+		return eventlog.Envelope{}, err
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	byID, _, err := h.foldTenant(ctx, id)
+	if err != nil {
+		return eventlog.Envelope{}, err
+	}
+	agg, ok := byID[cmd.FlowID]
+	if !ok {
+		return eventlog.Envelope{}, fmt.Errorf("decision-engine: unknown flow %q", cmd.FlowID)
+	}
+	if cmd.Version > agg.latest {
+		return eventlog.Envelope{}, fmt.Errorf("decision-engine: version %d not published (latest is %d)", cmd.Version, agg.latest)
+	}
+	if cmd.ChallengerVersion > agg.latest {
+		return eventlog.Envelope{}, fmt.Errorf("decision-engine: challenger version %d not published (latest is %d)", cmd.ChallengerVersion, agg.latest)
+	}
+	payload, err := json.Marshal(events.FlowVersionDeployed{
+		FlowID:            cmd.FlowID,
+		Environment:       cmd.Environment,
+		Version:           cmd.Version,
+		ChallengerVersion: cmd.ChallengerVersion,
+		ChallengerPct:     cmd.ChallengerPct,
+	})
+	if err != nil {
+		return eventlog.Envelope{}, fmt.Errorf("decision-engine: marshal deployed: %w", err)
+	}
+	return h.appendFlowEvent(ctx, id, events.TypeFlowVersionDeployed, payload)
+}
+
 func (h *Handler) appendFlowEvent(ctx context.Context, id identity.Identity, typ string, payload json.RawMessage) (eventlog.Envelope, error) {
 	return h.log.Append(ctx, eventlog.Envelope{
 		Org:       id.Org,

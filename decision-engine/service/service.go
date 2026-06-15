@@ -71,6 +71,7 @@ func (s *Service) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/flows", s.list)
 	mux.HandleFunc("GET /v1/flows/{flow_id}", s.get)
 	mux.HandleFunc("POST /v1/flows/{flow_id}/versions", s.publish)
+	mux.HandleFunc("POST /v1/flows/{flow_id}/deployments", s.deploy)
 	mux.HandleFunc("POST /v1/flows/{slug}/{env}/decide", s.runDecide)
 	mux.HandleFunc("GET /v1/decisions", s.listDecisions)
 	mux.HandleFunc("GET /v1/decisions/{decision_id}", s.getDecision)
@@ -144,6 +145,40 @@ func (s *Service) get(w http.ResponseWriter, r *http.Request) {
 	}
 	fv, found, err := flows.Read(r.Context(), s.store, id, r.PathValue("flow_id"))
 	writeOne(w, fv, found, err, "flow not found")
+}
+
+type deployRequest struct {
+	Environment       string `json:"environment"`
+	Version           int    `json:"version"`
+	ChallengerVersion int    `json:"challenger_version,omitempty"`
+	ChallengerPct     int    `json:"challenger_pct,omitempty"`
+}
+
+// deploy makes a flow version (and optional A/B challenger) live in an environment.
+func (s *Service) deploy(w http.ResponseWriter, r *http.Request) {
+	id, ok := s.caller(w, r)
+	if !ok {
+		return
+	}
+	var req deployRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	e, err := s.cmd.Deploy(r.Context(), id, domain.DeployVersion{
+		FlowID:            r.PathValue("flow_id"),
+		Environment:       req.Environment,
+		Version:           req.Version,
+		ChallengerVersion: req.ChallengerVersion,
+		ChallengerPct:     req.ChallengerPct,
+	})
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	httpx.JSON(w, http.StatusCreated, map[string]any{
+		"environment": req.Environment, "version": req.Version, "event_id": e.ID, "seq": e.Seq,
+	})
 }
 
 type decideRequest struct {

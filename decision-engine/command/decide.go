@@ -4,6 +4,7 @@ package command
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -16,9 +17,6 @@ import (
 	"github.com/e6qu/intraktible/platform/store"
 )
 
-// validEnvironments are the decide environments (mirrors API-key scopes).
-var validEnvironments = map[string]bool{"sandbox": true, "production": true}
-
 // DecideHandler executes published flows. It reads the flow registry read model
 // for the version to run, evaluates it with the pure core, and records the
 // decision as an event stream (started -> node-evaluated… -> completed/failed).
@@ -27,17 +25,41 @@ type DecideHandler struct {
 	store store.Store
 	now   func() time.Time
 	newID func() string
+	roll  func() int // A/B routing draw in [0,100); recorded via the chosen version+variant
 }
 
-// NewDecideHandler builds a DecideHandler using the system clock and a random id
-// source. id generation and timing are the only effects, and both are recorded.
-func NewDecideHandler(log eventlog.Log, st store.Store) *DecideHandler {
-	return &DecideHandler{
+// DecideOption customizes a DecideHandler (used by tests to make A/B routing
+// deterministic).
+type DecideOption func(*DecideHandler)
+
+// WithRoll overrides the A/B routing draw (a value in [0,100)).
+func WithRoll(roll func() int) DecideOption { return func(h *DecideHandler) { h.roll = roll } }
+
+// NewDecideHandler builds a DecideHandler using the system clock and random id +
+// routing sources. id generation, timing, and the routing draw are the only
+// effects, and all are recorded (the chosen version and variant land in the
+// DecisionStarted event, so replay is deterministic).
+func NewDecideHandler(log eventlog.Log, st store.Store, opts ...DecideOption) *DecideHandler {
+	h := &DecideHandler{
 		log:   log,
 		store: st,
 		now:   func() time.Time { return time.Now().UTC() },
 		newID: newID,
+		roll:  rollPercent,
 	}
+	for _, opt := range opts {
+		opt(h)
+	}
+	return h
+}
+
+// rollPercent returns a near-uniform draw in [0,100) from a cryptographic source
+// (avoids the weak-RNG SAST finding; routing is not security-sensitive). One byte
+// is mapped to [0,99] via *100/256, so the conversion is a safe widening byte->int.
+func rollPercent() int {
+	var b [1]byte
+	_, _ = rand.Read(b[:])
+	return int(b[0]) * 100 / 256
 }
 
 // DecideResult is the decide response: the recorded decision id, the run status,
@@ -57,7 +79,7 @@ func (h *DecideHandler) Decide(ctx context.Context, id identity.Identity, slug, 
 	if err := id.Valid(); err != nil {
 		return DecideResult{}, err
 	}
-	if !validEnvironments[env] {
+	if !domain.ValidEnvironment(env) {
 		return DecideResult{}, fmt.Errorf("decision-engine: invalid environment %q (sandbox|production)", env)
 	}
 	fv, ok, err := flows.BySlug(ctx, h.store, id, slug)
@@ -70,7 +92,11 @@ func (h *DecideHandler) Decide(ctx context.Context, id identity.Identity, slug, 
 	if len(fv.Versions) == 0 {
 		return DecideResult{}, fmt.Errorf("decision-engine: flow %q has no published version", slug)
 	}
-	version := fv.Versions[len(fv.Versions)-1] // MVP: latest; env-pinning/A-B later
+	versionNo, variant := h.resolveVersion(fv, env)
+	version, ok := versionByNumber(fv, versionNo)
+	if !ok {
+		return DecideResult{}, fmt.Errorf("decision-engine: flow %q has no version %d", slug, versionNo)
+	}
 
 	decisionID := h.newID()
 	start := h.now()
@@ -80,7 +106,7 @@ func (h *DecideHandler) Decide(ctx context.Context, id identity.Identity, slug, 
 	}
 	if err := h.emit(ctx, id, events.TypeDecisionStarted, events.DecisionStarted{
 		DecisionID: decisionID, FlowID: fv.FlowID, Slug: slug,
-		Version: version.Version, Environment: env, Data: dataJSON,
+		Version: version.Version, Environment: env, Variant: variant, Data: dataJSON,
 	}); err != nil {
 		return DecideResult{}, err
 	}
@@ -114,6 +140,30 @@ func (h *DecideHandler) Decide(ctx context.Context, id identity.Identity, slug, 
 		return DecideResult{}, err
 	}
 	return DecideResult{DecisionID: decisionID, Status: domain.StatusCompleted, Output: run.Output}, nil
+}
+
+// resolveVersion selects the version to run for an environment: the deployed
+// champion (or the A/B challenger for ChallengerPct percent of traffic), falling
+// back to the latest published version when nothing is deployed. It returns the
+// version number and the variant; the choice is recorded so replay is stable.
+func (h *DecideHandler) resolveVersion(fv flows.FlowView, env string) (int, string) {
+	dep, ok := fv.Deployments[env]
+	if !ok || dep.Version == 0 {
+		return fv.Latest, "champion"
+	}
+	if dep.ChallengerVersion > 0 && h.roll() < dep.ChallengerPct {
+		return dep.ChallengerVersion, "challenger"
+	}
+	return dep.Version, "champion"
+}
+
+func versionByNumber(fv flows.FlowView, n int) (flows.VersionView, bool) {
+	for _, v := range fv.Versions {
+		if v.Version == n {
+			return v, true
+		}
+	}
+	return flows.VersionView{}, false
 }
 
 func (h *DecideHandler) emit(ctx context.Context, id identity.Identity, typ string, payload any) error {

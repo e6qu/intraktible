@@ -14,6 +14,7 @@ const StreamFlows = "decision.flows"
 const (
 	TypeFlowCreated          = "decision.flow.created"
 	TypeFlowVersionPublished = "decision.flow.version_published"
+	TypeFlowVersionDeployed  = "decision.flow.version_deployed"
 )
 
 // NodeType enumerates the node kinds in the MVP palette (PLAN.md §4.1). Input
@@ -78,4 +79,14 @@ type FlowVersionPublished struct {
 	Etag        string          `json:"etag"`
 	Graph       Graph           `json:"graph"`
 	InputSchema json.RawMessage `json:"input_schema,omitempty"`
+}
+
+// FlowVersionDeployed records which version is live in an environment, optionally
+// with an A/B challenger version receiving ChallengerPct percent of decisions.
+type FlowVersionDeployed struct {
+	FlowID            string `json:"flow_id"`
+	Environment       string `json:"environment"`
+	Version           int    `json:"version"`
+	ChallengerVersion int    `json:"challenger_version,omitempty"`
+	ChallengerPct     int    `json:"challenger_pct,omitempty"`
 }

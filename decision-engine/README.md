@@ -34,8 +34,12 @@ Done — execution runtime + decide API + decision history (the decision event s
 - Each `/decide` records a stream — `DecisionStarted` → `NodeEvaluated`…  → `DecisionCompleted` /
   `DecisionFailed` — so a run is replayable node-by-node; a flow-logic error is a recorded **failed**
   decision (HTTP 200, `status: "failed"`), not a swallowed error.
+- **Versioning / rollout:** `POST /v1/flows/{flow_id}/deployments` pins which version is live per
+  environment (sandbox/production) and configures an optional **A/B challenger** taking
+  `challenger_pct` of decisions. Decide routes accordingly and records the chosen version + variant
+  (champion/challenger), so replay is stable; with no deployment it falls back to the latest version.
 - HTTP: `POST /v1/flows/{slug}/{env}/decide` → `{decision_id, status, data}`;
-  `GET /v1/decisions` · `GET /v1/decisions/{decision_id}` — history with the full node trace.
+  `GET /v1/decisions` · `GET /v1/decisions/{decision_id}` — history with the full node trace + variant.
 
 Next in Phase 1 (see [../PLAN.md](../PLAN.md) §4.1, §8): CEL conditions (alternative engine),
-env-pinned versions + A/B routing, analytics-lite, and the Svelte Flow builder + inline test runs.
+analytics-lite, and the Svelte Flow builder + inline test runs.

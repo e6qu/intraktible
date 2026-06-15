@@ -30,17 +30,26 @@ type VersionView struct {
 	PublishedBy string          `json:"published_by"`
 }
 
+// DeploymentView is which version is live in an environment, with an optional
+// A/B challenger taking ChallengerPct percent of decisions.
+type DeploymentView struct {
+	Version           int `json:"version"`
+	ChallengerVersion int `json:"challenger_version,omitempty"`
+	ChallengerPct     int `json:"challenger_pct,omitempty"`
+}
+
 // FlowView is the materialized read model for one flow.
 type FlowView struct {
-	Org       string        `json:"org"`
-	Workspace string        `json:"workspace"`
-	FlowID    string        `json:"flow_id"`
-	Slug      string        `json:"slug"`
-	Name      string        `json:"name"`
-	Latest    int           `json:"latest"`
-	Versions  []VersionView `json:"versions"`
-	CreatedAt time.Time     `json:"created_at"`
-	UpdatedAt time.Time     `json:"updated_at"`
+	Org         string                    `json:"org"`
+	Workspace   string                    `json:"workspace"`
+	FlowID      string                    `json:"flow_id"`
+	Slug        string                    `json:"slug"`
+	Name        string                    `json:"name"`
+	Latest      int                       `json:"latest"`
+	Versions    []VersionView             `json:"versions"`
+	Deployments map[string]DeploymentView `json:"deployments,omitempty"`
+	CreatedAt   time.Time                 `json:"created_at"`
+	UpdatedAt   time.Time                 `json:"updated_at"`
 }
 
 // Projector folds flow lifecycle events into FlowView documents.
@@ -57,6 +66,8 @@ func (Projector) Apply(ctx context.Context, e eventlog.Envelope, s store.Store) 
 		return applyCreated(ctx, e, s)
 	case events.TypeFlowVersionPublished:
 		return applyPublished(ctx, e, s)
+	case events.TypeFlowVersionDeployed:
+		return applyDeployed(ctx, e, s)
 	default:
 		return nil
 	}
@@ -101,6 +112,31 @@ func applyPublished(ctx context.Context, e eventlog.Envelope, s store.Store) err
 		PublishedBy: e.Actor,
 	})
 	fv.Latest = p.Version
+	fv.UpdatedAt = e.Time
+	return store.PutDoc(ctx, s, Collection, key, fv)
+}
+
+func applyDeployed(ctx context.Context, e eventlog.Envelope, s store.Store) error {
+	var p events.FlowVersionDeployed
+	if err := json.Unmarshal(e.Payload, &p); err != nil {
+		return fmt.Errorf("decision_flows: decode deployed seq %d: %w", e.Seq, err)
+	}
+	key := store.Key(e.Org, e.Workspace, p.FlowID)
+	fv, ok, err := store.GetDoc[FlowView](ctx, s, Collection, key)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("decision_flows: deployed seq %d for unknown flow %q", e.Seq, p.FlowID)
+	}
+	if fv.Deployments == nil {
+		fv.Deployments = make(map[string]DeploymentView)
+	}
+	fv.Deployments[p.Environment] = DeploymentView{
+		Version:           p.Version,
+		ChallengerVersion: p.ChallengerVersion,
+		ChallengerPct:     p.ChallengerPct,
+	}
 	fv.UpdatedAt = e.Time
 	return store.PutDoc(ctx, s, Collection, key, fv)
 }

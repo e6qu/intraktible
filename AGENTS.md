@@ -15,10 +15,11 @@ reimplementation of a commercial Agentic Decision Platform.
 Working today: `platform/{eventlog,store,projection,identity,auth,httpx,ai,web}` + the `hello`
 slice; and the **Decision Engine** — flow model + versioning, a deterministic execution runtime
 (Input/Assignment/Rule/Split/Scorecard/Decision Table/2D Matrix/Code/Output; expr-lang for
-expressions, Starlark for the Code node), the `…/{env}/decide` API, and decision history (all
+expressions, Starlark for the Code node), the `…/{env}/decide` API with **per-environment version
+pinning + A/B (champion/challenger) routing**, and decision history (all
 command→event→projection→API, durable & replayable).
 Run it: `go run ./cmd/intraktible serve` then open http://localhost:8080 (dev key `dev-sandbox-key`).
-Phase 1 remaining: CEL conditions, env-pinned/A-B routing, analytics-lite, Svelte Flow builder UI.
+Phase 1 remaining: CEL conditions, analytics-lite, Svelte Flow builder UI.
 Build order after Phase 1: Case Manager → Context Layer → Agent Manager.
 
 ## The design in one breath

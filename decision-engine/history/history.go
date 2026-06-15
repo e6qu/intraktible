@@ -38,7 +38,8 @@ type Record struct {
 	Slug        string          `json:"slug"`
 	Version     int             `json:"version"`
 	Environment string          `json:"environment"`
-	Status      string          `json:"status"` // started | completed | failed
+	Variant     string          `json:"variant,omitempty"` // champion | challenger
+	Status      string          `json:"status"`            // started | completed | failed
 	Data        json.RawMessage `json:"data,omitempty"`
 	Output      json.RawMessage `json:"output,omitempty"`
 	Error       string          `json:"error,omitempty"`
@@ -88,7 +89,7 @@ func applyStarted(ctx context.Context, e eventlog.Envelope, s store.Store) error
 	r := Record{
 		Org: e.Org, Workspace: e.Workspace,
 		DecisionID: p.DecisionID, FlowID: p.FlowID, Slug: p.Slug,
-		Version: p.Version, Environment: p.Environment, Status: "started",
+		Version: p.Version, Environment: p.Environment, Variant: p.Variant, Status: "started",
 		Data: p.Data, TimeOrdered: []string{}, Nodes: []NodeRecord{}, StartedAt: e.Time,
 	}
 	return store.PutDoc(ctx, s, Collection, store.Key(e.Org, e.Workspace, r.DecisionID), r)

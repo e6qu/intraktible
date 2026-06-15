@@ -6,9 +6,24 @@ package flowtest
 
 import (
 	"encoding/json"
+	"fmt"
 
 	"github.com/e6qu/intraktible/decision-engine/events"
 )
+
+// ConstGraph is a flow that outputs a constant {"decision": <value>}, used to
+// tell which version ran in version-routing tests.
+func ConstGraph(value string) events.Graph {
+	cfg := json.RawMessage(fmt.Sprintf(`{"assignments":[{"target":"decision","expr":"'%s'"}]}`, value))
+	return events.Graph{
+		Nodes: []events.Node{
+			{ID: "in", Type: events.NodeInput},
+			{ID: "a", Type: events.NodeAssignment, Config: cfg},
+			{ID: "out", Type: events.NodeOutput, Config: json.RawMessage(`{"fields":["decision"]}`)},
+		},
+		Edges: []events.Edge{{From: "in", To: "a"}, {From: "a", To: "out"}},
+	}
+}
 
 // LinearGraph is a minimal valid flow: input -> rule -> output.
 func LinearGraph() events.Graph {

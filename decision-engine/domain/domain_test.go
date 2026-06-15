@@ -115,3 +115,26 @@ func TestCommandValidate(t *testing.T) {
 		t.Fatal("empty flow id should be rejected")
 	}
 }
+
+func TestDeployVersionValidate(t *testing.T) {
+	ok := domain.DeployVersion{FlowID: "f", Environment: "production", Version: 1}
+	if err := ok.Validate(); err != nil {
+		t.Fatalf("valid deploy rejected: %v", err)
+	}
+	ab := domain.DeployVersion{FlowID: "f", Environment: "sandbox", Version: 1, ChallengerVersion: 2, ChallengerPct: 50}
+	if err := ab.Validate(); err != nil {
+		t.Fatalf("valid A/B deploy rejected: %v", err)
+	}
+	bad := []domain.DeployVersion{
+		{FlowID: "", Environment: "production", Version: 1},                                            // no flow
+		{FlowID: "f", Environment: "staging", Version: 1},                                              // bad env
+		{FlowID: "f", Environment: "production", Version: 0},                                           // version < 1
+		{FlowID: "f", Environment: "production", Version: 1, ChallengerPct: 50},                        // pct without challenger
+		{FlowID: "f", Environment: "production", Version: 1, ChallengerVersion: 2, ChallengerPct: 150}, // pct out of range
+	}
+	for i, c := range bad {
+		if err := c.Validate(); err == nil {
+			t.Fatalf("case %d: expected validation error for %+v", i, c)
+		}
+	}
+}
