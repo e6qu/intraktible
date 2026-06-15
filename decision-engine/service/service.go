@@ -9,6 +9,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/e6qu/intraktible/decision-engine/analytics"
 	"github.com/e6qu/intraktible/decision-engine/command"
 	"github.com/e6qu/intraktible/decision-engine/domain"
 	"github.com/e6qu/intraktible/decision-engine/events"
@@ -70,6 +71,7 @@ func (s *Service) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/flows", s.create)
 	mux.HandleFunc("GET /v1/flows", s.list)
 	mux.HandleFunc("GET /v1/flows/{flow_id}", s.get)
+	mux.HandleFunc("GET /v1/flows/{flow_id}/metrics", s.metrics)
 	mux.HandleFunc("POST /v1/flows/{flow_id}/versions", s.publish)
 	mux.HandleFunc("POST /v1/flows/{flow_id}/deployments", s.deploy)
 	mux.HandleFunc("POST /v1/flows/{slug}/{env}/decide", s.runDecide)
@@ -234,4 +236,22 @@ func (s *Service) getDecision(w http.ResponseWriter, r *http.Request) {
 	}
 	rec, found, err := history.Read(r.Context(), s.store, id, r.PathValue("decision_id"))
 	writeOne(w, rec, found, err, "decision not found")
+}
+
+func (s *Service) metrics(w http.ResponseWriter, r *http.Request) {
+	id, ok := s.caller(w, r)
+	if !ok {
+		return
+	}
+	flowID := r.PathValue("flow_id")
+	m, found, err := analytics.Read(r.Context(), s.store, id, flowID)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	if !found {
+		// A flow with no decisions yet has zero metrics, not a 404.
+		m = analytics.FlowMetrics{FlowID: flowID, ByEnvironment: map[string]int{}, ByVersion: map[int]int{}, ByVariant: map[string]analytics.VariantStats{}}
+	}
+	httpx.JSON(w, http.StatusOK, m)
 }

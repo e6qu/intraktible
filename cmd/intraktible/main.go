@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/e6qu/intraktible/decision-engine/analytics"
 	enginecmd "github.com/e6qu/intraktible/decision-engine/command"
 	"github.com/e6qu/intraktible/decision-engine/flows"
 	"github.com/e6qu/intraktible/decision-engine/history"
@@ -94,7 +95,7 @@ func run(addr, dataDir, modules, devKey string) error {
 	if enabled(modules, "decision-engine") {
 		engineSvc := engineservice.New(enginecmd.NewHandler(log), enginecmd.NewDecideHandler(log, st), st)
 		engineSvc.Routes(api)
-		projectors = append(projectors, flows.Projector{}, history.Projector{})
+		projectors = append(projectors, flows.Projector{}, history.Projector{}, analytics.Projector{})
 	}
 
 	rt := projection.New(log, st, projectors...)

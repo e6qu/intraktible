@@ -11,6 +11,19 @@ import (
 	"github.com/e6qu/intraktible/decision-engine/events"
 )
 
+// FailingGraph is a valid graph whose Assignment references an undefined field,
+// so every decision through it fails loudly at node "a".
+func FailingGraph() events.Graph {
+	return events.Graph{
+		Nodes: []events.Node{
+			{ID: "in", Type: events.NodeInput},
+			{ID: "a", Type: events.NodeAssignment, Config: json.RawMessage(`{"assignments":[{"target":"y","expr":"undefined_field + 1"}]}`)},
+			{ID: "out", Type: events.NodeOutput},
+		},
+		Edges: []events.Edge{{From: "in", To: "a"}, {From: "a", To: "out"}},
+	}
+}
+
 // ConstGraph is a flow that outputs a constant {"decision": <value>}, used to
 // tell which version ran in version-routing tests.
 func ConstGraph(value string) events.Graph {

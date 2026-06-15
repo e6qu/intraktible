@@ -38,8 +38,12 @@ Done — execution runtime + decide API + decision history (the decision event s
   environment (sandbox/production) and configures an optional **A/B challenger** taking
   `challenger_pct` of decisions. Decide routes accordingly and records the chosen version + variant
   (champion/challenger), so replay is stable; with no deployment it falls back to the latest version.
+- **Analytics-lite:** a metrics projection folds the decision stream into per-flow counters
+  (volume, completed/failed, average duration, and breakdowns by environment, version, and
+  **variant** — so champion vs challenger outcome rates are directly comparable). `GET
+  /v1/flows/{flow_id}/metrics`.
 - HTTP: `POST /v1/flows/{slug}/{env}/decide` → `{decision_id, status, data}`;
   `GET /v1/decisions` · `GET /v1/decisions/{decision_id}` — history with the full node trace + variant.
 
-Next in Phase 1 (see [../PLAN.md](../PLAN.md) §4.1, §8): CEL conditions (alternative engine),
-analytics-lite, and the Svelte Flow builder + inline test runs.
+Next in Phase 1 (see [../PLAN.md](../PLAN.md) §4.1, §8): CEL conditions (alternative engine) and the
+Svelte Flow builder + inline test runs.

@@ -38,17 +38,26 @@ type NodeEvaluated struct {
 	Output     json.RawMessage `json:"output,omitempty"`
 }
 
-// DecisionCompleted records a successful decision and its output.
+// DecisionCompleted records a successful decision and its output. Flow context
+// (flow/version/variant) is carried so the read side can attribute the outcome
+// without correlating back to DecisionStarted.
 type DecisionCompleted struct {
 	DecisionID string          `json:"decision_id"`
+	FlowID     string          `json:"flow_id"`
+	Version    int             `json:"version"`
+	Variant    string          `json:"variant,omitempty"`
 	Output     json.RawMessage `json:"output"`
 	DurationMS int64           `json:"duration_ms"`
 }
 
 // DecisionFailed records a decision that errored during evaluation (fail loudly:
-// the failure is recorded, not swallowed).
+// the failure is recorded, not swallowed). It carries flow context for the same
+// reason as DecisionCompleted.
 type DecisionFailed struct {
 	DecisionID string `json:"decision_id"`
+	FlowID     string `json:"flow_id"`
+	Version    int    `json:"version"`
+	Variant    string `json:"variant,omitempty"`
 	NodeID     string `json:"node_id,omitempty"`
 	Error      string `json:"error"`
 	DurationMS int64  `json:"duration_ms"`

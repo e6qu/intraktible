@@ -123,7 +123,8 @@ func (h *DecideHandler) Decide(ctx context.Context, id identity.Identity, slug, 
 	dur := h.now().Sub(start).Milliseconds()
 	if run.Status == domain.StatusFailed {
 		if err := h.emit(ctx, id, events.TypeDecisionFailed, events.DecisionFailed{
-			DecisionID: decisionID, NodeID: run.FailedNode, Error: run.Err, DurationMS: dur,
+			DecisionID: decisionID, FlowID: fv.FlowID, Version: version.Version, Variant: variant,
+			NodeID: run.FailedNode, Error: run.Err, DurationMS: dur,
 		}); err != nil {
 			return DecideResult{}, err
 		}
@@ -135,7 +136,8 @@ func (h *DecideHandler) Decide(ctx context.Context, id identity.Identity, slug, 
 		return DecideResult{}, fmt.Errorf("decision-engine: marshal output: %w", err)
 	}
 	if err := h.emit(ctx, id, events.TypeDecisionCompleted, events.DecisionCompleted{
-		DecisionID: decisionID, Output: outJSON, DurationMS: dur,
+		DecisionID: decisionID, FlowID: fv.FlowID, Version: version.Version, Variant: variant,
+		Output: outJSON, DurationMS: dur,
 	}); err != nil {
 		return DecideResult{}, err
 	}

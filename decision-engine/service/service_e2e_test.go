@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/e6qu/intraktible/decision-engine/analytics"
 	"github.com/e6qu/intraktible/decision-engine/command"
 	"github.com/e6qu/intraktible/decision-engine/events"
 	"github.com/e6qu/intraktible/decision-engine/flows"
@@ -28,7 +29,7 @@ func startEngine(t *testing.T) *testutil.API {
 	st := store.NewMemory()
 	svc := service.New(command.NewHandler(log), command.NewDecideHandler(log, st), st)
 	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "author"}
-	return testutil.StartAPI(t, log, st, "test-key", id, svc.Routes, flows.Projector{}, history.Projector{})
+	return testutil.StartAPI(t, log, st, "test-key", id, svc.Routes, flows.Projector{}, history.Projector{}, analytics.Projector{})
 }
 
 func TestEngineAPIEndToEnd(t *testing.T) {
@@ -145,6 +146,15 @@ func TestDecideAPIEndToEnd(t *testing.T) {
 	api.Request(t, http.MethodGet, "/v1/decisions", nil, http.StatusOK, &list)
 	if len(list.Decisions) == 0 {
 		t.Fatal("decision list is empty")
+	}
+
+	// The decision is counted in the analytics metrics (async projection).
+	if !testutil.Eventually(t, func() bool {
+		var m analytics.FlowMetrics
+		api.Request(t, http.MethodGet, "/v1/flows/"+created.FlowID+"/metrics", nil, http.StatusOK, &m)
+		return m.Total >= 1 && m.Completed >= 1 && m.ByVariant["champion"].Completed >= 1
+	}) {
+		t.Fatal("metrics never reflected the decision")
 	}
 
 	// Invalid environment -> 400.
