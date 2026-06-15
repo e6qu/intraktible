@@ -22,7 +22,8 @@ expressions, Starlark for the Code node), the `…/{env}/decide` API with **per-
 pinning + A/B (champion/challenger) routing**, decision history, and **analytics-lite** (per-flow
 metrics with champion/challenger breakdown) — all command→event→projection→API, durable & replayable.
 The **Svelte Flow builder UI** (`web/src/routes/engine`) lists/creates flows and edits a flow's graph
-(add nodes from a palette, wire edges, edit per-node config, publish a new version — with backend
+(add nodes from a palette, wire edges, edit per-node config via structured panels for common types or
+raw JSON, publish a new version — with backend
 validation surfaced), renders it on a canvas (auto-layout), and runs inline test decisions.
 The **Case Manager** (`case-manager/`) opens cases — manually or **escalated from a decision flow's
 `manual_review` node** (cross-component via the event log, linked by `source_decision_id`) — with

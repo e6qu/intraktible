@@ -13,6 +13,7 @@
     type GraphEdge
   } from '$lib/api';
   import { layout } from '$lib/layout';
+  import { asText, asCsv, fromCsv, cleanConfig } from '$lib/nodeconfig';
 
   const NODE_TYPES = [
     'input',
@@ -114,6 +115,24 @@
   }
   function updateSelected(patch: Partial<EditNode>) {
     editNodes = editNodes.map((n) => (n.id === selectedId ? { ...n, ...patch } : n));
+  }
+
+  // Node types with a flat config that gets a structured panel; the rest keep the
+  // raw-JSON textarea (which stays available for every type as the advanced view).
+  const STRUCTURED = ['split', 'connect', 'ai', 'manual_review', 'output'];
+
+  // The selected node's config as an object (empty on blank/invalid JSON).
+  function nodeCfg(): Record<string, unknown> {
+    if (!selected || !selected.config.trim()) return {};
+    try {
+      return JSON.parse(selected.config) as Record<string, unknown>;
+    } catch {
+      return {};
+    }
+  }
+  // Merge a patch into the config and write it back (empty fields are dropped).
+  function patchCfg(patch: Record<string, unknown>) {
+    updateSelected({ config: JSON.stringify(cleanConfig({ ...nodeCfg(), ...patch })) });
   }
   function addEdge() {
     if (!edgeFrom || !edgeTo) return;
@@ -221,8 +240,88 @@
             {#each NODE_TYPES as t (t)}<option value={t}>{t}</option>{/each}
           </select>
         </label>
+        {#if selected.type === 'split'}
+          <label
+            >condition <input
+              value={asText(nodeCfg().condition)}
+              oninput={(e) => patchCfg({ condition: e.currentTarget.value })}
+              aria-label="condition"
+            /></label
+          >
+        {:else if selected.type === 'connect'}
+          <label
+            >connector <input
+              value={asText(nodeCfg().connector)}
+              oninput={(e) => patchCfg({ connector: e.currentTarget.value })}
+              aria-label="connector"
+            /></label
+          >
+          <label
+            >output key <input
+              value={asText(nodeCfg().output)}
+              oninput={(e) => patchCfg({ output: e.currentTarget.value })}
+              aria-label="connect output"
+            /></label
+          >
+        {:else if selected.type === 'ai'}
+          <label
+            >agent <input
+              value={asText(nodeCfg().agent)}
+              oninput={(e) => patchCfg({ agent: e.currentTarget.value })}
+              aria-label="agent"
+            /></label
+          >
+          <label
+            >output key <input
+              value={asText(nodeCfg().output)}
+              oninput={(e) => patchCfg({ output: e.currentTarget.value })}
+              aria-label="ai output"
+            /></label
+          >
+          <label
+            >prompt <input
+              value={asText(nodeCfg().prompt)}
+              oninput={(e) => patchCfg({ prompt: e.currentTarget.value })}
+              aria-label="ai prompt"
+            /></label
+          >
+        {:else if selected.type === 'manual_review'}
+          <label
+            >company_name expr <input
+              value={asText(nodeCfg().company_name)}
+              oninput={(e) => patchCfg({ company_name: e.currentTarget.value })}
+              aria-label="company_name expr"
+            /></label
+          >
+          <label
+            >case_type expr <input
+              value={asText(nodeCfg().case_type)}
+              oninput={(e) => patchCfg({ case_type: e.currentTarget.value })}
+              aria-label="case_type expr"
+            /></label
+          >
+          <label
+            >sla_days <input
+              type="number"
+              value={asText(nodeCfg().sla_days)}
+              oninput={(e) =>
+                patchCfg({
+                  sla_days: e.currentTarget.value === '' ? '' : Number(e.currentTarget.value)
+                })}
+              aria-label="sla_days"
+            /></label
+          >
+        {:else if selected.type === 'output'}
+          <label
+            >fields (comma-separated; empty = whole context) <input
+              value={asCsv(nodeCfg().fields)}
+              oninput={(e) => patchCfg({ fields: fromCsv(e.currentTarget.value) })}
+              aria-label="output fields"
+            /></label
+          >
+        {/if}
         <label
-          >config (JSON)
+          >{STRUCTURED.includes(selected.type) ? 'config (JSON, advanced)' : 'config (JSON)'}
           <textarea
             value={selected.config}
             oninput={(e) => updateSelected({ config: e.currentTarget.value })}

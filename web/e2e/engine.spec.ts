@@ -118,6 +118,25 @@ test('builds a flow in the editor and publishes it', async ({ page, request }) =
   await expect(page.getByTestId('run-result')).toContainText('BUILT');
 });
 
+test('a structured config panel edits a node without raw JSON', async ({ page, request }) => {
+  const slug = uniqueSlug();
+  const created = await request.post('/v1/flows', {
+    headers: { 'X-Api-Key': KEY },
+    data: { slug, name: 'Structured' }
+  });
+  const { flow_id } = await created.json();
+
+  await page.goto(`/engine/${flow_id}`);
+  await expect(page.getByLabel('new node type')).toBeVisible();
+
+  // Add a split node (auto-selected) and set its condition via the structured
+  // field — no JSON typing. The advanced JSON view reflects the same config.
+  await page.getByLabel('new node type').selectOption('split');
+  await page.getByRole('button', { name: 'Add', exact: true }).click();
+  await page.getByLabel('condition', { exact: true }).fill('score >= 700');
+  await expect(page.getByLabel('node config')).toHaveValue('{"condition":"score >= 700"}');
+});
+
 test('shows the backend validation error when publishing an invalid graph', async ({
   page,
   request

@@ -9,7 +9,7 @@ Format: `ID | severity | component | description | status`.
 
 ## Open (deferred / limitations after Phase 1)
 - `D9 | low | decision-engine | CEL conditions not implemented; expr-lang serves Rule/Split conditions + Assignment and Starlark serves the Code node, so conditions work — CEL is an optional alternative engine | deferred`
-- `D10 | low | web | builder UI lacks drag-to-connect on the canvas and bespoke per-node config panels (raw JSON config textarea for now) | deferred`
+- `D10 | low | web | partly done: structured config panels now cover the flat-config node types (split, connect, ai, manual_review, output); the complex types (rule, scorecard, decision_table, 2d_matrix, assignment, code) still use the raw-JSON textarea, and the canvas still has no drag-to-connect (edges are added via the from/to form) | deferred`
 - `D11 | low | decision-engine | each decide appends one event per node (started + N node-evaluated + completed/failed); fine for MVP, could batch for high-volume flows | deferred`
 
 ## Open (deferred / limitations after Phase 2)
