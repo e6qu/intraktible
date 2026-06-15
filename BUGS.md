@@ -5,7 +5,6 @@ Format: `ID | severity | component | description | status`.
 
 ## Open (deferred / limitations after Phase 0)
 - `D1 | low | eventlog | WAL holds all events in memory and re-reads the whole file on open; fine for MVP, revisit with segments/Badger | open`
-- `D3 | med | projection | a live-apply error stops the consumer (surfaced via Err) but the HTTP server keeps running; no auto-restart/dead-letter yet | open`
 - `D5 | med | ai | only the Stub provider exists; Claude/OpenAI/Gemini/Ollama adapters not yet wired | open`
 
 ## Open (deferred / limitations after Phase 1)
@@ -32,6 +31,7 @@ Format: `ID | severity | component | description | status`.
 - `D18 | med | eventlog | the file WAL is single-process (each process holds its own in-memory copy + appends locally). The split-services compose profile therefore gives each module an independent log; full cross-component split (escalation, Rule/Connect/AI nodes reading another layer) needs a shared/networked log backend (Badger/Postgres/gRPC) behind the existing Log interface. The monolith profile is unaffected | open`
 
 ## Fixed
+- `D3 | projection | a stalled projection (a live-apply error stopped the consumer) is now surfaced: GET /healthz returns 503 "degraded" with the error when the runtime's Err() is set, so an orchestrator can restart/depool the node (a fresh boot rebuilds the projections). Dead-lettering/auto-skip is intentionally NOT added — silently dropping an event would violate fail-loudly and leave projections inconsistent. | fixed`
 - `D2 | store | added a durable SQLite projection store (store.NewSQLite, pure-Go modernc.org/sqlite — no CGO) behind the existing store.Store interface, selectable with serve --store=sqlite (persists to <data-dir>/projections.db, WAL + busy_timeout for one writer / many readers). Verified data survives a restart. Postgres adapter split out as D21. | fixed`
 - `D7 | auth | added a login flow: POST /v1/login exchanges a valid API key for an HttpOnly session cookie (the Authenticate middleware already accepted it), POST /v1/logout revokes it, GET /v1/me returns the caller; sessions now expire (DefaultSessionTTL) and can be revoked. Remaining follow-ups split out as D20. | fixed`
 - `D8 | projection | rebuild is now idempotent: the Projector interface gained Collections(), and RebuildTo resets each projector's collections before replaying — so rebuilding into a non-empty store (a durable store, or a repeated replay) no longer double-applies. Verified by replaying the same store twice (counts unchanged). | fixed`

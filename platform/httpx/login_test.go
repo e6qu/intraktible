@@ -3,6 +3,7 @@
 package httpx_test
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,6 +13,27 @@ import (
 	"github.com/e6qu/intraktible/platform/httpx"
 	"github.com/e6qu/intraktible/platform/identity"
 )
+
+func TestHealth(t *testing.T) {
+	// Healthy: check returns nil -> 200 ok.
+	ok := httptest.NewRecorder()
+	httpx.Health(func() error { return nil })(ok, httptest.NewRequest(http.MethodGet, "/healthz", http.NoBody))
+	if ok.Code != http.StatusOK || !strings.Contains(ok.Body.String(), `"ok"`) {
+		t.Fatalf("healthy -> %d body=%s", ok.Code, ok.Body.String())
+	}
+	// A stalled projection -> 503 degraded with the error surfaced.
+	bad := httptest.NewRecorder()
+	httpx.Health(func() error { return errors.New("projector boom") })(bad, httptest.NewRequest(http.MethodGet, "/healthz", http.NoBody))
+	if bad.Code != http.StatusServiceUnavailable || !strings.Contains(bad.Body.String(), "projector boom") {
+		t.Fatalf("degraded -> %d body=%s", bad.Code, bad.Body.String())
+	}
+	// A nil check is treated as healthy.
+	nilc := httptest.NewRecorder()
+	httpx.Health(nil)(nilc, httptest.NewRequest(http.MethodGet, "/healthz", http.NoBody))
+	if nilc.Code != http.StatusOK {
+		t.Fatalf("nil check -> %d, want 200", nilc.Code)
+	}
+}
 
 func TestLoginLogoutFlow(t *testing.T) {
 	keyring := auth.NewKeyring()

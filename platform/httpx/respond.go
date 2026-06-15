@@ -49,6 +49,22 @@ func Caller(w http.ResponseWriter, r *http.Request) (identity.Identity, bool) {
 	return id, ok
 }
 
+// Health returns a /healthz handler that reports liveness AND projection health:
+// check is the projection runtime's error accessor (nil = healthy). A stalled
+// projection (an apply error stopped the consumer) returns 503 "degraded" so an
+// orchestrator can restart/depool rather than keep serving stale read models.
+func Health(check func() error) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		if check != nil {
+			if err := check(); err != nil {
+				JSON(w, http.StatusServiceUnavailable, map[string]string{"status": "degraded", "error": err.Error()})
+				return
+			}
+		}
+		JSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	}
+}
+
 // Route is one declarative endpoint: an HTTP method, a 1.22-mux pattern, and its
 // handler. A service registers a []Route via Register instead of repeating
 // mux.HandleFunc lines.

@@ -114,9 +114,6 @@ func run(addr, dataDir, modules, devKey, storeKind string) error {
 	}
 
 	root := http.NewServeMux()
-	root.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
-		httpx.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
-	})
 	root.Handle("/", web.Handler())
 
 	api := http.NewServeMux()
@@ -157,6 +154,10 @@ func run(addr, dataDir, modules, devKey, storeKind string) error {
 	if err := rt.Start(ctx); err != nil {
 		return fmt.Errorf("projection start: %w", err)
 	}
+	// /healthz reflects projection health: degraded (503) if a live apply error
+	// stopped the consumer, so an orchestrator does not keep routing to a node
+	// serving stale read models.
+	root.HandleFunc("GET /healthz", httpx.Health(rt.Err))
 
 	// Public auth endpoints — exchange an API key for a session cookie (and clear
 	// it). Registered on root with exact patterns so they win over the /v1/ chain.

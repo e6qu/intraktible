@@ -90,7 +90,8 @@ Pluggable storage (SQLite/Postgres) and pluggable AI provider. Details: [PLAN.md
 - Operate (Phase 5): `intraktible log` prints the event log (audit) + per-stream summary;
   `intraktible replay [--modules] [--as-of <seq>]` rebuilds projections from the log into a fresh
   store and reports the rebuilt collections — `--as-of` is a read-only **log-based rollback** to that
-  seq (the append-only log is never mutated).
+  seq (the append-only log is never mutated). `GET /healthz` reports projection health — 503
+  `degraded` if a live-apply error stopped the consumer (so an orchestrator can restart the node).
 
 ## Testing & quality gates (enforced, not optional)
 - **Test pyramid, per module:** pure **unit** tests (`domain/`, platform pkgs) → **integration**
