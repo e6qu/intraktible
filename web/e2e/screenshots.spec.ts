@@ -11,6 +11,7 @@ const SHOTS = process.env.ITK_SHOTS_DIR ?? '/tmp/itk-shots';
 test.skip(!process.env.ITK_SHOTS, 'set ITK_SHOTS=1 to capture design-review screenshots');
 
 let flowId = '';
+let caseId = '';
 
 test.beforeAll(async ({ request }) => {
   const flow = await request.post('/v1/flows', {
@@ -39,13 +40,18 @@ test.beforeAll(async ({ request }) => {
       }
     }
   });
-  await request.post('/v1/cases', {
+  const c = await request.post('/v1/cases', {
     headers: { 'X-Api-Key': KEY },
     data: { company_name: 'Acme Corp', case_type: 'aml', sla_days: 5 }
   });
+  caseId = (await c.json()).case_id;
   await request.post('/v1/agents', {
     headers: { 'X-Api-Key': KEY },
     data: { name: 'screener', system: 'screen applicants', tools: ['bureau'] }
+  });
+  await request.post('/v1/agents/screener/run', {
+    headers: { 'X-Api-Key': KEY },
+    data: { prompt: 'screen this applicant' }
   });
 });
 
@@ -58,7 +64,9 @@ for (const themeMode of ['light', 'dark']) {
       engine: '/engine',
       builder: `/engine/${flowId}`,
       cases: '/cases',
-      agents: '/agents'
+      'case-detail': `/cases/${caseId}`,
+      agents: '/agents',
+      'agent-detail': '/agents/screener'
     };
     for (const [label, path] of Object.entries(routes)) {
       await page.goto(path);

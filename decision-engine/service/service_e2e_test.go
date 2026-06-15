@@ -85,6 +85,53 @@ func TestExportFlowOverHTTP(t *testing.T) {
 	}
 }
 
+func TestExportDecisionTraceOverHTTP(t *testing.T) {
+	api := startEngine(t)
+	var created struct {
+		FlowID string `json:"flow_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows", map[string]any{"slug": "trace", "name": "Trace"}, http.StatusCreated, &created)
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/versions", map[string]any{
+		"graph": map[string]any{
+			"nodes": []map[string]any{
+				{"id": "in", "type": "input"},
+				{"id": "a", "type": "assignment", "config": map[string]any{"assignments": []map[string]any{{"target": "d", "expr": "'OK'"}}}},
+				{"id": "out", "type": "output", "config": map[string]any{"fields": []string{"d"}}},
+			},
+			"edges": []map[string]any{{"from": "in", "to": "a"}, {"from": "a", "to": "out"}},
+		},
+	}, http.StatusCreated, nil)
+
+	// Decide (retries until the flow projection is live), capturing the decision id.
+	var dec struct {
+		DecisionID string `json:"decision_id"`
+		Status     string `json:"status"`
+	}
+	if !testutil.Eventually(t, func() bool {
+		dec = struct {
+			DecisionID string `json:"decision_id"`
+			Status     string `json:"status"`
+		}{}
+		api.Request(t, http.MethodPost, "/v1/flows/trace/production/decide", map[string]any{"data": map[string]any{}}, http.StatusOK, &dec)
+		return dec.Status == "completed" && dec.DecisionID != ""
+	}) {
+		t.Fatal("decide never completed")
+	}
+
+	// The decision run exports as a Mermaid sequence diagram with its node trace.
+	var trace string
+	if !testutil.Eventually(t, func() bool {
+		code, body := rawGet(t, api, "/v1/decisions/"+dec.DecisionID+"/export")
+		trace = body
+		return code == http.StatusOK && strings.Contains(body, "Note over E: a (assignment)")
+	}) {
+		t.Fatalf("decision trace export incomplete:\n%s", trace)
+	}
+	if !strings.Contains(trace, "sequenceDiagram") || !strings.Contains(trace, "E-->>C: completed") {
+		t.Fatalf("sequence diagram incomplete:\n%s", trace)
+	}
+}
+
 func startEngine(t *testing.T, opts ...command.DecideOption) *testutil.API {
 	t.Helper()
 	log, st := testutil.NewLogStore(t)

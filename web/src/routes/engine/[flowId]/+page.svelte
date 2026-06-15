@@ -16,6 +16,7 @@
     publishVersion,
     decide,
     exportFlow,
+    exportDecision,
     type ExportFormat,
     type Flow,
     type GraphNode,
@@ -360,18 +361,42 @@
     }
   }
 
+  let lastDecisionId = $state('');
   async function run() {
     result = '';
+    lastDecisionId = '';
     if (!flow) return;
     try {
       const entity = entityType && entityID ? { type: entityType, id: entityID } : undefined;
-      result = JSON.stringify(
-        await decide(key, flow.slug, env, JSON.parse(dataText), entity),
-        null,
-        2
-      );
+      const res = await decide(key, flow.slug, env, JSON.parse(dataText), entity);
+      lastDecisionId = res.decision_id ?? '';
+      result = JSON.stringify(res, null, 2);
     } catch (e) {
       result = `Error: ${msg(e)}`;
+    }
+  }
+  async function downloadTrace() {
+    exportMsg = '';
+    try {
+      const text = await exportDecision(key, lastDecisionId);
+      const url = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${lastDecisionId}-trace.mmd`;
+      a.click();
+      URL.revokeObjectURL(url);
+      exportMsg = 'Downloaded run trace';
+    } catch (e) {
+      error = msg(e);
+    }
+  }
+  async function copyTrace() {
+    exportMsg = '';
+    try {
+      await navigator.clipboard.writeText(await exportDecision(key, lastDecisionId));
+      exportMsg = 'Copied run trace to clipboard';
+    } catch (e) {
+      error = msg(e);
     }
   }
 
@@ -858,6 +883,22 @@
     </div>
     <textarea bind:value={dataText} aria-label="input data" rows="3"></textarea>
     <pre data-testid="run-result">{result}</pre>
+    {#if lastDecisionId}
+      <div class="row">
+        <span class="exportlabel"><Icon name="diagram" size={15} /> Run trace</span>
+        <button onclick={downloadTrace} title="Download the run as a Mermaid sequence diagram">
+          <Icon name="download" size={14} /> Sequence
+        </button>
+        <button
+          class="icon"
+          aria-label="Copy run trace"
+          title="Copy sequence diagram"
+          onclick={copyTrace}
+        >
+          <Icon name="copy" size={14} />
+        </button>
+      </div>
+    {/if}
   </section>
 </main>
 

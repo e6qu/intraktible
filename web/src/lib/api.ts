@@ -147,6 +147,19 @@ export async function exportFlow(
   return res.text();
 }
 
+// exportDecision fetches a decision run rendered as a Mermaid sequence diagram.
+export async function exportDecision(
+  key: string,
+  decisionId: string,
+  fetcher: typeof fetch = fetch
+): Promise<string> {
+  const res = await fetcher(`/v1/decisions/${decisionId}/export`, { headers: authHeaders(key) });
+  if (!res.ok) {
+    throw new Error(`export decision failed: ${res.status}`);
+  }
+  return res.text();
+}
+
 export async function publishVersion(
   key: string,
   flowId: string,

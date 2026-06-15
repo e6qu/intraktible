@@ -8,6 +8,8 @@ import {
   createFlow,
   decide,
   publishVersion,
+  exportFlow,
+  exportDecision,
   listCases,
   getCaseSummary,
   requestReview,
@@ -35,6 +37,35 @@ function fetcherReturning(status: number, body: unknown) {
       jsonResponse(status, body)
   );
 }
+
+function textFetcher(status: number, body: string) {
+  return vi.fn(
+    async (_input: RequestInfo | URL, _init?: RequestInit): Promise<Response> =>
+      new Response(body, { status, headers: { 'Content-Type': 'text/plain' } })
+  );
+}
+
+describe('export', () => {
+  it('exportFlow requests the format and returns the raw diagram text', async () => {
+    const fetcher = textFetcher(200, 'flowchart TD\n');
+    const out = await exportFlow('k', 'f1', 'bpmn', fetcher);
+    expect(out).toBe('flowchart TD\n');
+    const [url, init] = fetcher.mock.calls[0];
+    expect(url).toBe('/v1/flows/f1/export?format=bpmn');
+    expect(init?.headers).toMatchObject({ 'X-Api-Key': 'k' });
+  });
+
+  it('exportDecision fetches the decision trace', async () => {
+    const fetcher = textFetcher(200, 'sequenceDiagram\n');
+    const out = await exportDecision('k', 'd9', fetcher);
+    expect(out).toBe('sequenceDiagram\n');
+    expect(fetcher.mock.calls[0][0]).toBe('/v1/decisions/d9/export');
+  });
+
+  it('throws loudly on a non-2xx export', async () => {
+    await expect(exportFlow('k', 'f1', 'mermaid', textFetcher(404, ''))).rejects.toThrow(/404/);
+  });
+});
 
 describe('getStats', () => {
   it('sends the api key and parses the stats body', async () => {
