@@ -4,13 +4,12 @@
 # Postgres profile (future durable projection store): `docker compose --profile pg up`.
 #
 # The same image runs every module; `serve --modules=<name>` selects which one.
-# NOTE on the split profile: each service below uses its own data volume, so it has
-# an independent event log. A module runs fully standalone that way, but the
-# cross-component flows that travel through the shared log — escalation
-# (manual_review → Case Manager), and the Rule/Connect/AI nodes that read another
-# layer — need a *shared* log backend, which the single-process file WAL is not
-# (tracked in BUGS as D18). Until that lands, treat the split profile as the deploy
-# topology; run the monolith for the full cross-component experience.
+# Split profile: every module service shares ONE data volume and runs with
+# `--log=sqlite --store=sqlite`, so all processes append to and read from a single
+# ordered event log (and a single projection store) — the cross-component flows
+# that travel through the log (escalation manual_review → Case Manager, and the
+# Rule/Connect/AI nodes that read another layer) work across processes. The shared
+# SQLite log replaces the single-process file WAL for this topology (D18).
 services:
   intraktible:
     build:
@@ -21,30 +20,31 @@ services:
     volumes: ["itk-data:/data"]
 
   # --- split profile: one service per module (same image, different --modules) ---
+  # All split services share itk-split:/data so the sqlite log + store are shared.
   decision-engine:
     image: intraktible:dev
     profiles: ["split"]
-    command: ["--modules=decision-engine"]
+    command: ["--modules=decision-engine", "--log=sqlite", "--store=sqlite"]
     ports: ["8081:8080"]
-    volumes: ["de-data:/data"]
+    volumes: ["itk-split:/data"]
   case-manager:
     image: intraktible:dev
     profiles: ["split"]
-    command: ["--modules=case-manager"]
+    command: ["--modules=case-manager", "--log=sqlite", "--store=sqlite"]
     ports: ["8082:8080"]
-    volumes: ["cm-data:/data"]
+    volumes: ["itk-split:/data"]
   context-layer:
     image: intraktible:dev
     profiles: ["split"]
-    command: ["--modules=context-layer"]
+    command: ["--modules=context-layer", "--log=sqlite", "--store=sqlite"]
     ports: ["8083:8080"]
-    volumes: ["cl-data:/data"]
+    volumes: ["itk-split:/data"]
   agent-manager:
     image: intraktible:dev
     profiles: ["split"]
-    command: ["--modules=agent-manager"]
+    command: ["--modules=agent-manager", "--log=sqlite", "--store=sqlite"]
     ports: ["8084:8080"]
-    volumes: ["am-data:/data"]
+    volumes: ["itk-split:/data"]
 
   postgres:
     image: postgres:17-alpine   # PostgreSQL License (AGPL-compatible)
@@ -57,8 +57,5 @@ services:
 
 volumes:
   itk-data: {}
-  de-data: {}
-  cm-data: {}
-  cl-data: {}
-  am-data: {}
+  itk-split: {}
   pg-data: {}

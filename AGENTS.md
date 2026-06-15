@@ -58,8 +58,10 @@ agents (with a run-summary banner) and, per agent, runs it, shows the run log, a
 Run it: `go run ./cmd/intraktible serve` then open http://localhost:8080 (dev key `dev-sandbox-key`);
 for UI dev use `make dev` (Vite + Go API). Phase 1 deferrals (CEL, builder UI polish, …) and other
 limitations are tracked in [BUGS.md](BUGS.md).
-All five phases are built; further work is the post-MVP backlog in [BUGS.md](BUGS.md) (durable stores, a
-shared log backend for true split-services, real AI providers, …).
+All five phases are built; further work is the post-MVP backlog in [BUGS.md](BUGS.md). Durable stores
+(SQLite), a shared SQLite event log for the split-services profile (`--log=sqlite`), real OpenAI-compatible
+AI providers, and agent tool-calling have since landed; remaining items (a Postgres adapter, async agent
+runs, builder UI polish) stay tracked there.
 
 ## The design in one breath
 Go backend (**functional core / imperative shell**) + **SvelteKit + Svelte Flow** UI embedded in the

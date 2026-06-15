@@ -85,15 +85,16 @@ func serveCmd(args []string) error {
 	modules := fs.String("modules", "all", "comma-separated modules (or 'all')")
 	devKey := fs.String("dev-api-key", "dev-sandbox-key", "seed a sandbox API key for local dev (empty to disable)")
 	storeKind := fs.String("store", "memory", "projection store: memory | sqlite (sqlite persists to <data-dir>/projections.db)")
+	logKind := fs.String("log", "file", "event log: file (single-process WAL) | sqlite (shared across processes, for the split profile)")
 	_ = fs.Parse(args)
-	return run(*addr, *dataDir, *modules, *devKey, *storeKind)
+	return run(*addr, *dataDir, *modules, *devKey, *storeKind, *logKind)
 }
 
-func run(addr, dataDir, modules, devKey, storeKind string) error {
+func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	log, err := eventlog.OpenWAL(dataDir)
+	log, err := openLog(logKind, dataDir)
 	if err != nil {
 		return err
 	}
@@ -224,6 +225,20 @@ func openStore(kind, dataDir string) (store.Store, error) {
 		return store.NewSQLite(filepath.Join(dataDir, "projections.db"))
 	default:
 		return nil, fmt.Errorf("unknown --store %q (memory|sqlite)", kind)
+	}
+}
+
+// openLog selects the event-log backend. The file WAL is single-process; the
+// shared SQLite log lets the split-services profile (one process per module) all
+// append to and read from one ordered log.
+func openLog(kind, dataDir string) (eventlog.Log, error) {
+	switch kind {
+	case "", "file":
+		return eventlog.OpenWAL(dataDir)
+	case "sqlite":
+		return eventlog.OpenSQLiteLog(dataDir, eventlog.DefaultPollInterval)
+	default:
+		return nil, fmt.Errorf("unknown --log %q (file|sqlite)", kind)
 	}
 }
 
