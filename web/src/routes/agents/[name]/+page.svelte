@@ -2,6 +2,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { page } from '$app/stores';
+  import Icon from '$lib/Icon.svelte';
   import {
     getAgent,
     runAgent,
@@ -56,6 +57,58 @@
     }
   }
 
+  // --- streaming run (configurable transport: SSE or WebSocket) ---
+  let transport = $state<'sse' | 'ws'>('sse');
+  let streamPrompt = $state('');
+  let streamText = $state('');
+  let streaming = $state(false);
+
+  function streamSSE() {
+    streamText = '';
+    streaming = true;
+    const es = new EventSource(
+      `/v1/agents/${name}/run/stream?prompt=${encodeURIComponent(streamPrompt)}`
+    );
+    es.addEventListener('chunk', (e) => {
+      streamText += (JSON.parse((e as MessageEvent).data) as { text: string }).text;
+    });
+    es.addEventListener('done', () => {
+      streaming = false;
+      es.close();
+      void load();
+    });
+    es.onerror = () => {
+      streaming = false;
+      es.close();
+    };
+  }
+
+  function streamWS() {
+    streamText = '';
+    streaming = true;
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    const ws = new WebSocket(`${proto}://${location.host}/v1/agents/${name}/run/ws`);
+    ws.onopen = () => ws.send(JSON.stringify({ prompt: streamPrompt }));
+    ws.onmessage = (e) => {
+      const m = JSON.parse(e.data) as { type: string; text?: string };
+      if (m.type === 'chunk') streamText += m.text ?? '';
+      if (m.type === 'done' || m.type === 'error') {
+        streaming = false;
+        ws.close();
+        void load();
+      }
+    };
+    ws.onerror = () => {
+      streaming = false;
+    };
+  }
+
+  function runStream() {
+    if (!agent || streaming) return;
+    if (transport === 'ws') streamWS();
+    else streamSSE();
+  }
+
   onMount(load);
 </script>
 
@@ -86,6 +139,22 @@
       <button onclick={run} disabled={!agent}>Run</button>
     </div>
     {#if lastRunID}<p class="muted">Last run: <code>{lastRunID}</code></p>{/if}
+  </section>
+
+  <section class="actions">
+    <h2>Stream a run</h2>
+    <div class="row">
+      <input bind:value={streamPrompt} placeholder="prompt" aria-label="stream prompt" />
+      <select bind:value={transport} aria-label="transport">
+        <option value="sse">SSE</option>
+        <option value="ws">WebSocket</option>
+      </select>
+      <button class="primary" onclick={runStream} disabled={!agent || streaming}>
+        <Icon name="play" size={14} />
+        {streaming ? 'Streaming…' : 'Stream'}
+      </button>
+    </div>
+    {#if streamText || streaming}<pre data-testid="stream-output">{streamText}</pre>{/if}
   </section>
 
   {#if agent}

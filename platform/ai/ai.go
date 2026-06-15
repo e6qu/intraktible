@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // Request is a single completion. When Schema is set, providers must return
@@ -66,6 +67,23 @@ type Provider interface {
 	Complete(ctx context.Context, req Request) (Response, error)
 }
 
+// Chunk is one streamed delta of a completion's text.
+type Chunk struct {
+	Text string `json:"text"`
+}
+
+// StreamHandler receives streamed deltas as they arrive.
+type StreamHandler func(Chunk)
+
+// StreamingProvider streams a completion token-by-token, invoking onChunk for
+// each delta, and returns the final aggregated Response so the run is still
+// recorded in full. A provider that does not implement this is used
+// non-streaming (the caller emits the final text as a single chunk).
+type StreamingProvider interface {
+	Provider
+	Stream(ctx context.Context, req Request, onChunk StreamHandler) (Response, error)
+}
+
 // Registry holds the available providers and the default selection.
 type Registry struct {
 	providers map[string]Provider
@@ -110,4 +128,23 @@ func (Stub) Complete(_ context.Context, req Request) (Response, error) {
 		return Response{Structured: json.RawMessage(`{}`), Model: "stub"}, nil
 	}
 	return Response{Text: "stub: " + req.Prompt, Model: "stub"}, nil
+}
+
+// Stream streams the canned text word-by-word, so the streaming path is testable
+// without a network. A structured request is not token-streamed — the whole
+// object is the final Response (no chunks).
+func (s Stub) Stream(_ context.Context, req Request, onChunk StreamHandler) (Response, error) {
+	if len(req.Schema) > 0 {
+		return Response{Structured: json.RawMessage(`{}`), Model: "stub"}, nil
+	}
+	var b strings.Builder
+	for i, word := range strings.Fields("stub: " + req.Prompt) {
+		delta := word
+		if i > 0 {
+			delta = " " + word
+		}
+		onChunk(Chunk{Text: delta})
+		b.WriteString(delta)
+	}
+	return Response{Text: b.String(), Model: "stub"}, nil
 }

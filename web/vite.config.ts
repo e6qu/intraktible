@@ -5,5 +5,11 @@ import { defineConfig } from 'vite';
 // Dev proxies the API to the Go server; prod is embedded in the binary.
 export default defineConfig({
   plugins: [sveltekit()],
-  server: { proxy: { '/v1': 'http://localhost:8080', '/healthz': 'http://localhost:8080' } }
+  // ws:true proxies the streaming WebSocket endpoint to the Go server in dev.
+  server: {
+    proxy: {
+      '/v1': { target: 'http://localhost:8080', ws: true },
+      '/healthz': 'http://localhost:8080'
+    }
+  }
 });

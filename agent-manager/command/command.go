@@ -118,6 +118,27 @@ func (h *Handler) RunAgent(ctx context.Context, id identity.Identity, agent, pro
 	return RunResult{RunID: runID, Status: out.Status, Text: out.Text, Structured: out.Structured, Error: out.Error}, nil
 }
 
+// StreamRun runs the named agent, streaming text deltas to onChunk as they
+// arrive, and records the terminal run (the full text) like RunAgent — so a
+// streamed run is just as auditable and replay reads the recorded output.
+func (h *Handler) StreamRun(ctx context.Context, id identity.Identity, agent, prompt string, onChunk ai.StreamHandler) (RunResult, error) {
+	if err := id.Valid(); err != nil {
+		return RunResult{}, err
+	}
+	out, err := agents.InvokeStream(ctx, h.store, h.reg, h.tools, id, agent, prompt, onChunk)
+	if err != nil {
+		return RunResult{}, err
+	}
+	runID := h.newID()
+	if _, err := h.append(ctx, id, events.TypeAgentRunRecorded, events.AgentRunRecorded{
+		RunID: runID, Agent: agent, Model: out.Model, Prompt: prompt,
+		Status: out.Status, Text: out.Text, Structured: out.Structured, ToolCalls: out.ToolCalls, Error: out.Error, At: h.now(),
+	}); err != nil {
+		return RunResult{}, err
+	}
+	return RunResult{RunID: runID, Status: out.Status, Text: out.Text, Structured: out.Structured, Error: out.Error}, nil
+}
+
 // StartRun accepts an agent run for asynchronous execution: it records an
 // AgentRunStarted (status "running") and queues the work, returning the run id
 // immediately. A worker later invokes the provider and records the terminal

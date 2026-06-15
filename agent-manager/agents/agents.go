@@ -278,6 +278,52 @@ func InvokeWithTools(ctx context.Context, s store.Store, reg *ai.Registry, tb To
 	return out, nil
 }
 
+// InvokeStream runs the named agent, streaming text deltas to onChunk when the
+// provider supports streaming and the agent declares no tools; otherwise it runs
+// the normal (tool-calling) path and emits the final text as a single chunk, so
+// callers get a uniform streaming interface. The Outcome is recorded by the caller.
+func InvokeStream(ctx context.Context, s store.Store, reg *ai.Registry, tb Toolbox, id identity.Identity, agent, prompt string, onChunk ai.StreamHandler) (Outcome, error) {
+	def, ok, err := Read(ctx, s, id, agent)
+	if err != nil {
+		return Outcome{}, err
+	}
+	if !ok {
+		return Outcome{}, fmt.Errorf("agent-manager: unknown agent %q", agent)
+	}
+	p, err := reg.Get(def.Provider)
+	if err != nil {
+		return Outcome{}, err
+	}
+	sp, streamable := p.(ai.StreamingProvider)
+	if !streamable || len(def.Tools) > 0 {
+		// Tools or a non-streaming provider: run fully, then emit the text once.
+		out, ierr := InvokeWithTools(ctx, s, reg, tb, id, agent, prompt)
+		if ierr != nil {
+			return Outcome{}, ierr
+		}
+		if out.Text != "" && onChunk != nil {
+			onChunk(ai.Chunk{Text: out.Text})
+		}
+		return out, nil
+	}
+
+	out := Outcome{Model: def.Model, Status: domainRunCompleted}
+	resp, perr := sp.Stream(ctx, ai.Request{Model: def.Model, System: def.System, Prompt: prompt, Schema: def.Schema}, onChunk)
+	switch {
+	case perr != nil:
+		out.Status, out.Error = domainRunFailed, perr.Error()
+	default:
+		if resp.Model != "" {
+			out.Model = resp.Model
+		}
+		out.Text, out.Structured = resp.Text, resp.Structured
+		if verr := validateStructured(def.Schema, resp.Structured); verr != nil {
+			out.Status, out.Error, out.Text, out.Structured = domainRunFailed, verr.Error(), "", nil
+		}
+	}
+	return out, nil
+}
+
 // resolveTools maps an agent's declared tool names to provider tool specs via the
 // Toolbox, erroring if a declared tool is unknown. No declared tools (or no
 // Toolbox) yields no tools — a plain completion.

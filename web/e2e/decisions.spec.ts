@@ -55,7 +55,7 @@ test('a decision run shows in the history and its detail has the node trace', as
 
   // The detail page shows the node trace.
   await page.goto(`/decisions/${decisionId}`);
-  await expect(page.getByRole('heading', { name: new RegExp(slug) })).toBeVisible();
+  await expect(page.getByRole('heading', { name: slug })).toBeVisible();
   await expect(page.locator('ol.trace')).toContainText('assignment');
   await expect(page.getByRole('button', { name: 'Sequence', exact: true })).toBeVisible();
 });

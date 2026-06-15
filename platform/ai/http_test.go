@@ -167,6 +167,42 @@ func TestHTTPProviderToolResultRoundTrip(t *testing.T) {
 	}
 }
 
+func TestHTTPProviderStream(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var req map[string]any
+		_ = json.Unmarshal(body, &req)
+		if req["stream"] != true {
+			t.Errorf("expected stream=true, got %v", req["stream"])
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		for _, frame := range []string{
+			`{"choices":[{"delta":{"content":"Hel"}}],"model":"gpt-test"}`,
+			`{"choices":[{"delta":{"content":"lo"}}]}`,
+			`{"choices":[{"delta":{"content":" world"}}]}`,
+			"[DONE]",
+		} {
+			_, _ = w.Write([]byte("data: " + frame + "\n\n"))
+		}
+	}))
+	defer srv.Close()
+
+	p := ai.NewHTTP("openai", srv.URL, "sk-test", "gpt-test")
+	var got []string
+	resp, err := p.Stream(context.Background(), ai.Request{Prompt: "hi"}, func(c ai.Chunk) {
+		got = append(got, c.Text)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got, "|") != "Hel|lo| world" {
+		t.Fatalf("chunks = %v", got)
+	}
+	if resp.Text != "Hello world" {
+		t.Fatalf("aggregated text = %q", resp.Text)
+	}
+}
+
 // The provider plugs into the registry like any other.
 func TestHTTPProviderInRegistry(t *testing.T) {
 	r := ai.NewRegistry()

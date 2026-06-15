@@ -35,6 +35,8 @@ func (s *Service) Routes(mux *http.ServeMux) {
 		{Method: "GET", Pattern: "/v1/agents", Handler: s.listAgents},
 		{Method: "GET", Pattern: "/v1/agents/{name}", Handler: s.getAgent},
 		{Method: "POST", Pattern: "/v1/agents/{name}/run", Handler: s.runAgent},
+		{Method: "GET", Pattern: "/v1/agents/{name}/run/stream", Handler: s.runStreamSSE},
+		{Method: "GET", Pattern: "/v1/agents/{name}/run/ws", Handler: s.runStreamWS},
 		{Method: "GET", Pattern: "/v1/agents/{name}/runs", Handler: s.listAgentRuns},
 		{Method: "POST", Pattern: "/v1/agents/{name}/runs/{run_id}/escalate", Handler: s.escalateRun},
 		{Method: "GET", Pattern: "/v1/agent-runs", Handler: s.listRuns},

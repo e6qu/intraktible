@@ -3,12 +3,14 @@
 package ai
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -69,6 +71,17 @@ type chatRequest struct {
 	Messages       []chatMessage `json:"messages"`
 	Tools          []chatTool    `json:"tools,omitempty"`
 	ResponseFormat *responseFmt  `json:"response_format,omitempty"`
+	Stream         bool          `json:"stream,omitempty"`
+}
+
+// chatStreamChunk is one SSE delta frame from the streaming Chat Completions API.
+type chatStreamChunk struct {
+	Choices []struct {
+		Delta struct {
+			Content string `json:"content"`
+		} `json:"delta"`
+	} `json:"choices"`
+	Model string `json:"model"`
 }
 
 type responseFmt struct {
@@ -205,6 +218,82 @@ func (h HTTP) Complete(ctx context.Context, req Request) (Response, error) {
 		out.Structured = json.RawMessage(content)
 	} else {
 		out.Text = content
+	}
+	return out, nil
+}
+
+// Stream sends a streaming Chat Completion (`stream: true`) and parses the SSE
+// frames, invoking onChunk for each text delta and returning the aggregated
+// Response. A structured request is aggregated then validated as JSON.
+func (h HTTP) Stream(ctx context.Context, req Request, onChunk StreamHandler) (Response, error) {
+	model := req.Model
+	if model == "" {
+		model = h.model
+	}
+	cr := chatRequest{Model: model, Messages: buildMessages(req), Tools: buildTools(req.Tools), Stream: true}
+	if len(req.Schema) > 0 {
+		cr.ResponseFormat = &responseFmt{Type: "json_object"}
+	}
+	body, err := json.Marshal(cr)
+	if err != nil {
+		return Response{}, fmt.Errorf("ai: marshal request: %w", err)
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, h.baseURL+"/chat/completions", bytes.NewReader(body)) // #nosec G107 -- operator-configured provider endpoint
+	if err != nil {
+		return Response{}, fmt.Errorf("ai: build request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "text/event-stream")
+	if h.apiKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+h.apiKey)
+	}
+	resp, err := h.client.Do(httpReq)
+	if err != nil {
+		return Response{}, fmt.Errorf("ai: call %s: %w", h.name, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return Response{}, fmt.Errorf("ai: provider status %d", resp.StatusCode)
+	}
+
+	var b strings.Builder
+	sc := bufio.NewScanner(resp.Body)
+	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		data, ok := strings.CutPrefix(line, "data:")
+		if !ok {
+			continue // ignore comments/blank lines and non-data SSE fields
+		}
+		data = strings.TrimSpace(data)
+		if data == "[DONE]" {
+			break
+		}
+		var chunk chatStreamChunk
+		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			return Response{}, fmt.Errorf("ai: decode stream chunk: %w", err)
+		}
+		if chunk.Model != "" {
+			model = chunk.Model
+		}
+		for _, ch := range chunk.Choices {
+			if ch.Delta.Content != "" {
+				onChunk(Chunk{Text: ch.Delta.Content})
+				b.WriteString(ch.Delta.Content)
+			}
+		}
+	}
+	if err := sc.Err(); err != nil {
+		return Response{}, fmt.Errorf("ai: read stream: %w", err)
+	}
+	out := Response{Model: model}
+	if len(req.Schema) > 0 {
+		if !json.Valid([]byte(b.String())) {
+			return Response{}, fmt.Errorf("ai: structured stream but reply was not JSON")
+		}
+		out.Structured = json.RawMessage(b.String())
+	} else {
+		out.Text = b.String()
 	}
 	return out, nil
 }

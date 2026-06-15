@@ -36,9 +36,9 @@ test('runs an agent and escalates the run to a case', async ({ page, request }) 
   expect(created.ok()).toBeTruthy();
 
   await page.goto(`/agents/${name}`);
-  await expect(page.getByLabel('prompt')).toBeVisible();
+  await expect(page.getByLabel('prompt', { exact: true })).toBeVisible();
 
-  await page.getByLabel('prompt').fill('is this suspicious?');
+  await page.getByLabel('prompt', { exact: true }).fill('is this suspicious?');
   await page.getByRole('button', { name: 'Run', exact: true }).click();
 
   // The run appears in the log (the stub echoes the prompt) and run count updates.
@@ -54,4 +54,22 @@ test('runs an agent and escalates the run to a case', async ({ page, request }) 
     .first()
     .click();
   await expect(page.locator('p.err')).toHaveCount(0);
+});
+
+test('streams an agent run over SSE in the browser', async ({ page, request }) => {
+  const name = uniqueName();
+  await request.post('/v1/agents', { headers: { 'X-Api-Key': KEY }, data: { name } });
+  // Wait for the projection so the detail page loads the agent (Stream enabled).
+  await expect(async () => {
+    const r = await request.get(`/v1/agents/${name}`, { headers: { 'X-Api-Key': KEY } });
+    expect(r.ok()).toBeTruthy();
+  }).toPass({ timeout: 5000 });
+
+  await page.goto(`/agents/${name}`);
+  await page.getByLabel('stream prompt').fill('hello there');
+  await page.getByLabel('transport').selectOption('sse');
+  await page.getByRole('button', { name: 'Stream', exact: true }).click();
+
+  // The output accumulates the streamed deltas (the stub echoes the prompt).
+  await expect(page.getByTestId('stream-output')).toContainText('stub: hello there');
 });

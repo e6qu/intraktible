@@ -34,10 +34,18 @@ Done — agent definitions + runs (command→event→projection→API, durable &
   the provider and records the terminal `AgentRunRecorded` (poll the run for the outcome). In-flight
   runs finish on graceful shutdown, and a run left `running` by a crash is re-enqueued at boot
   (`RecoverRunning` folds the log). The synchronous path is unchanged.
+- **Streaming runs** (token-by-token, configurable transport): the provider boundary gained a
+  `StreamingProvider` (Stub chunks word-by-word; the HTTP provider parses OpenAI SSE deltas), and
+  `StreamRun` streams deltas while still recording the terminal run. Two transports: **SSE**
+  (`GET /v1/agents/{name}/run/stream?prompt=`) and **WebSocket** (`GET /v1/agents/{name}/run/ws`,
+  send a `{prompt}` message → `{type:"chunk"}`… `{type:"done"}`). The builder's agent page lets you
+  pick the transport. A tool-using or non-streaming agent runs normally and emits its text as one
+  chunk, so the interface is uniform.
 - HTTP (under `/v1/`, X-Api-Key / session auth, org+workspace scoped):
   - `POST /v1/agents` — define `{name, provider?, model?, system?, schema?, tools?}`
   - `GET /v1/agents` · `GET /v1/agents/{name}` — the agent registry
   - `POST /v1/agents/{name}/run` — run `{prompt, async?}` → sync `{run_id, status, text?, structured?, error?}` or async `202 {run_id, status:"running"}`
+  - `GET /v1/agents/{name}/run/stream` (SSE) · `GET /v1/agents/{name}/run/ws` (WebSocket) — stream a run
   - `GET /v1/agents/{name}/runs` — the agent's run log · `GET /v1/agent-runs/{run_id}` — one run
   - `POST /v1/agents/{name}/runs/{run_id}/escalate` — open a case from a run → `{case_id}`
   - `GET /v1/agent-runs` — all runs · `GET /v1/agent-runs/summary` — run monitoring roll-up
@@ -58,5 +66,5 @@ layer.
 
 A schema-constrained agent's structured output is validated against its schema (a mismatch is a
 recorded failed run). A real OpenAI-compatible HTTP provider exists (`ai.NewHTTP`, configured via
-`INTRAKTIBLE_AI_*` env vars); the Stub is the default fallback. Runs can be synchronous or async
-(D17); token-level **streaming** of a run's output is not implemented.
+`INTRAKTIBLE_AI_*` env vars); the Stub is the default fallback. Runs can be **synchronous**, **async**
+(queued), or **streamed** token-by-token over SSE or WebSocket.

@@ -30,6 +30,24 @@ func TestStubComplete(t *testing.T) {
 	}
 }
 
+func TestStubStream(t *testing.T) {
+	var sp ai.StreamingProvider = ai.Stub{}
+	var chunks []string
+	resp, err := sp.Stream(context.Background(), ai.Request{Prompt: "hello world"}, func(c ai.Chunk) {
+		chunks = append(chunks, c.Text)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Word-by-word, concatenating to the same text Complete would return.
+	if len(chunks) != 3 {
+		t.Fatalf("chunks = %v, want 3", chunks)
+	}
+	if resp.Text != "stub: hello world" {
+		t.Fatalf("aggregated = %q", resp.Text)
+	}
+}
+
 func TestRegistry(t *testing.T) {
 	r := ai.NewRegistry()
 	if _, err := r.Get(""); err == nil {
