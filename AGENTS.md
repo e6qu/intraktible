@@ -10,7 +10,7 @@ reimplementation of a commercial Agentic Decision Platform.
 4. Research basis (why the design looks like this): `../specs/openapi-current.yaml`, `../ENDPOINTS.md`, `../docs/`. (That parent tree is research only — **do not** mix it into this repo.)
 
 ## Status
-**Phase 0 (shared core), Phase 1 (Decision Engine), and Phase 2 (Case Manager) DONE. Phase 3 (Context Layer) NEXT.**
+**Phase 0 (shared core), Phase 1 (Decision Engine), and Phase 2 (Case Manager) DONE. Phase 3 (Context Layer) IN PROGRESS.**
 Roadmap & exit criteria: [PLAN.md §8](PLAN.md#8-phased-roadmap); deferrals tracked in [BUGS.md](BUGS.md).
 Working today: `platform/{eventlog,store,projection,identity,auth,httpx,ai,web}` + the `hello`
 slice; and the **Decision Engine** — flow model + versioning, a deterministic execution runtime
@@ -28,6 +28,10 @@ tracking** (days-left + on_track/due_soon/overdue computed at the read boundary 
 stays clock-free) and a **queue summary** roll-up (`GET /v1/cases/summary`); its **dashboard UI**
 (`web/src/routes/cases`) has the queue (filters + summary banner + per-row days-left) and a
 case-detail view with those actions.
+The **Context Layer** (`context-layer/`) records **custom entities** (dynamic JSONB, keyed by
+type+id, re-records patch via top-level attribute merge) and **custom events** about them (per-entity
+event log + an event count; an event auto-creates a shell entity; `occurred_at` is a recorded effect)
+— the raw signals a feature engine will later aggregate; all command→event→projection→API.
 Run it: `go run ./cmd/intraktible serve` then open http://localhost:8080 (dev key `dev-sandbox-key`);
 for UI dev use `make dev` (Vite + Go API). Phase 1 deferrals (CEL, builder UI polish, …) and other
 limitations are tracked in [BUGS.md](BUGS.md).

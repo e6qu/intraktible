@@ -27,6 +27,18 @@ type API struct {
 	Identity identity.Identity
 }
 
+// NewLogStore opens a per-test WAL (closed on cleanup) and a fresh in-memory
+// store — the common backing pair for a module's e2e harness.
+func NewLogStore(t *testing.T) (eventlog.Log, store.Store) {
+	t.Helper()
+	log, err := eventlog.OpenWAL(t.TempDir())
+	if err != nil {
+		t.Fatalf("testutil: open WAL: %v", err)
+	}
+	t.Cleanup(func() { _ = log.Close() })
+	return log, store.NewMemory()
+}
+
 // StartAPI assembles the same handler chain as cmd/intraktible (auth-gated /v1,
 // recover/request-id/logger middleware) over a real httptest server, with the
 // given module routes and projections wired to log/st. It seeds an API key

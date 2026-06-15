@@ -9,20 +9,13 @@ import (
 	"github.com/e6qu/intraktible/case-manager/cases"
 	"github.com/e6qu/intraktible/case-manager/command"
 	"github.com/e6qu/intraktible/case-manager/service"
-	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/identity"
-	"github.com/e6qu/intraktible/platform/store"
 	"github.com/e6qu/intraktible/platform/testutil"
 )
 
 func start(t *testing.T) *testutil.API {
 	t.Helper()
-	log, err := eventlog.OpenWAL(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = log.Close() })
-	st := store.NewMemory()
+	log, st := testutil.NewLogStore(t)
 	svc := service.New(command.NewHandler(log), st)
 	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "adam"}
 	return testutil.StartAPI(t, log, st, "test-key", id, svc.Routes, cases.Projector{})

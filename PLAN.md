@@ -228,8 +228,14 @@ intraktible/
   (unit/integration/API-e2e/Playwright); all CI gates green. **Deferred from Phase 2** (in `BUGS.md`):
   no SLA-breach events/alerts — overdue is derived on read (D12); no rich/schema-aware context view in
   case detail (D13).
-- **Phase 3 — Context Layer:** entities/events/features + feature engine, connector interface +
-  reference connectors + Custom Connect Node, wired into Rule/Connect nodes.
+- **Phase 3 — Context Layer — 🚧 IN PROGRESS.** Done: **custom entities** (dynamic JSONB keyed by
+  type+id; re-recording patches via a pure top-level attribute merge) and **custom events** about an
+  entity (per-entity event log + a running event count; an event auto-creates a shell entity;
+  `occurred_at` is a recorded effect for replay stability) — command→event→projection→API
+  (`/v1/context/entities`, `…/{type}/{id}[/events]`, `/v1/context/events`), module `context-layer`.
+  Remaining: the **feature engine** (windowed counts/sums over the event stream, consumed by Rule
+  nodes); **connectors** (a `Connect` interface + reference connectors + the Custom Connect Node,
+  results recorded as events) wired into Rule/Connect nodes.
 - **Phase 4 — Agent Manager:** agent config + AI-node execution, structured output, run monitoring,
   human-in-the-loop → Case Manager.
 - **Phase 5 — Harden:** replay/rollback tooling, split-services profile, docs, examples.

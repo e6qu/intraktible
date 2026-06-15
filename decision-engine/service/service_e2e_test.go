@@ -13,20 +13,13 @@ import (
 	"github.com/e6qu/intraktible/decision-engine/history"
 	"github.com/e6qu/intraktible/decision-engine/internal/flowtest"
 	"github.com/e6qu/intraktible/decision-engine/service"
-	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/identity"
-	"github.com/e6qu/intraktible/platform/store"
 	"github.com/e6qu/intraktible/platform/testutil"
 )
 
 func startEngine(t *testing.T) *testutil.API {
 	t.Helper()
-	log, err := eventlog.OpenWAL(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = log.Close() })
-	st := store.NewMemory()
+	log, st := testutil.NewLogStore(t)
 	svc := service.New(command.NewHandler(log), command.NewDecideHandler(log, st), st)
 	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "author"}
 	return testutil.StartAPI(t, log, st, "test-key", id, svc.Routes, flows.Projector{}, history.Projector{}, analytics.Projector{})
