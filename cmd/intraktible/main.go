@@ -144,11 +144,18 @@ func run(addr, dataDir, modules, devKey string) error {
 		agentservice.New(agentcmd.NewHandler(log, st, aiRegistry), st).Routes(api)
 	}
 
+	// Authenticated caller introspection (inside the /v1 auth chain).
+	api.HandleFunc("GET /v1/me", httpx.MeHandler())
+
 	rt := projection.New(log, st, moduleProjectors(modules)...)
 	if err := rt.Start(ctx); err != nil {
 		return fmt.Errorf("projection start: %w", err)
 	}
 
+	// Public auth endpoints — exchange an API key for a session cookie (and clear
+	// it). Registered on root with exact patterns so they win over the /v1/ chain.
+	root.HandleFunc("POST /v1/login", httpx.LoginHandler(keyring, sessions))
+	root.HandleFunc("POST /v1/logout", httpx.LogoutHandler(sessions))
 	root.Handle("/v1/", httpx.Chain(api, httpx.Authenticate(keyring, sessions)))
 	handler := httpx.Chain(root, httpx.Recover, httpx.RequestID, httpx.Logger)
 
