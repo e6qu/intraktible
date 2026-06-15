@@ -7,9 +7,7 @@ Format: `ID | severity | component | description | status`.
 - `D1 | low | eventlog | WAL holds all events in memory and re-reads the whole file on open; fine for MVP, revisit with segments/Badger | open`
 
 ## Open (deferred / limitations after Phase 1)
-- `D9 | low | decision-engine | CEL conditions not implemented; expr-lang serves Rule/Split conditions + Assignment and Starlark serves the Code node, so conditions work — CEL is an optional alternative engine | deferred`
 - `D10 | low | web | partly done: structured config panels now cover the flat-config node types (split, connect, ai, manual_review, output); the complex types (rule, scorecard, decision_table, 2d_matrix, assignment, code) still use the raw-JSON textarea, and the canvas still has no drag-to-connect (edges are added via the from/to form) | deferred`
-- `D11 | low | decision-engine | each decide appends one event per node (started + N node-evaluated + completed/failed); fine for MVP, could batch for high-volume flows | deferred`
 
 ## Open (deferred / limitations after Phase 2)
 - `D12 | low | case-manager | SLA days-left and SLA state are computed at read time from created_at + sla_days against the wall clock; the stored projection stays clock-free (replay-stable). No SLA-breach events/alerts are emitted — overdue is derived on read, not pushed | deferred`
@@ -28,6 +26,10 @@ Format: `ID | severity | component | description | status`.
 - `D21 | low | store | only the SQLite durable adapter exists (plus in-memory); a Postgres store.Store adapter (pgx) is not implemented yet — useful for large/shared projections. On a restart the SQLite store is still fully rebuilt from the log rather than resumed incrementally from Head (correct but not optimized) | open`
 - `D20 | low | auth | sessions are still in-memory (lost on restart) and the builder UI still sends X-Api-Key per request rather than using the new POST /v1/login cookie flow; durable session storage + UI adoption (a login page) are follow-ups | open`
 - `D18 | med | eventlog | the file WAL is single-process (each process holds its own in-memory copy + appends locally). The split-services compose profile therefore gives each module an independent log; full cross-component split (escalation, Rule/Connect/AI nodes reading another layer) needs a shared/networked log backend (Badger/Postgres/gRPC) behind the existing Log interface. The monolith profile is unaffected | open`
+
+## Closed by decision (won't implement)
+- `D9 | decision-engine | CEL conditions — won't implement. expr-lang already serves Rule/Split conditions + Assignment, and Starlark serves the Code node, so conditions/expressions are fully covered. A second expression engine (cel-go) would add a dependency and parallel semantics for no new capability. Revisit only if a concrete need for CEL specifically arises.`
+- `D11 | decision-engine | batching the per-node decision events — won't implement. The per-node DecisionStarted → NodeEvaluated… → Completed/Failed stream IS the replayable, node-by-node decision history (PLAN §3.3); batching would trade that granularity for throughput the MVP does not need. A future high-volume optimization, not a bug.`
 
 ## Fixed
 - `D17 (partial) | agent-manager | a schema-constrained agent's structured output is now validated against the agent's schema (shared platform/schema.ValidateObject, the same JSON-Schema subset the decide-input check uses); a mismatch is a recorded failed run (fail loudly). Remaining (async/queued/streaming runs) stays open as D17. | fixed`

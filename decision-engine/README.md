@@ -64,5 +64,5 @@ Done — execution runtime + decide API + decision history (the decision event s
 
 The builder has **structured config panels** for the flat-config node types (split, connect, ai,
 manual_review, output); other types still use a raw-JSON textarea. Deferred (see
-[../BUGS.md](../BUGS.md)): CEL as an alternative condition engine (D9); builder drag-to-connect +
-structured panels for the complex node types (D10).
+[../BUGS.md](../BUGS.md)): builder drag-to-connect + structured panels for the complex node types (D10).
+(CEL as a second condition engine was closed by decision — expr-lang + Starlark already cover it.)
