@@ -5,16 +5,17 @@ A component of **intraktible** (see [../PLAN.md](../PLAN.md) §4.3). New here? S
 Layout (functional core / imperative shell):
 ```
 domain/      # pure types + validation + attribute merge + the feature engine (no I/O)
-events/      # event payloads (EntityRecorded, EventRecorded, FeatureDefined)
+events/      # event payloads (Entity/Event/Feature/Connector Defined/Recorded/Fetched)
 command/     # validate (pure) -> emit events
 entities/    # events -> JSONB read models (entity store + per-entity event log)
 features/    # events -> feature-definition read model + read-time compute (wraps domain.Compute)
+connectors/  # the Connect interface + reference connectors + def/fetch read models
 service/     # HTTP handlers + wiring (imperative shell)
 ```
 
 Status: **in progress (Phase 3).**
 
-Done — custom entities + events + feature engine (command→event→projection→API, durable & replayable):
+Done — custom entities + events + feature engine + connectors (command→event→projection→API, durable & replayable):
 - **Entities** are dynamic-JSONB records keyed by `(entity_type, entity_id)`. Recording the same
   entity again **patches** it: top-level attribute keys merge (latest wins, others retained) via the
   pure `domain.MergeAttributes`. Non-object attributes are rejected loudly.
@@ -32,6 +33,12 @@ Done — custom entities + events + feature engine (command→event→projection
   entity; the **decision engine** consumes it through a port so a decide call carrying an
   `{entity_type, entity_id}` ref gets these folded into its input under `features.*` (read by Rule
   nodes).
+- **Connectors** fetch external data. A definition is `{name, type, config}` for one of the reference
+  types: **http** (calls an operator-configured REST endpoint — the "Custom Connect" case) or
+  **mock_bureau** (a deterministic in-process bureau, derives a stable risk score from the params'
+  `subject`). Invoking a connector is an effect performed by the shell and **recorded as a
+  `ConnectorFetched` event**, so the stored response — never a re-fetch — is what replay/audit reads.
+  The `Connect` interface + a registry make new connector types pluggable.
 - HTTP (under `/v1/`, X-Api-Key / session auth, org+workspace scoped):
   - `POST /v1/context/entities` — record/patch `{entity_type, entity_id, attributes?}`
   - `GET /v1/context/entities?type=` — the entity list, optionally filtered by type
@@ -41,7 +48,12 @@ Done — custom entities + events + feature engine (command→event→projection
   - `POST /v1/context/events` — record `{entity_type, entity_id, event_name, data?, occurred_at?}`
   - `POST /v1/context/features` — define `{name, entity_type, event_name, aggregation, field?, window_hours}`
   - `GET /v1/context/features?type=` — the feature definitions, optionally filtered by type
+  - `POST /v1/context/connectors` — define `{name, type, config?}`
+  - `GET /v1/context/connectors?type=` — the connector definitions, optionally filtered by type
+  - `POST /v1/context/connectors/{name}/fetch` — invoke `{params?}` → `{fetch_id, response}` (recorded)
+  - `GET /v1/context/connectors/{name}/fetches` — the recorded fetch history, newest first
 - Run it: `intraktible serve --modules=context-layer`.
 
-Next (PLAN §4.3): **connectors** — a `Connect` interface + reference connectors (HTTP/REST, SQL, a
-mock bureau) + a Custom Connect Node, with connector results recorded as events.
+Next (PLAN §4.3, to close the phase): a decision-engine **Custom Connect Node** that calls a connector
+during a flow (mirroring the feature provider port/adapter so the engine stays import-free of this
+layer), and a **SQL** reference connector (deferred — see [../BUGS.md](../BUGS.md)).

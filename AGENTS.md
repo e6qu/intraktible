@@ -36,7 +36,10 @@ and runs a **feature engine** — windowed `count`/`sum` aggregates over an enti
 command→event→projection→API. Decisions can carry an `{entity_type, entity_id}` ref so the engine
 folds that entity's features into the input under `features.*` (read by Rule/Split expressions,
 recorded in `DecisionStarted`); the engine reaches the Context Layer through a `FeatureProvider` port
-+ adapter wired at the composition root (so the earlier-built engine never imports it).
++ adapter wired at the composition root (so the earlier-built engine never imports it). It also has a
+**connector** subsystem — a `Connect` interface + reference connectors (an arbitrary-HTTP one and a
+deterministic mock bureau) — where invoking a connector is an effect recorded as a `ConnectorFetched`
+event (so replay reads the stored response, never a re-fetch).
 Run it: `go run ./cmd/intraktible serve` then open http://localhost:8080 (dev key `dev-sandbox-key`);
 for UI dev use `make dev` (Vite + Go API). Phase 1 deferrals (CEL, builder UI polish, …) and other
 limitations are tracked in [BUGS.md](BUGS.md).

@@ -7,6 +7,8 @@ package command
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -28,15 +30,24 @@ func NewHandler(log eventlog.Log) *Handler {
 	return &Handler{log: log, now: func() time.Time { return time.Now().UTC() }}
 }
 
-// RecordEntity upserts a custom entity.
-func (h *Handler) RecordEntity(ctx context.Context, id identity.Identity, cmd domain.RecordEntity) (eventlog.Envelope, error) {
+// validator is implemented by every domain command.
+type validator interface{ Validate() error }
+
+// emit checks the caller and validates the command, then appends the event —
+// the shared validate→append spine of the write side.
+func (h *Handler) emit(ctx context.Context, id identity.Identity, cmd validator, typ string, payload any) (eventlog.Envelope, error) {
 	if err := id.Valid(); err != nil {
 		return eventlog.Envelope{}, err
 	}
 	if err := cmd.Validate(); err != nil {
 		return eventlog.Envelope{}, err
 	}
-	return h.append(ctx, id, events.TypeEntityRecorded, events.EntityRecorded{
+	return h.append(ctx, id, typ, payload)
+}
+
+// RecordEntity upserts a custom entity.
+func (h *Handler) RecordEntity(ctx context.Context, id identity.Identity, cmd domain.RecordEntity) (eventlog.Envelope, error) {
+	return h.emit(ctx, id, cmd, events.TypeEntityRecorded, events.EntityRecorded{
 		EntityType: cmd.EntityType,
 		EntityID:   cmd.EntityID,
 		Attributes: cmd.Attributes,
@@ -46,17 +57,11 @@ func (h *Handler) RecordEntity(ctx context.Context, id identity.Identity, cmd do
 // RecordEvent records a custom event about an entity, filling OccurredAt with the
 // record time when the caller omits it (a recorded effect, replay-stable).
 func (h *Handler) RecordEvent(ctx context.Context, id identity.Identity, cmd domain.RecordEvent) (eventlog.Envelope, error) {
-	if err := id.Valid(); err != nil {
-		return eventlog.Envelope{}, err
-	}
-	if err := cmd.Validate(); err != nil {
-		return eventlog.Envelope{}, err
-	}
 	occurredAt := cmd.OccurredAt
 	if occurredAt.IsZero() {
 		occurredAt = h.now()
 	}
-	return h.append(ctx, id, events.TypeEventRecorded, events.EventRecorded{
+	return h.emit(ctx, id, cmd, events.TypeEventRecorded, events.EventRecorded{
 		EntityType: cmd.EntityType,
 		EntityID:   cmd.EntityID,
 		EventName:  cmd.EventName,
@@ -68,13 +73,7 @@ func (h *Handler) RecordEvent(ctx context.Context, id identity.Identity, cmd dom
 // DefineFeature defines (or redefines) a windowed feature over an entity type's
 // event stream.
 func (h *Handler) DefineFeature(ctx context.Context, id identity.Identity, cmd domain.DefineFeature) (eventlog.Envelope, error) {
-	if err := id.Valid(); err != nil {
-		return eventlog.Envelope{}, err
-	}
-	if err := cmd.Validate(); err != nil {
-		return eventlog.Envelope{}, err
-	}
-	return h.append(ctx, id, events.TypeFeatureDefined, events.FeatureDefined{
+	return h.emit(ctx, id, cmd, events.TypeFeatureDefined, events.FeatureDefined{
 		Name:        cmd.Name,
 		EntityType:  cmd.EntityType,
 		EventName:   cmd.EventName,
@@ -82,6 +81,30 @@ func (h *Handler) DefineFeature(ctx context.Context, id identity.Identity, cmd d
 		Field:       cmd.Field,
 		WindowHours: cmd.WindowHours,
 	})
+}
+
+// DefineConnector registers (or redefines) a named external connector.
+func (h *Handler) DefineConnector(ctx context.Context, id identity.Identity, cmd domain.DefineConnector) (eventlog.Envelope, error) {
+	return h.emit(ctx, id, cmd, events.TypeConnectorDefined, events.ConnectorDefined{
+		Name: cmd.Name, Type: cmd.Type, Config: cmd.Config,
+	})
+}
+
+// RecordFetch records a connector invocation and its result. The fetch itself
+// (the external call) is performed by the shell; recording the response here is
+// what makes the result auditable and replay-stable. It returns the fetch id.
+func (h *Handler) RecordFetch(ctx context.Context, id identity.Identity, connector string, params, response json.RawMessage) (string, eventlog.Envelope, error) {
+	if err := id.Valid(); err != nil {
+		return "", eventlog.Envelope{}, err
+	}
+	fetchID := newID()
+	e, err := h.append(ctx, id, events.TypeConnectorFetched, events.ConnectorFetched{
+		FetchID: fetchID, Connector: connector, Params: params, Response: response, At: h.now(),
+	})
+	if err != nil {
+		return "", eventlog.Envelope{}, err
+	}
+	return fetchID, e, nil
 }
 
 func (h *Handler) append(ctx context.Context, id identity.Identity, typ string, payload any) (eventlog.Envelope, error) {
@@ -98,4 +121,10 @@ func (h *Handler) append(ctx context.Context, id identity.Identity, typ string, 
 		Time:      h.now(),
 		Payload:   b,
 	})
+}
+
+func newID() string {
+	var b [16]byte
+	_, _ = rand.Read(b[:])
+	return hex.EncodeToString(b[:])
 }

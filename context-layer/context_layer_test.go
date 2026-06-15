@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/e6qu/intraktible/context-layer/command"
+	"github.com/e6qu/intraktible/context-layer/connectors"
 	"github.com/e6qu/intraktible/context-layer/domain"
 	"github.com/e6qu/intraktible/context-layer/entities"
 	"github.com/e6qu/intraktible/context-layer/features"
@@ -151,5 +152,52 @@ func TestFeatureReplay(t *testing.T) {
 	}
 	if got["txn_count_24h"] != 2 || got["txn_sum_24h"] != 350 {
 		t.Fatalf("features = %v, want count 2 / sum 350", got)
+	}
+}
+
+// TestConnectorReplay defines a connector and records a fetch, then rebuilds from
+// the log and confirms the definition and the recorded result survive the replay.
+func TestConnectorReplay(t *testing.T) {
+	ctx := context.Background()
+	log, err := eventlog.OpenWAL(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = log.Close() }()
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "dev"}
+
+	h := command.NewHandler(log)
+	if _, err := h.DefineConnector(ctx, id, domain.DefineConnector{Name: "bureau", Type: "mock_bureau"}); err != nil {
+		t.Fatal(err)
+	}
+	// Invoke against a store the connector can read its definition from, then
+	// record the result — the effect happens once, the response is logged.
+	st := store.NewMemory()
+	if err := projection.New(log, st, connectors.Projector{}).Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := connectors.Invoke(ctx, st, id, "bureau", json.RawMessage(`{"subject":"Acme"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := h.RecordFetch(ctx, id, "bureau", json.RawMessage(`{"subject":"Acme"}`), resp); err != nil {
+		t.Fatal(err)
+	}
+
+	// Rebuild a fresh read model purely from the log.
+	rebuilt := store.NewMemory()
+	if err := projection.New(log, rebuilt, connectors.Projector{}).Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	def, ok, err := connectors.Read(ctx, rebuilt, id, "bureau")
+	if err != nil || !ok || def.Type != "mock_bureau" {
+		t.Fatalf("connector def after replay: ok=%v def=%+v err=%v", ok, def, err)
+	}
+	fetches, err := connectors.ListFetches(ctx, rebuilt, id, "bureau")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fetches) != 1 || !json.Valid(fetches[0].Response) {
+		t.Fatalf("recorded fetch did not survive replay: %+v", fetches)
 	}
 }

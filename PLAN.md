@@ -243,8 +243,13 @@ intraktible/
   `features.txn_count_24h`), recorded in `DecisionStarted` for replay stability. The engine stays
   free of a context-layer import via a `FeatureProvider` **port** (in `decision-engine/command`)
   satisfied by a `features.Provider` **adapter** wired at the composition root — preserving the
-  build-order dependency direction. Remaining: **connectors** (a `Connect` interface + reference
-  connectors + the Custom Connect Node, results recorded as events) wired into Rule/Connect nodes.
+  build-order dependency direction. **Connectors** subsystem: a `Connect` interface + registry +
+  reference connectors (an arbitrary-HTTP one and a deterministic `mock_bureau`); a definition is
+  `{name, type, config}` and invoking a connector is an effect recorded as a `ConnectorFetched`
+  event (the stored response, not a re-fetch, is what replay reads) — API `/v1/context/connectors`
+  + `…/{name}/fetch` + `…/{name}/fetches`. Remaining to close the phase: a decision-engine **Custom
+  Connect Node** consuming connectors in a flow (port/adapter, like features); a **SQL** reference
+  connector is deferred (BUGS).
 - **Phase 4 — Agent Manager:** agent config + AI-node execution, structured output, run monitoring,
   human-in-the-loop → Case Manager.
 - **Phase 5 — Harden:** replay/rollback tooling, split-services profile, docs, examples.

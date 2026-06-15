@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/e6qu/intraktible/context-layer/command"
+	"github.com/e6qu/intraktible/context-layer/connectors"
 	"github.com/e6qu/intraktible/context-layer/entities"
 	"github.com/e6qu/intraktible/context-layer/features"
 	"github.com/e6qu/intraktible/context-layer/service"
@@ -20,7 +21,8 @@ func start(t *testing.T) *testutil.API {
 	log, st := testutil.NewLogStore(t)
 	svc := service.New(command.NewHandler(log), st)
 	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "dev"}
-	return testutil.StartAPI(t, log, st, "test-key", id, svc.Routes, entities.Projector{}, features.Projector{})
+	return testutil.StartAPI(t, log, st, "test-key", id, svc.Routes,
+		entities.Projector{}, features.Projector{}, connectors.Projector{})
 }
 
 func TestContextAPIEndToEnd(t *testing.T) {
@@ -120,6 +122,48 @@ func TestFeatureEngineEndToEnd(t *testing.T) {
 	}
 }
 
+func TestConnectorEndToEnd(t *testing.T) {
+	api := start(t)
+
+	// Define the deterministic mock bureau connector.
+	api.Request(t, http.MethodPost, "/v1/context/connectors",
+		map[string]any{"name": "bureau", "type": "mock_bureau"}, http.StatusAccepted, nil)
+
+	// Invoke it — the response is returned and recorded as an event.
+	var fetched struct {
+		FetchID  string `json:"fetch_id"`
+		Response struct {
+			Subject   string `json:"subject"`
+			RiskScore int    `json:"risk_score"`
+		} `json:"response"`
+	}
+	api.Request(t, http.MethodPost, "/v1/context/connectors/bureau/fetch",
+		map[string]any{"params": map[string]any{"subject": "Acme Corp"}}, http.StatusOK, &fetched)
+	if fetched.FetchID == "" || fetched.Response.Subject != "Acme Corp" {
+		t.Fatalf("unexpected fetch result: %+v", fetched)
+	}
+
+	// The recorded fetch history surfaces (async projection of the event).
+	if !testutil.Eventually(t, func() bool {
+		var hist struct {
+			Fetches []connectors.FetchView `json:"fetches"`
+		}
+		api.Request(t, http.MethodGet, "/v1/context/connectors/bureau/fetches", nil, http.StatusOK, &hist)
+		return len(hist.Fetches) == 1 && hist.Fetches[0].Connector == "bureau"
+	}) {
+		t.Fatal("connector fetch was never recorded in history")
+	}
+
+	// The connector appears in the (type-filtered) listing.
+	var list struct {
+		Connectors []connectors.ConnectorView `json:"connectors"`
+	}
+	api.Request(t, http.MethodGet, "/v1/context/connectors?type=mock_bureau", nil, http.StatusOK, &list)
+	if len(list.Connectors) != 1 || list.Connectors[0].Name != "bureau" {
+		t.Fatalf("connector listing: %+v", list.Connectors)
+	}
+}
+
 func TestContextAPIValidationAndAuth(t *testing.T) {
 	api := start(t)
 
@@ -133,6 +177,11 @@ func TestContextAPIValidationAndAuth(t *testing.T) {
 	// Sum feature without a field -> 400.
 	api.Request(t, http.MethodPost, "/v1/context/features",
 		map[string]any{"name": "f", "entity_type": "customer", "event_name": "t", "aggregation": "sum", "window_hours": 24}, http.StatusBadRequest, nil)
+	// Connector with an unknown type -> 400.
+	api.Request(t, http.MethodPost, "/v1/context/connectors",
+		map[string]any{"name": "c", "type": "carrier_pigeon"}, http.StatusBadRequest, nil)
+	// Fetching an undefined connector -> 502 (the invocation could not be made).
+	api.Request(t, http.MethodPost, "/v1/context/connectors/ghost/fetch", map[string]any{}, http.StatusBadGateway, nil)
 	// Unknown entity -> 404.
 	api.Request(t, http.MethodGet, "/v1/context/entities/customer/ghost", nil, http.StatusNotFound, nil)
 	// Unauthenticated -> 401.

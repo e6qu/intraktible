@@ -16,9 +16,11 @@ const StreamContext = "context"
 
 // Context Layer event types.
 const (
-	TypeEntityRecorded = "context.entity_recorded"
-	TypeEventRecorded  = "context.event_recorded"
-	TypeFeatureDefined = "context.feature_defined"
+	TypeEntityRecorded   = "context.entity_recorded"
+	TypeEventRecorded    = "context.event_recorded"
+	TypeFeatureDefined   = "context.feature_defined"
+	TypeConnectorDefined = "context.connector_defined"
+	TypeConnectorFetched = "context.connector_fetched"
 )
 
 // EntityRecorded records (or patches) a custom entity's attributes.
@@ -48,4 +50,21 @@ type FeatureDefined struct {
 	Aggregation string `json:"aggregation"`
 	Field       string `json:"field,omitempty"`
 	WindowHours int    `json:"window_hours"`
+}
+
+// ConnectorDefined registers (or redefines) a named external connector.
+type ConnectorDefined struct {
+	Name   string          `json:"name"`
+	Type   string          `json:"type"`
+	Config json.RawMessage `json:"config,omitempty"`
+}
+
+// ConnectorFetched records one connector invocation and its result, so a fetch is
+// auditable and the recorded response — not a re-fetch — is what replay reads.
+type ConnectorFetched struct {
+	FetchID   string          `json:"fetch_id"`
+	Connector string          `json:"connector"`
+	Params    json.RawMessage `json:"params,omitempty"`
+	Response  json.RawMessage `json:"response"`
+	At        time.Time       `json:"at"`
 }

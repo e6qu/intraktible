@@ -10,10 +10,13 @@ import (
 	"time"
 
 	"github.com/e6qu/intraktible/context-layer/command"
+	"github.com/e6qu/intraktible/context-layer/connectors"
 	"github.com/e6qu/intraktible/context-layer/domain"
 	"github.com/e6qu/intraktible/context-layer/entities"
 	"github.com/e6qu/intraktible/context-layer/features"
+	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/httpx"
+	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/store"
 )
 
@@ -38,6 +41,10 @@ func (s *Service) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/context/events", s.recordEvent)
 	mux.HandleFunc("POST /v1/context/features", s.defineFeature)
 	mux.HandleFunc("GET /v1/context/features", s.listFeatures)
+	mux.HandleFunc("POST /v1/context/connectors", s.defineConnector)
+	mux.HandleFunc("GET /v1/context/connectors", s.listConnectors)
+	mux.HandleFunc("POST /v1/context/connectors/{name}/fetch", s.fetchConnector)
+	mux.HandleFunc("GET /v1/context/connectors/{name}/fetches", s.listFetches)
 }
 
 type entityRequest struct {
@@ -47,25 +54,12 @@ type entityRequest struct {
 }
 
 func (s *Service) recordEntity(w http.ResponseWriter, r *http.Request) {
-	id, ok := httpx.Caller(w, r)
-	if !ok {
-		return
-	}
 	var req entityRequest
-	if err := httpx.DecodeJSON(r, &req); err != nil {
-		httpx.Error(w, http.StatusBadRequest, err)
-		return
-	}
-	e, err := s.cmd.RecordEntity(r.Context(), id, domain.RecordEntity{
-		EntityType: req.EntityType,
-		EntityID:   req.EntityID,
-		Attributes: req.Attributes,
+	httpx.Emit(w, r, &req, func(id identity.Identity) (eventlog.Envelope, error) {
+		return s.cmd.RecordEntity(r.Context(), id, domain.RecordEntity{
+			EntityType: req.EntityType, EntityID: req.EntityID, Attributes: req.Attributes,
+		})
 	})
-	if err != nil {
-		httpx.Error(w, http.StatusBadRequest, err)
-		return
-	}
-	httpx.JSON(w, http.StatusAccepted, map[string]any{"event_id": e.ID, "seq": e.Seq})
 }
 
 type eventRequest struct {
@@ -77,27 +71,13 @@ type eventRequest struct {
 }
 
 func (s *Service) recordEvent(w http.ResponseWriter, r *http.Request) {
-	id, ok := httpx.Caller(w, r)
-	if !ok {
-		return
-	}
 	var req eventRequest
-	if err := httpx.DecodeJSON(r, &req); err != nil {
-		httpx.Error(w, http.StatusBadRequest, err)
-		return
-	}
-	e, err := s.cmd.RecordEvent(r.Context(), id, domain.RecordEvent{
-		EntityType: req.EntityType,
-		EntityID:   req.EntityID,
-		EventName:  req.EventName,
-		Data:       req.Data,
-		OccurredAt: req.OccurredAt,
+	httpx.Emit(w, r, &req, func(id identity.Identity) (eventlog.Envelope, error) {
+		return s.cmd.RecordEvent(r.Context(), id, domain.RecordEvent{
+			EntityType: req.EntityType, EntityID: req.EntityID, EventName: req.EventName,
+			Data: req.Data, OccurredAt: req.OccurredAt,
+		})
 	})
-	if err != nil {
-		httpx.Error(w, http.StatusBadRequest, err)
-		return
-	}
-	httpx.JSON(w, http.StatusAccepted, map[string]any{"event_id": e.ID, "seq": e.Seq})
 }
 
 func (s *Service) listEntities(w http.ResponseWriter, r *http.Request) {
@@ -137,28 +117,13 @@ type featureRequest struct {
 }
 
 func (s *Service) defineFeature(w http.ResponseWriter, r *http.Request) {
-	id, ok := httpx.Caller(w, r)
-	if !ok {
-		return
-	}
 	var req featureRequest
-	if err := httpx.DecodeJSON(r, &req); err != nil {
-		httpx.Error(w, http.StatusBadRequest, err)
-		return
-	}
-	e, err := s.cmd.DefineFeature(r.Context(), id, domain.DefineFeature{
-		Name:        req.Name,
-		EntityType:  req.EntityType,
-		EventName:   req.EventName,
-		Aggregation: req.Aggregation,
-		Field:       req.Field,
-		WindowHours: req.WindowHours,
+	httpx.Emit(w, r, &req, func(id identity.Identity) (eventlog.Envelope, error) {
+		return s.cmd.DefineFeature(r.Context(), id, domain.DefineFeature{
+			Name: req.Name, EntityType: req.EntityType, EventName: req.EventName,
+			Aggregation: req.Aggregation, Field: req.Field, WindowHours: req.WindowHours,
+		})
 	})
-	if err != nil {
-		httpx.Error(w, http.StatusBadRequest, err)
-		return
-	}
-	httpx.JSON(w, http.StatusAccepted, map[string]any{"event_id": e.ID, "seq": e.Seq})
 }
 
 func (s *Service) listFeatures(w http.ResponseWriter, r *http.Request) {
@@ -177,4 +142,63 @@ func (s *Service) computeFeatures(w http.ResponseWriter, r *http.Request) {
 	}
 	vals, err := features.Compute(r.Context(), s.store, id, r.PathValue("type"), r.PathValue("id"), time.Now().UTC())
 	httpx.WriteList(w, "features", vals, err)
+}
+
+type connectorRequest struct {
+	Name   string          `json:"name"`
+	Type   string          `json:"type"`
+	Config json.RawMessage `json:"config,omitempty"`
+}
+
+func (s *Service) defineConnector(w http.ResponseWriter, r *http.Request) {
+	var req connectorRequest
+	httpx.Emit(w, r, &req, func(id identity.Identity) (eventlog.Envelope, error) {
+		return s.cmd.DefineConnector(r.Context(), id, domain.DefineConnector{Name: req.Name, Type: req.Type, Config: req.Config})
+	})
+}
+
+func (s *Service) listConnectors(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	recs, err := connectors.List(r.Context(), s.store, id, r.URL.Query().Get("type"))
+	httpx.WriteList(w, "connectors", recs, err)
+}
+
+// fetchConnector invokes a defined connector (the external effect) and records
+// the result as an event, so the response is auditable and replay-stable.
+func (s *Service) fetchConnector(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		Params json.RawMessage `json:"params,omitempty"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	name := r.PathValue("name")
+	resp, err := connectors.Invoke(r.Context(), s.store, id, name, req.Params)
+	if err != nil {
+		httpx.Error(w, http.StatusBadGateway, err)
+		return
+	}
+	fetchID, _, err := s.cmd.RecordFetch(r.Context(), id, name, req.Params, resp)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"fetch_id": fetchID, "response": resp})
+}
+
+func (s *Service) listFetches(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	recs, err := connectors.ListFetches(r.Context(), s.store, id, r.PathValue("name"))
+	httpx.WriteList(w, "fetches", recs, err)
 }

@@ -22,5 +22,9 @@ Format: `ID | severity | component | description | status`.
 - `D12 | low | case-manager | SLA days-left and SLA state are computed at read time from created_at + sla_days against the wall clock; the stored projection stays clock-free (replay-stable). No SLA-breach events/alerts are emitted — overdue is derived on read, not pushed | deferred`
 - `D13 | low | web | case detail shows the raw context JSON inline; no schema-aware/rich context view (e.g. rendering the source decision's inputs/outputs) yet | deferred`
 
+## Open (deferred / limitations during Phase 3)
+- `D14 | low | context-layer | reference connectors cover http + a deterministic mock_bureau; a SQL connector is not implemented (needs a driver/DB). The Connect interface + registry make it pluggable when a backend lands | deferred`
+- `D15 | low | context-layer | the http connector fetches an operator-configured URL (the intended Custom Connect feature); it validates the scheme + bounds time/size but has no allow-list/SSRF policy — add egress controls before exposing it to untrusted config | open`
+
 ## Fixed
 _None yet._

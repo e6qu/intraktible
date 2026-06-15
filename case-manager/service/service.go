@@ -121,31 +121,11 @@ func (s *Service) get(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteOne(w, c, found, err, "case not found")
 }
 
-// mutate is the shared shape of the case-mutating endpoints: authenticate,
-// decode body into req, run the command, and respond 202. run is called after
-// req is decoded, so it can read the decoded fields.
-func (s *Service) mutate(w http.ResponseWriter, r *http.Request, req any, run func(identity.Identity) (eventlog.Envelope, error)) {
-	id, ok := httpx.Caller(w, r)
-	if !ok {
-		return
-	}
-	if err := httpx.DecodeJSON(r, req); err != nil {
-		httpx.Error(w, http.StatusBadRequest, err)
-		return
-	}
-	e, err := run(id)
-	if err != nil {
-		httpx.Error(w, http.StatusBadRequest, err)
-		return
-	}
-	httpx.JSON(w, http.StatusAccepted, map[string]any{"event_id": e.ID, "seq": e.Seq})
-}
-
 func (s *Service) assign(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Assignee string `json:"assignee"`
 	}
-	s.mutate(w, r, &req, func(id identity.Identity) (eventlog.Envelope, error) {
+	httpx.Emit(w, r, &req, func(id identity.Identity) (eventlog.Envelope, error) {
 		return s.cmd.AssignCase(r.Context(), id, domain.AssignCase{CaseID: r.PathValue("case_id"), Assignee: req.Assignee})
 	})
 }
@@ -154,7 +134,7 @@ func (s *Service) status(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Status string `json:"status"`
 	}
-	s.mutate(w, r, &req, func(id identity.Identity) (eventlog.Envelope, error) {
+	httpx.Emit(w, r, &req, func(id identity.Identity) (eventlog.Envelope, error) {
 		return s.cmd.SetStatus(r.Context(), id, domain.SetStatus{CaseID: r.PathValue("case_id"), Status: req.Status})
 	})
 }
@@ -163,7 +143,7 @@ func (s *Service) note(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Text string `json:"text"`
 	}
-	s.mutate(w, r, &req, func(id identity.Identity) (eventlog.Envelope, error) {
+	httpx.Emit(w, r, &req, func(id identity.Identity) (eventlog.Envelope, error) {
 		return s.cmd.AddNote(r.Context(), id, domain.AddNote{CaseID: r.PathValue("case_id"), Text: req.Text})
 	})
 }

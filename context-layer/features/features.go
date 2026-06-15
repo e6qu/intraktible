@@ -10,7 +10,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sort"
 	"time"
 
 	"github.com/e6qu/intraktible/context-layer/domain"
@@ -70,19 +69,9 @@ func (Projector) Apply(ctx context.Context, e eventlog.Envelope, s store.Store) 
 // List returns the tenant's feature definitions, optionally filtered by entity
 // type, ordered by name.
 func List(ctx context.Context, s store.Store, id identity.Identity, entityType string) ([]FeatureView, error) {
-	all, err := store.ListDocs[FeatureView](ctx, s, Collection, store.Key(id.Org, id.Workspace, ""))
-	if err != nil {
-		return nil, err
-	}
-	out := make([]FeatureView, 0, len(all))
-	for _, f := range all {
-		if entityType != "" && f.EntityType != entityType {
-			continue
-		}
-		out = append(out, f)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
-	return out, nil
+	return store.QueryDocs(ctx, s, Collection, store.Key(id.Org, id.Workspace, ""),
+		func(f FeatureView) bool { return entityType == "" || f.EntityType == entityType },
+		func(a, b FeatureView) bool { return a.Name < b.Name })
 }
 
 // Compute evaluates every feature defined for the entity's type against that

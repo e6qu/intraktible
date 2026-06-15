@@ -22,6 +22,7 @@ import (
 	casecmd "github.com/e6qu/intraktible/case-manager/command"
 	caseservice "github.com/e6qu/intraktible/case-manager/service"
 	contextcmd "github.com/e6qu/intraktible/context-layer/command"
+	"github.com/e6qu/intraktible/context-layer/connectors"
 	"github.com/e6qu/intraktible/context-layer/entities"
 	"github.com/e6qu/intraktible/context-layer/features"
 	contextservice "github.com/e6qu/intraktible/context-layer/service"
@@ -118,7 +119,7 @@ func run(addr, dataDir, modules, devKey string) error {
 	if enabled(modules, "context-layer") {
 		contextSvc := contextservice.New(contextcmd.NewHandler(log), st)
 		contextSvc.Routes(api)
-		projectors = append(projectors, entities.Projector{}, features.Projector{})
+		projectors = append(projectors, entities.Projector{}, features.Projector{}, connectors.Projector{})
 	}
 
 	rt := projection.New(log, st, projectors...)

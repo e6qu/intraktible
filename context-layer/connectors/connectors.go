@@ -1,0 +1,258 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+// Package connectors is the Context Layer's connector subsystem: a projector that
+// folds connector definitions + fetch history out of the event stream, the Connect
+// interface with reference implementations (an arbitrary-HTTP connector and a
+// deterministic mock bureau), and the read-side that invokes a defined connector.
+// The invocation is an effect performed by the shell and recorded as an event, so
+// the stored response — never a re-fetch — is what replay reads.
+package connectors
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"sort"
+	"time"
+
+	"github.com/e6qu/intraktible/context-layer/domain"
+	"github.com/e6qu/intraktible/context-layer/events"
+	"github.com/e6qu/intraktible/platform/eventlog"
+	"github.com/e6qu/intraktible/platform/identity"
+	"github.com/e6qu/intraktible/platform/store"
+)
+
+// Collections held by this read model.
+const (
+	CollectionConnectors = "context_connectors"
+	CollectionFetches    = "context_connector_fetches"
+)
+
+// fetchTimeout bounds an HTTP connector call.
+const fetchTimeout = 10 * time.Second
+
+// ConnectorView is the materialized read model for one connector definition.
+type ConnectorView struct {
+	Org       string          `json:"org"`
+	Workspace string          `json:"workspace"`
+	Name      string          `json:"name"`
+	Type      string          `json:"type"`
+	Config    json.RawMessage `json:"config,omitempty"`
+	UpdatedAt time.Time       `json:"updated_at"`
+}
+
+// FetchView is one recorded connector invocation.
+type FetchView struct {
+	Org       string          `json:"org"`
+	Workspace string          `json:"workspace"`
+	FetchID   string          `json:"fetch_id"`
+	Connector string          `json:"connector"`
+	Params    json.RawMessage `json:"params,omitempty"`
+	Response  json.RawMessage `json:"response"`
+	Seq       uint64          `json:"seq"`
+	At        time.Time       `json:"at"`
+}
+
+// Connector fetches external data for a set of params, returning a JSON document.
+type Connector interface {
+	Fetch(ctx context.Context, params json.RawMessage) (json.RawMessage, error)
+}
+
+// Projector folds connector definitions + fetches into read models.
+type Projector struct{}
+
+// Name identifies the projector.
+func (Projector) Name() string { return "context_connectors" }
+
+// Apply maintains the connector definition + fetch-history read models.
+func (Projector) Apply(ctx context.Context, e eventlog.Envelope, s store.Store) error {
+	switch e.Type {
+	case events.TypeConnectorDefined:
+		return applyDefined(ctx, e, s)
+	case events.TypeConnectorFetched:
+		return applyFetched(ctx, e, s)
+	default:
+		return nil
+	}
+}
+
+func applyDefined(ctx context.Context, e eventlog.Envelope, s store.Store) error {
+	var p events.ConnectorDefined
+	if err := json.Unmarshal(e.Payload, &p); err != nil {
+		return fmt.Errorf("context-layer: decode %s seq %d: %w", e.Type, e.Seq, err)
+	}
+	v := ConnectorView{
+		Org: e.Org, Workspace: e.Workspace,
+		Name: p.Name, Type: p.Type, Config: p.Config, UpdatedAt: e.Time,
+	}
+	return store.PutDoc(ctx, s, CollectionConnectors, store.Key(e.Org, e.Workspace, p.Name), v)
+}
+
+func applyFetched(ctx context.Context, e eventlog.Envelope, s store.Store) error {
+	var p events.ConnectorFetched
+	if err := json.Unmarshal(e.Payload, &p); err != nil {
+		return fmt.Errorf("context-layer: decode %s seq %d: %w", e.Type, e.Seq, err)
+	}
+	v := FetchView{
+		Org: e.Org, Workspace: e.Workspace,
+		FetchID: p.FetchID, Connector: p.Connector, Params: p.Params,
+		Response: p.Response, Seq: e.Seq, At: p.At,
+	}
+	// Key by connector + zero-padded seq so a connector's fetches list in order.
+	key := store.Key(e.Org, e.Workspace, fmt.Sprintf("%s/%020d", p.Connector, e.Seq))
+	return store.PutDoc(ctx, s, CollectionFetches, key, v)
+}
+
+// Read returns one connector definition for id's tenant.
+func Read(ctx context.Context, s store.Store, id identity.Identity, name string) (ConnectorView, bool, error) {
+	return store.GetDoc[ConnectorView](ctx, s, CollectionConnectors, store.Key(id.Org, id.Workspace, name))
+}
+
+// List returns the tenant's connector definitions, optionally filtered by type.
+func List(ctx context.Context, s store.Store, id identity.Identity, connType string) ([]ConnectorView, error) {
+	return store.QueryDocs(ctx, s, CollectionConnectors, store.Key(id.Org, id.Workspace, ""),
+		func(c ConnectorView) bool { return connType == "" || c.Type == connType },
+		func(a, b ConnectorView) bool { return a.Name < b.Name })
+}
+
+// ListFetches returns a connector's recorded invocations, newest first.
+func ListFetches(ctx context.Context, s store.Store, id identity.Identity, name string) ([]FetchView, error) {
+	all, err := store.ListDocs[FetchView](ctx, s, CollectionFetches, store.Key(id.Org, id.Workspace, name+"/"))
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].Seq > all[j].Seq })
+	return all, nil
+}
+
+// Invoke looks up a connector definition, builds the connector, and fetches —
+// performing the external effect. Recording the result is the caller's job.
+func Invoke(ctx context.Context, s store.Store, id identity.Identity, name string, params json.RawMessage) (json.RawMessage, error) {
+	def, ok, err := Read(ctx, s, id, name)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, fmt.Errorf("context-layer: unknown connector %q", name)
+	}
+	c, err := build(def)
+	if err != nil {
+		return nil, err
+	}
+	return c.Fetch(ctx, params)
+}
+
+// build constructs a Connector from its definition.
+func build(def ConnectorView) (Connector, error) {
+	switch def.Type {
+	case domain.ConnectorHTTP:
+		return newHTTP(def.Config)
+	case domain.ConnectorMockBureau:
+		return mockBureau{}, nil
+	default:
+		return nil, fmt.Errorf("context-layer: connector %q has unsupported type %q", def.Name, def.Type)
+	}
+}
+
+// --- HTTP connector ---
+
+type httpConfig struct {
+	URL    string `json:"url"`
+	Method string `json:"method"`
+}
+
+type httpConnector struct {
+	url    string
+	method string
+	client *http.Client
+}
+
+func newHTTP(config json.RawMessage) (httpConnector, error) {
+	var cfg httpConfig
+	if len(config) > 0 {
+		if err := json.Unmarshal(config, &cfg); err != nil {
+			return httpConnector{}, fmt.Errorf("context-layer: http connector config: %w", err)
+		}
+	}
+	u, err := url.Parse(cfg.URL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+		return httpConnector{}, fmt.Errorf("context-layer: http connector needs an http(s) url, got %q", cfg.URL)
+	}
+	method := cfg.Method
+	if method == "" {
+		method = http.MethodGet
+	}
+	return httpConnector{url: cfg.URL, method: method, client: &http.Client{Timeout: fetchTimeout}}, nil
+}
+
+// Fetch calls the configured endpoint (sending params as the JSON body for
+// non-GET methods) and returns the JSON response, failing loudly on a non-2xx
+// status or a non-JSON body.
+func (h httpConnector) Fetch(ctx context.Context, params json.RawMessage) (json.RawMessage, error) {
+	var body io.Reader
+	if h.method != http.MethodGet && len(params) > 0 {
+		body = bytes.NewReader(params)
+	}
+	// The URL is operator-configured per connector; calling it is the feature.
+	req, err := http.NewRequestWithContext(ctx, h.method, h.url, body) // #nosec G107
+	if err != nil {
+		return nil, fmt.Errorf("context-layer: http connector request: %w", err)
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := h.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("context-layer: http connector fetch: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	b, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return nil, fmt.Errorf("context-layer: http connector read: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("context-layer: http connector status %d", resp.StatusCode)
+	}
+	if !json.Valid(b) {
+		return nil, fmt.Errorf("context-layer: http connector returned non-JSON body")
+	}
+	return json.RawMessage(b), nil
+}
+
+// --- Mock bureau connector ---
+
+// mockBureau is a deterministic reference connector: it derives a stable risk
+// score (and a sanctioned flag) from the params' "subject" (or the whole params
+// blob), so flows can be built and tested without any external dependency.
+type mockBureau struct{}
+
+func (mockBureau) Fetch(_ context.Context, params json.RawMessage) (json.RawMessage, error) {
+	subject := string(params)
+	var p struct {
+		Subject string `json:"subject"`
+	}
+	if json.Valid(params) {
+		_ = json.Unmarshal(params, &p)
+		if p.Subject != "" {
+			subject = p.Subject
+		}
+	}
+	sum := sha256.Sum256([]byte(subject))
+	score := int(binary.BigEndian.Uint32(sum[:4]) % 101) // 0..100, deterministic
+	out := map[string]any{
+		"subject":    subject,
+		"risk_score": score,
+		"sanctioned": score >= 90,
+	}
+	b, err := json.Marshal(out)
+	if err != nil {
+		return nil, fmt.Errorf("context-layer: mock bureau marshal: %w", err)
+	}
+	return b, nil
+}

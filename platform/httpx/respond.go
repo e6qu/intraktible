@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/identity"
 )
 
@@ -46,6 +47,27 @@ func Caller(w http.ResponseWriter, r *http.Request) (identity.Identity, bool) {
 		Error(w, http.StatusUnauthorized, errors.New("authentication required"))
 	}
 	return id, ok
+}
+
+// Emit is the shared write-endpoint shape: authenticate, decode the request body
+// into req, run the command, and respond 202 with the resulting event id + seq.
+// run is invoked after req is decoded, so its closure can read the decoded fields.
+// A decode or command error maps to 400.
+func Emit(w http.ResponseWriter, r *http.Request, req any, run func(identity.Identity) (eventlog.Envelope, error)) {
+	id, ok := Caller(w, r)
+	if !ok {
+		return
+	}
+	if err := DecodeJSON(r, req); err != nil {
+		Error(w, http.StatusBadRequest, err)
+		return
+	}
+	e, err := run(id)
+	if err != nil {
+		Error(w, http.StatusBadRequest, err)
+		return
+	}
+	JSON(w, http.StatusAccepted, map[string]any{"event_id": e.ID, "seq": e.Seq})
 }
 
 // WriteList responds with a read-model listing under the given JSON key, mapping

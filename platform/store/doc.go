@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -49,6 +50,26 @@ func ListDocs[T any](ctx context.Context, s Store, collection, prefix string) ([
 			return nil, fmt.Errorf("store: decode %s/%s: %w", collection, rec.Key, err)
 		}
 		out = append(out, v)
+	}
+	return out, nil
+}
+
+// QueryDocs lists the prefix-scoped documents of collection, keeps those matching
+// keep, and sorts the survivors by less — the shared shape of a filtered read-model
+// listing. A nil keep keeps all; a nil less leaves store order.
+func QueryDocs[T any](ctx context.Context, s Store, collection, prefix string, keep func(T) bool, less func(a, b T) bool) ([]T, error) {
+	all, err := ListDocs[T](ctx, s, collection, prefix)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]T, 0, len(all))
+	for _, v := range all {
+		if keep == nil || keep(v) {
+			out = append(out, v)
+		}
+	}
+	if less != nil {
+		sort.Slice(out, func(i, j int) bool { return less(out[i], out[j]) })
 	}
 	return out, nil
 }

@@ -134,19 +134,9 @@ func ReadEntity(ctx context.Context, s store.Store, id identity.Identity, entity
 // ListEntities returns the tenant's entities, optionally filtered by type, most
 // recently updated first.
 func ListEntities(ctx context.Context, s store.Store, id identity.Identity, entityType string) ([]EntityView, error) {
-	all, err := store.ListDocs[EntityView](ctx, s, CollectionEntities, store.Key(id.Org, id.Workspace, ""))
-	if err != nil {
-		return nil, err
-	}
-	out := make([]EntityView, 0, len(all))
-	for _, c := range all {
-		if entityType != "" && c.EntityType != entityType {
-			continue
-		}
-		out = append(out, c)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].UpdatedAt.After(out[j].UpdatedAt) })
-	return out, nil
+	return store.QueryDocs(ctx, s, CollectionEntities, store.Key(id.Org, id.Workspace, ""),
+		func(c EntityView) bool { return entityType == "" || c.EntityType == entityType },
+		func(a, b EntityView) bool { return a.UpdatedAt.After(b.UpdatedAt) })
 }
 
 // ListEvents returns the events recorded about one entity, newest first.
