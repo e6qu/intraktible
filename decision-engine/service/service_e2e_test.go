@@ -414,24 +414,24 @@ func TestDeployAPIPinsVersion(t *testing.T) {
 	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/versions",
 		map[string]any{"graph": flowtest.ConstGraph("v2")}, http.StatusCreated, nil)
 
-	// Pin production to v1; wait for the registry projection to show it.
+	// Pin sandbox to v1 (a direct deploy, allowed for non-production environments).
 	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/deployments",
-		map[string]any{"environment": "production", "version": 1}, http.StatusCreated, nil)
+		map[string]any{"environment": "sandbox", "version": 1}, http.StatusCreated, nil)
 	if !testutil.Eventually(t, func() bool {
 		var fv flows.FlowView
 		api.Request(t, http.MethodGet, "/v1/flows/"+created.FlowID, nil, http.StatusOK, &fv)
-		dep, ok := fv.Deployments["production"]
+		dep, ok := fv.Deployments["sandbox"]
 		return ok && dep.Version == 1
 	}) {
 		t.Fatal("deployment never reached the registry projection")
 	}
 
-	// Decide production -> the pinned v1, not the latest v2.
+	// Decide sandbox -> the pinned v1, not the latest v2.
 	var decision struct {
 		Status string         `json:"status"`
 		Data   map[string]any `json:"data"`
 	}
-	api.Request(t, http.MethodPost, "/v1/flows/router/production/decide",
+	api.Request(t, http.MethodPost, "/v1/flows/router/sandbox/decide",
 		map[string]any{"data": map[string]any{}}, http.StatusOK, &decision)
 	if decision.Status != "completed" || decision.Data["decision"] != "v1" {
 		t.Fatalf("pinned decide: %+v", decision)
@@ -439,7 +439,48 @@ func TestDeployAPIPinsVersion(t *testing.T) {
 
 	// Deploying an unpublished version is rejected.
 	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/deployments",
-		map[string]any{"environment": "production", "version": 9}, http.StatusBadRequest, nil)
+		map[string]any{"environment": "sandbox", "version": 9}, http.StatusBadRequest, nil)
+}
+
+func TestMakerCheckerDeploymentAPI(t *testing.T) {
+	api := startEngine(t)
+	var created struct {
+		FlowID string `json:"flow_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows",
+		map[string]string{"slug": "gov", "name": "Gov"}, http.StatusCreated, &created)
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/versions",
+		map[string]any{"graph": flowtest.ConstGraph("v1")}, http.StatusCreated, nil)
+
+	// A direct production deploy is refused — it must go through maker-checker.
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/deployments",
+		map[string]any{"environment": "production", "version": 1}, http.StatusBadRequest, nil)
+
+	// Propose a production deployment (the maker).
+	var req struct {
+		RequestID string `json:"request_id"`
+		Status    string `json:"status"`
+	}
+	if !testutil.Eventually(t, func() bool {
+		api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/deployment-requests",
+			map[string]any{"environment": "production", "version": 1}, http.StatusCreated, &req)
+		return req.RequestID != "" && req.Status == "pending"
+	}) {
+		t.Fatal("deployment request was not created")
+	}
+
+	// Four-eyes: the same caller (the proposer) cannot approve their own request.
+	api.Request(t, http.MethodPost,
+		"/v1/flows/"+created.FlowID+"/deployment-requests/"+req.RequestID+"/approve", nil, http.StatusBadRequest, nil)
+
+	// The request is visible as pending on the flow (the audit/approval surface).
+	if !testutil.Eventually(t, func() bool {
+		var fv flows.FlowView
+		api.Request(t, http.MethodGet, "/v1/flows/"+created.FlowID, nil, http.StatusOK, &fv)
+		return len(fv.DeploymentRequests) == 1 && fv.DeploymentRequests[0].Status == "pending"
+	}) {
+		t.Fatal("pending deployment request not surfaced on the flow")
+	}
 }
 
 func TestEngineAPIRequiresAuth(t *testing.T) {

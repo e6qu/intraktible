@@ -15,6 +15,10 @@ const (
 	TypeFlowCreated          = "decision.flow.created"
 	TypeFlowVersionPublished = "decision.flow.version_published"
 	TypeFlowVersionDeployed  = "decision.flow.version_deployed"
+	// Maker-checker (four-eyes) change control on deployments.
+	TypeDeploymentRequested = "decision.flow.deployment_requested"
+	TypeDeploymentApproved  = "decision.flow.deployment_approved"
+	TypeDeploymentRejected  = "decision.flow.deployment_rejected"
 )
 
 // NodeType enumerates the node kinds in the MVP palette (PLAN.md §4.1). Input
@@ -90,4 +94,34 @@ type FlowVersionDeployed struct {
 	Version           int    `json:"version"`
 	ChallengerVersion int    `json:"challenger_version,omitempty"`
 	ChallengerPct     int    `json:"challenger_pct,omitempty"`
+}
+
+// DeploymentRequested proposes a deployment for review (maker-checker). The
+// proposer is the envelope actor; production deployments must go through this.
+type DeploymentRequested struct {
+	RequestID         string `json:"request_id"`
+	FlowID            string `json:"flow_id"`
+	Environment       string `json:"environment"`
+	Version           int    `json:"version"`
+	ChallengerVersion int    `json:"challenger_version,omitempty"`
+	ChallengerPct     int    `json:"challenger_pct,omitempty"`
+}
+
+// DeploymentApproved records that a proposed deployment was approved by a
+// different user (the checker, the envelope actor) — and is the event that
+// actually deploys the version.
+type DeploymentApproved struct {
+	RequestID         string `json:"request_id"`
+	FlowID            string `json:"flow_id"`
+	Environment       string `json:"environment"`
+	Version           int    `json:"version"`
+	ChallengerVersion int    `json:"challenger_version,omitempty"`
+	ChallengerPct     int    `json:"challenger_pct,omitempty"`
+}
+
+// DeploymentRejected records that a proposed deployment was rejected.
+type DeploymentRejected struct {
+	RequestID string `json:"request_id"`
+	FlowID    string `json:"flow_id"`
+	Reason    string `json:"reason,omitempty"`
 }

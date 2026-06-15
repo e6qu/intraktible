@@ -45,9 +45,14 @@ func TestAnalyticsMetrics(t *testing.T) {
 		t.Fatal(err)
 	}
 	dh := command.NewDecideHandler(log, rm)
+	approver := identity.Identity{Org: "demo", Workspace: "main", Actor: "approver"}
 	deployAndWait := func(dep domain.DeployVersion) {
 		dep.FlowID, dep.Environment = flowID, "production"
-		if _, err := h.Deploy(ctx, id, dep); err != nil {
+		reqID, _, err := h.RequestDeployment(ctx, id, dep)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := h.ApproveDeployment(ctx, approver, flowID, reqID); err != nil {
 			t.Fatal(err)
 		}
 		if !testutil.Eventually(t, func() bool {

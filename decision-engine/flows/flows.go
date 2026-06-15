@@ -38,18 +38,34 @@ type DeploymentView struct {
 	ChallengerPct     int `json:"challenger_pct,omitempty"`
 }
 
+// DeploymentRequest is one maker-checker change request and its decision status.
+type DeploymentRequest struct {
+	RequestID         string    `json:"request_id"`
+	Environment       string    `json:"environment"`
+	Version           int       `json:"version"`
+	ChallengerVersion int       `json:"challenger_version,omitempty"`
+	ChallengerPct     int       `json:"challenger_pct,omitempty"`
+	Status            string    `json:"status"` // pending | approved | rejected
+	Reason            string    `json:"reason,omitempty"`
+	RequestedBy       string    `json:"requested_by"`
+	RequestedAt       time.Time `json:"requested_at"`
+	DecidedBy         string    `json:"decided_by,omitempty"`
+	DecidedAt         time.Time `json:"decided_at,omitempty"`
+}
+
 // FlowView is the materialized read model for one flow.
 type FlowView struct {
-	Org         string                    `json:"org"`
-	Workspace   string                    `json:"workspace"`
-	FlowID      string                    `json:"flow_id"`
-	Slug        string                    `json:"slug"`
-	Name        string                    `json:"name"`
-	Latest      int                       `json:"latest"`
-	Versions    []VersionView             `json:"versions"`
-	Deployments map[string]DeploymentView `json:"deployments,omitempty"`
-	CreatedAt   time.Time                 `json:"created_at"`
-	UpdatedAt   time.Time                 `json:"updated_at"`
+	Org                string                    `json:"org"`
+	Workspace          string                    `json:"workspace"`
+	FlowID             string                    `json:"flow_id"`
+	Slug               string                    `json:"slug"`
+	Name               string                    `json:"name"`
+	Latest             int                       `json:"latest"`
+	Versions           []VersionView             `json:"versions"`
+	Deployments        map[string]DeploymentView `json:"deployments,omitempty"`
+	DeploymentRequests []DeploymentRequest       `json:"deployment_requests,omitempty"`
+	CreatedAt          time.Time                 `json:"created_at"`
+	UpdatedAt          time.Time                 `json:"updated_at"`
 }
 
 // Projector folds flow lifecycle events into FlowView documents.
@@ -61,18 +77,94 @@ func (Projector) Name() string { return "decision_flows" }
 // Collections lists the store collection this projector owns.
 func (Projector) Collections() []string { return []string{Collection} }
 
+// flowAppliers dispatches each flow event type to its handler (a map keeps the
+// dispatch flat — events of other types are simply absent and skipped).
+var flowAppliers = map[string]func(context.Context, eventlog.Envelope, store.Store) error{
+	events.TypeFlowCreated:          applyCreated,
+	events.TypeFlowVersionPublished: applyPublished,
+	events.TypeFlowVersionDeployed:  applyDeployed,
+	events.TypeDeploymentRequested:  applyDeploymentRequested,
+	events.TypeDeploymentApproved:   applyDeploymentApproved,
+	events.TypeDeploymentRejected:   applyDeploymentRejected,
+}
+
 // Apply maintains the flow document. Events of other types are not this
 // projector's concern and are skipped (correct routing, not error-swallowing).
 func (Projector) Apply(ctx context.Context, e eventlog.Envelope, s store.Store) error {
-	switch e.Type {
-	case events.TypeFlowCreated:
-		return applyCreated(ctx, e, s)
-	case events.TypeFlowVersionPublished:
-		return applyPublished(ctx, e, s)
-	case events.TypeFlowVersionDeployed:
-		return applyDeployed(ctx, e, s)
-	default:
-		return nil
+	if fn, ok := flowAppliers[e.Type]; ok {
+		return fn(ctx, e, s)
+	}
+	return nil
+}
+
+// mutateFlow loads a flow, applies fn (which may set UpdatedAt), and writes it
+// back — failing loudly when the flow is unknown.
+func mutateFlow(ctx context.Context, s store.Store, e eventlog.Envelope, flowID string, fn func(*FlowView)) error {
+	ok, err := store.UpdateDoc(ctx, s, Collection, store.Key(e.Org, e.Workspace, flowID), func(fv *FlowView) {
+		fn(fv)
+		fv.UpdatedAt = e.Time
+	})
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("decision_flows: event seq %d for unknown flow %q", e.Seq, flowID)
+	}
+	return nil
+}
+
+func applyDeploymentRequested(ctx context.Context, e eventlog.Envelope, s store.Store) error {
+	var p events.DeploymentRequested
+	if err := json.Unmarshal(e.Payload, &p); err != nil {
+		return fmt.Errorf("decision_flows: decode deployment_requested seq %d: %w", e.Seq, err)
+	}
+	return mutateFlow(ctx, s, e, p.FlowID, func(fv *FlowView) {
+		fv.DeploymentRequests = append(fv.DeploymentRequests, DeploymentRequest{
+			RequestID: p.RequestID, Environment: p.Environment, Version: p.Version,
+			ChallengerVersion: p.ChallengerVersion, ChallengerPct: p.ChallengerPct,
+			Status: "pending", RequestedBy: e.Actor, RequestedAt: e.Time,
+		})
+	})
+}
+
+func applyDeploymentApproved(ctx context.Context, e eventlog.Envelope, s store.Store) error {
+	var p events.DeploymentApproved
+	if err := json.Unmarshal(e.Payload, &p); err != nil {
+		return fmt.Errorf("decision_flows: decode deployment_approved seq %d: %w", e.Seq, err)
+	}
+	return mutateFlow(ctx, s, e, p.FlowID, func(fv *FlowView) {
+		// Approving deploys the version.
+		if fv.Deployments == nil {
+			fv.Deployments = make(map[string]DeploymentView)
+		}
+		fv.Deployments[p.Environment] = DeploymentView{
+			Version: p.Version, ChallengerVersion: p.ChallengerVersion, ChallengerPct: p.ChallengerPct,
+		}
+		decideRequest(fv, p.RequestID, "approved", "", e)
+	})
+}
+
+func applyDeploymentRejected(ctx context.Context, e eventlog.Envelope, s store.Store) error {
+	var p events.DeploymentRejected
+	if err := json.Unmarshal(e.Payload, &p); err != nil {
+		return fmt.Errorf("decision_flows: decode deployment_rejected seq %d: %w", e.Seq, err)
+	}
+	return mutateFlow(ctx, s, e, p.FlowID, func(fv *FlowView) {
+		decideRequest(fv, p.RequestID, "rejected", p.Reason, e)
+	})
+}
+
+// decideRequest stamps a request's terminal status, decider, and time.
+func decideRequest(fv *FlowView, reqID, status, reason string, e eventlog.Envelope) {
+	for i := range fv.DeploymentRequests {
+		if fv.DeploymentRequests[i].RequestID != reqID {
+			continue
+		}
+		fv.DeploymentRequests[i].Status = status
+		fv.DeploymentRequests[i].Reason = reason
+		fv.DeploymentRequests[i].DecidedBy = e.Actor
+		fv.DeploymentRequests[i].DecidedAt = e.Time
+		return
 	}
 }
 

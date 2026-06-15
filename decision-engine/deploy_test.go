@@ -57,9 +57,16 @@ func TestVersionPinningAndABRouting(t *testing.T) {
 		}
 		return res.Output["decision"].(string)
 	}
+	// Production deploys go through maker-checker: a request by the author, then an
+	// approval by a *different* user (four-eyes).
+	approver := identity.Identity{Org: "demo", Workspace: "main", Actor: "approver"}
 	deploy := func(c domain.DeployVersion) {
 		c.FlowID, c.Environment = flowID, "production"
-		if _, err := h.Deploy(ctx, id, c); err != nil {
+		reqID, _, err := h.RequestDeployment(ctx, id, c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := h.ApproveDeployment(ctx, approver, flowID, reqID); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -131,12 +138,81 @@ func TestDeployValidationAndUnknownVersion(t *testing.T) {
 	if _, _, _, err := h.PublishVersion(ctx, id, domain.PublishVersion{FlowID: flowID, Graph: flowtest.ConstGraph("v1")}); err != nil {
 		t.Fatal(err)
 	}
-	// Deploying an unpublished version fails loudly.
-	if _, err := h.Deploy(ctx, id, domain.DeployVersion{FlowID: flowID, Environment: "production", Version: 5}); err == nil {
+	// Deploying an unpublished version fails loudly (sandbox: direct deploy allowed).
+	if _, err := h.Deploy(ctx, id, domain.DeployVersion{FlowID: flowID, Environment: "sandbox", Version: 5}); err == nil {
 		t.Fatal("expected error deploying an unpublished version")
 	}
 	// Bad environment is rejected by command validation.
 	if _, err := h.Deploy(ctx, id, domain.DeployVersion{FlowID: flowID, Environment: "staging", Version: 1}); err == nil {
 		t.Fatal("expected error for invalid environment")
+	}
+	// A direct deploy to production is refused — it must go through maker-checker.
+	if _, err := h.Deploy(ctx, id, domain.DeployVersion{FlowID: flowID, Environment: "production", Version: 1}); err == nil {
+		t.Fatal("expected a direct production deploy to be refused")
+	}
+}
+
+func TestMakerCheckerApproval(t *testing.T) {
+	ctx := context.Background()
+	log, err := eventlog.OpenWAL(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = log.Close() }()
+	maker := identity.Identity{Org: "demo", Workspace: "main", Actor: "maker"}
+	checker := identity.Identity{Org: "demo", Workspace: "main", Actor: "checker"}
+
+	h := command.NewHandler(log)
+	flowID, _, err := h.CreateFlow(ctx, maker, domain.CreateFlow{Slug: "mc", Name: "MC"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := h.PublishVersion(ctx, maker, domain.PublishVersion{FlowID: flowID, Graph: flowtest.ConstGraph("v1")}); err != nil {
+		t.Fatal(err)
+	}
+
+	// The maker proposes a production deployment.
+	reqID, _, err := h.RequestDeployment(ctx, maker, domain.DeployVersion{FlowID: flowID, Environment: "production", Version: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Four-eyes: the maker cannot approve their own request.
+	if _, err := h.ApproveDeployment(ctx, maker, flowID, reqID); err == nil {
+		t.Fatal("the proposer must not be able to approve their own deployment (four-eyes)")
+	}
+
+	// A different user (the checker) approves it, which deploys.
+	if _, err := h.ApproveDeployment(ctx, checker, flowID, reqID); err != nil {
+		t.Fatal(err)
+	}
+	s := store.NewMemory()
+	if err := projection.New(log, s, flows.Projector{}).Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	fv, _, err := flows.Read(ctx, s, maker, flowID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dep, ok := fv.Deployments["production"]; !ok || dep.Version != 1 {
+		t.Fatalf("approval did not deploy: %+v", fv.Deployments)
+	}
+	if len(fv.DeploymentRequests) != 1 || fv.DeploymentRequests[0].Status != "approved" ||
+		fv.DeploymentRequests[0].DecidedBy != "checker" {
+		t.Fatalf("request not marked approved: %+v", fv.DeploymentRequests)
+	}
+
+	// Re-approving a decided request fails.
+	if _, err := h.ApproveDeployment(ctx, checker, flowID, reqID); err == nil {
+		t.Fatal("re-approving an already-approved request should fail")
+	}
+
+	// A rejected request does not deploy.
+	reqID2, _, err := h.RequestDeployment(ctx, maker, domain.DeployVersion{FlowID: flowID, Environment: "production", Version: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.RejectDeployment(ctx, checker, flowID, reqID2, "needs more testing"); err != nil {
+		t.Fatal(err)
 	}
 }

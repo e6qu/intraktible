@@ -24,6 +24,18 @@ func GetDoc[T any](ctx context.Context, s Store, collection, key string) (T, boo
 	return v, true, nil
 }
 
+// UpdateDoc loads collection[key] as T, applies mutate, and writes it back. It
+// returns false (and does not write) when the key is absent — projectors use this
+// to fail loudly on an event for an aggregate that should already exist.
+func UpdateDoc[T any](ctx context.Context, s Store, collection, key string, mutate func(*T)) (bool, error) {
+	v, ok, err := GetDoc[T](ctx, s, collection, key)
+	if err != nil || !ok {
+		return ok, err
+	}
+	mutate(&v)
+	return true, PutDoc(ctx, s, collection, key, v)
+}
+
 // PutDoc JSON-encodes v and stores it at collection[key].
 func PutDoc[T any](ctx context.Context, s Store, collection, key string, v T) error {
 	doc, err := json.Marshal(v)

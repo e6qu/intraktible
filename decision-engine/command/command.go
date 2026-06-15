@@ -130,6 +130,11 @@ func (h *Handler) Deploy(ctx context.Context, id identity.Identity, cmd domain.D
 	if err := cmd.Validate(); err != nil {
 		return eventlog.Envelope{}, err
 	}
+	// Change control: a production deployment must go through maker-checker
+	// (RequestDeployment + a different user's ApproveDeployment), never a direct deploy.
+	if cmd.Environment == domain.EnvProduction {
+		return eventlog.Envelope{}, fmt.Errorf("decision-engine: production deployments require an approved deployment request")
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -158,6 +163,148 @@ func (h *Handler) Deploy(ctx context.Context, id identity.Identity, cmd domain.D
 		return eventlog.Envelope{}, fmt.Errorf("decision-engine: marshal deployed: %w", err)
 	}
 	return h.appendFlowEvent(ctx, id, events.TypeFlowVersionDeployed, payload)
+}
+
+// RequestDeployment proposes a deployment for review (the maker side of
+// maker-checker). It validates the target version is published and records a
+// DeploymentRequested; a different user must ApproveDeployment to make it live.
+func (h *Handler) RequestDeployment(ctx context.Context, id identity.Identity, cmd domain.DeployVersion) (string, eventlog.Envelope, error) {
+	if err := id.Valid(); err != nil {
+		return "", eventlog.Envelope{}, err
+	}
+	if err := cmd.Validate(); err != nil {
+		return "", eventlog.Envelope{}, err
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	byID, _, err := h.foldTenant(ctx, id)
+	if err != nil {
+		return "", eventlog.Envelope{}, err
+	}
+	agg, ok := byID[cmd.FlowID]
+	if !ok {
+		return "", eventlog.Envelope{}, fmt.Errorf("decision-engine: unknown flow %q", cmd.FlowID)
+	}
+	if cmd.Version > agg.latest || cmd.ChallengerVersion > agg.latest {
+		return "", eventlog.Envelope{}, fmt.Errorf("decision-engine: version not published (latest is %d)", agg.latest)
+	}
+	reqID := h.newID()
+	payload, err := json.Marshal(events.DeploymentRequested{
+		RequestID: reqID, FlowID: cmd.FlowID, Environment: cmd.Environment,
+		Version: cmd.Version, ChallengerVersion: cmd.ChallengerVersion, ChallengerPct: cmd.ChallengerPct,
+	})
+	if err != nil {
+		return "", eventlog.Envelope{}, fmt.Errorf("decision-engine: marshal requested: %w", err)
+	}
+	e, err := h.appendFlowEvent(ctx, id, events.TypeDeploymentRequested, payload)
+	return reqID, e, err
+}
+
+// ApproveDeployment is the checker side: a *different* user approves a pending
+// request (four-eyes), which deploys the version. The proposer cannot approve
+// their own request.
+func (h *Handler) ApproveDeployment(ctx context.Context, id identity.Identity, flowID, reqID string) (eventlog.Envelope, error) {
+	if err := id.Valid(); err != nil {
+		return eventlog.Envelope{}, err
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	req, ok, err := h.foldRequest(ctx, id, flowID, reqID)
+	if err != nil {
+		return eventlog.Envelope{}, err
+	}
+	if !ok {
+		return eventlog.Envelope{}, fmt.Errorf("decision-engine: unknown deployment request %q", reqID)
+	}
+	if req.status != "pending" {
+		return eventlog.Envelope{}, fmt.Errorf("decision-engine: deployment request %q is already %s", reqID, req.status)
+	}
+	if req.requestedBy == id.Actor {
+		return eventlog.Envelope{}, fmt.Errorf("decision-engine: four-eyes — %q cannot approve their own deployment request", id.Actor)
+	}
+	payload, err := json.Marshal(events.DeploymentApproved{
+		RequestID: reqID, FlowID: flowID, Environment: req.env,
+		Version: req.version, ChallengerVersion: req.challengerVersion, ChallengerPct: req.challengerPct,
+	})
+	if err != nil {
+		return eventlog.Envelope{}, fmt.Errorf("decision-engine: marshal approved: %w", err)
+	}
+	return h.appendFlowEvent(ctx, id, events.TypeDeploymentApproved, payload)
+}
+
+// RejectDeployment rejects a pending deployment request.
+func (h *Handler) RejectDeployment(ctx context.Context, id identity.Identity, flowID, reqID, reason string) (eventlog.Envelope, error) {
+	if err := id.Valid(); err != nil {
+		return eventlog.Envelope{}, err
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	req, ok, err := h.foldRequest(ctx, id, flowID, reqID)
+	if err != nil {
+		return eventlog.Envelope{}, err
+	}
+	if !ok {
+		return eventlog.Envelope{}, fmt.Errorf("decision-engine: unknown deployment request %q", reqID)
+	}
+	if req.status != "pending" {
+		return eventlog.Envelope{}, fmt.Errorf("decision-engine: deployment request %q is already %s", reqID, req.status)
+	}
+	payload, err := json.Marshal(events.DeploymentRejected{RequestID: reqID, FlowID: flowID, Reason: reason})
+	if err != nil {
+		return eventlog.Envelope{}, fmt.Errorf("decision-engine: marshal rejected: %w", err)
+	}
+	return h.appendFlowEvent(ctx, id, events.TypeDeploymentRejected, payload)
+}
+
+// deployReq is the folded state of one deployment request.
+type deployReq struct {
+	env                                       string
+	version, challengerVersion, challengerPct int
+	requestedBy, status                       string
+}
+
+// foldRequest reconstructs one deployment request from the flow stream.
+func (h *Handler) foldRequest(ctx context.Context, id identity.Identity, flowID, reqID string) (deployReq, bool, error) {
+	evs, err := h.log.Read(ctx, 0)
+	if err != nil {
+		return deployReq{}, false, fmt.Errorf("decision-engine: read log: %w", err)
+	}
+	var req deployReq
+	found := false
+	for _, e := range evs {
+		if e.Stream != events.StreamFlows || e.Org != id.Org || e.Workspace != id.Workspace {
+			continue
+		}
+		switch e.Type {
+		case events.TypeDeploymentRequested:
+			var p events.DeploymentRequested
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				return deployReq{}, false, fmt.Errorf("decision-engine: decode requested seq %d: %w", e.Seq, err)
+			}
+			if p.FlowID == flowID && p.RequestID == reqID {
+				req = deployReq{env: p.Environment, version: p.Version, challengerVersion: p.ChallengerVersion,
+					challengerPct: p.ChallengerPct, requestedBy: e.Actor, status: "pending"}
+				found = true
+			}
+		case events.TypeDeploymentApproved:
+			var p events.DeploymentApproved
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				return deployReq{}, false, fmt.Errorf("decision-engine: decode approved seq %d: %w", e.Seq, err)
+			}
+			if p.RequestID == reqID {
+				req.status = "approved"
+			}
+		case events.TypeDeploymentRejected:
+			var p events.DeploymentRejected
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				return deployReq{}, false, fmt.Errorf("decision-engine: decode rejected seq %d: %w", e.Seq, err)
+			}
+			if p.RequestID == reqID {
+				req.status = "rejected"
+			}
+		}
+	}
+	return req, found, nil
 }
 
 func (h *Handler) appendFlowEvent(ctx context.Context, id identity.Identity, typ string, payload json.RawMessage) (eventlog.Envelope, error) {

@@ -128,18 +128,22 @@ func TestAuthorizeRBAC(t *testing.T) {
 		secret, method, path string
 		want                 int
 	}{
-		{"viewer-k", "GET", "/v1/flows", 200},                        // reads open to viewer
-		{"viewer-k", "POST", "/v1/flows", 403},                       // authoring needs editor role
-		{"editor-k", "POST", "/v1/flows", 200},                       // editor may author
-		{"editor-k", "POST", "/v1/flows/f1/versions", 200},           // publish needs editor
-		{"editor-k", "POST", "/v1/flows/f1/deployments", 403},        // deploy needs approver role
-		{"approver-k", "POST", "/v1/flows/f1/deployments", 200},      // approver may deploy
-		{"viewer-k", "POST", "/v1/flows/s/production/decide", 403},   // decide needs operator role
-		{"operator-k", "POST", "/v1/flows/s/production/decide", 200}, // operator may decide
-		{"operator-k", "POST", "/v1/cases", 200},                     // case ops need operator
-		{"operator-k", "POST", "/v1/agents", 403},                    // defining an agent needs editor
-		{"editor-k", "POST", "/v1/agents", 200},                      // editor may define
-		{"admin-k", "POST", "/v1/flows/f1/deployments", 200},         // admin may do anything
+		{"viewer-k", "GET", "/v1/flows", 200},                                    // reads open to viewer
+		{"viewer-k", "POST", "/v1/flows", 403},                                   // authoring needs editor role
+		{"editor-k", "POST", "/v1/flows", 200},                                   // editor may author
+		{"editor-k", "POST", "/v1/flows/f1/versions", 200},                       // publish needs editor
+		{"editor-k", "POST", "/v1/flows/f1/deployments", 403},                    // deploy needs approver role
+		{"approver-k", "POST", "/v1/flows/f1/deployments", 200},                  // approver may deploy
+		{"viewer-k", "POST", "/v1/flows/s/production/decide", 403},               // decide needs operator role
+		{"operator-k", "POST", "/v1/flows/s/production/decide", 200},             // operator may decide
+		{"operator-k", "POST", "/v1/cases", 200},                                 // case ops need operator
+		{"operator-k", "POST", "/v1/agents", 403},                                // defining an agent needs editor
+		{"editor-k", "POST", "/v1/agents", 200},                                  // editor may define
+		{"admin-k", "POST", "/v1/flows/f1/deployments", 200},                     // admin may do anything
+		{"editor-k", "POST", "/v1/flows/f1/deployment-requests", 200},            // propose: editor
+		{"operator-k", "POST", "/v1/flows/f1/deployment-requests", 403},          // propose needs editor
+		{"editor-k", "POST", "/v1/flows/f1/deployment-requests/r1/approve", 403}, // approve needs approver
+		{"approver-k", "POST", "/v1/flows/f1/deployment-requests/r1/approve", 200},
 	}
 	for _, c := range cases {
 		if got := do(c.secret, c.method, c.path); got != c.want {

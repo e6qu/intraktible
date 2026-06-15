@@ -45,9 +45,16 @@ Done — execution runtime + decide API + decision history (the decision event s
   `DecisionFailed` — so a run is replayable node-by-node; a flow-logic error is a recorded **failed**
   decision (HTTP 200, `status: "failed"`), not a swallowed error.
 - **Versioning / rollout:** `POST /v1/flows/{flow_id}/deployments` pins which version is live per
-  environment (sandbox/production) and configures an optional **A/B challenger** taking
-  `challenger_pct` of decisions. Decide routes accordingly and records the chosen version + variant
-  (champion/challenger), so replay is stable; with no deployment it falls back to the latest version.
+  environment and configures an optional **A/B challenger** taking `challenger_pct` of decisions.
+  Decide routes accordingly and records the chosen version + variant (champion/challenger), so replay
+  is stable; with no deployment it falls back to the latest version.
+- **Change governance (maker-checker / four-eyes):** a direct deploy is allowed only for non-production
+  environments. A **production** deployment must be *proposed* by one user
+  (`POST /v1/flows/{flow_id}/deployment-requests`) and *approved by a different user*
+  (`POST …/deployment-requests/{req_id}/approve`, or `…/reject`) — the approval is what actually
+  deploys. The proposer cannot approve their own request; every request + decision is recorded on the
+  flow (an auditable approval trail). Combined with RBAC, proposing needs the `editor` role and
+  approving needs `approver`.
 - **Analytics-lite:** a metrics projection folds the decision stream into per-flow counters
   (volume, completed/failed, average duration, and breakdowns by environment, version, and
   **variant** — so champion vs challenger outcome rates are directly comparable). `GET

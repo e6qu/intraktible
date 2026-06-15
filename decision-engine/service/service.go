@@ -38,6 +38,9 @@ func (s *Service) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/flows/{flow_id}/metrics", s.metrics)
 	mux.HandleFunc("POST /v1/flows/{flow_id}/versions", s.publish)
 	mux.HandleFunc("POST /v1/flows/{flow_id}/deployments", s.deploy)
+	mux.HandleFunc("POST /v1/flows/{flow_id}/deployment-requests", s.requestDeployment)
+	mux.HandleFunc("POST /v1/flows/{flow_id}/deployment-requests/{req_id}/approve", s.approveDeployment)
+	mux.HandleFunc("POST /v1/flows/{flow_id}/deployment-requests/{req_id}/reject", s.rejectDeployment)
 	mux.HandleFunc("POST /v1/flows/{slug}/{env}/decide", s.runDecide)
 	mux.HandleFunc("GET /v1/flows/{flow_id}/export", s.exportFlow)
 	mux.HandleFunc("GET /v1/decisions", s.listDecisions)
@@ -147,6 +150,65 @@ func (s *Service) deploy(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusCreated, map[string]any{
 		"environment": req.Environment, "version": req.Version, "event_id": e.ID, "seq": e.Seq,
 	})
+}
+
+// requestDeployment proposes a deployment for review (maker-checker maker side).
+func (s *Service) requestDeployment(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	var req deployRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	reqID, e, err := s.cmd.RequestDeployment(r.Context(), id, domain.DeployVersion{
+		FlowID:            r.PathValue("flow_id"),
+		Environment:       req.Environment,
+		Version:           req.Version,
+		ChallengerVersion: req.ChallengerVersion,
+		ChallengerPct:     req.ChallengerPct,
+	})
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	httpx.JSON(w, http.StatusCreated, map[string]any{
+		"request_id": reqID, "status": "pending", "event_id": e.ID, "seq": e.Seq,
+	})
+}
+
+// approveDeployment is the checker side: approve a pending request (four-eyes), deploying it.
+func (s *Service) approveDeployment(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	e, err := s.cmd.ApproveDeployment(r.Context(), id, r.PathValue("flow_id"), r.PathValue("req_id"))
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"status": "approved", "event_id": e.ID, "seq": e.Seq})
+}
+
+// rejectDeployment rejects a pending request.
+func (s *Service) rejectDeployment(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		Reason string `json:"reason,omitempty"`
+	}
+	_ = httpx.DecodeJSON(r, &req)
+	e, err := s.cmd.RejectDeployment(r.Context(), id, r.PathValue("flow_id"), r.PathValue("req_id"), req.Reason)
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"status": "rejected", "event_id": e.ID, "seq": e.Seq})
 }
 
 type decideRequest struct {

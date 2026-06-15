@@ -111,8 +111,8 @@ enterprise buyers; **P2** = differentiators / scale.
 
 | # | Item | Why | Effort |
 |---|------|-----|--------|
-| 1 | **RBAC** (roles + authZ) | P0 — nothing else is safe without it | M |
-| 2 | **Maker-checker approvals** | P0 — change control on decision logic | M |
+| 1 | **RBAC** (roles + authZ) — ✅ done | P0 — nothing else is safe without it | M |
+| 2 | **Maker-checker approvals** — ✅ done | P0 — change control on decision logic | M |
 | 3 | **Backtesting on a dataset** | P0 — the user's #1 confidence tool | M |
 | 4 | **Audit API + UI** | P0 — surface the lineage we already record | S |
 | 5 | **Reason codes** | P0 — adverse-action / explainability | S–M |
@@ -130,6 +130,9 @@ decisioning core — it is the **governance, access-control, testing, and compli
 envelope** around it. Those are well-scoped, mostly tractable on the existing
 architecture (events + ports), and are what this roadmap front-loads.
 
-The first P0 item — **RBAC** — is implemented (`platform/auth` roles +
-`platform/httpx` per-request authorization). **Maker-checker approvals** land next
-(Decision Engine). The rest are sequenced above; none requires re-architecting.
+The first two P0 items are implemented: **RBAC** (`platform/auth` roles +
+`platform/httpx` per-request authorization) and **maker-checker approvals** (the
+Decision Engine refuses direct production deploys; a deployment must be *proposed*
+by one user and *approved* by a different one — four-eyes — via
+`/v1/flows/{id}/deployment-requests` + `…/approve`). The rest are sequenced above;
+none requires re-architecting — they extend the same event-sourced core.

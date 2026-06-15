@@ -141,11 +141,12 @@ func requiredRole(method, path string) auth.Role {
 		return auth.RoleViewer
 	}
 	switch {
-	case strings.Contains(path, "/deployments"),
-		strings.HasSuffix(path, "/approve"),
-		strings.HasSuffix(path, "/reject"):
+	case strings.Contains(path, "/deployments"), // a direct deploy (non-prod)
+		strings.HasSuffix(path, "/approve"), // the checker approving a deployment
+		strings.HasSuffix(path, "/reject"):  // the checker rejecting a deployment
 		return auth.RoleApprover
-	case isAuthoringPath(path):
+	case strings.HasSuffix(path, "/deployment-requests"), // proposing a deployment (maker)
+		isAuthoringPath(path):
 		return auth.RoleEditor
 	default:
 		return auth.RoleOperator
