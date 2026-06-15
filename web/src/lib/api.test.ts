@@ -16,7 +16,10 @@ import {
   listAgents,
   runAgent,
   escalateRun,
-  getRunSummary
+  getRunSummary,
+  login,
+  logout,
+  currentUser
 } from './api';
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -221,5 +224,41 @@ describe('agents', () => {
     expect(sum.failed).toBe(1);
     const [url] = fetcher.mock.calls[0];
     expect(url).toBe('/v1/agent-runs/summary');
+  });
+});
+
+describe('session auth', () => {
+  it('login posts the api key and returns the identity', async () => {
+    const fetcher = fetcherReturning(200, { org: 'demo', workspace: 'main', actor: 'dev' });
+    const id = await login('dev-sandbox-key', fetcher);
+    expect(id.actor).toBe('dev');
+    const [url, init] = fetcher.mock.calls[0];
+    expect(url).toBe('/v1/login');
+    expect(init?.body).toBe(JSON.stringify({ api_key: 'dev-sandbox-key' }));
+  });
+
+  it('login surfaces an invalid key', async () => {
+    await expect(
+      login('nope', fetcherReturning(401, { error: 'invalid api key' }))
+    ).rejects.toThrow(/invalid api key/);
+  });
+
+  it('currentUser returns null when unauthenticated', async () => {
+    expect(await currentUser(fetcherReturning(401, {}))).toBeNull();
+  });
+
+  it('currentUser returns the identity when signed in', async () => {
+    const id = await currentUser(
+      fetcherReturning(200, { org: 'demo', workspace: 'main', actor: 'dev' })
+    );
+    expect(id?.actor).toBe('dev');
+  });
+
+  it('logout posts to the logout endpoint', async () => {
+    const fetcher = fetcherReturning(200, {});
+    await logout(fetcher);
+    const [url, init] = fetcher.mock.calls[0];
+    expect(url).toBe('/v1/logout');
+    expect(init?.method).toBe('POST');
   });
 });

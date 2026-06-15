@@ -467,3 +467,45 @@ export async function escalateRun(
   }
   return (await res.json()) as { case_id: string };
 }
+
+// ---- Session auth (login/logout) ----
+
+export interface Identity {
+  org: string;
+  workspace: string;
+  actor: string;
+}
+
+// login exchanges an API key for a session cookie (set by the server).
+export async function login(apiKey: string, fetcher: typeof fetch = fetch): Promise<Identity> {
+  const res = await fetcher('/v1/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ api_key: apiKey })
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'POST /v1/login');
+  }
+  return (await res.json()) as Identity;
+}
+
+// logout revokes the current session and clears the cookie.
+export async function logout(fetcher: typeof fetch = fetch): Promise<void> {
+  const res = await fetcher('/v1/logout', { method: 'POST' });
+  if (!res.ok && res.status !== 204) {
+    await errorOrStatus(res, 'POST /v1/logout');
+  }
+}
+
+// currentUser returns the signed-in identity from the session cookie, or null
+// when there is no valid session.
+export async function currentUser(fetcher: typeof fetch = fetch): Promise<Identity | null> {
+  const res = await fetcher('/v1/me');
+  if (res.status === 401) {
+    return null;
+  }
+  if (!res.ok) {
+    return errorOrStatus(res, 'GET /v1/me');
+  }
+  return (await res.json()) as Identity;
+}

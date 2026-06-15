@@ -1,10 +1,25 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
-  import { getStats, sayHello } from '$lib/api';
+  import { onMount } from 'svelte';
+  import { getStats, sayHello, currentUser, logout, type Identity } from '$lib/api';
 
   let key = $state('dev-sandbox-key');
   let name = $state('world');
   let out = $state('stats will appear here…');
+  let user = $state<Identity | null>(null);
+
+  async function refreshUser() {
+    try {
+      user = await currentUser();
+    } catch {
+      user = null;
+    }
+  }
+  async function signOut() {
+    await logout();
+    await refreshUser();
+  }
+  onMount(refreshUser);
 
   async function stats() {
     try {
@@ -27,6 +42,14 @@
 <main>
   <h1>intraktible — Phase 0 vertical slice</h1>
   <p>command → event log → projection → API → this UI.</p>
+  <p data-testid="auth-status">
+    {#if user}
+      Signed in as <b>{user.actor}</b> ({user.org}/{user.workspace})
+      <button onclick={signOut}>Sign out</button>
+    {:else}
+      Not signed in — <a href="/login">sign in →</a>
+    {/if}
+  </p>
   <p>
     <a href="/engine">Decision Engine builder →</a>
     &nbsp;·&nbsp;
