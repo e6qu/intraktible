@@ -40,6 +40,9 @@ web/.pw-data/
 .env.*
 !.env.example
 
+# Scratch / local-only working area (design screenshots, notes, throwaway scripts)
+/temp/
+
 # Editor / OS
 .DS_Store
 .idea/

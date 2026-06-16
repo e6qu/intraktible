@@ -1,6 +1,8 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   import { onMount } from 'svelte';
+  import EmptyState from '$lib/EmptyState.svelte';
+  import Skeleton from '$lib/Skeleton.svelte';
   import { listAgents, defineAgent, getRunSummary, type Agent, type RunSummary } from '$lib/api';
 
   // API calls authenticate via the session cookie (empty key -> no X-Api-Key header).
@@ -8,6 +10,7 @@
   let list = $state<Agent[]>([]);
   let summary = $state<RunSummary | null>(null);
   let error = $state('');
+  let loading = $state(true);
 
   // new-agent form
   let name = $state('');
@@ -19,11 +22,14 @@
   let busy = $state(false);
 
   async function load() {
+    loading = true;
     error = '';
     try {
       [list, summary] = await Promise.all([listAgents(key), getRunSummary(key)]);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
+    } finally {
+      loading = false;
     }
   }
 
@@ -108,8 +114,14 @@
     </div>
   {/if}
 
-  {#if list.length === 0}
-    <p class="muted">No agents.</p>
+  {#if loading}
+    <Skeleton rows={4} />
+  {:else if list.length === 0}
+    <EmptyState
+      icon="agents"
+      title="No agents defined"
+      hint="Define an agent above — a system prompt over the AI provider, optionally with tools and a structured-output schema — then run and monitor it here."
+    />
   {:else}
     <div class="table-wrap">
       <table>

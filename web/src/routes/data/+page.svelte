@@ -2,6 +2,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import Icon from '$lib/Icon.svelte';
+  import EmptyState from '$lib/EmptyState.svelte';
   import { toast } from '$lib/toast';
   import {
     listConnectors,
@@ -220,9 +221,11 @@
   <section>
     <h2>Entities</h2>
     {#if entities.length === 0}
-      <p class="muted">
-        No entities yet. They are created when a decision references one, or via the API.
-      </p>
+      <EmptyState
+        icon="database"
+        title="No entities yet"
+        hint="Entities appear when a decision references one, when an event records one, or when you create them via the API."
+      />
     {:else}
       <div class="table-wrap">
         <table>
@@ -313,7 +316,7 @@
     border-radius: 0.3rem;
   }
   .config {
-    font-family: ui-monospace, monospace;
+    font-family: var(--font-mono);
     font-size: 0.8rem;
     color: var(--fg-muted);
     max-width: 22rem;

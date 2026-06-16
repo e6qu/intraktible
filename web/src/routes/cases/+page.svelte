@@ -2,6 +2,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { toast } from '$lib/toast';
+  import EmptyState from '$lib/EmptyState.svelte';
+  import Skeleton from '$lib/Skeleton.svelte';
   import {
     listCases,
     getCaseSummary,
@@ -17,6 +19,7 @@
   let list = $state<Case[]>([]);
   let summary = $state<CaseSummary | null>(null);
   let error = $state('');
+  let loading = $state(true);
 
   // new-case form
   let company = $state('');
@@ -24,6 +27,7 @@
   let slaDays = $state(5);
 
   async function load() {
+    loading = true;
     error = '';
     try {
       [list, summary] = await Promise.all([
@@ -32,6 +36,8 @@
       ]);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
+    } finally {
+      loading = false;
     }
   }
 
@@ -108,8 +114,14 @@
     </div>
   {/if}
 
-  {#if list.length === 0}
-    <p class="muted">No cases.</p>
+  {#if loading}
+    <Skeleton rows={5} />
+  {:else if list.length === 0}
+    <EmptyState
+      icon="cases"
+      title={statusFilter ? `No ${statusFilter} cases` : 'The review queue is clear'}
+      hint="Cases open here when a flow's manual-review node escalates, an agent run is escalated, or you open one above."
+    />
   {:else}
     <div class="table-wrap">
       <table>
@@ -142,7 +154,6 @@
     max-width: 52rem;
     margin: 2rem auto;
     padding: 0 1rem;
-    font-family: system-ui, sans-serif;
   }
   .row {
     display: flex;

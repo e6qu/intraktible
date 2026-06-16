@@ -39,7 +39,7 @@
     max-width: 32rem;
     margin: 3rem auto;
     padding: 0 1rem;
-    font-family: system-ui, sans-serif;
+    font-family: var(--font-ui);
   }
   .row {
     display: flex;

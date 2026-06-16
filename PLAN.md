@@ -314,6 +314,18 @@ record and the decision UI shows (ECOA/Reg B + insurance explainability). **All 
 are done.** Remaining work is P1/P2 (secrets management/encryption-at-rest, alerting/drift, SSO/SCIM,
 batch decisioning, SDKs, SOC2) — sequenced in `docs/ENTERPRISE.md`.
 
+**Persona-aware UI (post-MVP).** The web UI gained a **persona** axis (`web/src/lib/persona.ts`) — a
+client-side "view-as" preference anyone can switch (not RBAC-gated), orthogonal to light/dark theme. It
+applies a `data-persona` attribute that swaps accent, type system, and density, and the landing page
+renders a distinct dashboard per persona over the same data: **Builder** (dense monospace command-deck —
+flows, latency percentiles, pending deploys, a live decision tape), **Operator** (calm KPI mission-control
+— throughput, SLA/queue health, four-eyes approvals, agent runs), and **Showcase** (an editorial serif
+story with count-up headline metrics for stakeholders). Typefaces are self-hosted (IBM Plex Sans/Mono +
+Fraunces, OFL, vendored under `web/static/fonts` — no runtime CDN). The **Admin surface** (audit ledger)
+is deliberately exempt: an `.admin-surface` token set gives it one fixed, canonical slate-indigo identity
+for everyone. The Phase-0 hello slice moved off the landing to `/hello`; shared `EmptyState`/`Skeleton`
+primitives added designed empty and loading states across the list pages.
+
 > Per project convention: at the **end of every phase**, update `PLAN.md` and `BUGS.md` in the same
 > PR as the phase's code.
 

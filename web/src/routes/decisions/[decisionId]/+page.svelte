@@ -162,7 +162,7 @@
     font-size: 0.9rem;
   }
   .mono {
-    font-family: ui-monospace, monospace;
+    font-family: var(--font-mono);
     font-size: 0.85rem;
   }
   ul.reasons {
@@ -177,7 +177,7 @@
     gap: 0.6rem;
   }
   .rcode {
-    font-family: ui-monospace, monospace;
+    font-family: var(--font-mono);
     font-weight: 600;
     color: var(--accent);
     background: var(--surface-2);
@@ -213,7 +213,7 @@
   .ntype {
     font-size: 0.75rem;
     color: var(--fg-subtle);
-    font-family: ui-monospace, monospace;
+    font-family: var(--font-mono);
   }
   .nout {
     margin-left: auto;

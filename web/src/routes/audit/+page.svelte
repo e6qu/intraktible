@@ -50,7 +50,8 @@
   onMount(load);
 </script>
 
-<main>
+<main class="admin-surface">
+  <span class="admin-tag"><Icon name="shield" size={13} /> Admin</span>
   <div class="head">
     <h1><Icon name="shield" size={20} /> Audit log</h1>
     <div class="actions">
@@ -128,6 +129,20 @@
     max-width: 68rem;
     margin: 2rem auto;
     padding: 0 1.25rem;
+  }
+  .admin-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.15rem 0.55rem;
+    margin-bottom: 0.6rem;
+    border-radius: 999px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--on-accent);
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
   }
   .head {
     display: flex;

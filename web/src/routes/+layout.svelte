@@ -7,16 +7,24 @@
   import { page } from '$app/stores';
   import Icon from '$lib/Icon.svelte';
   import { initTheme, toggleTheme, theme as themeStore } from '$lib/theme';
+  import { initPersona, setPersona, persona as personaStore, PERSONAS } from '$lib/persona';
   import { user, refreshUser, signOut } from '$lib/session';
   import Toasts from '$lib/Toasts.svelte';
 
   let { children } = $props();
   let theme = $state<'light' | 'dark'>('light');
+  let persona = $state(initPersona());
 
   onMount(() => {
     theme = initTheme();
+    initPersona();
     void refreshUser();
-    return themeStore.subscribe((t) => (theme = t));
+    const unsubTheme = themeStore.subscribe((t) => (theme = t));
+    const unsubPersona = personaStore.subscribe((p) => (persona = p));
+    return () => {
+      unsubTheme();
+      unsubPersona();
+    };
   });
 
   const nav = [
@@ -32,6 +40,22 @@
   function active(href: string): boolean {
     return path === href || path.startsWith(href + '/');
   }
+
+  const currentPersona = $derived(PERSONAS.find((p) => p.id === persona) ?? PERSONAS[0]);
+  let personaEl = $state<HTMLDetailsElement | null>(null);
+
+  function choose(id: typeof persona): void {
+    setPersona(id);
+    if (personaEl) personaEl.open = false;
+  }
+  // Close the persona menu on an outside click (details has no native dismiss).
+  $effect(() => {
+    function onDocClick(e: MouseEvent): void {
+      if (personaEl?.open && !personaEl.contains(e.target as Node)) personaEl.open = false;
+    }
+    document.addEventListener('click', onDocClick);
+    return () => document.removeEventListener('click', onDocClick);
+  });
 </script>
 
 <a class="skip-link" href="#main">Skip to content</a>
@@ -62,6 +86,29 @@
       <a class="navlink" href="/login">Sign in</a>
     {/if}
   </span>
+  <details class="persona" bind:this={personaEl} data-testid="persona-switch">
+    <summary class="persona-trigger" title="Switch view — {currentPersona.blurb}">
+      <span class="avatar"><Icon name={currentPersona.id} size={16} /></span>
+      <span class="persona-name">{currentPersona.label}</span>
+      <span class="caret"><Icon name="chevron-down" size={13} /></span>
+    </summary>
+    <div class="persona-menu" role="menu" aria-label="View persona">
+      <p class="persona-hint">View as</p>
+      {#each PERSONAS as p (p.id)}
+        <button
+          class="persona-opt"
+          class:on={persona === p.id}
+          role="menuitemradio"
+          aria-checked={persona === p.id}
+          onclick={() => choose(p.id)}
+        >
+          <span class="opt-avatar" data-p={p.id}><Icon name={p.id} size={16} /></span>
+          <span class="opt-text"><b>{p.label}</b><small>{p.blurb}</small></span>
+          {#if persona === p.id}<span class="opt-check"><Icon name="check" size={14} /></span>{/if}
+        </button>
+      {/each}
+    </div>
+  </details>
   <button
     class="toggle"
     onclick={() => (theme = toggleTheme(theme))}
@@ -190,6 +237,134 @@
     height: 36px;
     padding: 0;
     border-radius: 999px;
+  }
+
+  /* Persona switcher — a "view-as" identity control. The avatar's colour IS the
+     active persona's accent, so the current view is legible at a glance. */
+  .persona {
+    position: relative;
+  }
+  .persona-trigger {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0.25rem 0.55rem 0.25rem 0.3rem;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--surface);
+    color: var(--fg);
+    font: inherit;
+    font-size: 0.85rem;
+    cursor: pointer;
+    list-style: none;
+    user-select: none;
+  }
+  .persona-trigger::-webkit-details-marker {
+    display: none;
+  }
+  .persona-trigger:hover {
+    background: var(--surface-2);
+  }
+  .avatar {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    border-radius: 999px;
+    color: var(--on-accent);
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  }
+  .persona-name {
+    font-weight: 550;
+  }
+  .caret {
+    display: inline-flex;
+    color: var(--fg-subtle);
+    transition: transform 0.15s ease;
+  }
+  .persona[open] .caret {
+    transform: rotate(180deg);
+  }
+  .persona-menu {
+    position: absolute;
+    top: calc(100% + 0.45rem);
+    right: 0;
+    z-index: 50;
+    min-width: 16rem;
+    padding: 0.4rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+  }
+  .persona-hint {
+    margin: 0.2rem 0.5rem 0.35rem;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--fg-subtle);
+  }
+  .persona-opt {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    width: 100%;
+    padding: 0.45rem 0.5rem;
+    border: none;
+    border-radius: var(--radius-sm);
+    background: none;
+    text-align: left;
+    cursor: pointer;
+  }
+  .persona-opt:hover {
+    background: var(--surface-2);
+  }
+  .persona-opt.on {
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+  }
+  .opt-avatar {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    flex: none;
+    border-radius: 999px;
+    color: #fff;
+  }
+  .opt-avatar[data-p='builder'] {
+    background: linear-gradient(135deg, #f59e0b, #d97706);
+    color: #1c1503;
+  }
+  .opt-avatar[data-p='operator'] {
+    background: linear-gradient(135deg, #14b8a6, #0d9488);
+  }
+  .opt-avatar[data-p='showcase'] {
+    background: linear-gradient(135deg, #e11d48, #be123c);
+  }
+  .opt-text {
+    display: flex;
+    flex-direction: column;
+    line-height: 1.25;
+    margin-right: auto;
+  }
+  .opt-text b {
+    font-weight: 600;
+    font-size: 0.9rem;
+  }
+  .opt-text small {
+    color: var(--fg-muted);
+    font-size: 0.78rem;
+  }
+  .opt-check {
+    display: inline-flex;
+    color: var(--accent-ink);
+  }
+  @media (max-width: 640px) {
+    .persona-name {
+      display: none;
+    }
   }
   .page {
     min-height: calc(100vh - 53px);

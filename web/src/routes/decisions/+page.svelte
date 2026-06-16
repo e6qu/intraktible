@@ -2,22 +2,28 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import Icon from '$lib/Icon.svelte';
+  import EmptyState from '$lib/EmptyState.svelte';
+  import Skeleton from '$lib/Skeleton.svelte';
   import { listDecisions, type Decision } from '$lib/api';
 
   // API calls authenticate via the session cookie (empty key → no X-Api-Key).
   const key = '';
   let list = $state<Decision[]>([]);
   let error = $state('');
+  let loading = $state(true);
 
   function msg(e: unknown): string {
     return e instanceof Error ? e.message : String(e);
   }
   async function load() {
+    loading = true;
     error = '';
     try {
       list = await listDecisions(key);
     } catch (e) {
       error = msg(e);
+    } finally {
+      loading = false;
     }
   }
   function when(iso: string): string {
@@ -33,10 +39,18 @@
   </div>
   {#if error}<p class="err">{error}</p>{/if}
 
-  {#if list.length === 0}
-    <p class="muted">
-      No decisions yet. Run a flow from the <a href="/engine">Decision Engine</a>.
-    </p>
+  {#if loading}
+    <Skeleton rows={6} />
+  {:else if list.length === 0}
+    <EmptyState
+      icon="diagram"
+      title="No decisions yet"
+      hint="Run a flow from the Decision Engine and every determination shows up here — replayable, node by node."
+    >
+      {#snippet action()}
+        <a href="/engine">Open the Decision Engine →</a>
+      {/snippet}
+    </EmptyState>
   {:else}
     <div class="table-wrap">
       <table>

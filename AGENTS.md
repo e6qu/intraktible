@@ -89,9 +89,18 @@ first-class instead of operator-CLI-only).
 ## The design in one breath
 Go backend (**functional core / imperative shell**) + **SvelteKit + Svelte Flow** UI embedded in the
 binary — a shared layout with **light/dark theming** (toggleable, persisted, OS-default), an inline-SVG
-icon set, and flow **diagram export** (Mermaid / BPMN) from the builder. List pages share a tokenized
-table style; async actions show in-flight (disabled) states to prevent double-submit; the flow list
-surfaces per-environment deployment status. A **pure-Go embedded append-only event log** is the backbone; **hybrid event sourcing**
+icon set, and flow **diagram export** (Mermaid / BPMN) from the builder. The UI is **persona-aware**:
+a client-side "view-as" switch (anyone can flip it — a presentation preference, *not* RBAC) re-skins and
+re-prioritises the whole app for three viewers — **Builder** (a dense monospace command-deck for the
+developer/maintainer), **Operator** (calm KPI mission-control for the risk/ops manager), and **Showcase**
+(an editorial serif story for stakeholders). Persona drives accent, type system (self-hosted IBM Plex
+Sans/Mono + Fraunces, OFL, vendored — no runtime CDN), and density via a `data-persona` attribute,
+orthogonal to `data-theme`; the landing page is a different dashboard per persona, all over the same
+data. The **Admin surface** (the audit ledger) is exempt — a fixed, canonical slate-indigo identity that
+reads the same for everyone regardless of persona. List pages share a tokenized table style with designed
+**empty states** and **loading skeletons**; async actions show in-flight (disabled) states to prevent
+double-submit; the flow list surfaces per-environment deployment status. A **pure-Go embedded
+append-only event log** is the backbone; **hybrid event sourcing**
 (events are truth, **JSONB projections** are rebuilt views) gives **perfect replay + log-based
 rollback**. **Modular monolith** that also splits into services. **Org+workspace scoped** from day 1.
 Pluggable storage (SQLite/Postgres) and pluggable AI provider. Details: [PLAN.md §3](PLAN.md#3-architecture).

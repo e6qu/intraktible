@@ -1309,7 +1309,7 @@
     max-width: 72rem;
     margin: 2rem auto;
     padding: 0 1rem;
-    font-family: system-ui, sans-serif;
+    font-family: var(--font-ui);
   }
   .grid {
     display: grid;
@@ -1337,7 +1337,7 @@
   }
   textarea {
     width: 100%;
-    font-family: ui-monospace, monospace;
+    font-family: var(--font-mono);
   }
   label {
     display: block;
@@ -1402,7 +1402,7 @@
     margin-left: auto;
     font-size: 0.7rem;
     color: var(--fg-subtle);
-    font-family: ui-monospace, monospace;
+    font-family: var(--font-mono);
   }
   button.x {
     border: none;
@@ -1521,7 +1521,7 @@
     list-style: none;
     padding: 0;
     margin: 0.5rem 0 0;
-    font-family: ui-monospace, monospace;
+    font-family: var(--font-mono);
     font-size: 0.85rem;
   }
   .diff li {

@@ -2,6 +2,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import Icon from '$lib/Icon.svelte';
+  import EmptyState from '$lib/EmptyState.svelte';
+  import Skeleton from '$lib/Skeleton.svelte';
   import { listFlows, createFlow, type Flow } from '$lib/api';
 
   // API calls authenticate via the session cookie (empty key -> no X-Api-Key header).
@@ -11,13 +13,17 @@
   let name = $state('');
   let error = $state('');
   let busy = $state(false);
+  let loading = $state(true);
 
   async function load() {
+    loading = true;
     error = '';
     try {
       flows = await listFlows(key);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
+    } finally {
+      loading = false;
     }
   }
 
@@ -66,8 +72,14 @@
 
   {#if error}<p class="err">{error}</p>{/if}
 
-  {#if flows.length === 0}
-    <p class="muted">No flows yet.</p>
+  {#if loading}
+    <Skeleton rows={4} />
+  {:else if flows.length === 0}
+    <EmptyState
+      icon="engine"
+      title="No flows yet"
+      hint="Create your first decision flow above, then open it to build the graph on the canvas, publish a version, and deploy."
+    />
   {:else}
     <div class="table-wrap">
       <table>
