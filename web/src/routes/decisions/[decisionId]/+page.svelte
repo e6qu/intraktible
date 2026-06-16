@@ -76,6 +76,15 @@
 
     {#if d.error}<p class="err">Error: {d.error}</p>{/if}
 
+    {#if d.reason_codes && d.reason_codes.length}
+      <h2>Reason codes</h2>
+      <ul class="reasons" data-testid="reason-codes">
+        {#each d.reason_codes as rc (rc.code)}
+          <li><span class="rcode">{rc.code}</span> {rc.description}</li>
+        {/each}
+      </ul>
+    {/if}
+
     <h2>Node trace</h2>
     {#if d.nodes && d.nodes.length}
       <ol class="trace">
@@ -155,6 +164,25 @@
   .mono {
     font-family: ui-monospace, monospace;
     font-size: 0.85rem;
+  }
+  ul.reasons {
+    list-style: none;
+    padding: 0;
+    margin: 0.4rem 0 0.8rem;
+  }
+  ul.reasons li {
+    padding: 0.3rem 0;
+    display: flex;
+    align-items: baseline;
+    gap: 0.6rem;
+  }
+  .rcode {
+    font-family: ui-monospace, monospace;
+    font-weight: 600;
+    color: var(--accent);
+    background: var(--surface-2);
+    padding: 0.05rem 0.4rem;
+    border-radius: 0.3rem;
   }
   ol.trace {
     list-style: none;

@@ -545,3 +545,53 @@ func TestEngineAPIRequiresAuth(t *testing.T) {
 		t.Fatalf("unauthenticated request -> %d, want 401", resp.StatusCode)
 	}
 }
+
+func TestDecideRecordsReasonCodes(t *testing.T) {
+	api := startEngine(t)
+
+	var created struct {
+		FlowID string `json:"flow_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows",
+		map[string]string{"slug": "adverse", "name": "Adverse"}, http.StatusCreated, &created)
+	graph := map[string]any{
+		"nodes": []map[string]any{
+			{"id": "in", "type": "input"},
+			{"id": "r", "type": "reason", "config": map[string]any{"reasons": []map[string]any{
+				{"when": "fico < 600", "code": "R01", "description": "Insufficient credit score"},
+				{"when": "income < 30000", "code": "R02", "description": "Insufficient income"},
+			}}},
+			{"id": "out", "type": "output", "config": map[string]any{"fields": []string{"decision"}}},
+		},
+		"edges": []map[string]any{{"from": "in", "to": "r"}, {"from": "r", "to": "out"}},
+	}
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/versions",
+		map[string]any{"graph": graph}, http.StatusCreated, nil)
+	if !testutil.Eventually(t, func() bool {
+		var fv flows.FlowView
+		api.Request(t, http.MethodGet, "/v1/flows/"+created.FlowID, nil, http.StatusOK, &fv)
+		return fv.Latest == 1
+	}) {
+		t.Fatal("flow registry projection never caught up")
+	}
+
+	var decision struct {
+		DecisionID string `json:"decision_id"`
+		Status     string `json:"status"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows/adverse/production/decide",
+		map[string]any{"data": map[string]any{"fico": 500, "income": 50000}}, http.StatusOK, &decision)
+	if decision.Status != "completed" {
+		t.Fatalf("decide status=%s", decision.Status)
+	}
+
+	// Only fico<600 matched, and the reason codes are lifted to the first-class
+	// field on the decision record (the adverse-action explanation).
+	if !testutil.Eventually(t, func() bool {
+		var rec history.Record
+		api.Request(t, http.MethodGet, "/v1/decisions/"+decision.DecisionID, nil, http.StatusOK, &rec)
+		return len(rec.ReasonCodes) == 1 && rec.ReasonCodes[0].Code == "R01"
+	}) {
+		t.Fatal("reason codes never recorded on the decision")
+	}
+}

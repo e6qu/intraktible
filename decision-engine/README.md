@@ -36,7 +36,10 @@ Done — flow model + versioning (vertical slice, command→event→projection�
 Done — execution runtime + decide API + decision history (the decision event stream, PLAN.md §3.3):
 - `domain.Execute` is a **pure, deterministic** DAG traversal (input → … → output) over a published
   graph. Node engines: **Input, Assignment, Rule, Split, Scorecard, Decision Table, 2D Matrix, Code,
-  ManualReview, Output** (a ManualReview node escalates to the Case Manager — opens a case).
+  ManualReview, Reason, Output** (a ManualReview node escalates to the Case Manager — opens a case;
+  a **Reason** node emits structured adverse-action `{code, description}`s into the reserved
+  `reason_codes` field — always surfaced by Output — which the history projector lifts to a first-class
+  `reason_codes` field on the decision record for ECOA/Reg B + insurance explainability).
   Conditions/expressions use **expr-lang**; the **Code** node runs **Starlark** (no
   clock/random/IO, recursion off, bounded by a step limit) with the context as a `data` dict and its
   top-level assignments merged back. A **Connect** node calls a Context Layer connector and an **AI**

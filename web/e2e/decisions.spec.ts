@@ -59,3 +59,59 @@ test('a decision run shows in the history and its detail has the node trace', as
   await expect(page.locator('ol.trace')).toContainText('assignment');
   await expect(page.getByRole('button', { name: 'Sequence', exact: true })).toBeVisible();
 });
+
+test('a reason node yields adverse-action reason codes on the decision detail', async ({
+  page,
+  request
+}) => {
+  const slug = uniqueSlug();
+  const created = await request.post('/v1/flows', {
+    headers: { 'X-Api-Key': KEY },
+    data: { slug, name: 'Adverse Flow' }
+  });
+  const { flow_id } = await created.json();
+  await request.post(`/v1/flows/${flow_id}/versions`, {
+    headers: { 'X-Api-Key': KEY },
+    data: {
+      graph: {
+        nodes: [
+          { id: 'in', type: 'input' },
+          {
+            id: 'r',
+            type: 'reason',
+            config: {
+              reasons: [
+                { when: 'fico < 600', code: 'R01', description: 'Insufficient credit score' },
+                { when: 'income < 30000', code: 'R02', description: 'Insufficient income' }
+              ]
+            }
+          },
+          { id: 'out', type: 'output', config: { fields: ['decision'] } }
+        ],
+        edges: [
+          { from: 'in', to: 'r' },
+          { from: 'r', to: 'out' }
+        ]
+      }
+    }
+  });
+
+  let decisionId = '';
+  await expect(async () => {
+    const r = await request.post(`/v1/flows/${slug}/production/decide`, {
+      headers: { 'X-Api-Key': KEY },
+      data: { data: { fico: 500, income: 50000 } }
+    });
+    const body = await r.json();
+    expect(body.status).toBe('completed');
+    decisionId = body.decision_id;
+  }).toPass({ timeout: 5000 });
+
+  // Only fico<600 matched → exactly one reason code, surfaced first-class.
+  await page.goto(`/decisions/${decisionId}`);
+  const reasons = page.getByTestId('reason-codes');
+  await expect(reasons).toBeVisible();
+  await expect(reasons.locator('li')).toHaveCount(1);
+  await expect(reasons).toContainText('R01');
+  await expect(reasons).toContainText('Insufficient credit score');
+});

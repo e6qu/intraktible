@@ -85,6 +85,19 @@ type scorecardConfig struct {
 	} `json:"factors"`
 }
 
+// reasonConfig is the config of a Reason node: an ordered list of reason codes,
+// each appended to the reserved "reason_codes" list in the context when its When
+// condition holds. Code and Description are literal, human-readable text — the
+// adverse-action explainability (ECOA/Reg B, insurance) raw material; When is an
+// expression evaluated against the context.
+type reasonConfig struct {
+	Reasons []struct {
+		When        string `json:"when"`
+		Code        string `json:"code"`
+		Description string `json:"description"`
+	} `json:"reasons"`
+}
+
 // decisionTableConfig is the config of a Decision Table node: ordered rows, each
 // a condition with its output assignments. Mode "first" (default) applies the
 // first matching row; "all" applies every matching row in order.

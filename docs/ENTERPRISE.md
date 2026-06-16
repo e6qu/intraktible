@@ -63,9 +63,13 @@ enterprise buyers; **P2** = differentiators / scale.
   newest-first, with a `?format=csv` export. It is admin-gated (read-only but
   sensitive) and surfaced as an **Audit log** UI page. The data was always in the
   log; this makes "who did what, when" first-class instead of operator-CLI-only.
-- **P0 — Reason codes / adverse-action explainability.** Lending (ECOA/Reg B) and
-  insurance require human-readable reasons for a decline. The node trace is the
-  raw material; it needs structured reason-code output.
+- **P0 — Reason codes / adverse-action explainability — ✅ done.** A **Reason node**
+  emits a structured `{code, description}` for every condition that holds; the codes
+  accumulate in a reserved `reason_codes` field that the Output node always surfaces
+  (never dropped by field selection), and the decision-history projector lifts them
+  into a first-class `reason_codes` field on the decision record. The decision-detail
+  UI shows a **Reason codes** section. This is the ECOA/Reg B + insurance decline-
+  reason requirement.
 - **P1 — PII handling**: field-level classification, masking in traces/logs,
   configurable retention & purge, right-to-erasure (GDPR/CCPA).
 - **P1 — Model risk management (SR 11-7 / SS1/23)**: documented model inventory,
@@ -131,7 +135,7 @@ enterprise buyers; **P2** = differentiators / scale.
 | 2 | **Maker-checker approvals** — ✅ done | P0 — change control on decision logic | M |
 | 3 | **Backtesting on a dataset** — ✅ done | P0 — the user's #1 confidence tool | M |
 | 4 | **Audit API + UI** — ✅ done | P0 — surface the lineage we already record | S |
-| 5 | **Reason codes** | P0 — adverse-action / explainability | S–M |
+| 5 | **Reason codes** — ✅ done | P0 — adverse-action / explainability | S–M |
 | 6 | **Secrets management** for connectors | P1 | M |
 | 7 | **Alerting / drift** | P1 | M |
 | 8 | **SSO/SCIM, batch decisioning, SDKs, networked log** | P1 | L each |
@@ -146,13 +150,16 @@ decisioning core — it is the **governance, access-control, testing, and compli
 envelope** around it. Those are well-scoped, mostly tractable on the existing
 architecture (events + ports), and are what this roadmap front-loads.
 
-Four P0 items are implemented: **RBAC** (`platform/auth` roles +
+All five P0 items are implemented: **RBAC** (`platform/auth` roles +
 `platform/httpx` per-request authorization), **maker-checker approvals** (the
 Decision Engine refuses direct production deploys; a deployment must be *proposed*
 by one user and *approved* by a different one — four-eyes — via
 `/v1/flows/{id}/deployment-requests` + `…/approve`), **backtesting**
 (`/v1/flows/{id}/backtest` replays a dataset through the pure engine and diffs two
-versions before deploy), and the **immutable audit surface** (`GET /v1/audit`, a
-filterable + CSV-exportable read over the event log). The remaining P0 is
-**reason codes**; the rest are sequenced above. None requires re-architecting —
-they extend the same event-sourced core.
+versions before deploy), the **immutable audit surface** (`GET /v1/audit`, a
+filterable + CSV-exportable read over the event log), and **reason codes** (a
+Reason node emits structured adverse-action `{code, description}`s, lifted to a
+first-class field on the decision record and shown in the decision UI). The
+remaining work is all P1/P2 (secrets management, alerting, SSO/SCIM, batch
+decisioning, SDKs, SOC2 …); none requires re-architecting — they extend the same
+event-sourced core.

@@ -57,6 +57,7 @@
     'code',
     'connect',
     'ai',
+    'reason',
     'output'
   ];
 
@@ -190,7 +191,8 @@
     'rule',
     'scorecard',
     'decision_table',
-    '2d_matrix'
+    '2d_matrix',
+    'reason'
   ];
 
   // --- Rule node: rules[] = {when, then:[{target,expr}]} (two-level repeater) ---
@@ -249,6 +251,22 @@
   }
   function setFactor(i: number, patch: Factor) {
     patchCfg({ factors: factors().map((f, j) => (j === i ? { ...f, ...patch } : f)) });
+  }
+
+  // --- Reason node: reasons[] = {when, code, description} ---
+  type Reason = { when?: string; code?: string; description?: string };
+  function reasons(): Reason[] {
+    const r = nodeCfg().reasons;
+    return Array.isArray(r) ? (r as Reason[]) : [];
+  }
+  function addReason() {
+    patchCfg({ reasons: [...reasons(), { when: '', code: '', description: '' }] });
+  }
+  function removeReason(i: number) {
+    patchCfg({ reasons: reasons().filter((_, j) => j !== i) });
+  }
+  function setReason(i: number, patch: Reason) {
+    patchCfg({ reasons: reasons().map((r, j) => (j === i ? { ...r, ...patch } : r)) });
   }
 
   // --- Decision table: rows[] = {when, outputs:[{target,expr}]}, mode? ---
@@ -1021,6 +1039,35 @@
             </div>
           {/each}
           <button onclick={addFactor}>Add factor</button>
+        {:else if selected.type === 'reason'}
+          <p class="muted">reason codes (when → code + description)</p>
+          {#each reasons() as r, i (i)}
+            <div class="row">
+              <input
+                value={asText(r.when)}
+                oninput={(e) => setReason(i, { when: e.currentTarget.value })}
+                aria-label={`reason ${i} when`}
+                placeholder="when"
+              />
+              <input
+                value={asText(r.code)}
+                oninput={(e) => setReason(i, { code: e.currentTarget.value })}
+                aria-label={`reason ${i} code`}
+                placeholder="code"
+                size="8"
+              />
+              <input
+                value={asText(r.description)}
+                oninput={(e) => setReason(i, { description: e.currentTarget.value })}
+                aria-label={`reason ${i} description`}
+                placeholder="description"
+              />
+              <button class="x" aria-label={`remove reason ${i}`} onclick={() => removeReason(i)}
+                >✕</button
+              >
+            </div>
+          {/each}
+          <button onclick={addReason}>Add reason</button>
         {:else if selected.type === 'decision_table'}
           <label
             >mode

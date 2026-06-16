@@ -109,6 +109,8 @@ func evalNode(n events.Node, ctx map[string]any, edges []events.Edge) (any, stri
 		return evalAI(n, ctx, edges)
 	case events.NodeManualReview:
 		return evalManualReview(n, ctx, edges)
+	case events.NodeReason:
+		return evalReason(n, ctx, edges)
 	case events.NodeOutput:
 		return evalOutput(n, ctx)
 	default:
@@ -200,6 +202,44 @@ func evalScorecard(n events.Node, ctx map[string]any, edges []events.Edge) (any,
 	}
 	ctx[output] = score
 	return map[string]any{output: score}, firstEdge(edges), nil
+}
+
+// reasonCodesField is the reserved context/output key that accumulates structured
+// adverse-action reason codes. The Output node always surfaces it.
+const reasonCodesField = "reason_codes"
+
+// evalReason appends a {code, description} entry for every reason whose condition
+// holds to the reserved reason_codes list, accumulating across the flow.
+func evalReason(n events.Node, ctx map[string]any, edges []events.Edge) (any, string, error) {
+	var cfg reasonConfig
+	if err := decodeConfig(n, &cfg); err != nil {
+		return nil, "", err
+	}
+	codes := existingReasonCodes(ctx)
+	added := make([]any, 0, len(cfg.Reasons))
+	for i, r := range cfg.Reasons {
+		match, err := evalBool(r.When, ctx)
+		if err != nil {
+			return nil, "", fmt.Errorf("decision-engine: node %q reason %d condition: %w", n.ID, i, err)
+		}
+		if !match {
+			continue
+		}
+		code := map[string]any{"code": r.Code, "description": r.Description}
+		codes = append(codes, code)
+		added = append(added, code)
+	}
+	ctx[reasonCodesField] = codes
+	return map[string]any{reasonCodesField: added}, firstEdge(edges), nil
+}
+
+// existingReasonCodes returns a copy of the accumulated reason_codes list (empty
+// when absent or the wrong shape) so Reason nodes append without aliasing ctx.
+func existingReasonCodes(ctx map[string]any) []any {
+	if v, ok := ctx[reasonCodesField].([]any); ok {
+		return append([]any{}, v...)
+	}
+	return []any{}
 }
 
 func evalDecisionTable(n events.Node, ctx map[string]any, edges []events.Edge) (any, string, error) {
@@ -413,6 +453,13 @@ func evalOutput(n events.Node, ctx map[string]any) (any, string, error) {
 	resp := make(map[string]any, len(cfg.Fields))
 	for _, f := range cfg.Fields {
 		resp[f] = ctx[f]
+	}
+	// reason_codes is a reserved compliance field — always surface it so an
+	// adverse-action explanation is never dropped by output field selection.
+	if rc, ok := ctx[reasonCodesField]; ok {
+		if _, selected := resp[reasonCodesField]; !selected {
+			resp[reasonCodesField] = rc
+		}
 	}
 	return resp, "", nil
 }

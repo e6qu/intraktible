@@ -17,7 +17,8 @@ Post-MVP backlog is tracked in [BUGS.md](BUGS.md).
 Roadmap & exit criteria: [PLAN.md §8](PLAN.md#8-phased-roadmap); deferrals tracked in [BUGS.md](BUGS.md).
 Working today: `platform/{eventlog,store,projection,identity,auth,httpx,ai,web}` + the `hello`
 slice; and the **Decision Engine** — flow model + versioning, a deterministic execution runtime
-(Input/Assignment/Rule/Split/Scorecard/Decision Table/2D Matrix/Code/Output; expr-lang for
+(Input/Assignment/Rule/Split/Scorecard/Decision Table/2D Matrix/Code/Reason/Output; the Reason node
+emits structured adverse-action reason codes lifted first-class onto the decision; expr-lang for
 expressions, Starlark for the Code node), the `…/{env}/decide` API with **per-environment version
 pinning + A/B (champion/challenger) routing**, decision history, and **analytics-lite** (per-flow
 metrics with champion/challenger breakdown) — all command→event→projection→API, durable & replayable.

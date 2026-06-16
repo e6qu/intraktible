@@ -307,8 +307,12 @@ approve-by-a-different-user, recorded on the flow as an auditable trail), **back
 published version and optionally diffs two versions over `domain.Execute` only (no recorded decision,
 no I/O), surfaced in the builder as a panel that flags the changed records — and the **immutable audit
 surface** (`GET /v1/audit`, `platform/audit`): a tenant-scoped, filterable, CSV-exportable read over the
-event log, admin-gated, with an Audit log UI page. Remaining P0/P1 items (reason codes, secrets
-management, alerting/drift, SSO/SCIM, batch decisioning, SDKs) are sequenced in `docs/ENTERPRISE.md`.
+event log, admin-gated, with an Audit log UI page; and **reason codes** — a Reason node (`decision-engine/
+domain`) emits structured adverse-action `{code, description}`s into a reserved `reason_codes` field
+(always surfaced by Output), which the history projector lifts to a first-class field on the decision
+record and the decision UI shows (ECOA/Reg B + insurance explainability). **All five enterprise P0 items
+are done.** Remaining work is P1/P2 (secrets management/encryption-at-rest, alerting/drift, SSO/SCIM,
+batch decisioning, SDKs, SOC2) — sequenced in `docs/ENTERPRISE.md`.
 
 > Per project convention: at the **end of every phase**, update `PLAN.md` and `BUGS.md` in the same
 > PR as the phase's code.

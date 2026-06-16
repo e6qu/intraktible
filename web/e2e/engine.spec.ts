@@ -211,6 +211,29 @@ test('a rule panel edits when/then clauses without raw JSON', async ({ page, req
   );
 });
 
+test('a reason panel edits adverse-action codes without raw JSON', async ({ page, request }) => {
+  const slug = uniqueSlug();
+  const created = await request.post('/v1/flows', {
+    headers: { 'X-Api-Key': KEY },
+    data: { slug, name: 'Reason' }
+  });
+  const { flow_id } = await created.json();
+
+  await page.goto(`/engine/${flow_id}`);
+  await expect(page.getByLabel('new node type')).toBeVisible();
+
+  await page.getByLabel('new node type').selectOption('reason');
+  await page.getByRole('button', { name: 'Add', exact: true }).click();
+  await page.getByRole('button', { name: 'Add reason' }).click();
+  await page.getByLabel('reason 0 when').fill('fico < 600');
+  await page.getByLabel('reason 0 code').fill('R01');
+  await page.getByLabel('reason 0 description').fill('Insufficient credit score');
+
+  await expect(page.getByLabel('node config')).toHaveValue(
+    '{"reasons":[{"when":"fico < 600","code":"R01","description":"Insufficient credit score"}]}'
+  );
+});
+
 test('backtests a dataset and diffs two versions', async ({ page, request }) => {
   const slug = uniqueSlug();
   const created = await request.post('/v1/flows', {

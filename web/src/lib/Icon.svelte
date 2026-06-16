@@ -74,7 +74,8 @@
       '<rect x="3" y="4" width="18" height="6" rx="2"/><rect x="3" y="14" width="18" height="6" rx="2"/><path d="M12 10v4"/>'
     ],
     ['manual_review', '<circle cx="12" cy="8" r="3"/><path d="M5 21a7 7 0 0 1 14 0"/>'],
-    ['assignment', '<path d="M5 12h14M12 5v14"/>']
+    ['assignment', '<path d="M5 12h14M12 5v14"/>'],
+    ['reason', '<path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5M9 13h6M9 17h4"/>']
   ]);
 
   function pathFor(name: string): string {

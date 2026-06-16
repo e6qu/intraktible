@@ -29,6 +29,13 @@ type NodeRecord struct {
 	Output json.RawMessage `json:"output,omitempty"`
 }
 
+// ReasonCode is one structured adverse-action reason — human-readable
+// explainability (ECOA/Reg B, insurance) lifted from a decision's output.
+type ReasonCode struct {
+	Code        string `json:"code"`
+	Description string `json:"description"`
+}
+
 // Record is the materialized history of one decision.
 type Record struct {
 	Org         string          `json:"org"`
@@ -42,6 +49,7 @@ type Record struct {
 	Status      string          `json:"status"`            // started | completed | failed
 	Data        json.RawMessage `json:"data,omitempty"`
 	Output      json.RawMessage `json:"output,omitempty"`
+	ReasonCodes []ReasonCode    `json:"reason_codes,omitempty"`
 	Error       string          `json:"error,omitempty"`
 	TimeOrdered []string        `json:"time_ordered"`
 	Nodes       []NodeRecord    `json:"nodes"`
@@ -116,7 +124,23 @@ func applyCompleted(ctx context.Context, e eventlog.Envelope, s store.Store) err
 	}
 	return update(ctx, s, e, p.DecisionID, func(r *Record) {
 		r.Status, r.Output, r.EndedAt, r.DurationMS = "completed", p.Output, e.Time, p.DurationMS
+		r.ReasonCodes = extractReasonCodes(p.Output)
 	})
+}
+
+// extractReasonCodes lifts the reserved reason_codes field out of a decision's
+// output into the first-class, structured field on the record.
+func extractReasonCodes(output json.RawMessage) []ReasonCode {
+	if len(output) == 0 {
+		return nil
+	}
+	var wrapper struct {
+		ReasonCodes []ReasonCode `json:"reason_codes"`
+	}
+	if err := json.Unmarshal(output, &wrapper); err != nil {
+		return nil
+	}
+	return wrapper.ReasonCodes
 }
 
 func applyFailed(ctx context.Context, e eventlog.Envelope, s store.Store) error {

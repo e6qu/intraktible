@@ -39,6 +39,7 @@ const (
 	NodeAI            NodeType = "ai"
 	NodeConnect       NodeType = "connect"
 	NodeManualReview  NodeType = "manual_review"
+	NodeReason        NodeType = "reason"
 	NodeOutput        NodeType = "output"
 )
 

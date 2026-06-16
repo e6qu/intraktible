@@ -194,6 +194,11 @@ export interface NodeRecord {
   output?: unknown;
 }
 
+export interface ReasonCode {
+  code: string;
+  description: string;
+}
+
 export interface Decision {
   decision_id: string;
   flow_id: string;
@@ -204,6 +209,7 @@ export interface Decision {
   status: string;
   data?: unknown;
   output?: unknown;
+  reason_codes?: ReasonCode[];
   error?: string;
   nodes?: NodeRecord[];
   started_at: string;

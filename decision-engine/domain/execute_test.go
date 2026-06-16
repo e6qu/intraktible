@@ -147,6 +147,32 @@ func TestExecuteManualReview(t *testing.T) {
 	}
 }
 
+func TestExecuteReasonCodes(t *testing.T) {
+	g := linear(
+		cfgNode("r", events.NodeReason, `{"reasons":[`+
+			`{"when":"fico < 600","code":"R01","description":"Insufficient credit score"},`+
+			`{"when":"income < 30000","code":"R02","description":"Insufficient income"}]}`),
+		cfgNode("out", events.NodeOutput, `{"fields":["decision"]}`),
+	)
+	run := domain.Execute(g, map[string]any{"fico": 500.0, "income": 50000.0, "decision": "DECLINE"})
+	if run.Status != domain.StatusCompleted {
+		t.Fatalf("status=%s err=%s", run.Status, run.Err)
+	}
+	// Only the matching condition (fico<600) emits a code, and reason_codes is
+	// surfaced even though the output node selected only "decision".
+	rc, ok := run.Output["reason_codes"].([]any)
+	if !ok || len(rc) != 1 {
+		t.Fatalf("want 1 surfaced reason code, got %#v", run.Output["reason_codes"])
+	}
+	first, _ := rc[0].(map[string]any)
+	if first["code"] != "R01" || first["description"] != "Insufficient credit score" {
+		t.Fatalf("wrong reason code: %#v", first)
+	}
+	if run.Output["decision"] != "DECLINE" {
+		t.Fatalf("selected field lost: %v", run.Output["decision"])
+	}
+}
+
 func TestExecuteFailsLoudly(t *testing.T) {
 	cases := []struct {
 		name       string
