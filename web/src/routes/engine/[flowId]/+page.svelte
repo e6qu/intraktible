@@ -31,6 +31,7 @@
     type GraphEdge
   } from '$lib/api';
   import { toast } from '$lib/toast';
+  import { diffGraphs, diffIsEmpty } from '$lib/diff';
   import { layout } from '$lib/layout';
   import { theme } from '$lib/theme';
   import Icon from '$lib/Icon.svelte';
@@ -138,10 +139,29 @@
         editEdges = version.graph.edges.map((e) => ({ from: e.from, to: e.to, branch: e.branch }));
         counter = editNodes.length;
       }
+      // Default the version-diff selectors to the two most recent versions.
+      const vs = flow.versions;
+      if (vs.length > 0) {
+        diffB = String(vs[vs.length - 1].version);
+        diffA = String(vs[vs.length >= 2 ? vs.length - 2 : vs.length - 1].version);
+      }
     } catch (e) {
       error = msg(e);
     }
   }
+
+  // --- Version diff (client-side structural compare of two published versions) ---
+  let diffA = $state('');
+  let diffB = $state('');
+  function versionGraph(v: string) {
+    const n = parseInt(v, 10);
+    return flow?.versions.find((x) => x.version === n)?.graph;
+  }
+  let graphDiff = $derived.by(() => {
+    const a = versionGraph(diffA);
+    const b = versionGraph(diffB);
+    return a && b ? diffGraphs(a, b) : null;
+  });
 
   function addNode() {
     const id = `n${++counter}`;
@@ -696,6 +716,68 @@
       </div>
     {/if}
   </section>
+
+  {#if flow && flow.versions.length > 0}
+    <section class="versions" data-testid="versions-panel">
+      <h2>Versions</h2>
+      <div class="vlist">
+        {#each [...flow.versions].reverse() as v (v.version)}
+          <span class="vchip">
+            <b>v{v.version}</b>
+            <code>{v.etag.slice(0, 8)}</code>
+            {#if v.published_by}<span class="muted">by {v.published_by}</span>{/if}
+          </span>
+        {/each}
+      </div>
+      {#if flow.versions.length >= 2}
+        <div class="row">
+          <label
+            >diff <select bind:value={diffA} aria-label="diff base version">
+              {#each flow.versions as v (v.version)}<option value={String(v.version)}
+                  >v{v.version}</option
+                >{/each}
+            </select></label
+          >
+          <span>→</span>
+          <select bind:value={diffB} aria-label="diff candidate version">
+            {#each flow.versions as v (v.version)}<option value={String(v.version)}
+                >v{v.version}</option
+              >{/each}
+          </select>
+        </div>
+        {#if graphDiff}
+          {#if diffIsEmpty(graphDiff)}
+            <p class="muted" data-testid="version-diff">v{diffA} and v{diffB} are identical.</p>
+          {:else}
+            <ul class="diff" data-testid="version-diff">
+              {#each graphDiff.nodesAdded as id (id)}<li>
+                  <span class="add">+ node</span>
+                  {id}
+                </li>{/each}
+              {#each graphDiff.nodesRemoved as id (id)}<li>
+                  <span class="del">− node</span>
+                  {id}
+                </li>{/each}
+              {#each graphDiff.nodesChanged as id (id)}<li>
+                  <span class="chg">~ node</span>
+                  {id}
+                </li>{/each}
+              {#each graphDiff.edgesAdded as e (e)}<li>
+                  <span class="add">+ edge</span>
+                  {e}
+                </li>{/each}
+              {#each graphDiff.edgesRemoved as e (e)}<li>
+                  <span class="del">− edge</span>
+                  {e}
+                </li>{/each}
+            </ul>
+          {/if}
+        {/if}
+      {:else}
+        <p class="muted">Publish another version to compare.</p>
+      {/if}
+    </section>
+  {/if}
 
   {#if error}<p class="err">{error}</p>{/if}
 
@@ -1361,6 +1443,51 @@
   .reqactions {
     display: flex;
     gap: 0.4rem;
+  }
+  .versions {
+    margin: 0.6rem 0;
+    padding: 0.7rem 0.9rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+  }
+  .versions h2 {
+    margin: 0 0 0.5rem;
+    font-size: 1rem;
+  }
+  .vlist {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-bottom: 0.6rem;
+  }
+  .vchip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.2rem 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    font-size: 0.82rem;
+  }
+  .diff {
+    list-style: none;
+    padding: 0;
+    margin: 0.5rem 0 0;
+    font-family: ui-monospace, monospace;
+    font-size: 0.85rem;
+  }
+  .diff li {
+    padding: 0.15rem 0;
+  }
+  .diff .add {
+    color: var(--ok);
+  }
+  .diff .del {
+    color: var(--danger);
+  }
+  .diff .chg {
+    color: var(--accent);
   }
   .export .grp {
     display: inline-flex;

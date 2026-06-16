@@ -39,6 +39,13 @@ test('deploys to sandbox and runs the production four-eyes flow', async ({ page,
   const panel = page.getByTestId('deploy-panel');
   await expect(panel).toBeVisible();
 
+  // The version-diff (v1 vs v2) shows node 'a' changed and nothing else — the two
+  // graphs differ only in the assignment node's expression.
+  const vdiff = page.getByTestId('version-diff');
+  await expect(vdiff.locator('li')).toHaveCount(1);
+  await expect(vdiff).toContainText('node');
+  await expect(vdiff).toContainText('a');
+
   // Deploy v1 to sandbox (no approval needed) -> the live badge updates.
   await page.getByLabel('deploy version').fill('1');
   await page.getByLabel('deploy environment').selectOption('sandbox');

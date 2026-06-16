@@ -51,7 +51,9 @@ enterprise buyers; **P2** = differentiators / scale.
   deploy-to-sandbox, propose-for-production, and a pending-approvals queue with
   approve/reject (self-approval is refused — four-eyes), plus A/B challenger %.
 - **P1 — Promotion workflow** sandbox → staging → production with gates.
-- **P1 — Change history / diff** between versions (what changed, by whom, why).
+- **P1 — Change history / diff** between versions — *the builder now has a client-side
+  version-diff panel (added/removed/changed nodes + edges between any two published
+  versions); a richer who/why audit of changes is still open.*
 - **P2 — Scheduled / time-boxed deployments**, instant rollback button.
 
 ### Auditability & compliance  (status: audit surface shipped; reason codes next)

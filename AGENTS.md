@@ -26,7 +26,9 @@ The **Svelte Flow builder UI** (`web/src/routes/engine`) lists/creates flows and
 raw JSON, publish a new version — with backend
 validation surfaced), renders it on a canvas (auto-layout), runs inline test decisions, and manages
 **deployment + maker-checker** (live-version-per-env badges, deploy-to-sandbox, propose-for-production,
-a pending-approvals queue with approve/reject — self-approval refused — and A/B challenger %).
+a pending-approvals queue with approve/reject — self-approval refused — and A/B challenger %), and a
+**version-diff** panel (client-side structural compare of any two published versions: added/removed/
+changed nodes + added/removed edges).
 The **Case Manager** (`case-manager/`) opens cases — manually or **escalated from a decision flow's
 `manual_review` node** (cross-component via the event log, linked by `source_decision_id`) — with
 assignment / status / notes, a queue with filters, a per-case audit log built from events, **SLA

@@ -71,6 +71,8 @@ export interface FlowVersion {
   version: number;
   etag: string;
   graph: FlowGraph;
+  published_at?: string;
+  published_by?: string;
 }
 
 export interface DeploymentView {
