@@ -21,6 +21,19 @@ test('defines a connector and a feature from the UI', async ({ page }) => {
   await page.getByRole('button', { name: 'Define connector' }).click();
   await expect(page.locator('tbody').filter({ hasText: conn })).toBeVisible();
 
+  // A connector with a credential-bearing config is masked in the list (the DSN
+  // never reaches the client).
+  const secretConn = 'sql-' + uniq();
+  await page.getByLabel('connector name').fill(secretConn);
+  await page.getByLabel('connector type').selectOption('sql');
+  await page
+    .getByLabel('connector config')
+    .fill('{"driver":"sqlite","dsn":"user:supersecret@/db","query":"SELECT 1"}');
+  await page.getByRole('button', { name: 'Define connector' }).click();
+  const secretRow = page.locator('tbody tr').filter({ hasText: secretConn });
+  await expect(secretRow).toContainText('[redacted]');
+  await expect(secretRow).not.toContainText('supersecret');
+
   // Define a feature.
   await page.getByLabel('feature name').fill(feat);
   await page.getByLabel('feature entity type').fill('customer');

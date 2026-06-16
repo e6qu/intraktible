@@ -197,3 +197,35 @@ func TestInvokeUnknownConnector(t *testing.T) {
 		t.Fatal("expected error for unknown connector")
 	}
 }
+
+func TestRedactConfigMasksCredentials(t *testing.T) {
+	cfg := json.RawMessage(`{"driver":"sqlite","dsn":"user:p@ss@host/db","query":"SELECT 1","nested":{"api_key":"sk-123","keep":"ok"}}`)
+	out := connectors.RedactConfig(cfg)
+	var m map[string]any
+	if err := json.Unmarshal(out, &m); err != nil {
+		t.Fatal(err)
+	}
+	if m["dsn"] != "[redacted]" {
+		t.Fatalf("dsn not redacted: %v", m["dsn"])
+	}
+	// Non-credential fields are preserved.
+	if m["driver"] != "sqlite" || m["query"] != "SELECT 1" {
+		t.Fatalf("non-secret fields altered: %v", m)
+	}
+	// Redaction recurses into nested objects.
+	nested, _ := m["nested"].(map[string]any)
+	if nested["api_key"] != "[redacted]" || nested["keep"] != "ok" {
+		t.Fatalf("nested redaction wrong: %v", nested)
+	}
+}
+
+func TestRedactedViewLeavesStoredConfigIntact(t *testing.T) {
+	v := connectors.ConnectorView{Name: "db", Type: "sql", Config: json.RawMessage(`{"dsn":"secret"}`)}
+	r := v.Redacted()
+	if string(v.Config) != `{"dsn":"secret"}` {
+		t.Fatalf("original config mutated: %s", v.Config)
+	}
+	if !json.Valid(r.Config) || string(r.Config) == string(v.Config) {
+		t.Fatalf("redacted copy not masked: %s", r.Config)
+	}
+}

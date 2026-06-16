@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strings"
 	"syscall"
 	"time"
 
@@ -170,6 +171,63 @@ func List(ctx context.Context, s store.Store, id identity.Identity, connType str
 	return store.QueryDocs(ctx, s, CollectionConnectors, store.Key(id.Org, id.Workspace, ""),
 		func(c ConnectorView) bool { return connType == "" || c.Type == connType },
 		func(a, b ConnectorView) bool { return a.Name < b.Name })
+}
+
+// redactKeys are config field names whose values are credentials and must never
+// leave the server. The connector fetch path reads the real config via Read; the
+// HTTP boundary serves redacted copies (see Redacted), so the UI/API never see
+// secrets even though the stored projection keeps them.
+var redactKeys = map[string]bool{
+	"dsn": true, "password": true, "passwd": true, "pwd": true,
+	"secret": true, "secret_key": true, "token": true, "access_token": true,
+	"api_key": true, "apikey": true, "access_key": true, "private_key": true,
+	"authorization": true, "auth": true, "credential": true, "credentials": true,
+}
+
+// RedactConfig returns a copy of a connector config JSON with credential values
+// masked. Non-object / unparseable config is returned unchanged.
+func RedactConfig(config json.RawMessage) json.RawMessage {
+	if len(config) == 0 {
+		return config
+	}
+	var v any
+	if err := json.Unmarshal(config, &v); err != nil {
+		return config
+	}
+	redacted := redactValue(v)
+	out, err := json.Marshal(redacted)
+	if err != nil {
+		return config
+	}
+	return out
+}
+
+func redactValue(v any) any {
+	switch t := v.(type) {
+	case map[string]any:
+		for k, val := range t {
+			if redactKeys[strings.ToLower(k)] {
+				t[k] = "[redacted]"
+			} else {
+				t[k] = redactValue(val)
+			}
+		}
+		return t
+	case []any:
+		for i := range t {
+			t[i] = redactValue(t[i])
+		}
+		return t
+	default:
+		return v
+	}
+}
+
+// Redacted returns a copy of the view with its config credentials masked — the
+// safe shape to serve over HTTP.
+func (c ConnectorView) Redacted() ConnectorView {
+	c.Config = RedactConfig(c.Config)
+	return c
 }
 
 // ListFetches returns a connector's recorded invocations, newest first.

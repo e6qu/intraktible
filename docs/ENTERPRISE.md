@@ -94,7 +94,10 @@ enterprise buyers; **P2** = differentiators / scale.
   entities + their event timelines — closing the gap where flows referenced connectors/features
   by name that could only be created via the API.*
 - **P1 — A connector catalog** (credit bureaus, KYC/AML, fraud, document/OCR) with
-  managed **secrets** (today connector URLs/DSNs are stored in plaintext config).
+  managed **secrets**. *Credential config fields (dsn/password/token/secret/api_key/
+  authorization/…) are now redacted at the HTTP boundary (`connectors.RedactConfig`),
+  so secrets never reach the client/UI — though they are still stored in plaintext
+  in the projection; a real secret store / encryption-at-rest remains the P1 work.*
 - **P1 — Batch decisioning** (score a file / a population) + a feature store.
 - **P2 — Streaming ingestion** for real-time features.
 

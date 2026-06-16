@@ -138,13 +138,14 @@
       <div class="table-wrap">
         <table>
           <thead>
-            <tr><th>Name</th><th>Type</th><th>Updated</th></tr>
+            <tr><th>Name</th><th>Type</th><th>Config</th><th>Updated</th></tr>
           </thead>
           <tbody>
             {#each connectors as c (c.name)}
               <tr>
                 <td>{c.name}</td>
                 <td><span class="badge">{c.type}</span></td>
+                <td class="config">{c.config ? JSON.stringify(c.config) : '—'}</td>
                 <td class="muted">{new Date(c.updated_at).toLocaleString()}</td>
               </tr>
             {/each}
@@ -310,6 +311,15 @@
     background: var(--surface-2);
     padding: 0 0.3rem;
     border-radius: 0.3rem;
+  }
+  .config {
+    font-family: ui-monospace, monospace;
+    font-size: 0.8rem;
+    color: var(--fg-muted);
+    max-width: 22rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .muted {
     color: var(--fg-subtle);

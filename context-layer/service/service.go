@@ -177,6 +177,11 @@ func (s *Service) listConnectors(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	recs, err := connectors.List(r.Context(), s.store, id, r.URL.Query().Get("type"))
+	// Mask credential config fields at the HTTP boundary — secrets never leave the
+	// server (the fetch path reads the real config via connectors.Read).
+	for i := range recs {
+		recs[i] = recs[i].Redacted()
+	}
 	httpx.WriteList(w, "connectors", recs, err)
 }
 
