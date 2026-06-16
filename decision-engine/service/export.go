@@ -96,8 +96,5 @@ func pickVersion(fv flows.FlowView, v string) (flows.VersionView, error) {
 }
 
 func writeExport(w http.ResponseWriter, contentType, filename, body string) {
-	w.Header().Set("Content-Type", contentType)
-	w.Header().Set("Content-Disposition", "attachment; filename=\""+filename+"\"")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(body))
+	httpx.Download(w, contentType, filename, body)
 }

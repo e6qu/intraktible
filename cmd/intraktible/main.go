@@ -43,6 +43,7 @@ import (
 	helloservice "github.com/e6qu/intraktible/hello/service"
 	"github.com/e6qu/intraktible/hello/stats"
 	"github.com/e6qu/intraktible/platform/ai"
+	"github.com/e6qu/intraktible/platform/audit"
 	"github.com/e6qu/intraktible/platform/auth"
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/httpx"
@@ -188,6 +189,10 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 		defer agentHandler.DrainWorkers()
 		agentservice.New(agentHandler, st).Routes(api)
 	}
+
+	// Audit surface (platform capability, independent of the enabled modules): a
+	// tenant-scoped, filterable, exportable read over the event log.
+	audit.New(log).Routes(api)
 
 	// Authenticated caller introspection (inside the /v1 auth chain).
 	api.HandleFunc("GET /v1/me", httpx.MeHandler())

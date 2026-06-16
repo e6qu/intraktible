@@ -69,9 +69,13 @@ An **enterprise-readiness track** (tracked in [docs/ENTERPRISE.md](docs/ENTERPRI
 top of the MVP: **RBAC** (a `platform/auth` role hierarchy viewer→operator→editor→approver→admin with
 per-request authorization in `platform/httpx`), **maker-checker / four-eyes** production deploys
 (propose-by-one + approve-by-a-different-user via `…/deployment-requests` + `…/approve`, recorded on the
-flow), and **backtesting** — `POST /v1/flows/{flow_id}/backtest` (`decision-engine/backtest`, pure)
+flow), **backtesting** — `POST /v1/flows/{flow_id}/backtest` (`decision-engine/backtest`, pure)
 replays a dataset through a published version and optionally diffs two versions over `domain.Execute`
-only (no recorded decision, no I/O), surfaced in the builder as a panel that flags the changed records.
+only (no recorded decision, no I/O), surfaced in the builder as a panel that flags the changed records —
+and the **immutable audit surface** — `GET /v1/audit` (`platform/audit`), a tenant-scoped, filterable
+(stream/actor/type/resource/time-range), CSV-exportable read straight over the append-only event log,
+admin-gated and surfaced as an Audit log UI page (the data was always in the log; this makes it
+first-class instead of operator-CLI-only).
 
 ## The design in one breath
 Go backend (**functional core / imperative shell**) + **SvelteKit + Svelte Flow** UI embedded in the

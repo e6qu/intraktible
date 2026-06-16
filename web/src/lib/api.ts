@@ -397,6 +397,60 @@ async function errorOrStatus(res: Response, label: string): Promise<never> {
   throw new Error(body.error ?? `${label}: ${res.status}`);
 }
 
+// ---- Audit surface ----
+
+export interface AuditEntry {
+  seq: number;
+  id: string;
+  time: string;
+  actor: string;
+  stream: string;
+  type: string;
+  payload?: unknown;
+}
+
+export interface AuditFilter {
+  stream?: string;
+  actor?: string;
+  type?: string;
+  resource?: string;
+  since?: string;
+  until?: string;
+  limit?: number;
+}
+
+export function auditQuery(filter: AuditFilter): string {
+  const q = new URLSearchParams();
+  if (filter.stream) q.set('stream', filter.stream);
+  if (filter.actor) q.set('actor', filter.actor);
+  if (filter.type) q.set('type', filter.type);
+  if (filter.resource) q.set('resource', filter.resource);
+  if (filter.since) q.set('since', filter.since);
+  if (filter.until) q.set('until', filter.until);
+  if (filter.limit) q.set('limit', String(filter.limit));
+  const qs = q.toString();
+  return qs ? '?' + qs : '';
+}
+
+export async function listAudit(
+  key: string,
+  filter: AuditFilter = {},
+  fetcher: typeof fetch = fetch
+): Promise<AuditEntry[]> {
+  const res = await fetcher(`/v1/audit${auditQuery(filter)}`, { headers: authHeaders(key) });
+  if (!res.ok) {
+    return errorOrStatus(res, 'GET /v1/audit');
+  }
+  return ((await res.json()) as { entries: AuditEntry[] }).entries ?? [];
+}
+
+// auditExportUrl is the CSV download URL for the current filter (the browser
+// follows it with the session cookie, so no key is embedded).
+export function auditExportUrl(filter: AuditFilter = {}): string {
+  const q = auditQuery({ ...filter });
+  return `/v1/audit${q ? q + '&' : '?'}format=csv`;
+}
+
 export async function listCases(
   key: string,
   filter: CaseFilter = {},

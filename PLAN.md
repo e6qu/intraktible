@@ -302,12 +302,13 @@ serving, HA).
 pass began closing the gaps a regulated rollout needs (tracked in [`docs/ENTERPRISE.md`](docs/ENTERPRISE.md)).
 Shipped so far: **RBAC** (`platform/auth` role hierarchy viewer→admin + `platform/httpx` per-request
 authorization), **maker-checker / four-eyes approvals** for production deploys (propose-by-one,
-approve-by-a-different-user, recorded on the flow as an auditable trail), and **backtesting** —
+approve-by-a-different-user, recorded on the flow as an auditable trail), **backtesting** —
 `POST /v1/flows/{flow_id}/backtest` (`decision-engine/backtest`, pure) replays a dataset through a
 published version and optionally diffs two versions over `domain.Execute` only (no recorded decision,
-no I/O), surfaced in the builder as a panel that flags the changed records. Remaining P0/P1 items
-(audit API+UI, reason codes, secrets management, alerting/drift, SSO/SCIM, batch decisioning, SDKs) are
-sequenced in `docs/ENTERPRISE.md`.
+no I/O), surfaced in the builder as a panel that flags the changed records — and the **immutable audit
+surface** (`GET /v1/audit`, `platform/audit`): a tenant-scoped, filterable, CSV-exportable read over the
+event log, admin-gated, with an Audit log UI page. Remaining P0/P1 items (reason codes, secrets
+management, alerting/drift, SSO/SCIM, batch decisioning, SDKs) are sequenced in `docs/ENTERPRISE.md`.
 
 > Per project convention: at the **end of every phase**, update `PLAN.md` and `BUGS.md` in the same
 > PR as the phase's code.

@@ -137,6 +137,12 @@ func Authorize(next http.Handler) http.Handler {
 // (defining flows/agents/connectors/features) needs editor; all other mutations are
 // runtime operations (decide, cases, agent runs, context ingest) at operator level.
 func requiredRole(method, path string) auth.Role {
+	// The audit surface exposes every actor's activity across the tenant. It is
+	// read-only but sensitive, so it is gated to admins regardless of method —
+	// checked before the general read rule below.
+	if path == "/v1/audit" {
+		return auth.RoleAdmin
+	}
 	if method == http.MethodGet || method == http.MethodHead || method == http.MethodOptions {
 		return auth.RoleViewer
 	}

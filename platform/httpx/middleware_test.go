@@ -144,6 +144,9 @@ func TestAuthorizeRBAC(t *testing.T) {
 		{"operator-k", "POST", "/v1/flows/f1/deployment-requests", 403},          // propose needs editor
 		{"editor-k", "POST", "/v1/flows/f1/deployment-requests/r1/approve", 403}, // approve needs approver
 		{"approver-k", "POST", "/v1/flows/f1/deployment-requests/r1/approve", 200},
+		{"admin-k", "GET", "/v1/audit", 200},    // the audit trail is admin-only
+		{"approver-k", "GET", "/v1/audit", 403}, // even approver cannot read it
+		{"viewer-k", "GET", "/v1/audit", 403},   // ...nor viewer
 	}
 	for _, c := range cases {
 		if got := do(c.secret, c.method, c.path); got != c.want {

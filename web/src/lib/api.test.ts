@@ -14,6 +14,9 @@ import {
   getDecision,
   getFlowMetrics,
   backtestFlow,
+  listAudit,
+  auditQuery,
+  auditExportUrl,
   listCases,
   getCaseSummary,
   requestReview,
@@ -145,6 +148,38 @@ describe('backtest', () => {
         fetcherReturning(400, { error: 'dataset is required' })
       )
     ).rejects.toThrow(/dataset is required/);
+  });
+});
+
+describe('audit', () => {
+  it('builds the query string from a filter', () => {
+    expect(auditQuery({})).toBe('');
+    expect(auditQuery({ stream: 'flows', actor: 'ada', limit: 50 })).toBe(
+      '?stream=flows&actor=ada&limit=50'
+    );
+  });
+
+  it('listAudit unwraps the entries array and passes filters', async () => {
+    const fetcher = fetcherReturning(200, {
+      entries: [
+        { seq: 2, id: 'e2', time: 't', actor: 'ada', stream: 'flows', type: 'flow.created' }
+      ]
+    });
+    const entries = await listAudit('k', { stream: 'flows', resource: 'f1' }, fetcher);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].actor).toBe('ada');
+    expect(fetcher.mock.calls[0][0]).toBe('/v1/audit?stream=flows&resource=f1');
+  });
+
+  it('surfaces the 403 admin restriction loudly', async () => {
+    await expect(
+      listAudit('k', {}, fetcherReturning(403, { error: 'requires at least the "admin" role' }))
+    ).rejects.toThrow(/admin/);
+  });
+
+  it('auditExportUrl appends format=csv', () => {
+    expect(auditExportUrl({})).toBe('/v1/audit?format=csv');
+    expect(auditExportUrl({ stream: 'cases' })).toBe('/v1/audit?stream=cases&format=csv');
   });
 });
 

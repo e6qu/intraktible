@@ -102,6 +102,15 @@ func Emit(w http.ResponseWriter, r *http.Request, req any, run func(identity.Ide
 	JSON(w, http.StatusAccepted, map[string]any{"event_id": e.ID, "seq": e.Seq})
 }
 
+// Download writes body as a file attachment with the given content type and
+// filename — the shared writer for the diagram-export and audit-export endpoints.
+func Download(w http.ResponseWriter, contentType, filename, body string) {
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Disposition", "attachment; filename=\""+filename+"\"")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(body))
+}
+
 // WriteList responds with a read-model listing under the given JSON key, mapping
 // a store error to 500.
 func WriteList[T any](w http.ResponseWriter, key string, items []T, err error) {

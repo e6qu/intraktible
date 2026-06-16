@@ -52,9 +52,13 @@ enterprise buyers; **P2** = differentiators / scale.
 - **P1 — Change history / diff** between versions (what changed, by whom, why).
 - **P2 — Scheduled / time-boxed deployments**, instant rollback button.
 
-### Auditability & compliance  (status: partial — the log is the audit trail)
-- **P0 — Immutable audit surface** (who did what, when) per resource, exportable —
-  the data exists in the event log; it needs a first-class API + UI.
+### Auditability & compliance  (status: audit surface shipped; reason codes next)
+- **P0 — Immutable audit surface — ✅ done.** `GET /v1/audit` (`platform/audit`) is a
+  tenant-scoped, filterable, exportable read straight over the append-only event
+  log: filter by stream / actor / event type / resource id / RFC3339 time range,
+  newest-first, with a `?format=csv` export. It is admin-gated (read-only but
+  sensitive) and surfaced as an **Audit log** UI page. The data was always in the
+  log; this makes "who did what, when" first-class instead of operator-CLI-only.
 - **P0 — Reason codes / adverse-action explainability.** Lending (ECOA/Reg B) and
   insurance require human-readable reasons for a decline. The node trace is the
   raw material; it needs structured reason-code output.
@@ -116,7 +120,7 @@ enterprise buyers; **P2** = differentiators / scale.
 | 1 | **RBAC** (roles + authZ) — ✅ done | P0 — nothing else is safe without it | M |
 | 2 | **Maker-checker approvals** — ✅ done | P0 — change control on decision logic | M |
 | 3 | **Backtesting on a dataset** — ✅ done | P0 — the user's #1 confidence tool | M |
-| 4 | **Audit API + UI** | P0 — surface the lineage we already record | S |
+| 4 | **Audit API + UI** — ✅ done | P0 — surface the lineage we already record | S |
 | 5 | **Reason codes** | P0 — adverse-action / explainability | S–M |
 | 6 | **Secrets management** for connectors | P1 | M |
 | 7 | **Alerting / drift** | P1 | M |
@@ -132,11 +136,13 @@ decisioning core — it is the **governance, access-control, testing, and compli
 envelope** around it. Those are well-scoped, mostly tractable on the existing
 architecture (events + ports), and are what this roadmap front-loads.
 
-Three P0 items are implemented: **RBAC** (`platform/auth` roles +
+Four P0 items are implemented: **RBAC** (`platform/auth` roles +
 `platform/httpx` per-request authorization), **maker-checker approvals** (the
 Decision Engine refuses direct production deploys; a deployment must be *proposed*
 by one user and *approved* by a different one — four-eyes — via
-`/v1/flows/{id}/deployment-requests` + `…/approve`), and **backtesting**
+`/v1/flows/{id}/deployment-requests` + `…/approve`), **backtesting**
 (`/v1/flows/{id}/backtest` replays a dataset through the pure engine and diffs two
-versions before deploy). The rest are sequenced above; none requires
-re-architecting — they extend the same event-sourced core.
+versions before deploy), and the **immutable audit surface** (`GET /v1/audit`, a
+filterable + CSV-exportable read over the event log). The remaining P0 is
+**reason codes**; the rest are sequenced above. None requires re-architecting —
+they extend the same event-sourced core.
