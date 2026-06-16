@@ -11,8 +11,12 @@
 
   // new-agent form
   let name = $state('');
+  let provider = $state('');
   let model = $state('');
   let system = $state('');
+  let schema = $state('');
+  let tools = $state('');
+  let busy = $state(false);
 
   async function load() {
     error = '';
@@ -25,12 +29,38 @@
 
   async function create() {
     error = '';
+    busy = true;
     try {
-      await defineAgent(key, { name, model, system });
+      const body: {
+        name: string;
+        provider?: string;
+        model?: string;
+        system?: string;
+        schema?: unknown;
+        tools?: string[];
+      } = { name: name.trim() };
+      if (provider.trim()) body.provider = provider.trim();
+      if (model.trim()) body.model = model.trim();
+      if (system.trim()) body.system = system.trim();
+      // A structured-output schema, if given, must be valid JSON (fail loudly).
+      if (schema.trim()) body.schema = JSON.parse(schema);
+      const tl = tools
+        .split(',')
+        .map((t) => t.trim())
+        .filter(Boolean);
+      if (tl.length > 0) body.tools = tl;
+      await defineAgent(key, body);
       name = '';
+      provider = '';
+      model = '';
+      system = '';
+      schema = '';
+      tools = '';
       await load();
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
+    } finally {
+      busy = false;
     }
   }
 
@@ -44,16 +74,28 @@
   </div>
 
   <form
-    class="row"
+    class="define"
     onsubmit={(e) => {
       e.preventDefault();
       create();
     }}
   >
-    <input bind:value={name} placeholder="agent name" aria-label="agent name" />
-    <input bind:value={model} placeholder="model (optional)" aria-label="model" />
+    <div class="row">
+      <input bind:value={name} placeholder="agent name" aria-label="agent name" required />
+      <input bind:value={provider} placeholder="provider (optional)" aria-label="provider" />
+      <input bind:value={model} placeholder="model (optional)" aria-label="model" />
+    </div>
     <input bind:value={system} placeholder="system prompt (optional)" aria-label="system prompt" />
-    <button type="submit">Define agent</button>
+    <input bind:value={tools} placeholder="tools, comma-separated (optional)" aria-label="tools" />
+    <textarea
+      bind:value={schema}
+      placeholder={'structured-output schema JSON (optional) e.g. {"type":"object","required":["risk"]}'}
+      aria-label="output schema"
+      rows="3"
+    ></textarea>
+    <div class="row">
+      <button type="submit" disabled={busy}>{busy ? 'Saving…' : 'Define agent'}</button>
+    </div>
   </form>
 
   {#if error}<p class="err">{error}</p>{/if}
@@ -72,13 +114,20 @@
     <div class="table-wrap">
       <table>
         <thead>
-          <tr><th>Name</th><th>Model</th><th>Runs</th></tr>
+          <tr><th>Name</th><th>Model</th><th>Capabilities</th><th>Runs</th></tr>
         </thead>
         <tbody>
           {#each list as a (a.name)}
             <tr>
               <td><a href={`/agents/${a.name}`}>{a.name}</a></td>
               <td>{a.model || '—'}</td>
+              <td>
+                {#if a.schema}<span class="badge">structured</span>{/if}
+                {#if a.tools && a.tools.length > 0}<span class="badge"
+                    >{a.tools.length} tool{a.tools.length === 1 ? '' : 's'}</span
+                  >{/if}
+                {#if !a.schema && !(a.tools && a.tools.length > 0)}<span class="muted">—</span>{/if}
+              </td>
               <td>{a.runs}</td>
             </tr>
           {/each}
@@ -102,10 +151,38 @@
     margin: 0.6rem 0;
     align-items: center;
   }
+  .define {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin: 0.6rem 0;
+  }
+  .define .row {
+    margin: 0;
+  }
   input,
-  button {
+  button,
+  textarea {
     font: inherit;
     padding: 0.4rem 0.6rem;
+  }
+  textarea {
+    width: 100%;
+    box-sizing: border-box;
+    resize: vertical;
+  }
+  .define > input {
+    width: 100%;
+    box-sizing: border-box;
+  }
+  .badge {
+    display: inline-block;
+    padding: 0.05rem 0.45rem;
+    margin-right: 0.25rem;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    background: var(--surface-2);
+    color: var(--fg-muted);
   }
   table {
     border-collapse: collapse;

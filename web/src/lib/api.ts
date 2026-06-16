@@ -871,7 +871,14 @@ export async function getAgent(
 
 export async function defineAgent(
   key: string,
-  body: { name: string; model?: string; system?: string },
+  body: {
+    name: string;
+    provider?: string;
+    model?: string;
+    system?: string;
+    schema?: unknown;
+    tools?: string[];
+  },
   fetcher: typeof fetch = fetch
 ): Promise<void> {
   const res = await fetcher('/v1/agents', {

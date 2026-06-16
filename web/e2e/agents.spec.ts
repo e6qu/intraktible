@@ -19,11 +19,18 @@ test('defines an agent from the registry and shows the run summary', async ({ pa
   const name = uniqueName();
   await page.getByLabel('agent name').fill(name);
   await page.getByLabel('system prompt').fill('be terse');
+  // Exercise the deepened form: a tool set and a structured-output schema.
+  await page.getByLabel('tools').fill('bureau');
+  await page.getByLabel('output schema').fill('{"type":"object","required":["risk"]}');
   await page.getByRole('button', { name: 'Define agent' }).click();
 
   // .first(): a reused dev server may carry agents from prior runs.
   await expect(page.getByRole('link', { name }).first()).toBeVisible();
   await expect(page.getByLabel('run summary')).toContainText('Runs');
+  // The capability badges reflect the schema + tools just defined.
+  const row = page.locator('tbody tr').filter({ hasText: name });
+  await expect(row).toContainText('structured');
+  await expect(row).toContainText('1 tool');
 });
 
 test('runs an agent and escalates the run to a case', async ({ page, request }) => {

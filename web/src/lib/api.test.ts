@@ -33,6 +33,7 @@ import {
   assignCase,
   setCaseStatus,
   listAgents,
+  defineAgent,
   runAgent,
   escalateRun,
   getRunSummary,
@@ -452,6 +453,30 @@ describe('agents', () => {
     const a = await listAgents('k', fetcher);
     expect(a).toHaveLength(1);
     expect(a[0].name).toBe('triage');
+  });
+
+  it('defineAgent posts provider, schema, and tools', async () => {
+    const fetcher = fetcherReturning(201, {});
+    await defineAgent(
+      'k',
+      {
+        name: 'triage',
+        provider: 'openai',
+        model: 'gpt',
+        system: 'be terse',
+        schema: { type: 'object', required: ['risk'] },
+        tools: ['bureau']
+      },
+      fetcher
+    );
+    const [url, init] = fetcher.mock.calls[0];
+    expect(url).toBe('/v1/agents');
+    expect(JSON.parse(String(init?.body))).toMatchObject({
+      name: 'triage',
+      provider: 'openai',
+      tools: ['bureau'],
+      schema: { type: 'object', required: ['risk'] }
+    });
   });
 
   it('runAgent posts the prompt to the run endpoint', async () => {

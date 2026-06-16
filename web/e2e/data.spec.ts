@@ -49,7 +49,7 @@ test('browses an entity and its event timeline', async ({ page, request }) => {
   await row.getByRole('link', { name: id }).click();
 
   // Entity detail shows the attribute and the event timeline.
-  await expect(page.getByRole('heading', { name: new RegExp(id) })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 1 })).toContainText(id);
   await expect(page.getByText('gold')).toBeVisible();
   await expect(page.locator('.timeline')).toContainText('login');
 });

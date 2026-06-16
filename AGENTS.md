@@ -58,7 +58,9 @@ output under `ai.<output>`) — the same one-way wiring as features/connectors. 
 escalating a run opens a **Case Manager** case (the Agent Manager, built later, emits the Case
 Manager's own `ReviewRequested` event the `cases` projector already consumes — one-way direction), and
 `GET /v1/agent-runs/summary` gives run monitoring. Its **UI** (`web/src/routes/agents`) lists/defines
-agents (with a run-summary banner) and, per agent, runs it, shows the run log, and escalates a run.
+agents — the define form covers provider, model, system prompt, **a tool set, and a structured-output
+schema** (so tool-calling / structured agents are authorable, not just plain-text ones; the list shows
+per-agent capability badges) — and, per agent, runs it, shows the run log, and escalates a run.
 Run it: `go run ./cmd/intraktible serve` then open http://localhost:8080 (dev key `dev-sandbox-key`);
 for UI dev use `make dev` (Vite + Go API). Phase 1 deferrals (CEL, builder UI polish, …) and other
 limitations are tracked in [BUGS.md](BUGS.md).
