@@ -14,6 +14,10 @@ import {
   getDecision,
   getFlowMetrics,
   backtestFlow,
+  deployVersion,
+  requestDeployment,
+  approveDeployment,
+  rejectDeployment,
   listAudit,
   auditQuery,
   auditExportUrl,
@@ -148,6 +152,54 @@ describe('backtest', () => {
         fetcherReturning(400, { error: 'dataset is required' })
       )
     ).rejects.toThrow(/dataset is required/);
+  });
+});
+
+describe('deployment & maker-checker', () => {
+  it('deployVersion posts to the deployments endpoint', async () => {
+    const fetcher = fetcherReturning(201, { environment: 'sandbox', version: 2 });
+    await deployVersion('k', 'f1', { environment: 'sandbox', version: 2 }, fetcher);
+    const [url, init] = fetcher.mock.calls[0];
+    expect(url).toBe('/v1/flows/f1/deployments');
+    expect(init?.method).toBe('POST');
+    expect(JSON.parse(String(init?.body))).toMatchObject({ environment: 'sandbox', version: 2 });
+  });
+
+  it('requestDeployment proposes and returns the request id', async () => {
+    const fetcher = fetcherReturning(201, { request_id: 'req-9', status: 'pending' });
+    const r = await requestDeployment(
+      'k',
+      'f1',
+      { environment: 'production', version: 3, challenger_version: 2, challenger_pct: 10 },
+      fetcher
+    );
+    expect(r.request_id).toBe('req-9');
+    expect(fetcher.mock.calls[0][0]).toBe('/v1/flows/f1/deployment-requests');
+  });
+
+  it('approveDeployment hits the approve endpoint', async () => {
+    const fetcher = fetcherReturning(200, { status: 'approved' });
+    await approveDeployment('k', 'f1', 'req-9', fetcher);
+    expect(fetcher.mock.calls[0][0]).toBe('/v1/flows/f1/deployment-requests/req-9/approve');
+  });
+
+  it('surfaces the four-eyes self-approval error loudly', async () => {
+    await expect(
+      approveDeployment(
+        'k',
+        'f1',
+        'req-9',
+        fetcherReturning(400, { error: 'cannot approve your own deployment request' })
+      )
+    ).rejects.toThrow(/own deployment request/);
+  });
+
+  it('rejectDeployment sends the reason', async () => {
+    const fetcher = fetcherReturning(200, { status: 'rejected' });
+    await rejectDeployment('k', 'f1', 'req-9', 'nope', fetcher);
+    const [url, init] = fetcher.mock.calls[0];
+    expect(url).toBe('/v1/flows/f1/deployment-requests/req-9/reject');
+    expect(JSON.parse(String(init?.body))).toMatchObject({ reason: 'nope' });
   });
 });
 

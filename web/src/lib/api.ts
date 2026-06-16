@@ -73,12 +73,34 @@ export interface FlowVersion {
   graph: FlowGraph;
 }
 
+export interface DeploymentView {
+  version: number;
+  challenger_version?: number;
+  challenger_pct?: number;
+}
+
+export interface DeploymentRequest {
+  request_id: string;
+  environment: string;
+  version: number;
+  challenger_version?: number;
+  challenger_pct?: number;
+  status: string; // pending | approved | rejected
+  reason?: string;
+  requested_by: string;
+  requested_at: string;
+  decided_by?: string;
+  decided_at?: string;
+}
+
 export interface Flow {
   flow_id: string;
   slug: string;
   name: string;
   latest: number;
   versions: FlowVersion[];
+  deployments?: Record<string, DeploymentView>;
+  deployment_requests?: DeploymentRequest[];
 }
 
 export interface DecideResult {
@@ -303,6 +325,86 @@ export async function publishVersion(
     throw new Error(body.error ?? `publish version failed: ${res.status}`);
   }
   return (await res.json()) as { version: number; etag: string };
+}
+
+// ---- Deployment & maker-checker (four-eyes) ----
+
+export interface DeployInput {
+  environment: string;
+  version: number;
+  challenger_version?: number;
+  challenger_pct?: number;
+}
+
+// deployVersion pins a version live in an environment. The backend refuses a
+// direct production deploy (use requestDeployment + approveDeployment for that).
+export async function deployVersion(
+  key: string,
+  flowId: string,
+  body: DeployInput,
+  fetcher: typeof fetch = fetch
+): Promise<void> {
+  const res = await fetcher(`/v1/flows/${flowId}/deployments`, {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) {
+    await errorOrStatus(res, 'POST deployment');
+  }
+}
+
+// requestDeployment proposes a deployment for review (maker side).
+export async function requestDeployment(
+  key: string,
+  flowId: string,
+  body: DeployInput,
+  fetcher: typeof fetch = fetch
+): Promise<{ request_id: string }> {
+  const res = await fetcher(`/v1/flows/${flowId}/deployment-requests`, {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'POST deployment-request');
+  }
+  return (await res.json()) as { request_id: string };
+}
+
+// approveDeployment is the checker side: approving deploys it (four-eyes — the
+// backend rejects a self-approval by the proposer).
+export async function approveDeployment(
+  key: string,
+  flowId: string,
+  reqId: string,
+  fetcher: typeof fetch = fetch
+): Promise<void> {
+  const res = await fetcher(`/v1/flows/${flowId}/deployment-requests/${reqId}/approve`, {
+    method: 'POST',
+    headers: jsonHeaders(key)
+  });
+  if (!res.ok) {
+    await errorOrStatus(res, 'approve deployment');
+  }
+}
+
+// rejectDeployment rejects a pending request, with an optional reason.
+export async function rejectDeployment(
+  key: string,
+  flowId: string,
+  reqId: string,
+  reason: string,
+  fetcher: typeof fetch = fetch
+): Promise<void> {
+  const res = await fetcher(`/v1/flows/${flowId}/deployment-requests/${reqId}/reject`, {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify({ reason })
+  });
+  if (!res.ok) {
+    await errorOrStatus(res, 'reject deployment');
+  }
 }
 
 // EntityRef optionally points a decision at a Context Layer entity so its

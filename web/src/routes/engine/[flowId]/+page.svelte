@@ -19,6 +19,10 @@
     exportDecision,
     getFlowMetrics,
     backtestFlow,
+    deployVersion,
+    requestDeployment,
+    approveDeployment,
+    rejectDeployment,
     type ExportFormat,
     type Flow,
     type FlowMetrics,
@@ -465,6 +469,80 @@
     }
   }
 
+  // --- Deployment & maker-checker (four-eyes) ---
+  let depVersion = $state('');
+  let depEnv = $state('sandbox');
+  let depChallenger = $state('');
+  let depChallengerPct = $state('');
+  let deploying = $state(false);
+  // Pending requests awaiting a checker (the maker-checker review queue).
+  let pendingRequests = $derived(
+    (flow?.deployment_requests ?? []).filter((r) => r.status === 'pending')
+  );
+
+  function liveVersion(environment: string): number | undefined {
+    // Lookup via entries (not a computed object index) to stay clear of the
+    // detect-object-injection lint — the deployments map comes from JSON.
+    const found = Object.entries(flow?.deployments ?? {}).find(([e]) => e === environment);
+    return found?.[1]?.version;
+  }
+
+  async function submitDeploy() {
+    error = '';
+    if (!flow) return;
+    const version = parseInt(depVersion, 10) || flow.latest;
+    const body: {
+      environment: string;
+      version: number;
+      challenger_version?: number;
+      challenger_pct?: number;
+    } = { environment: depEnv, version };
+    const cv = parseInt(depChallenger, 10);
+    const pct = parseInt(depChallengerPct, 10);
+    if (!Number.isNaN(cv) && cv > 0) {
+      body.challenger_version = cv;
+      if (!Number.isNaN(pct) && pct > 0) body.challenger_pct = pct;
+    }
+    deploying = true;
+    try {
+      // Production is gated by four-eyes: propose for review instead of deploying.
+      if (depEnv === 'production') {
+        const r = await requestDeployment(key, flowId, body);
+        toast.success(`Proposed v${version} for production (request ${r.request_id.slice(0, 8)})`);
+      } else {
+        await deployVersion(key, flowId, body);
+        toast.success(`Deployed v${version} to ${depEnv}`);
+      }
+      await load();
+    } catch (e) {
+      error = msg(e);
+    } finally {
+      deploying = false;
+    }
+  }
+
+  async function approve(reqId: string) {
+    error = '';
+    try {
+      await approveDeployment(key, flowId, reqId);
+      toast.success('Deployment approved and live');
+      await load();
+    } catch (e) {
+      error = msg(e);
+    }
+  }
+
+  async function reject(reqId: string) {
+    error = '';
+    try {
+      await rejectDeployment(key, flowId, reqId, 'rejected from the builder');
+      toast.success('Deployment request rejected');
+      await load();
+    } catch (e) {
+      error = msg(e);
+    }
+  }
+
   onMount(() => {
     void load();
     void loadMetrics();
@@ -525,6 +603,92 @@
       <a href="/decisions">view runs →</a>
     </div>
   {/if}
+
+  <section class="deploy" data-testid="deploy-panel">
+    <h2>Deployment</h2>
+    <div class="live">
+      <span class="exportlabel"><Icon name="check" size={15} /> Live</span>
+      <span class="env">
+        sandbox:
+        {#if liveVersion('sandbox')}<b>v{liveVersion('sandbox')}</b>{:else}<span class="muted"
+            >— (falls back to latest)</span
+          >{/if}
+      </span>
+      <span class="env">
+        production:
+        {#if liveVersion('production')}<b>v{liveVersion('production')}</b>{:else}<span class="muted"
+            >— (falls back to latest)</span
+          >{/if}
+      </span>
+    </div>
+    <div class="row">
+      <input
+        bind:value={depVersion}
+        placeholder={`version (default latest v${flow?.latest ?? '?'})`}
+        aria-label="deploy version"
+        size="22"
+        inputmode="numeric"
+      />
+      <select bind:value={depEnv} aria-label="deploy environment">
+        <option value="sandbox">sandbox</option>
+        <option value="production">production (four-eyes)</option>
+      </select>
+      <input
+        bind:value={depChallenger}
+        placeholder="challenger ver (optional)"
+        aria-label="challenger version"
+        size="18"
+        inputmode="numeric"
+      />
+      <input
+        bind:value={depChallengerPct}
+        placeholder="challenger %"
+        aria-label="challenger pct"
+        size="10"
+        inputmode="numeric"
+      />
+      <button
+        class="primary"
+        onclick={submitDeploy}
+        disabled={!flow || deploying}
+        data-testid="deploy-submit"
+      >
+        {#if deploying}Working…{:else if depEnv === 'production'}Propose for review{:else}Deploy{/if}
+      </button>
+    </div>
+    <p class="hint muted">
+      Production deploys require maker-checker approval: proposing creates a request that a
+      <em>different</em> user must approve.
+    </p>
+
+    {#if pendingRequests.length > 0}
+      <div class="requests" data-testid="pending-requests">
+        <h3>Pending approvals</h3>
+        <table>
+          <thead>
+            <tr><th>Env</th><th>Version</th><th>Proposed by</th><th></th></tr>
+          </thead>
+          <tbody>
+            {#each pendingRequests as r (r.request_id)}
+              <tr>
+                <td>{r.environment}</td>
+                <td
+                  >v{r.version}{#if r.challenger_version}
+                    + v{r.challenger_version} @ {r.challenger_pct ?? 0}%{/if}</td
+                >
+                <td>{r.requested_by}</td>
+                <td class="reqactions">
+                  <button class="primary" onclick={() => approve(r.request_id)}>Approve</button>
+                  <button onclick={() => reject(r.request_id)}>Reject</button>
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
+    {/if}
+  </section>
+
   {#if error}<p class="err">{error}</p>{/if}
 
   <div class="grid">
@@ -1144,6 +1308,51 @@
   }
   .metrics .muted {
     color: var(--fg-subtle);
+  }
+  .deploy {
+    margin: 0.6rem 0;
+    padding: 0.7rem 0.9rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+  }
+  .deploy h2 {
+    margin: 0 0 0.5rem;
+    font-size: 1rem;
+  }
+  .deploy .live {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 0.6rem;
+    font-size: 0.9rem;
+  }
+  .deploy .hint {
+    font-size: 0.8rem;
+    margin: 0.4rem 0 0;
+  }
+  .requests {
+    margin-top: 0.8rem;
+  }
+  .requests h3 {
+    font-size: 0.9rem;
+    margin: 0 0 0.3rem;
+  }
+  .requests table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  .requests th,
+  .requests td {
+    text-align: left;
+    padding: 0.4rem 0.5rem;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.88rem;
+  }
+  .reqactions {
+    display: flex;
+    gap: 0.4rem;
   }
   .export .grp {
     display: inline-flex;

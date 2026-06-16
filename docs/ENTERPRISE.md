@@ -44,10 +44,12 @@ enterprise buyers; **P2** = differentiators / scale.
 - **P1 — API token management** (scoped tokens, rotation, expiry, per-token audit).
 - **P2 — Fine-grained, per-flow/per-environment permissions.**
 
-### Governance & change control  (status: none)
-- **P0 — Maker-checker (four-eyes) approvals.** A new flow version must be reviewed
-  and approved by a *different* user before it can be deployed to production. This
-  is non-negotiable for decision logic in a bank.
+### Governance & change control  (status: deploy + maker-checker shipped, UI included)
+- **P0 — Maker-checker (four-eyes) approvals — ✅ done (backend + UI).** A production
+  deploy must be *proposed* by one user and *approved* by a *different* one. The
+  builder now has a **Deployment panel**: live-version-per-environment badges,
+  deploy-to-sandbox, propose-for-production, and a pending-approvals queue with
+  approve/reject (self-approval is refused — four-eyes), plus A/B challenger %.
 - **P1 — Promotion workflow** sandbox → staging → production with gates.
 - **P1 — Change history / diff** between versions (what changed, by whom, why).
 - **P2 — Scheduled / time-boxed deployments**, instant rollback button.
