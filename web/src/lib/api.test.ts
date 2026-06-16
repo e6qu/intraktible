@@ -30,6 +30,7 @@ import {
   listCases,
   getCaseSummary,
   requestReview,
+  sweepSLA,
   assignCase,
   setCaseStatus,
   listAgents,
@@ -444,6 +445,15 @@ describe('cases', () => {
     expect(sum.overdue).toBe(1);
     const [url] = fetcher.mock.calls[0];
     expect(url).toBe('/v1/cases/summary?assignee=adam');
+  });
+
+  it('sweepSLA posts to the sla-sweep endpoint and returns the count', async () => {
+    const fetcher = fetcherReturning(200, { breached: ['c1'], count: 1 });
+    const res = await sweepSLA('k', fetcher);
+    expect(res.count).toBe(1);
+    const [url, init] = fetcher.mock.calls[0];
+    expect(url).toBe('/v1/cases/sla-sweep');
+    expect(init?.method).toBe('POST');
   });
 });
 

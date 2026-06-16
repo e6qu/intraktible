@@ -1,7 +1,15 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { listCases, getCaseSummary, requestReview, type Case, type CaseSummary } from '$lib/api';
+  import { toast } from '$lib/toast';
+  import {
+    listCases,
+    getCaseSummary,
+    requestReview,
+    sweepSLA,
+    type Case,
+    type CaseSummary
+  } from '$lib/api';
 
   // API calls authenticate via the session cookie (empty key -> no X-Api-Key header).
   const key = '';
@@ -38,6 +46,21 @@
     }
   }
 
+  let sweeping = $state(false);
+  async function runSweep() {
+    error = '';
+    sweeping = true;
+    try {
+      const { count } = await sweepSLA(key);
+      toast.success(count > 0 ? `${count} case(s) breached SLA` : 'No SLA breaches');
+      await load();
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    } finally {
+      sweeping = false;
+    }
+  }
+
   onMount(load);
 </script>
 
@@ -54,6 +77,9 @@
       </select>
     </label>
     <button onclick={load}>Reload</button>
+    <button onclick={runSweep} disabled={sweeping} title="Flag overdue open cases as SLA-breached">
+      {sweeping ? 'Sweeping…' : 'Run SLA sweep'}
+    </button>
   </div>
 
   <form

@@ -32,8 +32,8 @@ The **Case Manager** (`case-manager/`) opens cases — manually or **escalated f
 assignment / status / notes, a queue with filters, a per-case audit log built from events, **SLA
 tracking** (days-left + on_track/due_soon/overdue computed at the read boundary so the projection
 stays clock-free) and a **queue summary** roll-up (`GET /v1/cases/summary`); its **dashboard UI**
-(`web/src/routes/cases`) has the queue (filters + summary banner + per-row days-left) and a
-case-detail view with those actions.
+(`web/src/routes/cases`) has the queue (filters + summary banner + per-row days-left + an SLA-sweep
+trigger) and a case-detail view with those actions.
 The **Context Layer** (`context-layer/`) records **custom entities** (dynamic JSONB, keyed by
 type+id, re-records patch via top-level attribute merge) and **custom events** about them (per-entity
 event log + an event count; an event auto-creates a shell entity; `occurred_at` is a recorded effect),

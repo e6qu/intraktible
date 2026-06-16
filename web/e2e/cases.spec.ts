@@ -23,6 +23,10 @@ test('opens a case from the queue and shows SLA + summary', async ({ page }) => 
   const summary = page.getByLabel('queue summary');
   await expect(summary).toContainText('Total');
   await expect(summary).toContainText('Overdue');
+
+  // The SLA sweep runs without error (a fresh 5-day case is not overdue).
+  await page.getByRole('button', { name: 'Run SLA sweep' }).click();
+  await expect(page.locator('p.err')).toHaveCount(0);
 });
 
 test('case detail shows computed days-left', async ({ page, request }) => {

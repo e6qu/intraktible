@@ -737,6 +737,19 @@ export async function getCaseSummary(
   return (await res.json()) as CaseSummary;
 }
 
+// sweepSLA folds the case stream and emits a breach event for every overdue open
+// case (idempotent), returning how many were breached this sweep.
+export async function sweepSLA(
+  key: string,
+  fetcher: typeof fetch = fetch
+): Promise<{ count: number }> {
+  const res = await fetcher('/v1/cases/sla-sweep', { method: 'POST', headers: authHeaders(key) });
+  if (!res.ok) {
+    return errorOrStatus(res, 'POST /v1/cases/sla-sweep');
+  }
+  return (await res.json()) as { count: number };
+}
+
 export async function getCase(
   key: string,
   caseID: string,
