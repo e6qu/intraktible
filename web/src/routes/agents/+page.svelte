@@ -141,8 +141,7 @@
   main {
     max-width: 52rem;
     margin: 2rem auto;
-    padding: 0 1rem;
-    font-family: system-ui, sans-serif;
+    padding: 0 1.25rem;
   }
   .row {
     display: flex;

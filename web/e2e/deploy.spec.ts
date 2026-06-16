@@ -57,4 +57,9 @@ test('deploys to sandbox and runs the production four-eyes flow', async ({ page,
   // Approving your own request is blocked by four-eyes (the proposer is the dev user).
   await requests.getByRole('button', { name: 'Approve' }).click();
   await expect(page.locator('.err')).toContainText('four-eyes');
+
+  // The flow list now surfaces the sandbox deployment for this flow.
+  await page.goto('/engine');
+  const flowRow = page.locator('tbody tr').filter({ hasText: slug });
+  await expect(flowRow).toContainText('v1');
 });
