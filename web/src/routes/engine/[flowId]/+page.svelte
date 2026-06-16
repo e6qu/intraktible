@@ -362,8 +362,10 @@
     editEdges = editEdges.filter((_, j) => j !== i);
   }
 
+  let publishing = $state(false);
   async function publish() {
     error = '';
+    publishing = true;
     try {
       const gnodes: GraphNode[] = editNodes.map((n) => ({
         id: n.id,
@@ -376,14 +378,18 @@
       await load();
     } catch (e) {
       error = msg(e);
+    } finally {
+      publishing = false;
     }
   }
 
   let lastDecisionId = $state('');
+  let running = $state(false);
   async function run() {
     result = '';
     lastDecisionId = '';
     if (!flow) return;
+    running = true;
     try {
       const entity = entityType && entityID ? { type: entityType, id: entityID } : undefined;
       const res = await decide(key, flow.slug, env, JSON.parse(dataText), entity);
@@ -392,6 +398,8 @@
       void loadMetrics();
     } catch (e) {
       result = `Error: ${msg(e)}`;
+    } finally {
+      running = false;
     }
   }
   async function downloadTrace() {
@@ -554,8 +562,8 @@
   <h1>{flow?.name ?? flowId}</h1>
   <div class="row">
     <button onclick={load}><Icon name="reload" size={15} /> Reload</button>
-    <button class="primary" onclick={publish}
-      ><Icon name="check" size={15} /> Publish version</button
+    <button class="primary" onclick={publish} disabled={publishing}
+      ><Icon name="check" size={15} /> {publishing ? 'Publishing…' : 'Publish version'}</button
     >
   </div>
   <div class="row export">
@@ -1076,7 +1084,7 @@
         <option value="sandbox">sandbox</option>
         <option value="production">production</option>
       </select>
-      <button onclick={run} disabled={!flow}>Run</button>
+      <button onclick={run} disabled={!flow || running}>{running ? 'Running…' : 'Run'}</button>
     </div>
     <div class="row">
       <input

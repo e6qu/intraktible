@@ -32,14 +32,18 @@
     }
   }
 
+  let running = $state(false);
   async function run() {
     error = '';
+    running = true;
     try {
       const res = await runAgent(key, name, prompt);
       lastRunID = res.run_id;
       await load();
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
+    } finally {
+      running = false;
     }
   }
 
@@ -136,7 +140,7 @@
   <section class="actions">
     <div class="row">
       <input bind:value={prompt} placeholder="prompt" aria-label="prompt" />
-      <button onclick={run} disabled={!agent}>Run</button>
+      <button onclick={run} disabled={!agent || running}>{running ? 'Running…' : 'Run'}</button>
     </div>
     {#if lastRunID}<p class="muted">Last run: <code>{lastRunID}</code></p>{/if}
   </section>

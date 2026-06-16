@@ -27,13 +27,17 @@
     }
   }
 
+  let busy = $state(false);
   async function run(action: () => Promise<void>) {
     error = '';
+    busy = true;
     try {
       await action();
       await load();
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
+    } finally {
+      busy = false;
     }
   }
 
@@ -82,7 +86,9 @@
   <div class="actions">
     <div class="row">
       <input bind:value={assignee} placeholder="assignee" aria-label="assignee" />
-      <button onclick={() => run(() => assignCase(key, caseID, assignee))}>Assign</button>
+      <button onclick={() => run(() => assignCase(key, caseID, assignee))} disabled={busy}
+        >Assign</button
+      >
     </div>
     <div class="row">
       <select bind:value={newStatus} aria-label="set status">
@@ -90,12 +96,15 @@
         <option value="in_progress">in_progress</option>
         <option value="completed">completed</option>
       </select>
-      <button onclick={() => run(() => setCaseStatus(key, caseID, newStatus))}>Set status</button>
+      <button onclick={() => run(() => setCaseStatus(key, caseID, newStatus))} disabled={busy}
+        >Set status</button
+      >
     </div>
     <div class="row">
       <input bind:value={noteText} placeholder="note" aria-label="note" />
       <button
         onclick={() => run(() => addCaseNote(key, caseID, noteText)).then(() => (noteText = ''))}
+        disabled={busy}
       >
         Add note
       </button>
