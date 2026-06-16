@@ -89,7 +89,10 @@ enterprise buyers; **P2** = differentiators / scale.
 - **P1 — Dashboards & SLOs**; structured request tracing (OpenTelemetry).
 - **P2 — Cost tracking** for AI nodes.
 
-### Data & integrations  (status: http / sql / mock connectors)
+### Data & integrations  (status: http / sql / mock connectors, now with a management UI)
+- *A **Context data** UI (`/data`) now lists/defines connectors and features and browses
+  entities + their event timelines — closing the gap where flows referenced connectors/features
+  by name that could only be created via the API.*
 - **P1 — A connector catalog** (credit bureaus, KYC/AML, fraud, document/OCR) with
   managed **secrets** (today connector URLs/DSNs are stored in plaintext config).
 - **P1 — Batch decisioning** (score a file / a population) + a feature store.

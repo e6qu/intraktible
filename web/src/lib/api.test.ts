@@ -21,6 +21,12 @@ import {
   listAudit,
   auditQuery,
   auditExportUrl,
+  listConnectors,
+  defineConnector,
+  listFeatures,
+  defineFeature,
+  listEntities,
+  listEntityEvents,
   listCases,
   getCaseSummary,
   requestReview,
@@ -232,6 +238,66 @@ describe('audit', () => {
   it('auditExportUrl appends format=csv', () => {
     expect(auditExportUrl({})).toBe('/v1/audit?format=csv');
     expect(auditExportUrl({ stream: 'cases' })).toBe('/v1/audit?stream=cases&format=csv');
+  });
+});
+
+describe('context layer', () => {
+  it('listConnectors unwraps the connectors array', async () => {
+    const fetcher = fetcherReturning(200, {
+      connectors: [{ name: 'bureau', type: 'mock_bureau' }]
+    });
+    const cs = await listConnectors('k', fetcher);
+    expect(cs[0].type).toBe('mock_bureau');
+    expect(fetcher.mock.calls[0][0]).toBe('/v1/context/connectors');
+  });
+
+  it('defineConnector posts name/type/config', async () => {
+    const fetcher = fetcherReturning(201, {});
+    await defineConnector('k', { name: 'b', type: 'http', config: { url: 'https://x' } }, fetcher);
+    const [url, init] = fetcher.mock.calls[0];
+    expect(url).toBe('/v1/context/connectors');
+    expect(JSON.parse(String(init?.body))).toMatchObject({ name: 'b', type: 'http' });
+  });
+
+  it('listFeatures unwraps the features array', async () => {
+    const fetcher = fetcherReturning(200, {
+      features: [{ name: 'txn_24h', entity_type: 'cust', aggregation: 'count', window_hours: 24 }]
+    });
+    const fs = await listFeatures('k', fetcher);
+    expect(fs[0].name).toBe('txn_24h');
+  });
+
+  it('defineFeature posts the spec', async () => {
+    const fetcher = fetcherReturning(201, {});
+    await defineFeature(
+      'k',
+      {
+        name: 'f',
+        entity_type: 'c',
+        event_name: 'txn',
+        aggregation: 'sum',
+        field: 'amt',
+        window_hours: 24
+      },
+      fetcher
+    );
+    expect(JSON.parse(String(fetcher.mock.calls[0][1]?.body))).toMatchObject({
+      aggregation: 'sum',
+      field: 'amt'
+    });
+  });
+
+  it('listEntities passes a type filter', async () => {
+    const fetcher = fetcherReturning(200, { entities: [] });
+    await listEntities('k', 'customer', fetcher);
+    expect(fetcher.mock.calls[0][0]).toBe('/v1/context/entities?type=customer');
+  });
+
+  it('listEntityEvents hits the per-entity events endpoint', async () => {
+    const fetcher = fetcherReturning(200, { events: [{ event_name: 'txn', seq: 1 }] });
+    const evs = await listEntityEvents('k', 'customer', 'c1', fetcher);
+    expect(evs).toHaveLength(1);
+    expect(fetcher.mock.calls[0][0]).toBe('/v1/context/entities/customer/c1/events');
   });
 });
 

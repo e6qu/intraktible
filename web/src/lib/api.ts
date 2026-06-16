@@ -553,6 +553,166 @@ export function auditExportUrl(filter: AuditFilter = {}): string {
   return `/v1/audit${q ? q + '&' : '?'}format=csv`;
 }
 
+// ---- Context Layer (connectors, features, entities) ----
+
+export interface Connector {
+  name: string;
+  type: string;
+  config?: unknown;
+  updated_at: string;
+}
+
+export interface Feature {
+  name: string;
+  entity_type: string;
+  event_name: string;
+  aggregation: string;
+  field?: string;
+  window_hours: number;
+  updated_at: string;
+}
+
+export interface Entity {
+  entity_type: string;
+  entity_id: string;
+  attributes: Record<string, unknown>;
+  event_count: number;
+  first_seen: string;
+  updated_at: string;
+}
+
+export interface EntityEvent {
+  entity_type: string;
+  entity_id: string;
+  event_name: string;
+  data?: Record<string, unknown>;
+  seq: number;
+  occurred_at: string;
+  recorded_at: string;
+}
+
+export interface FeatureValue {
+  name: string;
+  value: number;
+}
+
+export async function listConnectors(
+  key: string,
+  fetcher: typeof fetch = fetch
+): Promise<Connector[]> {
+  const res = await fetcher('/v1/context/connectors', { headers: authHeaders(key) });
+  if (!res.ok) {
+    return errorOrStatus(res, 'GET /v1/context/connectors');
+  }
+  return ((await res.json()) as { connectors: Connector[] }).connectors ?? [];
+}
+
+export async function defineConnector(
+  key: string,
+  body: { name: string; type: string; config?: unknown },
+  fetcher: typeof fetch = fetch
+): Promise<void> {
+  const res = await fetcher('/v1/context/connectors', {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) {
+    await errorOrStatus(res, 'POST /v1/context/connectors');
+  }
+}
+
+export async function listFeatures(key: string, fetcher: typeof fetch = fetch): Promise<Feature[]> {
+  const res = await fetcher('/v1/context/features', { headers: authHeaders(key) });
+  if (!res.ok) {
+    return errorOrStatus(res, 'GET /v1/context/features');
+  }
+  return ((await res.json()) as { features: Feature[] }).features ?? [];
+}
+
+export async function defineFeature(
+  key: string,
+  body: {
+    name: string;
+    entity_type: string;
+    event_name: string;
+    aggregation: string;
+    field?: string;
+    window_hours: number;
+  },
+  fetcher: typeof fetch = fetch
+): Promise<void> {
+  const res = await fetcher('/v1/context/features', {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) {
+    await errorOrStatus(res, 'POST /v1/context/features');
+  }
+}
+
+export async function listEntities(
+  key: string,
+  type = '',
+  fetcher: typeof fetch = fetch
+): Promise<Entity[]> {
+  const qs = type ? `?type=${encodeURIComponent(type)}` : '';
+  const res = await fetcher(`/v1/context/entities${qs}`, { headers: authHeaders(key) });
+  if (!res.ok) {
+    return errorOrStatus(res, 'GET /v1/context/entities');
+  }
+  return ((await res.json()) as { entities: Entity[] }).entities ?? [];
+}
+
+export async function getEntity(
+  key: string,
+  type: string,
+  id: string,
+  fetcher: typeof fetch = fetch
+): Promise<Entity> {
+  const res = await fetcher(
+    `/v1/context/entities/${encodeURIComponent(type)}/${encodeURIComponent(id)}`,
+    { headers: authHeaders(key) }
+  );
+  if (!res.ok) {
+    return errorOrStatus(res, 'GET entity');
+  }
+  return (await res.json()) as Entity;
+}
+
+export async function listEntityEvents(
+  key: string,
+  type: string,
+  id: string,
+  fetcher: typeof fetch = fetch
+): Promise<EntityEvent[]> {
+  const res = await fetcher(
+    `/v1/context/entities/${encodeURIComponent(type)}/${encodeURIComponent(id)}/events`,
+    { headers: authHeaders(key) }
+  );
+  if (!res.ok) {
+    return errorOrStatus(res, 'GET entity events');
+  }
+  return ((await res.json()) as { events: EntityEvent[] }).events ?? [];
+}
+
+export async function getEntityFeatures(
+  key: string,
+  type: string,
+  id: string,
+  fetcher: typeof fetch = fetch
+): Promise<FeatureValue[]> {
+  const res = await fetcher(
+    `/v1/context/entities/${encodeURIComponent(type)}/${encodeURIComponent(id)}/features`,
+    { headers: authHeaders(key) }
+  );
+  if (!res.ok) {
+    return errorOrStatus(res, 'GET entity features');
+  }
+  return ((await res.json()) as { features: FeatureValue[] }).features ?? [];
+}
+
 export async function listCases(
   key: string,
   filter: CaseFilter = {},

@@ -45,7 +45,9 @@ recorded in `DecisionStarted`); the engine reaches the Context Layer through a `
 + adapter wired at the composition root (so the earlier-built engine never imports it). It also has a
 **connector** subsystem — a `Connect` interface + reference connectors (an arbitrary-HTTP one and a
 deterministic mock bureau) — where invoking a connector is an effect recorded as a `ConnectorFetched`
-event (so replay reads the stored response, never a re-fetch).
+event (so replay reads the stored response, never a re-fetch). Its **Context data UI** (`web/src/routes/data`)
+lists/defines connectors and features and browses entities + their per-entity event timelines (so the
+data a flow's Connect/Rule nodes depend on can be authored in the product, not just via the API).
 The **Agent Manager** (`agent-manager/`) defines **agents** — configs over the pluggable AI provider
 (`platform/ai`: system prompt, model, optional structured-output schema, tool set) — and **runs**
 them: the provider call is an effect captured in an `AgentRunRecorded` event (so replay reads the
