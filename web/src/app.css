@@ -80,6 +80,25 @@
   --hairline: rgba(20, 25, 35, 0.05);
 }
 
+/* Flow-builder node accents (rail + icon tint), one per node type. Jewel tones
+   chosen to read on both the light and dark card surfaces, so they are shared
+   across themes rather than split. */
+:root {
+  --node-input: #16a34a;
+  --node-output: #2563eb;
+  --node-rule: #d97706;
+  --node-split: #7c3aed;
+  --node-scorecard: #0d9488;
+  --node-decision_table: #4f46e5;
+  --node-2d_matrix: #0891b2;
+  --node-code: #475569;
+  --node-connect: #ea580c;
+  --node-ai: #9333ea;
+  --node-manual_review: #db2777;
+  --node-assignment: #2563eb;
+  --node-reason: #dc2626;
+}
+
 :root[data-theme='dark'] {
   --bg: #0e1117;
   --surface: #161b22;

@@ -62,6 +62,9 @@ test('renders a flow graph and runs a test decision', async ({ page, request }) 
   // The graph renders on the Svelte Flow canvas (3 nodes). The assertion retries,
   // covering the async flow-registry projection catching up.
   await expect(page.locator('.svelte-flow__node')).toHaveCount(3);
+  // Typed node cards show the node type + a config summary (not a bare box).
+  const canvas = page.getByTestId('flow-canvas');
+  await expect(canvas).toContainText('assignment');
 
   // Inline test run -> a completed decision.
   await page.getByLabel('input data').fill('{}');
@@ -69,6 +72,8 @@ test('renders a flow graph and runs a test decision', async ({ page, request }) 
   const result = page.getByTestId('run-result');
   await expect(result).toContainText('"status": "completed"');
   await expect(result).toContainText('SEEDED');
+  // The run paints each node's last output onto its card (live status).
+  await expect(canvas).toContainText('decision: SEEDED');
 });
 
 test('batch-decides a dataset from the builder', async ({ page, request }) => {

@@ -13,6 +13,7 @@
   import '@xyflow/svelte/dist/style.css';
   import {
     getFlow,
+    getDecision,
     publishVersion,
     decide,
     batchDecide,
@@ -59,6 +60,8 @@
   import { theme } from '$lib/theme';
   import Icon from '$lib/Icon.svelte';
   import CommentThread from '$lib/CommentThread.svelte';
+  import FlowNode from '$lib/FlowNode.svelte';
+  import { nodeSummary, telemetrySummary } from '$lib/nodevis';
   import {
     asText,
     asNum,
@@ -130,6 +133,10 @@
   let selectedId = $state<string | null>(null);
   let nodes = $state.raw<Node[]>([]);
   let edges = $state.raw<Edge[]>([]);
+  // Render every node with the typed FlowNode card.
+  const nodeTypes = { flow: FlowNode };
+  // node id → last test-run output summary, shown on the card; cleared on edits.
+  let nodeTelemetry = $state(new Map<string, string>());
 
   let newType = $state('input');
   let edgeFrom = $state('');
@@ -166,8 +173,14 @@
     const auto = layout(editNodes, editEdges);
     nodes = editNodes.map((n) => ({
       id: n.id,
+      type: 'flow',
       position: n.pos ?? auto.get(n.id) ?? { x: 0, y: 0 },
-      data: { label: `${n.name || n.id} · ${n.type}` }
+      data: {
+        type: n.type,
+        name: n.name || n.id,
+        summary: nodeSummary(n.type, n.config),
+        telemetry: nodeTelemetry.get(n.id)
+      }
     }));
     edges = editEdges.map((e, i) => ({
       id: `e${i}`,
@@ -566,10 +579,25 @@
       lastDecisionId = res.decision_id ?? '';
       result = JSON.stringify(res, null, 2);
       void loadMetrics();
+      void loadTelemetry(lastDecisionId);
     } catch (e) {
       result = `Error: ${msg(e)}`;
     } finally {
       running = false;
+    }
+  }
+  // After a test run, paint each node's last output onto its card from the
+  // recorded decision's node trace (retries while the history projection catches up).
+  async function loadTelemetry(decisionId: string) {
+    if (!decisionId) return;
+    try {
+      const d = await getDecision(key, decisionId);
+      const t = new Map<string, string>();
+      for (const n of d.nodes ?? []) t.set(n.node_id, telemetrySummary(n.output));
+      nodeTelemetry = t;
+      syncCanvas();
+    } catch {
+      /* telemetry is best-effort; the run result still shows */
     }
   }
   async function downloadTrace() {
@@ -1447,7 +1475,14 @@
       >
         <Icon name="diagram" size={14} /> Relax layout
       </button>
-      <SvelteFlow bind:nodes bind:edges onconnect={onConnect} colorMode={$theme} fitView>
+      <SvelteFlow
+        bind:nodes
+        bind:edges
+        {nodeTypes}
+        onconnect={onConnect}
+        colorMode={$theme}
+        fitView
+      >
         <Background />
         <Controls />
       </SvelteFlow>
