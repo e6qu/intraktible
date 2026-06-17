@@ -252,7 +252,7 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 	notifications.New(notifications.NewHandler(log), st).Routes(api)
 
 	// Authenticated caller introspection (inside the /v1 auth chain).
-	httpx.NewAPIKeysHandler(apiKeys).Routes(api)
+	httpx.NewAPIKeysHandler(apiKeys, log).Routes(api)
 	api.HandleFunc("GET /v1/me", httpx.MeHandler())
 
 	rt := projection.New(log, st, moduleProjectors(modules)...)

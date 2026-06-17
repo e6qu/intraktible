@@ -3,6 +3,7 @@
 package httpx_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -12,11 +13,11 @@ import (
 	"github.com/e6qu/intraktible/platform/auth"
 	"github.com/e6qu/intraktible/platform/httpx"
 	"github.com/e6qu/intraktible/platform/identity"
-	"github.com/e6qu/intraktible/platform/store"
+	"github.com/e6qu/intraktible/platform/testutil"
 )
 
 func TestManagedAPIKeysCreateUseRevoke(t *testing.T) {
-	st := store.NewMemory()
+	log, st := testutil.NewLogStore(t)
 	keys := auth.NewStoreAPIKeys(st)
 	keyring := auth.NewKeyring()
 	keyring.UseResolver(keys)
@@ -25,7 +26,7 @@ func TestManagedAPIKeysCreateUseRevoke(t *testing.T) {
 	keyring.Add("admin-key", auth.APIKey{ID: "admin", Identity: adminID, Scope: auth.Sandbox, Role: auth.RoleAdmin})
 
 	api := http.NewServeMux()
-	httpx.NewAPIKeysHandler(keys).Routes(api)
+	httpx.NewAPIKeysHandler(keys, log).Routes(api)
 	api.HandleFunc("GET /v1/me", httpx.MeHandler())
 	handler := httpx.Chain(api, httpx.Authenticate(keyring, sessions), httpx.Authorize)
 
@@ -78,5 +79,30 @@ func TestManagedAPIKeysCreateUseRevoke(t *testing.T) {
 	handler.ServeHTTP(after, afterReq)
 	if after.Code != http.StatusUnauthorized {
 		t.Fatalf("revoked key should not authenticate -> %d body=%s", after.Code, after.Body.String())
+	}
+
+	// Create and revoke each leave an audit breadcrumb on the log, attributed to
+	// the admin caller (not the token's bound actor) and referencing the token id.
+	evs, err := log.Read(context.Background(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var createdEv, revokedEv bool
+	for _, e := range evs {
+		if e.Stream != auth.AuditStream || e.Actor != "admin" {
+			continue
+		}
+		if !strings.Contains(string(e.Payload), created.APIKey.ID) {
+			t.Fatalf("audit event %q missing token id: %s", e.Type, e.Payload)
+		}
+		switch e.Type {
+		case auth.EventManagedKeyCreated:
+			createdEv = true
+		case auth.EventManagedKeyRevoked:
+			revokedEv = true
+		}
+	}
+	if !createdEv || !revokedEv {
+		t.Fatalf("expected created+revoked audit events, got created=%v revoked=%v", createdEv, revokedEv)
 	}
 }

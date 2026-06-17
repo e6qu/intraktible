@@ -45,8 +45,10 @@ enterprise buyers; **P2** = differentiators / scale.
   `GET/POST/DELETE /v1/api-keys` manages durable, hashed API tokens for the current
   org/workspace; create returns the generated secret once, tokens carry scope, role,
   actor, optional expiry, and revoke time. Managed from an **API tokens** panel on the
-  Audit (admin) page — create a token, copy the one-time secret, and revoke. Remaining:
-  rotation helper UX and event-log-backed per-token audit.
+  Audit (admin) page — create a token, copy the one-time secret, and revoke. Token
+  create/revoke append `auth.managed_key.*` events to the log, so each token's lifecycle
+  shows in the immutable audit trail (per-token deep link from the panel), attributed to
+  the admin who acted. Remaining: rotation helper UX.
 - **P2 — Fine-grained, per-flow/per-environment permissions.**
 
 ### Governance & change control  (status: deploy + maker-checker shipped, UI included)

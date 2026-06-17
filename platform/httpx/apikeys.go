@@ -3,22 +3,26 @@
 package httpx
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/e6qu/intraktible/platform/auth"
+	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/identity"
 )
 
 // APIKeysHandler exposes admin-only management for durable API tokens.
 type APIKeysHandler struct {
 	keys *auth.StoreAPIKeys
+	log  eventlog.Log
 }
 
-// NewAPIKeysHandler returns the HTTP shell for managed API tokens.
-func NewAPIKeysHandler(keys *auth.StoreAPIKeys) *APIKeysHandler {
-	return &APIKeysHandler{keys: keys}
+// NewAPIKeysHandler returns the HTTP shell for managed API tokens. The log
+// receives a token-lifecycle audit event on each create/revoke.
+func NewAPIKeysHandler(keys *auth.StoreAPIKeys, log eventlog.Log) *APIKeysHandler {
+	return &APIKeysHandler{keys: keys, log: log}
 }
 
 // Routes registers managed API-token endpoints.
@@ -80,7 +84,27 @@ func (h *APIKeysHandler) create(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusBadRequest, err)
 		return
 	}
+	if err := h.audit(r.Context(), id, auth.EventManagedKeyCreated, key.CreatedAt, auth.APIKeyAudit{
+		KeyID:      key.ID,
+		Name:       key.Name,
+		Role:       key.Role,
+		Scope:      key.Scope,
+		TokenActor: key.Identity.Actor,
+		ExpiresAt:  key.ExpiresAt,
+	}); err != nil {
+		Error(w, http.StatusInternalServerError, err)
+		return
+	}
 	JSON(w, http.StatusCreated, map[string]any{"api_key": key, "secret": secret})
+}
+
+// audit records a token-lifecycle event on the log under the caller's identity,
+// so the action is attributed to the admin who performed it (not the token's
+// own bound actor). The recorded time is the lifecycle timestamp for replay
+// stability.
+func (h *APIKeysHandler) audit(ctx context.Context, id identity.Identity, typ string, at time.Time, payload auth.APIKeyAudit) error {
+	_, err := eventlog.AppendJSON(ctx, h.log, id.Org, id.Workspace, id.Actor, auth.AuditStream, typ, at, payload)
+	return err
 }
 
 func (h *APIKeysHandler) revoke(w http.ResponseWriter, r *http.Request) {
@@ -105,6 +129,19 @@ func (h *APIKeysHandler) revoke(w http.ResponseWriter, r *http.Request) {
 	key, err = h.keys.Revoke(r.Context(), keyID)
 	if err != nil {
 		Error(w, http.StatusBadRequest, err)
+		return
+	}
+	revokedAt := key.CreatedAt
+	if key.RevokedAt != nil {
+		revokedAt = *key.RevokedAt
+	}
+	if err := h.audit(r.Context(), id, auth.EventManagedKeyRevoked, revokedAt, auth.APIKeyAudit{
+		KeyID: key.ID,
+		Name:  key.Name,
+		Role:  key.Role,
+		Scope: key.Scope,
+	}); err != nil {
+		Error(w, http.StatusInternalServerError, err)
 		return
 	}
 	JSON(w, http.StatusOK, map[string]any{"api_key": key})

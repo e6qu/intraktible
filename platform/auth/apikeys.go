@@ -14,6 +14,28 @@ import (
 
 const managedKeyCollection = "auth_managed_keys"
 
+// Audit stream + event types for managed-token lifecycle. They are appended to
+// the event log by the HTTP shell so the immutable audit surface records who
+// created or revoked which token — the token store itself is operational state,
+// not a projection.
+const (
+	AuditStream            = "auth"
+	EventManagedKeyCreated = "auth.managed_key.created"
+	EventManagedKeyRevoked = "auth.managed_key.revoked"
+)
+
+// APIKeyAudit is the audit-log payload for a token lifecycle event. KeyID is
+// surfaced so the audit trail can be filtered to one token (?resource=). It
+// never carries the secret or its hash.
+type APIKeyAudit struct {
+	KeyID      string     `json:"key_id"`
+	Name       string     `json:"name"`
+	Role       Role       `json:"role,omitempty"`
+	Scope      Scope      `json:"scope,omitempty"`
+	TokenActor string     `json:"token_actor,omitempty"`
+	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
+}
+
 // ManagedAPIKey is the durable metadata for an operator-managed API token. The
 // secret itself is generated once and only its SHA-256 hash is stored.
 type ManagedAPIKey struct {

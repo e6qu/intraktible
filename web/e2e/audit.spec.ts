@@ -63,6 +63,13 @@ test('creates and revokes a managed API token (admin)', async ({ page }) => {
   await expect(row.getByText('active')).toBeVisible();
   await row.getByRole('button', { name: 'Revoke' }).click();
   await expect(row.getByText('revoked')).toBeVisible();
+
+  // The per-token Audit link deep-links to that token's trail — create + revoke
+  // both left an event-log breadcrumb attributed to the admin.
+  await row.getByRole('link', { name: 'Audit' }).click();
+  const rows = page.locator('tbody tr');
+  await expect(rows.filter({ hasText: 'auth.managed_key.created' }).first()).toBeVisible();
+  await expect(rows.filter({ hasText: 'auth.managed_key.revoked' }).first()).toBeVisible();
 });
 
 test('configures PII masking fields (admin)', async ({ page }) => {
