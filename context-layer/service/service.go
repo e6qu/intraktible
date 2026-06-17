@@ -57,6 +57,7 @@ func (s *Service) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/context/features", s.listFeatures)
 	mux.HandleFunc("POST /v1/context/connectors", s.defineConnector)
 	mux.HandleFunc("GET /v1/context/connectors", s.listConnectors)
+	mux.HandleFunc("GET /v1/context/connectors/catalog", s.connectorCatalog)
 	mux.HandleFunc("POST /v1/context/connectors/{name}/fetch", s.fetchConnector)
 	mux.HandleFunc("GET /v1/context/connectors/{name}/fetches", s.listFetches)
 }
@@ -169,6 +170,13 @@ func (s *Service) defineConnector(w http.ResponseWriter, r *http.Request) {
 	httpx.Emit(w, r, &req, func(id identity.Identity) (eventlog.Envelope, error) {
 		return s.cmd.DefineConnector(r.Context(), id, domain.DefineConnector{Name: req.Name, Type: req.Type, Config: req.Config})
 	})
+}
+
+func (s *Service) connectorCatalog(w http.ResponseWriter, r *http.Request) {
+	if _, ok := httpx.Caller(w, r); !ok {
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"templates": connectors.Catalog()})
 }
 
 func (s *Service) listConnectors(w http.ResponseWriter, r *http.Request) {

@@ -135,10 +135,13 @@ enterprise buyers; **P2** = differentiators / scale.
   entities + their event timelines — closing the gap where flows referenced connectors/features
   by name that could only be created via the API.*
 - **P1 — A connector catalog** (credit bureaus, KYC/AML, fraud, document/OCR) with
-  managed **secrets**. *Credential config fields (dsn/password/token/secret/api_key/
-  authorization/…) are now redacted at the HTTP boundary (`connectors.RedactConfig`),
-  so secrets never reach the client/UI — though they are still stored in plaintext
-  in the projection; a real secret store / encryption-at-rest remains the P1 work.*
+  managed **secrets**. *The **catalog ships** (`connectors.Catalog`, `GET
+  /v1/context/connectors/catalog`): curated templates (REST / credit bureau / KYC-AML
+  / fraud / document-OCR / SQL) that scaffold the connector config, surfaced as
+  "start from a template" chips on the Data page. Credential config fields
+  (dsn/password/token/…) are redacted at the HTTP boundary (`connectors.RedactConfig`),
+  so secrets never reach the client/UI — but are still stored in plaintext; a real
+  secret store / encryption-at-rest (and per-template auth fields) remains the P1 work.*
 - **P1 — Batch decisioning** (score a file / a population) — **DONE.** `POST
   /v1/flows/{slug}/{env}/decide/batch` runs a dataset through the recorded decide
   path (each row a real decision in history/metrics/audit; capped at 500), with a

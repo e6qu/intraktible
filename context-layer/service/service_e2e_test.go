@@ -164,6 +164,45 @@ func TestConnectorEndToEnd(t *testing.T) {
 	}
 }
 
+func TestConnectorCatalog(t *testing.T) {
+	api := start(t)
+
+	var cat struct {
+		Templates []connectors.Template `json:"templates"`
+	}
+	api.Request(t, http.MethodGet, "/v1/context/connectors/catalog", nil, http.StatusOK, &cat)
+	if len(cat.Templates) < 4 {
+		t.Fatalf("expected a populated catalog, got %d", len(cat.Templates))
+	}
+	var bureau *connectors.Template
+	for i := range cat.Templates {
+		if cat.Templates[i].ID == "credit-bureau" {
+			bureau = &cat.Templates[i]
+		}
+	}
+	if bureau == nil || bureau.Type != "http" || len(bureau.Config) == 0 {
+		t.Fatalf("credit-bureau template missing or malformed: %+v", bureau)
+	}
+
+	// A template instantiates as an ordinary connector via its scaffold config.
+	api.Request(t, http.MethodPost, "/v1/context/connectors",
+		map[string]any{"name": "my-bureau", "type": bureau.Type, "config": bureau.Config}, http.StatusAccepted, nil)
+	if !testutil.Eventually(t, func() bool {
+		var list struct {
+			Connectors []connectors.ConnectorView `json:"connectors"`
+		}
+		api.Request(t, http.MethodGet, "/v1/context/connectors?type=http", nil, http.StatusOK, &list)
+		for _, c := range list.Connectors {
+			if c.Name == "my-bureau" {
+				return true
+			}
+		}
+		return false
+	}) {
+		t.Fatal("connector instantiated from the catalog never appeared")
+	}
+}
+
 func TestContextAPIValidationAndAuth(t *testing.T) {
 	api := start(t)
 

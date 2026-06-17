@@ -1268,6 +1268,26 @@ export interface Connector {
   updated_at: string;
 }
 
+export interface ConnectorTemplate {
+  id: string;
+  name: string;
+  category: string;
+  type: string;
+  description: string;
+  config: unknown;
+}
+
+export async function listConnectorCatalog(
+  key: string,
+  fetcher: typeof fetch = fetch
+): Promise<ConnectorTemplate[]> {
+  const res = await fetcher('/v1/context/connectors/catalog', { headers: authHeaders(key) });
+  if (!res.ok) {
+    return errorOrStatus(res, 'GET connector catalog');
+  }
+  return ((await res.json()) as { templates: ConnectorTemplate[] }).templates ?? [];
+}
+
 export interface Feature {
   name: string;
   entity_type: string;

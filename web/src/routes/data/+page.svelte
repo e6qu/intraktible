@@ -8,10 +8,12 @@
   import {
     listConnectors,
     defineConnector,
+    listConnectorCatalog,
     listFeatures,
     defineFeature,
     listEntities,
     type Connector,
+    type ConnectorTemplate,
     type Feature,
     type Entity
   } from '$lib/api';
@@ -39,11 +41,18 @@
     }
   }
 
-  // --- Connector define form ---
   let cName = $state('');
   let cType = $state('mock_bureau');
   let cConfig = $state('');
   let cBusy = $state(false);
+  let catalog = $state<ConnectorTemplate[]>([]);
+  // Selecting a catalog template scaffolds the define form (the operator then edits
+  // the placeholder URL/DSN and names it).
+  function useTemplate(t: ConnectorTemplate) {
+    cType = t.type;
+    cConfig = JSON.stringify(t.config, null, 2);
+    if (!cName.trim()) cName = t.id;
+  }
   async function addConnector() {
     error = '';
     cBusy = true;
@@ -65,7 +74,6 @@
     }
   }
 
-  // --- Feature define form ---
   let fName = $state('');
   let fEntityType = $state('');
   let fEventName = $state('');
@@ -97,7 +105,12 @@
     }
   }
 
-  onMount(load);
+  onMount(() => {
+    void load();
+    listConnectorCatalog(key)
+      .then((c) => (catalog = c))
+      .catch(() => (catalog = []));
+  });
 </script>
 
 <main>
@@ -113,6 +126,15 @@
 
   <section>
     <h2>Connectors</h2>
+    {#if catalog.length > 0}
+      <div class="catalog" data-testid="connector-catalog">
+        <span class="catalog-label">Start from a template:</span>
+        {#each catalog as t (t.id)}
+          <button class="chip" title={t.description} onclick={() => useTemplate(t)}>{t.name}</button
+          >
+        {/each}
+      </div>
+    {/if}
     <form
       class="row"
       onsubmit={(e) => {
@@ -283,6 +305,30 @@
     gap: 0.5rem;
     align-items: center;
     margin: 0.5rem 0;
+  }
+  .catalog {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    align-items: center;
+    margin: 0.4rem 0;
+  }
+  .catalog-label {
+    font-size: 0.82rem;
+    color: var(--fg-subtle);
+  }
+  .chip {
+    padding: 0.2rem 0.6rem;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--surface-2);
+    color: var(--fg);
+    font-size: 0.82rem;
+    cursor: pointer;
+  }
+  .chip:hover {
+    border-color: var(--accent);
+    color: var(--accent-ink, var(--accent));
   }
   table {
     width: 100%;
