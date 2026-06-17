@@ -19,6 +19,7 @@ import (
 	"github.com/e6qu/intraktible/decision-engine/history"
 	"github.com/e6qu/intraktible/decision-engine/internal/flowtest"
 	"github.com/e6qu/intraktible/decision-engine/policy"
+	"github.com/e6qu/intraktible/decision-engine/preapproval"
 	"github.com/e6qu/intraktible/decision-engine/service"
 	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/testutil"
@@ -309,6 +310,44 @@ func TestDecideAppliesPolicyOverHTTP(t *testing.T) {
 	}
 }
 
+func TestPreApprovalOverHTTP(t *testing.T) {
+	api := startEngine(t)
+	var granted struct {
+		PreApprovalID string `json:"preapproval_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/preapprovals", map[string]any{
+		"entity_type": "applicant", "entity_id": "acme", "disposition": "approve",
+		"terms": map[string]any{"limit": 15000}, "valid_days": 90, "policy_id": "p1",
+	}, http.StatusCreated, &granted)
+	if granted.PreApprovalID == "" {
+		t.Fatal("grant returned no id")
+	}
+
+	// It is readable by entity (retry while the projection catches up).
+	type view struct {
+		Disposition string `json:"disposition"`
+		Status      string `json:"status"`
+	}
+	var v view
+	if !testutil.Eventually(t, func() bool {
+		v = view{}
+		api.Request(t, http.MethodGet, "/v1/preapprovals/applicant/acme", nil, http.StatusOK, &v)
+		return v.Status == "active" && v.Disposition == "approve"
+	}) {
+		t.Fatalf("pre-approval not active: %+v", v)
+	}
+
+	// Revoking flips it to revoked.
+	api.Request(t, http.MethodPost, "/v1/preapprovals/applicant/acme/revoke", map[string]any{"reason": "fraud"}, http.StatusOK, nil)
+	if !testutil.Eventually(t, func() bool {
+		v = view{}
+		api.Request(t, http.MethodGet, "/v1/preapprovals/applicant/acme", nil, http.StatusOK, &v)
+		return v.Status == "revoked"
+	}) {
+		t.Fatalf("pre-approval not revoked: %+v", v)
+	}
+}
+
 func TestPolicyBacktestOverHTTP(t *testing.T) {
 	api := startEngine(t)
 	var flow struct {
@@ -366,13 +405,15 @@ func startEngine(t *testing.T, opts ...command.DecideOption) *testutil.API {
 	log, st := testutil.NewLogStore(t)
 	svc := service.New(command.NewHandler(log), command.NewDecideHandler(log, st, opts...), st)
 	pol := policy.New(policy.NewHandler(log), st)
+	pa := preapproval.New(preapproval.NewHandler(log), st)
 	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "author"}
 	routes := func(mux *http.ServeMux) {
 		svc.Routes(mux)
 		pol.Routes(mux)
+		pa.Routes(mux)
 	}
 	return testutil.StartAPI(t, log, st, "test-key", id, routes,
-		flows.Projector{}, history.Projector{}, analytics.Projector{}, policy.Projector{})
+		flows.Projector{}, history.Projector{}, analytics.Projector{}, policy.Projector{}, preapproval.Projector{})
 }
 
 // stubFeatures is a fixed feature source for the decide HTTP test.

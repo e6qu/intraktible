@@ -40,6 +40,7 @@ import (
 	"github.com/e6qu/intraktible/decision-engine/flows"
 	"github.com/e6qu/intraktible/decision-engine/history"
 	"github.com/e6qu/intraktible/decision-engine/policy"
+	"github.com/e6qu/intraktible/decision-engine/preapproval"
 	engineservice "github.com/e6qu/intraktible/decision-engine/service"
 	hellocmd "github.com/e6qu/intraktible/hello/command"
 	helloservice "github.com/e6qu/intraktible/hello/service"
@@ -177,6 +178,8 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 		// Policies are the operational disposition layer over flows (auto-approve/
 		// decline/refer); a first-class artifact alongside the flow registry.
 		policy.New(policy.NewHandler(log), st).Routes(api)
+		// Pre-approvals: durable pre-decisions honored instantly at decide time.
+		preapproval.New(preapproval.NewHandler(log), st).Routes(api)
 	}
 	if enabled(modules, "case-manager") {
 		caseservice.New(casecmd.NewHandler(log), st).Routes(api)
@@ -291,7 +294,7 @@ func moduleProjectors(modules string) []projection.Projector {
 		ps = append(ps, stats.Projector{})
 	}
 	if enabled(modules, "decision-engine") {
-		ps = append(ps, flows.Projector{}, history.Projector{}, analytics.Projector{}, policy.Projector{})
+		ps = append(ps, flows.Projector{}, history.Projector{}, analytics.Projector{}, policy.Projector{}, preapproval.Projector{})
 	}
 	if enabled(modules, "case-manager") {
 		ps = append(ps, cases.Projector{})

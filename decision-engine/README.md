@@ -91,6 +91,12 @@ Done — execution runtime + decide API + decision history (the decision event s
   compare version, the rows that flip — recording nothing (safe tuning). API: `POST /v1/policies`,
   `POST /v1/policies/{id}/versions`, `GET /v1/policies[/{id}]`. UI: a `/policies` page authors the bands
   and previews impact.
+- **Pre-approvals (`decision-engine/preapproval`):** durable, time-boxed pre-decisions for an entity —
+  granted (in bulk from a policy run) with the offer **terms** + provenance (policy/flow) + a validity
+  window, and (next slice) **honored instantly at decide** time so a pre-approved entity is approved
+  without re-running the flow. A grant supersedes the entity's prior one; revoke or expiry invalidates it
+  (expiry checked at read time, so the projection stays clock-free). API: `POST /v1/preapprovals` (grant,
+  `editor`), `GET /v1/preapprovals[/{type}/{id}]`, `POST /v1/preapprovals/{type}/{id}/revoke`.
 - **Flow export** (`decision-engine/export`, pure): a flow version renders to **Mermaid**
   (`flowchart`, `stateDiagram-v2`), **BPMN 2.0 XML with BPMNDI** layout (opens laid-out in
   bpmn.io / Camunda; node types map to start/end events, gateways, business-rule/service/script/user
