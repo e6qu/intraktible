@@ -29,7 +29,9 @@ validation surfaced), renders it on a canvas (auto-layout), runs inline test dec
 **deployment + maker-checker** (live-version-per-env badges, deploy-to-sandbox, propose-for-production,
 a pending-approvals queue with approve/reject — self-approval refused — and A/B challenger %), and a
 **version-diff** panel (client-side structural compare of any two published versions: added/removed/
-changed nodes + added/removed edges).
+changed nodes + added/removed edges). A flow version **exports** to Mermaid / BPMN / Graphviz DOT /
+round-trippable JSON, and a flow JSON **imports** straight back onto the canvas (paste or upload) to
+publish into any flow — so flows move between environments and version control.
 The **Case Manager** (`case-manager/`) opens cases — manually or **escalated from a decision flow's
 `manual_review` node** (cross-component via the event log, linked by `source_decision_id`) — with
 assignment / status / notes, a queue with filters, a per-case audit log built from events, **SLA

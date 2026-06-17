@@ -107,6 +107,60 @@ test('exports the flow as DOT and JSON', async ({ page, request }) => {
   }
 });
 
+test('imports a flow JSON onto the canvas and publishes it (round-trip)', async ({
+  page,
+  request
+}) => {
+  const H = { 'X-Api-Key': KEY };
+  // Source flow A with a 3-node graph and an input schema.
+  const slugA = uniqueSlug();
+  const a = await request.post('/v1/flows', { headers: H, data: { slug: slugA, name: 'Source' } });
+  const { flow_id: aId } = await a.json();
+  await request.post(`/v1/flows/${aId}/versions`, {
+    headers: H,
+    data: {
+      graph: {
+        nodes: [
+          { id: 'in', type: 'input' },
+          { id: 'a', type: 'assignment', config: { assignments: [{ target: 'd', expr: "'OK'" }] } },
+          { id: 'out', type: 'output', config: { fields: ['d'] } }
+        ],
+        edges: [
+          { from: 'in', to: 'a' },
+          { from: 'a', to: 'out' }
+        ]
+      },
+      input_schema: { type: 'object', required: ['x'] }
+    }
+  });
+  // Export A as JSON (the round-trippable form).
+  const exported = await (
+    await request.get(`/v1/flows/${aId}/export?format=json`, { headers: H })
+  ).text();
+
+  // Empty target flow B; import A's JSON into it via the builder.
+  const slugB = uniqueSlug();
+  const b = await request.post('/v1/flows', { headers: H, data: { slug: slugB, name: 'Target' } });
+  const { flow_id: bId } = await b.json();
+
+  await page.goto(`/engine/${bId}`);
+  await expect(page.getByLabel('new node type')).toBeVisible(); // hydrated
+  await page.getByText('Import JSON', { exact: true }).click(); // open the disclosure
+  await page.getByLabel('import flow json').fill(exported);
+  await page.getByTestId('import-load').click();
+
+  // The imported graph is on the canvas, then published as B's first version.
+  await expect(page.locator('.svelte-flow__node')).toHaveCount(3);
+  await page.getByRole('button', { name: 'Publish version' }).click();
+  await expect(page.getByText(/Published v1/)).toBeVisible();
+
+  // Round-trip integrity: B v1 carries the same graph and input schema.
+  const got = await (await request.get(`/v1/flows/${bId}`, { headers: H })).json();
+  const v = got.versions.at(-1);
+  expect(v.graph.nodes).toHaveLength(3);
+  expect(v.input_schema).toEqual({ type: 'object', required: ['x'] });
+});
+
 test('builds a flow in the editor and publishes it', async ({ page, request }) => {
   const slug = uniqueSlug();
   const created = await request.post('/v1/flows', {

@@ -71,6 +71,7 @@ export interface FlowVersion {
   version: number;
   etag: string;
   graph: FlowGraph;
+  input_schema?: unknown;
   published_at?: string;
   published_by?: string;
 }
@@ -320,12 +321,14 @@ export async function publishVersion(
   key: string,
   flowId: string,
   graph: FlowGraph,
+  inputSchema?: unknown,
   fetcher: typeof fetch = fetch
 ): Promise<{ version: number; etag: string }> {
+  const body = inputSchema === undefined ? { graph } : { graph, input_schema: inputSchema };
   const res = await fetcher(`/v1/flows/${flowId}/versions`, {
     method: 'POST',
     headers: jsonHeaders(key),
-    body: JSON.stringify({ graph })
+    body: JSON.stringify(body)
   });
   if (!res.ok) {
     // Surface the backend's validation message (fail loudly, visibly).

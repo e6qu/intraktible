@@ -96,5 +96,7 @@ The builder has **structured config panels for every node type** — the flat on
 manual_review, output, code, assignment) and the nested-table ones (rule, scorecard, decision_table,
 2d_matrix, with when→then / factor / row→output repeaters and a matrix cell grid) — with the raw-JSON
 textarea kept as a per-type advanced view. The canvas supports **drag-to-connect** (drag between node
-handles to add an edge) alongside the from/to form (D10).
+handles to add an edge) alongside the from/to form (D10). It also **imports a flow JSON** (paste or
+upload a JSON export, or a bare `{graph}` / `{nodes,edges}` object) onto the canvas — the inverse of the
+JSON export — to review and publish; `input_schema` is preserved across edits, imports, and republishes.
 (CEL as a second condition engine was closed by decision — expr-lang + Starlark already cover it.)

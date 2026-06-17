@@ -86,6 +86,10 @@
   // Engine-level editor model (the source of truth) and its Svelte Flow render.
   let editNodes = $state<EditNode[]>([]);
   let editEdges = $state<GraphEdge[]>([]);
+  // The version's input schema is preserved across edits and republishes (the
+  // builder edits the graph, not the schema) and can be brought in by an import.
+  let inputSchema = $state<unknown>(undefined);
+  let importText = $state('');
   let counter = $state(0);
   let selectedId = $state<string | null>(null);
   let nodes = $state.raw<Node[]>([]);
@@ -138,6 +142,7 @@
           config: n.config ? JSON.stringify(n.config) : ''
         }));
         editEdges = version.graph.edges.map((e) => ({ from: e.from, to: e.to, branch: e.branch }));
+        inputSchema = version.input_schema;
         counter = editNodes.length;
       }
       // Default the version-diff selectors to the two most recent versions.
@@ -411,7 +416,7 @@
         name: n.name || undefined,
         config: n.config.trim() ? JSON.parse(n.config) : undefined
       }));
-      const r = await publishVersion(key, flowId, { nodes: gnodes, edges: editEdges });
+      const r = await publishVersion(key, flowId, { nodes: gnodes, edges: editEdges }, inputSchema);
       toast.success(`Published v${r.version}`);
       await load();
     } catch (e) {
@@ -419,6 +424,57 @@
     } finally {
       publishing = false;
     }
+  }
+
+  // importJSON loads a flow export (or a bare {graph} / {nodes,edges} object) onto
+  // the canvas so it can be reviewed and published — the inverse of JSON export.
+  function importJSON(text: string): void {
+    error = '';
+    if (!text.trim()) {
+      error = 'Import failed: paste a flow export or a graph object first';
+      return;
+    }
+    try {
+      const raw = JSON.parse(text) as Record<string, unknown>;
+      const g = (raw.graph ?? raw) as { nodes?: unknown; edges?: unknown };
+      if (!Array.isArray(g.nodes)) {
+        throw new Error(
+          'expected a "nodes" array (a flow export, or a {graph}/{nodes,edges} object)'
+        );
+      }
+      type N = { id?: string; type?: string; name?: string; config?: unknown };
+      type E = { from?: string; to?: string; branch?: string };
+      editNodes = (g.nodes as N[]).map((n) => ({
+        id: String(n.id ?? ''),
+        type: String(n.type ?? ''),
+        name: n.name ?? '',
+        config: n.config !== undefined ? JSON.stringify(n.config) : ''
+      }));
+      editEdges = Array.isArray(g.edges)
+        ? (g.edges as E[]).map((e) => ({
+            from: String(e.from ?? ''),
+            to: String(e.to ?? ''),
+            branch: e.branch
+          }))
+        : [];
+      inputSchema = 'input_schema' in raw ? raw.input_schema : undefined;
+      counter = editNodes.length;
+      selectedId = '';
+      importText = '';
+      toast.success(
+        `Imported ${editNodes.length} node${editNodes.length === 1 ? '' : 's'} — review, then Publish`
+      );
+    } catch (e) {
+      error = 'Import failed: ' + msg(e);
+    }
+  }
+
+  async function importFile(ev: Event): Promise<void> {
+    const input = ev.currentTarget as HTMLInputElement;
+    const file = input.files?.item(0);
+    if (!file) return;
+    importJSON(await file.text());
+    input.value = '';
   }
 
   let lastDecisionId = $state('');
@@ -659,6 +715,33 @@
       </button>
     </div>
   </div>
+  <details class="importflow">
+    <summary><Icon name="download" size={15} /> Import JSON</summary>
+    <p class="importhint">
+      Load a flow export (or a bare <code>graph</code> / <code>{'{nodes, edges}'}</code> object)
+      onto the canvas, then <b>Publish</b> to save it as a new version — the inverse of JSON export.
+    </p>
+    <div class="row">
+      <input
+        type="file"
+        accept="application/json,.json"
+        aria-label="import flow file"
+        onchange={importFile}
+      />
+    </div>
+    <textarea
+      class="importbox"
+      bind:value={importText}
+      placeholder={'{"graph":{"nodes":[…],"edges":[…]}}'}
+      aria-label="import flow json"
+      rows="4"
+    ></textarea>
+    <div class="row">
+      <button onclick={() => importJSON(importText)} data-testid="import-load">
+        <Icon name="download" size={14} /> Load into editor
+      </button>
+    </div>
+  </details>
   {#if metrics && metrics.total > 0}
     <div class="metrics">
       <span class="exportlabel"><Icon name="diagram" size={15} /> Analytics</span>
@@ -1571,6 +1654,31 @@
     border-bottom-left-radius: 0;
     border-left: none;
     padding: 0.4rem 0.5rem;
+  }
+  .importflow {
+    margin: 0.6rem 0;
+  }
+  .importflow > summary {
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.9rem;
+    color: var(--fg-muted);
+    width: max-content;
+  }
+  .importflow > summary:hover {
+    color: var(--fg);
+  }
+  .importhint {
+    color: var(--fg-subtle);
+    font-size: 0.85rem;
+    margin: 0.5rem 0;
+  }
+  .importbox {
+    width: 100%;
+    box-sizing: border-box;
+    resize: vertical;
   }
   pre {
     background: #8881;

@@ -360,18 +360,27 @@ describe('flows', () => {
 
   it('publishVersion posts the graph and returns the version', async () => {
     const fetcher = fetcherReturning(201, { version: 2, etag: 'abc' });
-    const res = await publishVersion('k', 'f1', { nodes: [], edges: [] }, fetcher);
+    const res = await publishVersion('k', 'f1', { nodes: [], edges: [] }, undefined, fetcher);
     expect(res.version).toBe(2);
     const [url, init] = fetcher.mock.calls[0];
     expect(url).toBe('/v1/flows/f1/versions');
     expect(init?.body).toBe(JSON.stringify({ graph: { nodes: [], edges: [] } }));
   });
 
+  it('publishVersion includes input_schema when given', async () => {
+    const fetcher = fetcherReturning(201, { version: 3, etag: 'def' });
+    await publishVersion('k', 'f1', { nodes: [], edges: [] }, { type: 'object' }, fetcher);
+    const [, init] = fetcher.mock.calls[0];
+    expect(init?.body).toBe(
+      JSON.stringify({ graph: { nodes: [], edges: [] }, input_schema: { type: 'object' } })
+    );
+  });
+
   it('publishVersion surfaces the backend validation error', async () => {
     const fetcher = fetcherReturning(400, { error: 'graph needs exactly one input node' });
-    await expect(publishVersion('k', 'f1', { nodes: [], edges: [] }, fetcher)).rejects.toThrow(
-      /exactly one input/
-    );
+    await expect(
+      publishVersion('k', 'f1', { nodes: [], edges: [] }, undefined, fetcher)
+    ).rejects.toThrow(/exactly one input/);
   });
 
   it('decide targets the slug/env path', async () => {
