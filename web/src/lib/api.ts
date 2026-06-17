@@ -697,6 +697,56 @@ export async function batchDecide(
   return (await res.json()) as BatchReport;
 }
 
+export interface PreApproveResult {
+  index: number;
+  entity_id?: string;
+  decision_id?: string;
+  status: string; // completed | failed | rejected
+  disposition?: string;
+  granted: boolean;
+  preapproval_id?: string;
+  reason?: string;
+  error?: string;
+}
+
+export interface PreApproveBatchReport {
+  total: number;
+  granted: number;
+  skipped: number;
+  failed: number;
+  rejected: number;
+  results: PreApproveResult[];
+}
+
+// preapproveBatch runs a population through the flow + its bound policy and grants
+// a time-boxed pre-approval for every row the policy disposes to `disposition`
+// (default approve), keyed by each row's `entityKey` field.
+export async function preapproveBatch(
+  key: string,
+  slug: string,
+  env: string,
+  body: {
+    dataset: Record<string, unknown>[];
+    entity_type: string;
+    entity_key: string;
+    disposition?: string;
+    valid_days: number;
+    note?: string;
+  },
+  fetcher: typeof fetch = fetch
+): Promise<PreApproveBatchReport> {
+  const res = await fetcher(`/v1/flows/${slug}/${env}/preapprove/batch`, {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) {
+    const b = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(b.error ?? `POST preapprove batch failed: ${res.status}`);
+  }
+  return (await res.json()) as PreApproveBatchReport;
+}
+
 // ---- Case Manager ----
 
 export interface CaseNote {

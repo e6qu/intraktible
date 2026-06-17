@@ -397,6 +397,82 @@ func TestDecideHonorsPreApprovalOverHTTP(t *testing.T) {
 	}
 }
 
+func TestPreApproveBatchOverHTTP(t *testing.T) {
+	api := startEngine(t)
+	var flow struct {
+		FlowID string `json:"flow_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows", map[string]any{"slug": "bulk", "name": "Bulk"}, http.StatusCreated, &flow)
+	api.Request(t, http.MethodPost, "/v1/flows/"+flow.FlowID+"/versions", map[string]any{
+		"graph": map[string]any{
+			"nodes": []map[string]any{
+				{"id": "in", "type": "input"},
+				{"id": "a", "type": "assignment", "config": map[string]any{"assignments": []map[string]any{{"target": "score", "expr": "score"}}}},
+				{"id": "out", "type": "output", "config": map[string]any{"fields": []string{"score"}}},
+			},
+			"edges": []map[string]any{{"from": "in", "to": "a"}, {"from": "a", "to": "out"}},
+		},
+	}, http.StatusCreated, nil)
+
+	// Bind a policy: score >= 0.8 -> approve, else refer.
+	var pol struct {
+		PolicyID string `json:"policy_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/policies", map[string]any{"name": "stp", "flow_slug": "bulk"}, http.StatusCreated, &pol)
+	api.Request(t, http.MethodPost, "/v1/policies/"+pol.PolicyID+"/versions", map[string]any{
+		"spec": map[string]any{"rules": []map[string]any{{"when": "score >= 0.8", "disposition": "approve"}}, "default": "refer"},
+	}, http.StatusCreated, nil)
+
+	// Promote a population: two approve (score>=0.8), one refer, one missing id.
+	type result struct {
+		Index         int    `json:"index"`
+		EntityID      string `json:"entity_id"`
+		Status        string `json:"status"`
+		Disposition   string `json:"disposition"`
+		Granted       bool   `json:"granted"`
+		PreApprovalID string `json:"preapproval_id"`
+		Reason        string `json:"reason"`
+	}
+	var resp struct {
+		Total    int      `json:"total"`
+		Granted  int      `json:"granted"`
+		Skipped  int      `json:"skipped"`
+		Rejected int      `json:"rejected"`
+		Results  []result `json:"results"`
+	}
+	dataset := []map[string]any{
+		{"applicant_id": "a1", "score": 0.95},
+		{"applicant_id": "a2", "score": 0.5},
+		{"applicant_id": "a3", "score": 0.85},
+		{"score": 0.99}, // no applicant_id -> rejected
+	}
+	if !testutil.Eventually(t, func() bool {
+		resp.Granted, resp.Skipped, resp.Rejected = 0, 0, 0
+		api.Request(t, http.MethodPost, "/v1/flows/bulk/production/preapprove/batch", map[string]any{
+			"dataset": dataset, "entity_type": "applicant", "entity_key": "applicant_id", "valid_days": 30,
+		}, http.StatusOK, &resp)
+		return resp.Granted == 2 // wait until the policy projection resolves
+	}) {
+		t.Fatalf("expected 2 grants once the policy resolves: %+v", resp)
+	}
+	if resp.Total != 4 || resp.Skipped != 1 || resp.Rejected != 1 {
+		t.Fatalf("unexpected batch tally: %+v", resp)
+	}
+
+	// The approved entities are now honored instantly at decide — terms carry the score.
+	var d struct {
+		Status      string         `json:"status"`
+		Disposition string         `json:"disposition"`
+		Data        map[string]any `json:"data"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows/bulk/production/decide", map[string]any{
+		"data": map[string]any{}, "entity_type": "applicant", "entity_id": "a1",
+	}, http.StatusOK, &d)
+	if d.Status != "completed" || d.Disposition != "approve" || d.Data["score"] != 0.95 {
+		t.Fatalf("expected a1 honored from the batch grant: %+v", d)
+	}
+}
+
 func TestPolicyBacktestOverHTTP(t *testing.T) {
 	api := startEngine(t)
 	var flow struct {
@@ -452,9 +528,10 @@ func TestPolicyBacktestOverHTTP(t *testing.T) {
 func startEngine(t *testing.T, opts ...command.DecideOption) *testutil.API {
 	t.Helper()
 	log, st := testutil.NewLogStore(t)
-	svc := service.New(command.NewHandler(log), command.NewDecideHandler(log, st, opts...), st)
+	paCmd := preapproval.NewHandler(log)
+	svc := service.New(command.NewHandler(log), command.NewDecideHandler(log, st, opts...), paCmd, st)
 	pol := policy.New(policy.NewHandler(log), st)
-	pa := preapproval.New(preapproval.NewHandler(log), st)
+	pa := preapproval.New(paCmd, st)
 	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "author"}
 	routes := func(mux *http.ServeMux) {
 		svc.Routes(mux)

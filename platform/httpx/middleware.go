@@ -165,6 +165,7 @@ func isAuthoringPath(path string) bool {
 	return path == "/v1/flows" || // create a flow
 		path == "/v1/policies" || // create a policy
 		path == "/v1/preapprovals" || // grant a pre-approval (material)
+		strings.HasSuffix(path, "/preapprove/batch") || // bulk-grant pre-approvals from a run
 		strings.HasSuffix(path, "/versions") || // publish a flow or policy version
 		path == "/v1/agents" || // define an agent
 		path == "/v1/context/features" || // define a feature

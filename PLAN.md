@@ -320,8 +320,11 @@ disposition on every decision (real-time STP), with a record-nothing **dispositi
 tuning; **batch decisioning** (`…/{env}/decide/batch`) scores a whole population through the recorded
 decide path; and **pre-approvals** (`decision-engine/preapproval`) are durable, time-boxed grants per
 entity that the decide path **honors instantly** — a pre-approved entity is completed straight from the
-grant's terms, skipping the flow, recorded with `preapproval_id` for provenance. UI: `/policies` (band
-editor + impact preview) and `/preapprovals` (grant / list / revoke).
+grant's terms, skipping the flow, recorded with `preapproval_id` for provenance. The three modes join up
+via **promote-to-pre-approvals** (`…/{env}/preapprove/batch`): a population runs through the policy and
+every approved row becomes a durable grant keyed by a row field — decide a population once, pre-approve
+the winners, honor them instantly. UI: `/policies` (band editor + impact preview), `/preapprovals`
+(grant / list / revoke), and a **Promote to pre-approvals** panel in the builder.
 
 **Persona-aware UI (post-MVP).** The web UI gained a **persona** axis (`web/src/lib/persona.ts`) — a
 client-side "view-as" preference anyone can switch (not RBAC-gated), orthogonal to light/dark theme. It

@@ -101,6 +101,14 @@ Done — execution runtime + decide API + decision history (the decision event s
   clock-free). API: `POST /v1/preapprovals` (grant, `editor`), `GET /v1/preapprovals[/{type}/{id}]`,
   `POST /v1/preapprovals/{type}/{id}/revoke`. UI: a `/preapprovals` page grants, lists (with live
   active/expired/revoked status + honored count), and revokes.
+- **Promote a batch to pre-approvals** (`POST /v1/flows/{slug}/{env}/preapprove/batch`, `editor`): the
+  bridge from bulk decisioning to durable pre-decisions. A population (`{dataset, entity_type,
+  entity_key, disposition?, valid_days, note?}`) runs through the recorded decide path (applying the
+  flow's bound policy), and every row the policy disposes to the target disposition (default `approve`)
+  is granted a time-boxed pre-approval keyed by the row's `entity_key` field — its decision output
+  becomes the stored offer terms. Returns a per-row tally (granted / skipped / failed / rejected). The
+  builder's **Promote to pre-approvals** panel drives it over the batch dataset. This is the "policy
+  informs bulk decisions" loop: decide a population once, pre-approve the winners, honor them instantly.
 - **Flow export** (`decision-engine/export`, pure): a flow version renders to **Mermaid**
   (`flowchart`, `stateDiagram-v2`), **BPMN 2.0 XML with BPMNDI** layout (opens laid-out in
   bpmn.io / Camunda; node types map to start/end events, gateways, business-rule/service/script/user

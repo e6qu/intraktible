@@ -106,6 +106,66 @@ test('batch-decides a dataset from the builder', async ({ page, request }) => {
   await expect(page.getByRole('link', { name: 'view' }).first()).toBeVisible();
 });
 
+test('promotes an approved batch into pre-approvals', async ({ page, request }) => {
+  const slug = uniqueSlug();
+  const created = await request.post('/v1/flows', {
+    headers: { 'X-Api-Key': KEY },
+    data: { slug, name: 'Promoted' }
+  });
+  const { flow_id } = await created.json();
+  await request.post(`/v1/flows/${flow_id}/versions`, {
+    headers: { 'X-Api-Key': KEY },
+    data: {
+      graph: {
+        nodes: [
+          { id: 'in', type: 'input' },
+          {
+            id: 'a',
+            type: 'assignment',
+            config: { assignments: [{ target: 'score', expr: 'score' }] }
+          },
+          { id: 'out', type: 'output', config: { fields: ['score'] } }
+        ],
+        edges: [
+          { from: 'in', to: 'a' },
+          { from: 'a', to: 'out' }
+        ]
+      }
+    }
+  });
+  // Bind a policy: score >= 0.8 -> approve, else refer.
+  const pol = await request.post('/v1/policies', {
+    headers: { 'X-Api-Key': KEY },
+    data: { name: `stp-${slug}`, flow_slug: slug }
+  });
+  const { policy_id } = await pol.json();
+  await request.post(`/v1/policies/${policy_id}/versions`, {
+    headers: { 'X-Api-Key': KEY },
+    data: { spec: { rules: [{ when: 'score >= 0.8', disposition: 'approve' }], default: 'refer' } }
+  });
+
+  await page.goto(`/engine/${flow_id}`);
+  await expect(page.locator('.svelte-flow__node')).toHaveCount(3);
+
+  await page
+    .getByLabel('batch dataset')
+    .fill('[{"applicant_id": "a1", "score": 0.95}, {"applicant_id": "a2", "score": 0.4}]');
+  await page.getByLabel('pre-approve entity type').fill('applicant');
+  await page.getByLabel('pre-approve entity key').fill('applicant_id');
+
+  // Retry the promote until the policy projection resolves (1 grant, 1 skipped).
+  const summary = page.getByTestId('preapprove-summary');
+  await expect(async () => {
+    await page.getByTestId('run-preapprove').click();
+    await expect(summary).toContainText('1 granted');
+  }).toPass();
+  await expect(summary).toContainText('1 skipped');
+
+  // The granted entity now appears active on the pre-approvals page.
+  await page.goto('/preapprovals');
+  await expect(page.locator('tr', { hasText: 'a1' }).first()).toContainText('active');
+});
+
 test('exports the flow as DOT and JSON', async ({ page, request }) => {
   const slug = uniqueSlug();
   const created = await request.post('/v1/flows', {

@@ -174,12 +174,16 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 			enginecmd.WithFeatures(features.Provider{Store: st}),
 			enginecmd.WithConnectors(connectors.Provider{Store: st, Egress: egress}),
 			enginecmd.WithAgents(agents.Provider{Store: st, Registry: aiRegistry, Tools: toolbox}))
-		engineservice.New(enginecmd.NewHandler(log), decide, st).Routes(api)
+		// The pre-approval write side is shared: the engine service uses it to
+		// promote an approved batch into grants; the pre-approval service exposes
+		// the standalone grant/list/revoke surface.
+		paCmd := preapproval.NewHandler(log)
+		engineservice.New(enginecmd.NewHandler(log), decide, paCmd, st).Routes(api)
 		// Policies are the operational disposition layer over flows (auto-approve/
 		// decline/refer); a first-class artifact alongside the flow registry.
 		policy.New(policy.NewHandler(log), st).Routes(api)
 		// Pre-approvals: durable pre-decisions honored instantly at decide time.
-		preapproval.New(preapproval.NewHandler(log), st).Routes(api)
+		preapproval.New(paCmd, st).Routes(api)
 	}
 	if enabled(modules, "case-manager") {
 		caseservice.New(casecmd.NewHandler(log), st).Routes(api)

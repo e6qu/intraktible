@@ -173,5 +173,8 @@ record-nothing disposition backtest for safe tuning); **batch decisioning** scor
 whole population through the recorded decide path; and **pre-approvals**
 (`decision-engine/preapproval`) are durable, time-boxed grants that the decide path
 honors instantly — a pre-approved entity is completed straight from the grant's terms,
-skipping the flow, recorded with `preapproval_id` for provenance. One disposition brain
-serves real-time, bulk, and pre-approval paths.
+skipping the flow, recorded with `preapproval_id` for provenance. The three join up via
+**promote-to-pre-approvals** (`…/{env}/preapprove/batch`): decide a population through the
+policy and turn every approved row into a durable grant keyed by a row field, so a bulk
+run pre-approves the winners and they are honored instantly thereafter. One disposition
+brain serves real-time, bulk, and pre-approval paths.

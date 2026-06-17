@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 
 	"github.com/e6qu/intraktible/decision-engine/analytics"
 	"github.com/e6qu/intraktible/decision-engine/command"
@@ -15,6 +16,7 @@ import (
 	"github.com/e6qu/intraktible/decision-engine/events"
 	"github.com/e6qu/intraktible/decision-engine/flows"
 	"github.com/e6qu/intraktible/decision-engine/history"
+	"github.com/e6qu/intraktible/decision-engine/preapproval"
 	"github.com/e6qu/intraktible/platform/httpx"
 	"github.com/e6qu/intraktible/platform/store"
 )
@@ -23,12 +25,14 @@ import (
 type Service struct {
 	cmd    *command.Handler
 	decide *command.DecideHandler
+	pa     *preapproval.Handler
 	store  store.Store
 }
 
-// New builds the service.
-func New(cmd *command.Handler, decide *command.DecideHandler, st store.Store) *Service {
-	return &Service{cmd: cmd, decide: decide, store: st}
+// New builds the service. The pre-approval handler is shared with the standalone
+// pre-approval service so a batch run can promote approved entities into grants.
+func New(cmd *command.Handler, decide *command.DecideHandler, pa *preapproval.Handler, st store.Store) *Service {
+	return &Service{cmd: cmd, decide: decide, pa: pa, store: st}
 }
 
 // Routes registers the flow-management, decide, and decision-history endpoints.
@@ -44,6 +48,7 @@ func (s *Service) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/flows/{flow_id}/deployment-requests/{req_id}/reject", s.rejectDeployment)
 	mux.HandleFunc("POST /v1/flows/{slug}/{env}/decide", s.runDecide)
 	mux.HandleFunc("POST /v1/flows/{slug}/{env}/decide/batch", s.decideBatch)
+	mux.HandleFunc("POST /v1/flows/{slug}/{env}/preapprove/batch", s.preapproveBatch)
 	mux.HandleFunc("GET /v1/flows/{flow_id}/export", s.exportFlow)
 	mux.HandleFunc("POST /v1/flows/{flow_id}/backtest", s.backtestFlow)
 	mux.HandleFunc("GET /v1/decisions", s.listDecisions)
@@ -329,6 +334,150 @@ func (s *Service) decideBatch(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	httpx.JSON(w, http.StatusOK, resp)
+}
+
+type preapproveBatchRequest struct {
+	Dataset     []map[string]any `json:"dataset"`
+	EntityType  string           `json:"entity_type"`
+	EntityKey   string           `json:"entity_key"`            // field in each row read as the entity id
+	Disposition string           `json:"disposition,omitempty"` // grant rows the policy gave this (default approve)
+	ValidDays   int              `json:"valid_days"`
+	Note        string           `json:"note,omitempty"`
+}
+
+type preapproveResult struct {
+	Index         int    `json:"index"`
+	EntityID      string `json:"entity_id,omitempty"`
+	DecisionID    string `json:"decision_id,omitempty"`
+	Status        string `json:"status"` // completed | failed | rejected
+	Disposition   string `json:"disposition,omitempty"`
+	Granted       bool   `json:"granted"`
+	PreApprovalID string `json:"preapproval_id,omitempty"`
+	Reason        string `json:"reason,omitempty"` // why a decided row was not granted
+	Error         string `json:"error,omitempty"`
+}
+
+type preapproveBatchResponse struct {
+	Total    int                `json:"total"`
+	Granted  int                `json:"granted"`
+	Skipped  int                `json:"skipped"`  // decided, but disposition did not match (or grant failed)
+	Failed   int                `json:"failed"`   // flow logic errored
+	Rejected int                `json:"rejected"` // could not decide (missing entity id / validation)
+	Results  []preapproveResult `json:"results"`
+}
+
+// preapproveBatch promotes a population into pre-approvals: each row runs through
+// the recorded decide path (applying the flow's bound policy), and every row the
+// policy disposes to the target disposition (default approve) is granted a
+// time-boxed pre-approval keyed by the row's entity id — its output becomes the
+// stored terms. This is the bridge from bulk decisioning to durable pre-decisions.
+func (s *Service) preapproveBatch(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	var req preapproveBatchRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	switch {
+	case len(req.Dataset) == 0:
+		httpx.Error(w, http.StatusBadRequest, fmt.Errorf("preapprove batch: dataset is empty"))
+		return
+	case len(req.Dataset) > maxBatch:
+		httpx.Error(w, http.StatusBadRequest, fmt.Errorf("preapprove batch: dataset too large (%d > %d)", len(req.Dataset), maxBatch))
+		return
+	case req.EntityType == "" || req.EntityKey == "":
+		httpx.Error(w, http.StatusBadRequest, fmt.Errorf("preapprove batch: entity_type and entity_key are required"))
+		return
+	case req.ValidDays <= 0:
+		httpx.Error(w, http.StatusBadRequest, fmt.Errorf("preapprove batch: valid_days must be positive"))
+		return
+	}
+	target := req.Disposition
+	if target == "" {
+		target = preapproval.Approved
+	}
+	if target != preapproval.Approved && target != preapproval.Declined {
+		httpx.Error(w, http.StatusBadRequest, fmt.Errorf("preapprove batch: disposition must be approve or decline"))
+		return
+	}
+
+	slug, env := r.PathValue("slug"), r.PathValue("env")
+	resp := preapproveBatchResponse{Total: len(req.Dataset), Results: make([]preapproveResult, 0, len(req.Dataset))}
+	for i, input := range req.Dataset {
+		row := preapproveResult{Index: i, EntityID: stringField(input, req.EntityKey)}
+		if row.EntityID == "" {
+			row.Status, row.Reason = "rejected", "missing entity id field "+req.EntityKey
+			resp.Rejected++
+			resp.Results = append(resp.Results, row)
+			continue
+		}
+		res, err := s.decide.Decide(r.Context(), id, slug, env, input,
+			command.EntityRef{Type: req.EntityType, ID: row.EntityID})
+		if err != nil {
+			row.Status, row.Error = "rejected", err.Error()
+			resp.Rejected++
+			resp.Results = append(resp.Results, row)
+			continue
+		}
+		row.DecisionID, row.Status, row.Disposition = res.DecisionID, res.Status, res.Disposition
+		switch {
+		case res.Status != domain.StatusCompleted:
+			row.Reason = "decision " + res.Status
+			resp.Failed++
+		case res.Disposition != target:
+			row.Reason = "disposition " + dispositionOrNone(res.Disposition)
+			resp.Skipped++
+		default:
+			terms, mErr := json.Marshal(res.Output)
+			if mErr != nil {
+				row.Reason = "terms: " + mErr.Error()
+				resp.Skipped++
+				break
+			}
+			paID, _, gErr := s.pa.Grant(r.Context(), id, preapproval.GrantCmd{
+				EntityType: req.EntityType, EntityID: row.EntityID, Disposition: target,
+				Terms: terms, FlowSlug: slug, ValidDays: req.ValidDays, Note: req.Note,
+			})
+			if gErr != nil {
+				row.Reason = "grant: " + gErr.Error()
+				resp.Skipped++
+				break
+			}
+			row.Granted, row.PreApprovalID = true, paID
+			resp.Granted++
+		}
+		resp.Results = append(resp.Results, row)
+	}
+	httpx.JSON(w, http.StatusOK, resp)
+}
+
+// stringField reads a dataset field as a string id (numbers are formatted without
+// scientific notation so an integer-looking id stays stable).
+func stringField(m map[string]any, key string) string {
+	switch v := m[key].(type) {
+	case nil:
+		return ""
+	case string:
+		return v
+	case float64:
+		return strconv.FormatFloat(v, 'f', -1, 64)
+	case json.Number:
+		return v.String()
+	case bool:
+		return strconv.FormatBool(v)
+	default:
+		return fmt.Sprintf("%v", v)
+	}
+}
+
+func dispositionOrNone(d string) string {
+	if d == "" {
+		return "none"
+	}
+	return d
 }
 
 func (s *Service) listDecisions(w http.ResponseWriter, r *http.Request) {

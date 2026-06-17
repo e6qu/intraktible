@@ -16,6 +16,7 @@
     publishVersion,
     decide,
     batchDecide,
+    preapproveBatch,
     exportFlow,
     exportDecision,
     getFlowMetrics,
@@ -29,6 +30,7 @@
     type FlowMetrics,
     type BacktestReport,
     type BatchReport,
+    type PreApproveBatchReport,
     type GraphNode,
     type GraphEdge
   } from '$lib/api';
@@ -607,6 +609,39 @@
       error = msg(e);
     } finally {
       batchRunning = false;
+    }
+  }
+
+  // --- Promote a batch into pre-approvals: grant a time-boxed pre-decision for
+  // every row the bound policy approves, keyed by a field in each row. ---
+  let paEntityType = $state('applicant');
+  let paEntityKey = $state('applicant_id');
+  let paDisposition = $state('approve');
+  let paValidDays = $state(30);
+  let paReport = $state<PreApproveBatchReport | null>(null);
+  let paRunning = $state(false);
+  async function runPreapproveBatch() {
+    error = '';
+    paReport = null;
+    if (!flow) return;
+    paRunning = true;
+    try {
+      const dataset = JSON.parse(batchDataset) as Record<string, unknown>[];
+      paReport = await preapproveBatch(key, flow.slug, env, {
+        dataset,
+        entity_type: paEntityType.trim(),
+        entity_key: paEntityKey.trim(),
+        disposition: paDisposition,
+        valid_days: paValidDays
+      });
+      toast.success(
+        `Granted ${paReport.granted} pre-approval${paReport.granted === 1 ? '' : 's'} of ${paReport.total}`
+      );
+      await loadMetrics();
+    } catch (e) {
+      error = msg(e);
+    } finally {
+      paRunning = false;
     }
   }
 
@@ -1499,6 +1534,83 @@
       </table>
     {/if}
   </section>
+
+  <section>
+    <h2>Promote to pre-approvals</h2>
+    <p class="muted">
+      Run the dataset above through the flow's bound <a href="/policies">policy</a> and grant a
+      time-boxed <a href="/preapprovals">pre-approval</a> for every row it disposes to the chosen disposition
+      — keyed by a field in each row. Each grant's decision output becomes the stored offer terms, honored
+      instantly the next time that entity is decided.
+    </p>
+    <div class="row pa-controls">
+      <label>
+        Entity type
+        <input
+          bind:value={paEntityType}
+          aria-label="pre-approve entity type"
+          placeholder="applicant"
+        />
+      </label>
+      <label>
+        Key field
+        <input
+          bind:value={paEntityKey}
+          aria-label="pre-approve entity key"
+          placeholder="applicant_id"
+        />
+      </label>
+      <label>
+        Grant on
+        <select bind:value={paDisposition} aria-label="pre-approve disposition">
+          <option value="approve">approve</option>
+          <option value="decline">decline</option>
+        </select>
+      </label>
+      <label>
+        Valid (days)
+        <input
+          type="number"
+          min="1"
+          max="3650"
+          bind:value={paValidDays}
+          aria-label="pre-approve valid days"
+        />
+      </label>
+      <button
+        onclick={runPreapproveBatch}
+        disabled={!flow || paRunning || !paEntityType.trim() || !paEntityKey.trim()}
+        data-testid="run-preapprove"
+      >
+        {paRunning ? 'Granting…' : 'Promote'}
+      </button>
+    </div>
+    {#if paReport}
+      <div class="metrics" data-testid="preapprove-summary">
+        <span>{paReport.total} rows</span>
+        <span class="ok">{paReport.granted} granted</span>
+        {#if paReport.skipped > 0}<span class="changed">{paReport.skipped} skipped</span>{/if}
+        {#if paReport.failed > 0}<span class="err">{paReport.failed} failed</span>{/if}
+        {#if paReport.rejected > 0}<span class="changed">{paReport.rejected} rejected</span>{/if}
+      </div>
+      <table class="bt-table">
+        <thead>
+          <tr><th>#</th><th>Entity</th><th>Disposition</th><th>Granted</th><th>Detail</th></tr>
+        </thead>
+        <tbody>
+          {#each paReport.results as r (r.index)}
+            <tr>
+              <td>{r.index}</td>
+              <td>{r.entity_id || '—'}</td>
+              <td>{r.disposition ?? '—'}</td>
+              <td class={r.granted ? 'ok' : 'changed'}>{r.granted ? 'yes' : 'no'}</td>
+              <td>{r.error || r.reason || (r.granted ? 'pre-approved' : '')}</td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    {/if}
+  </section>
 </main>
 
 <style>
@@ -1524,6 +1636,19 @@
     flex-wrap: wrap;
     margin: 0.5rem 0;
     align-items: center;
+  }
+  .pa-controls {
+    align-items: flex-end;
+  }
+  .pa-controls label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    font-size: 0.8rem;
+    color: var(--fg-subtle);
+  }
+  .pa-controls input {
+    width: 9rem;
   }
   input,
   button,

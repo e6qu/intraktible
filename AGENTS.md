@@ -27,7 +27,8 @@ disposition `approve`/`decline`/`refer` via expr bands; the decide path applies 
 records the disposition on the decision — the shared brain for real-time/bulk/pre-approval decisioning),
 **pre-approvals** (`decision-engine/preapproval` — durable, time-boxed grants per entity that the decide
 path honors instantly: a pre-approved entity is completed from the grant's terms, skipping the flow,
-recorded with `preapproval_id`), decision history, and **analytics-lite** (per-flow metrics with champion/challenger breakdown) — all
+recorded with `preapproval_id`; `…/{env}/preapprove/batch` promotes a whole population — every row the
+bound policy approves becomes a grant keyed by a row field), decision history, and **analytics-lite** (per-flow metrics with champion/challenger breakdown) — all
 command→event→projection→API, durable & replayable.
 The **Svelte Flow builder UI** (`web/src/routes/engine`) lists/creates flows and edits a flow's graph
 (add nodes from a palette, wire edges, edit per-node config via structured panels for common types or
