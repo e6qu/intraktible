@@ -163,7 +163,8 @@ func requiredRole(method, path string) auth.Role {
 // (vs. running it). These are the create/publish endpoints.
 func isAuthoringPath(path string) bool {
 	return path == "/v1/flows" || // create a flow
-		strings.HasSuffix(path, "/versions") || // publish a version
+		path == "/v1/policies" || // create a policy
+		strings.HasSuffix(path, "/versions") || // publish a flow or policy version
 		path == "/v1/agents" || // define an agent
 		path == "/v1/context/features" || // define a feature
 		path == "/v1/context/connectors" // define a connector

@@ -39,6 +39,7 @@ import (
 	"github.com/e6qu/intraktible/decision-engine/export"
 	"github.com/e6qu/intraktible/decision-engine/flows"
 	"github.com/e6qu/intraktible/decision-engine/history"
+	"github.com/e6qu/intraktible/decision-engine/policy"
 	engineservice "github.com/e6qu/intraktible/decision-engine/service"
 	hellocmd "github.com/e6qu/intraktible/hello/command"
 	helloservice "github.com/e6qu/intraktible/hello/service"
@@ -173,6 +174,9 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 			enginecmd.WithConnectors(connectors.Provider{Store: st, Egress: egress}),
 			enginecmd.WithAgents(agents.Provider{Store: st, Registry: aiRegistry, Tools: toolbox}))
 		engineservice.New(enginecmd.NewHandler(log), decide, st).Routes(api)
+		// Policies are the operational disposition layer over flows (auto-approve/
+		// decline/refer); a first-class artifact alongside the flow registry.
+		policy.New(policy.NewHandler(log), st).Routes(api)
 	}
 	if enabled(modules, "case-manager") {
 		caseservice.New(casecmd.NewHandler(log), st).Routes(api)
@@ -287,7 +291,7 @@ func moduleProjectors(modules string) []projection.Projector {
 		ps = append(ps, stats.Projector{})
 	}
 	if enabled(modules, "decision-engine") {
-		ps = append(ps, flows.Projector{}, history.Projector{}, analytics.Projector{})
+		ps = append(ps, flows.Projector{}, history.Projector{}, analytics.Projector{}, policy.Projector{})
 	}
 	if enabled(modules, "case-manager") {
 		ps = append(ps, cases.Projector{})
