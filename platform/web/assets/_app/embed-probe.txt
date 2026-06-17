@@ -1,0 +1,1 @@
+embed-probe: present only to prove //go:embed uses all: (so _app, which starts with "_", is embedded). make web replaces assets/, so this file exists in the committed placeholder tree the go-test stage builds against.

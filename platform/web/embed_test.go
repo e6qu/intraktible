@@ -47,3 +47,21 @@ func TestHandlerServesIndexWithSPAFallback(t *testing.T) {
 		t.Fatal("GET /engine should fall back to the same index shell as /")
 	}
 }
+
+// TestUnderscoreAssetsAreEmbedded guards the //go:embed all: directive: SvelteKit
+// emits JS/CSS under _app/, and a bare //go:embed would silently drop it (blank
+// UI). The committed _app/embed-probe.txt is served as itself (not the SPA shell)
+// only when _app is embedded.
+func TestUnderscoreAssetsAreEmbedded(t *testing.T) {
+	srv := httptest.NewServer(web.Handler())
+	defer srv.Close()
+
+	_, shell := get(t, srv, "/")
+	status, body := get(t, srv, "/_app/embed-probe.txt")
+	if status != http.StatusOK {
+		t.Fatalf("GET /_app/embed-probe.txt -> %d, want 200 (is //go:embed missing all:?)", status)
+	}
+	if body == shell {
+		t.Fatal("_app/ asset fell back to the index shell — //go:embed dropped underscore files; use all:assets")
+	}
+}

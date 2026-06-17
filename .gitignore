@@ -26,6 +26,13 @@ web/.pw-data/
 # tracked (so `go build` always works); the build output is never committed.
 /platform/web/assets/*
 !/platform/web/assets/index.html
+# A committed underscore-prefixed probe so the embed test proves //go:embed uses
+# all: (a bare directive drops _app/ and ships a blank UI). make web wipes assets/,
+# so this lives only in the placeholder tree the go-test stage builds against.
+# Un-ignore the _app dir but only the probe inside it (not a real build's output).
+!/platform/web/assets/_app/
+/platform/web/assets/_app/*
+!/platform/web/assets/_app/embed-probe.txt
 
 # Local data / event log / databases
 /data/

@@ -14,7 +14,11 @@ import (
 	"strings"
 )
 
-//go:embed assets
+// all: is required — SvelteKit emits its JS/CSS under _app/, and a bare
+// //go:embed skips files/dirs whose names begin with '_' or '.', which would
+// embed index.html but none of the assets (a blank page).
+//
+//go:embed all:assets
 var assets embed.FS
 
 // Handler serves the embedded UI at the root with SPA fallback: a request for a
