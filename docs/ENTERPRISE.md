@@ -56,8 +56,9 @@ enterprise buyers; **P2** = differentiators / scale.
   production) and a **promote** action (`POST /v1/flows/{id}/promote {from,to}`)
   that ships the live version of one env up the chain — deploying directly into a
   non-production target and opening a maker-checker request into production (the
-  same four-eyes gate). Surfaced in the builder's Deployment panel. *Remaining:
-  per-stage automated gates (require monitors green / a backtest pass before promote).*
+  same four-eyes gate), and a **promotion gate** refuses to promote a flow whose
+  monitors are firing (409 + the firing list; `force` overrides). Surfaced in the
+  builder's Deployment panel. *Remaining: a backtest-pass gate and per-stage policy.*
 - **Comment threads / explanations — ✅ done.** A general commenting capability
   (`platform/comments`): a durable, chronological discussion attached to any subject
   (`GET/POST /v1/comments/{type}/{id}`), surfaced on the items that get approved /

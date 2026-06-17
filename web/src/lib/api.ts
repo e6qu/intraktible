@@ -789,12 +789,13 @@ export async function promoteFlow(
   flowId: string,
   from: string,
   to: string,
+  force = false,
   fetcher: typeof fetch = fetch
 ): Promise<{ promoted: boolean; pending?: boolean; request_id?: string; version: number }> {
   const res = await fetcher(`/v1/flows/${flowId}/promote`, {
     method: 'POST',
     headers: jsonHeaders(key),
-    body: JSON.stringify({ from, to })
+    body: JSON.stringify({ from, to, force })
   });
   if (!res.ok) {
     return errorOrStatus(res, 'POST promote');

@@ -1203,6 +1203,53 @@ func TestPromoteOverHTTP(t *testing.T) {
 		map[string]any{"from": "production", "to": "sandbox"}, http.StatusBadRequest, nil)
 }
 
+func TestPromoteGateOnFiringMonitorOverHTTP(t *testing.T) {
+	api := startEngine(t)
+	var created struct {
+		FlowID string `json:"flow_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows",
+		map[string]string{"slug": "gated", "name": "Gated"}, http.StatusCreated, &created)
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/versions",
+		map[string]any{"graph": flowtest.ConstGraph("v1")}, http.StatusCreated, nil)
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/deployments",
+		map[string]any{"environment": "sandbox", "version": 1}, http.StatusCreated, nil)
+	// A monitor that fires on any traffic, then traffic to trip it.
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/monitors",
+		map[string]any{"metric": "volume", "op": "gt", "threshold": 0}, http.StatusCreated, nil)
+	api.Request(t, http.MethodPost, "/v1/flows/gated/sandbox/decide",
+		map[string]any{"data": map[string]any{}}, http.StatusOK, nil)
+
+	// Once the monitor is firing, an un-forced promote is blocked (409).
+	type listed struct {
+		Monitors []struct {
+			Status struct {
+				Firing bool `json:"firing"`
+			} `json:"status"`
+		} `json:"monitors"`
+	}
+	var ls listed
+	if !testutil.Eventually(t, func() bool {
+		ls.Monitors = nil
+		api.Request(t, http.MethodGet, "/v1/flows/"+created.FlowID+"/monitors", nil, http.StatusOK, &ls)
+		return len(ls.Monitors) == 1 && ls.Monitors[0].Status.Firing
+	}) {
+		t.Fatalf("monitor never fired: %+v", ls.Monitors)
+	}
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/promote",
+		map[string]any{"from": "sandbox", "to": "staging"}, http.StatusConflict, nil)
+
+	// Forcing the promote overrides the gate.
+	var promo struct {
+		Promoted bool `json:"promoted"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/promote",
+		map[string]any{"from": "sandbox", "to": "staging", "force": true}, http.StatusCreated, &promo)
+	if !promo.Promoted {
+		t.Fatalf("forced promote should deploy: %+v", promo)
+	}
+}
+
 func TestBacktestComparesVersions(t *testing.T) {
 	api := startEngine(t)
 	var created struct {

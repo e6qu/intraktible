@@ -712,13 +712,14 @@
   // --- Promote: ship the live version of one env up the chain ---
   let promoteFrom = $state('sandbox');
   let promoteTo = $state('staging');
+  let promoteForce = $state(false);
   let promoting = $state(false);
   async function submitPromote() {
     error = '';
     if (!flow) return;
     promoting = true;
     try {
-      const r = await promoteFlow(key, flowId, promoteFrom, promoteTo);
+      const r = await promoteFlow(key, flowId, promoteFrom, promoteTo, promoteForce);
       toast.success(
         r.promoted
           ? `Promoted v${r.version} ${promoteFrom} → ${promoteTo}`
@@ -1239,8 +1240,11 @@
       <button onclick={submitPromote} disabled={!flow || promoting} data-testid="promote-submit">
         {promoting ? 'Working…' : promoteTo === 'production' ? 'Promote (review)' : 'Promote'}
       </button>
+      <label class="force"
+        ><input type="checkbox" bind:checked={promoteForce} aria-label="force promote" /> force</label
+      >
       <span class="hint muted"
-        >ships the live version of one env up the chain (prod via review).</span
+        >ships the live version up the chain; blocked if monitors are firing (prod via review).</span
       >
     </div>
 
@@ -2017,6 +2021,13 @@
   }
   .pa-controls {
     align-items: flex-end;
+  }
+  .force {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    font-size: 0.85rem;
+    color: var(--fg-muted);
   }
   .pa-controls label {
     display: flex;

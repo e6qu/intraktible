@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/e6qu/intraktible/decision-engine/analytics"
 	"github.com/e6qu/intraktible/decision-engine/command"
@@ -17,6 +18,7 @@ import (
 	"github.com/e6qu/intraktible/decision-engine/events"
 	"github.com/e6qu/intraktible/decision-engine/flows"
 	"github.com/e6qu/intraktible/decision-engine/history"
+	"github.com/e6qu/intraktible/decision-engine/monitor"
 	"github.com/e6qu/intraktible/decision-engine/preapproval"
 	"github.com/e6qu/intraktible/platform/httpx"
 	"github.com/e6qu/intraktible/platform/identity"
@@ -165,8 +167,9 @@ func (s *Service) deploy(w http.ResponseWriter, r *http.Request) {
 }
 
 type promoteRequest struct {
-	From string `json:"from"`
-	To   string `json:"to"`
+	From  string `json:"from"`
+	To    string `json:"to"`
+	Force bool   `json:"force,omitempty"` // override the firing-monitor gate
 }
 
 // promote ships the version live in `from` to `to`, carrying the champion only
@@ -207,6 +210,15 @@ func (s *Service) promote(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, fmt.Errorf("promote: nothing deployed in %q to promote", req.From))
 		return
 	}
+	// Promotion gate: a flow whose monitors are firing is not healthy enough to
+	// promote. Refuse unless explicitly forced (the override is the operator's call).
+	if !req.Force {
+		if firing := s.firingMonitors(r.Context(), id, flowID); len(firing) > 0 {
+			httpx.Error(w, http.StatusConflict,
+				fmt.Errorf("promote blocked: monitors firing (%s) — fix them or pass force to override", strings.Join(firing, ", ")))
+			return
+		}
+	}
 	cmd := domain.DeployVersion{FlowID: flowID, Environment: req.To, Version: src.Version}
 	if req.To == domain.EnvProduction {
 		reqID, e, derr := s.cmd.RequestDeployment(r.Context(), id, cmd)
@@ -229,6 +241,26 @@ func (s *Service) promote(w http.ResponseWriter, r *http.Request) {
 		"promoted": true, "from": req.From, "to": req.To, "version": src.Version,
 		"event_id": e.ID, "seq": e.Seq,
 	})
+}
+
+// firingMonitors returns the metrics of the flow's monitors that are currently
+// firing — the promotion gate's input.
+func (s *Service) firingMonitors(ctx context.Context, id identity.Identity, flowID string) []string {
+	rules, err := monitor.ListByFlow(ctx, s.store, id, flowID)
+	if err != nil || len(rules) == 0 {
+		return nil
+	}
+	snap, err := monitor.LoadSnapshot(ctx, s.store, id, flowID)
+	if err != nil {
+		return nil
+	}
+	var firing []string
+	for _, m := range rules {
+		if st := monitor.Evaluate(snap, m.Rule()); st.Firing {
+			firing = append(firing, m.Metric)
+		}
+	}
+	return firing
 }
 
 // requestDeployment proposes a deployment for review (maker-checker maker side).
