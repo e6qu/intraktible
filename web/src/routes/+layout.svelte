@@ -12,6 +12,7 @@
   import { openPalette } from '$lib/palette';
   import Toasts from '$lib/Toasts.svelte';
   import CommandPalette from '$lib/CommandPalette.svelte';
+  import ShortcutsOverlay from '$lib/ShortcutsOverlay.svelte';
 
   let { children } = $props();
   let theme = $state<'light' | 'dark'>('light');
@@ -192,6 +193,7 @@
   {@render children()}
 </div>
 <CommandPalette />
+<ShortcutsOverlay />
 <Toasts />
 
 <style>

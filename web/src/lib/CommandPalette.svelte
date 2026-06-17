@@ -9,6 +9,7 @@
   import { setPersona, PERSONAS } from '$lib/persona';
   import { user, signOut } from '$lib/session';
   import { paletteOpen, closePalette, togglePalette } from '$lib/palette';
+  import { openShortcuts } from '$lib/shortcuts';
   import { listFlows, listAgents, listCases } from '$lib/api';
 
   type Cmd = {
@@ -68,6 +69,15 @@
         run: () => setPersona(p.id)
       })
     ),
+    {
+      id: 'shortcuts',
+      section: 'Help',
+      label: 'Keyboard shortcuts',
+      hint: 'press ?',
+      icon: 'search',
+      keywords: 'keyboard shortcuts help hotkeys ?',
+      run: () => openShortcuts()
+    },
     $user
       ? {
           id: 'signout',

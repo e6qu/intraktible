@@ -261,3 +261,16 @@ for (const themeMode of ['light', 'dark']) {
     await page.screenshot({ path: `${SHOTS}/palette-search-${themeMode}.png` });
   });
 }
+
+// The ? keyboard-shortcuts overlay.
+for (const themeMode of ['light', 'dark']) {
+  test(`shortcuts — ${themeMode}`, async ({ page }) => {
+    await page.context().request.post('/v1/login', { data: { api_key: KEY } });
+    await page.addInitScript((t) => localStorage.setItem('intraktible-theme', t), themeMode);
+    await page.goto('/');
+    await page.getByTestId('cmdk-trigger').waitFor();
+    await page.keyboard.press('?');
+    await page.waitForTimeout(250);
+    await page.screenshot({ path: `${SHOTS}/shortcuts-${themeMode}.png` });
+  });
+}
