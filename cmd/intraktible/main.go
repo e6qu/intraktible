@@ -35,6 +35,7 @@ import (
 	"github.com/e6qu/intraktible/context-layer/features"
 	contextservice "github.com/e6qu/intraktible/context-layer/service"
 	"github.com/e6qu/intraktible/decision-engine/analytics"
+	"github.com/e6qu/intraktible/decision-engine/assertions"
 	enginecmd "github.com/e6qu/intraktible/decision-engine/command"
 	"github.com/e6qu/intraktible/decision-engine/export"
 	"github.com/e6qu/intraktible/decision-engine/flows"
@@ -198,6 +199,9 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 		monCmd := monitor.NewHandler(log)
 		monitor.New(monCmd, st, notifier).Routes(api)
 		monitorScheduler = monitor.NewScheduler(st, monCmd, notifier)
+		// Flow assertions: input→expected test cases, run through the pure core and
+		// used as a pre-promote gate.
+		assertions.New(assertions.NewHandler(log), st).Routes(api)
 	}
 	if enabled(modules, "case-manager") {
 		caseservice.New(casecmd.NewHandler(log), st).Routes(api)
@@ -335,7 +339,7 @@ func moduleProjectors(modules string) []projection.Projector {
 		ps = append(ps, stats.Projector{})
 	}
 	if enabled(modules, "decision-engine") {
-		ps = append(ps, flows.Projector{}, history.Projector{}, analytics.Projector{}, policy.Projector{}, preapproval.Projector{}, monitor.Projector{}, notify.Projector{})
+		ps = append(ps, flows.Projector{}, history.Projector{}, analytics.Projector{}, policy.Projector{}, preapproval.Projector{}, monitor.Projector{}, notify.Projector{}, assertions.Projector{})
 	}
 	if enabled(modules, "case-manager") {
 		ps = append(ps, cases.Projector{})

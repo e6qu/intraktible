@@ -341,6 +341,12 @@ drift** is a first-class metric: `POST /v1/flows/{id}/baseline` snapshots the di
 (`monitor.Scheduler`, `INTRAKTIBLE_MONITOR_INTERVAL`) sweeps on a timer and notifies only on the ok→firing
 edge (resetting on resolve). The alerting gap is closed end-to-end — rules + drift + delivery + scheduling.
 
+**Flow assertions + promotion gates (post-MVP, governance).** `decision-engine/assertions` stores
+input→expected test cases per flow (`PUT/GET /v1/flows/{id}/assertions`, `POST …/assertions/run`), run
+through the pure backtest core. The **promotion gate** refuses a promote (409) when the flow's monitors
+are firing or its assertions fail on the target version — `force` overrides. Surfaced as an Assertions
+panel + a force toggle in the builder. Ties monitors + tests into the sandbox→staging→production chain.
+
 **Comment threads (post-MVP, governance).** `platform/comments` is a general discussion capability — a
 durable, chronological thread keyed by `(subject_type, subject_id)` (`GET/POST /v1/comments/{type}/{id}`),
 reusable `CommentThread.svelte` component — wired onto the items that get approved/rejected/promoted

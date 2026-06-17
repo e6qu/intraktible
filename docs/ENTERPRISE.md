@@ -57,8 +57,9 @@ enterprise buyers; **P2** = differentiators / scale.
   that ships the live version of one env up the chain — deploying directly into a
   non-production target and opening a maker-checker request into production (the
   same four-eyes gate), and a **promotion gate** refuses to promote a flow whose
-  monitors are firing (409 + the firing list; `force` overrides). Surfaced in the
-  builder's Deployment panel. *Remaining: a backtest-pass gate and per-stage policy.*
+  monitors are firing or whose **assertions fail** on the target version (409 +
+  details; `force` overrides). Surfaced in the builder's Deployment panel.
+  *Remaining: per-stage promotion policy.*
 - **Comment threads / explanations — ✅ done.** A general commenting capability
   (`platform/comments`): a durable, chronological discussion attached to any subject
   (`GET/POST /v1/comments/{type}/{id}`), surfaced on the items that get approved /
@@ -105,8 +106,12 @@ enterprise buyers; **P2** = differentiators / scale.
   outcome changed. The deterministic engine makes this a natural, safe pre-deploy
   confidence check.
 - **P1 — Shadow / canary deploys** (the A/B challenger is a start).
-- **P1 — Flow unit tests / assertions** stored with the flow (given input → expect
-  output), run in CI and pre-deploy.
+- **P1 — Flow unit tests / assertions — ✅ done.** Input→expected cases stored
+  with the flow (`decision-engine/assertions`), run through the pure core via
+  `POST /v1/flows/{id}/assertions/run`, and enforced as a **pre-promote gate**
+  (a promote is blocked when assertions fail on the target version). UI: an
+  Assertions panel in the builder. *Remaining: run them automatically in CI / a
+  pre-deploy hook (today they gate promote and run on demand).*
 - **P2 — What-if / sensitivity analysis.**
 
 ### Observability & operations  (status: metrics + monitors + drift + scheduled webhook alerts + /healthz)

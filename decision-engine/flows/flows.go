@@ -241,6 +241,20 @@ func Read(ctx context.Context, s store.Store, id identity.Identity, flowID strin
 	return store.GetDoc[FlowView](ctx, s, Collection, store.Key(id.Org, id.Workspace, flowID))
 }
 
+// GraphForVersion returns a flow version's graph (version 0 = latest published).
+func GraphForVersion(fv FlowView, version int) (events.Graph, error) {
+	want := version
+	if want == 0 {
+		want = fv.Latest
+	}
+	for _, v := range fv.Versions {
+		if v.Version == want {
+			return v.Graph, nil
+		}
+	}
+	return events.Graph{}, fmt.Errorf("decision_flows: flow has no version %d", want)
+}
+
 // BySlug returns the flow with the given slug for id's tenant. Slugs are unique
 // per tenant, so at most one matches; it is the decide path's flow lookup.
 func BySlug(ctx context.Context, s store.Store, id identity.Identity, slug string) (FlowView, bool, error) {

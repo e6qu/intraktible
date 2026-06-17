@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/e6qu/intraktible/decision-engine/analytics"
+	"github.com/e6qu/intraktible/decision-engine/assertions"
 	"github.com/e6qu/intraktible/decision-engine/command"
 	"github.com/e6qu/intraktible/decision-engine/events"
 	"github.com/e6qu/intraktible/decision-engine/export"
@@ -823,6 +824,7 @@ func startEngine(t *testing.T, opts ...command.DecideOption) *testutil.API {
 	// Tests deliver to httptest (loopback), so use a plain client (no egress guard).
 	mon := monitor.New(monitor.NewHandler(log), st, notify.NewNotifier(log, st, http.DefaultClient))
 	priv := privacy.New(privacy.NewHandler(log), st)
+	asserts := assertions.New(assertions.NewHandler(log), st)
 	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "author"}
 	routes := func(mux *http.ServeMux) {
 		svc.Routes(mux)
@@ -831,9 +833,10 @@ func startEngine(t *testing.T, opts ...command.DecideOption) *testutil.API {
 		hooks.Routes(mux)
 		mon.Routes(mux)
 		priv.Routes(mux)
+		asserts.Routes(mux)
 	}
 	return testutil.StartAPI(t, log, st, "test-key", id, routes,
-		flows.Projector{}, history.Projector{}, analytics.Projector{}, policy.Projector{}, preapproval.Projector{}, monitor.Projector{}, notify.Projector{}, privacy.Projector{})
+		flows.Projector{}, history.Projector{}, analytics.Projector{}, policy.Projector{}, preapproval.Projector{}, monitor.Projector{}, notify.Projector{}, privacy.Projector{}, assertions.Projector{})
 }
 
 // stubFeatures is a fixed feature source for the decide HTTP test.
@@ -1201,6 +1204,68 @@ func TestPromoteOverHTTP(t *testing.T) {
 	// Promoting from an env with nothing deployed is rejected.
 	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/promote",
 		map[string]any{"from": "production", "to": "sandbox"}, http.StatusBadRequest, nil)
+}
+
+func TestAssertionsAndPromoteGateOverHTTP(t *testing.T) {
+	api := startEngine(t)
+	var created struct {
+		FlowID string `json:"flow_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows",
+		map[string]string{"slug": "asserted", "name": "Asserted"}, http.StatusCreated, &created)
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/versions",
+		map[string]any{"graph": flowtest.ConstGraph("approve")}, http.StatusCreated, nil)
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/deployments",
+		map[string]any{"environment": "sandbox", "version": 1}, http.StatusCreated, nil)
+
+	// Define two cases: one matches the constant output, one does not.
+	api.Request(t, http.MethodPut, "/v1/flows/"+created.FlowID+"/assertions", map[string]any{
+		"cases": []map[string]any{
+			{"name": "ok", "input": map[string]any{}, "expect": map[string]any{"decision": "approve"}},
+			{"name": "bad", "input": map[string]any{}, "expect": map[string]any{"decision": "decline"}},
+		},
+	}, http.StatusOK, nil)
+
+	type runReport struct {
+		Total, Passed, Failed int
+	}
+	var rep runReport
+	if !testutil.Eventually(t, func() bool {
+		rep = runReport{}
+		api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/assertions/run", nil, http.StatusOK, &rep)
+		return rep.Total == 2
+	}) {
+		t.Fatalf("assertions never ran against the published version: %+v", rep)
+	}
+	if rep.Passed != 1 || rep.Failed != 1 {
+		t.Fatalf("expected 1 pass / 1 fail: %+v", rep)
+	}
+
+	// A failing assertion blocks promotion (409); force overrides.
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/promote",
+		map[string]any{"from": "sandbox", "to": "staging"}, http.StatusConflict, nil)
+
+	// Fix the cases so all pass; wait for the projection, then the gate lets it through.
+	api.Request(t, http.MethodPut, "/v1/flows/"+created.FlowID+"/assertions", map[string]any{
+		"cases": []map[string]any{
+			{"name": "ok", "input": map[string]any{}, "expect": map[string]any{"decision": "approve"}},
+		},
+	}, http.StatusOK, nil)
+	if !testutil.Eventually(t, func() bool {
+		rep = runReport{}
+		api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/assertions/run", nil, http.StatusOK, &rep)
+		return rep.Total == 1 && rep.Failed == 0
+	}) {
+		t.Fatalf("assertions never went green: %+v", rep)
+	}
+	var promo struct {
+		Promoted bool `json:"promoted"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/promote",
+		map[string]any{"from": "sandbox", "to": "staging"}, http.StatusCreated, &promo)
+	if !promo.Promoted {
+		t.Fatalf("promote should succeed once assertions pass: %+v", promo)
+	}
 }
 
 func TestPromoteGateOnFiringMonitorOverHTTP(t *testing.T) {

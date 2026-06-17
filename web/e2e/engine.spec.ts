@@ -106,6 +106,47 @@ test('batch-decides a dataset from the builder', async ({ page, request }) => {
   await expect(page.getByRole('link', { name: 'view' }).first()).toBeVisible();
 });
 
+test('defines and runs flow assertions', async ({ page, request }) => {
+  const slug = uniqueSlug();
+  const created = await request.post('/v1/flows', {
+    headers: { 'X-Api-Key': KEY },
+    data: { slug, name: 'Asserted' }
+  });
+  const { flow_id } = await created.json();
+  await request.post(`/v1/flows/${flow_id}/versions`, {
+    headers: { 'X-Api-Key': KEY },
+    data: {
+      graph: {
+        nodes: [
+          { id: 'in', type: 'input' },
+          { id: 'a', type: 'assignment', config: { assignments: [{ target: 'd', expr: "'OK'" }] } },
+          { id: 'out', type: 'output', config: { fields: ['d'] } }
+        ],
+        edges: [
+          { from: 'in', to: 'a' },
+          { from: 'a', to: 'out' }
+        ]
+      }
+    }
+  });
+
+  await page.goto(`/engine/${flow_id}`);
+  await expect(page.locator('.svelte-flow__node')).toHaveCount(3);
+
+  // One passing case (d == OK), one failing (d == NOPE).
+  await page
+    .getByLabel('assertion cases')
+    .fill(
+      '[{"name":"good","input":{},"expect":{"d":"OK"}},{"name":"bad","input":{},"expect":{"d":"NOPE"}}]'
+    );
+  await page.getByTestId('save-assertions').click();
+  await expect(async () => {
+    await page.getByTestId('run-assertions').click();
+    await expect(page.getByTestId('assert-summary')).toContainText('1 passed');
+  }).toPass();
+  await expect(page.getByTestId('assert-summary')).toContainText('1 failed');
+});
+
 test('promotes an approved batch into pre-approvals', async ({ page, request }) => {
   const slug = uniqueSlug();
   const created = await request.post('/v1/flows', {

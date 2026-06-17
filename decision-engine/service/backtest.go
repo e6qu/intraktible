@@ -55,14 +55,14 @@ func (s *Service) backtestFlow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	baseline, err := graphForVersion(fv, req.Version)
+	baseline, err := flows.GraphForVersion(fv, req.Version)
 	if err != nil {
 		httpx.Error(w, http.StatusBadRequest, err)
 		return
 	}
 	var candidate *events.Graph
 	if req.CompareVersion != 0 {
-		c, err := graphForVersion(fv, req.CompareVersion)
+		c, err := flows.GraphForVersion(fv, req.CompareVersion)
 		if err != nil {
 			httpx.Error(w, http.StatusBadRequest, err)
 			return
@@ -73,20 +73,6 @@ func (s *Service) backtestFlow(w http.ResponseWriter, r *http.Request) {
 	rep := backtest.Run(baseline, candidate, req.Dataset)
 	rep.Records = sampleRecords(rep.Records, candidate != nil)
 	httpx.JSON(w, http.StatusOK, rep)
-}
-
-// graphForVersion returns a flow version's graph (version 0 = latest).
-func graphForVersion(fv flows.FlowView, version int) (events.Graph, error) {
-	want := version
-	if want == 0 {
-		want = fv.Latest
-	}
-	for _, v := range fv.Versions {
-		if v.Version == want {
-			return v.Graph, nil
-		}
-	}
-	return events.Graph{}, fmt.Errorf("flow has no version %d", want)
 }
 
 // sampleRecords caps the per-record results: in compare mode it returns the

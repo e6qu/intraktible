@@ -60,6 +60,12 @@ Done — execution runtime + decide API + decision history (the decision event s
   (a reason recorded on the request), and every request + decision is kept on the flow — pending and
   decided alike stay visible (an auditable approval trail with who/why). Combined with RBAC, proposing
   needs the `editor` role and approving needs `approver`.
+- **Flow assertions (`decision-engine/assertions`):** stored input→expected test cases per flow, run
+  through the **pure execution core** (no I/O, no recorded decision — reuses the backtest runner). A case
+  passes when every field in its `expect` map equals the flow's output. API: `PUT /v1/flows/{id}/assertions`
+  (`editor`), `GET …/assertions`, `POST …/assertions/run[{version}]` → a pass/fail report. They double as
+  a **pre-promote gate**: a promote is blocked (409) when assertions fail on the version being promoted
+  (alongside the firing-monitor gate; `force` overrides). UI: an **Assertions** panel in the builder.
 - **Discussion threads:** deployment requests (the approve/reject/promote subject), flows, policies, and
   decisions carry a comment thread via the platform's `platform/comments` capability
   (`GET/POST /v1/comments/{type}/{id}`, e.g. `deployment_request` / `flow` / `policy` / `decision`) — an

@@ -26,6 +26,10 @@
     checkMonitors,
     captureBaseline,
     getDrift,
+    getAssertions,
+    setAssertions,
+    runAssertions,
+    type AssertionReport,
     listWebhooks,
     subscribeWebhook,
     deleteWebhook,
@@ -899,12 +903,54 @@
     return `${Math.round(n * 100)}%`;
   }
 
+  // --- Flow assertions: input→expected tests run through the pure core ---
+  let assertText = $state(
+    '[\n  {\n    "name": "example",\n    "input": {},\n    "expect": {}\n  }\n]'
+  );
+  let assertReport = $state<AssertionReport | null>(null);
+  let assertBusy = $state(false);
+  async function loadAssertions() {
+    try {
+      const cases = await getAssertions(key, flowId);
+      if (cases.length) assertText = JSON.stringify(cases, null, 2);
+    } catch {
+      /* leave the placeholder */
+    }
+  }
+  async function saveAssertions() {
+    error = '';
+    assertBusy = true;
+    try {
+      const cases = JSON.parse(assertText);
+      await setAssertions(key, flowId, cases);
+      toast.success('Assertions saved');
+    } catch (e) {
+      error = msg(e);
+    } finally {
+      assertBusy = false;
+    }
+  }
+  async function runAssertionsNow() {
+    error = '';
+    assertReport = null;
+    assertBusy = true;
+    try {
+      assertReport = await runAssertions(key, flowId);
+      toast.success(`${assertReport.passed}/${assertReport.total} assertions passed`);
+    } catch (e) {
+      error = msg(e);
+    } finally {
+      assertBusy = false;
+    }
+  }
+
   onMount(() => {
     void load();
     void loadMetrics();
     void loadMonitors();
     void loadWebhooks();
     void loadDrift();
+    void loadAssertions();
   });
 </script>
 
@@ -1857,6 +1903,51 @@
           </tbody>
         </table>
       {/if}
+    {/if}
+  </section>
+
+  <section>
+    <h2>Assertions</h2>
+    <p class="muted">
+      Stored input→expected tests, run through the pure engine (no recorded decision). A case passes
+      when every field in <code>expect</code> equals the flow's output. Failing assertions block a
+      <b>promote</b> (override with force).
+    </p>
+    <div class="row">
+      <button onclick={saveAssertions} disabled={!flow || assertBusy} data-testid="save-assertions"
+        >Save tests</button
+      >
+      <button onclick={runAssertionsNow} disabled={!flow || assertBusy} data-testid="run-assertions"
+        >Run tests</button
+      >
+    </div>
+    <textarea bind:value={assertText} aria-label="assertion cases" rows="6" spellcheck="false"
+    ></textarea>
+    {#if assertReport}
+      <div class="metrics" data-testid="assert-summary">
+        <span>{assertReport.total} cases</span>
+        <span class="ok">{assertReport.passed} passed</span>
+        {#if assertReport.failed > 0}<span class="err">{assertReport.failed} failed</span>{/if}
+      </div>
+      <table class="bt-table">
+        <thead>
+          <tr><th>Case</th><th>Result</th><th>Detail</th></tr>
+        </thead>
+        <tbody>
+          {#each assertReport.results as r (r.name)}
+            <tr>
+              <td>{r.name}</td>
+              <td class={r.passed ? 'ok' : 'err'}>{r.passed ? 'pass' : 'fail'}</td>
+              <td
+                >{r.error ||
+                  (r.mismatch && r.mismatch.length
+                    ? `mismatch: ${r.mismatch.join(', ')}`
+                    : 'ok')}</td
+              >
+            </tr>
+          {/each}
+        </tbody>
+      </table>
     {/if}
   </section>
 

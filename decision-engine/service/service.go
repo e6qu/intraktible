@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/e6qu/intraktible/decision-engine/analytics"
+	"github.com/e6qu/intraktible/decision-engine/assertions"
 	"github.com/e6qu/intraktible/decision-engine/command"
 	"github.com/e6qu/intraktible/decision-engine/domain"
 	"github.com/e6qu/intraktible/decision-engine/events"
@@ -210,12 +211,17 @@ func (s *Service) promote(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, fmt.Errorf("promote: nothing deployed in %q to promote", req.From))
 		return
 	}
-	// Promotion gate: a flow whose monitors are firing is not healthy enough to
-	// promote. Refuse unless explicitly forced (the override is the operator's call).
+	// Promotion gate: a flow with firing monitors or failing assertions is not
+	// healthy enough to promote. Refuse unless explicitly forced.
 	if !req.Force {
 		if firing := s.firingMonitors(r.Context(), id, flowID); len(firing) > 0 {
 			httpx.Error(w, http.StatusConflict,
 				fmt.Errorf("promote blocked: monitors firing (%s) — fix them or pass force to override", strings.Join(firing, ", ")))
+			return
+		}
+		if rep, err := assertions.RunForFlow(r.Context(), s.store, id, flowID, src.Version); err == nil && rep.Failed > 0 {
+			httpx.Error(w, http.StatusConflict,
+				fmt.Errorf("promote blocked: %d/%d assertions failing on v%d — fix them or pass force to override", rep.Failed, rep.Total, src.Version))
 			return
 		}
 	}

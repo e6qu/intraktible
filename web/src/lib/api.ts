@@ -399,6 +399,73 @@ export async function checkMonitors(
   return (await res.json()) as MonitorCheck;
 }
 
+// ---- Flow assertions (stored input→expected tests, run via the pure core) ----
+
+export interface AssertionCase {
+  name: string;
+  input: Record<string, unknown>;
+  expect: Record<string, unknown>;
+}
+
+export interface AssertionResult {
+  name: string;
+  passed: boolean;
+  status: string;
+  got?: Record<string, unknown>;
+  mismatch?: string[];
+  error?: string;
+}
+
+export interface AssertionReport {
+  total: number;
+  passed: number;
+  failed: number;
+  results: AssertionResult[];
+}
+
+export async function getAssertions(
+  key: string,
+  flowId: string,
+  fetcher: typeof fetch = fetch
+): Promise<AssertionCase[]> {
+  const res = await fetcher(`/v1/flows/${flowId}/assertions`, { headers: authHeaders(key) });
+  if (!res.ok) {
+    return errorOrStatus(res, 'GET assertions');
+  }
+  return ((await res.json()) as { cases: AssertionCase[] }).cases ?? [];
+}
+
+export async function setAssertions(
+  key: string,
+  flowId: string,
+  cases: AssertionCase[],
+  fetcher: typeof fetch = fetch
+): Promise<void> {
+  const res = await fetcher(`/v1/flows/${flowId}/assertions`, {
+    method: 'PUT',
+    headers: jsonHeaders(key),
+    body: JSON.stringify({ cases })
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'PUT assertions');
+  }
+}
+
+export async function runAssertions(
+  key: string,
+  flowId: string,
+  fetcher: typeof fetch = fetch
+): Promise<AssertionReport> {
+  const res = await fetcher(`/v1/flows/${flowId}/assertions/run`, {
+    method: 'POST',
+    headers: jsonHeaders(key)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'POST assertions run');
+  }
+  return (await res.json()) as AssertionReport;
+}
+
 export interface DriftBucket {
   disposition: string;
   baseline: number;

@@ -172,6 +172,7 @@ func isAuthoringPath(path string) bool {
 		path == "/v1/preapprovals" || // grant a pre-approval (material)
 		strings.HasSuffix(path, "/preapprove/batch") || // bulk-grant pre-approvals from a run
 		strings.Contains(path, "/monitors") || // define/delete a monitor; check pushes alerts
+		strings.HasSuffix(path, "/assertions") || // define a flow's test cases (run is separate)
 		strings.HasPrefix(path, "/v1/webhooks") || // register/remove a notification endpoint
 		strings.HasSuffix(path, "/versions") || // publish a flow or policy version
 		path == "/v1/agents" || // define an agent
