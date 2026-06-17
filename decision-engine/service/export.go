@@ -3,6 +3,7 @@
 package service
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -83,8 +84,29 @@ func (s *Service) exportDecision(w http.ResponseWriter, r *http.Request) {
 	for _, n := range rec.Nodes {
 		steps = append(steps, export.RunStep{NodeID: n.NodeID, Type: string(n.Type)})
 	}
-	body := export.MermaidSequence(rec.Slug, steps, rec.Status)
-	writeExport(w, "text/plain; charset=utf-8", rec.DecisionID+"-trace.mmd", body)
+
+	format := r.URL.Query().Get("format")
+	if format == "" {
+		format = "mermaid"
+	}
+	var body, contentType, filename string
+	switch format {
+	case "mermaid", "sequence":
+		body, contentType, filename = export.MermaidSequence(rec.Slug, steps, rec.Status), "text/plain; charset=utf-8", rec.DecisionID+"-trace.mmd"
+	case "dot", "graphviz":
+		body, contentType, filename = export.RunDOT(rec.Slug, steps, rec.Status), "text/vnd.graphviz; charset=utf-8", rec.DecisionID+"-trace.dot"
+	case "json":
+		js, err := json.MarshalIndent(rec, "", "  ")
+		if err != nil {
+			httpx.Error(w, http.StatusInternalServerError, err)
+			return
+		}
+		body, contentType, filename = string(js)+"\n", "application/json; charset=utf-8", rec.DecisionID+".json"
+	default:
+		httpx.Error(w, http.StatusBadRequest, fmt.Errorf("unknown export format %q (mermaid|dot|json)", format))
+		return
+	}
+	writeExport(w, contentType, filename, body)
 }
 
 // pickVersion returns the requested version (or the latest when v is empty).

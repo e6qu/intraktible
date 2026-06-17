@@ -138,6 +138,28 @@ func TestJSONRoundTrips(t *testing.T) {
 	}
 }
 
+func TestRunDOT(t *testing.T) {
+	steps := []export.RunStep{
+		{NodeID: "in", Type: "input"},
+		{NodeID: "s", Type: "split"},
+		{NodeID: "out", Type: "output"},
+	}
+	out := export.RunDOT("creditflow", steps, "completed")
+	for _, want := range []string{
+		"digraph run {",
+		`"__start" [label="decide: creditflow", shape=circle];`,
+		`"s" [label="s (split)", shape=box];`,
+		`"__end" [label="completed", shape=doublecircle];`,
+		`"__start" -> "in";`,
+		`"in" -> "s";`,
+		`"out" -> "__end";`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("run DOT missing %q in:\n%s", want, out)
+		}
+	}
+}
+
 func TestBPMNIsWellFormedAndComplete(t *testing.T) {
 	out := export.BPMN(sample(), "Credit Flow")
 

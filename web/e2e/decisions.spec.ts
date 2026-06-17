@@ -59,6 +59,18 @@ test('a decision run shows in the history and its detail has the node trace', as
   await expect(page.locator('ol.trace')).toContainText('assignment');
   await expect(page.getByRole('button', { name: 'Sequence', exact: true })).toBeVisible();
 
+  // The run trace exports as DOT and JSON (the decision record).
+  for (const [name, file] of [
+    ['DOT', `${decisionId}-trace.dot`],
+    ['JSON', `${decisionId}.json`]
+  ] as const) {
+    const [dl] = await Promise.all([
+      page.waitForEvent('download'),
+      page.getByRole('button', { name, exact: true }).click()
+    ]);
+    expect(dl.suggestedFilename()).toBe(file);
+  }
+
   // The decision id is click-to-copy (a developer DX affordance).
   await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
   await page.getByTestId('copyable').click();

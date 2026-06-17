@@ -150,6 +150,28 @@ func TestExportDecisionTraceOverHTTP(t *testing.T) {
 	if !strings.Contains(trace, "sequenceDiagram") || !strings.Contains(trace, "E-->>C: completed") {
 		t.Fatalf("sequence diagram incomplete:\n%s", trace)
 	}
+
+	// The run also exports as a Graphviz DOT path...
+	code, dot := rawGet(t, api, "/v1/decisions/"+dec.DecisionID+"/export?format=dot")
+	if code != http.StatusOK || !strings.Contains(dot, "digraph run {") || !strings.Contains(dot, `"a" [label="a (assignment)"`) {
+		t.Fatalf("run DOT export incomplete (status %d):\n%s", code, dot)
+	}
+	// ...and as the full decision record JSON.
+	code, raw := rawGet(t, api, "/v1/decisions/"+dec.DecisionID+"/export?format=json")
+	if code != http.StatusOK {
+		t.Fatalf("run JSON export status %d:\n%s", code, raw)
+	}
+	var rec history.Record
+	if err := json.Unmarshal([]byte(raw), &rec); err != nil {
+		t.Fatalf("run JSON not valid: %v\n%s", err, raw)
+	}
+	if rec.DecisionID != dec.DecisionID || rec.Status != "completed" {
+		t.Fatalf("run JSON mismatch: %+v", rec)
+	}
+	// Unknown format → 400.
+	if code, _ := rawGet(t, api, "/v1/decisions/"+dec.DecisionID+"/export?format=svg"); code != http.StatusBadRequest {
+		t.Fatalf("unknown run format → %d, want 400", code)
+	}
 }
 
 func startEngine(t *testing.T, opts ...command.DecideOption) *testutil.API {

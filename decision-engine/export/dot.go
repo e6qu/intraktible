@@ -32,6 +32,33 @@ func DOT(g events.Graph) string {
 	return b.String()
 }
 
+// RunDOT renders one decision run as a Graphviz `digraph`: a start node, the
+// nodes visited in execution order (left to right), and a terminal status node —
+// the path the decision actually took.
+func RunDOT(flow string, steps []RunStep, status string) string {
+	const startID, endID = "__start", "__end"
+	if status == "" {
+		status = "done"
+	}
+	var b strings.Builder
+	b.WriteString("digraph run {\n")
+	b.WriteString("  rankdir=LR;\n")
+	b.WriteString(`  node [fontname="Helvetica,Arial,sans-serif"];` + "\n")
+	fmt.Fprintf(&b, "  %s [label=%s, shape=circle];\n", dotQuote(startID), dotQuote("decide: "+flow))
+	for _, s := range steps {
+		fmt.Fprintf(&b, "  %s [label=%s, shape=box];\n", dotQuote(s.NodeID), dotQuote(fmt.Sprintf("%s (%s)", s.NodeID, s.Type)))
+	}
+	fmt.Fprintf(&b, "  %s [label=%s, shape=doublecircle];\n", dotQuote(endID), dotQuote(status))
+	prev := startID
+	for _, s := range steps {
+		fmt.Fprintf(&b, "  %s -> %s;\n", dotQuote(prev), dotQuote(s.NodeID))
+		prev = s.NodeID
+	}
+	fmt.Fprintf(&b, "  %s -> %s;\n", dotQuote(prev), dotQuote(endID))
+	b.WriteString("}\n")
+	return b.String()
+}
+
 // dotShape maps a node type to a Graphviz shape (mirrors the Mermaid shape map).
 func dotShape(t events.NodeType) string {
 	switch t {

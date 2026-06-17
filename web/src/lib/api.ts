@@ -175,14 +175,20 @@ export async function exportFlow(
 }
 
 // exportDecision fetches a decision run rendered as a Mermaid sequence diagram.
+// RunExportFormat is a decision-run export the UI offers.
+export type RunExportFormat = 'mermaid' | 'dot' | 'json';
+
 export async function exportDecision(
   key: string,
   decisionId: string,
+  format: RunExportFormat = 'mermaid',
   fetcher: typeof fetch = fetch
 ): Promise<string> {
-  const res = await fetcher(`/v1/decisions/${decisionId}/export`, { headers: authHeaders(key) });
+  const res = await fetcher(`/v1/decisions/${decisionId}/export?format=${format}`, {
+    headers: authHeaders(key)
+  });
   if (!res.ok) {
-    throw new Error(`export decision failed: ${res.status}`);
+    throw new Error(`export decision (${format}) failed: ${res.status}`);
   }
   return res.text();
 }

@@ -76,9 +76,15 @@ describe('export', () => {
 
   it('exportDecision fetches the decision trace', async () => {
     const fetcher = textFetcher(200, 'sequenceDiagram\n');
-    const out = await exportDecision('k', 'd9', fetcher);
+    const out = await exportDecision('k', 'd9', 'mermaid', fetcher);
     expect(out).toBe('sequenceDiagram\n');
-    expect(fetcher.mock.calls[0][0]).toBe('/v1/decisions/d9/export');
+    expect(fetcher.mock.calls[0][0]).toBe('/v1/decisions/d9/export?format=mermaid');
+  });
+
+  it('exportDecision requests the chosen format', async () => {
+    const fetcher = textFetcher(200, 'digraph run {}');
+    await exportDecision('k', 'd9', 'dot', fetcher);
+    expect(fetcher.mock.calls[0][0]).toBe('/v1/decisions/d9/export?format=dot');
   });
 
   it('throws loudly on a non-2xx export', async () => {

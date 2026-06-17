@@ -4,7 +4,7 @@
   import { page } from '$app/stores';
   import Icon from '$lib/Icon.svelte';
   import Copyable from '$lib/Copyable.svelte';
-  import { getDecision, exportDecision, type Decision } from '$lib/api';
+  import { getDecision, exportDecision, type Decision, type RunExportFormat } from '$lib/api';
   import { toast } from '$lib/toast';
 
   // API calls authenticate via the session cookie (empty key → no X-Api-Key).
@@ -27,24 +27,29 @@
       error = msg(e);
     }
   }
-  async function downloadTrace() {
+  const RUN_EXPORTS: { format: RunExportFormat; label: string; ext: string; mime: string }[] = [
+    { format: 'mermaid', label: 'Sequence', ext: 'mmd', mime: 'text/plain' },
+    { format: 'dot', label: 'DOT', ext: 'dot', mime: 'text/vnd.graphviz' },
+    { format: 'json', label: 'JSON', ext: 'json', mime: 'application/json' }
+  ];
+  async function downloadTrace(e: (typeof RUN_EXPORTS)[number]) {
     try {
-      const text = await exportDecision(key, id);
-      const url = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
+      const text = await exportDecision(key, id, e.format);
+      const url = URL.createObjectURL(new Blob([text], { type: e.mime }));
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${id}-trace.mmd`;
+      a.download = e.format === 'json' ? `${id}.json` : `${id}-trace.${e.ext}`;
       a.click();
       URL.revokeObjectURL(url);
-      toast.success('Downloaded sequence diagram');
-    } catch (e) {
-      error = msg(e);
+      toast.success(`Downloaded ${e.label}`);
+    } catch (err) {
+      error = msg(err);
     }
   }
-  async function copyTrace() {
+  async function copyTrace(format: RunExportFormat) {
     try {
-      await navigator.clipboard.writeText(await exportDecision(key, id));
-      toast.success('Copied sequence diagram');
+      await navigator.clipboard.writeText(await exportDecision(key, id, format));
+      toast.success('Copied to clipboard');
     } catch (e) {
       error = msg(e);
     }
@@ -115,10 +120,22 @@
 
     <div class="row">
       <span class="exportlabel"><Icon name="diagram" size={15} /> Export trace</span>
-      <button onclick={downloadTrace}><Icon name="download" size={14} /> Sequence</button>
-      <button class="icon" aria-label="Copy sequence diagram" onclick={copyTrace}>
-        <Icon name="copy" size={14} />
-      </button>
+      {#each RUN_EXPORTS as e (e.format)}
+        <span class="grp">
+          <button onclick={() => downloadTrace(e)} title={`Download ${e.label}`}>
+            <Icon name="download" size={14} />
+            {e.label}
+          </button>
+          <button
+            class="icon"
+            aria-label={`Copy ${e.label}`}
+            title={`Copy ${e.label}`}
+            onclick={() => copyTrace(e.format)}
+          >
+            <Icon name="copy" size={14} />
+          </button>
+        </span>
+      {/each}
     </div>
   {:else if !error}
     <p class="muted">Loading…</p>
@@ -242,6 +259,19 @@
     align-items: center;
     gap: 0.4rem;
     margin-top: 1rem;
+    flex-wrap: wrap;
+  }
+  .grp {
+    display: inline-flex;
+  }
+  .grp button:first-child {
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+  }
+  .grp button.icon {
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+    border-left: none;
   }
   .exportlabel {
     display: inline-flex;
