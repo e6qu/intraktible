@@ -12,7 +12,7 @@ PostgreSQL,LGPL-2.1,LGPL-3.0,GPL-2.0,GPL-3.0,AGPL-3.0
 GO_PKGS := $(shell $(GO) list ./... | grep -v /node_modules)
 GO_DIRS := $(shell $(GO) list -f '{{.Dir}}' ./... | grep -v /node_modules)
 
-.PHONY: all build run test test-short fmt fmtcheck vet typecheck lint sast deadcode dupl vuln licenses check ci precommit web dist clean
+.PHONY: all build run dev test test-short fmt fmtcheck vet typecheck lint sast deadcode dupl vuln licenses check ci precommit web dist clean
 
 all: build
 
@@ -23,6 +23,18 @@ build:
 ## run: build then serve the modular monolith
 run: build
 	$(BIN) serve
+
+## dev: full-stack hot-reload — Go API (:8080) + Vite UI (:5173, proxies /v1) at once.
+# One command for UI work: the SvelteKit dev server hot-reloads and proxies API
+# calls to the Go backend. Ctrl-C stops both (trap kills the process group).
+dev:
+	@command -v npm >/dev/null || { echo "make dev needs npm (Node 20+) for the UI dev server"; exit 1; }
+	@[ -d web/node_modules ] || (cd web && npm install)
+	@echo "▶ API http://localhost:8080  ·  UI http://localhost:5173  (dev key: dev-sandbox-key) — Ctrl-C to stop"
+	@trap 'kill 0' INT TERM EXIT; \
+		$(GO) run ./cmd/intraktible serve --addr=:8080 & \
+		(cd web && npm run dev -- --port 5173 --strictPort) & \
+		wait
 
 ## test: run all Go tests with the race detector
 test:
