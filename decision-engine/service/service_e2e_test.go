@@ -309,6 +309,58 @@ func TestDecideAppliesPolicyOverHTTP(t *testing.T) {
 	}
 }
 
+func TestPolicyBacktestOverHTTP(t *testing.T) {
+	api := startEngine(t)
+	var flow struct {
+		FlowID string `json:"flow_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows", map[string]any{"slug": "btscore", "name": "BTScore"}, http.StatusCreated, &flow)
+	api.Request(t, http.MethodPost, "/v1/flows/"+flow.FlowID+"/versions", map[string]any{
+		"graph": map[string]any{
+			"nodes": []map[string]any{
+				{"id": "in", "type": "input"},
+				{"id": "a", "type": "assignment", "config": map[string]any{"assignments": []map[string]any{{"target": "score", "expr": "score"}}}},
+				{"id": "out", "type": "output", "config": map[string]any{"fields": []string{"score"}}},
+			},
+			"edges": []map[string]any{{"from": "in", "to": "a"}, {"from": "a", "to": "out"}},
+		},
+	}, http.StatusCreated, nil)
+
+	var pol struct {
+		PolicyID string `json:"policy_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/policies", map[string]any{"name": "bt", "flow_slug": "btscore"}, http.StatusCreated, &pol)
+	// Published v1: strict cutoff 0.85.
+	api.Request(t, http.MethodPost, "/v1/policies/"+pol.PolicyID+"/versions", map[string]any{
+		"spec": map[string]any{"rules": []map[string]any{{"when": "score >= 0.85", "disposition": "approve"}}, "default": "refer"},
+	}, http.StatusCreated, nil)
+
+	// Backtest a looser draft (cutoff 0.4) against the published v1; the 0.5 row flips.
+	type dist struct{ Approve, Decline, Refer, Failed int }
+	var rep struct {
+		Summary struct {
+			Total     int
+			Evaluated dist
+			Compare   *dist
+			Flipped   int
+		} `json:"summary"`
+	}
+	if !testutil.Eventually(t, func() bool {
+		rep.Summary.Compare = nil
+		api.Request(t, http.MethodPost, "/v1/policies/"+pol.PolicyID+"/backtest", map[string]any{
+			"spec":            map[string]any{"rules": []map[string]any{{"when": "score >= 0.4", "disposition": "approve"}}, "default": "refer"},
+			"compare_version": 1,
+			"dataset":         []map[string]any{{"score": 0.9}, {"score": 0.5}},
+		}, http.StatusOK, &rep)
+		return rep.Summary.Total == 2 && rep.Summary.Evaluated.Approve == 2
+	}) {
+		t.Fatalf("policy backtest never resolved the flow+policy: %+v", rep.Summary)
+	}
+	if rep.Summary.Compare == nil || rep.Summary.Compare.Approve != 1 || rep.Summary.Flipped != 1 {
+		t.Fatalf("unexpected backtest diff: %+v", rep.Summary)
+	}
+}
+
 func startEngine(t *testing.T, opts ...command.DecideOption) *testutil.API {
 	t.Helper()
 	log, st := testutil.NewLogStore(t)

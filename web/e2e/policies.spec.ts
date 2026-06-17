@@ -9,9 +9,31 @@ test.beforeEach(async ({ page }) => {
 
 test('creates a policy bound to a flow and publishes a band', async ({ page, request }) => {
   const slug = 'pol-' + Math.random().toString(36).slice(2, 8);
-  await request.post('/v1/flows', {
+  const created = await request.post('/v1/flows', {
     headers: { 'X-Api-Key': KEY },
     data: { slug, name: `PolFlow ${slug}` }
+  });
+  const { flow_id } = await created.json();
+  // Publish a score-passthrough version so the disposition backtest can run.
+  await request.post(`/v1/flows/${flow_id}/versions`, {
+    headers: { 'X-Api-Key': KEY },
+    data: {
+      graph: {
+        nodes: [
+          { id: 'in', type: 'input' },
+          {
+            id: 'a',
+            type: 'assignment',
+            config: { assignments: [{ target: 'score', expr: 'score' }] }
+          },
+          { id: 'out', type: 'output', config: { fields: ['score'] } }
+        ],
+        edges: [
+          { from: 'in', to: 'a' },
+          { from: 'a', to: 'out' }
+        ]
+      }
+    }
   });
 
   await page.goto('/policies');
@@ -32,4 +54,12 @@ test('creates a policy bound to a flow and publishes a band', async ({ page, req
   await expect(page.getByText(/Published policy v1/)).toBeVisible();
   // The list now shows the published version.
   await expect(page.locator('tr', { hasText: `stp-${slug}` })).toContainText('v1');
+
+  // Loosen the band to 0.4 and preview the impact vs the published v1: the 0.5
+  // row flips from refer to approve.
+  await page.getByLabel('band 0 when').fill('score >= 0.4');
+  await page.getByLabel('backtest dataset').fill('[{"score": 0.9}, {"score": 0.5}]');
+  await page.getByTestId('backtest-policy').click();
+  await expect(page.getByTestId('backtest-result')).toBeVisible();
+  await expect(page.getByText(/would change disposition/)).toBeVisible();
 });

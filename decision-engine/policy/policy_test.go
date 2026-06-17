@@ -4,8 +4,10 @@ package policy_test
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
+	"github.com/e6qu/intraktible/decision-engine/events"
 	"github.com/e6qu/intraktible/decision-engine/policy"
 	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/projection"
@@ -88,6 +90,44 @@ func TestEtagStableAndContentSensitive(t *testing.T) {
 	c, _ := policy.Etag(s2)
 	if c == a {
 		t.Fatal("etag should change with the spec")
+	}
+}
+
+// scoreGraph is a flow that passes its input `score` through to the output.
+func scoreGraph() events.Graph {
+	cfg := func(v any) json.RawMessage { b, _ := json.Marshal(v); return b }
+	return events.Graph{
+		Nodes: []events.Node{
+			{ID: "in", Type: events.NodeInput},
+			{ID: "a", Type: events.NodeAssignment, Config: cfg(map[string]any{"assignments": []map[string]any{{"target": "score", "expr": "score"}}})},
+			{ID: "out", Type: events.NodeOutput, Config: cfg(map[string]any{"fields": []string{"score"}})},
+		},
+		Edges: []events.Edge{{From: "in", To: "a"}, {From: "a", To: "out"}},
+	}
+}
+
+func TestBacktestDistributionAndFlips(t *testing.T) {
+	g := scoreGraph()
+	ds := []map[string]any{{"score": 0.9}, {"score": 0.5}, {"score": 0.95}}
+	strict := policy.Spec{Rules: []policy.Rule{{When: "score >= 0.85", Disposition: policy.Approve}}, Default: policy.Refer}
+
+	// No-compare: 2 approve (0.9, 0.95), 1 refer (0.5).
+	rep := policy.Backtest(g, ds, strict, nil)
+	if rep.Summary.Total != 3 || rep.Summary.Evaluated.Approve != 2 || rep.Summary.Evaluated.Refer != 1 {
+		t.Fatalf("unexpected distribution: %+v", rep.Summary)
+	}
+	if rep.Summary.Compare != nil {
+		t.Fatal("compare should be nil without a compare spec")
+	}
+
+	// Compare a looser cutoff against the strict one: the 0.5 row flips to approve.
+	loose := policy.Spec{Rules: []policy.Rule{{When: "score >= 0.4", Disposition: policy.Approve}}, Default: policy.Refer}
+	cmp := policy.Backtest(g, ds, loose, &strict)
+	if cmp.Summary.Evaluated.Approve != 3 || cmp.Summary.Compare.Approve != 2 || cmp.Summary.Flipped != 1 {
+		t.Fatalf("unexpected compare summary: %+v", cmp.Summary)
+	}
+	if len(cmp.Flips) != 1 || cmp.Flips[0].Evaluated != policy.Approve || cmp.Flips[0].Compare != policy.Refer {
+		t.Fatalf("unexpected flips: %+v", cmp.Flips)
 	}
 }
 

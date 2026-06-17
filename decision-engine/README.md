@@ -84,8 +84,13 @@ Done — execution runtime + decide API + decision history (the decision event s
   to the output, recording the disposition + the policy version on the decision (replay-stable; lifted
   first-class onto the history record and returned by `decide` / `decide/batch`). It is the shared brain
   for real-time (faster/STP), bulk, and (next) pre-approval decisioning. A policy that can't evaluate
-  refers (routes to a human) rather than failing a completed decision. API: `POST /v1/policies`,
-  `POST /v1/policies/{id}/versions`, `GET /v1/policies[/{id}]`.
+  refers (routes to a human) rather than failing a completed decision. The completed disposition rolls up
+  into analytics (`by_disposition` → an automation rate). **Disposition backtest**: `POST
+  /v1/policies/{id}/backtest` `{spec?, compare_version?, flow_version?, dataset}` replays a dataset through
+  the bound flow + the (draft or published) bands and reports the disposition distribution — and, vs a
+  compare version, the rows that flip — recording nothing (safe tuning). API: `POST /v1/policies`,
+  `POST /v1/policies/{id}/versions`, `GET /v1/policies[/{id}]`. UI: a `/policies` page authors the bands
+  and previews impact.
 - **Flow export** (`decision-engine/export`, pure): a flow version renders to **Mermaid**
   (`flowchart`, `stateDiagram-v2`), **BPMN 2.0 XML with BPMNDI** layout (opens laid-out in
   bpmn.io / Camunda; node types map to start/end events, gateways, business-rule/service/script/user

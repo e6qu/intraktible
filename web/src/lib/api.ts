@@ -355,6 +355,47 @@ export async function publishPolicy(
   return (await res.json()) as { version: number; etag: string };
 }
 
+export interface PolicyDistribution {
+  approve: number;
+  decline: number;
+  refer: number;
+  failed: number;
+}
+
+export interface PolicyBacktestReport {
+  summary: {
+    total: number;
+    evaluated: PolicyDistribution;
+    compare?: PolicyDistribution;
+    flipped?: number;
+  };
+  flips?: { index: number; evaluated: string; compare: string }[];
+}
+
+// policyBacktest previews how a policy disposes a dataset (and how it shifts vs a
+// compare version) without recording anything. `spec` is the unpublished draft.
+export async function policyBacktest(
+  key: string,
+  policyId: string,
+  body: {
+    spec?: PolicySpec;
+    compare_version?: number;
+    flow_version?: number;
+    dataset: Record<string, unknown>[];
+  },
+  fetcher: typeof fetch = fetch
+): Promise<PolicyBacktestReport> {
+  const res = await fetcher(`/v1/policies/${policyId}/backtest`, {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'POST policy backtest');
+  }
+  return (await res.json()) as PolicyBacktestReport;
+}
+
 // ---- Backtesting ----
 
 export interface BacktestOutcome {

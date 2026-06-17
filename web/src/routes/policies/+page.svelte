@@ -12,9 +12,11 @@
     listPolicies,
     createPolicy,
     publishPolicy,
+    policyBacktest,
     listFlows,
     type Policy,
     type PolicyRule,
+    type PolicyBacktestReport,
     type Flow
   } from '$lib/api';
 
@@ -36,6 +38,11 @@
   let rules = $state<PolicyRule[]>([]);
   let dflt = $state('refer');
   let publishing = $state(false);
+
+  // disposition backtest (preview the draft over a dataset)
+  let btDataset = $state('[\n  {}\n]');
+  let btReport = $state<PolicyBacktestReport | null>(null);
+  let btRunning = $state(false);
 
   const selected = $derived(policies.find((p) => p.policy_id === selectedId) ?? null);
 
@@ -83,25 +90,49 @@
   function setRule(i: number, patch: Partial<PolicyRule>) {
     rules = rules.map((r, j) => (j === i ? { ...r, ...patch } : r));
   }
+  // draftSpec is the current band editor as a publishable / backtestable spec.
+  function draftSpec() {
+    const rs = rules
+      .filter((r) => r.when.trim())
+      .map((r) => ({
+        when: r.when.trim(),
+        disposition: r.disposition,
+        code: r.code?.trim() || undefined,
+        description: r.description?.trim() || undefined
+      }));
+    return { rules: rs, default: dflt };
+  }
   async function publish() {
     error = '';
     publishing = true;
     try {
-      const clean = rules
-        .filter((r) => r.when.trim())
-        .map((r) => ({
-          when: r.when.trim(),
-          disposition: r.disposition,
-          code: r.code?.trim() || undefined,
-          description: r.description?.trim() || undefined
-        }));
-      const r = await publishPolicy(key, selectedId, { rules: clean, default: dflt });
+      const r = await publishPolicy(key, selectedId, draftSpec());
       toast.success(`Published policy v${r.version}`);
       await load();
     } catch (e) {
       error = msg(e);
     } finally {
       publishing = false;
+    }
+  }
+  // preview replays a dataset through the bound flow + the draft bands, diffing
+  // against the latest published version (when one exists) — safe tuning.
+  async function preview() {
+    error = '';
+    btReport = null;
+    btRunning = true;
+    try {
+      const dataset = JSON.parse(btDataset) as Record<string, unknown>[];
+      const compare = selected && selected.latest > 0 ? selected.latest : undefined;
+      btReport = await policyBacktest(key, selectedId, {
+        spec: draftSpec(),
+        compare_version: compare,
+        dataset
+      });
+    } catch (e) {
+      error = msg(e);
+    } finally {
+      btRunning = false;
     }
   }
 
@@ -227,6 +258,54 @@
           {publishing ? 'Publishing…' : 'Publish version'}
         </button>
       </div>
+
+      <h2 class="preview-h">Preview impact</h2>
+      <p class="muted">
+        Replay a dataset through the flow + these draft bands — no decisions are recorded. Diffs
+        against the latest published version when one exists, so you can see how the distribution
+        shifts before publishing.
+      </p>
+      <div class="row">
+        <button onclick={preview} disabled={btRunning} data-testid="backtest-policy">
+          {btRunning ? 'Running…' : 'Preview impact'}
+        </button>
+      </div>
+      <textarea
+        class="when"
+        bind:value={btDataset}
+        aria-label="backtest dataset"
+        rows="4"
+        placeholder={'[\n  {"score": 0.9},\n  {"score": 0.4}\n]'}
+      ></textarea>
+      {#if btReport}
+        <table class="bt" data-testid="backtest-result">
+          <thead>
+            <tr><th></th><th>Approve</th><th>Decline</th><th>Refer</th><th>Failed</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>draft</td>
+              <td class="ok">{btReport.summary.evaluated.approve}</td>
+              <td>{btReport.summary.evaluated.decline}</td>
+              <td>{btReport.summary.evaluated.refer}</td>
+              <td class="err">{btReport.summary.evaluated.failed}</td>
+            </tr>
+            {#if btReport.summary.compare}
+              <tr class="muted">
+                <td>published</td>
+                <td>{btReport.summary.compare.approve}</td>
+                <td>{btReport.summary.compare.decline}</td>
+                <td>{btReport.summary.compare.refer}</td>
+                <td>{btReport.summary.compare.failed}</td>
+              </tr>
+            {/if}
+          </tbody>
+        </table>
+        <p class="muted">
+          {btReport.summary.total} records{#if btReport.summary.compare}
+            · <b class="changed">{btReport.summary.flipped ?? 0}</b> would change disposition{/if}
+        </p>
+      {/if}
     </section>
   {/if}
 </main>
@@ -310,5 +389,33 @@
     gap: 0.35rem;
     color: var(--fg-muted);
     font-size: 0.9rem;
+  }
+  .preview-h {
+    margin-top: 1.4rem;
+    border-top: 1px solid var(--border);
+    padding-top: 1rem;
+  }
+  table.bt {
+    width: auto;
+    margin-top: 0.5rem;
+  }
+  table.bt td,
+  table.bt th {
+    text-align: right;
+    padding: 0.3rem 0.8rem;
+  }
+  table.bt td:first-child,
+  table.bt th:first-child {
+    text-align: left;
+    color: var(--fg-muted);
+  }
+  .ok {
+    color: var(--ok);
+  }
+  .err {
+    color: var(--danger);
+  }
+  .changed {
+    color: var(--warn);
   }
 </style>
