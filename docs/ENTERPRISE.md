@@ -89,14 +89,15 @@ enterprise buyers; **P2** = differentiators / scale.
   output), run in CI and pre-deploy.
 - **P2 — What-if / sensitivity analysis.**
 
-### Observability & operations  (status: per-flow metrics + monitors + /healthz)
+### Observability & operations  (status: metrics + monitors + webhook alerts + /healthz)
 - **P1 — Alerting**: failure-rate, latency, volume, and outcome-distribution
-  **drift** alerts. *Threshold **monitors** now ship (`decision-engine/monitor`):
-  per-flow rules `{metric, op, threshold}` over failure/refer/automation/approve/
-  decline rate, avg latency, and volume, evaluated live against the metrics
-  projection and surfaced firing/ok in the builder. Remaining: a notification
-  channel (the rules fire in the read model but nothing pushes them out) and
-  baseline-vs-current distribution drift.*
+  **drift** alerts. *Threshold **monitors** (`decision-engine/monitor`) +
+  **webhook delivery** (`decision-engine/notify`) now ship: per-flow rules
+  `{metric, op, threshold}` over failure/refer/automation/approve/decline rate,
+  avg latency, and volume, evaluated live; a monitor **check** pushes the firing
+  set to registered webhooks (SSRF-safe egress, each delivery recorded for audit),
+  driven from the builder or wired to cron. Remaining: a built-in scheduler (the
+  check is pull-based today) and baseline-vs-current distribution drift.*
 - **P1 — Dashboards & SLOs**; structured request tracing (OpenTelemetry).
 - **P2 — Cost tracking** for AI nodes.
 

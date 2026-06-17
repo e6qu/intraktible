@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	_ "modernc.org/sqlite"
 
@@ -228,4 +229,25 @@ func TestRedactedViewLeavesStoredConfigIntact(t *testing.T) {
 	if !json.Valid(r.Config) || string(r.Config) == string(v.Config) {
 		t.Fatalf("redacted copy not masked: %s", r.Config)
 	}
+}
+
+func TestEgressClientGuardsLoopback(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	// The default (zero-value) policy must refuse to dial the loopback test server.
+	def := connectors.EgressPolicy{}
+	blocked, err := def.Client(2 * time.Second).Get(srv.URL)
+	if err == nil {
+		_ = blocked.Body.Close()
+		t.Fatal("default egress client should block a loopback target (SSRF guard)")
+	}
+	// AllowPrivate opts in.
+	resp, err := connectors.EgressPolicy{AllowPrivate: true}.Client(2 * time.Second).Get(srv.URL)
+	if err != nil {
+		t.Fatalf("AllowPrivate client should reach loopback: %v", err)
+	}
+	_ = resp.Body.Close()
 }

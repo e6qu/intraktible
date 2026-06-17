@@ -198,7 +198,8 @@ test('defines an outcome monitor and sees it fire', async ({ page, request }) =>
   await expect(panel.locator('.mon-rule')).toContainText('volume');
   await expect(panel.locator('.mon-state')).toHaveText('ok'); // 0 > 2 is false
 
-  // Run three decisions, then refresh — the monitor fires.
+  // Run three decisions, then check & notify — the monitor fires (no webhooks, so
+  // nothing is delivered; real delivery is covered by the Go e2e).
   for (let i = 0; i < 3; i++) {
     await request.post(`/v1/flows/${slug}/production/decide`, {
       headers: { 'X-Api-Key': KEY },
@@ -206,9 +207,18 @@ test('defines an outcome monitor and sees it fire', async ({ page, request }) =>
     });
   }
   await expect(async () => {
-    await panel.getByRole('button', { name: 'Refresh' }).click();
+    await panel.getByTestId('check-monitors').click();
     await expect(panel.locator('.mon-state')).toHaveText('firing');
   }).toPass();
+
+  // Webhook CRUD lives in the same panel (tenant-wide delivery targets).
+  await panel.getByText('Notification webhooks').click(); // open the <details>
+  await panel.getByLabel('webhook url').fill('https://hooks.example.com/alerts');
+  await panel.getByTestId('add-webhook').click();
+  const hookRow = panel.locator('li', { hasText: 'hooks.example.com' });
+  await expect(hookRow).toBeVisible();
+  await hookRow.getByRole('button', { name: 'remove' }).click();
+  await expect(panel.locator('li', { hasText: 'hooks.example.com' })).toHaveCount(0);
 });
 
 test('exports the flow as DOT and JSON', async ({ page, request }) => {

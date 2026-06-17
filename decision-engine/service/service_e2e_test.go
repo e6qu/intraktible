@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/e6qu/intraktible/decision-engine/analytics"
@@ -19,6 +21,7 @@ import (
 	"github.com/e6qu/intraktible/decision-engine/history"
 	"github.com/e6qu/intraktible/decision-engine/internal/flowtest"
 	"github.com/e6qu/intraktible/decision-engine/monitor"
+	"github.com/e6qu/intraktible/decision-engine/notify"
 	"github.com/e6qu/intraktible/decision-engine/policy"
 	"github.com/e6qu/intraktible/decision-engine/preapproval"
 	"github.com/e6qu/intraktible/decision-engine/service"
@@ -541,6 +544,81 @@ func TestMonitorsOverHTTP(t *testing.T) {
 	}
 }
 
+func TestMonitorCheckDeliversToWebhookOverHTTP(t *testing.T) {
+	api := startEngine(t)
+
+	// A webhook target that records the payload it receives.
+	var mu sync.Mutex
+	var received []map[string]any
+	hook := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		var p map[string]any
+		_ = json.Unmarshal(b, &p)
+		mu.Lock()
+		received = append(received, p)
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer hook.Close()
+
+	api.Request(t, http.MethodPost, "/v1/webhooks", map[string]any{"url": hook.URL, "note": "ops"}, http.StatusCreated, nil)
+
+	var flow struct {
+		FlowID string `json:"flow_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows", map[string]any{"slug": "alerted", "name": "Alerted"}, http.StatusCreated, &flow)
+	api.Request(t, http.MethodPost, "/v1/flows/"+flow.FlowID+"/versions", map[string]any{
+		"graph": map[string]any{
+			"nodes": []map[string]any{{"id": "in", "type": "input"}, {"id": "out", "type": "output"}},
+			"edges": []map[string]any{{"from": "in", "to": "out"}},
+		},
+	}, http.StatusCreated, nil)
+	api.Request(t, http.MethodPost, "/v1/flows/"+flow.FlowID+"/monitors", map[string]any{
+		"metric": "volume", "op": "gt", "threshold": 0, "description": "any traffic",
+	}, http.StatusCreated, nil)
+	api.Request(t, http.MethodPost, "/v1/flows/alerted/production/decide", map[string]any{"data": map[string]any{}}, http.StatusOK, nil)
+
+	// Checking the flow fires the monitor and delivers it to the webhook.
+	type delivery struct {
+		OK     bool `json:"ok"`
+		Status int  `json:"status"`
+	}
+	var checkResp struct {
+		Fired      []map[string]any `json:"fired"`
+		Deliveries []delivery       `json:"deliveries"`
+	}
+	if !testutil.Eventually(t, func() bool {
+		checkResp.Fired, checkResp.Deliveries = nil, nil
+		api.Request(t, http.MethodPost, "/v1/flows/"+flow.FlowID+"/monitors/check", nil, http.StatusOK, &checkResp)
+		return len(checkResp.Fired) == 1 && len(checkResp.Deliveries) == 1 && checkResp.Deliveries[0].OK
+	}) {
+		t.Fatalf("monitor check never delivered: %+v", checkResp)
+	}
+
+	mu.Lock()
+	gotPayload := len(received) > 0 && received[0]["flow_id"] == flow.FlowID
+	mu.Unlock()
+	if !gotPayload {
+		t.Fatalf("webhook did not receive the firing payload: %+v", received)
+	}
+
+	// The delivery is recorded on the webhook's read model.
+	type webhook struct {
+		DeliveryCount int  `json:"delivery_count"`
+		LastOK        bool `json:"last_ok"`
+	}
+	var listed struct {
+		Webhooks []webhook `json:"webhooks"`
+	}
+	if !testutil.Eventually(t, func() bool {
+		listed.Webhooks = nil
+		api.Request(t, http.MethodGet, "/v1/webhooks", nil, http.StatusOK, &listed)
+		return len(listed.Webhooks) == 1 && listed.Webhooks[0].DeliveryCount >= 1 && listed.Webhooks[0].LastOK
+	}) {
+		t.Fatalf("delivery not recorded on the webhook: %+v", listed.Webhooks)
+	}
+}
+
 func TestPolicyBacktestOverHTTP(t *testing.T) {
 	api := startEngine(t)
 	var flow struct {
@@ -600,16 +678,19 @@ func startEngine(t *testing.T, opts ...command.DecideOption) *testutil.API {
 	svc := service.New(command.NewHandler(log), command.NewDecideHandler(log, st, opts...), paCmd, st)
 	pol := policy.New(policy.NewHandler(log), st)
 	pa := preapproval.New(paCmd, st)
-	mon := monitor.New(monitor.NewHandler(log), st)
+	hooks := notify.New(notify.NewHandler(log), st)
+	// Tests deliver to httptest (loopback), so use a plain client (no egress guard).
+	mon := monitor.New(monitor.NewHandler(log), st, notify.NewNotifier(log, st, http.DefaultClient))
 	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "author"}
 	routes := func(mux *http.ServeMux) {
 		svc.Routes(mux)
 		pol.Routes(mux)
 		pa.Routes(mux)
+		hooks.Routes(mux)
 		mon.Routes(mux)
 	}
 	return testutil.StartAPI(t, log, st, "test-key", id, routes,
-		flows.Projector{}, history.Projector{}, analytics.Projector{}, policy.Projector{}, preapproval.Projector{}, monitor.Projector{})
+		flows.Projector{}, history.Projector{}, analytics.Projector{}, policy.Projector{}, preapproval.Projector{}, monitor.Projector{}, notify.Projector{})
 }
 
 // stubFeatures is a fixed feature source for the decide HTTP test.

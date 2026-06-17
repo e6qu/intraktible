@@ -357,6 +357,101 @@ export async function deleteMonitor(
   }
 }
 
+export interface FiredMonitor {
+  monitor_id: string;
+  metric: string;
+  op: string;
+  threshold: number;
+  actual: number;
+  description?: string;
+}
+
+export interface DeliveryResult {
+  webhook_id: string;
+  url: string;
+  ok: boolean;
+  status?: number;
+  error?: string;
+}
+
+export interface MonitorCheck {
+  flow_id: string;
+  checked: number;
+  fired: FiredMonitor[];
+  deliveries?: DeliveryResult[];
+}
+
+// checkMonitors evaluates a flow's monitors and pushes the firing ones to every
+// active webhook (the pull-based alerting trigger).
+export async function checkMonitors(
+  key: string,
+  flowId: string,
+  fetcher: typeof fetch = fetch
+): Promise<MonitorCheck> {
+  const res = await fetcher(`/v1/flows/${flowId}/monitors/check`, {
+    method: 'POST',
+    headers: jsonHeaders(key)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'POST monitor check');
+  }
+  return (await res.json()) as MonitorCheck;
+}
+
+// ---- Webhooks (outbound notification channel, shared across flows) ----
+
+export interface Webhook {
+  webhook_id: string;
+  url: string;
+  note?: string;
+  active: boolean;
+  delivery_count: number;
+  last_status?: number;
+  last_ok: boolean;
+  last_error?: string;
+  last_delivery_at?: string;
+  created_at: string;
+}
+
+export async function listWebhooks(key: string, fetcher: typeof fetch = fetch): Promise<Webhook[]> {
+  const res = await fetcher('/v1/webhooks', { headers: authHeaders(key) });
+  if (!res.ok) {
+    return errorOrStatus(res, 'GET /v1/webhooks');
+  }
+  return ((await res.json()) as { webhooks: Webhook[] }).webhooks ?? [];
+}
+
+export async function subscribeWebhook(
+  key: string,
+  url: string,
+  note: string,
+  fetcher: typeof fetch = fetch
+): Promise<{ webhook_id: string }> {
+  const res = await fetcher('/v1/webhooks', {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify({ url, note: note || undefined })
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'POST /v1/webhooks');
+  }
+  return (await res.json()) as { webhook_id: string };
+}
+
+export async function deleteWebhook(
+  key: string,
+  webhookId: string,
+  fetcher: typeof fetch = fetch
+): Promise<void> {
+  const res = await fetcher(`/v1/webhooks/${webhookId}`, {
+    method: 'DELETE',
+    headers: authHeaders(key)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'DELETE /v1/webhooks');
+  }
+}
+
 // ---- Policies (operational disposition layer over a flow) ----
 
 export interface PolicyRule {

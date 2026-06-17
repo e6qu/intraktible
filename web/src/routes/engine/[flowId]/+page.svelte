@@ -23,8 +23,14 @@
     listMonitors,
     defineMonitor,
     deleteMonitor,
+    checkMonitors,
+    listWebhooks,
+    subscribeWebhook,
+    deleteWebhook,
     MONITOR_METRICS,
     type Monitor,
+    type MonitorCheck,
+    type Webhook,
     backtestFlow,
     deployVersion,
     requestDeployment,
@@ -780,11 +786,67 @@
       toast.error(msg(e));
     }
   }
+  // Check & notify: evaluate the monitors and push firing ones to webhooks.
+  let lastCheck = $state<MonitorCheck | null>(null);
+  let checking = $state(false);
+  async function checkNow() {
+    error = '';
+    checking = true;
+    try {
+      lastCheck = await checkMonitors(key, flowId);
+      await loadMonitors();
+      const n = lastCheck.fired.length;
+      const sent = lastCheck.deliveries?.length ?? 0;
+      toast.success(n === 0 ? 'No monitors firing' : `${n} firing → ${sent} webhook(s) notified`);
+    } catch (e) {
+      error = msg(e);
+    } finally {
+      checking = false;
+    }
+  }
+
+  // --- Notification webhooks (tenant-wide delivery targets) ---
+  let webhooks = $state<Webhook[]>([]);
+  let hookURL = $state('');
+  let hookNote = $state('');
+  let hookBusy = $state(false);
+  async function loadWebhooks() {
+    try {
+      webhooks = await listWebhooks(key);
+    } catch {
+      webhooks = [];
+    }
+  }
+  async function addWebhook() {
+    error = '';
+    hookBusy = true;
+    try {
+      await subscribeWebhook(key, hookURL.trim(), hookNote.trim());
+      hookURL = '';
+      hookNote = '';
+      toast.success('Webhook added');
+      await loadWebhooks();
+    } catch (e) {
+      error = msg(e);
+    } finally {
+      hookBusy = false;
+    }
+  }
+  async function removeWebhook(wid: string) {
+    try {
+      await deleteWebhook(key, wid);
+      toast.success('Webhook removed');
+      await loadWebhooks();
+    } catch (e) {
+      toast.error(msg(e));
+    }
+  }
 
   onMount(() => {
     void load();
     void loadMetrics();
     void loadMonitors();
+    void loadWebhooks();
   });
 </script>
 
@@ -898,9 +960,20 @@
   <section class="monitors" data-testid="monitors-panel">
     <div class="mon-head">
       <h2>Monitors</h2>
-      <button class="ghost" onclick={loadMonitors} title="Re-evaluate against current metrics">
-        <Icon name="reload" size={14} /> Refresh
-      </button>
+      <div class="row">
+        <button class="ghost" onclick={loadMonitors} title="Re-evaluate against current metrics">
+          <Icon name="reload" size={14} /> Refresh
+        </button>
+        <button
+          class="ghost"
+          onclick={checkNow}
+          disabled={checking}
+          data-testid="check-monitors"
+          title="Evaluate and push firing monitors to webhooks"
+        >
+          <Icon name="check" size={14} /> Check &amp; notify
+        </button>
+      </div>
     </div>
     <p class="muted">
       Thresholds over this flow's live metrics — failure / refer / automation rate, latency, and
@@ -953,6 +1026,66 @@
     {:else}
       <p class="muted">No monitors yet.</p>
     {/if}
+
+    {#if lastCheck && lastCheck.deliveries && lastCheck.deliveries.length > 0}
+      <div class="mon-deliveries" data-testid="check-deliveries">
+        <span class="exportlabel">Last check delivered to:</span>
+        {#each lastCheck.deliveries as d (d.webhook_id)}
+          <span class={d.ok ? 'ok' : 'err'}
+            >{d.ok ? '✓' : '✗'} {d.url}{d.status ? ` (${d.status})` : ''}</span
+          >
+        {/each}
+      </div>
+    {/if}
+
+    <details class="webhooks">
+      <summary
+        >Notification webhooks <span class="muted">(shared across flows · {webhooks.length})</span
+        ></summary
+      >
+      <div class="row mon-form">
+        <label class="grow">
+          Endpoint URL
+          <input
+            bind:value={hookURL}
+            aria-label="webhook url"
+            placeholder="https://hooks.example.com/alerts"
+          />
+        </label>
+        <label>
+          Note
+          <input bind:value={hookNote} aria-label="webhook note" placeholder="optional" />
+        </label>
+        <button
+          onclick={addWebhook}
+          disabled={hookBusy || !hookURL.trim()}
+          data-testid="add-webhook">Add webhook</button
+        >
+      </div>
+      {#if webhooks.length > 0}
+        <ul class="mon-list">
+          {#each webhooks as h (h.webhook_id)}
+            <li>
+              <span class="mon-rule">{h.url}</span>
+              {#if h.note}<span class="muted">{h.note}</span>{/if}
+              <span class="mon-actual"
+                >{h.delivery_count} sent{h.delivery_count > 0
+                  ? h.last_ok
+                    ? ' · last ok'
+                    : ' · last failed'
+                  : ''}</span
+              >
+              <button class="link danger" onclick={() => removeWebhook(h.webhook_id)}>remove</button
+              >
+            </li>
+          {/each}
+        </ul>
+      {:else}
+        <p class="muted">
+          No webhooks. Add one, then <b>Check &amp; notify</b> pushes firing monitors to it.
+        </p>
+      {/if}
+    </details>
   </section>
 
   <section class="deploy" data-testid="deploy-panel">
@@ -1967,6 +2100,24 @@
   .mon-actual {
     color: var(--fg-muted);
     font-variant-numeric: tabular-nums;
+  }
+  .mon-deliveries {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+    align-items: center;
+    margin-top: 0.6rem;
+    font-size: 0.82rem;
+  }
+  .webhooks {
+    margin-top: 0.8rem;
+    border-top: 1px solid var(--border);
+    padding-top: 0.6rem;
+  }
+  .webhooks summary {
+    cursor: pointer;
+    font-weight: 550;
+    font-size: 0.92rem;
   }
   .deploy {
     margin: 0.6rem 0;

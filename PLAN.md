@@ -331,8 +331,11 @@ metrics — failure / refer / automation / approve / decline rate, avg latency, 
 `{metric, op, threshold}` evaluated **firing/ok** against the analytics projection at read time (a pure
 function of the snapshot; a rate with no data reads "no data", not a false 0). `POST|GET|DELETE
 /v1/flows/{id}/monitors` (define editor-gated); a **Monitors** panel in the builder defines rules and
-shows live status. Closes the "metrics exist but thresholds don't" half of the alerting gap; a
-notification channel + distribution drift remain.
+shows live status. **Notifications** (`decision-engine/notify`) make them actionable: register webhooks
+(`POST /v1/webhooks`) and a monitor **check** (`POST /v1/flows/{id}/monitors/check`) pushes the firing set
+to every active webhook over the SSRF-safe egress client, recording each delivery for audit. Closes the
+alerting gap end-to-end (rules + delivery); a built-in scheduler (check is pull-based) + distribution
+drift remain.
 
 **Persona-aware UI (post-MVP).** The web UI gained a **persona** axis (`web/src/lib/persona.ts`) — a
 client-side "view-as" preference anyone can switch (not RBAC-gated), orthogonal to light/dark theme. It

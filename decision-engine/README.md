@@ -115,9 +115,17 @@ Done — execution runtime + decide API + decision history (the decision event s
   of an `analytics.FlowMetrics` snapshot; status (`actual` / `computable` / `firing`) is computed at read
   time, never stored, so it stays correct as decisions accrue (a rate with no decisions reads "no data",
   not a false 0). API: `POST /v1/flows/{id}/monitors` (`editor`), `GET /v1/flows/{id}/monitors` (rules +
-  live status), `DELETE /v1/flows/{id}/monitors/{monitor_id}`. UI: a **Monitors** panel in the builder
-  defines rules and shows firing/ok/no-data with the current value. (The thresholds exist; wiring them to
-  a notification channel is the open alerting work.)
+  live status), `DELETE /v1/flows/{id}/monitors/{monitor_id}`, and `POST /v1/flows/{id}/monitors/check`
+  (evaluate + push firing rules to webhooks — the pull-based alerting trigger; wire it to cron). UI: a
+  **Monitors** panel in the builder defines rules and shows firing/ok/no-data with the current value.
+- **Notifications (`decision-engine/notify`):** an outbound webhook channel that makes monitors
+  actionable. `POST /v1/webhooks` (`editor`) registers an http(s) endpoint; a monitor **check** POSTs the
+  firing set (`{flow_id, checked_at, fired:[…]}`) to every active webhook and records each `Delivered`
+  event (so deliveries show in the audit log and update the webhook's last-delivery state). Delivery
+  reuses the connector **egress guard** (`connectors.EgressPolicy.Client` — SSRF-safe at dial time),
+  injected as a plain `*http.Client` so `notify` stays decoupled from the context layer (main wires the
+  guarded client). API: `POST|GET /v1/webhooks`, `DELETE /v1/webhooks/{id}`; UI: a webhook list + a
+  "Check & notify" action in the Monitors panel. (Pull-based today — a scheduled push remains.)
 - **Flow export** (`decision-engine/export`, pure): a flow version renders to **Mermaid**
   (`flowchart`, `stateDiagram-v2`), **BPMN 2.0 XML with BPMNDI** layout (opens laid-out in
   bpmn.io / Camunda; node types map to start/end events, gateways, business-rule/service/script/user

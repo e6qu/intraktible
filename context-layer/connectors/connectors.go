@@ -107,6 +107,17 @@ func (p EgressPolicy) control(_, address string, _ syscall.RawConn) error {
 	return nil
 }
 
+// Client builds an http.Client that enforces this egress policy at dial time (so
+// it guards every redirect hop and resists DNS rebinding). It is the reusable
+// SSRF-safe client for any outbound caller (HTTP connectors, webhook delivery).
+func (p EgressPolicy) Client(timeout time.Duration) *http.Client {
+	dialer := &net.Dialer{Timeout: timeout, Control: p.control}
+	return &http.Client{
+		Timeout:   timeout,
+		Transport: &http.Transport{DialContext: dialer.DialContext},
+	}
+}
+
 // blockedIP reports whether ip is in a range the default policy refuses to dial.
 func blockedIP(ip net.IP) bool {
 	return ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified() ||
@@ -322,12 +333,7 @@ func newHTTP(config json.RawMessage, egress EgressPolicy) (httpConnector, error)
 	}
 	// The egress policy is enforced at dial time (after DNS resolution) so it
 	// guards every redirect hop and resists DNS rebinding.
-	dialer := &net.Dialer{Timeout: fetchTimeout, Control: egress.control}
-	client := &http.Client{
-		Timeout:   fetchTimeout,
-		Transport: &http.Transport{DialContext: dialer.DialContext},
-	}
-	return httpConnector{url: cfg.URL, method: method, client: client}, nil
+	return httpConnector{url: cfg.URL, method: method, client: egress.Client(fetchTimeout)}, nil
 }
 
 // Fetch calls the configured endpoint (sending params as the JSON body for
