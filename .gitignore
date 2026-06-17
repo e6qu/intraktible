@@ -20,6 +20,7 @@ web/node_modules/
 web/playwright-report/
 web/test-results/
 web/.pw-data/
+web/.pw-data-embedded/
 
 # Generated embedded UI: `make web` overwrites platform/web/assets/ with the real
 # SvelteKit build for a full artifact. Only the committed placeholder index.html is

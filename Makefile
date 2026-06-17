@@ -12,7 +12,7 @@ PostgreSQL,LGPL-2.1,LGPL-3.0,GPL-2.0,GPL-3.0,AGPL-3.0
 GO_PKGS := $(shell $(GO) list ./... | grep -v /node_modules)
 GO_DIRS := $(shell $(GO) list -f '{{.Dir}}' ./... | grep -v /node_modules)
 
-.PHONY: all build run dev test test-short fmt fmtcheck vet typecheck lint sast deadcode dupl vuln licenses check ci precommit web dist clean
+.PHONY: all build run dev test test-short fmt fmtcheck vet typecheck lint sast deadcode dupl vuln licenses check ci precommit web dist e2e-embedded clean
 
 all: build
 
@@ -99,6 +99,20 @@ web:
 
 ## dist: the single self-contained artifact — build + embed the real UI, then the binary
 dist: web build
+
+## e2e-embedded: smoke the SHIPPING artifact — build+embed the real UI, build the
+# binary, and run the embedded Playwright suite (HTTP + browser) against
+# `intraktible serve` on :8080. Restores the committed placeholder assets after,
+# so the working tree stays clean even if the smoke fails. Catches embedded-only
+# breakage (e.g. a //go:embed that drops _app and ships a blank page).
+e2e-embedded:
+	@command -v npm >/dev/null || { echo "make e2e-embedded needs npm (Node 20+)"; exit 1; }
+	@[ -d web/node_modules ] || (cd web && npm ci)
+	@set -e; trap 'git checkout -q -- platform/web/assets 2>/dev/null || true' EXIT; \
+		(cd web && npm run build); \
+		rm -rf platform/web/assets && cp -r web/build platform/web/assets; \
+		$(GO) build -o $(BIN) ./cmd/intraktible; \
+		(cd web && npm run test:e2e:embedded)
 
 ## check: fast local gate
 check: fmtcheck vet typecheck test

@@ -133,3 +133,13 @@ repos:
         files: ^web/
         pass_filenames: false
         stages: [pre-push]
+
+      # The shipping artifact: the single binary with the real UI embedded. Runs
+      # regardless of which files changed (an embedded-only break can be Go-side —
+      # e.g. the //go:embed directive — so a web-only filter would miss it).
+      - id: e2e-embedded
+        name: 'artifact · embedded-binary smoke (HTTP + Playwright)'
+        entry: make e2e-embedded
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
