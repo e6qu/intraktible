@@ -8,6 +8,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -367,19 +368,21 @@ func replayCmd(args []string) error {
 	return nil
 }
 
-// exportCmd rebuilds the decision-engine flow projection from the log and renders
-// one flow (by id or slug) to a diagram on stdout: mermaid | mermaid-state | bpmn.
+// exportCmd rebuilds the relevant projection from the log and renders to stdout:
+// a flow (by id or slug) as mermaid | mermaid-state | bpmn | dot | json, or a
+// recorded decision run (by id) as mermaid | dot | json.
 func exportCmd(args []string) error {
 	fs := flag.NewFlagSet("export", flag.ExitOnError)
 	dataDir := fs.String("data-dir", "./data", "event-log data directory")
 	org := fs.String("org", "demo", "tenant org")
 	workspace := fs.String("workspace", "main", "tenant workspace")
-	flow := fs.String("flow", "", "flow id or slug to export (required)")
-	format := fs.String("format", "mermaid", "mermaid | mermaid-state | bpmn | dot | json")
+	flow := fs.String("flow", "", "flow id or slug to export")
+	decision := fs.String("decision", "", "decision id to export (a recorded run)")
+	format := fs.String("format", "mermaid", "flows: mermaid|mermaid-state|bpmn|dot|json — runs: mermaid|dot|json")
 	version := fs.Int("version", 0, "flow version to export (0 = latest)")
 	_ = fs.Parse(args)
-	if *flow == "" {
-		return fmt.Errorf("export: --flow <id-or-slug> is required")
+	if (*flow == "") == (*decision == "") {
+		return fmt.Errorf("export: exactly one of --flow <id-or-slug> or --decision <id> is required")
 	}
 
 	ctx := context.Background()
@@ -390,10 +393,30 @@ func exportCmd(args []string) error {
 	defer func() { _ = log.Close() }()
 
 	st := store.NewMemory()
+	id := identity.Identity{Org: *org, Workspace: *workspace, Actor: "export"}
+
+	if *decision != "" {
+		if _, err := projection.New(log, st, history.Projector{}).RebuildTo(ctx, 0); err != nil {
+			return err
+		}
+		rec, found, err := history.Read(ctx, st, id, *decision)
+		if err != nil {
+			return err
+		}
+		if !found {
+			return fmt.Errorf("export: no decision %q for %s/%s", *decision, *org, *workspace)
+		}
+		out, err := renderRun(rec, *format)
+		if err != nil {
+			return err
+		}
+		fmt.Print(out)
+		return nil
+	}
+
 	if _, err := projection.New(log, st, flows.Projector{}).RebuildTo(ctx, 0); err != nil {
 		return err
 	}
-	id := identity.Identity{Org: *org, Workspace: *workspace, Actor: "export"}
 	fv, found, err := findFlow(ctx, st, id, *flow)
 	if err != nil {
 		return err
@@ -411,6 +434,28 @@ func exportCmd(args []string) error {
 	}
 	fmt.Print(out)
 	return nil
+}
+
+// renderRun renders a recorded decision to the requested run format.
+func renderRun(rec history.Record, format string) (string, error) {
+	steps := make([]export.RunStep, 0, len(rec.Nodes))
+	for _, n := range rec.Nodes {
+		steps = append(steps, export.RunStep{NodeID: n.NodeID, Type: string(n.Type)})
+	}
+	switch format {
+	case "mermaid", "sequence":
+		return export.MermaidSequence(rec.Slug, steps, rec.Status), nil
+	case "dot", "graphviz":
+		return export.RunDOT(rec.Slug, steps, rec.Status), nil
+	case "json":
+		b, err := json.MarshalIndent(rec, "", "  ")
+		if err != nil {
+			return "", err
+		}
+		return string(b) + "\n", nil
+	default:
+		return "", fmt.Errorf("export: unknown run format %q (mermaid|dot|json)", format)
+	}
 }
 
 // findFlow looks a flow up by id, falling back to a slug match.

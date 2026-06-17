@@ -73,6 +73,7 @@ intraktible log                       # print the event log + a per-stream summa
 intraktible replay                    # rebuild projections from the log into a fresh store
 intraktible replay --as-of 42         # time-travel: rebuild as of seq 42 (read-only rollback)
 intraktible export --flow credit --format mermaid   # export a flow: mermaid | mermaid-state | bpmn | dot | json
+intraktible export --decision <id> --format dot      # export a recorded run: mermaid | dot | json
 ```
 
 ### Docker (no Go/Node toolchain needed)
