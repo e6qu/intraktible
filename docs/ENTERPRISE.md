@@ -41,14 +41,16 @@ enterprise buyers; **P2** = differentiators / scale.
 - **P0 — RBAC — ✅ done.** Roles (viewer / operator / editor / approver / admin)
   and authorization on mutating endpoints.
 - **P1 — SSO** (SAML / OIDC) and **SCIM** user provisioning; map IdP groups → roles.
-- **P1 — API token management — ✅ first pass done (backend + UI).** Admin-gated
-  `GET/POST/DELETE /v1/api-keys` manages durable, hashed API tokens for the current
-  org/workspace; create returns the generated secret once, tokens carry scope, role,
-  actor, optional expiry, and revoke time. Managed from an **API tokens** panel on the
-  Audit (admin) page — create a token, copy the one-time secret, and revoke. Token
-  create/revoke append `auth.managed_key.*` events to the log, so each token's lifecycle
-  shows in the immutable audit trail (per-token deep link from the panel), attributed to
-  the admin who acted. Remaining: rotation helper UX.
+- **P1 — API token management — ✅ done (backend + UI).** Admin-gated
+  `GET/POST/DELETE /v1/api-keys` (+ `POST …/{id}/rotate`) manages durable, hashed API
+  tokens for the current org/workspace; create returns the generated secret once, tokens
+  carry scope, role, actor, optional expiry, and revoke time. **Rotation** mints a fresh
+  secret while honoring the prior one through a grace window (zero-downtime roll-out;
+  `grace_seconds`, default immediate). Managed from an **API tokens** panel on the Audit
+  (admin) page — create, rotate, and revoke, each revealing the one-time secret. Token
+  create/rotate/revoke append `auth.managed_key.*` events to the log, so each token's
+  lifecycle shows in the immutable audit trail (per-token deep link from the panel),
+  attributed to the admin who acted.
 - **P2 — Fine-grained, per-flow/per-environment permissions.**
 
 ### Governance & change control  (status: deploy + maker-checker shipped, UI included)

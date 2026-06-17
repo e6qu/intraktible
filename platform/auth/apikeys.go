@@ -22,6 +22,7 @@ const (
 	AuditStream            = "auth"
 	EventManagedKeyCreated = "auth.managed_key.created"
 	EventManagedKeyRevoked = "auth.managed_key.revoked"
+	EventManagedKeyRotated = "auth.managed_key.rotated"
 )
 
 // APIKeyAudit is the audit-log payload for a token lifecycle event. KeyID is
@@ -47,7 +48,12 @@ type ManagedAPIKey struct {
 	CreatedAt time.Time         `json:"created_at"`
 	ExpiresAt *time.Time        `json:"expires_at,omitempty"`
 	RevokedAt *time.Time        `json:"revoked_at,omitempty"`
+	RotatedAt *time.Time        `json:"rotated_at,omitempty"`
 	Hash      string            `json:"hash,omitempty"`
+	// PrevHash is the prior secret's hash, honored until PrevHashExpiresAt so a
+	// rotation can roll out with no downtime. Both are cleared on read.
+	PrevHash          string     `json:"prev_hash,omitempty"`
+	PrevHashExpiresAt *time.Time `json:"prev_hash_expires_at,omitempty"`
 }
 
 // StoreAPIKeys persists managed API tokens in store.Store. It is operational
@@ -139,6 +145,38 @@ func (s *StoreAPIKeys) Revoke(ctx context.Context, id string) (ManagedAPIKey, er
 	return redactManagedKey(key), nil
 }
 
+// Rotate issues a fresh secret for an existing token, returning it once. The
+// previous secret keeps working until now+grace (grace 0 = effective
+// immediately), so an operator can roll the new secret out with no downtime.
+func (s *StoreAPIKeys) Rotate(ctx context.Context, id string, grace time.Duration) (ManagedAPIKey, string, error) {
+	key, ok, err := store.GetDoc[ManagedAPIKey](ctx, s.store, managedKeyCollection, id)
+	if err != nil {
+		return ManagedAPIKey{}, "", err
+	}
+	if !ok {
+		return ManagedAPIKey{}, "", fmt.Errorf("auth: api key %q not found", id)
+	}
+	if key.RevokedAt != nil {
+		return ManagedAPIKey{}, "", fmt.Errorf("auth: api key %q is revoked", id)
+	}
+	now := s.now().UTC()
+	secret := "itk_" + newToken()
+	if grace > 0 {
+		exp := now.Add(grace)
+		key.PrevHash = key.Hash
+		key.PrevHashExpiresAt = &exp
+	} else {
+		key.PrevHash = ""
+		key.PrevHashExpiresAt = nil
+	}
+	key.Hash = hash(secret)
+	key.RotatedAt = &now
+	if err := store.PutDoc(ctx, s.store, managedKeyCollection, id, key); err != nil {
+		return ManagedAPIKey{}, "", err
+	}
+	return redactManagedKey(key), secret, nil
+}
+
 // ResolveSecret implements KeyResolver for Authenticate.
 func (s *StoreAPIKeys) ResolveSecret(secret string) (APIKey, bool) {
 	want := hash(secret)
@@ -148,9 +186,10 @@ func (s *StoreAPIKeys) ResolveSecret(secret string) (APIKey, bool) {
 	}
 	now := s.now()
 	for _, rec := range recs {
-		if subtle.ConstantTimeCompare([]byte(rec.Hash), []byte(want)) != 1 ||
-			rec.RevokedAt != nil ||
-			(rec.ExpiresAt != nil && now.After(*rec.ExpiresAt)) {
+		if rec.RevokedAt != nil || (rec.ExpiresAt != nil && now.After(*rec.ExpiresAt)) {
+			continue
+		}
+		if !secretMatches(rec, want, now) {
 			continue
 		}
 		return APIKey{ID: rec.ID, Identity: rec.Identity, Scope: rec.Scope, Role: rec.Role}, true
@@ -158,7 +197,18 @@ func (s *StoreAPIKeys) ResolveSecret(secret string) (APIKey, bool) {
 	return APIKey{}, false
 }
 
+// secretMatches accepts the current hash, or the previous hash while its
+// rotation grace window is still open.
+func secretMatches(rec ManagedAPIKey, want string, now time.Time) bool {
+	if subtle.ConstantTimeCompare([]byte(rec.Hash), []byte(want)) == 1 {
+		return true
+	}
+	return rec.PrevHash != "" && rec.PrevHashExpiresAt != nil && now.Before(*rec.PrevHashExpiresAt) &&
+		subtle.ConstantTimeCompare([]byte(rec.PrevHash), []byte(want)) == 1
+}
+
 func redactManagedKey(key ManagedAPIKey) ManagedAPIKey {
 	key.Hash = ""
+	key.PrevHash = ""
 	return key
 }

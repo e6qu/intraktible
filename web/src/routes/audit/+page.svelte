@@ -14,6 +14,7 @@
     setPrivacy,
     listApiKeys,
     createApiKey,
+    rotateApiKey,
     revokeApiKey,
     type AuditEntry,
     type AuditFilter,
@@ -114,8 +115,13 @@
   let kScope = $state('sandbox');
   let kExpires = $state('');
   let kCreating = $state(false);
-  // The generated secret is shown once, right after creation, and never again.
+  // The generated secret is shown once, right after creation/rotation, and never
+  // again. secretNote explains how long a rotated-away secret keeps working.
   let newSecret = $state('');
+  let secretNote = $state('');
+  // Rotations roll the new secret out over an hour-long grace window so the old
+  // one keeps authenticating until the operator finishes redeploying.
+  const ROTATE_GRACE_SECONDS = 3600;
   async function loadKeys() {
     try {
       keys = await listApiKeys(key);
@@ -138,6 +144,7 @@
         expires_at: kExpires ? new Date(kExpires).toISOString() : undefined
       });
       newSecret = secret;
+      secretNote = '';
       kName = '';
       kActor = '';
       kExpires = '';
@@ -147,6 +154,19 @@
       toast.error(msg(e));
     } finally {
       kCreating = false;
+    }
+  }
+  async function rotateKey(id: string) {
+    try {
+      const { api_key, secret } = await rotateApiKey(key, id, ROTATE_GRACE_SECONDS);
+      newSecret = secret;
+      secretNote = api_key.prev_hash_expires_at
+        ? `The previous secret keeps working until ${new Date(api_key.prev_hash_expires_at).toLocaleString()}.`
+        : '';
+      toast.success('Token rotated');
+      await loadKeys();
+    } catch (e) {
+      toast.error(msg(e));
     }
   }
   async function revokeKey(id: string) {
@@ -252,9 +272,15 @@
       <div class="secret" data-testid="new-secret">
         <span class="muted">Copy this secret now — it will not be shown again:</span>
         <code>{newSecret}</code>
-        <button class="dismiss" onclick={() => (newSecret = '')} aria-label="dismiss secret"
-          >Done</button
+        <button
+          class="dismiss"
+          onclick={() => {
+            newSecret = '';
+            secretNote = '';
+          }}
+          aria-label="dismiss secret">Done</button
         >
+        {#if secretNote}<p class="muted note secret-note">{secretNote}</p>{/if}
       </div>
     {/if}
     {#if keys.length > 0}
@@ -273,6 +299,7 @@
               <td class="row-actions">
                 <a class="audit-link" href={`/audit?resource=${encodeURIComponent(k.id)}`}>Audit</a>
                 {#if keyStatus(k) === 'active'}
+                  <button class="rotate" onclick={() => rotateKey(k.id)}>Rotate</button>
                   <button class="revoke" onclick={() => revokeKey(k.id)}>Revoke</button>
                 {/if}
               </td>
@@ -421,9 +448,17 @@
     font-size: 0.82rem;
     color: var(--link);
   }
+  .rotate {
+    font-size: 0.82rem;
+    color: var(--link);
+  }
   .revoke {
     font-size: 0.82rem;
     color: var(--danger);
+  }
+  .secret-note {
+    flex-basis: 100%;
+    margin: 0;
   }
   .mask-row {
     display: flex;

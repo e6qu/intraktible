@@ -1297,6 +1297,8 @@ export interface ManagedApiKey {
   created_at: string;
   expires_at?: string;
   revoked_at?: string;
+  rotated_at?: string;
+  prev_hash_expires_at?: string;
 }
 
 export interface CreateApiKeyRequest {
@@ -1332,6 +1334,26 @@ export async function createApiKey(
   });
   if (!res.ok) {
     return errorOrStatus(res, 'POST /v1/api-keys');
+  }
+  return (await res.json()) as { api_key: ManagedApiKey; secret: string };
+}
+
+// rotateApiKey mints a fresh secret for a token, returning it once. The prior
+// secret keeps working for graceSeconds (0 = immediate) so it can be rolled out
+// without downtime.
+export async function rotateApiKey(
+  key: string,
+  id: string,
+  graceSeconds = 0,
+  fetcher: typeof fetch = fetch
+): Promise<{ api_key: ManagedApiKey; secret: string }> {
+  const res = await fetcher(`/v1/api-keys/${encodeURIComponent(id)}/rotate`, {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify({ grace_seconds: graceSeconds })
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'POST rotate api key');
   }
   return (await res.json()) as { api_key: ManagedApiKey; secret: string };
 }

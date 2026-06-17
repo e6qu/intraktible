@@ -23,6 +23,7 @@ import {
   auditExportUrl,
   listApiKeys,
   createApiKey,
+  rotateApiKey,
   revokeApiKey,
   listConnectors,
   defineConnector,
@@ -284,6 +285,19 @@ describe('managed api keys', () => {
     expect(url).toBe('/v1/api-keys');
     expect(init?.method).toBe('POST');
     expect(JSON.parse(init?.body as string)).toMatchObject({ name: 'bot', role: 'viewer' });
+  });
+
+  it('rotateApiKey posts the grace window and returns the new secret', async () => {
+    const fetcher = fetcherReturning(200, {
+      api_key: { id: 'k2', name: 'bot', prev_hash_expires_at: 't1' },
+      secret: 'itk_rotated'
+    });
+    const out = await rotateApiKey('k', 'k2', 3600, fetcher);
+    expect(out.secret).toBe('itk_rotated');
+    const [url, init] = fetcher.mock.calls[0];
+    expect(url).toBe('/v1/api-keys/k2/rotate');
+    expect(init?.method).toBe('POST');
+    expect(JSON.parse(init?.body as string)).toEqual({ grace_seconds: 3600 });
   });
 
   it('revokeApiKey deletes by id and unwraps the key', async () => {

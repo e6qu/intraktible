@@ -29,6 +29,7 @@ func NewAPIKeysHandler(keys *auth.StoreAPIKeys, log eventlog.Log) *APIKeysHandle
 func (h *APIKeysHandler) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/api-keys", h.list)
 	mux.HandleFunc("POST /v1/api-keys", h.create)
+	mux.HandleFunc("POST /v1/api-keys/{key_id}/rotate", h.rotate)
 	mux.HandleFunc("DELETE /v1/api-keys/{key_id}", h.revoke)
 }
 
@@ -105,6 +106,57 @@ func (h *APIKeysHandler) create(w http.ResponseWriter, r *http.Request) {
 func (h *APIKeysHandler) audit(ctx context.Context, id identity.Identity, typ string, at time.Time, payload auth.APIKeyAudit) error {
 	_, err := eventlog.AppendJSON(ctx, h.log, id.Org, id.Workspace, id.Actor, auth.AuditStream, typ, at, payload)
 	return err
+}
+
+type rotateAPIKeyRequest struct {
+	GraceSeconds int `json:"grace_seconds,omitempty"`
+}
+
+func (h *APIKeysHandler) rotate(w http.ResponseWriter, r *http.Request) {
+	id, ok := Caller(w, r)
+	if !ok {
+		return
+	}
+	keyID := r.PathValue("key_id")
+	key, found, err := h.keys.Get(r.Context(), keyID)
+	if err != nil {
+		Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	if !found || key.Identity.Org != id.Org || key.Identity.Workspace != id.Workspace {
+		Error(w, http.StatusNotFound, fmt.Errorf("api key not found"))
+		return
+	}
+	var req rotateAPIKeyRequest
+	if r.ContentLength != 0 {
+		if err := DecodeJSON(r, &req); err != nil {
+			Error(w, http.StatusBadRequest, err)
+			return
+		}
+	}
+	if req.GraceSeconds < 0 {
+		Error(w, http.StatusBadRequest, fmt.Errorf("grace_seconds must be >= 0"))
+		return
+	}
+	key, secret, err := h.keys.Rotate(r.Context(), keyID, time.Duration(req.GraceSeconds)*time.Second)
+	if err != nil {
+		Error(w, http.StatusBadRequest, err)
+		return
+	}
+	at := key.CreatedAt
+	if key.RotatedAt != nil {
+		at = *key.RotatedAt
+	}
+	if err := h.audit(r.Context(), id, auth.EventManagedKeyRotated, at, auth.APIKeyAudit{
+		KeyID: key.ID,
+		Name:  key.Name,
+		Role:  key.Role,
+		Scope: key.Scope,
+	}); err != nil {
+		Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	JSON(w, http.StatusOK, map[string]any{"api_key": key, "secret": secret})
 }
 
 func (h *APIKeysHandler) revoke(w http.ResponseWriter, r *http.Request) {

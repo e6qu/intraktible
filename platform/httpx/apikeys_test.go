@@ -65,6 +65,41 @@ func TestManagedAPIKeysCreateUseRevoke(t *testing.T) {
 		t.Fatalf("list should redact hashes -> %d body=%s", list.Code, list.Body.String())
 	}
 
+	rotate := httptest.NewRecorder()
+	rotReq := httptest.NewRequest(http.MethodPost, "/v1/api-keys/"+created.APIKey.ID+"/rotate",
+		strings.NewReader(`{"grace_seconds":0}`))
+	rotReq.Header.Set("X-Api-Key", "admin-key")
+	handler.ServeHTTP(rotate, rotReq)
+	if rotate.Code != http.StatusOK {
+		t.Fatalf("rotate api key -> %d body=%s", rotate.Code, rotate.Body.String())
+	}
+	var rotated struct {
+		APIKey auth.ManagedAPIKey `json:"api_key"`
+		Secret string             `json:"secret"`
+	}
+	if err := json.Unmarshal(rotate.Body.Bytes(), &rotated); err != nil {
+		t.Fatal(err)
+	}
+	if rotated.Secret == "" || rotated.Secret == created.Secret {
+		t.Fatalf("rotate should mint a new secret, got %q", rotated.Secret)
+	}
+
+	// Grace 0: the original secret dies at once; the rotated one authenticates.
+	oldAuth := httptest.NewRecorder()
+	oldReq := httptest.NewRequest(http.MethodGet, "/v1/me", http.NoBody)
+	oldReq.Header.Set("X-Api-Key", created.Secret)
+	handler.ServeHTTP(oldAuth, oldReq)
+	if oldAuth.Code != http.StatusUnauthorized {
+		t.Fatalf("rotated-away secret should not authenticate -> %d", oldAuth.Code)
+	}
+	rotAuth := httptest.NewRecorder()
+	rotMe := httptest.NewRequest(http.MethodGet, "/v1/me", http.NoBody)
+	rotMe.Header.Set("X-Api-Key", rotated.Secret)
+	handler.ServeHTTP(rotAuth, rotMe)
+	if rotAuth.Code != http.StatusOK || !strings.Contains(rotAuth.Body.String(), `"actor":"etl-worker"`) {
+		t.Fatalf("rotated secret should authenticate -> %d body=%s", rotAuth.Code, rotAuth.Body.String())
+	}
+
 	revoke := httptest.NewRecorder()
 	revReq := httptest.NewRequest(http.MethodDelete, "/v1/api-keys/"+created.APIKey.ID, http.NoBody)
 	revReq.Header.Set("X-Api-Key", "admin-key")
@@ -75,19 +110,20 @@ func TestManagedAPIKeysCreateUseRevoke(t *testing.T) {
 
 	after := httptest.NewRecorder()
 	afterReq := httptest.NewRequest(http.MethodGet, "/v1/me", http.NoBody)
-	afterReq.Header.Set("X-Api-Key", created.Secret)
+	afterReq.Header.Set("X-Api-Key", rotated.Secret)
 	handler.ServeHTTP(after, afterReq)
 	if after.Code != http.StatusUnauthorized {
 		t.Fatalf("revoked key should not authenticate -> %d body=%s", after.Code, after.Body.String())
 	}
 
-	// Create and revoke each leave an audit breadcrumb on the log, attributed to
-	// the admin caller (not the token's bound actor) and referencing the token id.
+	// Create, rotate, and revoke each leave an audit breadcrumb on the log,
+	// attributed to the admin caller (not the token's bound actor) and
+	// referencing the token id.
 	evs, err := log.Read(context.Background(), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var createdEv, revokedEv bool
+	var createdEv, rotatedEv, revokedEv bool
 	for _, e := range evs {
 		if e.Stream != auth.AuditStream || e.Actor != "admin" {
 			continue
@@ -98,11 +134,14 @@ func TestManagedAPIKeysCreateUseRevoke(t *testing.T) {
 		switch e.Type {
 		case auth.EventManagedKeyCreated:
 			createdEv = true
+		case auth.EventManagedKeyRotated:
+			rotatedEv = true
 		case auth.EventManagedKeyRevoked:
 			revokedEv = true
 		}
 	}
-	if !createdEv || !revokedEv {
-		t.Fatalf("expected created+revoked audit events, got created=%v revoked=%v", createdEv, revokedEv)
+	if !createdEv || !rotatedEv || !revokedEv {
+		t.Fatalf("expected created+rotated+revoked audit events, got created=%v rotated=%v revoked=%v",
+			createdEv, rotatedEv, revokedEv)
 	}
 }
