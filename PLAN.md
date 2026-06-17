@@ -344,8 +344,8 @@ edge (resetting on resolve). The alerting gap is closed end-to-end — rules + d
 **Comment threads (post-MVP, governance).** `platform/comments` is a general discussion capability — a
 durable, chronological thread keyed by `(subject_type, subject_id)` (`GET/POST /v1/comments/{type}/{id}`),
 reusable `CommentThread.svelte` component — wired onto the items that get approved/rejected/promoted
-(deployment requests) and onto decisions, so every reviewable workflow surface carries an explanation
-trail. Comments are events (auditable). Posting needs `operator`; reading is open to `viewer`.
+(deployment requests), flows, policies, and decisions, so every reviewable workflow surface carries an
+explanation trail. Comments are events (auditable). Posting needs `operator`; reading is open to `viewer`.
 
 **PII masking (post-MVP, compliance).** `platform/privacy` adds a per-workspace sensitive-field list
 (`GET/PUT /v1/privacy`, PUT admin-gated) whose values are redacted by a pure masker in decision

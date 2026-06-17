@@ -62,4 +62,10 @@ test('creates a policy bound to a flow and publishes a band', async ({ page, req
   await page.getByTestId('backtest-policy').click();
   await expect(page.getByTestId('backtest-result')).toBeVisible();
   await expect(page.getByText(/would change disposition/)).toBeVisible();
+
+  // The policy carries a discussion thread — post an explanation.
+  const thread = page.getByTestId('comment-thread');
+  await thread.getByLabel('new comment').fill('Loosening the cutoff for Q3 volume.');
+  await thread.getByTestId('post-comment').click();
+  await expect(thread).toContainText('Loosening the cutoff for Q3 volume.');
 });

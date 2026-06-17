@@ -1971,6 +1971,13 @@
       </table>
     {/if}
   </section>
+
+  {#if flow}
+    <section class="discussion" data-testid="flow-discussion">
+      <h2>Discussion</h2>
+      <CommentThread subjectType="flow" subjectId={flowId} title="Flow discussion" />
+    </section>
+  {/if}
 </main>
 
 <style>

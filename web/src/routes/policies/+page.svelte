@@ -5,6 +5,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import Icon from '$lib/Icon.svelte';
+  import CommentThread from '$lib/CommentThread.svelte';
   import EmptyState from '$lib/EmptyState.svelte';
   import Skeleton from '$lib/Skeleton.svelte';
   import { toast } from '$lib/toast';
@@ -306,6 +307,12 @@
             · <b class="changed">{btReport.summary.flipped ?? 0}</b> would change disposition{/if}
         </p>
       {/if}
+
+      <CommentThread
+        subjectType="policy"
+        subjectId={selected.policy_id}
+        title="Policy discussion"
+      />
     </section>
   {/if}
 </main>
