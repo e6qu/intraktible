@@ -54,7 +54,7 @@
       <span class="k">failed</span><span class="v">{ds.failed}</span>
     </div>
     <div class="ro">
-      <span class="k">success</span><span class="v">{pct(ds.completionRate)}</span>
+      <span class="k">success</span><span class="v">{ds.total ? pct(ds.completionRate) : '—'}</span>
     </div>
   </section>
 
@@ -192,6 +192,13 @@
   @media (max-width: 760px) {
     .grid {
       grid-template-columns: 1fr;
+    }
+  }
+  /* Phone: trim the decision tape to status · slug · duration so it never forces
+     horizontal page scroll (env, version, and time drop out). */
+  @media (max-width: 560px) {
+    .tape td.dim {
+      display: none;
     }
   }
   .panel {

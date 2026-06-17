@@ -18,6 +18,13 @@ test.describe.configure({ mode: 'serial' });
 // design review can compare the three viewer experiences side by side.
 const PERSONAS = ['builder', 'operator', 'showcase'];
 
+// Unique-per-run slugs so the helper can re-run against a persisted --data-dir
+// without colliding on flow slugs (this is a design helper, not a correctness
+// test, so a wall-clock run id is fine here).
+const RUN = String(Date.now()).slice(-7);
+const creditSlug = `shot-credit-${RUN}`;
+const simpleSlug = `shot-simple-${RUN}`;
+
 let flowId = '';
 let caseId = '';
 let decisionId = '';
@@ -27,7 +34,7 @@ let entityId = '';
 test.beforeAll(async ({ request }) => {
   const flow = await request.post('/v1/flows', {
     headers: { 'X-Api-Key': KEY },
-    data: { slug: 'shot-credit', name: 'Credit Decision' }
+    data: { slug: creditSlug, name: 'Credit Decision' }
   });
   flowId = (await flow.json()).flow_id;
   await request.post(`/v1/flows/${flowId}/versions`, {
@@ -67,7 +74,7 @@ test.beforeAll(async ({ request }) => {
   // A simple decideable flow + a run so /decisions has content.
   const simple = await request.post('/v1/flows', {
     headers: { 'X-Api-Key': KEY },
-    data: { slug: 'shot-simple', name: 'Approval' }
+    data: { slug: simpleSlug, name: 'Approval' }
   });
   const simpleId = (await simple.json()).flow_id;
   await request.post(`/v1/flows/${simpleId}/versions`, {
@@ -91,7 +98,7 @@ test.beforeAll(async ({ request }) => {
     }
   });
   await expect(async () => {
-    const r = await request.post('/v1/flows/shot-simple/production/decide', {
+    const r = await request.post(`/v1/flows/${simpleSlug}/production/decide`, {
       headers: { 'X-Api-Key': KEY },
       data: { data: {} }
     });
@@ -157,6 +164,22 @@ test('screenshots — mobile', async ({ page }) => {
   }
 });
 
+// Per-persona mobile: each dashboard + the persona switcher at phone width.
+for (const p of PERSONAS) {
+  test(`screenshots — mobile ${p}`, async ({ page }) => {
+    await page.context().request.post('/v1/login', { data: { api_key: KEY } });
+    await page.addInitScript((persona) => localStorage.setItem('intraktible-persona', persona), p);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto('/');
+    await page.waitForTimeout(900);
+    await page.screenshot({ path: `${SHOTS}/m-persona-${p}-home.png`, fullPage: true });
+    // Open the persona switcher menu to verify it fits on a phone.
+    await page.getByTestId('persona-switch').locator('summary').click();
+    await page.waitForTimeout(250);
+    await page.screenshot({ path: `${SHOTS}/m-persona-${p}-menu.png` });
+  });
+}
+
 for (const themeMode of ['light', 'dark']) {
   test(`screenshots — ${themeMode}`, async ({ page }) => {
     await page.context().request.post('/v1/login', { data: { api_key: KEY } });
@@ -200,7 +223,15 @@ for (const p of PERSONAS) {
       const routes: Record<string, string> = {
         home: '/',
         engine: '/engine',
+        builder: `/engine/${flowId}`,
+        decisions: '/decisions',
+        'decision-detail': `/decisions/${decisionId}`,
         cases: '/cases',
+        'case-detail': `/cases/${caseId}`,
+        agents: '/agents',
+        'agent-detail': '/agents/screener',
+        data: '/data',
+        'data-detail': `/data/${entityType}/${entityId}`,
         audit: '/audit'
       };
       for (const [label, path] of Object.entries(routes)) {

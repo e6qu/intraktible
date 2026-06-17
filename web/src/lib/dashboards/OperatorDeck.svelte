@@ -46,7 +46,7 @@
       <span class="kpi-label">Decisions</span>
       <span class="kpi-num">{compact(ds.total)}</span>
       <span class="kpi-foot {ds.failed ? 'warn' : 'ok'}"
-        >{pct(ds.completionRate)} success · {ds.failed} failed</span
+        >{ds.total ? pct(ds.completionRate) + ' success' : 'no runs yet'} · {ds.failed} failed</span
       >
     </a>
     <a class="kpi" href="/cases">
@@ -60,7 +60,7 @@
       <span class="kpi-label">Agent runs</span>
       <span class="kpi-num">{compact(r.total)}</span>
       <span class="kpi-foot {r.failed ? 'warn' : 'ok'}"
-        >{pct(runSuccess)} success · {r.failed} failed</span
+        >{r.total ? pct(runSuccess) + ' success' : 'no runs yet'} · {r.failed} failed</span
       >
     </a>
     <a class="kpi" href="/engine">

@@ -43,10 +43,47 @@
 
   const currentPersona = $derived(PERSONAS.find((p) => p.id === persona) ?? PERSONAS[0]);
   let personaEl = $state<HTMLDetailsElement | null>(null);
+  let menuEl = $state<HTMLDivElement | null>(null);
 
   function choose(id: typeof persona): void {
     setPersona(id);
-    if (personaEl) personaEl.open = false;
+    closeMenu();
+  }
+  function closeMenu(): void {
+    if (personaEl) {
+      personaEl.open = false;
+      personaEl.querySelector<HTMLElement>('summary')?.focus();
+    }
+  }
+  // Roving focus across the option buttons (ARIA menu keyboard pattern).
+  function menuKeydown(e: KeyboardEvent): void {
+    const opts = menuEl
+      ? Array.from(menuEl.querySelectorAll<HTMLButtonElement>('.persona-opt'))
+      : [];
+    if (opts.length === 0) return;
+    const i = opts.indexOf(document.activeElement as HTMLButtonElement);
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      opts[(i + 1) % opts.length]?.focus();
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      opts[(i - 1 + opts.length) % opts.length]?.focus();
+    } else if (e.key === 'Home') {
+      e.preventDefault();
+      opts[0]?.focus();
+    } else if (e.key === 'End') {
+      e.preventDefault();
+      opts.at(-1)?.focus();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      closeMenu();
+    }
+  }
+  // On open, move focus to the active option so arrow keys work immediately.
+  function onPersonaToggle(): void {
+    if (personaEl?.open) {
+      menuEl?.querySelector<HTMLButtonElement>('.persona-opt.on')?.focus();
+    }
   }
   // Close the persona menu on an outside click (details has no native dismiss).
   $effect(() => {
@@ -62,7 +99,7 @@
 <header>
   <a class="brand" href="/">
     <span class="mark"><Icon name="logo" size={20} /></span>
-    intraktible
+    <span class="wordmark">intraktible</span>
   </a>
   <nav aria-label="Primary">
     {#each nav as item (item.href)}
@@ -80,19 +117,38 @@
   <span class="auth" data-testid="auth-status">
     {#if $user}
       <span class="who">Signed in as <b>{$user.actor}</b></span>
-      <button class="ghost" onclick={signOut}><Icon name="signout" size={14} /> Sign out</button>
+      <button class="ghost" onclick={signOut} aria-label="Sign out">
+        <Icon name="signout" size={14} /> <span class="signout-label">Sign out</span>
+      </button>
     {:else}
       <span class="who muted">Not signed in</span>
       <a class="navlink" href="/login">Sign in</a>
     {/if}
   </span>
-  <details class="persona" bind:this={personaEl} data-testid="persona-switch">
-    <summary class="persona-trigger" title="Switch view — {currentPersona.blurb}">
+  <details
+    class="persona"
+    bind:this={personaEl}
+    data-testid="persona-switch"
+    ontoggle={onPersonaToggle}
+  >
+    <summary
+      class="persona-trigger"
+      title="Switch view — {currentPersona.blurb}"
+      aria-haspopup="menu"
+      aria-label="Switch view persona — current: {currentPersona.label}"
+    >
       <span class="avatar"><Icon name={currentPersona.id} size={16} /></span>
       <span class="persona-name">{currentPersona.label}</span>
       <span class="caret"><Icon name="chevron-down" size={13} /></span>
     </summary>
-    <div class="persona-menu" role="menu" aria-label="View persona">
+    <div
+      class="persona-menu"
+      role="menu"
+      aria-label="View persona"
+      tabindex="-1"
+      bind:this={menuEl}
+      onkeydown={menuKeydown}
+    >
       <p class="persona-hint">View as</p>
       {#each PERSONAS as p (p.id)}
         <button
@@ -149,11 +205,60 @@
     .navlink {
       padding: 0.4rem 0.5rem;
     }
+    nav {
+      gap: 0.1rem;
+    }
   }
-  @media (max-width: 460px) {
-    .brand {
-      font-size: 0;
+  /* Phone: drop the brand wordmark, sign-out label, and persona caret to icons,
+     and tighten nav, so the header (brand · nav · persona · theme) never
+     overflows the viewport. */
+  @media (max-width: 560px) {
+    header {
+      gap: 0.25rem;
+      padding: 0.5rem 0.45rem;
+    }
+    .wordmark {
+      display: none;
+    }
+    .signout-label {
+      display: none;
+    }
+    .auth {
+      gap: 0.25rem;
+    }
+    .auth .ghost {
+      padding: 0.3rem 0.3rem;
+    }
+    /* Let the nav shrink below its content width and scroll horizontally, so the
+       brand, persona switcher, and theme toggle stay pinned and the header never
+       overflows the viewport — however many nav items there are. */
+    nav {
       gap: 0;
+      min-width: 0;
+      overflow-x: auto;
+      scrollbar-width: none;
+      -webkit-overflow-scrolling: touch;
+    }
+    nav::-webkit-scrollbar {
+      display: none;
+    }
+    .navlink {
+      padding: 0.35rem 0.32rem;
+      flex: 0 0 auto;
+    }
+    .persona-trigger {
+      padding: 0.2rem 0.28rem;
+    }
+    .avatar {
+      width: 24px;
+      height: 24px;
+    }
+    .caret {
+      display: none;
+    }
+    .toggle {
+      width: 32px;
+      height: 32px;
     }
   }
   .brand {
