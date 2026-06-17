@@ -78,6 +78,66 @@ test('a decision run shows in the history and its detail has the node trace', as
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(decisionId);
 });
 
+test('a bound policy assigns a disposition shown on the decision detail', async ({
+  page,
+  request
+}) => {
+  const H = { 'X-Api-Key': KEY };
+  const slug = uniqueSlug();
+  const created = await request.post('/v1/flows', { headers: H, data: { slug, name: 'Scored' } });
+  const { flow_id } = await created.json();
+  await request.post(`/v1/flows/${flow_id}/versions`, {
+    headers: H,
+    data: {
+      graph: {
+        nodes: [
+          { id: 'in', type: 'input' },
+          {
+            id: 'a',
+            type: 'assignment',
+            config: { assignments: [{ target: 'score', expr: 'score' }] }
+          },
+          { id: 'out', type: 'output', config: { fields: ['score'] } }
+        ],
+        edges: [
+          { from: 'in', to: 'a' },
+          { from: 'a', to: 'out' }
+        ]
+      }
+    }
+  });
+  // A policy bound to the flow: high score auto-approves.
+  const pol = await request.post('/v1/policies', {
+    headers: H,
+    data: { name: 'scored-stp', flow_slug: slug }
+  });
+  const { policy_id } = await pol.json();
+  await request.post(`/v1/policies/${policy_id}/versions`, {
+    headers: H,
+    data: {
+      spec: {
+        rules: [{ when: 'score >= 0.85', disposition: 'approve', code: 'P-AUTO' }],
+        default: 'refer'
+      }
+    }
+  });
+
+  // Decide a high score; retry until both the flow and policy projections are live.
+  let decisionId = '';
+  await expect(async () => {
+    const r = await request.post(`/v1/flows/${slug}/production/decide`, {
+      headers: H,
+      data: { data: { score: 0.9 } }
+    });
+    const body = await r.json();
+    expect(body.disposition).toBe('approve');
+    decisionId = body.decision_id;
+  }).toPass({ timeout: 5000 });
+
+  await page.goto(`/decisions/${decisionId}`);
+  await expect(page.locator('.disp.approve')).toHaveText('approve');
+});
+
 test('a reason node yields adverse-action reason codes on the decision detail', async ({
   page,
   request

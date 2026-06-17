@@ -53,6 +53,14 @@ type DecisionCompleted struct {
 	Variant    string          `json:"variant,omitempty"`
 	Output     json.RawMessage `json:"output"`
 	DurationMS int64           `json:"duration_ms"`
+	// The operational policy's disposition for this decision (approve|decline|
+	// refer), plus the policy that assigned it — recorded so it is replay-stable.
+	// Empty when no policy is bound to the flow.
+	Disposition       string `json:"disposition,omitempty"`
+	DispositionCode   string `json:"disposition_code,omitempty"`
+	DispositionReason string `json:"disposition_reason,omitempty"`
+	PolicyID          string `json:"policy_id,omitempty"`
+	PolicyVersion     int    `json:"policy_version,omitempty"`
 }
 
 // ManualReviewRequested is raised when a decision runs a manual_review node. It

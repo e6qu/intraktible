@@ -50,12 +50,19 @@ type Record struct {
 	Data        json.RawMessage `json:"data,omitempty"`
 	Output      json.RawMessage `json:"output,omitempty"`
 	ReasonCodes []ReasonCode    `json:"reason_codes,omitempty"`
-	Error       string          `json:"error,omitempty"`
-	TimeOrdered []string        `json:"time_ordered"`
-	Nodes       []NodeRecord    `json:"nodes"`
-	StartedAt   time.Time       `json:"started_at"`
-	EndedAt     time.Time       `json:"ended_at,omitempty"`
-	DurationMS  int64           `json:"duration_ms,omitempty"`
+	// Disposition is the operational policy's outcome (approve|decline|refer) +
+	// the policy that assigned it, lifted first-class onto the decision record.
+	Disposition       string       `json:"disposition,omitempty"`
+	DispositionCode   string       `json:"disposition_code,omitempty"`
+	DispositionReason string       `json:"disposition_reason,omitempty"`
+	PolicyID          string       `json:"policy_id,omitempty"`
+	PolicyVersion     int          `json:"policy_version,omitempty"`
+	Error             string       `json:"error,omitempty"`
+	TimeOrdered       []string     `json:"time_ordered"`
+	Nodes             []NodeRecord `json:"nodes"`
+	StartedAt         time.Time    `json:"started_at"`
+	EndedAt           time.Time    `json:"ended_at,omitempty"`
+	DurationMS        int64        `json:"duration_ms,omitempty"`
 }
 
 // Projector folds decision events into Record documents.
@@ -125,6 +132,8 @@ func applyCompleted(ctx context.Context, e eventlog.Envelope, s store.Store) err
 	return update(ctx, s, e, p.DecisionID, func(r *Record) {
 		r.Status, r.Output, r.EndedAt, r.DurationMS = "completed", p.Output, e.Time, p.DurationMS
 		r.ReasonCodes = extractReasonCodes(p.Output)
+		r.Disposition, r.DispositionCode, r.DispositionReason = p.Disposition, p.DispositionCode, p.DispositionReason
+		r.PolicyID, r.PolicyVersion = p.PolicyID, p.PolicyVersion
 	})
 }
 

@@ -18,6 +18,7 @@ import (
 	"github.com/e6qu/intraktible/decision-engine/flows"
 	"github.com/e6qu/intraktible/decision-engine/history"
 	"github.com/e6qu/intraktible/decision-engine/internal/flowtest"
+	"github.com/e6qu/intraktible/decision-engine/policy"
 	"github.com/e6qu/intraktible/decision-engine/service"
 	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/testutil"
@@ -235,12 +236,78 @@ func TestDecideBatchOverHTTP(t *testing.T) {
 	api.Request(t, http.MethodPost, "/v1/flows/batch/production/decide/batch", map[string]any{"dataset": []any{}}, http.StatusBadRequest, nil)
 }
 
+func TestDecideAppliesPolicyOverHTTP(t *testing.T) {
+	api := startEngine(t)
+	var created struct {
+		FlowID string `json:"flow_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows", map[string]any{"slug": "scored", "name": "Scored"}, http.StatusCreated, &created)
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/versions", map[string]any{
+		"graph": map[string]any{
+			"nodes": []map[string]any{
+				{"id": "in", "type": "input"},
+				{"id": "a", "type": "assignment", "config": map[string]any{"assignments": []map[string]any{{"target": "score", "expr": "score"}}}},
+				{"id": "out", "type": "output", "config": map[string]any{"fields": []string{"score"}}},
+			},
+			"edges": []map[string]any{{"from": "in", "to": "a"}, {"from": "a", "to": "out"}},
+		},
+	}, http.StatusCreated, nil)
+
+	// A policy bound to the flow: high score auto-approves, else refer.
+	var pol struct {
+		PolicyID string `json:"policy_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/policies", map[string]any{"name": "scored-stp", "flow_slug": "scored"}, http.StatusCreated, &pol)
+	api.Request(t, http.MethodPost, "/v1/policies/"+pol.PolicyID+"/versions", map[string]any{
+		"spec": map[string]any{
+			"rules":   []map[string]any{{"when": "score >= 0.85", "disposition": "approve", "code": "P-AUTO"}},
+			"default": "refer",
+		},
+	}, http.StatusCreated, nil)
+
+	type decideResp struct {
+		DecisionID  string `json:"decision_id"`
+		Status      string `json:"status"`
+		Disposition string `json:"disposition"`
+	}
+	// Decide a high score → the policy auto-approves (retry while both the flow and
+	// policy projections catch up).
+	var dec decideResp
+	if !testutil.Eventually(t, func() bool {
+		dec = decideResp{}
+		api.Request(t, http.MethodPost, "/v1/flows/scored/production/decide", map[string]any{"data": map[string]any{"score": 0.9}}, http.StatusOK, &dec)
+		return dec.Status == "completed" && dec.Disposition == policy.Approve
+	}) {
+		t.Fatalf("policy never auto-approved: %+v", dec)
+	}
+
+	// The disposition is recorded first-class on the decision record.
+	var rec history.Record
+	api.Request(t, http.MethodGet, "/v1/decisions/"+dec.DecisionID, nil, http.StatusOK, &rec)
+	if rec.Disposition != policy.Approve || rec.PolicyID != pol.PolicyID || rec.PolicyVersion != 1 {
+		t.Fatalf("decision record missing policy disposition: %+v", rec)
+	}
+
+	// A low score refers (the residual that needs a human).
+	var low decideResp
+	api.Request(t, http.MethodPost, "/v1/flows/scored/production/decide", map[string]any{"data": map[string]any{"score": 0.2}}, http.StatusOK, &low)
+	if low.Disposition != policy.Refer {
+		t.Fatalf("low score should refer, got %q", low.Disposition)
+	}
+}
+
 func startEngine(t *testing.T, opts ...command.DecideOption) *testutil.API {
 	t.Helper()
 	log, st := testutil.NewLogStore(t)
 	svc := service.New(command.NewHandler(log), command.NewDecideHandler(log, st, opts...), st)
+	pol := policy.New(policy.NewHandler(log), st)
 	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "author"}
-	return testutil.StartAPI(t, log, st, "test-key", id, svc.Routes, flows.Projector{}, history.Projector{}, analytics.Projector{})
+	routes := func(mux *http.ServeMux) {
+		svc.Routes(mux)
+		pol.Routes(mux)
+	}
+	return testutil.StartAPI(t, log, st, "test-key", id, routes,
+		flows.Projector{}, history.Projector{}, analytics.Projector{}, policy.Projector{})
 }
 
 // stubFeatures is a fixed feature source for the decide HTTP test.

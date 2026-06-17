@@ -12,6 +12,7 @@ import (
 	"github.com/e6qu/intraktible/decision-engine/domain"
 	"github.com/e6qu/intraktible/decision-engine/events"
 	"github.com/e6qu/intraktible/decision-engine/flows"
+	"github.com/e6qu/intraktible/decision-engine/policy"
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/store"
@@ -118,6 +119,11 @@ type DecideResult struct {
 	Status     string
 	Output     map[string]any
 	Error      string
+	// Disposition is the operational policy's automated outcome (approve|decline|
+	// refer), empty when no policy is bound to the flow. DispositionReason is the
+	// matched rule's description (or why it referred).
+	Disposition       string
+	DispositionReason string
 }
 
 // Decide runs the latest published version of the flow with the given slug in
@@ -210,12 +216,24 @@ func (h *DecideHandler) Decide(ctx context.Context, id identity.Identity, slug, 
 		if err != nil {
 			return DecideResult{}, fmt.Errorf("decision-engine: marshal output: %w", err)
 		}
+		// Operational policy: assign a disposition over the output. A store error is
+		// fatal; a missing policy yields no disposition; a policy eval error refers
+		// (routes to a human) rather than failing an otherwise-completed decision.
+		disp, err := h.applyPolicy(ctx, id, slug, run.Output)
+		if err != nil {
+			return DecideResult{}, err
+		}
 		terminalType = events.TypeDecisionCompleted
 		terminalPayload = events.DecisionCompleted{
 			DecisionID: decisionID, FlowID: fv.FlowID, Version: version.Version, Variant: variant,
 			Output: outJSON, DurationMS: dur,
+			Disposition: disp.disposition, DispositionCode: disp.code, DispositionReason: disp.reason,
+			PolicyID: disp.policyID, PolicyVersion: disp.policyVersion,
 		}
-		result = DecideResult{DecisionID: decisionID, Status: domain.StatusCompleted, Output: run.Output}
+		result = DecideResult{
+			DecisionID: decisionID, Status: domain.StatusCompleted, Output: run.Output,
+			Disposition: disp.disposition, DispositionReason: disp.reason,
+		}
 	}
 	if err := h.emit(ctx, id, terminalType, terminalPayload); err != nil {
 		return DecideResult{}, err
@@ -349,6 +367,39 @@ func (h *DecideHandler) emitEscalations(ctx context.Context, id identity.Identit
 		}
 	}
 	return nil
+}
+
+// dispositionResult is the policy outcome the decide path records on a completed
+// decision (internal; flattened onto DecisionCompleted + DecideResult).
+type dispositionResult struct {
+	disposition   string
+	code          string
+	reason        string
+	policyID      string
+	policyVersion int
+}
+
+// applyPolicy resolves the active policy for the flow and assigns a disposition
+// over the output. No policy bound → empty disposition; a policy evaluation error
+// → refer (with the error as the reason) so a completed decision is never failed
+// by a policy problem; only a store error is returned.
+func (h *DecideHandler) applyPolicy(ctx context.Context, id identity.Identity, slug string, output map[string]any) (dispositionResult, error) {
+	pv, ver, ok, err := policy.ActiveForFlow(ctx, h.store, id, slug)
+	if err != nil {
+		return dispositionResult{}, err
+	}
+	if !ok {
+		return dispositionResult{}, nil
+	}
+	res := dispositionResult{policyID: pv.PolicyID, policyVersion: ver.Version}
+	// A policy that cannot evaluate (e.g. references a field the output lacks)
+	// refers to a human rather than failing the completed decision.
+	if out, applyErr := ver.Spec.Apply(output); applyErr != nil {
+		res.disposition, res.reason = policy.Refer, "policy: "+applyErr.Error()
+	} else {
+		res.disposition, res.code, res.reason = out.Disposition, out.Code, out.Description
+	}
+	return res, nil
 }
 
 // resolveVersion selects the version to run for an environment: the deployed

@@ -1463,7 +1463,7 @@
       </div>
       <table class="bt-table">
         <thead>
-          <tr><th>#</th><th>Status</th><th>Decision</th><th>Detail</th></tr>
+          <tr><th>#</th><th>Status</th><th>Disposition</th><th>Decision</th><th>Detail</th></tr>
         </thead>
         <tbody>
           {#each batchReport.results as r (r.index)}
@@ -1473,6 +1473,7 @@
                 class={r.status === 'completed' ? 'ok' : r.status === 'failed' ? 'err' : 'changed'}
                 >{r.status}</td
               >
+              <td>{r.disposition ?? '—'}</td>
               <td>
                 {#if r.decision_id}<a href={`/decisions/${r.decision_id}`}>view</a>{:else}—{/if}
               </td>

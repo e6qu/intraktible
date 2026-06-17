@@ -77,6 +77,15 @@ Done — execution runtime + decide API + decision history (the decision event s
   (completed/failed/rejected) + per-row results; a row that fails input validation/lookup is `rejected`
   (no decision), a row whose flow logic errors is a recorded `failed`. Dataset capped at 500. Surfaced as
   a builder panel.
+- **Policies (`decision-engine/policy`):** the operational disposition layer over a flow — a first-class,
+  versioned, governed artifact (create/publish like flows; authoring needs `editor`) that maps a flow's
+  output to a **disposition** (`approve` / `decline` / `refer`) via ordered expr-lang bands + a default.
+  The decide path resolves the policy bound to the flow (`ActiveForFlow`, latest version) and applies it
+  to the output, recording the disposition + the policy version on the decision (replay-stable; lifted
+  first-class onto the history record and returned by `decide` / `decide/batch`). It is the shared brain
+  for real-time (faster/STP), bulk, and (next) pre-approval decisioning. A policy that can't evaluate
+  refers (routes to a human) rather than failing a completed decision. API: `POST /v1/policies`,
+  `POST /v1/policies/{id}/versions`, `GET /v1/policies[/{id}]`.
 - **Flow export** (`decision-engine/export`, pure): a flow version renders to **Mermaid**
   (`flowchart`, `stateDiagram-v2`), **BPMN 2.0 XML with BPMNDI** layout (opens laid-out in
   bpmn.io / Camunda; node types map to start/end events, gateways, business-rule/service/script/user

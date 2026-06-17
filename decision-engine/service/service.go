@@ -224,10 +224,11 @@ type decideRequest struct {
 }
 
 type decideResponse struct {
-	DecisionID string         `json:"decision_id"`
-	Status     string         `json:"status"`
-	Data       map[string]any `json:"data,omitempty"`
-	Error      string         `json:"error,omitempty"`
+	DecisionID  string         `json:"decision_id"`
+	Status      string         `json:"status"`
+	Data        map[string]any `json:"data,omitempty"`
+	Disposition string         `json:"disposition,omitempty"`
+	Error       string         `json:"error,omitempty"`
 }
 
 // runDecide executes a published flow. A flow whose logic errors is a recorded
@@ -250,7 +251,8 @@ func (s *Service) runDecide(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, decideResponse{
-		DecisionID: result.DecisionID, Status: result.Status, Data: result.Output, Error: result.Error,
+		DecisionID: result.DecisionID, Status: result.Status, Data: result.Output,
+		Disposition: result.Disposition, Error: result.Error,
 	})
 }
 
@@ -265,11 +267,12 @@ type batchRequest struct {
 }
 
 type batchResult struct {
-	Index      int            `json:"index"`
-	DecisionID string         `json:"decision_id,omitempty"`
-	Status     string         `json:"status"` // completed | failed | rejected
-	Data       map[string]any `json:"data,omitempty"`
-	Error      string         `json:"error,omitempty"`
+	Index       int            `json:"index"`
+	DecisionID  string         `json:"decision_id,omitempty"`
+	Status      string         `json:"status"` // completed | failed | rejected
+	Data        map[string]any `json:"data,omitempty"`
+	Disposition string         `json:"disposition,omitempty"`
+	Error       string         `json:"error,omitempty"`
 }
 
 type batchResponse struct {
@@ -321,7 +324,8 @@ func (s *Service) decideBatch(w http.ResponseWriter, r *http.Request) {
 			resp.Failed++
 		}
 		resp.Results = append(resp.Results, batchResult{
-			Index: i, DecisionID: res.DecisionID, Status: res.Status, Data: res.Output, Error: res.Error,
+			Index: i, DecisionID: res.DecisionID, Status: res.Status, Data: res.Output,
+			Disposition: res.Disposition, Error: res.Error,
 		})
 	}
 	httpx.JSON(w, http.StatusOK, resp)

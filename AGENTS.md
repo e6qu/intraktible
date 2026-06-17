@@ -21,8 +21,11 @@ slice; and the **Decision Engine** — flow model + versioning, a deterministic 
 emits structured adverse-action reason codes lifted first-class onto the decision; expr-lang for
 expressions, Starlark for the Code node), the `…/{env}/decide` API with **per-environment version
 pinning + A/B (champion/challenger) routing**, **batch decisioning** (`…/{env}/decide/batch` runs a
-dataset of inputs through the recorded decide path — each row a real decision, capped at 500), decision
-history, and **analytics-lite** (per-flow metrics with champion/challenger breakdown) — all
+dataset of inputs through the recorded decide path — each row a real decision, capped at 500),
+**policies** (`decision-engine/policy` — a first-class versioned artifact mapping a flow's output to a
+disposition `approve`/`decline`/`refer` via expr bands; the decide path applies the bound policy and
+records the disposition on the decision — the shared brain for real-time/bulk/pre-approval decisioning),
+decision history, and **analytics-lite** (per-flow metrics with champion/challenger breakdown) — all
 command→event→projection→API, durable & replayable.
 The **Svelte Flow builder UI** (`web/src/routes/engine`) lists/creates flows and edits a flow's graph
 (add nodes from a palette, wire edges, edit per-node config via structured panels for common types or

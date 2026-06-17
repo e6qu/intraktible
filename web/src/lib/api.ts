@@ -110,6 +110,7 @@ export interface DecideResult {
   decision_id: string;
   status: string;
   data?: Record<string, unknown>;
+  disposition?: string; // approve | decline | refer (when a policy is bound)
   error?: string;
 }
 
@@ -217,6 +218,10 @@ export interface Decision {
   data?: unknown;
   output?: unknown;
   reason_codes?: ReasonCode[];
+  disposition?: string; // approve | decline | refer
+  disposition_reason?: string;
+  policy_id?: string;
+  policy_version?: number;
   error?: string;
   nodes?: NodeRecord[];
   started_at: string;
@@ -460,6 +465,7 @@ export interface BatchResult {
   decision_id?: string;
   status: string; // completed | failed | rejected
   data?: Record<string, unknown>;
+  disposition?: string; // approve | decline | refer
   error?: string;
 }
 

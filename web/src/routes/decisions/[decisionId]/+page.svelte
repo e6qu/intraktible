@@ -74,6 +74,13 @@
       <dd>{d.environment}</dd>
       <dt>variant</dt>
       <dd>{d.variant ?? '—'}</dd>
+      {#if d.disposition}
+        <dt>disposition</dt>
+        <dd>
+          <span class="disp {d.disposition}">{d.disposition}</span>
+          {#if d.disposition_reason}<span class="muted"> · {d.disposition_reason}</span>{/if}
+        </dd>
+      {/if}
       <dt>duration</dt>
       <dd>{d.duration_ms ?? 0} ms</dd>
       <dt>decision id</dt>
@@ -189,6 +196,27 @@
     display: flex;
     align-items: baseline;
     gap: 0.6rem;
+  }
+  .disp {
+    padding: 0.05rem 0.5rem;
+    border-radius: 999px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    text-transform: capitalize;
+    background: var(--surface-2);
+    color: var(--fg-muted);
+  }
+  .disp.approve {
+    background: color-mix(in srgb, var(--ok) 18%, transparent);
+    color: var(--ok);
+  }
+  .disp.decline {
+    background: color-mix(in srgb, var(--danger) 16%, transparent);
+    color: var(--danger);
+  }
+  .disp.refer {
+    background: color-mix(in srgb, var(--warn) 18%, transparent);
+    color: var(--warn);
   }
   .rcode {
     font-family: var(--font-mono);
