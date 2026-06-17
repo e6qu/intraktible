@@ -52,7 +52,7 @@ func TestAnalyticsMetrics(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := h.ApproveDeployment(ctx, approver, flowID, reqID); err != nil {
+		if _, err := h.ApproveDeployment(ctx, approver, flowID, reqID, ""); err != nil {
 			t.Fatal(err)
 		}
 		if !testutil.Eventually(t, func() bool {

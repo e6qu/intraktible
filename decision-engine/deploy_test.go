@@ -66,7 +66,7 @@ func TestVersionPinningAndABRouting(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := h.ApproveDeployment(ctx, approver, flowID, reqID); err != nil {
+		if _, err := h.ApproveDeployment(ctx, approver, flowID, reqID, ""); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -178,12 +178,12 @@ func TestMakerCheckerApproval(t *testing.T) {
 	}
 
 	// Four-eyes: the maker cannot approve their own request.
-	if _, err := h.ApproveDeployment(ctx, maker, flowID, reqID); err == nil {
+	if _, err := h.ApproveDeployment(ctx, maker, flowID, reqID, ""); err == nil {
 		t.Fatal("the proposer must not be able to approve their own deployment (four-eyes)")
 	}
 
-	// A different user (the checker) approves it, which deploys.
-	if _, err := h.ApproveDeployment(ctx, checker, flowID, reqID); err != nil {
+	// A different user (the checker) approves it with an explanation, which deploys.
+	if _, err := h.ApproveDeployment(ctx, checker, flowID, reqID, "backtest green, ship it"); err != nil {
 		t.Fatal(err)
 	}
 	s := store.NewMemory()
@@ -201,9 +201,13 @@ func TestMakerCheckerApproval(t *testing.T) {
 		fv.DeploymentRequests[0].DecidedBy != "checker" {
 		t.Fatalf("request not marked approved: %+v", fv.DeploymentRequests)
 	}
+	// The approver's explanation is recorded on the request (the audit trail).
+	if fv.DeploymentRequests[0].Reason != "backtest green, ship it" {
+		t.Fatalf("approval reason not recorded: %+v", fv.DeploymentRequests[0])
+	}
 
 	// Re-approving a decided request fails.
-	if _, err := h.ApproveDeployment(ctx, checker, flowID, reqID); err == nil {
+	if _, err := h.ApproveDeployment(ctx, checker, flowID, reqID, ""); err == nil {
 		t.Fatal("re-approving an already-approved request should fail")
 	}
 

@@ -667,10 +667,6 @@
   let depChallenger = $state('');
   let depChallengerPct = $state('');
   let deploying = $state(false);
-  // Pending requests awaiting a checker (the maker-checker review queue).
-  let pendingRequests = $derived(
-    (flow?.deployment_requests ?? []).filter((r) => r.status === 'pending')
-  );
 
   function liveVersion(environment: string): number | undefined {
     // Lookup via entries (not a computed object index) to stay clear of the
@@ -736,10 +732,16 @@
     }
   }
 
+  // All deployment requests (newest first) — pending and decided stay visible so
+  // the approval/rejection explanation persists with the request.
+  let allRequests = $derived([...(flow?.deployment_requests ?? [])].reverse());
+
   async function approve(reqId: string) {
+    const reason = prompt('Approval note (the explanation recorded with this decision):', '');
+    if (reason === null) return; // cancelled
     error = '';
     try {
-      await approveDeployment(key, flowId, reqId);
+      await approveDeployment(key, flowId, reqId, reason.trim());
       toast.success('Deployment approved and live');
       await load();
     } catch (e) {
@@ -748,9 +750,11 @@
   }
 
   async function reject(reqId: string) {
+    const reason = prompt('Reason for rejecting this deployment:', '');
+    if (reason === null) return; // cancelled
     error = '';
     try {
-      await rejectDeployment(key, flowId, reqId, 'rejected from the builder');
+      await rejectDeployment(key, flowId, reqId, reason.trim());
       toast.success('Deployment request rejected');
       await load();
     } catch (e) {
@@ -1240,29 +1244,36 @@
       >
     </div>
 
-    {#if pendingRequests.length > 0}
-      <div class="requests" data-testid="pending-requests">
-        <h3>Pending approvals</h3>
+    {#if allRequests.length > 0}
+      <div class="requests" data-testid="deployment-requests">
+        <h3>Deployment requests</h3>
         <table>
           <thead>
-            <tr><th>Env</th><th>Version</th><th>Proposed by</th><th></th></tr>
+            <tr><th>Env</th><th>Version</th><th>Status</th><th>Proposed by</th><th></th></tr>
           </thead>
           <tbody>
-            {#each pendingRequests as r (r.request_id)}
+            {#each allRequests as r (r.request_id)}
               <tr>
                 <td>{r.environment}</td>
                 <td
                   >v{r.version}{#if r.challenger_version}
                     + v{r.challenger_version} @ {r.challenger_pct ?? 0}%{/if}</td
                 >
+                <td><span class="reqstatus {r.status}">{r.status}</span></td>
                 <td>{r.requested_by}</td>
                 <td class="reqactions">
-                  <button class="primary" onclick={() => approve(r.request_id)}>Approve</button>
-                  <button onclick={() => reject(r.request_id)}>Reject</button>
+                  {#if r.status === 'pending'}
+                    <button class="primary" onclick={() => approve(r.request_id)}>Approve</button>
+                    <button onclick={() => reject(r.request_id)}>Reject</button>
+                  {:else}
+                    <span class="muted"
+                      >{r.status} by {r.decided_by ?? '—'}{#if r.reason}: {r.reason}{/if}</span
+                    >
+                  {/if}
                 </td>
               </tr>
               <tr class="threadrow">
-                <td colspan="4">
+                <td colspan="5">
                   <CommentThread
                     subjectType="deployment_request"
                     subjectId={r.request_id}
@@ -2275,6 +2286,27 @@
   .reqactions {
     display: flex;
     gap: 0.4rem;
+    align-items: center;
+  }
+  .reqstatus {
+    padding: 0.05rem 0.45rem;
+    border-radius: 999px;
+    font-size: 0.74rem;
+    font-weight: 600;
+    background: var(--surface-2);
+    color: var(--fg-muted);
+  }
+  .reqstatus.pending {
+    background: color-mix(in srgb, var(--warn) 18%, transparent);
+    color: var(--warn);
+  }
+  .reqstatus.approved {
+    background: color-mix(in srgb, var(--ok) 18%, transparent);
+    color: var(--ok);
+  }
+  .reqstatus.rejected {
+    background: color-mix(in srgb, var(--danger) 16%, transparent);
+    color: var(--danger);
   }
   .versions {
     margin: 0.6rem 0;

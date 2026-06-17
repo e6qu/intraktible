@@ -118,6 +118,7 @@ type DeploymentApproved struct {
 	Version           int    `json:"version"`
 	ChallengerVersion int    `json:"challenger_version,omitempty"`
 	ChallengerPct     int    `json:"challenger_pct,omitempty"`
+	Reason            string `json:"reason,omitempty"` // the approver's note (explanation)
 }
 
 // DeploymentRejected records that a proposed deployment was rejected.

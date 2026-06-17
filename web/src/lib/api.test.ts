@@ -193,7 +193,7 @@ describe('deployment & maker-checker', () => {
 
   it('approveDeployment hits the approve endpoint', async () => {
     const fetcher = fetcherReturning(200, { status: 'approved' });
-    await approveDeployment('k', 'f1', 'req-9', fetcher);
+    await approveDeployment('k', 'f1', 'req-9', 'looks good', fetcher);
     expect(fetcher.mock.calls[0][0]).toBe('/v1/flows/f1/deployment-requests/req-9/approve');
   });
 
@@ -203,6 +203,7 @@ describe('deployment & maker-checker', () => {
         'k',
         'f1',
         'req-9',
+        '',
         fetcherReturning(400, { error: 'cannot approve your own deployment request' })
       )
     ).rejects.toThrow(/own deployment request/);

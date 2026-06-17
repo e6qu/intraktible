@@ -48,8 +48,10 @@ enterprise buyers; **P2** = differentiators / scale.
 - **P0 — Maker-checker (four-eyes) approvals — ✅ done (backend + UI).** A production
   deploy must be *proposed* by one user and *approved* by a *different* one. The
   builder now has a **Deployment panel**: live-version-per-environment badges,
-  deploy-to-sandbox, propose-for-production, and a pending-approvals queue with
-  approve/reject (self-approval is refused — four-eyes), plus A/B challenger %.
+  deploy-to-sandbox, propose-for-production, and a requests queue (pending +
+  decided) with approve/reject (self-approval is refused — four-eyes), plus A/B
+  challenger %. Approve and reject both capture an **explanation** recorded on the
+  request, and each request carries a comment thread, so the who/why is durable.
 - **P1 — Promotion workflow — ✅ done.** Three environments (sandbox → staging →
   production) and a **promote** action (`POST /v1/flows/{id}/promote {from,to}`)
   that ships the live version of one env up the chain — deploying directly into a

@@ -831,11 +831,13 @@ export async function approveDeployment(
   key: string,
   flowId: string,
   reqId: string,
+  reason = '',
   fetcher: typeof fetch = fetch
 ): Promise<void> {
   const res = await fetcher(`/v1/flows/${flowId}/deployment-requests/${reqId}/approve`, {
     method: 'POST',
-    headers: jsonHeaders(key)
+    headers: jsonHeaders(key),
+    body: JSON.stringify({ reason })
   });
   if (!res.ok) {
     await errorOrStatus(res, 'approve deployment');

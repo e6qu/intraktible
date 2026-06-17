@@ -56,9 +56,10 @@ Done — execution runtime + decide API + decision history (the decision event s
   environments. A **production** deployment must be *proposed* by one user
   (`POST /v1/flows/{flow_id}/deployment-requests`) and *approved by a different user*
   (`POST …/deployment-requests/{req_id}/approve`, or `…/reject`) — the approval is what actually
-  deploys. The proposer cannot approve their own request; every request + decision is recorded on the
-  flow (an auditable approval trail). Combined with RBAC, proposing needs the `editor` role and
-  approving needs `approver`.
+  deploys. The proposer cannot approve their own request; **approve and reject both carry an explanation**
+  (a reason recorded on the request), and every request + decision is kept on the flow — pending and
+  decided alike stay visible (an auditable approval trail with who/why). Combined with RBAC, proposing
+  needs the `editor` role and approving needs `approver`.
 - **Discussion threads:** deployment requests (the approve/reject/promote subject), flows, policies, and
   decisions carry a comment thread via the platform's `platform/comments` capability
   (`GET/POST /v1/comments/{type}/{id}`, e.g. `deployment_request` / `flow` / `policy` / `decision`) — an

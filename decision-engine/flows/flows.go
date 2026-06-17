@@ -140,7 +140,7 @@ func applyDeploymentApproved(ctx context.Context, e eventlog.Envelope, s store.S
 		fv.Deployments[p.Environment] = DeploymentView{
 			Version: p.Version, ChallengerVersion: p.ChallengerVersion, ChallengerPct: p.ChallengerPct,
 		}
-		decideRequest(fv, p.RequestID, "approved", "", e)
+		decideRequest(fv, p.RequestID, "approved", p.Reason, e)
 	})
 }
 

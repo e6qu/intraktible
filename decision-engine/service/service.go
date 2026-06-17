@@ -264,7 +264,11 @@ func (s *Service) approveDeployment(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	e, err := s.cmd.ApproveDeployment(r.Context(), id, r.PathValue("flow_id"), r.PathValue("req_id"))
+	var req struct {
+		Reason string `json:"reason,omitempty"`
+	}
+	_ = httpx.DecodeJSON(r, &req)
+	e, err := s.cmd.ApproveDeployment(r.Context(), id, r.PathValue("flow_id"), r.PathValue("req_id"), req.Reason)
 	if err != nil {
 		httpx.Error(w, http.StatusBadRequest, err)
 		return

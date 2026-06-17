@@ -203,7 +203,7 @@ func (h *Handler) RequestDeployment(ctx context.Context, id identity.Identity, c
 // ApproveDeployment is the checker side: a *different* user approves a pending
 // request (four-eyes), which deploys the version. The proposer cannot approve
 // their own request.
-func (h *Handler) ApproveDeployment(ctx context.Context, id identity.Identity, flowID, reqID string) (eventlog.Envelope, error) {
+func (h *Handler) ApproveDeployment(ctx context.Context, id identity.Identity, flowID, reqID, reason string) (eventlog.Envelope, error) {
 	if err := id.Valid(); err != nil {
 		return eventlog.Envelope{}, err
 	}
@@ -225,6 +225,7 @@ func (h *Handler) ApproveDeployment(ctx context.Context, id identity.Identity, f
 	payload, err := json.Marshal(events.DeploymentApproved{
 		RequestID: reqID, FlowID: flowID, Environment: req.env,
 		Version: req.version, ChallengerVersion: req.challengerVersion, ChallengerPct: req.challengerPct,
+		Reason: reason,
 	})
 	if err != nil {
 		return eventlog.Envelope{}, fmt.Errorf("decision-engine: marshal approved: %w", err)
