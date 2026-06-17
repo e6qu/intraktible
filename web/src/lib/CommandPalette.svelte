@@ -46,6 +46,7 @@
     navCmd('/', 'Home dashboard', 'home'),
     navCmd('/engine', 'Decision Engine — flows', 'engine'),
     navCmd('/policies', 'Policies', 'rule'),
+    navCmd('/preapprovals', 'Pre-approvals', 'check'),
     navCmd('/decisions', 'Decisions', 'diagram'),
     navCmd('/data', 'Context data', 'database'),
     navCmd('/cases', 'Cases', 'cases'),

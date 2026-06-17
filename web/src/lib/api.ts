@@ -222,6 +222,7 @@ export interface Decision {
   disposition_reason?: string;
   policy_id?: string;
   policy_version?: number;
+  preapproval_id?: string; // set when served instantly from a pre-approval
   error?: string;
   nodes?: NodeRecord[];
   started_at: string;
@@ -394,6 +395,84 @@ export async function policyBacktest(
     return errorOrStatus(res, 'POST policy backtest');
   }
   return (await res.json()) as PolicyBacktestReport;
+}
+
+// ---- Pre-approvals ----
+
+export interface PreApproval {
+  preapproval_id: string;
+  entity_type: string;
+  entity_id: string;
+  disposition: string; // approve | decline
+  terms?: Record<string, unknown>;
+  policy_id?: string;
+  policy_version?: number;
+  flow_slug?: string;
+  valid_until: string;
+  status: string; // active | revoked
+  revoked_reason?: string;
+  honored_count: number;
+  note?: string;
+  granted_at: string;
+  granted_by: string;
+  updated_at: string;
+}
+
+export interface GrantPreApproval {
+  entity_type: string;
+  entity_id: string;
+  disposition: string;
+  terms?: Record<string, unknown>;
+  flow_slug?: string;
+  valid_days: number;
+  note?: string;
+}
+
+export async function listPreApprovals(
+  key: string,
+  fetcher: typeof fetch = fetch
+): Promise<PreApproval[]> {
+  const res = await fetcher('/v1/preapprovals', { headers: authHeaders(key) });
+  if (!res.ok) {
+    return errorOrStatus(res, 'GET /v1/preapprovals');
+  }
+  return ((await res.json()) as { preapprovals: PreApproval[] }).preapprovals ?? [];
+}
+
+export async function grantPreApproval(
+  key: string,
+  body: GrantPreApproval,
+  fetcher: typeof fetch = fetch
+): Promise<{ preapproval_id: string }> {
+  const res = await fetcher('/v1/preapprovals', {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'POST /v1/preapprovals');
+  }
+  return (await res.json()) as { preapproval_id: string };
+}
+
+export async function revokePreApproval(
+  key: string,
+  entityType: string,
+  entityId: string,
+  reason: string,
+  fetcher: typeof fetch = fetch
+): Promise<void> {
+  const res = await fetcher(
+    `/v1/preapprovals/${encodeURIComponent(entityType)}/${encodeURIComponent(entityId)}/revoke`,
+    {
+      method: 'POST',
+      headers: jsonHeaders(key),
+      body: JSON.stringify({ reason })
+    }
+  );
+  if (!res.ok) {
+    return errorOrStatus(res, 'POST revoke pre-approval');
+  }
 }
 
 // ---- Backtesting ----

@@ -13,6 +13,7 @@ import (
 	"github.com/e6qu/intraktible/decision-engine/events"
 	"github.com/e6qu/intraktible/decision-engine/flows"
 	"github.com/e6qu/intraktible/decision-engine/policy"
+	"github.com/e6qu/intraktible/decision-engine/preapproval"
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/store"
@@ -151,6 +152,18 @@ func (h *DecideHandler) Decide(ctx context.Context, id identity.Identity, slug, 
 	version, ok := versionByNumber(fv, versionNo)
 	if !ok {
 		return DecideResult{}, fmt.Errorf("decision-engine: flow %q has no version %d", slug, versionNo)
+	}
+
+	// Pre-approval fast path: a valid pre-approval for the entity is honored
+	// instantly — approve/decline with the stored terms, skipping the flow run.
+	if ref.Type != "" && ref.ID != "" {
+		res, honored, err := h.honorPreApproval(ctx, id, fv, version.Version, env, variant, slug, ref, data)
+		if err != nil {
+			return DecideResult{}, err
+		}
+		if honored {
+			return res, nil
+		}
 	}
 
 	// Validate the caller's input against the version's contract before anything
@@ -369,6 +382,54 @@ func (h *DecideHandler) emitEscalations(ctx context.Context, id identity.Identit
 	return nil
 }
 
+// honorPreApproval serves a decision instantly from a valid pre-approval for the
+// entity: it records a completed decision whose output is the stored terms and
+// whose disposition is the pre-approval's (skipping the flow), plus a
+// PreApprovalHonored effect. It returns honored=false when there is none.
+func (h *DecideHandler) honorPreApproval(ctx context.Context, id identity.Identity, fv flows.FlowView, version int, env, variant, slug string, ref EntityRef, data map[string]any) (DecideResult, bool, error) {
+	pa, ok, err := preapproval.ActiveFor(ctx, h.store, id, ref.Type, ref.ID, h.now())
+	if err != nil || !ok {
+		return DecideResult{}, false, err
+	}
+	terms := map[string]any{}
+	if len(pa.Terms) > 0 {
+		if err := json.Unmarshal(pa.Terms, &terms); err != nil {
+			return DecideResult{}, false, fmt.Errorf("decision-engine: pre-approval terms: %w", err)
+		}
+	}
+	dataJSON, err := json.Marshal(data)
+	if err != nil {
+		return DecideResult{}, false, fmt.Errorf("decision-engine: marshal data: %w", err)
+	}
+	outJSON, err := json.Marshal(terms)
+	if err != nil {
+		return DecideResult{}, false, fmt.Errorf("decision-engine: marshal terms: %w", err)
+	}
+	decisionID := h.newID()
+	if err := h.emit(ctx, id, events.TypeDecisionStarted, events.DecisionStarted{
+		DecisionID: decisionID, FlowID: fv.FlowID, Slug: slug, Version: version, Environment: env,
+		Variant: variant, EntityType: ref.Type, EntityID: ref.ID, Data: dataJSON,
+	}); err != nil {
+		return DecideResult{}, false, err
+	}
+	if err := h.emit(ctx, id, events.TypeDecisionCompleted, events.DecisionCompleted{
+		DecisionID: decisionID, FlowID: fv.FlowID, Version: version, Variant: variant,
+		Output: outJSON, DurationMS: 0,
+		Disposition: pa.Disposition, DispositionReason: "pre-approval honored", PreApprovalID: pa.PreApprovalID,
+	}); err != nil {
+		return DecideResult{}, false, err
+	}
+	if err := h.appendStream(ctx, id, preapproval.StreamPreApprovals, preapproval.TypeHonored, preapproval.Honored{
+		PreApprovalID: pa.PreApprovalID, EntityType: ref.Type, EntityID: ref.ID, DecisionID: decisionID,
+	}); err != nil {
+		return DecideResult{}, false, err
+	}
+	return DecideResult{
+		DecisionID: decisionID, Status: domain.StatusCompleted, Output: terms,
+		Disposition: pa.Disposition, DispositionReason: "pre-approval honored",
+	}, true, nil
+}
+
 // dispositionResult is the policy outcome the decide path records on a completed
 // decision (internal; flattened onto DecisionCompleted + DecideResult).
 type dispositionResult struct {
@@ -427,6 +488,12 @@ func versionByNumber(fv flows.FlowView, n int) (flows.VersionView, bool) {
 }
 
 func (h *DecideHandler) emit(ctx context.Context, id identity.Identity, typ string, payload any) error {
+	return h.appendStream(ctx, id, events.StreamDecisions, typ, payload)
+}
+
+// appendStream marshals and appends a payload to a named stream (decision events
+// go to StreamDecisions; a honored pre-approval also writes to its own stream).
+func (h *DecideHandler) appendStream(ctx context.Context, id identity.Identity, stream, typ string, payload any) error {
 	b, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("decision-engine: marshal %s: %w", typ, err)
@@ -435,7 +502,7 @@ func (h *DecideHandler) emit(ctx context.Context, id identity.Identity, typ stri
 		Org:       id.Org,
 		Workspace: id.Workspace,
 		Actor:     id.Actor,
-		Stream:    events.StreamDecisions,
+		Stream:    stream,
 		Type:      typ,
 		Time:      h.now(),
 		Payload:   b,

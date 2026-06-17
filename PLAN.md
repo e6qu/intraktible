@@ -312,7 +312,16 @@ domain`) emits structured adverse-action `{code, description}`s into a reserved 
 (always surfaced by Output), which the history projector lifts to a first-class field on the decision
 record and the decision UI shows (ECOA/Reg B + insurance explainability). **All five enterprise P0 items
 are done.** Remaining work is P1/P2 (secrets management/encryption-at-rest, alerting/drift, SSO/SCIM,
-batch decisioning, SDKs, SOC2) — sequenced in `docs/ENTERPRISE.md`.
+SDKs, SOC2) — sequenced in `docs/ENTERPRISE.md`.
+
+**Decision-automation layer (post-MVP).** A shared disposition brain now sits over the engine:
+**policies** (`decision-engine/policy`) attach auto-approve/decline/refer bands to a flow and assign a
+disposition on every decision (real-time STP), with a record-nothing **disposition backtest** for safe
+tuning; **batch decisioning** (`…/{env}/decide/batch`) scores a whole population through the recorded
+decide path; and **pre-approvals** (`decision-engine/preapproval`) are durable, time-boxed grants per
+entity that the decide path **honors instantly** — a pre-approved entity is completed straight from the
+grant's terms, skipping the flow, recorded with `preapproval_id` for provenance. UI: `/policies` (band
+editor + impact preview) and `/preapprovals` (grant / list / revoke).
 
 **Persona-aware UI (post-MVP).** The web UI gained a **persona** axis (`web/src/lib/persona.ts`) — a
 client-side "view-as" preference anyone can switch (not RBAC-gated), orthogonal to light/dark theme. It

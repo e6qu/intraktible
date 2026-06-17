@@ -78,6 +78,7 @@
         <dt>disposition</dt>
         <dd>
           <span class="disp {d.disposition}">{d.disposition}</span>
+          {#if d.preapproval_id}<span class="pa-tag">pre-approval</span>{/if}
           {#if d.disposition_reason}<span class="muted"> · {d.disposition_reason}</span>{/if}
         </dd>
       {/if}
@@ -217,6 +218,15 @@
   .disp.refer {
     background: color-mix(in srgb, var(--warn) 18%, transparent);
     color: var(--warn);
+  }
+  .pa-tag {
+    margin-left: 0.4rem;
+    padding: 0.05rem 0.45rem;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+    color: var(--accent-ink);
   }
   .rcode {
     font-family: var(--font-mono);

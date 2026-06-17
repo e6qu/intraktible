@@ -163,6 +163,15 @@ versions before deploy), the **immutable audit surface** (`GET /v1/audit`, a
 filterable + CSV-exportable read over the event log), and **reason codes** (a
 Reason node emits structured adverse-action `{code, description}`s, lifted to a
 first-class field on the decision record and shown in the decision UI). The
-remaining work is all P1/P2 (secrets management, alerting, SSO/SCIM, batch
-decisioning, SDKs, SOC2 …); none requires re-architecting — they extend the same
-event-sourced core.
+remaining work is all P1/P2 (secrets management, alerting, SSO/SCIM, SDKs,
+SOC2 …); none requires re-architecting — they extend the same event-sourced core.
+
+Beyond the P0 envelope, a **decision-automation** layer now sits over the engine:
+**policies** (`decision-engine/policy`) attach auto-approve / decline / refer bands
+to a flow and assign a disposition on every decision (real-time STP, with a
+record-nothing disposition backtest for safe tuning); **batch decisioning** scores a
+whole population through the recorded decide path; and **pre-approvals**
+(`decision-engine/preapproval`) are durable, time-boxed grants that the decide path
+honors instantly — a pre-approved entity is completed straight from the grant's terms,
+skipping the flow, recorded with `preapproval_id` for provenance. One disposition brain
+serves real-time, bulk, and pre-approval paths.

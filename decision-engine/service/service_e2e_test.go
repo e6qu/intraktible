@@ -348,6 +348,55 @@ func TestPreApprovalOverHTTP(t *testing.T) {
 	}
 }
 
+func TestDecideHonorsPreApprovalOverHTTP(t *testing.T) {
+	api := startEngine(t)
+	var flow struct {
+		FlowID string `json:"flow_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows", map[string]any{"slug": "honored", "name": "Honored"}, http.StatusCreated, &flow)
+	api.Request(t, http.MethodPost, "/v1/flows/"+flow.FlowID+"/versions", map[string]any{
+		"graph": map[string]any{
+			"nodes": []map[string]any{{"id": "in", "type": "input"}, {"id": "out", "type": "output"}},
+			"edges": []map[string]any{{"from": "in", "to": "out"}},
+		},
+	}, http.StatusCreated, nil)
+
+	// Pre-approve the entity with an offer.
+	api.Request(t, http.MethodPost, "/v1/preapprovals", map[string]any{
+		"entity_type": "applicant", "entity_id": "acme", "disposition": "approve",
+		"terms": map[string]any{"limit": 5000}, "valid_days": 30,
+	}, http.StatusCreated, nil)
+
+	// Deciding for that entity is served instantly from the pre-approval: approved,
+	// with the stored terms as the output, and no flow run.
+	type decResp struct {
+		DecisionID  string         `json:"decision_id"`
+		Status      string         `json:"status"`
+		Disposition string         `json:"disposition"`
+		Data        map[string]any `json:"data"`
+	}
+	var d decResp
+	if !testutil.Eventually(t, func() bool {
+		d = decResp{}
+		api.Request(t, http.MethodPost, "/v1/flows/honored/production/decide", map[string]any{
+			"data": map[string]any{}, "entity_type": "applicant", "entity_id": "acme",
+		}, http.StatusOK, &d)
+		return d.Status == "completed" && d.Disposition == "approve"
+	}) {
+		t.Fatalf("pre-approval never honored: %+v", d)
+	}
+	if d.Data["limit"] != float64(5000) {
+		t.Fatalf("honored decision should carry the pre-approval terms: %+v", d.Data)
+	}
+
+	// The decision record links the pre-approval and has no node trace (flow skipped).
+	var rec history.Record
+	api.Request(t, http.MethodGet, "/v1/decisions/"+d.DecisionID, nil, http.StatusOK, &rec)
+	if rec.PreApprovalID == "" || len(rec.Nodes) != 0 {
+		t.Fatalf("expected a honored record with no node trace: %+v", rec)
+	}
+}
+
 func TestPolicyBacktestOverHTTP(t *testing.T) {
 	api := startEngine(t)
 	var flow struct {

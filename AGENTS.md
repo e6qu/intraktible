@@ -25,7 +25,9 @@ dataset of inputs through the recorded decide path — each row a real decision,
 **policies** (`decision-engine/policy` — a first-class versioned artifact mapping a flow's output to a
 disposition `approve`/`decline`/`refer` via expr bands; the decide path applies the bound policy and
 records the disposition on the decision — the shared brain for real-time/bulk/pre-approval decisioning),
-decision history, and **analytics-lite** (per-flow metrics with champion/challenger breakdown) — all
+**pre-approvals** (`decision-engine/preapproval` — durable, time-boxed grants per entity that the decide
+path honors instantly: a pre-approved entity is completed from the grant's terms, skipping the flow,
+recorded with `preapproval_id`), decision history, and **analytics-lite** (per-flow metrics with champion/challenger breakdown) — all
 command→event→projection→API, durable & replayable.
 The **Svelte Flow builder UI** (`web/src/routes/engine`) lists/creates flows and edits a flow's graph
 (add nodes from a palette, wire edges, edit per-node config via structured panels for common types or

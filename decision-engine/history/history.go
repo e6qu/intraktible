@@ -57,6 +57,7 @@ type Record struct {
 	DispositionReason string       `json:"disposition_reason,omitempty"`
 	PolicyID          string       `json:"policy_id,omitempty"`
 	PolicyVersion     int          `json:"policy_version,omitempty"`
+	PreApprovalID     string       `json:"preapproval_id,omitempty"`
 	Error             string       `json:"error,omitempty"`
 	TimeOrdered       []string     `json:"time_ordered"`
 	Nodes             []NodeRecord `json:"nodes"`
@@ -133,7 +134,7 @@ func applyCompleted(ctx context.Context, e eventlog.Envelope, s store.Store) err
 		r.Status, r.Output, r.EndedAt, r.DurationMS = "completed", p.Output, e.Time, p.DurationMS
 		r.ReasonCodes = extractReasonCodes(p.Output)
 		r.Disposition, r.DispositionCode, r.DispositionReason = p.Disposition, p.DispositionCode, p.DispositionReason
-		r.PolicyID, r.PolicyVersion = p.PolicyID, p.PolicyVersion
+		r.PolicyID, r.PolicyVersion, r.PreApprovalID = p.PolicyID, p.PolicyVersion, p.PreApprovalID
 	})
 }
 

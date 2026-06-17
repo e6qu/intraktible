@@ -61,6 +61,9 @@ type DecisionCompleted struct {
 	DispositionReason string `json:"disposition_reason,omitempty"`
 	PolicyID          string `json:"policy_id,omitempty"`
 	PolicyVersion     int    `json:"policy_version,omitempty"`
+	// PreApprovalID is set when the decision was served instantly from a
+	// pre-approval (the flow was skipped); the output carries the stored terms.
+	PreApprovalID string `json:"preapproval_id,omitempty"`
 }
 
 // ManualReviewRequested is raised when a decision runs a manual_review node. It

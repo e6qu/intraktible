@@ -83,7 +83,7 @@ Done — execution runtime + decide API + decision history (the decision event s
   The decide path resolves the policy bound to the flow (`ActiveForFlow`, latest version) and applies it
   to the output, recording the disposition + the policy version on the decision (replay-stable; lifted
   first-class onto the history record and returned by `decide` / `decide/batch`). It is the shared brain
-  for real-time (faster/STP), bulk, and (next) pre-approval decisioning. A policy that can't evaluate
+  for real-time (faster/STP), bulk, and pre-approval decisioning. A policy that can't evaluate
   refers (routes to a human) rather than failing a completed decision. The completed disposition rolls up
   into analytics (`by_disposition` → an automation rate). **Disposition backtest**: `POST
   /v1/policies/{id}/backtest` `{spec?, compare_version?, flow_version?, dataset}` replays a dataset through
@@ -92,11 +92,15 @@ Done — execution runtime + decide API + decision history (the decision event s
   `POST /v1/policies/{id}/versions`, `GET /v1/policies[/{id}]`. UI: a `/policies` page authors the bands
   and previews impact.
 - **Pre-approvals (`decision-engine/preapproval`):** durable, time-boxed pre-decisions for an entity —
-  granted (in bulk from a policy run) with the offer **terms** + provenance (policy/flow) + a validity
-  window, and (next slice) **honored instantly at decide** time so a pre-approved entity is approved
-  without re-running the flow. A grant supersedes the entity's prior one; revoke or expiry invalidates it
-  (expiry checked at read time, so the projection stays clock-free). API: `POST /v1/preapprovals` (grant,
-  `editor`), `GET /v1/preapprovals[/{type}/{id}]`, `POST /v1/preapprovals/{type}/{id}/revoke`.
+  granted with the offer **terms** + provenance (policy/flow) + a validity window, and **honored
+  instantly at decide** time: a `decide` request that names a pre-approved entity (`entity_type` +
+  `entity_id`) is completed straight from the grant — the stored disposition + terms become the result
+  and the flow is skipped, recorded with `preapproval_id` for provenance (the honor also increments the
+  grant's honored count via its own stream event, so replay stays exact). A grant supersedes the entity's
+  prior one; revoke or expiry invalidates it (expiry checked at read time, so the projection stays
+  clock-free). API: `POST /v1/preapprovals` (grant, `editor`), `GET /v1/preapprovals[/{type}/{id}]`,
+  `POST /v1/preapprovals/{type}/{id}/revoke`. UI: a `/preapprovals` page grants, lists (with live
+  active/expired/revoked status + honored count), and revokes.
 - **Flow export** (`decision-engine/export`, pure): a flow version renders to **Mermaid**
   (`flowchart`, `stateDiagram-v2`), **BPMN 2.0 XML with BPMNDI** layout (opens laid-out in
   bpmn.io / Camunda; node types map to start/end events, gateways, business-rule/service/script/user
