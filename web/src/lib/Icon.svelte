@@ -79,6 +79,11 @@
     // persona / identity affordance
     ['user', '<circle cx="12" cy="8" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/>'],
     ['chevron-down', '<path d="M6 9l6 6 6-6"/>'],
+    ['search', '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>'],
+    [
+      'clipboard',
+      '<rect x="8" y="4" width="8" height="4" rx="1"/><path d="M9 4H6a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-3"/>'
+    ],
     // persona "portraits" — a distinct silhouette per viewer type
     [
       'builder',

@@ -9,7 +9,9 @@
   import { initTheme, toggleTheme, theme as themeStore } from '$lib/theme';
   import { initPersona, setPersona, persona as personaStore, PERSONAS } from '$lib/persona';
   import { user, refreshUser, signOut } from '$lib/session';
+  import { openPalette } from '$lib/palette';
   import Toasts from '$lib/Toasts.svelte';
+  import CommandPalette from '$lib/CommandPalette.svelte';
 
   let { children } = $props();
   let theme = $state<'light' | 'dark'>('light');
@@ -125,6 +127,17 @@
       <a class="navlink" href="/login">Sign in</a>
     {/if}
   </span>
+  <button
+    class="cmdk"
+    onclick={openPalette}
+    aria-label="Open command palette"
+    title="Command palette (⌘K)"
+    data-testid="cmdk-trigger"
+  >
+    <Icon name="search" size={14} />
+    <span class="cmdk-label">Search</span>
+    <kbd>⌘K</kbd>
+  </button>
   <details
     class="persona"
     bind:this={personaEl}
@@ -178,6 +191,7 @@
 <div id="main" class="page" tabindex="-1">
   {@render children()}
 </div>
+<CommandPalette />
 <Toasts />
 
 <style>
@@ -342,6 +356,38 @@
     height: 36px;
     padding: 0;
     border-radius: 999px;
+  }
+
+  /* ⌘K command-palette trigger — subtle, desktop-only (mobile uses the nav + the
+     keyboard shortcut still works everywhere). */
+  .cmdk {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.3rem 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--surface);
+    color: var(--fg-muted);
+    font-size: 0.82rem;
+  }
+  .cmdk:hover {
+    background: var(--surface-2);
+    color: var(--fg);
+  }
+  .cmdk kbd {
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    padding: 0.02rem 0.3rem;
+    border: 1px solid var(--border-strong);
+    border-radius: 4px;
+    color: var(--fg-subtle);
+    background: var(--surface-2);
+  }
+  @media (max-width: 720px) {
+    .cmdk {
+      display: none;
+    }
   }
 
   /* Persona switcher — a "view-as" identity control. The avatar's colour IS the

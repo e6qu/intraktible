@@ -3,6 +3,7 @@
   import { onMount } from 'svelte';
   import { page } from '$app/stores';
   import Icon from '$lib/Icon.svelte';
+  import Copyable from '$lib/Copyable.svelte';
   import { getDecision, exportDecision, type Decision } from '$lib/api';
   import { toast } from '$lib/toast';
 
@@ -71,7 +72,7 @@
       <dt>duration</dt>
       <dd>{d.duration_ms ?? 0} ms</dd>
       <dt>decision id</dt>
-      <dd class="mono">{d.decision_id}</dd>
+      <dd><Copyable value={d.decision_id} label="decision id" /></dd>
     </dl>
 
     {#if d.error}<p class="err">Error: {d.error}</p>{/if}
@@ -160,10 +161,6 @@
   dl.fields dt {
     color: var(--fg-subtle);
     font-size: 0.9rem;
-  }
-  .mono {
-    font-family: var(--font-mono);
-    font-size: 0.85rem;
   }
   ul.reasons {
     list-style: none;

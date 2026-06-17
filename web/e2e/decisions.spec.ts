@@ -58,6 +58,12 @@ test('a decision run shows in the history and its detail has the node trace', as
   await expect(page.getByRole('heading', { name: slug })).toBeVisible();
   await expect(page.locator('ol.trace')).toContainText('assignment');
   await expect(page.getByRole('button', { name: 'Sequence', exact: true })).toBeVisible();
+
+  // The decision id is click-to-copy (a developer DX affordance).
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+  await page.getByTestId('copyable').click();
+  await expect(page.getByText('Copied decision id')).toBeVisible();
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(decisionId);
 });
 
 test('a reason node yields adverse-action reason codes on the decision detail', async ({

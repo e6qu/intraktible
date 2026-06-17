@@ -245,3 +245,15 @@ for (const p of PERSONAS) {
     });
   }
 }
+
+// The ⌘K command palette, open, in both themes.
+for (const themeMode of ['light', 'dark']) {
+  test(`palette — ${themeMode}`, async ({ page }) => {
+    await page.context().request.post('/v1/login', { data: { api_key: KEY } });
+    await page.addInitScript((t) => localStorage.setItem('intraktible-theme', t), themeMode);
+    await page.goto('/');
+    await page.getByTestId('cmdk-trigger').click();
+    await page.waitForTimeout(300);
+    await page.screenshot({ path: `${SHOTS}/palette-${themeMode}.png` });
+  });
+}
