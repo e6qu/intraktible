@@ -268,6 +268,7 @@ export interface FlowMetrics {
   by_environment: Record<string, number>;
   by_version: Record<string, number>;
   by_variant: Record<string, VariantStats>;
+  by_disposition?: Record<string, number>;
 }
 
 export async function getFlowMetrics(

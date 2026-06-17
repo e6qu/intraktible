@@ -294,6 +294,19 @@ func TestDecideAppliesPolicyOverHTTP(t *testing.T) {
 	if low.Disposition != policy.Refer {
 		t.Fatalf("low score should refer, got %q", low.Disposition)
 	}
+
+	// The dispositions roll up into analytics (the automation-rate breakdown).
+	type metrics struct {
+		ByDisposition map[string]int `json:"by_disposition"`
+	}
+	var m metrics
+	if !testutil.Eventually(t, func() bool {
+		m = metrics{}
+		api.Request(t, http.MethodGet, "/v1/flows/"+created.FlowID+"/metrics", nil, http.StatusOK, &m)
+		return m.ByDisposition["approve"] >= 1 && m.ByDisposition["refer"] >= 1
+	}) {
+		t.Fatalf("disposition breakdown not in metrics: %+v", m)
+	}
 }
 
 func startEngine(t *testing.T, opts ...command.DecideOption) *testutil.API {

@@ -40,7 +40,10 @@ type FlowMetrics struct {
 	ByEnvironment   map[string]int          `json:"by_environment"`
 	ByVersion       map[int]int             `json:"by_version"`
 	ByVariant       map[string]VariantStats `json:"by_variant"`
-	UpdatedAt       time.Time               `json:"updated_at"`
+	// ByDisposition counts completed decisions by the policy's disposition
+	// (approve|decline|refer); approve+decline over the total is the automation rate.
+	ByDisposition map[string]int `json:"by_disposition"`
+	UpdatedAt     time.Time      `json:"updated_at"`
 }
 
 // Projector folds decision events into FlowMetrics.
@@ -91,6 +94,9 @@ func applyCompleted(ctx context.Context, e eventlog.Envelope, s store.Store) err
 			m.AvgDurationMS = m.TotalDurationMS / int64(m.Completed)
 		}
 		bump(m, p.Variant, func(v *VariantStats) { v.Completed++ })
+		if p.Disposition != "" {
+			m.ByDisposition[p.Disposition]++
+		}
 	})
 }
 
@@ -138,6 +144,9 @@ func update(ctx context.Context, s store.Store, e eventlog.Envelope, flowID stri
 	}
 	if m.ByVariant == nil {
 		m.ByVariant = map[string]VariantStats{}
+	}
+	if m.ByDisposition == nil {
+		m.ByDisposition = map[string]int{}
 	}
 	mutate(&m)
 	m.UpdatedAt = e.Time

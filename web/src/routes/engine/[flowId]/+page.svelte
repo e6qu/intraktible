@@ -85,6 +85,17 @@
     }
   }
 
+  // automation rate from the policy disposition breakdown: auto-handled
+  // (approve+decline) over the total dispositioned decisions.
+  const automation = $derived.by(() => {
+    const d = metrics?.by_disposition;
+    if (!d) return null;
+    const auto = (d.approve ?? 0) + (d.decline ?? 0);
+    const refer = d.refer ?? 0;
+    const total = auto + refer;
+    return total ? { auto, refer, rate: Math.round((auto / total) * 100) } : null;
+  });
+
   // Engine-level editor model (the source of truth) and its Svelte Flow render.
   let editNodes = $state<EditNode[]>([]);
   let editEdges = $state<GraphEdge[]>([]);
@@ -775,6 +786,10 @@
       <span class="ok">{metrics.completed} completed</span>
       <span class="err">{metrics.failed} failed</span>
       <span class="muted">avg {metrics.avg_duration_ms} ms</span>
+      {#if automation}
+        <span class="ok" data-testid="automation-rate">{automation.rate}% automated</span>
+        <span class="muted">{automation.refer} referred</span>
+      {/if}
       {#each Object.entries(metrics.by_variant) as [variant, v] (variant)}
         <span class="muted">{variant}: {v.completed}/{v.started}</span>
       {/each}
