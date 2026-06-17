@@ -53,6 +53,7 @@ import (
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/httpx"
 	"github.com/e6qu/intraktible/platform/identity"
+	"github.com/e6qu/intraktible/platform/privacy"
 	"github.com/e6qu/intraktible/platform/projection"
 	"github.com/e6qu/intraktible/platform/store"
 	"github.com/e6qu/intraktible/platform/web"
@@ -218,6 +219,10 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 	// tenant-scoped, filterable, exportable read over the event log.
 	audit.New(log).Routes(api)
 
+	// Privacy: per-workspace sensitive-field masking, applied at read boundaries
+	// (decision history/exports). A platform capability, independent of modules.
+	privacy.New(privacy.NewHandler(log), st).Routes(api)
+
 	// Authenticated caller introspection (inside the /v1 auth chain).
 	api.HandleFunc("GET /v1/me", httpx.MeHandler())
 
@@ -318,7 +323,9 @@ func openLog(kind, dataDir string) (eventlog.Log, error) {
 // the single source of truth shared by `serve` (live projections) and `replay`
 // (rebuild from the log).
 func moduleProjectors(modules string) []projection.Projector {
-	var ps []projection.Projector
+	// Privacy masking config is a platform capability, projected regardless of
+	// which modules are enabled (so masking works in every profile).
+	ps := []projection.Projector{privacy.Projector{}}
 	if enabled(modules, "hello") {
 		ps = append(ps, stats.Projector{})
 	}

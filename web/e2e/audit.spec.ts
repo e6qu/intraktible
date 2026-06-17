@@ -43,3 +43,16 @@ test('shows the event-log audit trail and filters it', async ({ page, request })
   await expect(page.getByLabel('type filter')).toHaveValue('decision.flow.created');
   await expect(rows.filter({ hasText: 'decision.flow.created' }).first()).toBeVisible();
 });
+
+test('configures PII masking fields (admin)', async ({ page }) => {
+  await page.goto('/audit');
+  const panel = page.getByTestId('masking-config');
+  await panel.getByText('PII masking').click(); // open the <details>
+  await panel.getByLabel('masked fields').fill('ssn, email');
+  await panel.getByTestId('save-masking').click();
+
+  // The config round-trips: reloading rehydrates the saved fields from the server.
+  await page.reload();
+  await page.getByTestId('masking-config').getByText('PII masking').click();
+  await expect(page.getByTestId('masking-config').getByLabel('masked fields')).toHaveValue(/ssn/);
+});

@@ -71,6 +71,9 @@ Done — execution runtime + decide API + decision history (the decision event s
   /v1/flows/{flow_id}/metrics`.
 - HTTP: `POST /v1/flows/{slug}/{env}/decide` → `{decision_id, status, data}`;
   `GET /v1/decisions` · `GET /v1/decisions/{decision_id}` — history with the full node trace + variant.
+  These reads honor the workspace's **PII masking** config (`platform/privacy`): fields named in
+  `GET/PUT /v1/privacy` are redacted in the returned input/output/node-traces and in JSON exports, at the
+  read boundary — the stored event log keeps the real values.
 - **Batch decisioning:** `POST /v1/flows/{slug}/{env}/decide/batch` with `{dataset:[…], entity_type?,
   entity_id?}` runs each input through the **same recorded decide path** — every row is a real decision
   (in history, metrics, and the audit log), unlike backtest which records nothing. Returns a summary

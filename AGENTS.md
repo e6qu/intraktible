@@ -95,7 +95,10 @@ and the **immutable audit surface** — `GET /v1/audit` (`platform/audit`), a te
 (stream/actor/type/resource/time-range), CSV-exportable read straight over the append-only event log,
 admin-gated and surfaced as an Audit log UI page (the data was always in the log; this makes it
 first-class instead of operator-CLI-only) whose filters are **URL-synced** — a filtered forensic view is
-deep-linkable, bookmarkable, and back/forward-navigable.
+deep-linkable, bookmarkable, and back/forward-navigable. **PII masking** (`platform/privacy`) adds a
+per-workspace sensitive-field list (admin-gated to change) whose values are redacted in decision
+input/output, node traces, and exports at the read boundary — the raw event log stays the source of
+truth; managed from the Audit page.
 
 ## The design in one breath
 Go backend (**functional core / imperative shell**) + **SvelteKit + Svelte Flow** UI embedded in the

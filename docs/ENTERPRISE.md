@@ -71,7 +71,12 @@ enterprise buyers; **P2** = differentiators / scale.
   UI shows a **Reason codes** section. This is the ECOA/Reg B + insurance decline-
   reason requirement.
 - **P1 — PII handling**: field-level classification, masking in traces/logs,
-  configurable retention & purge, right-to-erasure (GDPR/CCPA).
+  configurable retention & purge, right-to-erasure (GDPR/CCPA). *Field-level
+  **masking** now ships (`platform/privacy`): a per-workspace sensitive-field list
+  (admin-gated) whose values are redacted in decision input/output, node traces,
+  and exports at the read boundary — the raw event log stays intact. Remaining:
+  configurable retention/purge and right-to-erasure (which the event-sourced model
+  makes non-trivial — likely crypto-shredding per subject).*
 - **P1 — Model risk management (SR 11-7 / SS1/23)**: documented model inventory,
   validation evidence, monitoring — supported by metrics + versioning but not
   packaged.

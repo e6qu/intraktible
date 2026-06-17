@@ -5,7 +5,16 @@
   import { get } from 'svelte/store';
   import Icon from '$lib/Icon.svelte';
   import RelativeTime from '$lib/RelativeTime.svelte';
-  import { listAudit, auditExportUrl, type AuditEntry, type AuditFilter } from '$lib/api';
+  import { onMount } from 'svelte';
+  import { toast } from '$lib/toast';
+  import {
+    listAudit,
+    auditExportUrl,
+    getPrivacy,
+    setPrivacy,
+    type AuditEntry,
+    type AuditFilter
+  } from '$lib/api';
 
   // API calls authenticate via the session cookie (empty key → no X-Api-Key).
   const key = '';
@@ -62,6 +71,37 @@
     }
   }
 
+  // --- PII masking config (admin) ---
+  let maskFields = $state('');
+  let maskSaving = $state(false);
+  let maskNote = $state('');
+  async function loadPrivacy() {
+    try {
+      const cfg = await getPrivacy(key);
+      maskFields = (cfg.fields ?? []).join(', ');
+      maskNote = cfg.updated_by ? `last set by ${cfg.updated_by}` : '';
+    } catch {
+      /* non-admins simply do not see the editor populated */
+    }
+  }
+  async function savePrivacy() {
+    maskSaving = true;
+    try {
+      const fields = maskFields
+        .split(/[\s,]+/)
+        .map((f) => f.trim())
+        .filter(Boolean);
+      await setPrivacy(key, fields);
+      toast.success('Masking fields saved');
+      await loadPrivacy();
+    } catch (e) {
+      toast.error(msg(e));
+    } finally {
+      maskSaving = false;
+    }
+  }
+  onMount(loadPrivacy);
+
   // The URL drives the view: afterNavigate fires on mount, on Apply (goto), and on
   // back/forward — hydrate the inputs from the query string and fetch.
   afterNavigate(() => {
@@ -89,6 +129,28 @@
     Every recorded action across this workspace — who did what, when — read straight from the
     immutable event log.
   </p>
+
+  <details class="masking" data-testid="masking-config">
+    <summary
+      ><Icon name="shield" size={14} /> PII masking
+      <span class="muted">— field-level redaction</span></summary
+    >
+    <p class="muted">
+      Comma- or space-separated field names (case-insensitive). Their values are redacted in
+      decision input/output and exports at the read boundary — the raw event log is untouched.
+    </p>
+    <div class="mask-row">
+      <input
+        bind:value={maskFields}
+        aria-label="masked fields"
+        placeholder="ssn, dob, email, phone"
+      />
+      <button onclick={savePrivacy} disabled={maskSaving} data-testid="save-masking">
+        {maskSaving ? 'Saving…' : 'Save'}
+      </button>
+    </div>
+    {#if maskNote}<p class="muted note">{maskNote}</p>{/if}
+  </details>
 
   <form
     class="filters"
@@ -153,6 +215,34 @@
     max-width: 68rem;
     margin: 2rem auto;
     padding: 0 1.25rem;
+  }
+  .masking {
+    border: 1px solid var(--admin-border, var(--border));
+    border-radius: 10px;
+    padding: 0.6rem 0.9rem;
+    margin: 0.8rem 0;
+  }
+  .masking summary {
+    cursor: pointer;
+    font-weight: 600;
+  }
+  .mask-row {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+  }
+  .mask-row input {
+    flex: 1;
+    padding: 0.4rem 0.55rem;
+    border: 1px solid var(--admin-border, var(--border));
+    border-radius: 8px;
+    background: var(--admin-surface-2, var(--surface-2));
+    color: inherit;
+    font: inherit;
+  }
+  .note {
+    margin: 0.4rem 0 0;
+    font-size: 0.8rem;
   }
   .admin-tag {
     display: inline-flex;

@@ -5,6 +5,7 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -18,6 +19,8 @@ import (
 	"github.com/e6qu/intraktible/decision-engine/history"
 	"github.com/e6qu/intraktible/decision-engine/preapproval"
 	"github.com/e6qu/intraktible/platform/httpx"
+	"github.com/e6qu/intraktible/platform/identity"
+	"github.com/e6qu/intraktible/platform/privacy"
 	"github.com/e6qu/intraktible/platform/store"
 )
 
@@ -486,6 +489,13 @@ func (s *Service) listDecisions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	recs, err := history.List(r.Context(), s.store, id)
+	if err == nil {
+		if fields, ferr := privacy.Fields(r.Context(), s.store, id); ferr == nil {
+			for i := range recs {
+				recs[i] = maskRecord(recs[i], fields)
+			}
+		}
+	}
 	httpx.WriteList(w, "decisions", recs, err)
 }
 
@@ -495,7 +505,32 @@ func (s *Service) getDecision(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rec, found, err := history.Read(r.Context(), s.store, id, r.PathValue("decision_id"))
+	if found && err == nil {
+		rec = s.maskRecord(r.Context(), id, rec)
+	}
 	httpx.WriteOne(w, rec, found, err, "decision not found")
+}
+
+// maskRecord masks the configured sensitive fields in a decision record's input,
+// output, and per-node outputs at the read boundary (the raw event log is intact).
+func (s *Service) maskRecord(ctx context.Context, id identity.Identity, rec history.Record) history.Record {
+	fields, err := privacy.Fields(ctx, s.store, id)
+	if err != nil {
+		return rec
+	}
+	return maskRecord(rec, fields)
+}
+
+func maskRecord(rec history.Record, fields map[string]bool) history.Record {
+	if len(fields) == 0 {
+		return rec
+	}
+	rec.Data = privacy.Mask(rec.Data, fields)
+	rec.Output = privacy.Mask(rec.Output, fields)
+	for i := range rec.Nodes {
+		rec.Nodes[i].Output = privacy.Mask(rec.Nodes[i].Output, fields)
+	}
+	return rec
 }
 
 func (s *Service) metrics(w http.ResponseWriter, r *http.Request) {

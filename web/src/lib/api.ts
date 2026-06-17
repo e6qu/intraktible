@@ -1075,6 +1075,40 @@ export function auditExportUrl(filter: AuditFilter = {}): string {
   return `/v1/audit${q ? q + '&' : '?'}format=csv`;
 }
 
+// ---- Privacy (field-level masking config, admin-gated to change) ----
+
+export interface PrivacyConfig {
+  fields: string[];
+  updated_at?: string;
+  updated_by?: string;
+}
+
+export async function getPrivacy(
+  key: string,
+  fetcher: typeof fetch = fetch
+): Promise<PrivacyConfig> {
+  const res = await fetcher('/v1/privacy', { headers: authHeaders(key) });
+  if (!res.ok) {
+    return errorOrStatus(res, 'GET /v1/privacy');
+  }
+  return (await res.json()) as PrivacyConfig;
+}
+
+export async function setPrivacy(
+  key: string,
+  fields: string[],
+  fetcher: typeof fetch = fetch
+): Promise<void> {
+  const res = await fetcher('/v1/privacy', {
+    method: 'PUT',
+    headers: jsonHeaders(key),
+    body: JSON.stringify({ fields })
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'PUT /v1/privacy');
+  }
+}
+
 // ---- Context Layer (connectors, features, entities) ----
 
 export interface Connector {

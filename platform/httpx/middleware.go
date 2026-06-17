@@ -146,6 +146,10 @@ func requiredRole(method, path string) auth.Role {
 	if method == http.MethodGet || method == http.MethodHead || method == http.MethodOptions {
 		return auth.RoleViewer
 	}
+	// Changing the PII masking config is a compliance control — admin only.
+	if path == "/v1/privacy" {
+		return auth.RoleAdmin
+	}
 	switch {
 	case strings.Contains(path, "/deployments"), // a direct deploy (non-prod)
 		strings.HasSuffix(path, "/approve"), // the checker approving a deployment

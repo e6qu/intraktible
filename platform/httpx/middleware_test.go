@@ -147,6 +147,9 @@ func TestAuthorizeRBAC(t *testing.T) {
 		{"admin-k", "GET", "/v1/audit", 200},    // the audit trail is admin-only
 		{"approver-k", "GET", "/v1/audit", 403}, // even approver cannot read it
 		{"viewer-k", "GET", "/v1/audit", 403},   // ...nor viewer
+		{"viewer-k", "GET", "/v1/privacy", 200}, // the masking config is readable
+		{"editor-k", "PUT", "/v1/privacy", 403}, // ...but changing it is admin-only
+		{"admin-k", "PUT", "/v1/privacy", 200},  // a compliance control
 	}
 	for _, c := range cases {
 		if got := do(c.secret, c.method, c.path); got != c.want {

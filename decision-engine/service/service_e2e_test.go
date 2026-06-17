@@ -26,6 +26,7 @@ import (
 	"github.com/e6qu/intraktible/decision-engine/preapproval"
 	"github.com/e6qu/intraktible/decision-engine/service"
 	"github.com/e6qu/intraktible/platform/identity"
+	"github.com/e6qu/intraktible/platform/privacy"
 	"github.com/e6qu/intraktible/platform/testutil"
 )
 
@@ -619,6 +620,65 @@ func TestMonitorCheckDeliversToWebhookOverHTTP(t *testing.T) {
 	}
 }
 
+func TestPrivacyMaskingOverHTTP(t *testing.T) {
+	api := startEngine(t)
+	var flow struct {
+		FlowID string `json:"flow_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows", map[string]any{"slug": "pii", "name": "PII"}, http.StatusCreated, &flow)
+	api.Request(t, http.MethodPost, "/v1/flows/"+flow.FlowID+"/versions", map[string]any{
+		"graph": map[string]any{
+			"nodes": []map[string]any{
+				{"id": "in", "type": "input"},
+				{"id": "a", "type": "assignment", "config": map[string]any{"assignments": []map[string]any{
+					{"target": "ssn", "expr": "ssn"}, {"target": "amount", "expr": "amount"},
+				}}},
+				{"id": "out", "type": "output", "config": map[string]any{"fields": []string{"ssn", "amount"}}},
+			},
+			"edges": []map[string]any{{"from": "in", "to": "a"}, {"from": "a", "to": "out"}},
+		},
+	}, http.StatusCreated, nil)
+
+	// Classify "ssn" as sensitive.
+	api.Request(t, http.MethodPut, "/v1/privacy", map[string]any{"fields": []string{"SSN"}}, http.StatusOK, nil)
+
+	var dec struct {
+		DecisionID string `json:"decision_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows/pii/production/decide",
+		map[string]any{"data": map[string]any{"ssn": "123-45-6789", "amount": 100}}, http.StatusOK, &dec)
+
+	// The decision detail masks ssn but leaves amount intact, in both input and output.
+	var rec struct {
+		Data   map[string]any `json:"data"`
+		Output map[string]any `json:"output"`
+		Status string         `json:"status"`
+	}
+	if !testutil.Eventually(t, func() bool {
+		rec = struct {
+			Data   map[string]any `json:"data"`
+			Output map[string]any `json:"output"`
+			Status string         `json:"status"`
+		}{}
+		api.Request(t, http.MethodGet, "/v1/decisions/"+dec.DecisionID, nil, http.StatusOK, &rec)
+		return rec.Status == "completed"
+	}) {
+		t.Fatalf("decision never recorded: %+v", rec)
+	}
+	if rec.Data["ssn"] != "[redacted]" || rec.Data["amount"] != float64(100) {
+		t.Fatalf("input masking wrong: %+v", rec.Data)
+	}
+	if rec.Output["ssn"] != "[redacted]" || rec.Output["amount"] != float64(100) {
+		t.Fatalf("output masking wrong: %+v", rec.Output)
+	}
+
+	// The JSON export is masked too.
+	_, body := rawGet(t, api, "/v1/decisions/"+dec.DecisionID+"/export?format=json")
+	if !strings.Contains(body, "[redacted]") || strings.Contains(body, "123-45-6789") {
+		t.Fatalf("export not masked: %s", body)
+	}
+}
+
 func TestDistributionDriftOverHTTP(t *testing.T) {
 	api := startEngine(t)
 	var flow struct {
@@ -762,6 +822,7 @@ func startEngine(t *testing.T, opts ...command.DecideOption) *testutil.API {
 	hooks := notify.New(notify.NewHandler(log), st)
 	// Tests deliver to httptest (loopback), so use a plain client (no egress guard).
 	mon := monitor.New(monitor.NewHandler(log), st, notify.NewNotifier(log, st, http.DefaultClient))
+	priv := privacy.New(privacy.NewHandler(log), st)
 	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "author"}
 	routes := func(mux *http.ServeMux) {
 		svc.Routes(mux)
@@ -769,9 +830,10 @@ func startEngine(t *testing.T, opts ...command.DecideOption) *testutil.API {
 		pa.Routes(mux)
 		hooks.Routes(mux)
 		mon.Routes(mux)
+		priv.Routes(mux)
 	}
 	return testutil.StartAPI(t, log, st, "test-key", id, routes,
-		flows.Projector{}, history.Projector{}, analytics.Projector{}, policy.Projector{}, preapproval.Projector{}, monitor.Projector{}, notify.Projector{})
+		flows.Projector{}, history.Projector{}, analytics.Projector{}, policy.Projector{}, preapproval.Projector{}, monitor.Projector{}, notify.Projector{}, privacy.Projector{})
 }
 
 // stubFeatures is a fixed feature source for the decide HTTP test.

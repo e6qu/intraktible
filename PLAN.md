@@ -339,6 +339,12 @@ drift** is a first-class metric: `POST /v1/flows/{id}/baseline` snapshots the di
 (`monitor.Scheduler`, `INTRAKTIBLE_MONITOR_INTERVAL`) sweeps on a timer and notifies only on the ok→firing
 edge (resetting on resolve). The alerting gap is closed end-to-end — rules + drift + delivery + scheduling.
 
+**PII masking (post-MVP, compliance).** `platform/privacy` adds a per-workspace sensitive-field list
+(`GET/PUT /v1/privacy`, PUT admin-gated) whose values are redacted by a pure masker in decision
+input/output, node traces, and exports **at the read boundary** — mirroring connector credential
+redaction, so the raw event log stays the source of truth. Managed from the Audit page. Closes the
+field-level-masking half of the PII P1; retention/purge + right-to-erasure remain.
+
 **Persona-aware UI (post-MVP).** The web UI gained a **persona** axis (`web/src/lib/persona.ts`) — a
 client-side "view-as" preference anyone can switch (not RBAC-gated), orthogonal to light/dark theme. It
 applies a `data-persona` attribute that swaps accent, type system, and density, and the landing page
