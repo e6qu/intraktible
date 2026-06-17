@@ -27,15 +27,23 @@ export default defineConfig({
       cwd: '..',
       url: 'http://localhost:8080/healthz',
       reuseExistingServer: !process.env.CI,
-      stdout: 'pipe',
+      // The backend logs a line per request at INFO on stdout. Piping that to the
+      // test runner floods pre-commit's captured (non-blocking) stdout and aborts
+      // the push with a BlockingIOError, so drop it; stderr still surfaces real errors.
+      stdout: 'ignore',
       stderr: 'pipe',
       timeout: 120_000
     },
     {
-      command: 'vite dev --port 5173 --strictPort',
+      // Run e2e against the production build via `vite preview`, not `vite dev`:
+      // the dev server's on-demand dep-optimization + HMR open a cold-start window
+      // where partially-initialized modules throw transient client errors under the
+      // parallel suite. The preview server has no such window, so the run is
+      // deterministic and exercises the artifact that actually ships.
+      command: 'vite build && vite preview --port 5173 --strictPort',
       url: 'http://localhost:5173',
       reuseExistingServer: !process.env.CI,
-      timeout: 120_000
+      timeout: 180_000
     }
   ]
 });
