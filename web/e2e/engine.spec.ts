@@ -71,6 +71,42 @@ test('renders a flow graph and runs a test decision', async ({ page, request }) 
   await expect(result).toContainText('SEEDED');
 });
 
+test('exports the flow as DOT and JSON', async ({ page, request }) => {
+  const slug = uniqueSlug();
+  const created = await request.post('/v1/flows', {
+    headers: { 'X-Api-Key': KEY },
+    data: { slug, name: 'Exported' }
+  });
+  const { flow_id } = await created.json();
+  await request.post(`/v1/flows/${flow_id}/versions`, {
+    headers: { 'X-Api-Key': KEY },
+    data: {
+      graph: {
+        nodes: [
+          { id: 'in', type: 'input' },
+          { id: 'out', type: 'output' }
+        ],
+        edges: [{ from: 'in', to: 'out' }]
+      }
+    }
+  });
+
+  await page.goto(`/engine/${flow_id}`);
+  // The published version loads (2 nodes on the canvas) before we export it.
+  await expect(page.locator('.svelte-flow__node')).toHaveCount(2);
+
+  for (const [name, ext] of [
+    ['DOT', 'dot'],
+    ['JSON', 'json']
+  ] as const) {
+    const [download] = await Promise.all([
+      page.waitForEvent('download'),
+      page.getByRole('button', { name, exact: true }).click()
+    ]);
+    expect(download.suggestedFilename()).toBe(`${slug}.${ext}`);
+  }
+});
+
 test('builds a flow in the editor and publishes it', async ({ page, request }) => {
   const slug = uniqueSlug();
   const created = await request.post('/v1/flows', {

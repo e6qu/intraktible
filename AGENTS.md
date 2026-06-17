@@ -89,7 +89,7 @@ first-class instead of operator-CLI-only).
 ## The design in one breath
 Go backend (**functional core / imperative shell**) + **SvelteKit + Svelte Flow** UI embedded in the
 binary — a shared layout with **light/dark theming** (toggleable, persisted, OS-default), an inline-SVG
-icon set, and flow **diagram export** (Mermaid / BPMN) from the builder. The UI is **persona-aware**:
+icon set, and flow **export** (Mermaid / BPMN / Graphviz DOT / round-trippable JSON) from the builder. The UI is **persona-aware**:
 a client-side "view-as" switch (anyone can flip it — a presentation preference, *not* RBAC) re-skins and
 re-prioritises the whole app for three viewers — **Builder** (a dense monospace command-deck for the
 developer/maintainer), **Operator** (calm KPI mission-control for the risk/ops manager), and **Showcase**

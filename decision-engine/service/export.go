@@ -13,8 +13,9 @@ import (
 	"github.com/e6qu/intraktible/platform/httpx"
 )
 
-// exportFlow renders a flow version as a diagram: ?format=mermaid (flowchart, the
-// default) | mermaid-state | bpmn, and ?version=N (defaults to the latest).
+// exportFlow renders a flow version: ?format=mermaid (flowchart, the default) |
+// mermaid-state | bpmn | dot (Graphviz) | json (round-trippable), and ?version=N
+// (defaults to the latest).
 func (s *Service) exportFlow(w http.ResponseWriter, r *http.Request) {
 	id, ok := httpx.Caller(w, r)
 	if !ok {
@@ -47,8 +48,17 @@ func (s *Service) exportFlow(w http.ResponseWriter, r *http.Request) {
 		body, contentType, filename = export.MermaidState(ver.Graph), "text/plain; charset=utf-8", fv.Slug+"-state.mmd"
 	case "bpmn":
 		body, contentType, filename = export.BPMN(ver.Graph, fv.Name), "application/xml; charset=utf-8", fv.Slug+".bpmn"
+	case "dot", "graphviz":
+		body, contentType, filename = export.DOT(ver.Graph), "text/vnd.graphviz; charset=utf-8", fv.Slug+".dot"
+	case "json":
+		js, err := export.JSON(flowExport(fv, ver))
+		if err != nil {
+			httpx.Error(w, http.StatusInternalServerError, err)
+			return
+		}
+		body, contentType, filename = js, "application/json; charset=utf-8", fv.Slug+".json"
 	default:
-		httpx.Error(w, http.StatusBadRequest, fmt.Errorf("unknown export format %q (mermaid|mermaid-state|bpmn)", format))
+		httpx.Error(w, http.StatusBadRequest, fmt.Errorf("unknown export format %q (mermaid|mermaid-state|bpmn|dot|json)", format))
 		return
 	}
 	writeExport(w, contentType, filename, body)
@@ -93,6 +103,18 @@ func pickVersion(fv flows.FlowView, v string) (flows.VersionView, error) {
 		}
 	}
 	return flows.VersionView{}, fmt.Errorf("flow has no version %d", want)
+}
+
+// flowExport builds the portable JSON form from a flow + the chosen version.
+func flowExport(fv flows.FlowView, ver flows.VersionView) export.FlowExport {
+	return export.FlowExport{
+		Slug:        fv.Slug,
+		Name:        fv.Name,
+		Version:     ver.Version,
+		Etag:        ver.Etag,
+		Graph:       ver.Graph,
+		InputSchema: ver.InputSchema,
+	}
 }
 
 func writeExport(w http.ResponseWriter, contentType, filename, body string) {

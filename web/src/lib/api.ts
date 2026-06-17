@@ -154,8 +154,8 @@ export async function getFlow(
   return (await res.json()) as Flow;
 }
 
-// ExportFormat is a diagram export the builder offers.
-export type ExportFormat = 'mermaid' | 'mermaid-state' | 'bpmn';
+// ExportFormat is a flow export the builder offers (diagrams + portable data).
+export type ExportFormat = 'mermaid' | 'mermaid-state' | 'bpmn' | 'dot' | 'json';
 
 // exportFlow fetches a flow version rendered as a diagram (text), failing loudly.
 export async function exportFlow(

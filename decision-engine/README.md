@@ -71,12 +71,15 @@ Done — execution runtime + decide API + decision history (the decision event s
   /v1/flows/{flow_id}/metrics`.
 - HTTP: `POST /v1/flows/{slug}/{env}/decide` → `{decision_id, status, data}`;
   `GET /v1/decisions` · `GET /v1/decisions/{decision_id}` — history with the full node trace + variant.
-- **Diagram export** (`decision-engine/export`, pure): a flow version renders to **Mermaid**
-  (`flowchart`, `stateDiagram-v2`) and **BPMN 2.0 XML with BPMNDI** layout (opens laid-out in
+- **Flow export** (`decision-engine/export`, pure): a flow version renders to **Mermaid**
+  (`flowchart`, `stateDiagram-v2`), **BPMN 2.0 XML with BPMNDI** layout (opens laid-out in
   bpmn.io / Camunda; node types map to start/end events, gateways, business-rule/service/script/user
-  tasks); a decision run renders to a Mermaid **sequenceDiagram** trace. Exposed via
-  `GET /v1/flows/{flow_id}/export?format=mermaid|mermaid-state|bpmn[&version=N]`,
-  `GET /v1/decisions/{decision_id}/export`, the `intraktible export` CLI, and the builder UI.
+  tasks), **Graphviz DOT** (`dot -Tsvg`/`-Tpng`), and **round-trippable JSON** (`{slug,name,version,
+  etag,graph,input_schema}` — the `{graph,input_schema}` subset re-imports via `POST …/versions`); a
+  decision run renders to a Mermaid **sequenceDiagram** trace. Exposed via
+  `GET /v1/flows/{flow_id}/export?format=mermaid|mermaid-state|bpmn|dot|json[&version=N]`,
+  `GET /v1/decisions/{decision_id}/export`, the `intraktible export` CLI, and the builder UI
+  (download/copy per format).
 - **Context + agents (Phase 3/4):** a decide call may carry `{entity_type, entity_id}`; the shell folds
   that entity's computed features into the input under `features.*` (so a Rule/Split expression can
   read `features.txn_count_24h`). A flow's **Connect** nodes are likewise pre-resolved (the shell

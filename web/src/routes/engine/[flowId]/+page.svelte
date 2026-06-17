@@ -466,6 +466,8 @@
   function exportFilename(format: ExportFormat): string {
     const base = flow?.slug ?? flowId;
     if (format === 'bpmn') return `${base}.bpmn`;
+    if (format === 'dot') return `${base}.dot`;
+    if (format === 'json') return `${base}.json`;
     return format === 'mermaid-state' ? `${base}-state.mmd` : `${base}.mmd`;
   }
   async function downloadExport(format: ExportFormat) {
@@ -631,6 +633,27 @@
         aria-label="Copy BPMN"
         title="Copy BPMN"
         onclick={() => copyExport('bpmn')}
+      >
+        <Icon name="copy" size={14} />
+      </button>
+    </div>
+    <div class="grp">
+      <button onclick={() => downloadExport('dot')} title="Download Graphviz DOT">
+        <Icon name="download" size={14} /> DOT
+      </button>
+      <button class="icon" aria-label="Copy DOT" title="Copy DOT" onclick={() => copyExport('dot')}>
+        <Icon name="copy" size={14} />
+      </button>
+    </div>
+    <div class="grp">
+      <button onclick={() => downloadExport('json')} title="Download flow JSON (re-importable)">
+        <Icon name="download" size={14} /> JSON
+      </button>
+      <button
+        class="icon"
+        aria-label="Copy JSON"
+        title="Copy JSON"
+        onclick={() => copyExport('json')}
       >
         <Icon name="copy" size={14} />
       </button>

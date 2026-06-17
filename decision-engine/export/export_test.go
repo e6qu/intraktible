@@ -3,7 +3,9 @@
 package export_test
 
 import (
+	"encoding/json"
 	"encoding/xml"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -77,6 +79,62 @@ func TestMermaidSequence(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Fatalf("sequence diagram missing %q in:\n%s", want, out)
 		}
+	}
+}
+
+func TestDOT(t *testing.T) {
+	out := export.DOT(sample())
+	for _, want := range []string{
+		"digraph flow {",
+		"rankdir=TB;",
+		`"in" [label="in (input)", shape=ellipse];`,
+		`"s" [label="score check (split)", shape=diamond];`,
+		`"ai" [label="assess (ai)", shape=cylinder];`,
+		`"mr" [label="review (manual_review)", shape=hexagon];`,
+		`"s" -> "ai" [label="yes"];`,
+		`"ai" -> "out";`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("DOT missing %q in:\n%s", want, out)
+		}
+	}
+}
+
+func TestDOTQuotesSpecialChars(t *testing.T) {
+	g := events.Graph{Nodes: []events.Node{{ID: `a"b`, Type: events.NodeOutput, Name: "x\ny"}}}
+	out := export.DOT(g)
+	if !strings.Contains(out, `"a\"b"`) {
+		t.Fatalf("DOT did not escape a quote in the id:\n%s", out)
+	}
+	if strings.Contains(out, "x\ny") {
+		t.Fatalf("DOT did not flatten the newline in the label:\n%s", out)
+	}
+}
+
+func TestJSONRoundTrips(t *testing.T) {
+	g := sample()
+	in := export.FlowExport{
+		Slug:        "credit",
+		Name:        "Credit Flow",
+		Version:     3,
+		Etag:        "abc123",
+		Graph:       g,
+		InputSchema: json.RawMessage(`{"type":"object"}`),
+	}
+	out, err := export.JSON(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, `"slug": "credit"`) || !strings.Contains(out, `"version": 3`) {
+		t.Fatalf("JSON missing metadata:\n%s", out)
+	}
+	// The exported graph round-trips back to the original (re-importable).
+	var got export.FlowExport
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("export is not valid JSON: %v", err)
+	}
+	if !reflect.DeepEqual(got.Graph, g) {
+		t.Fatalf("graph did not round-trip: %+v != %+v", got.Graph, g)
 	}
 }
 

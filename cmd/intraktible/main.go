@@ -375,7 +375,7 @@ func exportCmd(args []string) error {
 	org := fs.String("org", "demo", "tenant org")
 	workspace := fs.String("workspace", "main", "tenant workspace")
 	flow := fs.String("flow", "", "flow id or slug to export (required)")
-	format := fs.String("format", "mermaid", "mermaid | mermaid-state | bpmn")
+	format := fs.String("format", "mermaid", "mermaid | mermaid-state | bpmn | dot | json")
 	version := fs.Int("version", 0, "flow version to export (0 = latest)")
 	_ = fs.Parse(args)
 	if *flow == "" {
@@ -451,8 +451,15 @@ func renderFlow(fv flows.FlowView, ver flows.VersionView, format string) (string
 		return export.MermaidState(ver.Graph), nil
 	case "bpmn":
 		return export.BPMN(ver.Graph, fv.Name), nil
+	case "dot", "graphviz":
+		return export.DOT(ver.Graph), nil
+	case "json":
+		return export.JSON(export.FlowExport{
+			Slug: fv.Slug, Name: fv.Name, Version: ver.Version, Etag: ver.Etag,
+			Graph: ver.Graph, InputSchema: ver.InputSchema,
+		})
 	default:
-		return "", fmt.Errorf("export: unknown format %q (mermaid|mermaid-state|bpmn)", format)
+		return "", fmt.Errorf("export: unknown format %q (mermaid|mermaid-state|bpmn|dot|json)", format)
 	}
 }
 

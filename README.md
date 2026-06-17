@@ -72,7 +72,7 @@ Projections always rebuild from the append-only event log on boot, so your data 
 intraktible log                       # print the event log + a per-stream summary
 intraktible replay                    # rebuild projections from the log into a fresh store
 intraktible replay --as-of 42         # time-travel: rebuild as of seq 42 (read-only rollback)
-intraktible export --flow credit --format mermaid   # diagram a flow (mermaid | mermaid-state | bpmn)
+intraktible export --flow credit --format mermaid   # export a flow: mermaid | mermaid-state | bpmn | dot | json
 ```
 
 ### Docker (no Go/Node toolchain needed)

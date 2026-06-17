@@ -14,6 +14,7 @@ import (
 	"github.com/e6qu/intraktible/decision-engine/analytics"
 	"github.com/e6qu/intraktible/decision-engine/command"
 	"github.com/e6qu/intraktible/decision-engine/events"
+	"github.com/e6qu/intraktible/decision-engine/export"
 	"github.com/e6qu/intraktible/decision-engine/flows"
 	"github.com/e6qu/intraktible/decision-engine/history"
 	"github.com/e6qu/intraktible/decision-engine/internal/flowtest"
@@ -77,6 +78,25 @@ func TestExportFlowOverHTTP(t *testing.T) {
 	code, bpmn := rawGet(t, api, "/v1/flows/"+created.FlowID+"/export?format=bpmn")
 	if code != http.StatusOK || !strings.Contains(bpmn, "<bpmn:definitions") || !strings.Contains(bpmn, "<bpmndi:BPMNDiagram") {
 		t.Fatalf("bpmn export incomplete (status %d):\n%s", code, bpmn)
+	}
+
+	// Graphviz DOT.
+	code, dot := rawGet(t, api, "/v1/flows/"+created.FlowID+"/export?format=dot")
+	if code != http.StatusOK || !strings.Contains(dot, "digraph flow {") || !strings.Contains(dot, `"s" -> "out" [label="yes"];`) {
+		t.Fatalf("dot export incomplete (status %d):\n%s", code, dot)
+	}
+
+	// Round-trippable JSON (the graph re-imports into POST .../versions).
+	code, raw := rawGet(t, api, "/v1/flows/"+created.FlowID+"/export?format=json")
+	if code != http.StatusOK {
+		t.Fatalf("json export status %d:\n%s", code, raw)
+	}
+	var fx export.FlowExport
+	if err := json.Unmarshal([]byte(raw), &fx); err != nil {
+		t.Fatalf("json export not valid: %v\n%s", err, raw)
+	}
+	if fx.Slug == "" || len(fx.Graph.Nodes) == 0 {
+		t.Fatalf("json export missing slug/graph:\n%s", raw)
 	}
 
 	// Unknown format → 400.
