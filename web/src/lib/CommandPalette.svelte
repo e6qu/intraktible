@@ -9,6 +9,7 @@
   import { setPersona, PERSONAS } from '$lib/persona';
   import { user, signOut } from '$lib/session';
   import { paletteOpen, closePalette, togglePalette } from '$lib/palette';
+  import { listFlows, listAgents, listCases } from '$lib/api';
 
   type Cmd = {
     id: string;
@@ -23,6 +24,9 @@
   let query = $state('');
   let selected = $state(0);
   let inputEl = $state<HTMLInputElement | null>(null);
+  // Tenant entities (flows/agents/cases) loaded when the palette opens, so the
+  // search can jump straight to a specific flow/agent/case by name.
+  let dynamic = $state<Cmd[]>([]);
 
   function navCmd(href: string, label: string, icon: string): Cmd {
     return {
@@ -92,7 +96,13 @@
     });
   }
 
-  const filtered = $derived(matches(commands, query));
+  // With no query, show only the static commands (a clean launcher); once typing,
+  // search the entities too and cap how many entity hits render.
+  const filtered = $derived(
+    query.trim() === ''
+      ? commands
+      : [...matches(commands, query), ...matches(dynamic, query).slice(0, 12)]
+  );
 
   function run(c: Cmd | undefined): void {
     if (!c) return;
@@ -100,12 +110,58 @@
     c.run();
   }
 
-  // Reset query/selection each time the palette opens, and focus the input.
+  // Load tenant entities into searchable commands (best-effort; a failed source
+  // is simply omitted so the palette never breaks).
+  async function loadDynamic(): Promise<void> {
+    const [flows, agents, cases] = await Promise.all([
+      listFlows('').catch(() => []),
+      listAgents('').catch(() => []),
+      listCases('', {}).catch(() => [])
+    ]);
+    dynamic = [
+      ...flows.map(
+        (f): Cmd => ({
+          id: `flow:${f.flow_id}`,
+          section: 'Flows',
+          label: f.name || f.slug,
+          hint: f.slug,
+          icon: 'engine',
+          keywords: `flow ${f.name} ${f.slug}`,
+          run: () => goto(`/engine/${f.flow_id}`)
+        })
+      ),
+      ...agents.map(
+        (a): Cmd => ({
+          id: `agent:${a.name}`,
+          section: 'Agents',
+          label: a.name,
+          icon: 'agents',
+          keywords: `agent ${a.name}`,
+          run: () => goto(`/agents/${a.name}`)
+        })
+      ),
+      ...cases.map(
+        (c): Cmd => ({
+          id: `case:${c.case_id}`,
+          section: 'Cases',
+          label: c.company_name,
+          hint: c.status,
+          icon: 'cases',
+          keywords: `case ${c.company_name} ${c.status}`,
+          run: () => goto(`/cases/${c.case_id}`)
+        })
+      )
+    ];
+  }
+
+  // Reset query/selection each time the palette opens, focus the input, and
+  // refresh the entity index.
   $effect(() => {
     if ($paletteOpen) {
       query = '';
       selected = 0;
       queueMicrotask(() => inputEl?.focus());
+      if ($user) void loadDynamic();
     }
   });
   // Typing always re-highlights the top match.
@@ -158,7 +214,7 @@
           aria-controls="cp-list"
           aria-activedescendant={filtered.at(selected)?.id}
           aria-label="Search commands"
-          placeholder="Search pages, actions, views…"
+          placeholder="Search pages, flows, cases, agents, actions…"
           autocomplete="off"
           spellcheck="false"
         />

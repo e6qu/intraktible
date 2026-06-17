@@ -255,5 +255,9 @@ for (const themeMode of ['light', 'dark']) {
     await page.getByTestId('cmdk-trigger').click();
     await page.waitForTimeout(300);
     await page.screenshot({ path: `${SHOTS}/palette-${themeMode}.png` });
+    // Typed query → entity search results (a flow by name) appear.
+    await page.getByRole('combobox', { name: 'Search commands' }).fill('credit');
+    await page.waitForTimeout(500);
+    await page.screenshot({ path: `${SHOTS}/palette-search-${themeMode}.png` });
   });
 }
