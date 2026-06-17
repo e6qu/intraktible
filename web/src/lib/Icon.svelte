@@ -27,6 +27,10 @@
     ['play', '<path d="M7 4l13 8-13 8V4z"/>'],
     ['check', '<path d="M5 12l5 5L20 6"/>'],
     [
+      'bell',
+      '<path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/>'
+    ],
+    [
       'copy',
       '<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h8"/>'
     ],
@@ -50,7 +54,6 @@
       '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/>'
     ],
     ['moon', '<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>'],
-    // node-type glyphs (flow builder)
     ['input', '<circle cx="12" cy="12" r="7"/><path d="M9 12h6M13 9l3 3-3 3"/>'],
     ['output', '<circle cx="12" cy="12" r="7"/><path d="M8 12h6M12 9l3 3-3 3"/>'],
     ['split', '<path d="M12 3l9 9-9 9-9-9 9-9z"/>'],
@@ -76,7 +79,6 @@
     ['manual_review', '<circle cx="12" cy="8" r="3"/><path d="M5 21a7 7 0 0 1 14 0"/>'],
     ['assignment', '<path d="M5 12h14M12 5v14"/>'],
     ['reason', '<path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5M9 13h6M9 17h4"/>'],
-    // persona / identity affordance
     ['user', '<circle cx="12" cy="8" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/>'],
     ['chevron-down', '<path d="M6 9l6 6 6-6"/>'],
     ['search', '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>'],

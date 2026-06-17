@@ -66,7 +66,9 @@ enterprise buyers; **P2** = differentiators / scale.
   rejected / promoted (deployment requests), on flows, policies, and decisions —
   every reviewable thing carries an audit-grade explanation trail (one reusable
   `CommentThread.svelte` drops onto any subject), with one level of **threaded
-  replies**. *Remaining: @-mentions/notifications.*
+  replies** and **@-mentions** that feed a per-user **notifications inbox**
+  (`platform/notifications` — a projector folds comment mentions into a recipient
+  inbox; a header bell shows the unread count and marks read).
 - **P1 — Change history / diff** between versions — *the builder now has a client-side
   version-diff panel (added/removed/changed nodes + edges between any two published
   versions); a richer who/why audit of changes is still open.*

@@ -191,7 +191,7 @@
     }
   }
 
-  // --- Version diff (client-side structural compare of two published versions) ---
+  // Version diff (client-side structural compare of two published versions)
   let diffA = $state('');
   let diffB = $state('');
   function versionGraph(v: string) {
@@ -235,7 +235,7 @@
     'reason'
   ];
 
-  // --- Rule node: rules[] = {when, then:[{target,expr}]} (two-level repeater) ---
+  // Rule node: rules[] = {when, then:[{target,expr}]} (two-level repeater)
   type Assign = { target?: string; expr?: string };
   type RuleClause = { when?: string; then?: Assign[] };
   function ruleClauses(): RuleClause[] {
@@ -277,7 +277,7 @@
     });
   }
 
-  // --- Scorecard node: factors[] = {when, weight}, output? ---
+  // Scorecard node: factors[] = {when, weight}, output?
   type Factor = { when?: string; weight?: number };
   function factors(): Factor[] {
     const f = nodeCfg().factors;
@@ -293,7 +293,7 @@
     patchCfg({ factors: factors().map((f, j) => (j === i ? { ...f, ...patch } : f)) });
   }
 
-  // --- Reason node: reasons[] = {when, code, description} ---
+  // Reason node: reasons[] = {when, code, description}
   type Reason = { when?: string; code?: string; description?: string };
   function reasons(): Reason[] {
     const r = nodeCfg().reasons;
@@ -309,7 +309,7 @@
     patchCfg({ reasons: reasons().map((r, j) => (j === i ? { ...r, ...patch } : r)) });
   }
 
-  // --- Decision table: rows[] = {when, outputs:[{target,expr}]}, mode? ---
+  // Decision table: rows[] = {when, outputs:[{target,expr}]}, mode?
   type TableRow = { when?: string; outputs?: Assign[] };
   function tableRows(): TableRow[] {
     const r = nodeCfg().rows;
@@ -352,7 +352,7 @@
     });
   }
 
-  // --- 2D matrix: rows[]/cols[] = {when}, cells[r][c] = literal, output? ---
+  // 2D matrix: rows[]/cols[] = {when}, cells[r][c] = literal, output?
   type AxisCond = { when?: string };
   function matrixRows(): AxisCond[] {
     const r = nodeCfg().rows;
@@ -584,7 +584,6 @@
     }
   }
 
-  // --- Backtesting: replay a dataset through the published version(s) ---
   let btDataset = $state('[\n  {}\n]');
   let btCompare = $state('');
   let btReport = $state<BacktestReport | null>(null);
@@ -608,7 +607,7 @@
     }
   }
 
-  // --- Batch decisioning: decide a whole dataset, each row a recorded decision ---
+  // Batch decisioning: decide a whole dataset, each row a recorded decision
   let batchDataset = $state('[\n  {}\n]');
   let batchReport = $state<BatchReport | null>(null);
   let batchRunning = $state(false);
@@ -632,7 +631,7 @@
     }
   }
 
-  // --- Promote a batch into pre-approvals: grant a time-boxed pre-decision for
+  // Promote a batch into pre-approvals: grant a time-boxed pre-decision for
   // every row the bound policy approves, keyed by a field in each row. ---
   let paEntityType = $state('applicant');
   let paEntityKey = $state('applicant_id');
@@ -665,7 +664,6 @@
     }
   }
 
-  // --- Deployment & maker-checker (four-eyes) ---
   let depVersion = $state('');
   let depEnv = $state('sandbox');
   let depChallenger = $state('');
@@ -713,7 +711,6 @@
     }
   }
 
-  // --- Promote: ship the live version of one env up the chain ---
   let promoteFrom = $state('sandbox');
   let promoteTo = $state('staging');
   let promoteForce = $state(false);
@@ -767,7 +764,6 @@
     }
   }
 
-  // --- Monitors: thresholds over the flow's live metrics ---
   let monitors = $state<Monitor[]>([]);
   let monMetric = $state('failure_rate');
   let monOp = $state('gt');
@@ -842,7 +838,7 @@
     }
   }
 
-  // --- Notification webhooks (tenant-wide delivery targets) ---
+  // Notification webhooks (tenant-wide delivery targets)
   let webhooks = $state<Webhook[]>([]);
   let hookURL = $state('');
   let hookNote = $state('');
@@ -879,7 +875,6 @@
     }
   }
 
-  // --- Distribution drift: capture a baseline, then compare current vs baseline ---
   let drift = $state<DriftReport | null>(null);
   async function loadDrift() {
     try {
@@ -903,7 +898,6 @@
     return `${Math.round(n * 100)}%`;
   }
 
-  // --- Flow assertions: input→expected tests run through the pure core ---
   let assertText = $state(
     '[\n  {\n    "name": "example",\n    "input": {},\n    "expect": {}\n  }\n]'
   );

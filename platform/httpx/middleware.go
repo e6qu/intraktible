@@ -150,6 +150,10 @@ func requiredRole(method, path string) auth.Role {
 	if path == "/v1/privacy" {
 		return auth.RoleAdmin
 	}
+	// A user manages their own notification inbox (marking read) — any viewer.
+	if strings.HasPrefix(path, "/v1/notifications") {
+		return auth.RoleViewer
+	}
 	switch {
 	case strings.Contains(path, "/deployments"), // a direct deploy (non-prod)
 		strings.HasSuffix(path, "/promote"), // promote a live version up the chain

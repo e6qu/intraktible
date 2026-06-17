@@ -13,6 +13,7 @@
   import Toasts from '$lib/Toasts.svelte';
   import CommandPalette from '$lib/CommandPalette.svelte';
   import ShortcutsOverlay from '$lib/ShortcutsOverlay.svelte';
+  import NotificationsBell from '$lib/NotificationsBell.svelte';
 
   let { children } = $props();
   let theme = $state<'light' | 'dark'>('light');
@@ -141,6 +142,7 @@
     <span class="cmdk-label">Search</span>
     <kbd>⌘K</kbd>
   </button>
+  {#if $user}<NotificationsBell />{/if}
   <details
     class="persona"
     bind:this={personaEl}

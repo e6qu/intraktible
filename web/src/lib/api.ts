@@ -47,8 +47,6 @@ export async function sayHello(
   return (await res.json()) as SayHelloResult;
 }
 
-// ---- Decision Engine ----
-
 export interface GraphNode {
   id: string;
   type: string;
@@ -194,8 +192,6 @@ export async function exportDecision(
   return res.text();
 }
 
-// ---- Decision history + analytics ----
-
 export interface NodeRecord {
   node_id: string;
   type: string;
@@ -283,8 +279,6 @@ export async function getFlowMetrics(
   }
   return (await res.json()) as FlowMetrics;
 }
-
-// ---- Monitors (thresholds over a flow's live metrics) ----
 
 export const MONITOR_METRICS = [
   'failure_rate',
@@ -399,8 +393,6 @@ export async function checkMonitors(
   return (await res.json()) as MonitorCheck;
 }
 
-// ---- Flow assertions (stored input→expected tests, run via the pure core) ----
-
 export interface AssertionCase {
   name: string;
   input: Record<string, unknown>;
@@ -510,8 +502,6 @@ export async function getDrift(
   return (await res.json()) as DriftReport;
 }
 
-// ---- Webhooks (outbound notification channel, shared across flows) ----
-
 export interface Webhook {
   webhook_id: string;
   url: string;
@@ -563,8 +553,6 @@ export async function deleteWebhook(
     return errorOrStatus(res, 'DELETE /v1/webhooks');
   }
 }
-
-// ---- Policies (operational disposition layer over a flow) ----
 
 export interface PolicyRule {
   when: string;
@@ -677,8 +665,6 @@ export async function policyBacktest(
   return (await res.json()) as PolicyBacktestReport;
 }
 
-// ---- Pre-approvals ----
-
 export interface PreApproval {
   preapproval_id: string;
   entity_type: string;
@@ -755,8 +741,6 @@ export async function revokePreApproval(
   }
 }
 
-// ---- Backtesting ----
-
 export interface BacktestOutcome {
   status: string;
   output?: Record<string, unknown>;
@@ -821,8 +805,6 @@ export async function publishVersion(
   }
   return (await res.json()) as { version: number; etag: string };
 }
-
-// ---- Deployment & maker-checker (four-eyes) ----
 
 export interface DeployInput {
   environment: string;
@@ -1055,8 +1037,6 @@ export async function preapproveBatch(
   return (await res.json()) as PreApproveBatchReport;
 }
 
-// ---- Case Manager ----
-
 export interface CaseNote {
   author: string;
   text: string;
@@ -1116,8 +1096,6 @@ async function errorOrStatus(res: Response, label: string): Promise<never> {
   throw new Error(body.error ?? `${label}: ${res.status}`);
 }
 
-// ---- Audit surface ----
-
 export interface AuditEntry {
   seq: number;
   id: string;
@@ -1170,8 +1148,6 @@ export function auditExportUrl(filter: AuditFilter = {}): string {
   return `/v1/audit${q ? q + '&' : '?'}format=csv`;
 }
 
-// ---- Comments (discussion threads on any workflow subject) ----
-
 export interface Comment {
   comment_id: string;
   subject_type: string;
@@ -1216,7 +1192,42 @@ export async function postComment(
   return (await res.json()) as { comment_id: string };
 }
 
-// ---- Privacy (field-level masking config, admin-gated to change) ----
+export interface Notification {
+  notification_id: string;
+  recipient: string;
+  kind: string;
+  subject_type: string;
+  subject_id: string;
+  snippet: string;
+  author: string;
+  read: boolean;
+  created_at: string;
+}
+
+export async function listNotifications(
+  key: string,
+  fetcher: typeof fetch = fetch
+): Promise<Notification[]> {
+  const res = await fetcher('/v1/notifications', { headers: authHeaders(key) });
+  if (!res.ok) {
+    return errorOrStatus(res, 'GET /v1/notifications');
+  }
+  return ((await res.json()) as { notifications: Notification[] }).notifications ?? [];
+}
+
+export async function markNotificationRead(
+  key: string,
+  notificationId: string,
+  fetcher: typeof fetch = fetch
+): Promise<void> {
+  const res = await fetcher(`/v1/notifications/${encodeURIComponent(notificationId)}/read`, {
+    method: 'POST',
+    headers: jsonHeaders(key)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'POST notification read');
+  }
+}
 
 export interface PrivacyConfig {
   fields: string[];
@@ -1249,8 +1260,6 @@ export async function setPrivacy(
     return errorOrStatus(res, 'PUT /v1/privacy');
   }
 }
-
-// ---- Context Layer (connectors, features, entities) ----
 
 export interface Connector {
   name: string;
@@ -1519,8 +1528,6 @@ export function addCaseNote(
   return caseAction(key, caseID, 'notes', { text }, fetcher);
 }
 
-// ---- Agent Manager ----
-
 export interface Agent {
   name: string;
   provider?: string;
@@ -1658,8 +1665,6 @@ export async function escalateRun(
   }
   return (await res.json()) as { case_id: string };
 }
-
-// ---- Session auth (login/logout) ----
 
 export interface Identity {
   org: string;
