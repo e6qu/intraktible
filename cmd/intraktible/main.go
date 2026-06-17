@@ -39,6 +39,7 @@ import (
 	"github.com/e6qu/intraktible/decision-engine/export"
 	"github.com/e6qu/intraktible/decision-engine/flows"
 	"github.com/e6qu/intraktible/decision-engine/history"
+	"github.com/e6qu/intraktible/decision-engine/monitor"
 	"github.com/e6qu/intraktible/decision-engine/policy"
 	"github.com/e6qu/intraktible/decision-engine/preapproval"
 	engineservice "github.com/e6qu/intraktible/decision-engine/service"
@@ -184,6 +185,9 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 		policy.New(policy.NewHandler(log), st).Routes(api)
 		// Pre-approvals: durable pre-decisions honored instantly at decide time.
 		preapproval.New(paCmd, st).Routes(api)
+		// Monitors: thresholds over a flow's metrics, evaluated live (failure/refer
+		// rate, automation rate, latency, volume).
+		monitor.New(monitor.NewHandler(log), st).Routes(api)
 	}
 	if enabled(modules, "case-manager") {
 		caseservice.New(casecmd.NewHandler(log), st).Routes(api)
@@ -298,7 +302,7 @@ func moduleProjectors(modules string) []projection.Projector {
 		ps = append(ps, stats.Projector{})
 	}
 	if enabled(modules, "decision-engine") {
-		ps = append(ps, flows.Projector{}, history.Projector{}, analytics.Projector{}, policy.Projector{}, preapproval.Projector{})
+		ps = append(ps, flows.Projector{}, history.Projector{}, analytics.Projector{}, policy.Projector{}, preapproval.Projector{}, monitor.Projector{})
 	}
 	if enabled(modules, "case-manager") {
 		ps = append(ps, cases.Projector{})

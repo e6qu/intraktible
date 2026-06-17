@@ -109,6 +109,15 @@ Done — execution runtime + decide API + decision history (the decision event s
   becomes the stored offer terms. Returns a per-row tally (granted / skipped / failed / rejected). The
   builder's **Promote to pre-approvals** panel drives it over the batch dataset. This is the "policy
   informs bulk decisions" loop: decide a population once, pre-approve the winners, honor them instantly.
+- **Monitors (`decision-engine/monitor`):** thresholds over a flow's live metrics — `failure_rate`,
+  `refer_rate`, `automation_rate`, `approve_rate`, `decline_rate`, `avg_latency_ms`, `volume` — each a
+  rule `{metric, op (gt|lt), threshold}` that **fires** when breached. The evaluator is a pure function
+  of an `analytics.FlowMetrics` snapshot; status (`actual` / `computable` / `firing`) is computed at read
+  time, never stored, so it stays correct as decisions accrue (a rate with no decisions reads "no data",
+  not a false 0). API: `POST /v1/flows/{id}/monitors` (`editor`), `GET /v1/flows/{id}/monitors` (rules +
+  live status), `DELETE /v1/flows/{id}/monitors/{monitor_id}`. UI: a **Monitors** panel in the builder
+  defines rules and shows firing/ok/no-data with the current value. (The thresholds exist; wiring them to
+  a notification channel is the open alerting work.)
 - **Flow export** (`decision-engine/export`, pure): a flow version renders to **Mermaid**
   (`flowchart`, `stateDiagram-v2`), **BPMN 2.0 XML with BPMNDI** layout (opens laid-out in
   bpmn.io / Camunda; node types map to start/end events, gateways, business-rule/service/script/user

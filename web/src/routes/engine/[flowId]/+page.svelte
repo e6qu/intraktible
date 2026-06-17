@@ -20,6 +20,11 @@
     exportFlow,
     exportDecision,
     getFlowMetrics,
+    listMonitors,
+    defineMonitor,
+    deleteMonitor,
+    MONITOR_METRICS,
+    type Monitor,
     backtestFlow,
     deployVersion,
     requestDeployment,
@@ -719,9 +724,67 @@
     }
   }
 
+  // --- Monitors: thresholds over the flow's live metrics ---
+  let monitors = $state<Monitor[]>([]);
+  let monMetric = $state('failure_rate');
+  let monOp = $state('gt');
+  let monThreshold = $state(0.05);
+  let monDesc = $state('');
+  let monBusy = $state(false);
+  // Rates are fractions (0–1); volume and latency are absolute.
+  const monIsRate = $derived(monMetric.endsWith('_rate'));
+  async function loadMonitors() {
+    try {
+      monitors = await listMonitors(key, flowId);
+    } catch {
+      monitors = [];
+    }
+  }
+  function fmtActual(m: Monitor): string {
+    if (!m.status.computable) return 'no data';
+    return m.metric.endsWith('_rate')
+      ? `${Math.round(m.status.actual * 100)}%`
+      : String(Math.round(m.status.actual));
+  }
+  function fmtThreshold(m: Monitor): string {
+    const sym = m.op === 'gt' ? '>' : '<';
+    return m.metric.endsWith('_rate')
+      ? `${sym} ${Math.round(m.threshold * 100)}%`
+      : `${sym} ${m.threshold}`;
+  }
+  async function addMonitor() {
+    error = '';
+    monBusy = true;
+    try {
+      await defineMonitor(key, flowId, {
+        metric: monMetric,
+        op: monOp,
+        threshold: monThreshold,
+        description: monDesc.trim() || undefined
+      });
+      monDesc = '';
+      toast.success('Monitor added');
+      await loadMonitors();
+    } catch (e) {
+      error = msg(e);
+    } finally {
+      monBusy = false;
+    }
+  }
+  async function removeMonitor(m: Monitor) {
+    try {
+      await deleteMonitor(key, flowId, m.monitor_id);
+      toast.success('Monitor removed');
+      await loadMonitors();
+    } catch (e) {
+      toast.error(msg(e));
+    }
+  }
+
   onMount(() => {
     void load();
     void loadMetrics();
+    void loadMonitors();
   });
 </script>
 
@@ -831,6 +894,66 @@
       <a href="/decisions">view runs →</a>
     </div>
   {/if}
+
+  <section class="monitors" data-testid="monitors-panel">
+    <div class="mon-head">
+      <h2>Monitors</h2>
+      <button class="ghost" onclick={loadMonitors} title="Re-evaluate against current metrics">
+        <Icon name="reload" size={14} /> Refresh
+      </button>
+    </div>
+    <p class="muted">
+      Thresholds over this flow's live metrics — failure / refer / automation rate, latency, and
+      volume. Each is evaluated against the analytics roll-up; a breached rule shows as
+      <b>firing</b>.
+    </p>
+    <div class="row mon-form">
+      <label>
+        Metric
+        <select bind:value={monMetric} aria-label="monitor metric">
+          {#each MONITOR_METRICS as m (m)}<option value={m}>{m}</option>{/each}
+        </select>
+      </label>
+      <label>
+        When
+        <select bind:value={monOp} aria-label="monitor op">
+          <option value="gt">above</option>
+          <option value="lt">below</option>
+        </select>
+      </label>
+      <label>
+        Threshold {monIsRate ? '(0–1)' : ''}
+        <input
+          type="number"
+          step={monIsRate ? '0.01' : '1'}
+          bind:value={monThreshold}
+          aria-label="monitor threshold"
+        />
+      </label>
+      <label class="grow">
+        Note
+        <input bind:value={monDesc} aria-label="monitor description" placeholder="optional" />
+      </label>
+      <button onclick={addMonitor} disabled={monBusy} data-testid="add-monitor">Add monitor</button>
+    </div>
+    {#if monitors.length > 0}
+      <ul class="mon-list">
+        {#each monitors as m (m.monitor_id)}
+          <li class:firing={m.status.firing}>
+            <span class="mon-state" class:firing={m.status.firing}
+              >{m.status.firing ? 'firing' : m.status.computable ? 'ok' : 'no data'}</span
+            >
+            <span class="mon-rule"><b>{m.metric}</b> {fmtThreshold(m)}</span>
+            <span class="mon-actual">now: {fmtActual(m)}</span>
+            {#if m.description}<span class="muted">{m.description}</span>{/if}
+            <button class="link danger" onclick={() => removeMonitor(m)}>remove</button>
+          </li>
+        {/each}
+      </ul>
+    {:else}
+      <p class="muted">No monitors yet.</p>
+    {/if}
+  </section>
 
   <section class="deploy" data-testid="deploy-panel">
     <h2>Deployment</h2>
@@ -1767,6 +1890,83 @@
   }
   .metrics .muted {
     color: var(--fg-subtle);
+  }
+  .monitors {
+    margin: 0.6rem 0;
+    padding: 0.7rem 0.9rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+  }
+  .mon-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .monitors h2 {
+    margin: 0 0 0.3rem;
+    font-size: 1rem;
+  }
+  button.ghost {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--fg-muted);
+    font-size: 0.8rem;
+  }
+  .mon-form {
+    align-items: flex-end;
+  }
+  .mon-form label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    font-size: 0.78rem;
+    color: var(--fg-subtle);
+  }
+  .mon-form label.grow {
+    flex: 1;
+    min-width: 8rem;
+  }
+  .mon-form input,
+  .mon-form select {
+    width: 8rem;
+  }
+  .mon-form label.grow input {
+    width: 100%;
+  }
+  .mon-list {
+    list-style: none;
+    padding: 0;
+    margin: 0.6rem 0 0;
+  }
+  .mon-list li {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.35rem 0.4rem;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.9rem;
+  }
+  .mon-list li.firing {
+    background: color-mix(in srgb, var(--danger) 9%, transparent);
+  }
+  .mon-state {
+    padding: 0.05rem 0.5rem;
+    border-radius: 999px;
+    font-size: 0.74rem;
+    font-weight: 600;
+    background: color-mix(in srgb, var(--ok) 18%, transparent);
+    color: var(--ok);
+    min-width: 3.5rem;
+    text-align: center;
+  }
+  .mon-state.firing {
+    background: color-mix(in srgb, var(--danger) 18%, transparent);
+    color: var(--danger);
+  }
+  .mon-actual {
+    color: var(--fg-muted);
+    font-variant-numeric: tabular-nums;
   }
   .deploy {
     margin: 0.6rem 0;

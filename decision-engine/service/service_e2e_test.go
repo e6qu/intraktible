@@ -18,6 +18,7 @@ import (
 	"github.com/e6qu/intraktible/decision-engine/flows"
 	"github.com/e6qu/intraktible/decision-engine/history"
 	"github.com/e6qu/intraktible/decision-engine/internal/flowtest"
+	"github.com/e6qu/intraktible/decision-engine/monitor"
 	"github.com/e6qu/intraktible/decision-engine/policy"
 	"github.com/e6qu/intraktible/decision-engine/preapproval"
 	"github.com/e6qu/intraktible/decision-engine/service"
@@ -473,6 +474,73 @@ func TestPreApproveBatchOverHTTP(t *testing.T) {
 	}
 }
 
+func TestMonitorsOverHTTP(t *testing.T) {
+	api := startEngine(t)
+	var flow struct {
+		FlowID string `json:"flow_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows", map[string]any{"slug": "watched", "name": "Watched"}, http.StatusCreated, &flow)
+	api.Request(t, http.MethodPost, "/v1/flows/"+flow.FlowID+"/versions", map[string]any{
+		"graph": map[string]any{
+			"nodes": []map[string]any{{"id": "in", "type": "input"}, {"id": "out", "type": "output"}},
+			"edges": []map[string]any{{"from": "in", "to": "out"}},
+		},
+	}, http.StatusCreated, nil)
+
+	// Define a volume monitor: fire when more than 2 decisions have run.
+	var def struct {
+		MonitorID string `json:"monitor_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows/"+flow.FlowID+"/monitors", map[string]any{
+		"metric": "volume", "op": "gt", "threshold": 2, "description": "traffic",
+	}, http.StatusCreated, &def)
+
+	type status struct {
+		Actual     float64 `json:"actual"`
+		Computable bool    `json:"computable"`
+		Firing     bool    `json:"firing"`
+	}
+	type mon struct {
+		MonitorID string `json:"monitor_id"`
+		Metric    string `json:"metric"`
+		Status    status `json:"status"`
+	}
+	var listed struct {
+		Monitors []mon `json:"monitors"`
+	}
+
+	// With no decisions yet, the rule is computable (volume 0) but not firing.
+	api.Request(t, http.MethodGet, "/v1/flows/"+flow.FlowID+"/monitors", nil, http.StatusOK, &listed)
+	if len(listed.Monitors) != 1 || listed.Monitors[0].Status.Firing {
+		t.Fatalf("expected one non-firing monitor before traffic: %+v", listed.Monitors)
+	}
+
+	// Run three decisions; the volume monitor then fires (3 > 2).
+	for range 3 {
+		api.Request(t, http.MethodPost, "/v1/flows/watched/production/decide", map[string]any{"data": map[string]any{}}, http.StatusOK, nil)
+	}
+	if !testutil.Eventually(t, func() bool {
+		listed.Monitors = nil
+		api.Request(t, http.MethodGet, "/v1/flows/"+flow.FlowID+"/monitors", nil, http.StatusOK, &listed)
+		return len(listed.Monitors) == 1 && listed.Monitors[0].Status.Firing
+	}) {
+		t.Fatalf("volume monitor never fired: %+v", listed.Monitors)
+	}
+	if listed.Monitors[0].Status.Actual != 3 {
+		t.Fatalf("expected actual volume 3: %+v", listed.Monitors[0].Status)
+	}
+
+	// Deleting it removes it from the list.
+	api.Request(t, http.MethodDelete, "/v1/flows/"+flow.FlowID+"/monitors/"+def.MonitorID, nil, http.StatusOK, nil)
+	if !testutil.Eventually(t, func() bool {
+		listed.Monitors = nil
+		api.Request(t, http.MethodGet, "/v1/flows/"+flow.FlowID+"/monitors", nil, http.StatusOK, &listed)
+		return len(listed.Monitors) == 0
+	}) {
+		t.Fatalf("monitor not deleted: %+v", listed.Monitors)
+	}
+}
+
 func TestPolicyBacktestOverHTTP(t *testing.T) {
 	api := startEngine(t)
 	var flow struct {
@@ -532,14 +600,16 @@ func startEngine(t *testing.T, opts ...command.DecideOption) *testutil.API {
 	svc := service.New(command.NewHandler(log), command.NewDecideHandler(log, st, opts...), paCmd, st)
 	pol := policy.New(policy.NewHandler(log), st)
 	pa := preapproval.New(paCmd, st)
+	mon := monitor.New(monitor.NewHandler(log), st)
 	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "author"}
 	routes := func(mux *http.ServeMux) {
 		svc.Routes(mux)
 		pol.Routes(mux)
 		pa.Routes(mux)
+		mon.Routes(mux)
 	}
 	return testutil.StartAPI(t, log, st, "test-key", id, routes,
-		flows.Projector{}, history.Projector{}, analytics.Projector{}, policy.Projector{}, preapproval.Projector{})
+		flows.Projector{}, history.Projector{}, analytics.Projector{}, policy.Projector{}, preapproval.Projector{}, monitor.Projector{})
 }
 
 // stubFeatures is a fixed feature source for the decide HTTP test.

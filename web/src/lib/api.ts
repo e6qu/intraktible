@@ -284,6 +284,79 @@ export async function getFlowMetrics(
   return (await res.json()) as FlowMetrics;
 }
 
+// ---- Monitors (thresholds over a flow's live metrics) ----
+
+export const MONITOR_METRICS = [
+  'failure_rate',
+  'refer_rate',
+  'automation_rate',
+  'approve_rate',
+  'decline_rate',
+  'avg_latency_ms',
+  'volume'
+] as const;
+export type MonitorMetric = (typeof MONITOR_METRICS)[number];
+
+export interface MonitorStatus {
+  actual: number;
+  computable: boolean;
+  firing: boolean;
+}
+
+export interface Monitor {
+  monitor_id: string;
+  flow_id: string;
+  metric: string;
+  op: string; // gt | lt
+  threshold: number;
+  description?: string;
+  status: MonitorStatus;
+}
+
+export async function listMonitors(
+  key: string,
+  flowId: string,
+  fetcher: typeof fetch = fetch
+): Promise<Monitor[]> {
+  const res = await fetcher(`/v1/flows/${flowId}/monitors`, { headers: authHeaders(key) });
+  if (!res.ok) {
+    return errorOrStatus(res, `GET /v1/flows/${flowId}/monitors`);
+  }
+  return ((await res.json()) as { monitors: Monitor[] }).monitors ?? [];
+}
+
+export async function defineMonitor(
+  key: string,
+  flowId: string,
+  body: { metric: string; op: string; threshold: number; description?: string },
+  fetcher: typeof fetch = fetch
+): Promise<{ monitor_id: string }> {
+  const res = await fetcher(`/v1/flows/${flowId}/monitors`, {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'POST monitor');
+  }
+  return (await res.json()) as { monitor_id: string };
+}
+
+export async function deleteMonitor(
+  key: string,
+  flowId: string,
+  monitorId: string,
+  fetcher: typeof fetch = fetch
+): Promise<void> {
+  const res = await fetcher(`/v1/flows/${flowId}/monitors/${monitorId}`, {
+    method: 'DELETE',
+    headers: authHeaders(key)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'DELETE monitor');
+  }
+}
+
 // ---- Policies (operational disposition layer over a flow) ----
 
 export interface PolicyRule {

@@ -166,6 +166,51 @@ test('promotes an approved batch into pre-approvals', async ({ page, request }) 
   await expect(page.locator('tr', { hasText: 'a1' }).first()).toContainText('active');
 });
 
+test('defines an outcome monitor and sees it fire', async ({ page, request }) => {
+  const slug = uniqueSlug();
+  const created = await request.post('/v1/flows', {
+    headers: { 'X-Api-Key': KEY },
+    data: { slug, name: 'Watched' }
+  });
+  const { flow_id } = await created.json();
+  await request.post(`/v1/flows/${flow_id}/versions`, {
+    headers: { 'X-Api-Key': KEY },
+    data: {
+      graph: {
+        nodes: [
+          { id: 'in', type: 'input' },
+          { id: 'out', type: 'output' }
+        ],
+        edges: [{ from: 'in', to: 'out' }]
+      }
+    }
+  });
+
+  await page.goto(`/engine/${flow_id}`);
+  await expect(page.locator('.svelte-flow__node')).toHaveCount(2);
+
+  // Define a volume monitor: fire above 2 decisions.
+  const panel = page.getByTestId('monitors-panel');
+  await panel.getByLabel('monitor metric').selectOption('volume');
+  await panel.getByLabel('monitor op').selectOption('gt');
+  await panel.getByLabel('monitor threshold').fill('2');
+  await panel.getByTestId('add-monitor').click();
+  await expect(panel.locator('.mon-rule')).toContainText('volume');
+  await expect(panel.locator('.mon-state')).toHaveText('ok'); // 0 > 2 is false
+
+  // Run three decisions, then refresh — the monitor fires.
+  for (let i = 0; i < 3; i++) {
+    await request.post(`/v1/flows/${slug}/production/decide`, {
+      headers: { 'X-Api-Key': KEY },
+      data: { data: {} }
+    });
+  }
+  await expect(async () => {
+    await panel.getByRole('button', { name: 'Refresh' }).click();
+    await expect(panel.locator('.mon-state')).toHaveText('firing');
+  }).toPass();
+});
+
 test('exports the flow as DOT and JSON', async ({ page, request }) => {
   const slug = uniqueSlug();
   const created = await request.post('/v1/flows', {
