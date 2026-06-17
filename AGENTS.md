@@ -86,7 +86,8 @@ only (no recorded decision, no I/O), surfaced in the builder as a panel that fla
 and the **immutable audit surface** — `GET /v1/audit` (`platform/audit`), a tenant-scoped, filterable
 (stream/actor/type/resource/time-range), CSV-exportable read straight over the append-only event log,
 admin-gated and surfaced as an Audit log UI page (the data was always in the log; this makes it
-first-class instead of operator-CLI-only).
+first-class instead of operator-CLI-only) whose filters are **URL-synced** — a filtered forensic view is
+deep-linkable, bookmarkable, and back/forward-navigable.
 
 ## The design in one breath
 Go backend (**functional core / imperative shell**) + **SvelteKit + Svelte Flow** UI embedded in the

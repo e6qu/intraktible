@@ -1,6 +1,8 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { goto, afterNavigate } from '$app/navigation';
+  import { page } from '$app/stores';
+  import { get } from 'svelte/store';
   import Icon from '$lib/Icon.svelte';
   import RelativeTime from '$lib/RelativeTime.svelte';
   import { listAudit, auditExportUrl, type AuditEntry, type AuditFilter } from '$lib/api';
@@ -11,7 +13,9 @@
   let error = $state('');
   let forbidden = $state(false);
 
-  // Filter inputs (bound to the form); applied on Apply/Reload.
+  // Filter inputs (bound to the form). The URL query string is the source of
+  // truth, so a filtered audit view is deep-linkable, bookmarkable, and the
+  // browser back/forward buttons step through filter changes.
   let fStream = $state('');
   let fActor = $state('');
   let fType = $state('');
@@ -30,6 +34,18 @@
   }
   let csvUrl = $derived(auditExportUrl(filter()));
 
+  // Apply pushes the current inputs into the URL; the effect below re-fetches.
+  function applyFilters() {
+    const p = new URLSearchParams();
+    const f = filter();
+    if (f.stream) p.set('stream', f.stream);
+    if (f.actor) p.set('actor', f.actor);
+    if (f.type) p.set('type', f.type);
+    if (f.resource) p.set('resource', f.resource);
+    const qs = p.toString();
+    goto(qs ? `?${qs}` : $page.url.pathname, { keepFocus: true, noScroll: true });
+  }
+
   async function load() {
     error = '';
     forbidden = false;
@@ -45,7 +61,17 @@
       }
     }
   }
-  onMount(load);
+
+  // The URL drives the view: afterNavigate fires on mount, on Apply (goto), and on
+  // back/forward — hydrate the inputs from the query string and fetch.
+  afterNavigate(() => {
+    const sp = get(page).url.searchParams;
+    fStream = sp.get('stream') ?? '';
+    fActor = sp.get('actor') ?? '';
+    fType = sp.get('type') ?? '';
+    fResource = sp.get('resource') ?? '';
+    void load();
+  });
 </script>
 
 <main class="admin-surface">
@@ -56,7 +82,7 @@
       <a class="btn" href={csvUrl} download="audit.csv" data-testid="audit-csv">
         <Icon name="download" size={14} /> CSV
       </a>
-      <button onclick={load}><Icon name="reload" size={15} /> Reload</button>
+      <button onclick={() => load()}><Icon name="reload" size={15} /> Reload</button>
     </div>
   </div>
   <p class="muted">
@@ -68,7 +94,7 @@
     class="filters"
     onsubmit={(e) => {
       e.preventDefault();
-      void load();
+      applyFilters();
     }}
   >
     <input bind:value={fStream} placeholder="stream" aria-label="stream filter" size="12" />

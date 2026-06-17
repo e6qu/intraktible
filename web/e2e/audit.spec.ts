@@ -32,6 +32,14 @@ test('shows the event-log audit trail and filters it', async ({ page, request })
   await page.getByRole('button', { name: 'Apply' }).click();
   await expect(page.getByText('No matching audit events.')).toBeVisible();
 
+  // The active filter lives in the URL — the view is deep-linkable / shareable.
+  await expect(page).toHaveURL(/[?&]stream=does-not-exist/);
+
   // The CSV export link carries the active filter.
   await expect(page.getByTestId('audit-csv')).toHaveAttribute('href', /format=csv/);
+
+  // Navigating straight to a filtered URL restores the inputs and the view.
+  await page.goto('/audit?type=decision.flow.created');
+  await expect(page.getByLabel('type filter')).toHaveValue('decision.flow.created');
+  await expect(rows.filter({ hasText: 'decision.flow.created' }).first()).toBeVisible();
 });
