@@ -45,11 +45,20 @@ const (
 
 // Node is one vertex of a flow graph. Config is opaque per-type configuration,
 // validated by each node engine at decide time (not by the graph structure).
+// Position is the builder's saved canvas coordinate; the execution runtime never
+// reads it, but persisting it keeps a flow's layout stable across edits/reloads.
 type Node struct {
-	ID     string          `json:"id"`
-	Type   NodeType        `json:"type"`
-	Name   string          `json:"name,omitempty"`
-	Config json.RawMessage `json:"config,omitempty"`
+	ID       string          `json:"id"`
+	Type     NodeType        `json:"type"`
+	Name     string          `json:"name,omitempty"`
+	Config   json.RawMessage `json:"config,omitempty"`
+	Position *NodePosition   `json:"position,omitempty"`
+}
+
+// NodePosition is a node's saved x/y on the builder canvas (presentation only).
+type NodePosition struct {
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
 }
 
 // Edge is a directed connection between two nodes. Branch labels a conditional

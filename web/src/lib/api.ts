@@ -52,6 +52,7 @@ export interface GraphNode {
   type: string;
   name?: string;
   config?: unknown;
+  position?: { x: number; y: number }; // builder canvas coordinate (presentation only)
 }
 
 export interface GraphEdge {

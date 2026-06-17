@@ -55,7 +55,7 @@
   } from '$lib/api';
   import { toast } from '$lib/toast';
   import { diffGraphs, diffIsEmpty } from '$lib/diff';
-  import { layout } from '$lib/layout';
+  import { layout, type XY } from '$lib/layout';
   import { theme } from '$lib/theme';
   import Icon from '$lib/Icon.svelte';
   import CommentThread from '$lib/CommentThread.svelte';
@@ -90,6 +90,7 @@
     type: string;
     name: string;
     config: string;
+    pos?: XY; // saved canvas position; absent → auto-laid-out until placed/dragged
   }
 
   // API calls authenticate via the session cookie (empty key -> no X-Api-Key header).
@@ -148,12 +149,24 @@
     return e instanceof Error ? e.message : String(e);
   }
 
-  // Keep the canvas in sync with the editor model.
-  $effect(() => {
-    const pos = layout(editNodes, editEdges);
+  // Canvas sync is explicit, not a reactive $effect over editNodes: a reactive
+  // rebuild re-ran auto-layout on every edit, so adding/editing a node shoved the
+  // others around. Instead each node keeps its own saved position (pos), drags are
+  // folded back before any rebuild, and auto-layout only fills nodes that have no
+  // position yet (a freshly loaded positionless graph) or runs on explicit Relax.
+  function foldPositions() {
+    const live = new Map(nodes.map((n) => [n.id, n.position]));
+    editNodes = editNodes.map((n) => {
+      const p = live.get(n.id);
+      return p ? { ...n, pos: { x: p.x, y: p.y } } : n;
+    });
+  }
+  function syncCanvas() {
+    foldPositions();
+    const auto = layout(editNodes, editEdges);
     nodes = editNodes.map((n) => ({
       id: n.id,
-      position: pos.get(n.id) ?? { x: 0, y: 0 },
+      position: n.pos ?? auto.get(n.id) ?? { x: 0, y: 0 },
       data: { label: `${n.name || n.id} · ${n.type}` }
     }));
     edges = editEdges.map((e, i) => ({
@@ -162,7 +175,14 @@
       target: e.to,
       label: e.branch
     }));
-  });
+  }
+  // Relax: adopt the auto-layout for every node (the only thing that moves nodes
+  // the user already placed — and only when they ask for it).
+  function relax() {
+    const auto = layout(editNodes, editEdges);
+    editNodes = editNodes.map((n) => ({ ...n, pos: auto.get(n.id) ?? n.pos }));
+    syncCanvas();
+  }
 
   async function load() {
     error = '';
@@ -174,11 +194,13 @@
           id: n.id,
           type: n.type,
           name: n.name ?? '',
-          config: n.config ? JSON.stringify(n.config) : ''
+          config: n.config ? JSON.stringify(n.config) : '',
+          pos: n.position
         }));
         editEdges = version.graph.edges.map((e) => ({ from: e.from, to: e.to, branch: e.branch }));
         inputSchema = version.input_schema;
         counter = editNodes.length;
+        syncCanvas();
       }
       // Default the version-diff selectors to the two most recent versions.
       const vs = flow.versions;
@@ -205,17 +227,29 @@
   });
 
   function addNode() {
+    foldPositions(); // capture any drags so they survive the rebuild
     const id = `n${++counter}`;
-    editNodes = [...editNodes, { id, type: newType, name: '', config: '' }];
+    editNodes = [...editNodes, { id, type: newType, name: '', config: '', pos: nextNodePos() }];
     selectedId = id;
+    syncCanvas();
+  }
+  // nextNodePos drops a new node just below-right of the selected one (or the last
+  // placed node), so it lands in free space without nudging anything already there.
+  function nextNodePos(): XY {
+    const anchor = editNodes.find((n) => n.id === selectedId)?.pos ?? editNodes.at(-1)?.pos;
+    if (anchor) return { x: anchor.x + 40, y: anchor.y + 90 };
+    return { x: 60, y: 60 };
   }
   function deleteNode(id: string) {
+    foldPositions();
     editNodes = editNodes.filter((n) => n.id !== id);
     editEdges = editEdges.filter((e) => e.from !== id && e.to !== id);
     if (selectedId === id) selectedId = null;
+    syncCanvas();
   }
   function updateSelected(patch: Partial<EditNode>) {
     editNodes = editNodes.map((n) => (n.id === selectedId ? { ...n, ...patch } : n));
+    syncCanvas();
   }
 
   // Node types with a structured panel; the raw-JSON textarea stays available for
@@ -430,14 +464,17 @@
     if (!edgeFrom || !edgeTo) return;
     editEdges = [...editEdges, { from: edgeFrom, to: edgeTo, branch: edgeBranch || undefined }];
     edgeFrom = edgeTo = edgeBranch = '';
+    syncCanvas();
   }
   // Drag-to-connect on the canvas: dragging from a node's handle to another adds
   // an (unbranched) edge, deduplicated against the existing ones.
   function onConnect(conn: Connection) {
     editEdges = addUniqueEdge(editEdges, conn.source, conn.target);
+    syncCanvas();
   }
   function deleteEdge(i: number) {
     editEdges = editEdges.filter((_, j) => j !== i);
+    syncCanvas();
   }
 
   let publishing = $state(false);
@@ -445,11 +482,13 @@
     error = '';
     publishing = true;
     try {
+      foldPositions(); // persist the current canvas layout with the version
       const gnodes: GraphNode[] = editNodes.map((n) => ({
         id: n.id,
         type: n.type,
         name: n.name || undefined,
-        config: n.config.trim() ? JSON.parse(n.config) : undefined
+        config: n.config.trim() ? JSON.parse(n.config) : undefined,
+        position: n.pos
       }));
       const r = await publishVersion(key, flowId, { nodes: gnodes, edges: editEdges }, inputSchema);
       toast.success(`Published v${r.version}`);
@@ -477,13 +516,14 @@
           'expected a "nodes" array (a flow export, or a {graph}/{nodes,edges} object)'
         );
       }
-      type N = { id?: string; type?: string; name?: string; config?: unknown };
+      type N = { id?: string; type?: string; name?: string; config?: unknown; position?: XY };
       type E = { from?: string; to?: string; branch?: string };
       editNodes = (g.nodes as N[]).map((n) => ({
         id: String(n.id ?? ''),
         type: String(n.type ?? ''),
         name: n.name ?? '',
-        config: n.config !== undefined ? JSON.stringify(n.config) : ''
+        config: n.config !== undefined ? JSON.stringify(n.config) : '',
+        pos: n.position
       }));
       editEdges = Array.isArray(g.edges)
         ? (g.edges as E[]).map((e) => ({
@@ -496,6 +536,7 @@
       counter = editNodes.length;
       selectedId = '';
       importText = '';
+      syncCanvas();
       toast.success(
         `Imported ${editNodes.length} node${editNodes.length === 1 ? '' : 's'} — review, then Publish`
       );
@@ -1398,6 +1439,14 @@
 
   <div class="grid">
     <div class="canvas" data-testid="flow-canvas">
+      <button
+        class="relax-btn"
+        onclick={relax}
+        title="Auto-arrange every node by flow order (the only thing that moves nodes you've placed)"
+        data-testid="relax-layout"
+      >
+        <Icon name="diagram" size={14} /> Relax layout
+      </button>
       <SvelteFlow bind:nodes bind:edges onconnect={onConnect} colorMode={$theme} fitView>
         <Background />
         <Controls />
@@ -2142,9 +2191,25 @@
     color: var(--fg-muted);
   }
   .canvas {
+    position: relative;
     height: 460px;
     border: 1px solid var(--border-strong);
     border-radius: 0.5rem;
+  }
+  .relax-btn {
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
+    z-index: 5;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.25rem 0.6rem;
+    font-size: 0.8rem;
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 1px 4px rgb(0 0 0 / 0.12);
   }
   aside {
     font-size: 0.95rem;

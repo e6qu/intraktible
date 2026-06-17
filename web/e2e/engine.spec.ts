@@ -408,6 +408,59 @@ test('builds a flow in the editor and publishes it', async ({ page, request }) =
   await expect(page.getByTestId('run-result')).toContainText('BUILT');
 });
 
+test('adding a node does not move already-placed nodes (stable layout)', async ({
+  page,
+  request
+}) => {
+  const slug = uniqueSlug();
+  const created = await request.post('/v1/flows', {
+    headers: { 'X-Api-Key': KEY },
+    data: { slug, name: 'Stable' }
+  });
+  const { flow_id } = await created.json();
+
+  await page.goto(`/engine/${flow_id}`);
+  await expect(page.getByLabel('new node type')).toBeVisible();
+
+  // Place input (n1) + output (n2), wire and publish v1.
+  for (const type of ['input', 'output']) {
+    await page.getByLabel('new node type').selectOption(type);
+    await page.getByRole('button', { name: 'Add', exact: true }).click();
+  }
+  await expect(page.locator('aside ul.nodes li')).toHaveCount(2);
+  await page.getByLabel('edge from', { exact: true }).selectOption('n1');
+  await page.getByLabel('edge to', { exact: true }).selectOption('n2');
+  await page.getByRole('button', { name: 'Add edge' }).click();
+  await page.getByRole('button', { name: 'Publish version' }).click();
+  await expect(page.getByText('Published v1')).toBeVisible();
+
+  // Positions are persisted with the version.
+  type Flow = {
+    versions: { graph: { nodes: { id: string; position?: { x: number; y: number } }[] } }[];
+  };
+  const posIn = async (version: number) => {
+    const f = (await (
+      await request.get(`/v1/flows/${flow_id}`, {
+        headers: { 'X-Api-Key': KEY }
+      })
+    ).json()) as Flow;
+    const n1 = f.versions[version - 1].graph.nodes.find((n) => n.id === 'n1');
+    return n1?.position;
+  };
+  const before = await posIn(1);
+  expect(before, 'n1 position is persisted').toBeTruthy();
+
+  // Add a third node and republish — n1 must not have moved.
+  await page.getByLabel('new node type').selectOption('assignment');
+  await page.getByRole('button', { name: 'Add', exact: true }).click();
+  await expect(page.locator('aside ul.nodes li')).toHaveCount(3);
+  await page.getByRole('button', { name: 'Publish version' }).click();
+  await expect(page.getByText('Published v2')).toBeVisible();
+
+  const after = await posIn(2);
+  expect(after).toEqual(before);
+});
+
 test('a structured config panel edits a node without raw JSON', async ({ page, request }) => {
   const slug = uniqueSlug();
   const created = await request.post('/v1/flows', {
