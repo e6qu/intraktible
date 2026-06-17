@@ -283,6 +283,78 @@ export async function getFlowMetrics(
   return (await res.json()) as FlowMetrics;
 }
 
+// ---- Policies (operational disposition layer over a flow) ----
+
+export interface PolicyRule {
+  when: string;
+  disposition: string; // approve | decline | refer
+  code?: string;
+  description?: string;
+}
+
+export interface PolicySpec {
+  rules: PolicyRule[];
+  default?: string;
+}
+
+export interface PolicyVersion {
+  version: number;
+  etag: string;
+  spec: PolicySpec;
+  published_at?: string;
+  published_by?: string;
+}
+
+export interface Policy {
+  policy_id: string;
+  name: string;
+  flow_slug: string;
+  latest: number;
+  versions: PolicyVersion[];
+  updated_at?: string;
+}
+
+export async function listPolicies(key: string, fetcher: typeof fetch = fetch): Promise<Policy[]> {
+  const res = await fetcher('/v1/policies', { headers: authHeaders(key) });
+  if (!res.ok) {
+    return errorOrStatus(res, 'GET /v1/policies');
+  }
+  return ((await res.json()) as { policies: Policy[] }).policies ?? [];
+}
+
+export async function createPolicy(
+  key: string,
+  body: { name: string; flow_slug: string },
+  fetcher: typeof fetch = fetch
+): Promise<{ policy_id: string }> {
+  const res = await fetcher('/v1/policies', {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'POST /v1/policies');
+  }
+  return (await res.json()) as { policy_id: string };
+}
+
+export async function publishPolicy(
+  key: string,
+  policyId: string,
+  spec: PolicySpec,
+  fetcher: typeof fetch = fetch
+): Promise<{ version: number; etag: string }> {
+  const res = await fetcher(`/v1/policies/${policyId}/versions`, {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify({ spec })
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'POST policy version');
+  }
+  return (await res.json()) as { version: number; etag: string };
+}
+
 // ---- Backtesting ----
 
 export interface BacktestOutcome {

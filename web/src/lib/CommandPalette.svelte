@@ -45,6 +45,7 @@
   const commands = $derived<Cmd[]>([
     navCmd('/', 'Home dashboard', 'home'),
     navCmd('/engine', 'Decision Engine — flows', 'engine'),
+    navCmd('/policies', 'Policies', 'rule'),
     navCmd('/decisions', 'Decisions', 'diagram'),
     navCmd('/data', 'Context data', 'database'),
     navCmd('/cases', 'Cases', 'cases'),

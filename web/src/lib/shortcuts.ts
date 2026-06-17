@@ -18,6 +18,7 @@ export function closeShortcuts(): void {
 export const GO_NAV: { key: string; href: string; label: string }[] = [
   { key: 'h', href: '/', label: 'Home dashboard' },
   { key: 'e', href: '/engine', label: 'Decision Engine' },
+  { key: 'p', href: '/policies', label: 'Policies' },
   { key: 'd', href: '/decisions', label: 'Decisions' },
   { key: 'x', href: '/data', label: 'Context data' },
   { key: 'c', href: '/cases', label: 'Cases' },
