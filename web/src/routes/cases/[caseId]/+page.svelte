@@ -4,6 +4,7 @@
   import { page } from '$app/stores';
   import { getCase, assignCase, setCaseStatus, addCaseNote, type Case } from '$lib/api';
   import { displayEntries } from '$lib/kv';
+  import RelativeTime from '$lib/RelativeTime.svelte';
 
   // API calls authenticate via the session cookie (empty key -> no X-Api-Key header).
   const key = '';
@@ -115,13 +116,16 @@
     <h2>Notes</h2>
     {#if c.notes.length === 0}<p class="muted">No notes.</p>{/if}
     <ul>
-      {#each c.notes as n (n.at)}<li><b>{n.author}</b>: {n.text}</li>{/each}
+      {#each c.notes as n (n.at)}<li>
+          <b>{n.author}</b>: {n.text} <span class="muted"><RelativeTime value={n.at} /></span>
+        </li>{/each}
     </ul>
 
     <h2>Audit</h2>
     <ul data-testid="audit">
       {#each c.audit as a (a.at + a.type)}<li>
-          <code>{a.type}</code> — {a.detail} <span class="muted">({a.actor})</span>
+          <code>{a.type}</code> — {a.detail}
+          <span class="muted">({a.actor}, <RelativeTime value={a.at} />)</span>
         </li>{/each}
     </ul>
   {/if}

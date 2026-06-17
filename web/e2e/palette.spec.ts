@@ -44,10 +44,11 @@ test('searches tenant entities and jumps to a flow by name', async ({ page, requ
   await page.getByRole('combobox', { name: 'Search commands' }).fill(slug);
 
   // Entities load asynchronously; the matching option appears, then opens the flow.
-  const option = page.getByRole('option', { name: new RegExp(slug) });
+  // `name` as a string is a case-insensitive substring match (no regex needed).
+  const option = page.getByRole('option', { name: slug });
   await expect(option).toBeVisible();
   await option.click();
-  await expect(page).toHaveURL(new RegExp(`/engine/${flow_id}$`));
+  await expect(page).toHaveURL(`/engine/${flow_id}`); // resolved against baseURL
 });
 
 test('switches the view persona', async ({ page }) => {

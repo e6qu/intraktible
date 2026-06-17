@@ -3,6 +3,7 @@
   import { onMount } from 'svelte';
   import Icon from '$lib/Icon.svelte';
   import EmptyState from '$lib/EmptyState.svelte';
+  import RelativeTime from '$lib/RelativeTime.svelte';
   import { toast } from '$lib/toast';
   import {
     listConnectors,
@@ -147,7 +148,7 @@
                 <td>{c.name}</td>
                 <td><span class="badge">{c.type}</span></td>
                 <td class="config">{c.config ? JSON.stringify(c.config) : '—'}</td>
-                <td class="muted">{new Date(c.updated_at).toLocaleString()}</td>
+                <td class="muted"><RelativeTime value={c.updated_at} /></td>
               </tr>
             {/each}
           </tbody>
@@ -243,7 +244,7 @@
                   ></td
                 >
                 <td>{e.event_count}</td>
-                <td class="muted">{new Date(e.updated_at).toLocaleString()}</td>
+                <td class="muted"><RelativeTime value={e.updated_at} /></td>
               </tr>
             {/each}
           </tbody>

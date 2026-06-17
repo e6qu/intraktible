@@ -102,8 +102,10 @@ data. The **Admin surface** (the audit ledger) is exempt — a fixed, canonical 
 reads the same for everyone regardless of persona. A **⌘K command palette** (`lib/CommandPalette.svelte`)
 jumps to any page, switches persona/theme, and **searches the tenant's flows/agents/cases by name** to
 open them — all from the keyboard; and developer IDs (e.g. the decision id)
-are **click-to-copy** (`lib/Copyable.svelte`). List pages share a tokenized table style with designed
-**empty states** and **loading skeletons**; async actions show in-flight (disabled) states to prevent
+are **click-to-copy** (`lib/Copyable.svelte`). Timestamps render as live **relative times** ("2m ago",
+absolute on hover) via a single shared clock (`lib/time.ts` + `lib/RelativeTime.svelte`). List pages share
+a tokenized table style with designed **empty states** and **loading skeletons**; async actions show
+in-flight (disabled) states to prevent
 double-submit; the flow list surfaces per-environment deployment status. A **pure-Go embedded
 append-only event log** is the backbone; **hybrid event sourcing**
 (events are truth, **JSONB projections** are rebuilt views) gives **perfect replay + log-based

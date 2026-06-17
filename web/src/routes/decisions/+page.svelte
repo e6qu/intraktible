@@ -4,6 +4,7 @@
   import Icon from '$lib/Icon.svelte';
   import EmptyState from '$lib/EmptyState.svelte';
   import Skeleton from '$lib/Skeleton.svelte';
+  import RelativeTime from '$lib/RelativeTime.svelte';
   import { listDecisions, type Decision } from '$lib/api';
 
   // API calls authenticate via the session cookie (empty key → no X-Api-Key).
@@ -25,9 +26,6 @@
     } finally {
       loading = false;
     }
-  }
-  function when(iso: string): string {
-    return iso ? new Date(iso).toLocaleString() : '';
   }
   onMount(load);
 </script>
@@ -69,7 +67,7 @@
               <td>v{d.version}</td>
               <td class="muted">{d.variant ?? '—'}</td>
               <td>{d.duration_ms ?? 0} ms</td>
-              <td class="muted">{when(d.started_at)}</td>
+              <td class="muted"><RelativeTime value={d.started_at} /></td>
             </tr>
           {/each}
         </tbody>

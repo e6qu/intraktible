@@ -2,6 +2,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import Icon from '$lib/Icon.svelte';
+  import RelativeTime from '$lib/RelativeTime.svelte';
   import { listAudit, auditExportUrl, type AuditEntry, type AuditFilter } from '$lib/api';
 
   // API calls authenticate via the session cookie (empty key → no X-Api-Key).
@@ -43,9 +44,6 @@
         error = m;
       }
     }
-  }
-  function when(iso: string): string {
-    return iso ? new Date(iso).toLocaleString() : '';
   }
   onMount(load);
 </script>
@@ -102,7 +100,7 @@
         <tbody>
           {#each list as e (e.seq)}
             <tr>
-              <td class="muted">{when(e.time)}</td>
+              <td class="muted"><RelativeTime value={e.time} /></td>
               <td>{e.actor}</td>
               <td><span class="badge">{e.stream}</span></td>
               <td>{e.type}</td>

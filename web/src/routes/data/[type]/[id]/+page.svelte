@@ -3,6 +3,7 @@
   import { onMount } from 'svelte';
   import { page } from '$app/stores';
   import { displayEntries } from '$lib/kv';
+  import RelativeTime from '$lib/RelativeTime.svelte';
   import {
     getEntity,
     listEntityEvents,
@@ -40,9 +41,6 @@
     } finally {
       loading = false;
     }
-  }
-  function when(iso: string): string {
-    return iso ? new Date(iso).toLocaleString() : '';
   }
   onMount(load);
 </script>
@@ -88,7 +86,7 @@
           {#each events as ev (ev.seq)}
             <li>
               <span class="ev-name">{ev.event_name}</span>
-              <span class="muted">{when(ev.occurred_at)}</span>
+              <span class="muted"><RelativeTime value={ev.occurred_at} /></span>
               {#if ev.data}<pre>{JSON.stringify(ev.data)}</pre>{/if}
             </li>
           {/each}
