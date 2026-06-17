@@ -6,6 +6,7 @@ package service
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"github.com/e6qu/intraktible/decision-engine/analytics"
@@ -42,6 +43,7 @@ func (s *Service) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/flows/{flow_id}/deployment-requests/{req_id}/approve", s.approveDeployment)
 	mux.HandleFunc("POST /v1/flows/{flow_id}/deployment-requests/{req_id}/reject", s.rejectDeployment)
 	mux.HandleFunc("POST /v1/flows/{slug}/{env}/decide", s.runDecide)
+	mux.HandleFunc("POST /v1/flows/{slug}/{env}/decide/batch", s.decideBatch)
 	mux.HandleFunc("GET /v1/flows/{flow_id}/export", s.exportFlow)
 	mux.HandleFunc("POST /v1/flows/{flow_id}/backtest", s.backtestFlow)
 	mux.HandleFunc("GET /v1/decisions", s.listDecisions)
@@ -250,6 +252,79 @@ func (s *Service) runDecide(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, decideResponse{
 		DecisionID: result.DecisionID, Status: result.Status, Data: result.Output, Error: result.Error,
 	})
+}
+
+// maxBatch caps a batch-decide dataset. Unlike backtest (which records nothing),
+// every batch row is a real recorded decision, so the cap is conservative.
+const maxBatch = 500
+
+type batchRequest struct {
+	Dataset    []map[string]any `json:"dataset"`
+	EntityType string           `json:"entity_type,omitempty"`
+	EntityID   string           `json:"entity_id,omitempty"`
+}
+
+type batchResult struct {
+	Index      int            `json:"index"`
+	DecisionID string         `json:"decision_id,omitempty"`
+	Status     string         `json:"status"` // completed | failed | rejected
+	Data       map[string]any `json:"data,omitempty"`
+	Error      string         `json:"error,omitempty"`
+}
+
+type batchResponse struct {
+	Total     int           `json:"total"`
+	Completed int           `json:"completed"`
+	Failed    int           `json:"failed"`
+	Rejected  int           `json:"rejected"`
+	Results   []batchResult `json:"results"`
+}
+
+// decideBatch runs a dataset of inputs through the published flow, recording a
+// real decision per row (so they appear in history, metrics, and the audit log).
+// A row whose input fails validation/lookup is "rejected" (no decision recorded);
+// a row whose flow logic errors is a recorded "failed" decision — the batch call
+// itself still returns 200 with a per-row breakdown.
+func (s *Service) decideBatch(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	var req batchRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	if len(req.Dataset) == 0 {
+		httpx.Error(w, http.StatusBadRequest, fmt.Errorf("batch: dataset is empty"))
+		return
+	}
+	if len(req.Dataset) > maxBatch {
+		httpx.Error(w, http.StatusBadRequest, fmt.Errorf("batch: dataset too large (%d > %d)", len(req.Dataset), maxBatch))
+		return
+	}
+
+	slug, env := r.PathValue("slug"), r.PathValue("env")
+	ref := command.EntityRef{Type: req.EntityType, ID: req.EntityID}
+	resp := batchResponse{Total: len(req.Dataset), Results: make([]batchResult, 0, len(req.Dataset))}
+	for i, input := range req.Dataset {
+		res, err := s.decide.Decide(r.Context(), id, slug, env, input, ref)
+		if err != nil {
+			resp.Rejected++
+			resp.Results = append(resp.Results, batchResult{Index: i, Status: "rejected", Error: err.Error()})
+			continue
+		}
+		switch res.Status {
+		case "completed":
+			resp.Completed++
+		case "failed":
+			resp.Failed++
+		}
+		resp.Results = append(resp.Results, batchResult{
+			Index: i, DecisionID: res.DecisionID, Status: res.Status, Data: res.Output, Error: res.Error,
+		})
+	}
+	httpx.JSON(w, http.StatusOK, resp)
 }
 
 func (s *Service) listDecisions(w http.ResponseWriter, r *http.Request) {

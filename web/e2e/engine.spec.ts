@@ -71,6 +71,41 @@ test('renders a flow graph and runs a test decision', async ({ page, request }) 
   await expect(result).toContainText('SEEDED');
 });
 
+test('batch-decides a dataset from the builder', async ({ page, request }) => {
+  const slug = uniqueSlug();
+  const created = await request.post('/v1/flows', {
+    headers: { 'X-Api-Key': KEY },
+    data: { slug, name: 'Batched' }
+  });
+  const { flow_id } = await created.json();
+  await request.post(`/v1/flows/${flow_id}/versions`, {
+    headers: { 'X-Api-Key': KEY },
+    data: {
+      graph: {
+        nodes: [
+          { id: 'in', type: 'input' },
+          { id: 'a', type: 'assignment', config: { assignments: [{ target: 'd', expr: "'OK'" }] } },
+          { id: 'out', type: 'output', config: { fields: ['d'] } }
+        ],
+        edges: [
+          { from: 'in', to: 'a' },
+          { from: 'a', to: 'out' }
+        ]
+      }
+    }
+  });
+
+  await page.goto(`/engine/${flow_id}`);
+  await expect(page.locator('.svelte-flow__node')).toHaveCount(3); // version loaded
+  await page.getByLabel('batch dataset').fill('[{}, {}, {}]');
+  await page.getByTestId('run-batch').click();
+  const summary = page.getByTestId('batch-summary');
+  await expect(summary).toContainText('3 decided');
+  await expect(summary).toContainText('3 completed');
+  // Each row recorded a real decision (a link to its detail).
+  await expect(page.getByRole('link', { name: 'view' }).first()).toBeVisible();
+});
+
 test('exports the flow as DOT and JSON', async ({ page, request }) => {
   const slug = uniqueSlug();
   const created = await request.post('/v1/flows', {

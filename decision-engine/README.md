@@ -71,6 +71,12 @@ Done — execution runtime + decide API + decision history (the decision event s
   /v1/flows/{flow_id}/metrics`.
 - HTTP: `POST /v1/flows/{slug}/{env}/decide` → `{decision_id, status, data}`;
   `GET /v1/decisions` · `GET /v1/decisions/{decision_id}` — history with the full node trace + variant.
+- **Batch decisioning:** `POST /v1/flows/{slug}/{env}/decide/batch` with `{dataset:[…], entity_type?,
+  entity_id?}` runs each input through the **same recorded decide path** — every row is a real decision
+  (in history, metrics, and the audit log), unlike backtest which records nothing. Returns a summary
+  (completed/failed/rejected) + per-row results; a row that fails input validation/lookup is `rejected`
+  (no decision), a row whose flow logic errors is a recorded `failed`. Dataset capped at 500. Surfaced as
+  a builder panel.
 - **Flow export** (`decision-engine/export`, pure): a flow version renders to **Mermaid**
   (`flowchart`, `stateDiagram-v2`), **BPMN 2.0 XML with BPMNDI** layout (opens laid-out in
   bpmn.io / Camunda; node types map to start/end events, gateways, business-rule/service/script/user

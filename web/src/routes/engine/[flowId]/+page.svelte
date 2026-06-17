@@ -15,6 +15,7 @@
     getFlow,
     publishVersion,
     decide,
+    batchDecide,
     exportFlow,
     exportDecision,
     getFlowMetrics,
@@ -27,6 +28,7 @@
     type Flow,
     type FlowMetrics,
     type BacktestReport,
+    type BatchReport,
     type GraphNode,
     type GraphEdge
   } from '$lib/api';
@@ -570,6 +572,30 @@
       error = msg(e);
     } finally {
       btRunning = false;
+    }
+  }
+
+  // --- Batch decisioning: decide a whole dataset, each row a recorded decision ---
+  let batchDataset = $state('[\n  {}\n]');
+  let batchReport = $state<BatchReport | null>(null);
+  let batchRunning = $state(false);
+  async function runBatch() {
+    error = '';
+    batchReport = null;
+    if (!flow) return;
+    batchRunning = true;
+    try {
+      const dataset = JSON.parse(batchDataset) as Record<string, unknown>[];
+      const entity = entityType && entityID ? { type: entityType, id: entityID } : undefined;
+      batchReport = await batchDecide(key, flow.slug, env, dataset, entity);
+      toast.success(
+        `Decided ${batchReport.total} (${batchReport.completed} ok, ${batchReport.rejected} rejected)`
+      );
+      await loadMetrics();
+    } catch (e) {
+      error = msg(e);
+    } finally {
+      batchRunning = false;
     }
   }
 
@@ -1406,6 +1432,55 @@
           </tbody>
         </table>
       {/if}
+    {/if}
+  </section>
+
+  <section>
+    <h2>Batch decide</h2>
+    <p class="muted">
+      Decide a whole dataset on the <b>{env}</b> environment (from Test run above) — each row is a
+      <b>recorded</b> decision (it shows in history, metrics, and the audit log), unlike a backtest. Up
+      to 500 rows.
+    </p>
+    <div class="row">
+      <button onclick={runBatch} disabled={!flow || batchRunning} data-testid="run-batch">
+        {batchRunning ? 'Deciding…' : 'Run batch'}
+      </button>
+    </div>
+    <textarea
+      bind:value={batchDataset}
+      aria-label="batch dataset"
+      rows="4"
+      placeholder={'[\n  {"score": 720},\n  {"score": 540}\n]'}
+    ></textarea>
+    {#if batchReport}
+      <div class="metrics" data-testid="batch-summary">
+        <span>{batchReport.total} decided</span>
+        <span class="ok">{batchReport.completed} completed</span>
+        {#if batchReport.failed > 0}<span class="err">{batchReport.failed} failed</span>{/if}
+        {#if batchReport.rejected > 0}<span class="changed">{batchReport.rejected} rejected</span
+          >{/if}
+      </div>
+      <table class="bt-table">
+        <thead>
+          <tr><th>#</th><th>Status</th><th>Decision</th><th>Detail</th></tr>
+        </thead>
+        <tbody>
+          {#each batchReport.results as r (r.index)}
+            <tr>
+              <td>{r.index}</td>
+              <td
+                class={r.status === 'completed' ? 'ok' : r.status === 'failed' ? 'err' : 'changed'}
+                >{r.status}</td
+              >
+              <td>
+                {#if r.decision_id}<a href={`/decisions/${r.decision_id}`}>view</a>{:else}—{/if}
+              </td>
+              <td>{r.error || JSON.stringify(r.data)}</td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
     {/if}
   </section>
 </main>

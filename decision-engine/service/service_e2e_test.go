@@ -174,6 +174,67 @@ func TestExportDecisionTraceOverHTTP(t *testing.T) {
 	}
 }
 
+func TestDecideBatchOverHTTP(t *testing.T) {
+	api := startEngine(t)
+	var created struct {
+		FlowID string `json:"flow_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows", map[string]any{"slug": "batch", "name": "Batch"}, http.StatusCreated, &created)
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/versions", map[string]any{
+		"graph": map[string]any{
+			"nodes": []map[string]any{
+				{"id": "in", "type": "input"},
+				{"id": "a", "type": "assignment", "config": map[string]any{"assignments": []map[string]any{{"target": "d", "expr": "'OK'"}}}},
+				{"id": "out", "type": "output", "config": map[string]any{"fields": []string{"d"}}},
+			},
+			"edges": []map[string]any{{"from": "in", "to": "a"}, {"from": "a", "to": "out"}},
+		},
+		"input_schema": map[string]any{"type": "object", "required": []string{"x"}},
+	}, http.StatusCreated, nil)
+
+	// Batch over three rows: two valid, one missing the required field → rejected.
+	type result struct {
+		DecisionID string `json:"decision_id"`
+		Status     string `json:"status"`
+	}
+	var resp struct {
+		Total, Completed, Failed, Rejected int
+		Results                            []result `json:"results"`
+	}
+	if !testutil.Eventually(t, func() bool {
+		resp = struct {
+			Total, Completed, Failed, Rejected int
+			Results                            []result `json:"results"`
+		}{}
+		api.Request(t, http.MethodPost, "/v1/flows/batch/production/decide/batch", map[string]any{
+			"dataset": []map[string]any{{"x": 1}, {"x": 2}, {}},
+		}, http.StatusOK, &resp)
+		return resp.Total == 3 && resp.Completed == 2
+	}) {
+		t.Fatalf("batch never completed two rows: %+v", resp)
+	}
+	if resp.Rejected != 1 {
+		t.Fatalf("expected 1 rejected (missing required field), got %+v", resp)
+	}
+	for _, r := range resp.Results[:2] {
+		if r.Status != "completed" || r.DecisionID == "" {
+			t.Fatalf("completed rows must carry a decision id: %+v", r)
+		}
+	}
+
+	// The completed rows were recorded as real decisions in history.
+	var hist struct {
+		Decisions []json.RawMessage `json:"decisions"`
+	}
+	api.Request(t, http.MethodGet, "/v1/decisions", nil, http.StatusOK, &hist)
+	if len(hist.Decisions) < 2 {
+		t.Fatalf("batch decisions not recorded in history: %d", len(hist.Decisions))
+	}
+
+	// An empty dataset is a 400.
+	api.Request(t, http.MethodPost, "/v1/flows/batch/production/decide/batch", map[string]any{"dataset": []any{}}, http.StatusBadRequest, nil)
+}
+
 func startEngine(t *testing.T, opts ...command.DecideOption) *testutil.API {
 	t.Helper()
 	log, st := testutil.NewLogStore(t)

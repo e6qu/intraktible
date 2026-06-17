@@ -455,6 +455,49 @@ export async function decide(
   return (await res.json()) as DecideResult;
 }
 
+export interface BatchResult {
+  index: number;
+  decision_id?: string;
+  status: string; // completed | failed | rejected
+  data?: Record<string, unknown>;
+  error?: string;
+}
+
+export interface BatchReport {
+  total: number;
+  completed: number;
+  failed: number;
+  rejected: number;
+  results: BatchResult[];
+}
+
+// batchDecide runs a dataset of inputs through a published flow — each row a real
+// recorded decision (appears in history, metrics, audit), unlike a backtest.
+export async function batchDecide(
+  key: string,
+  slug: string,
+  env: string,
+  dataset: Record<string, unknown>[],
+  entity?: EntityRef,
+  fetcher: typeof fetch = fetch
+): Promise<BatchReport> {
+  const body: Record<string, unknown> = { dataset };
+  if (entity?.type && entity?.id) {
+    body.entity_type = entity.type;
+    body.entity_id = entity.id;
+  }
+  const res = await fetcher(`/v1/flows/${slug}/${env}/decide/batch`, {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) {
+    const b = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(b.error ?? `POST batch decide failed: ${res.status}`);
+  }
+  return (await res.json()) as BatchReport;
+}
+
 // ---- Case Manager ----
 
 export interface CaseNote {

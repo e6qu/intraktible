@@ -104,7 +104,10 @@ enterprise buyers; **P2** = differentiators / scale.
   authorization/…) are now redacted at the HTTP boundary (`connectors.RedactConfig`),
   so secrets never reach the client/UI — though they are still stored in plaintext
   in the projection; a real secret store / encryption-at-rest remains the P1 work.*
-- **P1 — Batch decisioning** (score a file / a population) + a feature store.
+- **P1 — Batch decisioning** (score a file / a population) — **DONE.** `POST
+  /v1/flows/{slug}/{env}/decide/batch` runs a dataset through the recorded decide
+  path (each row a real decision in history/metrics/audit; capped at 500), with a
+  summary + per-row results and a builder panel. *A feature store remains.*
 - **P2 — Streaming ingestion** for real-time features.
 
 ### AI / ML governance  (status: provider + tool-calling + structured output)
