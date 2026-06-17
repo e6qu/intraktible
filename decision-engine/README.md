@@ -59,6 +59,10 @@ Done — execution runtime + decide API + decision history (the decision event s
   deploys. The proposer cannot approve their own request; every request + decision is recorded on the
   flow (an auditable approval trail). Combined with RBAC, proposing needs the `editor` role and
   approving needs `approver`.
+- **Discussion threads:** deployment requests (the approve/reject/promote subject) and decisions carry a
+  comment thread via the platform's `platform/comments` capability (`GET/POST /v1/comments/{type}/{id}`,
+  e.g. `deployment_request` / `decision`) — an explanation trail surfaced in the builder's approvals queue
+  and on the decision detail page.
 - **Promotion (`POST /v1/flows/{flow_id}/promote {from,to}`):** three environments in order —
   **sandbox → staging → production** — and a promote action that ships the version currently live in
   `from` up to `to`, carrying the champion only. A non-production target deploys directly; promoting into

@@ -95,7 +95,11 @@ and the **immutable audit surface** — `GET /v1/audit` (`platform/audit`), a te
 (stream/actor/type/resource/time-range), CSV-exportable read straight over the append-only event log,
 admin-gated and surfaced as an Audit log UI page (the data was always in the log; this makes it
 first-class instead of operator-CLI-only) whose filters are **URL-synced** — a filtered forensic view is
-deep-linkable, bookmarkable, and back/forward-navigable. **PII masking** (`platform/privacy`) adds a
+deep-linkable, bookmarkable, and back/forward-navigable. **Comment threads** (`platform/comments`) are a
+general capability: a chronological discussion attached to any subject (`subject_type`+`subject_id`) via
+`GET/POST /v1/comments/{type}/{id}`, surfaced on the workflow items that get approved/rejected/promoted
+(deployment requests) and on decisions — so every reviewable thing carries an explanation trail. **PII
+masking** (`platform/privacy`) adds a
 per-workspace sensitive-field list (admin-gated to change) whose values are redacted in decision
 input/output, node traces, and exports at the read boundary — the raw event log stays the source of
 truth; managed from the Audit page.

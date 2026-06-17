@@ -50,6 +50,7 @@ import (
 	"github.com/e6qu/intraktible/platform/ai"
 	"github.com/e6qu/intraktible/platform/audit"
 	"github.com/e6qu/intraktible/platform/auth"
+	"github.com/e6qu/intraktible/platform/comments"
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/httpx"
 	"github.com/e6qu/intraktible/platform/identity"
@@ -223,6 +224,10 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 	// (decision history/exports). A platform capability, independent of modules.
 	privacy.New(privacy.NewHandler(log), st).Routes(api)
 
+	// Comments: general discussion threads attached to any subject (deployment
+	// requests, decisions, cases) so workflow surfaces carry an explanation trail.
+	comments.New(comments.NewHandler(log), st).Routes(api)
+
 	// Authenticated caller introspection (inside the /v1 auth chain).
 	api.HandleFunc("GET /v1/me", httpx.MeHandler())
 
@@ -325,7 +330,7 @@ func openLog(kind, dataDir string) (eventlog.Log, error) {
 func moduleProjectors(modules string) []projection.Projector {
 	// Privacy masking config is a platform capability, projected regardless of
 	// which modules are enabled (so masking works in every profile).
-	ps := []projection.Projector{privacy.Projector{}}
+	ps := []projection.Projector{privacy.Projector{}, comments.Projector{}}
 	if enabled(modules, "hello") {
 		ps = append(ps, stats.Projector{})
 	}

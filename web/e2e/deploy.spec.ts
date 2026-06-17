@@ -64,8 +64,14 @@ test('deploys to sandbox and runs the production four-eyes flow', async ({ page,
   await page.getByTestId('deploy-submit').click();
   const requests = page.getByTestId('pending-requests');
   await expect(requests).toBeVisible();
-  await expect(requests.locator('tbody tr')).toHaveCount(1);
+  await expect(requests.locator('tbody tr:not(.threadrow)')).toHaveCount(1);
   await expect(requests).toContainText('v2');
+
+  // The request carries a comment thread — post an explanation and see it appear.
+  const thread = requests.getByTestId('comment-thread');
+  await thread.getByLabel('new comment').fill('Holding until the backtest passes.');
+  await thread.getByTestId('post-comment').click();
+  await expect(thread).toContainText('Holding until the backtest passes.');
 
   // Approving your own request is blocked by four-eyes (the proposer is the dev user).
   await requests.getByRole('button', { name: 'Approve' }).click();

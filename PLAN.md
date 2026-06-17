@@ -341,6 +341,12 @@ drift** is a first-class metric: `POST /v1/flows/{id}/baseline` snapshots the di
 (`monitor.Scheduler`, `INTRAKTIBLE_MONITOR_INTERVAL`) sweeps on a timer and notifies only on the ok→firing
 edge (resetting on resolve). The alerting gap is closed end-to-end — rules + drift + delivery + scheduling.
 
+**Comment threads (post-MVP, governance).** `platform/comments` is a general discussion capability — a
+durable, chronological thread keyed by `(subject_type, subject_id)` (`GET/POST /v1/comments/{type}/{id}`),
+reusable `CommentThread.svelte` component — wired onto the items that get approved/rejected/promoted
+(deployment requests) and onto decisions, so every reviewable workflow surface carries an explanation
+trail. Comments are events (auditable). Posting needs `operator`; reading is open to `viewer`.
+
 **PII masking (post-MVP, compliance).** `platform/privacy` adds a per-workspace sensitive-field list
 (`GET/PUT /v1/privacy`, PUT admin-gated) whose values are redacted by a pure masker in decision
 input/output, node traces, and exports **at the read boundary** — mirroring connector credential

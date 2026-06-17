@@ -56,6 +56,12 @@ enterprise buyers; **P2** = differentiators / scale.
   non-production target and opening a maker-checker request into production (the
   same four-eyes gate). Surfaced in the builder's Deployment panel. *Remaining:
   per-stage automated gates (require monitors green / a backtest pass before promote).*
+- **Comment threads / explanations — ✅ done.** A general commenting capability
+  (`platform/comments`): a durable, chronological discussion attached to any subject
+  (`GET/POST /v1/comments/{type}/{id}`), surfaced on the items that get approved /
+  rejected / promoted (deployment requests) and on decisions — every reviewable
+  thing carries an audit-grade explanation trail. *Remaining: threaded replies and
+  @-mentions/notifications.*
 - **P1 — Change history / diff** between versions — *the builder now has a client-side
   version-diff panel (added/removed/changed nodes + edges between any two published
   versions); a richer who/why audit of changes is still open.*

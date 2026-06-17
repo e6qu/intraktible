@@ -54,6 +54,7 @@
   import { layout } from '$lib/layout';
   import { theme } from '$lib/theme';
   import Icon from '$lib/Icon.svelte';
+  import CommentThread from '$lib/CommentThread.svelte';
   import {
     asText,
     asNum,
@@ -1258,6 +1259,15 @@
                 <td class="reqactions">
                   <button class="primary" onclick={() => approve(r.request_id)}>Approve</button>
                   <button onclick={() => reject(r.request_id)}>Reject</button>
+                </td>
+              </tr>
+              <tr class="threadrow">
+                <td colspan="4">
+                  <CommentThread
+                    subjectType="deployment_request"
+                    subjectId={r.request_id}
+                    title="Approval discussion"
+                  />
                 </td>
               </tr>
             {/each}

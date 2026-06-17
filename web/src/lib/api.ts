@@ -1100,6 +1100,50 @@ export function auditExportUrl(filter: AuditFilter = {}): string {
   return `/v1/audit${q ? q + '&' : '?'}format=csv`;
 }
 
+// ---- Comments (discussion threads on any workflow subject) ----
+
+export interface Comment {
+  comment_id: string;
+  subject_type: string;
+  subject_id: string;
+  body: string;
+  author: string;
+  at: string;
+}
+
+export async function listComments(
+  key: string,
+  subjectType: string,
+  subjectId: string,
+  fetcher: typeof fetch = fetch
+): Promise<Comment[]> {
+  const res = await fetcher(`/v1/comments/${subjectType}/${encodeURIComponent(subjectId)}`, {
+    headers: authHeaders(key)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'GET comments');
+  }
+  return ((await res.json()) as { comments: Comment[] }).comments ?? [];
+}
+
+export async function postComment(
+  key: string,
+  subjectType: string,
+  subjectId: string,
+  body: string,
+  fetcher: typeof fetch = fetch
+): Promise<{ comment_id: string }> {
+  const res = await fetcher(`/v1/comments/${subjectType}/${encodeURIComponent(subjectId)}`, {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify({ body })
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'POST comment');
+  }
+  return (await res.json()) as { comment_id: string };
+}
+
 // ---- Privacy (field-level masking config, admin-gated to change) ----
 
 export interface PrivacyConfig {

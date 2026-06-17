@@ -4,6 +4,7 @@
   import { page } from '$app/stores';
   import Icon from '$lib/Icon.svelte';
   import Copyable from '$lib/Copyable.svelte';
+  import CommentThread from '$lib/CommentThread.svelte';
   import { getDecision, exportDecision, type Decision, type RunExportFormat } from '$lib/api';
   import { toast } from '$lib/toast';
 
@@ -145,6 +146,8 @@
         </span>
       {/each}
     </div>
+
+    <CommentThread subjectType="decision" subjectId={d.decision_id} title="Discussion" />
   {:else if !error}
     <p class="muted">Loading…</p>
   {/if}
