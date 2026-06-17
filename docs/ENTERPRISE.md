@@ -41,11 +41,12 @@ enterprise buyers; **P2** = differentiators / scale.
 - **P0 — RBAC — ✅ done.** Roles (viewer / operator / editor / approver / admin)
   and authorization on mutating endpoints.
 - **P1 — SSO** (SAML / OIDC) and **SCIM** user provisioning; map IdP groups → roles.
-- **P1 — API token management — ✅ first pass done.** Admin-gated
+- **P1 — API token management — ✅ first pass done (backend + UI).** Admin-gated
   `GET/POST/DELETE /v1/api-keys` manages durable, hashed API tokens for the current
   org/workspace; create returns the generated secret once, tokens carry scope, role,
-  actor, optional expiry, and revoke time. Remaining: rotation helper UX and
-  event-log-backed per-token audit.
+  actor, optional expiry, and revoke time. Managed from an **API tokens** panel on the
+  Audit (admin) page — create a token, copy the one-time secret, and revoke. Remaining:
+  rotation helper UX and event-log-backed per-token audit.
 - **P2 — Fine-grained, per-flow/per-environment permissions.**
 
 ### Governance & change control  (status: deploy + maker-checker shipped, UI included)

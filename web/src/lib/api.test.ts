@@ -21,6 +21,9 @@ import {
   listAudit,
   auditQuery,
   auditExportUrl,
+  listApiKeys,
+  createApiKey,
+  revokeApiKey,
   listConnectors,
   defineConnector,
   listFeatures,
@@ -247,6 +250,55 @@ describe('audit', () => {
   it('auditExportUrl appends format=csv', () => {
     expect(auditExportUrl({})).toBe('/v1/audit?format=csv');
     expect(auditExportUrl({ stream: 'cases' })).toBe('/v1/audit?stream=cases&format=csv');
+  });
+});
+
+describe('managed api keys', () => {
+  it('listApiKeys unwraps the api_keys array', async () => {
+    const fetcher = fetcherReturning(200, {
+      api_keys: [
+        {
+          id: 'k1',
+          name: 'CI',
+          identity: { org: 'o', workspace: 'w', actor: 'ci' },
+          scope: 'sandbox',
+          role: 'editor',
+          created_at: 't'
+        }
+      ]
+    });
+    const keys = await listApiKeys('k', fetcher);
+    expect(keys).toHaveLength(1);
+    expect(keys[0].name).toBe('CI');
+    expect(fetcher.mock.calls[0][0]).toBe('/v1/api-keys');
+  });
+
+  it('createApiKey posts the request and returns the one-time secret', async () => {
+    const fetcher = fetcherReturning(201, {
+      api_key: { id: 'k2', name: 'bot', role: 'viewer', scope: 'sandbox' },
+      secret: 'itk_abc123'
+    });
+    const out = await createApiKey('k', { name: 'bot', actor: 'a', role: 'viewer' }, fetcher);
+    expect(out.secret).toBe('itk_abc123');
+    const [url, init] = fetcher.mock.calls[0];
+    expect(url).toBe('/v1/api-keys');
+    expect(init?.method).toBe('POST');
+    expect(JSON.parse(init?.body as string)).toMatchObject({ name: 'bot', role: 'viewer' });
+  });
+
+  it('revokeApiKey deletes by id and unwraps the key', async () => {
+    const fetcher = fetcherReturning(200, { api_key: { id: 'k3', revoked_at: 't' } });
+    const k = await revokeApiKey('k', 'k3', fetcher);
+    expect(k.revoked_at).toBe('t');
+    const [url, init] = fetcher.mock.calls[0];
+    expect(url).toBe('/v1/api-keys/k3');
+    expect(init?.method).toBe('DELETE');
+  });
+
+  it('surfaces the 403 admin restriction loudly', async () => {
+    await expect(
+      listApiKeys('k', fetcherReturning(403, { error: 'requires at least the "admin" role' }))
+    ).rejects.toThrow(/admin/);
   });
 });
 

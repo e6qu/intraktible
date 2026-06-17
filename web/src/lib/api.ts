@@ -1288,6 +1288,69 @@ export async function setPrivacy(
   }
 }
 
+export interface ManagedApiKey {
+  id: string;
+  name: string;
+  identity: { org: string; workspace: string; actor: string };
+  scope: string;
+  role: string;
+  created_at: string;
+  expires_at?: string;
+  revoked_at?: string;
+}
+
+export interface CreateApiKeyRequest {
+  name: string;
+  actor: string;
+  role: string;
+  scope?: string;
+  expires_at?: string;
+}
+
+export async function listApiKeys(
+  key: string,
+  fetcher: typeof fetch = fetch
+): Promise<ManagedApiKey[]> {
+  const res = await fetcher('/v1/api-keys', { headers: authHeaders(key) });
+  if (!res.ok) {
+    return errorOrStatus(res, 'GET /v1/api-keys');
+  }
+  return ((await res.json()) as { api_keys: ManagedApiKey[] }).api_keys ?? [];
+}
+
+// createApiKey returns the new token's metadata plus the generated secret, which
+// the server reveals only once — the caller must surface it immediately.
+export async function createApiKey(
+  key: string,
+  req: CreateApiKeyRequest,
+  fetcher: typeof fetch = fetch
+): Promise<{ api_key: ManagedApiKey; secret: string }> {
+  const res = await fetcher('/v1/api-keys', {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify(req)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'POST /v1/api-keys');
+  }
+  return (await res.json()) as { api_key: ManagedApiKey; secret: string };
+}
+
+export async function revokeApiKey(
+  key: string,
+  id: string,
+  fetcher: typeof fetch = fetch
+): Promise<ManagedApiKey> {
+  const res = await fetcher(`/v1/api-keys/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    headers: jsonHeaders(key)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'DELETE /v1/api-keys');
+  }
+  return ((await res.json()) as { api_key: ManagedApiKey }).api_key;
+}
+
 export interface Connector {
   name: string;
   type: string;

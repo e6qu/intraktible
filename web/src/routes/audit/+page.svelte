@@ -12,8 +12,12 @@
     auditExportUrl,
     getPrivacy,
     setPrivacy,
+    listApiKeys,
+    createApiKey,
+    revokeApiKey,
     type AuditEntry,
-    type AuditFilter
+    type AuditFilter,
+    type ManagedApiKey
   } from '$lib/api';
 
   // API calls authenticate via the session cookie (empty key → no X-Api-Key).
@@ -102,6 +106,65 @@
   }
   onMount(loadPrivacy);
 
+  // --- Managed API tokens (admin) ---
+  let keys = $state<ManagedApiKey[]>([]);
+  let kName = $state('');
+  let kActor = $state('');
+  let kRole = $state('viewer');
+  let kScope = $state('sandbox');
+  let kExpires = $state('');
+  let kCreating = $state(false);
+  // The generated secret is shown once, right after creation, and never again.
+  let newSecret = $state('');
+  async function loadKeys() {
+    try {
+      keys = await listApiKeys(key);
+    } catch {
+      /* non-admins simply do not see the token list populated */
+    }
+  }
+  async function createKey() {
+    if (!kName.trim() || !kActor.trim()) {
+      toast.error('name and actor are required');
+      return;
+    }
+    kCreating = true;
+    try {
+      const { secret } = await createApiKey(key, {
+        name: kName.trim(),
+        actor: kActor.trim(),
+        role: kRole,
+        scope: kScope,
+        expires_at: kExpires ? new Date(kExpires).toISOString() : undefined
+      });
+      newSecret = secret;
+      kName = '';
+      kActor = '';
+      kExpires = '';
+      toast.success('API token created');
+      await loadKeys();
+    } catch (e) {
+      toast.error(msg(e));
+    } finally {
+      kCreating = false;
+    }
+  }
+  async function revokeKey(id: string) {
+    try {
+      await revokeApiKey(key, id);
+      toast.success('Token revoked');
+      await loadKeys();
+    } catch (e) {
+      toast.error(msg(e));
+    }
+  }
+  function keyStatus(k: ManagedApiKey): string {
+    if (k.revoked_at) return 'revoked';
+    if (k.expires_at && new Date(k.expires_at) <= new Date()) return 'expired';
+    return 'active';
+  }
+  onMount(loadKeys);
+
   // The URL drives the view: afterNavigate fires on mount, on Apply (goto), and on
   // back/forward — hydrate the inputs from the query string and fetch.
   afterNavigate(() => {
@@ -150,6 +213,73 @@
       </button>
     </div>
     {#if maskNote}<p class="muted note">{maskNote}</p>{/if}
+  </details>
+
+  <details class="tokens" data-testid="api-keys-config">
+    <summary
+      ><Icon name="shield" size={14} /> API tokens
+      <span class="muted">— durable keys for the decide/data APIs</span></summary
+    >
+    <p class="muted">
+      Each token is generated once and stored hashed — the secret below is shown a single time.
+      Scope and role bound what the token can do; revoke takes effect immediately.
+    </p>
+    <div class="token-form">
+      <input bind:value={kName} aria-label="token name" placeholder="name (e.g. CI bot)" />
+      <input bind:value={kActor} aria-label="token actor" placeholder="actor (e.g. ci@acme)" />
+      <select bind:value={kRole} aria-label="token role">
+        <option value="viewer">viewer</option>
+        <option value="operator">operator</option>
+        <option value="editor">editor</option>
+        <option value="approver">approver</option>
+        <option value="admin">admin</option>
+      </select>
+      <select bind:value={kScope} aria-label="token scope">
+        <option value="sandbox">sandbox</option>
+        <option value="production">production</option>
+      </select>
+      <input
+        type="datetime-local"
+        bind:value={kExpires}
+        aria-label="token expiry"
+        title="optional expiry"
+      />
+      <button onclick={createKey} disabled={kCreating} data-testid="create-token">
+        {kCreating ? 'Creating…' : 'Create token'}
+      </button>
+    </div>
+    {#if newSecret}
+      <div class="secret" data-testid="new-secret">
+        <span class="muted">Copy this secret now — it will not be shown again:</span>
+        <code>{newSecret}</code>
+        <button class="dismiss" onclick={() => (newSecret = '')} aria-label="dismiss secret"
+          >Done</button
+        >
+      </div>
+    {/if}
+    {#if keys.length > 0}
+      <table class="token-table">
+        <thead>
+          <tr><th>Name</th><th>Actor</th><th>Role</th><th>Scope</th><th>Status</th><th></th></tr>
+        </thead>
+        <tbody>
+          {#each keys as k (k.id)}
+            <tr>
+              <td>{k.name}</td>
+              <td class="muted">{k.identity.actor}</td>
+              <td>{k.role}</td>
+              <td><span class="badge">{k.scope}</span></td>
+              <td><span class="status {keyStatus(k)}">{keyStatus(k)}</span></td>
+              <td>
+                {#if keyStatus(k) === 'active'}
+                  <button class="revoke" onclick={() => revokeKey(k.id)}>Revoke</button>
+                {/if}
+              </td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    {/if}
   </details>
 
   <form
@@ -216,15 +346,74 @@
     margin: 2rem auto;
     padding: 0 1.25rem;
   }
-  .masking {
+  .masking,
+  .tokens {
     border: 1px solid var(--admin-border, var(--border));
     border-radius: 10px;
     padding: 0.6rem 0.9rem;
     margin: 0.8rem 0;
   }
-  .masking summary {
+  .masking summary,
+  .tokens summary {
     cursor: pointer;
     font-weight: 600;
+  }
+  .token-form {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 0.6rem;
+  }
+  .token-form input,
+  .token-form select {
+    padding: 0.4rem 0.55rem;
+    border: 1px solid var(--admin-border, var(--border));
+    border-radius: 8px;
+    background: var(--admin-surface-2, var(--surface-2));
+    color: inherit;
+    font: inherit;
+  }
+  .secret {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 0.6rem;
+    padding: 0.5rem 0.7rem;
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+    border: 1px solid var(--accent);
+  }
+  .secret code {
+    font-family: var(--mono, monospace);
+    font-size: 0.85rem;
+    user-select: all;
+  }
+  .secret .dismiss {
+    margin-left: auto;
+  }
+  .token-table {
+    margin-top: 0.7rem;
+  }
+  .status {
+    display: inline-block;
+    padding: 0.05rem 0.5rem;
+    border-radius: 999px;
+    font-size: 0.76rem;
+    font-weight: 600;
+  }
+  .status.active {
+    color: var(--ok, #15803d);
+    background: color-mix(in srgb, var(--ok, #15803d) 14%, transparent);
+  }
+  .status.revoked,
+  .status.expired {
+    color: var(--fg-subtle);
+    background: var(--surface-2);
+  }
+  .revoke {
+    font-size: 0.82rem;
+    color: var(--danger);
   }
   .mask-row {
     display: flex;
