@@ -12,10 +12,12 @@ const StreamComments = "platform.comments"
 // TypeCommentPosted records a new comment on a subject's thread.
 const TypeCommentPosted = "platform.comment_posted"
 
-// CommentPosted is one comment appended to a subject's thread.
+// CommentPosted is one comment appended to a subject's thread. ParentID, when
+// set, makes it a reply to another comment (one level of threading).
 type CommentPosted struct {
 	CommentID   string `json:"comment_id"`
 	SubjectType string `json:"subject_type"`
 	SubjectID   string `json:"subject_id"`
 	Body        string `json:"body"`
+	ParentID    string `json:"parent_id,omitempty"`
 }

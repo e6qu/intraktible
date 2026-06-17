@@ -25,6 +25,7 @@ type View struct {
 	SubjectType string    `json:"subject_type"`
 	SubjectID   string    `json:"subject_id"`
 	Body        string    `json:"body"`
+	ParentID    string    `json:"parent_id,omitempty"`
 	Author      string    `json:"author"`
 	At          time.Time `json:"at"`
 }
@@ -54,7 +55,8 @@ func (Projector) Apply(ctx context.Context, e eventlog.Envelope, s store.Store) 
 	}
 	v := View{
 		Org: e.Org, Workspace: e.Workspace, CommentID: p.CommentID,
-		SubjectType: p.SubjectType, SubjectID: p.SubjectID, Body: p.Body, Author: e.Actor, At: e.Time,
+		SubjectType: p.SubjectType, SubjectID: p.SubjectID, Body: p.Body, ParentID: p.ParentID,
+		Author: e.Actor, At: e.Time,
 	}
 	key := store.Key(e.Org, e.Workspace, docID(p.SubjectType, p.SubjectID, p.CommentID))
 	return store.PutDoc(ctx, s, Collection, key, v)

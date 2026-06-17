@@ -38,7 +38,8 @@ func (s *Service) list(w http.ResponseWriter, r *http.Request) {
 }
 
 type postRequest struct {
-	Body string `json:"body"`
+	Body     string `json:"body"`
+	ParentID string `json:"parent_id,omitempty"`
 }
 
 func (s *Service) post(w http.ResponseWriter, r *http.Request) {
@@ -51,7 +52,7 @@ func (s *Service) post(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, err)
 		return
 	}
-	cid, e, err := s.cmd.Post(r.Context(), id, r.PathValue("subject_type"), r.PathValue("subject_id"), req.Body)
+	cid, e, err := s.cmd.Post(r.Context(), id, r.PathValue("subject_type"), r.PathValue("subject_id"), req.Body, req.ParentID)
 	if err != nil {
 		httpx.Error(w, http.StatusBadRequest, err)
 		return

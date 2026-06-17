@@ -1177,6 +1177,7 @@ export interface Comment {
   subject_type: string;
   subject_id: string;
   body: string;
+  parent_id?: string;
   author: string;
   at: string;
 }
@@ -1201,12 +1202,13 @@ export async function postComment(
   subjectType: string,
   subjectId: string,
   body: string,
+  parentId = '',
   fetcher: typeof fetch = fetch
 ): Promise<{ comment_id: string }> {
   const res = await fetcher(`/v1/comments/${subjectType}/${encodeURIComponent(subjectId)}`, {
     method: 'POST',
     headers: jsonHeaders(key),
-    body: JSON.stringify({ body })
+    body: JSON.stringify({ body, parent_id: parentId || undefined })
   });
   if (!res.ok) {
     return errorOrStatus(res, 'POST comment');

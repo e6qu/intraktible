@@ -68,9 +68,10 @@ Done — execution runtime + decide API + decision history (the decision event s
   (alongside the firing-monitor gate; `force` overrides). UI: an **Assertions** panel in the builder.
 - **Discussion threads:** deployment requests (the approve/reject/promote subject), flows, policies, and
   decisions carry a comment thread via the platform's `platform/comments` capability
-  (`GET/POST /v1/comments/{type}/{id}`, e.g. `deployment_request` / `flow` / `policy` / `decision`) — an
-  explanation trail surfaced in the builder (approvals queue + a flow-level Discussion section), on the
-  policy editor, and on the decision detail page.
+  (`GET/POST /v1/comments/{type}/{id}`, e.g. `deployment_request` / `flow` / `policy` / `decision`; a post
+  may carry a `parent_id` for one level of threaded replies) — an explanation trail surfaced in the
+  builder (approvals queue + a flow-level Discussion section), on the policy editor, and on the decision
+  detail page.
 - **Promotion (`POST /v1/flows/{flow_id}/promote {from,to}`):** three environments in order —
   **sandbox → staging → production** — and a promote action that ships the version currently live in
   `from` up to `to`, carrying the champion only. A non-production target deploys directly; promoting into

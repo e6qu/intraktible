@@ -36,8 +36,9 @@ func newID() string {
 	return hex.EncodeToString(b[:])
 }
 
-// Post appends a comment to the (subjectType, subjectID) thread.
-func (h *Handler) Post(ctx context.Context, id identity.Identity, subjectType, subjectID, body string) (string, eventlog.Envelope, error) {
+// Post appends a comment to the (subjectType, subjectID) thread. parentID, when
+// set, marks the comment as a reply to another comment.
+func (h *Handler) Post(ctx context.Context, id identity.Identity, subjectType, subjectID, body, parentID string) (string, eventlog.Envelope, error) {
 	if err := id.Valid(); err != nil {
 		return "", eventlog.Envelope{}, err
 	}
@@ -52,7 +53,7 @@ func (h *Handler) Post(ctx context.Context, id identity.Identity, subjectType, s
 		return "", eventlog.Envelope{}, fmt.Errorf("comments: comment too long (%d > %d)", len(body), maxBody)
 	}
 	cid := h.newID()
-	b, err := json.Marshal(CommentPosted{CommentID: cid, SubjectType: subjectType, SubjectID: subjectID, Body: body})
+	b, err := json.Marshal(CommentPosted{CommentID: cid, SubjectType: subjectType, SubjectID: subjectID, Body: body, ParentID: parentID})
 	if err != nil {
 		return "", eventlog.Envelope{}, fmt.Errorf("comments: marshal comment: %w", err)
 	}

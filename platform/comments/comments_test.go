@@ -46,6 +46,39 @@ func TestCommentThreadOverHTTP(t *testing.T) {
 		t.Fatalf("comment not attributed: %+v", got.Comments[0])
 	}
 
+	// A reply carries its parent comment's id (one level of threading).
+	var firstID struct {
+		Comments []struct {
+			CommentID string `json:"comment_id"`
+		} `json:"comments"`
+	}
+	api.Request(t, http.MethodGet, "/v1/comments/deployment_request/r1", nil, http.StatusOK, &firstID)
+	parent := firstID.Comments[0].CommentID
+	api.Request(t, http.MethodPost, "/v1/comments/deployment_request/r1",
+		map[string]any{"body": "agree, the retry masks it", "parent_id": parent}, http.StatusCreated, nil)
+	var threaded struct {
+		Comments []struct {
+			Body     string `json:"body"`
+			ParentID string `json:"parent_id"`
+		} `json:"comments"`
+	}
+	if !testutil.Eventually(t, func() bool {
+		threaded.Comments = nil
+		api.Request(t, http.MethodGet, "/v1/comments/deployment_request/r1", nil, http.StatusOK, &threaded)
+		return len(threaded.Comments) == 3
+	}) {
+		t.Fatalf("reply did not materialize: %+v", threaded.Comments)
+	}
+	var reply int
+	for _, c := range threaded.Comments {
+		if c.ParentID == parent {
+			reply++
+		}
+	}
+	if reply != 1 {
+		t.Fatalf("expected exactly one reply to %s: %+v", parent, threaded.Comments)
+	}
+
 	// The other subject's thread is isolated.
 	var other struct {
 		Comments []comment `json:"comments"`
