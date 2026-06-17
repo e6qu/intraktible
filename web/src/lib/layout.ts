@@ -71,3 +71,59 @@ export function layout(nodes: NodeRef[], edges: EdgeRef[]): Map<string, XY> {
   }
   return positions;
 }
+
+const LANE_GAP = 48;
+const LANE_PAD = 24;
+
+// LaneBand is the rendered extent of one swimlane (canvas coordinates).
+export interface LaneBand {
+  lane: string;
+  top: number;
+  height: number;
+}
+
+interface LaneNodeRef {
+  id: string;
+  lane?: string;
+}
+
+// layoutLanes lays nodes left-to-right by flow depth (as layout does), but stacks
+// them into horizontal swimlanes by their lane — so a flow reads as ordered stages
+// within owned lanes. Returns the positions plus each lane's band for drawing.
+// Lanes appear in first-seen order; a node with no lane falls into "Main".
+export function layoutLanes(
+  nodes: LaneNodeRef[],
+  edges: EdgeRef[]
+): { pos: Map<string, XY>; bands: LaneBand[] } {
+  const depthX = layout(nodes, edges); // reuse the depth pass for x only
+  const laneOrder: string[] = [];
+  const byLane = new Map<string, string[]>();
+  for (const n of nodes) {
+    const lane = n.lane || 'Main';
+    if (!byLane.has(lane)) {
+      byLane.set(lane, []);
+      laneOrder.push(lane);
+    }
+    (byLane.get(lane) as string[]).push(n.id);
+  }
+
+  const pos = new Map<string, XY>();
+  const bands: LaneBand[] = [];
+  let cursorY = 0;
+  for (const lane of laneOrder) {
+    const ids = byLane.get(lane) as string[];
+    const rowAtX = new Map<number, number>(); // stack nodes sharing a depth column
+    let rows = 0;
+    for (const id of ids) {
+      const x = depthX.get(id)?.x ?? 0;
+      const row = rowAtX.get(x) ?? 0;
+      rowAtX.set(x, row + 1);
+      rows = Math.max(rows, row + 1);
+      pos.set(id, { x, y: cursorY + row * ROW });
+    }
+    const height = Math.max(rows, 1) * ROW;
+    bands.push({ lane, top: cursorY - LANE_PAD, height: height + LANE_PAD });
+    cursorY += height + LANE_GAP;
+  }
+  return { pos, bands };
+}

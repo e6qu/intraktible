@@ -47,12 +47,15 @@ const (
 // validated by each node engine at decide time (not by the graph structure).
 // Position is the builder's saved canvas coordinate; the execution runtime never
 // reads it, but persisting it keeps a flow's layout stable across edits/reloads.
+// Lane is the swimlane the node belongs to (e.g. "Automated", "Underwriting") —
+// also presentation/organizational, ignored by the runtime.
 type Node struct {
 	ID       string          `json:"id"`
 	Type     NodeType        `json:"type"`
 	Name     string          `json:"name,omitempty"`
 	Config   json.RawMessage `json:"config,omitempty"`
 	Position *NodePosition   `json:"position,omitempty"`
+	Lane     string          `json:"lane,omitempty"`
 }
 
 // NodePosition is a node's saved x/y on the builder canvas (presentation only).

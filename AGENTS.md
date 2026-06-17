@@ -32,8 +32,10 @@ bound policy approves becomes a grant keyed by a row field), **flow assertions**
 command→event→projection→API, durable & replayable.
 The **Svelte Flow builder UI** (`web/src/routes/engine`) lists/creates flows and edits a flow's graph
 (add nodes from a palette, wire edges, edit per-node config via structured panels for common types or
-raw JSON, publish a new version — with backend
-validation surfaced), renders it on a canvas (auto-layout), runs inline test decisions, and manages
+raw JSON, publish a new version — with backend validation surfaced). Nodes render as **typed cards**
+(colour rail + icon + config summary + last test-run output) at **stable, persisted positions** (no
+reflow on edit; explicit Relax button), grouped into **swimlanes** (`events.Node.Lane`, presentation-only
+like `Position`). It runs inline test decisions, and manages
 **deployment + maker-checker + promotion** (sandbox→staging→production envs, a `…/promote {from,to}` that ships the live version up the chain — direct into non-prod, maker-checker request into prod; live-version-per-env badges, deploy-to-sandbox, propose-for-production,
 a pending-approvals queue with approve/reject — self-approval refused — and A/B challenger %), and a
 **version-diff** panel (client-side structural compare of any two published versions: added/removed/

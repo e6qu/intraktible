@@ -56,11 +56,12 @@
   } from '$lib/api';
   import { toast } from '$lib/toast';
   import { diffGraphs, diffIsEmpty } from '$lib/diff';
-  import { layout, type XY } from '$lib/layout';
+  import { layoutLanes, type XY } from '$lib/layout';
   import { theme } from '$lib/theme';
   import Icon from '$lib/Icon.svelte';
   import CommentThread from '$lib/CommentThread.svelte';
   import FlowNode from '$lib/FlowNode.svelte';
+  import LaneBand from '$lib/LaneBand.svelte';
   import { nodeSummary, telemetrySummary } from '$lib/nodevis';
   import {
     asText,
@@ -94,6 +95,7 @@
     name: string;
     config: string;
     pos?: XY; // saved canvas position; absent → auto-laid-out until placed/dragged
+    lane?: string; // swimlane (free-form); absent → "Main"
   }
 
   // API calls authenticate via the session cookie (empty key -> no X-Api-Key header).
@@ -133,8 +135,8 @@
   let selectedId = $state<string | null>(null);
   let nodes = $state.raw<Node[]>([]);
   let edges = $state.raw<Edge[]>([]);
-  // Render every node with the typed FlowNode card.
-  const nodeTypes = { flow: FlowNode };
+  // Typed cards for flow nodes; labelled backdrops for swimlanes.
+  const nodeTypes = { flow: FlowNode, lane: LaneBand };
   // node id → last test-run output summary, shown on the card; cleared on edits.
   let nodeTelemetry = $state(new Map<string, string>());
 
@@ -151,6 +153,10 @@
 
   const flowId = $page.params.flowId ?? '';
   const selected = $derived(editNodes.find((n) => n.id === selectedId) ?? null);
+  // Existing lane names, for the lane-input autocomplete.
+  const laneNames = $derived([
+    ...new Set(editNodes.map((n) => n.lane).filter(Boolean))
+  ] as string[]);
 
   function msg(e: unknown): string {
     return e instanceof Error ? e.message : String(e);
@@ -170,8 +176,8 @@
   }
   function syncCanvas() {
     foldPositions();
-    const auto = layout(editNodes, editEdges);
-    nodes = editNodes.map((n) => ({
+    const { pos: auto } = layoutLanes(editNodes, editEdges);
+    const flowNodes = editNodes.map((n) => ({
       id: n.id,
       type: 'flow',
       position: n.pos ?? auto.get(n.id) ?? { x: 0, y: 0 },
@@ -182,6 +188,9 @@
         telemetry: nodeTelemetry.get(n.id)
       }
     }));
+    // Lane backdrops are drawn (behind the cards) only when more than one lane is
+    // in use, sized to the actual positions so they hold even after free dragging.
+    nodes = [...laneBackdrops(flowNodes), ...flowNodes];
     edges = editEdges.map((e, i) => ({
       id: `e${i}`,
       source: e.from,
@@ -189,11 +198,49 @@
       label: e.branch
     }));
   }
-  // Relax: adopt the auto-layout for every node (the only thing that moves nodes
-  // the user already placed — and only when they ask for it).
+  const LANE_NODE_W = 180;
+  const LANE_NODE_H = 70;
+  const LANE_INSET = 18;
+  function laneBackdrops(flowNodes: Node[]): Node[] {
+    const laneOf = new Map(editNodes.map((n) => [n.id, n.lane || 'Main']));
+    if (new Set(laneOf.values()).size < 2) return []; // no lanes in use → no clutter
+    const order: string[] = [];
+    const box = new Map<string, { x0: number; y0: number; x1: number; y1: number }>();
+    for (const fn of flowNodes) {
+      const lane = laneOf.get(fn.id) ?? 'Main';
+      const { x, y } = fn.position;
+      const b = box.get(lane);
+      if (!b) {
+        box.set(lane, { x0: x, y0: y, x1: x + LANE_NODE_W, y1: y + LANE_NODE_H });
+        order.push(lane);
+      } else {
+        b.x0 = Math.min(b.x0, x);
+        b.y0 = Math.min(b.y0, y);
+        b.x1 = Math.max(b.x1, x + LANE_NODE_W);
+        b.y1 = Math.max(b.y1, y + LANE_NODE_H);
+      }
+    }
+    return order.map((lane) => {
+      const b = box.get(lane) as { x0: number; y0: number; x1: number; y1: number };
+      const width = b.x1 - b.x0 + LANE_INSET * 2;
+      const height = b.y1 - b.y0 + LANE_INSET * 2 + 8;
+      return {
+        id: `lane:${lane}`,
+        type: 'lane',
+        position: { x: b.x0 - LANE_INSET, y: b.y0 - LANE_INSET - 8 },
+        draggable: false,
+        selectable: false,
+        connectable: false,
+        zIndex: -1,
+        data: { label: lane, width, height }
+      };
+    });
+  }
+  // Relax: adopt the lane-aware auto-layout for every node (the only thing that
+  // moves nodes the user already placed — and only when they ask for it).
   function relax() {
-    const auto = layout(editNodes, editEdges);
-    editNodes = editNodes.map((n) => ({ ...n, pos: auto.get(n.id) ?? n.pos }));
+    const { pos } = layoutLanes(editNodes, editEdges);
+    editNodes = editNodes.map((n) => ({ ...n, pos: pos.get(n.id) ?? n.pos }));
     syncCanvas();
   }
 
@@ -208,7 +255,8 @@
           type: n.type,
           name: n.name ?? '',
           config: n.config ? JSON.stringify(n.config) : '',
-          pos: n.position
+          pos: n.position,
+          lane: n.lane
         }));
         editEdges = version.graph.edges.map((e) => ({ from: e.from, to: e.to, branch: e.branch }));
         inputSchema = version.input_schema;
@@ -501,7 +549,8 @@
         type: n.type,
         name: n.name || undefined,
         config: n.config.trim() ? JSON.parse(n.config) : undefined,
-        position: n.pos
+        position: n.pos,
+        lane: n.lane || undefined
       }));
       const r = await publishVersion(key, flowId, { nodes: gnodes, edges: editEdges }, inputSchema);
       toast.success(`Published v${r.version}`);
@@ -529,14 +578,22 @@
           'expected a "nodes" array (a flow export, or a {graph}/{nodes,edges} object)'
         );
       }
-      type N = { id?: string; type?: string; name?: string; config?: unknown; position?: XY };
+      type N = {
+        id?: string;
+        type?: string;
+        name?: string;
+        config?: unknown;
+        position?: XY;
+        lane?: string;
+      };
       type E = { from?: string; to?: string; branch?: string };
       editNodes = (g.nodes as N[]).map((n) => ({
         id: String(n.id ?? ''),
         type: String(n.type ?? ''),
         name: n.name ?? '',
         config: n.config !== undefined ? JSON.stringify(n.config) : '',
-        pos: n.position
+        pos: n.position,
+        lane: n.lane
       }));
       editEdges = Array.isArray(g.edges)
         ? (g.edges as E[]).map((e) => ({
@@ -1532,6 +1589,18 @@
             {#each NODE_TYPES as t (t)}<option value={t}>{t}</option>{/each}
           </select>
         </label>
+        <label
+          >lane <input
+            value={selected.lane ?? ''}
+            oninput={(e) => updateSelected({ lane: e.currentTarget.value || undefined })}
+            placeholder="Main"
+            aria-label="node lane"
+            list="lane-suggestions"
+          /></label
+        >
+        <datalist id="lane-suggestions">
+          {#each laneNames as l (l)}<option value={l}></option>{/each}
+        </datalist>
         {#if selected.type === 'split'}
           <label
             >condition <input

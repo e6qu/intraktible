@@ -466,6 +466,43 @@ test('adding a node does not move already-placed nodes (stable layout)', async (
   expect(after).toEqual(before);
 });
 
+test('assigns nodes to swimlanes that render and persist', async ({ page, request }) => {
+  const slug = uniqueSlug();
+  const created = await request.post('/v1/flows', {
+    headers: { 'X-Api-Key': KEY },
+    data: { slug, name: 'Laned' }
+  });
+  const { flow_id } = await created.json();
+
+  await page.goto(`/engine/${flow_id}`);
+  await expect(page.getByLabel('new node type')).toBeVisible();
+  for (const type of ['input', 'output']) {
+    await page.getByLabel('new node type').selectOption(type);
+    await page.getByRole('button', { name: 'Add', exact: true }).click();
+  }
+  await expect(page.locator('aside ul.nodes li')).toHaveCount(2);
+
+  // Put each node in its own lane via the side panel.
+  await page.locator('aside ul.nodes button.link').filter({ hasText: 'n1' }).click();
+  await page.getByLabel('node lane').fill('Intake');
+  await page.locator('aside ul.nodes button.link').filter({ hasText: 'n2' }).click();
+  await page.getByLabel('node lane').fill('Decision');
+
+  // Two lanes → labelled backdrops render on the canvas.
+  const canvas = page.getByTestId('flow-canvas');
+  await expect(canvas).toContainText('Intake');
+  await expect(canvas).toContainText('Decision');
+
+  // Lanes persist with the published version.
+  await page.getByRole('button', { name: 'Publish version' }).click();
+  await expect(page.getByText('Published v1')).toBeVisible();
+  const flow = (await (
+    await request.get(`/v1/flows/${flow_id}`, { headers: { 'X-Api-Key': KEY } })
+  ).json()) as { versions: { graph: { nodes: { id: string; lane?: string }[] } }[] };
+  const n1 = flow.versions[0].graph.nodes.find((n) => n.id === 'n1');
+  expect(n1?.lane).toBe('Intake');
+});
+
 test('a structured config panel edits a node without raw JSON', async ({ page, request }) => {
   const slug = uniqueSlug();
   const created = await request.post('/v1/flows', {

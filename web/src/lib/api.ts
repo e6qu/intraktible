@@ -53,6 +53,7 @@ export interface GraphNode {
   name?: string;
   config?: unknown;
   position?: { x: number; y: number }; // builder canvas coordinate (presentation only)
+  lane?: string; // swimlane the node belongs to (presentation/organizational)
 }
 
 export interface GraphEdge {
