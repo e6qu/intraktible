@@ -96,6 +96,13 @@ export interface DeploymentRequest {
   decided_at?: string;
 }
 
+export interface PromotionStagePolicy {
+  require_assertions: boolean;
+  require_no_firing_monitors: boolean;
+  allow_force: boolean;
+  require_review: boolean;
+}
+
 export interface Flow {
   flow_id: string;
   slug: string;
@@ -104,6 +111,7 @@ export interface Flow {
   versions: FlowVersion[];
   deployments?: Record<string, DeploymentView>;
   deployment_requests?: DeploymentRequest[];
+  promotion_policy?: Record<string, PromotionStagePolicy>;
 }
 
 export interface DecideResult {
@@ -857,6 +865,23 @@ export async function promoteFlow(
     request_id?: string;
     version: number;
   };
+}
+
+export async function setPromotionPolicy(
+  key: string,
+  flowId: string,
+  policy: Record<string, Partial<PromotionStagePolicy>>,
+  fetcher: typeof fetch = fetch
+): Promise<Record<string, PromotionStagePolicy>> {
+  const res = await fetcher(`/v1/flows/${flowId}/promotion-policy`, {
+    method: 'PUT',
+    headers: jsonHeaders(key),
+    body: JSON.stringify({ policy })
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'PUT promotion policy');
+  }
+  return ((await res.json()) as { policy: Record<string, PromotionStagePolicy> }).policy;
 }
 
 // requestDeployment proposes a deployment for review (maker side).

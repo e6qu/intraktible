@@ -140,7 +140,7 @@ func requiredRole(method, path string) auth.Role {
 	// The audit surface exposes every actor's activity across the tenant. It is
 	// read-only but sensitive, so it is gated to admins regardless of method —
 	// checked before the general read rule below.
-	if path == "/v1/audit" {
+	if path == "/v1/audit" || strings.HasPrefix(path, "/v1/api-keys") {
 		return auth.RoleAdmin
 	}
 	if method == http.MethodGet || method == http.MethodHead || method == http.MethodOptions {
@@ -156,9 +156,10 @@ func requiredRole(method, path string) auth.Role {
 	}
 	switch {
 	case strings.Contains(path, "/deployments"), // a direct deploy (non-prod)
-		strings.HasSuffix(path, "/promote"), // promote a live version up the chain
-		strings.HasSuffix(path, "/approve"), // the checker approving a deployment
-		strings.HasSuffix(path, "/reject"):  // the checker rejecting a deployment
+		strings.HasSuffix(path, "/promote"),          // promote a live version up the chain
+		strings.HasSuffix(path, "/promotion-policy"), // configure promotion gates
+		strings.HasSuffix(path, "/approve"),          // the checker approving a deployment
+		strings.HasSuffix(path, "/reject"):           // the checker rejecting a deployment
 		return auth.RoleApprover
 	case strings.HasSuffix(path, "/deployment-requests"), // proposing a deployment (maker)
 		isAuthoringPath(path):

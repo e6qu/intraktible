@@ -42,12 +42,14 @@
     backtestFlow,
     deployVersion,
     promoteFlow,
+    setPromotionPolicy,
     requestDeployment,
     approveDeployment,
     rejectDeployment,
     type ExportFormat,
     type Flow,
     type FlowMetrics,
+    type PromotionStagePolicy,
     type BacktestReport,
     type BatchReport,
     type PreApproveBatchReport,
@@ -61,6 +63,7 @@
   import Icon from '$lib/Icon.svelte';
   import CommentThread from '$lib/CommentThread.svelte';
   import FlowNode from '$lib/FlowNode.svelte';
+  import BpmnNode from '$lib/BpmnNode.svelte';
   import LaneBand from '$lib/LaneBand.svelte';
   import { nodeSummary, telemetrySummary } from '$lib/nodevis';
   import {
@@ -88,6 +91,7 @@
     'reason',
     'output'
   ];
+  const ENVIRONMENTS = ['sandbox', 'staging', 'production'];
 
   interface EditNode {
     id: string;
@@ -135,8 +139,10 @@
   let selectedId = $state<string | null>(null);
   let nodes = $state.raw<Node[]>([]);
   let edges = $state.raw<Edge[]>([]);
-  // Typed cards for flow nodes; labelled backdrops for swimlanes.
-  const nodeTypes = { flow: FlowNode, lane: LaneBand };
+  let canvasView = $state<'cards' | 'bpmn'>('cards');
+  // Typed cards and BPMN notation are alternate skins over the same flow model;
+  // labelled backdrops still render as swimlanes.
+  const nodeTypes = { flow: FlowNode, bpmn: BpmnNode, lane: LaneBand };
   // node id → last test-run output summary, shown on the card; cleared on edits.
   let nodeTelemetry = $state(new Map<string, string>());
 
@@ -177,9 +183,10 @@
   function syncCanvas() {
     foldPositions();
     const { pos: auto } = layoutLanes(editNodes, editEdges);
+    const flowNodeType = canvasView === 'bpmn' ? 'bpmn' : 'flow';
     const flowNodes = editNodes.map((n) => ({
       id: n.id,
-      type: 'flow',
+      type: flowNodeType,
       position: n.pos ?? auto.get(n.id) ?? { x: 0, y: 0 },
       data: {
         type: n.type,
@@ -241,6 +248,11 @@
   function relax() {
     const { pos } = layoutLanes(editNodes, editEdges);
     editNodes = editNodes.map((n) => ({ ...n, pos: pos.get(n.id) ?? n.pos }));
+    syncCanvas();
+  }
+  function setCanvasView(view: 'cards' | 'bpmn') {
+    if (canvasView === view) return;
+    canvasView = view;
     syncCanvas();
   }
 
@@ -841,6 +853,45 @@
   let promoteTo = $state('staging');
   let promoteForce = $state(false);
   let promoting = $state(false);
+  let policySaving = $state(false);
+
+  function promotionPolicyFor(environment: string): PromotionStagePolicy {
+    const found = Object.entries(flow?.promotion_policy ?? {}).find(([e]) => e === environment);
+    return (
+      found?.[1] ?? {
+        require_assertions: true,
+        require_no_firing_monitors: true,
+        allow_force: true,
+        require_review: environment === 'production'
+      }
+    );
+  }
+
+  async function updatePromotionPolicy(environment: string, patch: Partial<PromotionStagePolicy>) {
+    error = '';
+    if (!flow) return;
+    policySaving = true;
+    try {
+      const policy = Object.fromEntries(
+        ENVIRONMENTS.map((e) => [
+          e,
+          {
+            ...promotionPolicyFor(e),
+            ...(e === environment ? patch : {}),
+            ...(e === 'production' ? { require_review: true } : {})
+          }
+        ])
+      ) as Record<string, PromotionStagePolicy>;
+      const next = await setPromotionPolicy(key, flowId, policy);
+      flow = { ...flow, promotion_policy: next };
+      toast.success('Promotion policy saved');
+    } catch (e) {
+      error = msg(e);
+    } finally {
+      policySaving = false;
+    }
+  }
+
   async function submitPromote() {
     error = '';
     if (!flow) return;
@@ -1413,6 +1464,59 @@
         >ships the live version up the chain; blocked if monitors are firing (prod via review).</span
       >
     </div>
+    <details class="promotion-policy" data-testid="promotion-policy">
+      <summary><Icon name="shield" size={15} /> Promotion policy</summary>
+      <div class="policy-grid">
+        {#each ENVIRONMENTS as e (e)}
+          {@const p = promotionPolicyFor(e)}
+          <div class="policy-stage">
+            <b>{e}</b>
+            <label>
+              <input
+                type="checkbox"
+                checked={p.require_no_firing_monitors}
+                disabled={policySaving}
+                onchange={(ev) =>
+                  updatePromotionPolicy(e, {
+                    require_no_firing_monitors: ev.currentTarget.checked
+                  })}
+              />
+              no firing monitors
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                checked={p.require_assertions}
+                disabled={policySaving}
+                onchange={(ev) =>
+                  updatePromotionPolicy(e, { require_assertions: ev.currentTarget.checked })}
+              />
+              passing assertions
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                checked={p.allow_force}
+                disabled={policySaving}
+                onchange={(ev) =>
+                  updatePromotionPolicy(e, { allow_force: ev.currentTarget.checked })}
+              />
+              force override
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                checked={p.require_review}
+                disabled={policySaving || e === 'production'}
+                onchange={(ev) =>
+                  updatePromotionPolicy(e, { require_review: ev.currentTarget.checked })}
+              />
+              review request
+            </label>
+          </div>
+        {/each}
+      </div>
+    </details>
 
     {#if allRequests.length > 0}
       <div class="requests" data-testid="deployment-requests">
@@ -1524,14 +1628,36 @@
 
   <div class="grid">
     <div class="canvas" data-testid="flow-canvas">
-      <button
-        class="relax-btn"
-        onclick={relax}
-        title="Auto-arrange every node by flow order (the only thing that moves nodes you've placed)"
-        data-testid="relax-layout"
-      >
-        <Icon name="diagram" size={14} /> Relax layout
-      </button>
+      <div class="canvas-tools">
+        <div class="view-toggle" aria-label="canvas view">
+          <button
+            class:active={canvasView === 'cards'}
+            aria-pressed={canvasView === 'cards'}
+            onclick={() => setCanvasView('cards')}
+            title="Show detailed node cards"
+            data-testid="canvas-view-cards"
+          >
+            <Icon name="clipboard" size={14} /> Cards
+          </button>
+          <button
+            class:active={canvasView === 'bpmn'}
+            aria-pressed={canvasView === 'bpmn'}
+            onclick={() => setCanvasView('bpmn')}
+            title="Show BPMN process notation"
+            data-testid="canvas-view-bpmn"
+          >
+            <Icon name="diagram" size={14} /> BPMN
+          </button>
+        </div>
+        <button
+          class="relax-btn"
+          onclick={relax}
+          title="Auto-arrange every node by flow order (the only thing that moves nodes you've placed)"
+          data-testid="relax-layout"
+        >
+          <Icon name="diagram" size={14} /> Relax
+        </button>
+      </div>
       <SvelteFlow
         bind:nodes
         bind:edges
@@ -2300,17 +2426,46 @@
     border: 1px solid var(--border-strong);
     border-radius: 0.5rem;
   }
-  .relax-btn {
+  .canvas-tools {
     position: absolute;
     top: 0.5rem;
     right: 0.5rem;
     z-index: 5;
     display: inline-flex;
     align-items: center;
+    gap: 0.4rem;
+  }
+  .view-toggle {
+    display: inline-flex;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--surface-1);
+    box-shadow: 0 1px 4px rgb(0 0 0 / 0.12);
+  }
+  .view-toggle button,
+  .relax-btn {
+    display: inline-flex;
+    align-items: center;
     gap: 0.3rem;
     padding: 0.25rem 0.6rem;
     font-size: 0.8rem;
     background: var(--surface-1);
+  }
+  .view-toggle button {
+    border: 0;
+    border-radius: 0;
+    color: var(--fg-muted);
+    box-shadow: none;
+  }
+  .view-toggle button + button {
+    border-left: 1px solid var(--border);
+  }
+  .view-toggle button.active {
+    color: var(--fg);
+    background: color-mix(in srgb, var(--accent) 14%, var(--surface-1));
+  }
+  .relax-btn {
     border: 1px solid var(--border);
     border-radius: 8px;
     box-shadow: 0 1px 4px rgb(0 0 0 / 0.12);
@@ -2529,6 +2684,45 @@
   .deploy .hint {
     font-size: 0.8rem;
     margin: 0.4rem 0 0;
+  }
+  .promotion-policy {
+    margin-top: 0.7rem;
+    font-size: 0.86rem;
+  }
+  .promotion-policy summary {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    cursor: pointer;
+    color: var(--fg-muted);
+  }
+  .policy-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+    gap: 0.6rem;
+    margin-top: 0.55rem;
+  }
+  .policy-stage {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    padding: 0.5rem 0.6rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface-1);
+  }
+  .policy-stage b {
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    color: var(--fg-subtle);
+  }
+  .policy-stage label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    margin: 0;
+    font-size: 0.78rem;
+    color: var(--fg-muted);
   }
   .requests {
     margin-top: 0.8rem;

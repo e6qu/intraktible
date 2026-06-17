@@ -22,9 +22,10 @@ import (
 
 // Service wires the Context Layer commands and read model to HTTP.
 type Service struct {
-	cmd    *command.Handler
-	store  store.Store
-	egress connectors.EgressPolicy
+	cmd     *command.Handler
+	store   store.Store
+	egress  connectors.EgressPolicy
+	secrets connectors.SecretBox
 }
 
 // Option configures a Service.
@@ -34,6 +35,12 @@ type Option func(*Service)
 // (zero value) blocks loopback/private targets.
 func WithEgress(p connectors.EgressPolicy) Option {
 	return func(s *Service) { s.egress = p }
+}
+
+// WithSecrets enables connector credential encryption/decryption at the HTTP
+// boundary. Credential fields are encrypted before ConnectorDefined is emitted.
+func WithSecrets(box connectors.SecretBox) Option {
+	return func(s *Service) { s.secrets = box }
 }
 
 // New builds the service.
@@ -168,7 +175,11 @@ type connectorRequest struct {
 func (s *Service) defineConnector(w http.ResponseWriter, r *http.Request) {
 	var req connectorRequest
 	httpx.Emit(w, r, &req, func(id identity.Identity) (eventlog.Envelope, error) {
-		return s.cmd.DefineConnector(r.Context(), id, domain.DefineConnector{Name: req.Name, Type: req.Type, Config: req.Config})
+		cfg, err := connectors.EncryptSecrets(req.Config, s.secrets)
+		if err != nil {
+			return eventlog.Envelope{}, err
+		}
+		return s.cmd.DefineConnector(r.Context(), id, domain.DefineConnector{Name: req.Name, Type: req.Type, Config: cfg})
 	})
 }
 
@@ -208,7 +219,7 @@ func (s *Service) fetchConnector(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := r.PathValue("name")
-	resp, err := connectors.InvokeWith(r.Context(), s.store, id, name, req.Params, s.egress)
+	resp, err := connectors.InvokeWithSecrets(r.Context(), s.store, id, name, req.Params, s.egress, s.secrets)
 	if err != nil {
 		httpx.Error(w, http.StatusBadGateway, err)
 		return

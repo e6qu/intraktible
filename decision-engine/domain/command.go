@@ -80,7 +80,7 @@ func (c DeployVersion) Validate() error {
 		return errors.New("decision-engine: flow_id is required")
 	}
 	if !ValidEnvironment(c.Environment) {
-		return fmt.Errorf("decision-engine: invalid environment %q (sandbox|production)", c.Environment)
+		return fmt.Errorf("decision-engine: invalid environment %q (sandbox|staging|production)", c.Environment)
 	}
 	if c.Version < 1 {
 		return fmt.Errorf("decision-engine: version must be >= 1, got %d", c.Version)
@@ -93,6 +93,32 @@ func (c DeployVersion) Validate() error {
 	}
 	if c.ChallengerPct > 0 && c.ChallengerVersion < 1 {
 		return errors.New("decision-engine: challenger_pct set without a challenger_version")
+	}
+	return nil
+}
+
+// SetPromotionPolicy configures promotion gates per target environment.
+type SetPromotionPolicy struct {
+	FlowID string
+	Policy map[string]events.PromotionStagePolicy
+}
+
+// Validate checks that each configured stage is known and cannot disable the
+// mandatory production maker-checker gate.
+func (c SetPromotionPolicy) Validate() error {
+	if strings.TrimSpace(c.FlowID) == "" {
+		return errors.New("decision-engine: flow_id is required")
+	}
+	if len(c.Policy) == 0 {
+		return errors.New("decision-engine: promotion policy is required")
+	}
+	for env, stage := range c.Policy {
+		if !ValidEnvironment(env) {
+			return fmt.Errorf("decision-engine: invalid promotion policy environment %q", env)
+		}
+		if env == EnvProduction && !stage.RequireReview {
+			return errors.New("decision-engine: production promotions require review")
+		}
 	}
 	return nil
 }

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -228,6 +229,76 @@ func TestRedactedViewLeavesStoredConfigIntact(t *testing.T) {
 	}
 	if !json.Valid(r.Config) || string(r.Config) == string(v.Config) {
 		t.Fatalf("redacted copy not masked: %s", r.Config)
+	}
+}
+
+func TestEncryptDecryptSecrets(t *testing.T) {
+	box, err := connectors.NewAESGCMSecretBox([]byte("0123456789abcdef0123456789abcdef"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := json.RawMessage(`{"driver":"sqlite","dsn":"file:secret.db","nested":{"api_key":"sk-123","keep":"ok"}}`)
+	enc, err := connectors.EncryptSecrets(cfg, box)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(enc) == string(cfg) || strings.Contains(string(enc), "file:secret.db") || strings.Contains(string(enc), "sk-123") {
+		t.Fatalf("encrypted config leaked plaintext: %s", enc)
+	}
+	dec, err := connectors.DecryptSecrets(enc, box)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(dec, &got); err != nil {
+		t.Fatal(err)
+	}
+	nested := got["nested"].(map[string]any)
+	if got["dsn"] != "file:secret.db" || nested["api_key"] != "sk-123" || nested["keep"] != "ok" {
+		t.Fatalf("decrypted config mismatch: %s", dec)
+	}
+}
+
+func TestInvokeWithEncryptedSQLConnector(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	dsn := "file:" + dir + "/scores.db"
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `CREATE TABLE scores(subject TEXT PRIMARY KEY, risk INTEGER)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO scores VALUES('acme', 88)`); err != nil {
+		t.Fatal(err)
+	}
+	_ = db.Close()
+
+	box, err := connectors.NewAESGCMSecretBox([]byte("0123456789abcdef0123456789abcdef"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := json.RawMessage(`{"dsn":"` + dsn + `","query":"SELECT risk FROM scores WHERE subject = :subject","args":["subject"]}`)
+	enc, err := connectors.EncryptSecrets(cfg, box)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(enc), dsn) {
+		t.Fatalf("encrypted sql config leaked dsn: %s", enc)
+	}
+
+	s := store.NewMemory()
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "dev"}
+	define(ctx, t, s, id, connectors.ConnectorView{
+		Name: "scores", Type: domain.ConnectorSQL, Config: enc,
+	})
+	resp, err := connectors.InvokeWithSecrets(ctx, s, id, "scores", json.RawMessage(`{"subject":"acme"}`), connectors.EgressPolicy{}, box)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(resp), "88") {
+		t.Fatalf("encrypted connector did not fetch expected row: %s", resp)
 	}
 }
 

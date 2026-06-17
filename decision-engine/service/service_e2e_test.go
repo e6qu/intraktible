@@ -1315,6 +1315,75 @@ func TestPromoteGateOnFiringMonitorOverHTTP(t *testing.T) {
 	}
 }
 
+func TestPromotionPolicyOverHTTP(t *testing.T) {
+	api := startEngine(t)
+	var created struct {
+		FlowID string `json:"flow_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows",
+		map[string]string{"slug": "stage-policy", "name": "Stage Policy"}, http.StatusCreated, &created)
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/versions",
+		map[string]any{"graph": flowtest.ConstGraph("approve")}, http.StatusCreated, nil)
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/deployments",
+		map[string]any{"environment": "sandbox", "version": 1}, http.StatusCreated, nil)
+
+	// Failing assertions would normally block sandbox -> staging.
+	api.Request(t, http.MethodPut, "/v1/flows/"+created.FlowID+"/assertions", map[string]any{
+		"cases": []map[string]any{{"name": "bad", "input": map[string]any{}, "expect": map[string]any{"decision": "decline"}}},
+	}, http.StatusOK, nil)
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/promote",
+		map[string]any{"from": "sandbox", "to": "staging"}, http.StatusConflict, nil)
+
+	// Configure staging: skip assertions, but require review.
+	api.Request(t, http.MethodPut, "/v1/flows/"+created.FlowID+"/promotion-policy", map[string]any{
+		"policy": map[string]any{
+			"staging": map[string]any{"require_assertions": false, "require_review": true},
+		},
+	}, http.StatusOK, nil)
+	var got struct {
+		Policy map[string]events.PromotionStagePolicy `json:"policy"`
+	}
+	api.Request(t, http.MethodGet, "/v1/flows/"+created.FlowID+"/promotion-policy", nil, http.StatusOK, &got)
+	if !got.Policy["staging"].RequireReview || got.Policy["staging"].RequireAssertions {
+		t.Fatalf("promotion policy did not apply: %+v", got.Policy["staging"])
+	}
+
+	var promo struct {
+		Promoted  bool   `json:"promoted"`
+		Pending   bool   `json:"pending"`
+		RequestID string `json:"request_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/promote",
+		map[string]any{"from": "sandbox", "to": "staging"}, http.StatusCreated, &promo)
+	if promo.Promoted || !promo.Pending || promo.RequestID == "" {
+		t.Fatalf("staging policy should open a request: %+v", promo)
+	}
+}
+
+func TestPromotionPolicyCanDisableForce(t *testing.T) {
+	api := startEngine(t)
+	var created struct {
+		FlowID string `json:"flow_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows",
+		map[string]string{"slug": "noforce", "name": "No Force"}, http.StatusCreated, &created)
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/versions",
+		map[string]any{"graph": flowtest.ConstGraph("approve")}, http.StatusCreated, nil)
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/deployments",
+		map[string]any{"environment": "sandbox", "version": 1}, http.StatusCreated, nil)
+	api.Request(t, http.MethodPut, "/v1/flows/"+created.FlowID+"/assertions", map[string]any{
+		"cases": []map[string]any{{"name": "bad", "input": map[string]any{}, "expect": map[string]any{"decision": "decline"}}},
+	}, http.StatusOK, nil)
+	api.Request(t, http.MethodPut, "/v1/flows/"+created.FlowID+"/promotion-policy", map[string]any{
+		"policy": map[string]any{
+			"staging": map[string]any{"allow_force": false},
+		},
+	}, http.StatusOK, nil)
+
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/promote",
+		map[string]any{"from": "sandbox", "to": "staging", "force": true}, http.StatusConflict, nil)
+}
+
 func TestBacktestComparesVersions(t *testing.T) {
 	api := startEngine(t)
 	var created struct {

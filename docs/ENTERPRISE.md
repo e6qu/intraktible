@@ -37,11 +37,15 @@ These are real strengths, not placeholders:
 Priorities: **P0** = blocks a regulated production rollout; **P1** = expected by
 enterprise buyers; **P2** = differentiators / scale.
 
-### Identity & access  (status: authentication only)
-- **P0 — RBAC.** Roles (admin / editor / viewer / approver) and authorization on
-  every mutating endpoint. Today any authenticated caller can publish/deploy.
+### Identity & access  (status: RBAC + managed tokens shipped)
+- **P0 — RBAC — ✅ done.** Roles (viewer / operator / editor / approver / admin)
+  and authorization on mutating endpoints.
 - **P1 — SSO** (SAML / OIDC) and **SCIM** user provisioning; map IdP groups → roles.
-- **P1 — API token management** (scoped tokens, rotation, expiry, per-token audit).
+- **P1 — API token management — ✅ first pass done.** Admin-gated
+  `GET/POST/DELETE /v1/api-keys` manages durable, hashed API tokens for the current
+  org/workspace; create returns the generated secret once, tokens carry scope, role,
+  actor, optional expiry, and revoke time. Remaining: rotation helper UX and
+  event-log-backed per-token audit.
 - **P2 — Fine-grained, per-flow/per-environment permissions.**
 
 ### Governance & change control  (status: deploy + maker-checker shipped, UI included)
@@ -58,8 +62,11 @@ enterprise buyers; **P2** = differentiators / scale.
   non-production target and opening a maker-checker request into production (the
   same four-eyes gate), and a **promotion gate** refuses to promote a flow whose
   monitors are firing or whose **assertions fail** on the target version (409 +
-  details; `force` overrides). Surfaced in the builder's Deployment panel.
-  *Remaining: per-stage promotion policy.*
+  details; `force` overrides when the stage allows it). A per-stage **promotion
+  policy** (`GET/PUT /v1/flows/{id}/promotion-policy`) now controls, for each
+  target environment, whether assertions, monitors, review, and force override
+  are required/allowed; production review remains mandatory. Surfaced in the
+  builder's Deployment panel.
 - **Comment threads / explanations — ✅ done.** A general commenting capability
   (`platform/comments`): a durable, chronological discussion attached to any subject
   (`GET/POST /v1/comments/{type}/{id}`), surfaced on the items that get approved /
@@ -140,8 +147,11 @@ enterprise buyers; **P2** = differentiators / scale.
   / fraud / document-OCR / SQL) that scaffold the connector config, surfaced as
   "start from a template" chips on the Data page. Credential config fields
   (dsn/password/token/…) are redacted at the HTTP boundary (`connectors.RedactConfig`),
-  so secrets never reach the client/UI — but are still stored in plaintext; a real
-  secret store / encryption-at-rest (and per-template auth fields) remains the P1 work.*
+  so secrets never reach the client/UI. Connector credential fields are now also
+  encrypted before `ConnectorDefined` is recorded when operators set
+  `INTRAKTIBLE_CONNECTOR_SECRET_KEY` (32-byte base64/hex key), so the event log and
+  projections hold ciphertext envelopes while fetches decrypt just in time. Remaining
+  polish: external KMS/rotation and per-template auth fields.*
 - **P1 — Batch decisioning** (score a file / a population) — **DONE.** `POST
   /v1/flows/{slug}/{env}/decide/batch` runs a dataset through the recorded decide
   path (each row a real decision in history/metrics/audit; capped at 500), with a
@@ -177,7 +187,7 @@ enterprise buyers; **P2** = differentiators / scale.
 | 3 | **Backtesting on a dataset** — ✅ done | P0 — the user's #1 confidence tool | M |
 | 4 | **Audit API + UI** — ✅ done | P0 — surface the lineage we already record | S |
 | 5 | **Reason codes** — ✅ done | P0 — adverse-action / explainability | S–M |
-| 6 | **Secrets management** for connectors | P1 | M |
+| 6 | **Connector credential encryption** — ✅ done; external KMS/rotation remains | P1 | M |
 | 7 | **Alerting / drift** | P1 | M |
 | 8 | **SSO/SCIM, batch decisioning, SDKs, networked log** | P1 | L each |
 | 9 | **SOC2/ISO, data residency, multi-region** | P2 / org-level | XL |

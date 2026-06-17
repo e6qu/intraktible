@@ -19,6 +19,7 @@ const (
 	TypeDeploymentRequested = "decision.flow.deployment_requested"
 	TypeDeploymentApproved  = "decision.flow.deployment_approved"
 	TypeDeploymentRejected  = "decision.flow.deployment_rejected"
+	TypePromotionPolicySet  = "decision.flow.promotion_policy_set"
 )
 
 // NodeType enumerates the node kinds in the MVP palette (PLAN.md §4.1). Input
@@ -138,4 +139,19 @@ type DeploymentRejected struct {
 	RequestID string `json:"request_id"`
 	FlowID    string `json:"flow_id"`
 	Reason    string `json:"reason,omitempty"`
+}
+
+// PromotionStagePolicy is the gate applied when promoting into one target
+// environment.
+type PromotionStagePolicy struct {
+	RequireAssertions       bool `json:"require_assertions"`
+	RequireNoFiringMonitors bool `json:"require_no_firing_monitors"`
+	AllowForce              bool `json:"allow_force"`
+	RequireReview           bool `json:"require_review"`
+}
+
+// PromotionPolicySet records a flow's per-stage promotion gate policy.
+type PromotionPolicySet struct {
+	FlowID string                          `json:"flow_id"`
+	Policy map[string]PromotionStagePolicy `json:"policy"`
 }

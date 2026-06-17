@@ -295,16 +295,19 @@ login/durable sessions, a recursive JSON-Schema validator, an SSRF egress policy
 the Context Layer, pushed SLA-breach events, and full builder config panels (incl. the nested-table
 node types) + canvas drag-to-connect. What remains in `BUGS.md` is the small tail: incremental
 resume-from-Head for durable stores (D21b, a consistency project), the closed-by-decision items
-(D9 CEL, D11 batched events), and the §9 non-goals (SSO/RBAC, billing, 200+ real connectors, ONNX
+(D9 CEL, D11 batched events), and the §9 non-goals (SSO, billing, 200+ real connectors, ONNX
 serving, HA).
 
 **Enterprise-readiness track (post-MVP, ongoing).** Beyond the §9 non-goals, an enterprise-readiness
 pass began closing the gaps a regulated rollout needs (tracked in [`docs/ENTERPRISE.md`](docs/ENTERPRISE.md)).
 Shipped so far: **RBAC** (`platform/auth` role hierarchy viewer→admin + `platform/httpx` per-request
-authorization), **maker-checker / four-eyes approvals** for production deploys (propose-by-one,
+authorization) plus admin-managed durable API tokens (`GET/POST/DELETE /v1/api-keys`, hashed at rest,
+scoped by org/workspace, role, scope, actor, optional expiry, and revocation), **maker-checker /
+four-eyes approvals** for production deploys (propose-by-one,
 approve-by-a-different-user, recorded on the flow as an auditable trail) plus a **promotion workflow**
 (sandbox → staging → production; `POST …/promote {from,to}` ships the live version up the chain — direct
-into non-prod, maker-checker request into prod), **backtesting** —
+into non-prod, maker-checker request into prod) with per-stage promotion policy (`GET/PUT
+…/promotion-policy` controls assertions/monitors/review/force gates), **backtesting** —
 `POST /v1/flows/{flow_id}/backtest` (`decision-engine/backtest`, pure) replays a dataset through a
 published version and optionally diffs two versions over `domain.Execute` only (no recorded decision,
 no I/O), surfaced in the builder as a panel that flags the changed records — and the **immutable audit
@@ -313,8 +316,10 @@ event log, admin-gated, with an Audit log UI page; and **reason codes** — a Re
 domain`) emits structured adverse-action `{code, description}`s into a reserved `reason_codes` field
 (always surfaced by Output), which the history projector lifts to a first-class field on the decision
 record and the decision UI shows (ECOA/Reg B + insurance explainability). **All five enterprise P0 items
-are done.** Remaining work is P1/P2 (secrets management/encryption-at-rest, alerting/drift, SSO/SCIM,
-SDKs, SOC2) — sequenced in `docs/ENTERPRISE.md`.
+are done.** Connector credential fields are encrypted before connector-definition events when
+`INTRAKTIBLE_CONNECTOR_SECRET_KEY` is configured; remaining P1/P2 work is external KMS/rotation,
+broader encryption-at-rest/retention, alerting polish, SSO/SCIM, SDKs, SOC2 — sequenced in
+`docs/ENTERPRISE.md`.
 
 **Decision-automation layer (post-MVP).** A shared disposition brain now sits over the engine:
 **policies** (`decision-engine/policy`) attach auto-approve/decline/refer bands to a flow and assign a
@@ -377,7 +382,7 @@ primitives added designed empty and loading states across the list pages.
 ---
 
 ## 9. MVP non-goals
-Full SSO/RBAC, multi-tenant billing, the 200+ real data connectors, ONNX model serving at scale,
+Full SSO, multi-tenant billing, the 200+ real data connectors, ONNX model serving at scale,
 production HA/clustering, and exact API/UX parity with any commercial product. These are post-MVP.
 
 ## 10. Open questions (to resolve as we go)

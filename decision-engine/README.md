@@ -76,9 +76,11 @@ Done — execution runtime + decide API + decision history (the decision event s
   **sandbox → staging → production** — and a promote action that ships the version currently live in
   `from` up to `to`, carrying the champion only. A non-production target deploys directly; promoting into
   **production** opens a maker-checker request (the same four-eyes gate), so the chain can't be
-  short-circuited. A **promotion gate** refuses to promote a flow whose monitors are firing (returns
-  `409` listing them) — pass `force:true` to override. Surfaced in the builder's Deployment panel (with a
-  force toggle); requires the `approver` role.
+  short-circuited. A per-stage **promotion policy** (`GET/PUT
+  /v1/flows/{flow_id}/promotion-policy`) controls whether each target requires passing assertions,
+  no firing monitors, a review request, and whether `force:true` may override failed gates. Defaults
+  preserve the normal chain (assertions + monitors, force allowed; production review mandatory).
+  Surfaced in the builder's Deployment panel; requires the `approver` role.
 - **Backtesting (`decision-engine/backtest`, pure):** `POST /v1/flows/{flow_id}/backtest` with
   `{version?, compare_version?, dataset}` replays a dataset of inputs through a published version —
   and optionally diffs it against another version — over `domain.Execute` only. It records **no**

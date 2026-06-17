@@ -55,17 +55,18 @@ type DeploymentRequest struct {
 
 // FlowView is the materialized read model for one flow.
 type FlowView struct {
-	Org                string                    `json:"org"`
-	Workspace          string                    `json:"workspace"`
-	FlowID             string                    `json:"flow_id"`
-	Slug               string                    `json:"slug"`
-	Name               string                    `json:"name"`
-	Latest             int                       `json:"latest"`
-	Versions           []VersionView             `json:"versions"`
-	Deployments        map[string]DeploymentView `json:"deployments,omitempty"`
-	DeploymentRequests []DeploymentRequest       `json:"deployment_requests,omitempty"`
-	CreatedAt          time.Time                 `json:"created_at"`
-	UpdatedAt          time.Time                 `json:"updated_at"`
+	Org                string                                 `json:"org"`
+	Workspace          string                                 `json:"workspace"`
+	FlowID             string                                 `json:"flow_id"`
+	Slug               string                                 `json:"slug"`
+	Name               string                                 `json:"name"`
+	Latest             int                                    `json:"latest"`
+	Versions           []VersionView                          `json:"versions"`
+	Deployments        map[string]DeploymentView              `json:"deployments,omitempty"`
+	DeploymentRequests []DeploymentRequest                    `json:"deployment_requests,omitempty"`
+	PromotionPolicy    map[string]events.PromotionStagePolicy `json:"promotion_policy,omitempty"`
+	CreatedAt          time.Time                              `json:"created_at"`
+	UpdatedAt          time.Time                              `json:"updated_at"`
 }
 
 // Projector folds flow lifecycle events into FlowView documents.
@@ -86,6 +87,7 @@ var flowAppliers = map[string]func(context.Context, eventlog.Envelope, store.Sto
 	events.TypeDeploymentRequested:  applyDeploymentRequested,
 	events.TypeDeploymentApproved:   applyDeploymentApproved,
 	events.TypeDeploymentRejected:   applyDeploymentRejected,
+	events.TypePromotionPolicySet:   applyPromotionPolicySet,
 }
 
 // Apply maintains the flow document. Events of other types are not this
@@ -151,6 +153,16 @@ func applyDeploymentRejected(ctx context.Context, e eventlog.Envelope, s store.S
 	}
 	return mutateFlow(ctx, s, e, p.FlowID, func(fv *FlowView) {
 		decideRequest(fv, p.RequestID, "rejected", p.Reason, e)
+	})
+}
+
+func applyPromotionPolicySet(ctx context.Context, e eventlog.Envelope, s store.Store) error {
+	var p events.PromotionPolicySet
+	if err := json.Unmarshal(e.Payload, &p); err != nil {
+		return fmt.Errorf("decision_flows: decode promotion_policy_set seq %d: %w", e.Seq, err)
+	}
+	return mutateFlow(ctx, s, e, p.FlowID, func(fv *FlowView) {
+		fv.PromotionPolicy = EffectivePromotionPolicy(p.Policy)
 	})
 }
 
@@ -238,7 +250,11 @@ func applyDeployed(ctx context.Context, e eventlog.Envelope, s store.Store) erro
 
 // Read returns the flow with the given id for id's tenant.
 func Read(ctx context.Context, s store.Store, id identity.Identity, flowID string) (FlowView, bool, error) {
-	return store.GetDoc[FlowView](ctx, s, Collection, store.Key(id.Org, id.Workspace, flowID))
+	fv, ok, err := store.GetDoc[FlowView](ctx, s, Collection, store.Key(id.Org, id.Workspace, flowID))
+	if ok {
+		fv.PromotionPolicy = EffectivePromotionPolicy(fv.PromotionPolicy)
+	}
+	return fv, ok, err
 }
 
 // GraphForVersion returns a flow version's graph (version 0 = latest published).
@@ -264,6 +280,7 @@ func BySlug(ctx context.Context, s store.Store, id identity.Identity, slug strin
 	}
 	for _, fv := range fvs {
 		if fv.Slug == slug {
+			fv.PromotionPolicy = EffectivePromotionPolicy(fv.PromotionPolicy)
 			return fv, true, nil
 		}
 	}
@@ -272,5 +289,46 @@ func BySlug(ctx context.Context, s store.Store, id identity.Identity, slug strin
 
 // List returns all flows for id's tenant, ordered by store key.
 func List(ctx context.Context, s store.Store, id identity.Identity) ([]FlowView, error) {
-	return store.ListDocs[FlowView](ctx, s, Collection, store.Key(id.Org, id.Workspace, ""))
+	fvs, err := store.ListDocs[FlowView](ctx, s, Collection, store.Key(id.Org, id.Workspace, ""))
+	for i := range fvs {
+		fvs[i].PromotionPolicy = EffectivePromotionPolicy(fvs[i].PromotionPolicy)
+	}
+	return fvs, err
+}
+
+// DefaultPromotionPolicy preserves the existing promotion behavior.
+func DefaultPromotionPolicy() map[string]events.PromotionStagePolicy {
+	return map[string]events.PromotionStagePolicy{
+		"sandbox": {
+			RequireAssertions:       true,
+			RequireNoFiringMonitors: true,
+			AllowForce:              true,
+			RequireReview:           false,
+		},
+		"staging": {
+			RequireAssertions:       true,
+			RequireNoFiringMonitors: true,
+			AllowForce:              true,
+			RequireReview:           false,
+		},
+		"production": {
+			RequireAssertions:       true,
+			RequireNoFiringMonitors: true,
+			AllowForce:              true,
+			RequireReview:           true,
+		},
+	}
+}
+
+// EffectivePromotionPolicy fills missing stages from the default and forces the
+// non-negotiable production review requirement.
+func EffectivePromotionPolicy(policy map[string]events.PromotionStagePolicy) map[string]events.PromotionStagePolicy {
+	effective := DefaultPromotionPolicy()
+	for env, stage := range policy {
+		if env == "production" {
+			stage.RequireReview = true
+		}
+		effective[env] = stage
+	}
+	return effective
 }

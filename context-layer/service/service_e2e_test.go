@@ -5,6 +5,7 @@ package service_test
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/e6qu/intraktible/context-layer/command"
@@ -13,6 +14,7 @@ import (
 	"github.com/e6qu/intraktible/context-layer/features"
 	"github.com/e6qu/intraktible/context-layer/service"
 	"github.com/e6qu/intraktible/platform/identity"
+	"github.com/e6qu/intraktible/platform/store"
 	"github.com/e6qu/intraktible/platform/testutil"
 )
 
@@ -23,6 +25,19 @@ func start(t *testing.T) *testutil.API {
 	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "dev"}
 	return testutil.StartAPI(t, log, st, "test-key", id, svc.Routes,
 		entities.Projector{}, features.Projector{}, connectors.Projector{})
+}
+
+func startWithSecrets(t *testing.T, box connectors.SecretBox) (*testutil.API, store.Store) {
+	t.Helper()
+	log, st := testutil.NewLogStore(t)
+	svc := service.New(command.NewHandler(log), st, service.WithSecrets(box))
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "dev"}
+	return testutil.StartAPI(t, log, st, "test-key", id, svc.Routes,
+		entities.Projector{}, features.Projector{}, connectors.Projector{}), st
+}
+
+func jsonContains(raw json.RawMessage, want string) bool {
+	return strings.Contains(string(raw), want)
 }
 
 func TestContextAPIEndToEnd(t *testing.T) {
@@ -200,6 +215,52 @@ func TestConnectorCatalog(t *testing.T) {
 		return false
 	}) {
 		t.Fatal("connector instantiated from the catalog never appeared")
+	}
+}
+
+func TestConnectorDefinitionEncryptsStoredSecrets(t *testing.T) {
+	box, err := connectors.NewAESGCMSecretBox([]byte("0123456789abcdef0123456789abcdef"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	api, st := startWithSecrets(t, box)
+
+	api.Request(t, http.MethodPost, "/v1/context/connectors",
+		map[string]any{
+			"name": "secure-sql",
+			"type": "sql",
+			"config": map[string]any{
+				"dsn":   "file:plaintext-secret.db",
+				"query": "SELECT 1",
+			},
+		}, http.StatusAccepted, nil)
+
+	var stored connectors.ConnectorView
+	if !testutil.Eventually(t, func() bool {
+		var ok bool
+		stored, ok, err = store.GetDoc[connectors.ConnectorView](
+			t.Context(), st, connectors.CollectionConnectors, store.Key("demo", "main", "secure-sql"))
+		return err == nil && ok
+	}) {
+		t.Fatalf("connector projection missing or errored: %v", err)
+	}
+	if string(stored.Config) == "" || !json.Valid(stored.Config) {
+		t.Fatalf("stored config invalid: %s", stored.Config)
+	}
+	if string(stored.Config) == `{"dsn":"file:plaintext-secret.db","query":"SELECT 1"}` ||
+		jsonContains(stored.Config, "plaintext-secret") {
+		t.Fatalf("stored config leaked plaintext secret: %s", stored.Config)
+	}
+
+	var list struct {
+		Connectors []connectors.ConnectorView `json:"connectors"`
+	}
+	api.Request(t, http.MethodGet, "/v1/context/connectors?type=sql", nil, http.StatusOK, &list)
+	if len(list.Connectors) != 1 {
+		t.Fatalf("connector listing: %+v", list.Connectors)
+	}
+	if !jsonContains(list.Connectors[0].Config, "[redacted]") || jsonContains(list.Connectors[0].Config, "plaintext-secret") {
+		t.Fatalf("list response did not redact secret: %s", list.Connectors[0].Config)
 	}
 }
 

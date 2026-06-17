@@ -8,6 +8,8 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -126,6 +128,8 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 	// --store=sqlite (and stay in-memory with --store=memory). It is not a
 	// projection, so a rebuild never touches it.
 	sessions := auth.NewStoreSessions(st)
+	apiKeys := auth.NewStoreAPIKeys(st)
+	keyring.UseResolver(apiKeys)
 	if devKey != "" {
 		keyring.Add(devKey, auth.APIKey{
 			ID:       "dev",
@@ -163,10 +167,18 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 	if egress.AllowPrivate {
 		slog.Warn("connectors: egress to private/loopback targets is ALLOWED (INTRAKTIBLE_CONNECTOR_ALLOW_PRIVATE)")
 	}
+	connectorSecrets, err := connectorSecretBoxFromEnv()
+	if err != nil {
+		return err
+	}
+	if connectorSecrets != nil {
+		slog.Info("connectors: credential-field encryption enabled")
+	}
 
 	// Agents that declare tools call Context Layer connectors through this toolbox
 	// during a tool-calling run (shared by the Agent Manager and the engine's AI node).
-	toolbox := tools.ConnectorToolbox{Fetcher: connectors.Provider{Store: st, Egress: egress}}
+	connectorProvider := connectors.Provider{Store: st, Egress: egress, Secrets: connectorSecrets}
+	toolbox := tools.ConnectorToolbox{Fetcher: connectorProvider}
 
 	if enabled(modules, "hello") {
 		helloservice.New(hellocmd.NewHandler(log), st).Routes(api)
@@ -179,7 +191,7 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 		// not running / nothing is defined).
 		decide := enginecmd.NewDecideHandler(log, st,
 			enginecmd.WithFeatures(features.Provider{Store: st}),
-			enginecmd.WithConnectors(connectors.Provider{Store: st, Egress: egress}),
+			enginecmd.WithConnectors(connectorProvider),
 			enginecmd.WithAgents(agents.Provider{Store: st, Registry: aiRegistry, Tools: toolbox}))
 		// The pre-approval write side is shared: the engine service uses it to
 		// promote an approved batch into grants; the pre-approval service exposes
@@ -208,7 +220,10 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 		caseservice.New(casecmd.NewHandler(log), st).Routes(api)
 	}
 	if enabled(modules, "context-layer") {
-		contextservice.New(contextcmd.NewHandler(log), st, contextservice.WithEgress(egress)).Routes(api)
+		contextservice.New(contextcmd.NewHandler(log), st,
+			contextservice.WithEgress(egress),
+			contextservice.WithSecrets(connectorSecrets),
+		).Routes(api)
 	}
 	var agentHandler *agentcmd.Handler
 	if enabled(modules, "agent-manager") {
@@ -237,6 +252,7 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 	notifications.New(notifications.NewHandler(log), st).Routes(api)
 
 	// Authenticated caller introspection (inside the /v1 auth chain).
+	httpx.NewAPIKeysHandler(apiKeys).Routes(api)
 	api.HandleFunc("GET /v1/me", httpx.MeHandler())
 
 	rt := projection.New(log, st, moduleProjectors(modules)...)
@@ -330,6 +346,34 @@ func openLog(kind, dataDir string) (eventlog.Log, error) {
 	default:
 		return nil, fmt.Errorf("unknown --log %q (file|sqlite)", kind)
 	}
+}
+
+func connectorSecretBoxFromEnv() (connectors.SecretBox, error) {
+	raw := strings.TrimSpace(os.Getenv("INTRAKTIBLE_CONNECTOR_SECRET_KEY"))
+	if raw == "" {
+		return nil, nil
+	}
+	key, err := decodeConnectorSecretKey(raw)
+	if err != nil {
+		return nil, err
+	}
+	return connectors.NewAESGCMSecretBox(key)
+}
+
+func decodeConnectorSecretKey(raw string) ([]byte, error) {
+	decoders := []func(string) ([]byte, error){
+		base64.StdEncoding.DecodeString,
+		base64.RawStdEncoding.DecodeString,
+		base64.RawURLEncoding.DecodeString,
+		hex.DecodeString,
+	}
+	for _, decode := range decoders {
+		key, err := decode(raw)
+		if err == nil && len(key) == 32 {
+			return key, nil
+		}
+	}
+	return nil, fmt.Errorf("INTRAKTIBLE_CONNECTOR_SECRET_KEY must be a 32-byte key encoded as base64 or hex")
 }
 
 // moduleProjectors returns the read-model projectors for the enabled modules —

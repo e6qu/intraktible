@@ -260,12 +260,23 @@ func Invoke(ctx context.Context, s store.Store, id identity.Identity, name strin
 
 // InvokeWith is Invoke with an explicit egress policy for the HTTP connector.
 func InvokeWith(ctx context.Context, s store.Store, id identity.Identity, name string, params json.RawMessage, egress EgressPolicy) (json.RawMessage, error) {
+	return InvokeWithSecrets(ctx, s, id, name, params, egress, nil)
+}
+
+// InvokeWithSecrets is Invoke with explicit egress and connector-secret
+// decryption. It is used by the HTTP service and composition root when connector
+// configs are stored with encrypted credential fields.
+func InvokeWithSecrets(ctx context.Context, s store.Store, id identity.Identity, name string, params json.RawMessage, egress EgressPolicy, secrets SecretBox) (json.RawMessage, error) {
 	def, ok, err := Read(ctx, s, id, name)
 	if err != nil {
 		return nil, err
 	}
 	if !ok {
 		return nil, fmt.Errorf("context-layer: unknown connector %q", name)
+	}
+	def.Config, err = DecryptSecrets(def.Config, secrets)
+	if err != nil {
+		return nil, err
 	}
 	c, err := build(def, egress)
 	if err != nil {
@@ -280,13 +291,14 @@ func InvokeWith(ctx context.Context, s store.Store, id identity.Identity, name s
 // fetch is performed but not recorded here — the decision records the response in
 // its own event stream (in DecisionStarted's data and the Connect node's output).
 type Provider struct {
-	Store  store.Store
-	Egress EgressPolicy
+	Store   store.Store
+	Egress  EgressPolicy
+	Secrets SecretBox
 }
 
 // Fetch invokes the named connector with params under the provider's egress policy.
 func (p Provider) Fetch(ctx context.Context, id identity.Identity, connector string, params json.RawMessage) (json.RawMessage, error) {
-	return InvokeWith(ctx, p.Store, id, connector, params, p.Egress)
+	return InvokeWithSecrets(ctx, p.Store, id, connector, params, p.Egress, p.Secrets)
 }
 
 // build constructs a Connector from its definition.

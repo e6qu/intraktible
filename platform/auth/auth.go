@@ -68,8 +68,9 @@ type APIKey struct {
 
 // Keyring resolves API-key secrets to identities. Secrets are stored hashed.
 type Keyring struct {
-	mu   sync.RWMutex
-	keys map[string]APIKey // sha256(secret) -> key
+	mu        sync.RWMutex
+	keys      map[string]APIKey // sha256(secret) -> key
+	resolvers []KeyResolver
 }
 
 // NewKeyring returns an empty keyring.
@@ -82,6 +83,18 @@ func (k *Keyring) Add(secret string, key APIKey) {
 	k.keys[hash(secret)] = key
 }
 
+// KeyResolver resolves API-key secrets outside the static in-memory keyring.
+type KeyResolver interface {
+	ResolveSecret(secret string) (APIKey, bool)
+}
+
+// UseResolver adds a secondary resolver, such as the durable managed-token store.
+func (k *Keyring) UseResolver(resolver KeyResolver) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	k.resolvers = append(k.resolvers, resolver)
+}
+
 // Resolve looks up a presented secret in constant-ish time.
 func (k *Keyring) Resolve(secret string) (APIKey, bool) {
 	h := hash(secret)
@@ -89,6 +102,11 @@ func (k *Keyring) Resolve(secret string) (APIKey, bool) {
 	defer k.mu.RUnlock()
 	for stored, key := range k.keys {
 		if subtle.ConstantTimeCompare([]byte(stored), []byte(h)) == 1 {
+			return key, true
+		}
+	}
+	for _, resolver := range k.resolvers {
+		if key, ok := resolver.ResolveSecret(secret); ok {
 			return key, true
 		}
 	}

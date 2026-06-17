@@ -257,6 +257,30 @@ func (h *Handler) RejectDeployment(ctx context.Context, id identity.Identity, fl
 	return h.appendFlowEvent(ctx, id, events.TypeDeploymentRejected, payload)
 }
 
+// SetPromotionPolicy records a flow's per-stage promotion gate policy.
+func (h *Handler) SetPromotionPolicy(ctx context.Context, id identity.Identity, cmd domain.SetPromotionPolicy) (eventlog.Envelope, error) {
+	if err := id.Valid(); err != nil {
+		return eventlog.Envelope{}, err
+	}
+	if err := cmd.Validate(); err != nil {
+		return eventlog.Envelope{}, err
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	byID, _, err := h.foldTenant(ctx, id)
+	if err != nil {
+		return eventlog.Envelope{}, err
+	}
+	if _, ok := byID[cmd.FlowID]; !ok {
+		return eventlog.Envelope{}, fmt.Errorf("decision-engine: unknown flow %q", cmd.FlowID)
+	}
+	payload, err := json.Marshal(events.PromotionPolicySet{FlowID: cmd.FlowID, Policy: cmd.Policy})
+	if err != nil {
+		return eventlog.Envelope{}, fmt.Errorf("decision-engine: marshal promotion policy: %w", err)
+	}
+	return h.appendFlowEvent(ctx, id, events.TypePromotionPolicySet, payload)
+}
+
 // deployReq is the folded state of one deployment request.
 type deployReq struct {
 	env                                       string

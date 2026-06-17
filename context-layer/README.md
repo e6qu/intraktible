@@ -64,6 +64,13 @@ link-local / unspecified / multicast targets — so it guards every redirect hop
 rebinding. Operators whose connectors legitimately reach internal hosts opt in with
 `INTRAKTIBLE_CONNECTOR_ALLOW_PRIVATE` (logged at boot).
 
+Connector credential fields (`dsn`, `password`, `token`, `api_key`, `authorization`, etc.) are
+encrypted before a `ConnectorDefined` event is recorded when
+`INTRAKTIBLE_CONNECTOR_SECRET_KEY` is set to a 32-byte base64 or hex key. The event log and
+projections then hold ciphertext envelopes for those fields; connector fetches decrypt just in time,
+and list APIs still return redacted config. Losing the key makes encrypted connector definitions
+unusable.
+
 Reference connectors: **http** (Custom Connect), **sql** (a parameterized query against a
 configured database — `{dsn, query, args[]}`; the pure-Go sqlite driver is built in, args bind as
 named parameters so caller params cannot inject SQL, results bounded to 1000 rows), and a

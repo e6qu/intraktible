@@ -50,6 +50,8 @@ func (s *Service) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/flows/{flow_id}/versions", s.publish)
 	mux.HandleFunc("POST /v1/flows/{flow_id}/deployments", s.deploy)
 	mux.HandleFunc("POST /v1/flows/{flow_id}/promote", s.promote)
+	mux.HandleFunc("GET /v1/flows/{flow_id}/promotion-policy", s.getPromotionPolicy)
+	mux.HandleFunc("PUT /v1/flows/{flow_id}/promotion-policy", s.setPromotionPolicy)
 	mux.HandleFunc("POST /v1/flows/{flow_id}/deployment-requests", s.requestDeployment)
 	mux.HandleFunc("POST /v1/flows/{flow_id}/deployment-requests/{req_id}/approve", s.approveDeployment)
 	mux.HandleFunc("POST /v1/flows/{flow_id}/deployment-requests/{req_id}/reject", s.rejectDeployment)
@@ -173,6 +175,80 @@ type promoteRequest struct {
 	Force bool   `json:"force,omitempty"` // override the firing-monitor gate
 }
 
+type promotionStageRequest struct {
+	RequireAssertions       *bool `json:"require_assertions,omitempty"`
+	RequireNoFiringMonitors *bool `json:"require_no_firing_monitors,omitempty"`
+	AllowForce              *bool `json:"allow_force,omitempty"`
+	RequireReview           *bool `json:"require_review,omitempty"`
+}
+
+type promotionPolicyRequest struct {
+	Policy map[string]promotionStageRequest `json:"policy"`
+}
+
+func (s *Service) getPromotionPolicy(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	fv, found, err := flows.Read(r.Context(), s.store, id, r.PathValue("flow_id"))
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	if !found {
+		httpx.Error(w, http.StatusNotFound, fmt.Errorf("flow not found"))
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"policy": fv.PromotionPolicy})
+}
+
+func (s *Service) setPromotionPolicy(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	var req promotionPolicyRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	policy := mergePromotionPolicy(req.Policy)
+	e, err := s.cmd.SetPromotionPolicy(r.Context(), id, domain.SetPromotionPolicy{
+		FlowID: r.PathValue("flow_id"),
+		Policy: policy,
+	})
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"policy": policy, "event_id": e.ID, "seq": e.Seq})
+}
+
+func mergePromotionPolicy(req map[string]promotionStageRequest) map[string]events.PromotionStagePolicy {
+	policy := flows.DefaultPromotionPolicy()
+	for env, patch := range req {
+		stage := policy[env]
+		if patch.RequireAssertions != nil {
+			stage.RequireAssertions = *patch.RequireAssertions
+		}
+		if patch.RequireNoFiringMonitors != nil {
+			stage.RequireNoFiringMonitors = *patch.RequireNoFiringMonitors
+		}
+		if patch.AllowForce != nil {
+			stage.AllowForce = *patch.AllowForce
+		}
+		if patch.RequireReview != nil {
+			stage.RequireReview = *patch.RequireReview
+		}
+		if env == domain.EnvProduction {
+			stage.RequireReview = true
+		}
+		policy[env] = stage
+	}
+	return policy
+}
+
 // promote ships the version live in `from` to `to`, carrying the champion only
 // (a promotion is a known-good version moving up the chain, not an A/B split). It
 // honors the same gate as a direct action on the target: promoting into a
@@ -211,22 +287,13 @@ func (s *Service) promote(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, fmt.Errorf("promote: nothing deployed in %q to promote", req.From))
 		return
 	}
-	// Promotion gate: a flow with firing monitors or failing assertions is not
-	// healthy enough to promote. Refuse unless explicitly forced.
-	if !req.Force {
-		if firing := s.firingMonitors(r.Context(), id, flowID); len(firing) > 0 {
-			httpx.Error(w, http.StatusConflict,
-				fmt.Errorf("promote blocked: monitors firing (%s) — fix them or pass force to override", strings.Join(firing, ", ")))
-			return
-		}
-		if rep, err := assertions.RunForFlow(r.Context(), s.store, id, flowID, src.Version); err == nil && rep.Failed > 0 {
-			httpx.Error(w, http.StatusConflict,
-				fmt.Errorf("promote blocked: %d/%d assertions failing on v%d — fix them or pass force to override", rep.Failed, rep.Total, src.Version))
-			return
-		}
+	stage := fv.PromotionPolicy[req.To]
+	if err := s.checkPromotionGates(r.Context(), id, flowID, src.Version, req.To, stage, req.Force); err != nil {
+		httpx.Error(w, http.StatusConflict, err)
+		return
 	}
 	cmd := domain.DeployVersion{FlowID: flowID, Environment: req.To, Version: src.Version}
-	if req.To == domain.EnvProduction {
+	if stage.RequireReview {
 		reqID, e, derr := s.cmd.RequestDeployment(r.Context(), id, cmd)
 		if derr != nil {
 			httpx.Error(w, http.StatusBadRequest, derr)
@@ -247,6 +314,27 @@ func (s *Service) promote(w http.ResponseWriter, r *http.Request) {
 		"promoted": true, "from": req.From, "to": req.To, "version": src.Version,
 		"event_id": e.ID, "seq": e.Seq,
 	})
+}
+
+func (s *Service) checkPromotionGates(ctx context.Context, id identity.Identity, flowID string, version int, target string, stage events.PromotionStagePolicy, force bool) error {
+	if force && stage.AllowForce {
+		return nil
+	}
+	advice := "fix them or pass force to override"
+	if !stage.AllowForce {
+		advice = fmt.Sprintf("fix them; force is disabled for %s", target)
+	}
+	if stage.RequireNoFiringMonitors {
+		if firing := s.firingMonitors(ctx, id, flowID); len(firing) > 0 {
+			return fmt.Errorf("promote blocked: monitors firing (%s) — %s", strings.Join(firing, ", "), advice)
+		}
+	}
+	if stage.RequireAssertions {
+		if rep, err := assertions.RunForFlow(ctx, s.store, id, flowID, version); err == nil && rep.Failed > 0 {
+			return fmt.Errorf("promote blocked: %d/%d assertions failing on v%d — %s", rep.Failed, rep.Total, version, advice)
+		}
+	}
+	return nil
 }
 
 // firingMonitors returns the metrics of the flow's monitors that are currently
