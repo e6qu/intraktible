@@ -36,6 +36,7 @@
     type Webhook,
     backtestFlow,
     deployVersion,
+    promoteFlow,
     requestDeployment,
     approveDeployment,
     rejectDeployment,
@@ -711,6 +712,29 @@
     }
   }
 
+  // --- Promote: ship the live version of one env up the chain ---
+  let promoteFrom = $state('sandbox');
+  let promoteTo = $state('staging');
+  let promoting = $state(false);
+  async function submitPromote() {
+    error = '';
+    if (!flow) return;
+    promoting = true;
+    try {
+      const r = await promoteFlow(key, flowId, promoteFrom, promoteTo);
+      toast.success(
+        r.promoted
+          ? `Promoted v${r.version} ${promoteFrom} → ${promoteTo}`
+          : `Proposed v${r.version} for ${promoteTo} (request ${(r.request_id ?? '').slice(0, 8)})`
+      );
+      await load();
+    } catch (e) {
+      error = msg(e);
+    } finally {
+      promoting = false;
+    }
+  }
+
   async function approve(reqId: string) {
     error = '';
     try {
@@ -1150,18 +1174,12 @@
     <h2>Deployment</h2>
     <div class="live">
       <span class="exportlabel"><Icon name="check" size={15} /> Live</span>
-      <span class="env">
-        sandbox:
-        {#if liveVersion('sandbox')}<b>v{liveVersion('sandbox')}</b>{:else}<span class="muted"
-            >— (falls back to latest)</span
-          >{/if}
-      </span>
-      <span class="env">
-        production:
-        {#if liveVersion('production')}<b>v{liveVersion('production')}</b>{:else}<span class="muted"
-            >— (falls back to latest)</span
-          >{/if}
-      </span>
+      {#each ['sandbox', 'staging', 'production'] as e (e)}
+        <span class="env">
+          {e}:
+          {#if liveVersion(e)}<b>v{liveVersion(e)}</b>{:else}<span class="muted">—</span>{/if}
+        </span>
+      {/each}
     </div>
     <div class="row">
       <input
@@ -1173,6 +1191,7 @@
       />
       <select bind:value={depEnv} aria-label="deploy environment">
         <option value="sandbox">sandbox</option>
+        <option value="staging">staging</option>
         <option value="production">production (four-eyes)</option>
       </select>
       <input
@@ -1202,6 +1221,23 @@
       Production deploys require maker-checker approval: proposing creates a request that a
       <em>different</em> user must approve.
     </p>
+
+    <div class="row promote-row">
+      <span class="exportlabel"><Icon name="split" size={14} /> Promote</span>
+      <select bind:value={promoteFrom} aria-label="promote from">
+        {#each ['sandbox', 'staging', 'production'] as e (e)}<option value={e}>{e}</option>{/each}
+      </select>
+      <span aria-hidden="true">→</span>
+      <select bind:value={promoteTo} aria-label="promote to">
+        {#each ['sandbox', 'staging', 'production'] as e (e)}<option value={e}>{e}</option>{/each}
+      </select>
+      <button onclick={submitPromote} disabled={!flow || promoting} data-testid="promote-submit">
+        {promoting ? 'Working…' : promoteTo === 'production' ? 'Promote (review)' : 'Promote'}
+      </button>
+      <span class="hint muted"
+        >ships the live version of one env up the chain (prod via review).</span
+      >
+    </div>
 
     {#if pendingRequests.length > 0}
       <div class="requests" data-testid="pending-requests">

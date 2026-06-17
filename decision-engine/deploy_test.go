@@ -143,7 +143,7 @@ func TestDeployValidationAndUnknownVersion(t *testing.T) {
 		t.Fatal("expected error deploying an unpublished version")
 	}
 	// Bad environment is rejected by command validation.
-	if _, err := h.Deploy(ctx, id, domain.DeployVersion{FlowID: flowID, Environment: "staging", Version: 1}); err == nil {
+	if _, err := h.Deploy(ctx, id, domain.DeployVersion{FlowID: flowID, Environment: "qa", Version: 1}); err == nil {
 		t.Fatal("expected error for invalid environment")
 	}
 	// A direct deploy to production is refused — it must go through maker-checker.

@@ -16,13 +16,17 @@ import (
 // decide path, so it must be lowercase letters, digits, and hyphens.
 var slugPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
 
-// Decide environments (mirror the API-key scopes).
+// Decide environments, in promotion order (sandbox → staging → production).
 const (
 	EnvSandbox    = "sandbox"
+	EnvStaging    = "staging"
 	EnvProduction = "production"
 )
 
-var environments = map[string]bool{EnvSandbox: true, EnvProduction: true}
+var environments = map[string]bool{EnvSandbox: true, EnvStaging: true, EnvProduction: true}
+
+// PromotionOrder lists environments from least to most production-like.
+var PromotionOrder = []string{EnvSandbox, EnvStaging, EnvProduction}
 
 // ValidEnvironment reports whether env is a known decide environment.
 func ValidEnvironment(env string) bool { return environments[env] }

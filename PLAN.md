@@ -302,7 +302,9 @@ serving, HA).
 pass began closing the gaps a regulated rollout needs (tracked in [`docs/ENTERPRISE.md`](docs/ENTERPRISE.md)).
 Shipped so far: **RBAC** (`platform/auth` role hierarchy viewer→admin + `platform/httpx` per-request
 authorization), **maker-checker / four-eyes approvals** for production deploys (propose-by-one,
-approve-by-a-different-user, recorded on the flow as an auditable trail), **backtesting** —
+approve-by-a-different-user, recorded on the flow as an auditable trail) plus a **promotion workflow**
+(sandbox → staging → production; `POST …/promote {from,to}` ships the live version up the chain — direct
+into non-prod, maker-checker request into prod), **backtesting** —
 `POST /v1/flows/{flow_id}/backtest` (`decision-engine/backtest`, pure) replays a dataset through a
 published version and optionally diffs two versions over `domain.Execute` only (no recorded decision,
 no I/O), surfaced in the builder as a panel that flags the changed records — and the **immutable audit

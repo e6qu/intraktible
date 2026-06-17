@@ -152,6 +152,7 @@ func requiredRole(method, path string) auth.Role {
 	}
 	switch {
 	case strings.Contains(path, "/deployments"), // a direct deploy (non-prod)
+		strings.HasSuffix(path, "/promote"), // promote a live version up the chain
 		strings.HasSuffix(path, "/approve"), // the checker approving a deployment
 		strings.HasSuffix(path, "/reject"):  // the checker rejecting a deployment
 		return auth.RoleApprover

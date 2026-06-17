@@ -46,6 +46,7 @@ func (s *Service) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/flows/{flow_id}/metrics", s.metrics)
 	mux.HandleFunc("POST /v1/flows/{flow_id}/versions", s.publish)
 	mux.HandleFunc("POST /v1/flows/{flow_id}/deployments", s.deploy)
+	mux.HandleFunc("POST /v1/flows/{flow_id}/promote", s.promote)
 	mux.HandleFunc("POST /v1/flows/{flow_id}/deployment-requests", s.requestDeployment)
 	mux.HandleFunc("POST /v1/flows/{flow_id}/deployment-requests/{req_id}/approve", s.approveDeployment)
 	mux.HandleFunc("POST /v1/flows/{flow_id}/deployment-requests/{req_id}/reject", s.rejectDeployment)
@@ -160,6 +161,73 @@ func (s *Service) deploy(w http.ResponseWriter, r *http.Request) {
 	}
 	httpx.JSON(w, http.StatusCreated, map[string]any{
 		"environment": req.Environment, "version": req.Version, "event_id": e.ID, "seq": e.Seq,
+	})
+}
+
+type promoteRequest struct {
+	From string `json:"from"`
+	To   string `json:"to"`
+}
+
+// promote ships the version live in `from` to `to`, carrying the champion only
+// (a promotion is a known-good version moving up the chain, not an A/B split). It
+// honors the same gate as a direct action on the target: promoting into a
+// non-production env deploys immediately; promoting into production opens a
+// maker-checker deployment request instead of deploying directly.
+func (s *Service) promote(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	var req promoteRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	if !domain.ValidEnvironment(req.From) || !domain.ValidEnvironment(req.To) {
+		httpx.Error(w, http.StatusBadRequest, fmt.Errorf("promote: from and to must be valid environments"))
+		return
+	}
+	if req.From == req.To {
+		httpx.Error(w, http.StatusBadRequest, fmt.Errorf("promote: from and to must differ"))
+		return
+	}
+	flowID := r.PathValue("flow_id")
+	fv, found, err := flows.Read(r.Context(), s.store, id, flowID)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	if !found {
+		httpx.Error(w, http.StatusNotFound, fmt.Errorf("flow not found"))
+		return
+	}
+	src, ok := fv.Deployments[req.From]
+	if !ok || src.Version == 0 {
+		httpx.Error(w, http.StatusBadRequest, fmt.Errorf("promote: nothing deployed in %q to promote", req.From))
+		return
+	}
+	cmd := domain.DeployVersion{FlowID: flowID, Environment: req.To, Version: src.Version}
+	if req.To == domain.EnvProduction {
+		reqID, e, derr := s.cmd.RequestDeployment(r.Context(), id, cmd)
+		if derr != nil {
+			httpx.Error(w, http.StatusBadRequest, derr)
+			return
+		}
+		httpx.JSON(w, http.StatusCreated, map[string]any{
+			"promoted": false, "pending": true, "request_id": reqID, "from": req.From, "to": req.To,
+			"version": src.Version, "event_id": e.ID, "seq": e.Seq,
+		})
+		return
+	}
+	e, derr := s.cmd.Deploy(r.Context(), id, cmd)
+	if derr != nil {
+		httpx.Error(w, http.StatusBadRequest, derr)
+		return
+	}
+	httpx.JSON(w, http.StatusCreated, map[string]any{
+		"promoted": true, "from": req.From, "to": req.To, "version": src.Version,
+		"event_id": e.ID, "seq": e.Seq,
 	})
 }
 

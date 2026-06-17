@@ -782,6 +782,31 @@ export async function deployVersion(
   }
 }
 
+// promoteFlow ships the live version of `from` up to `to`. A non-production
+// target deploys directly; production opens a maker-checker request (pending).
+export async function promoteFlow(
+  key: string,
+  flowId: string,
+  from: string,
+  to: string,
+  fetcher: typeof fetch = fetch
+): Promise<{ promoted: boolean; pending?: boolean; request_id?: string; version: number }> {
+  const res = await fetcher(`/v1/flows/${flowId}/promote`, {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify({ from, to })
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'POST promote');
+  }
+  return (await res.json()) as {
+    promoted: boolean;
+    pending?: boolean;
+    request_id?: string;
+    version: number;
+  };
+}
+
 // requestDeployment proposes a deployment for review (maker side).
 export async function requestDeployment(
   key: string,

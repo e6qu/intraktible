@@ -50,7 +50,12 @@ enterprise buyers; **P2** = differentiators / scale.
   builder now has a **Deployment panel**: live-version-per-environment badges,
   deploy-to-sandbox, propose-for-production, and a pending-approvals queue with
   approve/reject (self-approval is refused — four-eyes), plus A/B challenger %.
-- **P1 — Promotion workflow** sandbox → staging → production with gates.
+- **P1 — Promotion workflow — ✅ done.** Three environments (sandbox → staging →
+  production) and a **promote** action (`POST /v1/flows/{id}/promote {from,to}`)
+  that ships the live version of one env up the chain — deploying directly into a
+  non-production target and opening a maker-checker request into production (the
+  same four-eyes gate). Surfaced in the builder's Deployment panel. *Remaining:
+  per-stage automated gates (require monitors green / a backtest pass before promote).*
 - **P1 — Change history / diff** between versions — *the builder now has a client-side
   version-diff panel (added/removed/changed nodes + edges between any two published
   versions); a richer who/why audit of changes is still open.*

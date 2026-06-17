@@ -125,7 +125,7 @@ func TestDecideUnknownFlowAndEnv(t *testing.T) {
 	if _, err := dh.Decide(ctx, id, "ghost", "production", nil, command.EntityRef{}); err == nil {
 		t.Fatal("expected error for unknown flow")
 	}
-	if _, err := dh.Decide(ctx, id, "scoring", "staging", nil, command.EntityRef{}); err == nil {
+	if _, err := dh.Decide(ctx, id, "scoring", "qa", nil, command.EntityRef{}); err == nil {
 		t.Fatal("expected error for invalid environment")
 	}
 }

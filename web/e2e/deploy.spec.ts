@@ -52,6 +52,12 @@ test('deploys to sandbox and runs the production four-eyes flow', async ({ page,
   await page.getByTestId('deploy-submit').click();
   await expect(panel.getByText(/sandbox:/)).toContainText('v1');
 
+  // Promote sandbox -> staging (a non-prod target deploys directly).
+  await page.getByLabel('promote from').selectOption('sandbox');
+  await page.getByLabel('promote to').selectOption('staging');
+  await page.getByTestId('promote-submit').click();
+  await expect(panel.getByText(/staging:/)).toContainText('v1');
+
   // Propose v2 to production -> a maker-checker request appears.
   await page.getByLabel('deploy version').fill('2');
   await page.getByLabel('deploy environment').selectOption('production');

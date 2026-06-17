@@ -59,6 +59,11 @@ Done — execution runtime + decide API + decision history (the decision event s
   deploys. The proposer cannot approve their own request; every request + decision is recorded on the
   flow (an auditable approval trail). Combined with RBAC, proposing needs the `editor` role and
   approving needs `approver`.
+- **Promotion (`POST /v1/flows/{flow_id}/promote {from,to}`):** three environments in order —
+  **sandbox → staging → production** — and a promote action that ships the version currently live in
+  `from` up to `to`, carrying the champion only. A non-production target deploys directly; promoting into
+  **production** opens a maker-checker request (the same four-eyes gate), so the chain can't be
+  short-circuited. Surfaced in the builder's Deployment panel; requires the `approver` role.
 - **Backtesting (`decision-engine/backtest`, pure):** `POST /v1/flows/{flow_id}/backtest` with
   `{version?, compare_version?, dataset}` replays a dataset of inputs through a published version —
   and optionally diffs it against another version — over `domain.Execute` only. It records **no**

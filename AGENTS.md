@@ -34,7 +34,7 @@ The **Svelte Flow builder UI** (`web/src/routes/engine`) lists/creates flows and
 (add nodes from a palette, wire edges, edit per-node config via structured panels for common types or
 raw JSON, publish a new version — with backend
 validation surfaced), renders it on a canvas (auto-layout), runs inline test decisions, and manages
-**deployment + maker-checker** (live-version-per-env badges, deploy-to-sandbox, propose-for-production,
+**deployment + maker-checker + promotion** (sandbox→staging→production envs, a `…/promote {from,to}` that ships the live version up the chain — direct into non-prod, maker-checker request into prod; live-version-per-env badges, deploy-to-sandbox, propose-for-production,
 a pending-approvals queue with approve/reject — self-approval refused — and A/B challenger %), and a
 **version-diff** panel (client-side structural compare of any two published versions: added/removed/
 changed nodes + added/removed edges). A flow version **exports** to Mermaid / BPMN / Graphviz DOT /

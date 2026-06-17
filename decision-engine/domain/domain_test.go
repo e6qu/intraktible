@@ -125,9 +125,13 @@ func TestDeployVersionValidate(t *testing.T) {
 	if err := ab.Validate(); err != nil {
 		t.Fatalf("valid A/B deploy rejected: %v", err)
 	}
+	// staging is a valid environment (sandbox → staging → production).
+	if err := (domain.DeployVersion{FlowID: "f", Environment: "staging", Version: 1}).Validate(); err != nil {
+		t.Fatalf("staging deploy should be valid: %v", err)
+	}
 	bad := []domain.DeployVersion{
 		{FlowID: "", Environment: "production", Version: 1},                                            // no flow
-		{FlowID: "f", Environment: "staging", Version: 1},                                              // bad env
+		{FlowID: "f", Environment: "nope", Version: 1},                                                 // bad env
 		{FlowID: "f", Environment: "production", Version: 0},                                           // version < 1
 		{FlowID: "f", Environment: "production", Version: 1, ChallengerPct: 50},                        // pct without challenger
 		{FlowID: "f", Environment: "production", Version: 1, ChallengerVersion: 2, ChallengerPct: 150}, // pct out of range

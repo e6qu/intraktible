@@ -1091,8 +1091,8 @@ func TestDecideAPIEndToEnd(t *testing.T) {
 		t.Fatal("metrics never reflected the decision")
 	}
 
-	// Invalid environment -> 400.
-	api.Request(t, http.MethodPost, "/v1/flows/scoring/staging/decide",
+	// Invalid environment -> 400 (sandbox/staging/production are the valid ones).
+	api.Request(t, http.MethodPost, "/v1/flows/scoring/qa/decide",
 		map[string]any{"data": map[string]any{}}, http.StatusBadRequest, nil)
 }
 
@@ -1136,6 +1136,71 @@ func TestDeployAPIPinsVersion(t *testing.T) {
 	// Deploying an unpublished version is rejected.
 	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/deployments",
 		map[string]any{"environment": "sandbox", "version": 9}, http.StatusBadRequest, nil)
+}
+
+func TestPromoteOverHTTP(t *testing.T) {
+	api := startEngine(t)
+	var created struct {
+		FlowID string `json:"flow_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows",
+		map[string]string{"slug": "promo", "name": "Promo"}, http.StatusCreated, &created)
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/versions",
+		map[string]any{"graph": flowtest.ConstGraph("v1")}, http.StatusCreated, nil)
+
+	// Pin sandbox to v1.
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/deployments",
+		map[string]any{"environment": "sandbox", "version": 1}, http.StatusCreated, nil)
+	if !testutil.Eventually(t, func() bool {
+		var fv flows.FlowView
+		api.Request(t, http.MethodGet, "/v1/flows/"+created.FlowID, nil, http.StatusOK, &fv)
+		return fv.Deployments["sandbox"].Version == 1
+	}) {
+		t.Fatal("sandbox deploy never landed")
+	}
+
+	// Promote sandbox -> staging: a non-production target deploys directly.
+	var promo struct {
+		Promoted bool `json:"promoted"`
+		Version  int  `json:"version"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/promote",
+		map[string]any{"from": "sandbox", "to": "staging"}, http.StatusCreated, &promo)
+	if !promo.Promoted || promo.Version != 1 {
+		t.Fatalf("staging promote should deploy directly: %+v", promo)
+	}
+	if !testutil.Eventually(t, func() bool {
+		var fv flows.FlowView
+		api.Request(t, http.MethodGet, "/v1/flows/"+created.FlowID, nil, http.StatusOK, &fv)
+		return fv.Deployments["staging"].Version == 1
+	}) {
+		t.Fatal("staging deployment never landed")
+	}
+
+	// Promote staging -> production: opens a maker-checker request, not a direct deploy.
+	var prod struct {
+		Promoted  bool   `json:"promoted"`
+		Pending   bool   `json:"pending"`
+		RequestID string `json:"request_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/promote",
+		map[string]any{"from": "staging", "to": "production"}, http.StatusCreated, &prod)
+	if prod.Promoted || !prod.Pending || prod.RequestID == "" {
+		t.Fatalf("production promote should open a pending request: %+v", prod)
+	}
+	if !testutil.Eventually(t, func() bool {
+		var fv flows.FlowView
+		api.Request(t, http.MethodGet, "/v1/flows/"+created.FlowID, nil, http.StatusOK, &fv)
+		// Production is not deployed yet (awaits a second approver); the request is pending.
+		_, deployed := fv.Deployments["production"]
+		return !deployed && len(fv.DeploymentRequests) == 1 && fv.DeploymentRequests[0].Status == "pending"
+	}) {
+		t.Fatal("production promote did not open a pending request")
+	}
+
+	// Promoting from an env with nothing deployed is rejected.
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/promote",
+		map[string]any{"from": "production", "to": "sandbox"}, http.StatusBadRequest, nil)
 }
 
 func TestBacktestComparesVersions(t *testing.T) {
