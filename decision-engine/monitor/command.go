@@ -66,6 +66,30 @@ func (h *Handler) Define(ctx context.Context, id identity.Identity, cmd DefineCm
 	return mid, e, nil
 }
 
+// CaptureBaseline records a flow's current disposition distribution as the drift
+// baseline. The distribution is computed by the caller (shell) from live metrics.
+func (h *Handler) CaptureBaseline(ctx context.Context, id identity.Identity, flowID string, b Baseline) (eventlog.Envelope, error) {
+	if err := id.Valid(); err != nil {
+		return eventlog.Envelope{}, err
+	}
+	if flowID == "" {
+		return eventlog.Envelope{}, fmt.Errorf("monitor: flow_id is required")
+	}
+	return h.append(ctx, id, TypeBaselineCaptured, BaselineCaptured{
+		FlowID: flowID, Approve: b.Approve, Decline: b.Decline, Refer: b.Refer, Total: b.Total,
+	})
+}
+
+// MarkAlerted records that a monitor crossed into firing (notification sent).
+func (h *Handler) MarkAlerted(ctx context.Context, id identity.Identity, flowID, monitorID string) (eventlog.Envelope, error) {
+	return h.append(ctx, id, TypeAlerted, Alerted{MonitorID: monitorID, FlowID: flowID})
+}
+
+// MarkResolved records that a previously-firing monitor returned to ok.
+func (h *Handler) MarkResolved(ctx context.Context, id identity.Identity, flowID, monitorID string) (eventlog.Envelope, error) {
+	return h.append(ctx, id, TypeResolved, Resolved{MonitorID: monitorID, FlowID: flowID})
+}
+
 // Delete records a Deleted event for a monitor.
 func (h *Handler) Delete(ctx context.Context, id identity.Identity, flowID, monitorID string) (eventlog.Envelope, error) {
 	if err := id.Valid(); err != nil {

@@ -4,6 +4,7 @@ package monitor
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -41,6 +42,8 @@ func (s *Service) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/flows/{flow_id}/monitors", s.list)
 	mux.HandleFunc("DELETE /v1/flows/{flow_id}/monitors/{monitor_id}", s.delete)
 	mux.HandleFunc("POST /v1/flows/{flow_id}/monitors/check", s.check)
+	mux.HandleFunc("POST /v1/flows/{flow_id}/baseline", s.captureBaseline)
+	mux.HandleFunc("GET /v1/flows/{flow_id}/drift", s.drift)
 }
 
 type defineRequest struct {
@@ -101,10 +104,14 @@ func (s *Service) list(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusInternalServerError, err)
 		return
 	}
-	metrics := s.metricsFor(r, id, flowID)
+	snap, err := LoadSnapshot(r.Context(), s.store, id, flowID)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, err)
+		return
+	}
 	out := make([]monitorStatus, 0, len(rules))
 	for _, v := range rules {
-		out = append(out, monitorStatus{View: v, Status: Evaluate(metrics, v.Rule())})
+		out = append(out, monitorStatus{View: v, Status: Evaluate(snap, v.Rule())})
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"monitors": out})
 }
@@ -119,9 +126,16 @@ type firedMonitor struct {
 	Description string  `json:"description,omitempty"`
 }
 
+func firedFrom(v View, st Status) firedMonitor {
+	return firedMonitor{
+		MonitorID: v.MonitorID, Metric: v.Metric, Op: v.Op,
+		Threshold: v.Threshold, Actual: st.Actual, Description: v.Description,
+	}
+}
+
 // check evaluates a flow's monitors and pushes the firing ones to every active
-// webhook. It is the pull-based alerting trigger (wire it to cron / a scheduler):
-// it returns the firing set and the per-webhook delivery outcomes.
+// webhook. It is the pull-based alerting trigger (the scheduler does this on a
+// timer): it returns the firing set and the per-webhook delivery outcomes.
 func (s *Service) check(w http.ResponseWriter, r *http.Request) {
 	id, ok := httpx.Caller(w, r)
 	if !ok {
@@ -133,14 +147,15 @@ func (s *Service) check(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusInternalServerError, err)
 		return
 	}
-	metrics := s.metricsFor(r, id, flowID)
+	snap, err := LoadSnapshot(r.Context(), s.store, id, flowID)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, err)
+		return
+	}
 	fired := make([]firedMonitor, 0)
 	for _, v := range rules {
-		if st := Evaluate(metrics, v.Rule()); st.Firing {
-			fired = append(fired, firedMonitor{
-				MonitorID: v.MonitorID, Metric: v.Metric, Op: v.Op,
-				Threshold: v.Threshold, Actual: st.Actual, Description: v.Description,
-			})
+		if st := Evaluate(snap, v.Rule()); st.Firing {
+			fired = append(fired, firedFrom(v, st))
 		}
 	}
 	resp := map[string]any{"flow_id": flowID, "checked": len(rules), "fired": fired}
@@ -156,12 +171,42 @@ func (s *Service) check(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, resp)
 }
 
-// metricsFor reads the flow's metrics snapshot (a zero snapshot when none yet, so
-// rules over an unused flow read as "no data" rather than erroring).
-func (s *Service) metricsFor(r *http.Request, id identity.Identity, flowID string) analytics.FlowMetrics {
+// captureBaseline snapshots the flow's current disposition distribution as the
+// drift reference.
+func (s *Service) captureBaseline(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	flowID := r.PathValue("flow_id")
 	m, _, err := analytics.Read(r.Context(), s.store, id, flowID)
 	if err != nil {
-		return analytics.FlowMetrics{}
+		httpx.Error(w, http.StatusInternalServerError, err)
+		return
 	}
-	return m
+	base, ok := DistributionOf(m)
+	if !ok {
+		httpx.Error(w, http.StatusBadRequest, fmt.Errorf("monitor: no dispositioned decisions to baseline yet"))
+		return
+	}
+	e, err := s.cmd.CaptureBaseline(r.Context(), id, flowID, base)
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	httpx.JSON(w, http.StatusCreated, map[string]any{"baseline": base, "event_id": e.ID, "seq": e.Seq})
+}
+
+// drift reports the current distribution vs the captured baseline, per bucket.
+func (s *Service) drift(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	snap, err := LoadSnapshot(r.Context(), s.store, id, r.PathValue("flow_id"))
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, ComputeDrift(snap))
 }

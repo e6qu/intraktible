@@ -110,14 +110,24 @@ Done — execution runtime + decide API + decision history (the decision event s
   builder's **Promote to pre-approvals** panel drives it over the batch dataset. This is the "policy
   informs bulk decisions" loop: decide a population once, pre-approve the winners, honor them instantly.
 - **Monitors (`decision-engine/monitor`):** thresholds over a flow's live metrics — `failure_rate`,
-  `refer_rate`, `automation_rate`, `approve_rate`, `decline_rate`, `avg_latency_ms`, `volume` — each a
-  rule `{metric, op (gt|lt), threshold}` that **fires** when breached. The evaluator is a pure function
-  of an `analytics.FlowMetrics` snapshot; status (`actual` / `computable` / `firing`) is computed at read
-  time, never stored, so it stays correct as decisions accrue (a rate with no decisions reads "no data",
-  not a false 0). API: `POST /v1/flows/{id}/monitors` (`editor`), `GET /v1/flows/{id}/monitors` (rules +
-  live status), `DELETE /v1/flows/{id}/monitors/{monitor_id}`, and `POST /v1/flows/{id}/monitors/check`
-  (evaluate + push firing rules to webhooks — the pull-based alerting trigger; wire it to cron). UI: a
-  **Monitors** panel in the builder defines rules and shows firing/ok/no-data with the current value.
+  `refer_rate`, `automation_rate`, `approve_rate`, `decline_rate`, `avg_latency_ms`, `volume`, and
+  **`distribution_drift`** — each a rule `{metric, op (gt|lt), threshold}` that **fires** when breached.
+  The evaluator is a pure function of a snapshot (metrics + an optional baseline); status (`actual` /
+  `computable` / `firing`) is computed at read time, never stored, so it stays correct as decisions
+  accrue (a metric with no data reads "no data", not a false 0). **Distribution drift** measures the
+  largest shift of any disposition share from a **captured baseline**: `POST /v1/flows/{id}/baseline`
+  snapshots the current approve/decline/refer mix; `GET /v1/flows/{id}/drift` reports per-bucket
+  baseline→current deltas + the max drift; a `distribution_drift` monitor alerts on it like any other.
+  API: `POST /v1/flows/{id}/monitors` (`editor`), `GET /v1/flows/{id}/monitors` (rules + live status),
+  `DELETE /v1/flows/{id}/monitors/{monitor_id}`, and `POST /v1/flows/{id}/monitors/check` (evaluate +
+  push firing rules to webhooks). UI: a **Monitors** panel defines rules, captures a baseline, and shows
+  firing/ok/no-data + the live drift readout.
+- **Monitor scheduler (`monitor.Scheduler`):** an optional background sweep — set
+  `INTRAKTIBLE_MONITOR_INTERVAL` (e.g. `1m`) and the server evaluates every monitor on that cadence,
+  delivering to webhooks only on the **ok→firing edge** (recording an `Alerted` event) and resetting on
+  `firing→ok` (a `Resolved` event), so a steadily-firing monitor is not re-sent each tick. Off by default
+  (the `…/monitors/check` endpoint is the on-demand alternative). `Tick` does one tenant-wide sweep;
+  `Run` wraps it on a ticker.
 - **Notifications (`decision-engine/notify`):** an outbound webhook channel that makes monitors
   actionable. `POST /v1/webhooks` (`editor`) registers an http(s) endpoint; a monitor **check** POSTs the
   firing set (`{flow_id, checked_at, fired:[…]}`) to every active webhook and records each `Delivered`

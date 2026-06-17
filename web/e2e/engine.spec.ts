@@ -189,6 +189,10 @@ test('defines an outcome monitor and sees it fire', async ({ page, request }) =>
   await page.goto(`/engine/${flow_id}`);
   await expect(page.locator('.svelte-flow__node')).toHaveCount(2);
 
+  // The drift panel renders; with no baseline yet it prompts to capture one.
+  const drift = page.getByTestId('drift-panel');
+  await expect(drift).toContainText('No baseline captured');
+
   // Define a volume monitor: fire above 2 decisions.
   const panel = page.getByTestId('monitors-panel');
   await panel.getByLabel('monitor metric').selectOption('volume');

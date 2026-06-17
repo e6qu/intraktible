@@ -89,15 +89,17 @@ enterprise buyers; **P2** = differentiators / scale.
   output), run in CI and pre-deploy.
 - **P2 — What-if / sensitivity analysis.**
 
-### Observability & operations  (status: metrics + monitors + webhook alerts + /healthz)
-- **P1 — Alerting**: failure-rate, latency, volume, and outcome-distribution
-  **drift** alerts. *Threshold **monitors** (`decision-engine/monitor`) +
-  **webhook delivery** (`decision-engine/notify`) now ship: per-flow rules
-  `{metric, op, threshold}` over failure/refer/automation/approve/decline rate,
-  avg latency, and volume, evaluated live; a monitor **check** pushes the firing
-  set to registered webhooks (SSRF-safe egress, each delivery recorded for audit),
-  driven from the builder or wired to cron. Remaining: a built-in scheduler (the
-  check is pull-based today) and baseline-vs-current distribution drift.*
+### Observability & operations  (status: metrics + monitors + drift + scheduled webhook alerts + /healthz)
+- **P1 — Alerting — ✅ done (failure-rate, latency, volume, distribution drift).**
+  Threshold **monitors** (`decision-engine/monitor`) over failure/refer/automation/
+  approve/decline rate, avg latency, volume, and **distribution drift** (max shift
+  of a disposition share vs a captured baseline) evaluate live; **webhook delivery**
+  (`decision-engine/notify`, SSRF-safe egress, each delivery recorded for audit)
+  pushes the firing set out; and a **scheduler** (`monitor.Scheduler`,
+  `INTRAKTIBLE_MONITOR_INTERVAL`) sweeps on a timer, notifying only on the
+  ok→firing edge (and resetting on resolve). The on-demand `…/monitors/check`
+  endpoint remains for cron/manual triggers. *Remaining polish: alert routing/
+  templating per channel and richer drift (PSI/KL vs simple share-delta).*
 - **P1 — Dashboards & SLOs**; structured request tracing (OpenTelemetry).
 - **P2 — Cost tracking** for AI nodes.
 

@@ -167,6 +167,7 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 	if enabled(modules, "hello") {
 		helloservice.New(hellocmd.NewHandler(log), st).Routes(api)
 	}
+	var monitorScheduler *monitor.Scheduler
 	if enabled(modules, "decision-engine") {
 		// A decision can fold in a Context Layer entity's features, call Context
 		// Layer connectors from Connect nodes, and run Agent Manager agents from AI
@@ -192,7 +193,9 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 		notifier := notify.NewNotifier(log, st, egress.Client(15*time.Second))
 		// Monitors: thresholds over a flow's metrics, evaluated live (failure/refer
 		// rate, automation rate, latency, volume); a check pushes firing rules to webhooks.
-		monitor.New(monitor.NewHandler(log), st, notifier).Routes(api)
+		monCmd := monitor.NewHandler(log)
+		monitor.New(monCmd, st, notifier).Routes(api)
+		monitorScheduler = monitor.NewScheduler(st, monCmd, notifier)
 	}
 	if enabled(modules, "case-manager") {
 		caseservice.New(casecmd.NewHandler(log), st).Routes(api)
@@ -231,6 +234,19 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 			slog.Info("agent-manager: re-enqueued interrupted runs", "count", n)
 		}
 	}
+	// Monitor scheduler: if INTRAKTIBLE_MONITOR_INTERVAL is set (e.g. "1m"), sweep
+	// monitors on that cadence and push firing-edge transitions to webhooks. Off by
+	// default — the /monitors/check endpoint is the on-demand alternative.
+	if monitorScheduler != nil {
+		if iv := os.Getenv("INTRAKTIBLE_MONITOR_INTERVAL"); iv != "" {
+			d, err := time.ParseDuration(iv)
+			if err != nil || d <= 0 {
+				return fmt.Errorf("INTRAKTIBLE_MONITOR_INTERVAL %q: must be a positive duration", iv)
+			}
+			go monitorScheduler.Run(ctx, d)
+		}
+	}
+
 	// /healthz reflects projection health: degraded (503) if a live apply error
 	// stopped the consumer, so an orchestrator does not keep routing to a node
 	// serving stale read models.

@@ -9,10 +9,10 @@ import (
 )
 
 func TestEvaluate(t *testing.T) {
-	snap := analytics.FlowMetrics{
+	snap := Snapshot{Metrics: analytics.FlowMetrics{
 		Total: 150, Completed: 90, Failed: 10, AvgDurationMS: 120,
 		ByDisposition: map[string]int{"approve": 60, "decline": 10, "refer": 30},
-	}
+	}}
 	cases := []struct {
 		name           string
 		rule           Rule
@@ -42,16 +42,56 @@ func TestEvaluate(t *testing.T) {
 
 func TestEvaluateNoData(t *testing.T) {
 	// An unused flow: rates have no denominator and must read as "no data", never firing.
-	empty := analytics.FlowMetrics{ByDisposition: map[string]int{}}
-	for _, m := range []string{MetricFailureRate, MetricReferRate, MetricAutomationRate, MetricAvgLatencyMS} {
+	empty := Snapshot{Metrics: analytics.FlowMetrics{ByDisposition: map[string]int{}}}
+	for _, m := range []string{MetricFailureRate, MetricReferRate, MetricAutomationRate, MetricAvgLatencyMS, MetricDistributionDrift} {
 		s := Evaluate(empty, Rule{Metric: m, Op: OpGreaterThan, Threshold: 0})
 		if s.Computable || s.Firing {
-			t.Fatalf("%s on empty metrics: got %+v, want not computable", m, s)
+			t.Fatalf("%s on empty snapshot: got %+v, want not computable", m, s)
 		}
 	}
 	// Volume is always computable (zero is a real count).
 	if s := Evaluate(empty, Rule{Metric: MetricVolume, Op: OpGreaterThan, Threshold: 0}); !s.Computable {
 		t.Fatalf("volume should be computable on empty metrics: %+v", s)
+	}
+}
+
+func TestDistributionDrift(t *testing.T) {
+	// Baseline: 70% approve / 10% decline / 20% refer. Current shifts toward refer.
+	base := &Baseline{Approve: 0.7, Decline: 0.1, Refer: 0.2, Total: 100}
+	snap := Snapshot{
+		Metrics:  analytics.FlowMetrics{ByDisposition: map[string]int{"approve": 50, "decline": 10, "refer": 40}},
+		Baseline: base,
+	}
+	// Shares now 0.5/0.1/0.4 → max drift = |0.4-0.2| = |0.5-0.7| = 0.2.
+	st := Evaluate(snap, Rule{Metric: MetricDistributionDrift, Op: OpGreaterThan, Threshold: 0.15})
+	if !st.Computable || !st.Firing || st.Actual < 0.199 || st.Actual > 0.201 {
+		t.Fatalf("drift should fire at ~0.2: %+v", st)
+	}
+	// Without a baseline, drift is not computable.
+	if s := Evaluate(Snapshot{Metrics: snap.Metrics}, Rule{Metric: MetricDistributionDrift, Op: OpGreaterThan, Threshold: 0}); s.Computable {
+		t.Fatalf("drift without a baseline must be not computable: %+v", s)
+	}
+
+	rep := ComputeDrift(snap)
+	if !rep.HasBaseline || !rep.HasCurrent || rep.MaxDrift < 0.199 || len(rep.Buckets) != 3 {
+		t.Fatalf("unexpected drift report: %+v", rep)
+	}
+}
+
+func TestTransition(t *testing.T) {
+	cases := []struct {
+		firing, alerting bool
+		want             transitionAction
+	}{
+		{true, false, actionAlert},   // ok -> firing: notify
+		{true, true, actionNone},     // still firing: no re-notify
+		{false, true, actionResolve}, // firing -> ok: reset
+		{false, false, actionNone},   // still ok: nothing
+	}
+	for _, c := range cases {
+		if got := transition(c.firing, c.alerting); got != c.want {
+			t.Fatalf("transition(%v,%v)=%v want %v", c.firing, c.alerting, got, c.want)
+		}
 	}
 }
 

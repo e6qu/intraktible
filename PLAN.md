@@ -333,9 +333,11 @@ function of the snapshot; a rate with no data reads "no data", not a false 0). `
 /v1/flows/{id}/monitors` (define editor-gated); a **Monitors** panel in the builder defines rules and
 shows live status. **Notifications** (`decision-engine/notify`) make them actionable: register webhooks
 (`POST /v1/webhooks`) and a monitor **check** (`POST /v1/flows/{id}/monitors/check`) pushes the firing set
-to every active webhook over the SSRF-safe egress client, recording each delivery for audit. Closes the
-alerting gap end-to-end (rules + delivery); a built-in scheduler (check is pull-based) + distribution
-drift remain.
+to every active webhook over the SSRF-safe egress client, recording each delivery for audit. **Distribution
+drift** is a first-class metric: `POST /v1/flows/{id}/baseline` snapshots the disposition mix, `GET
+…/drift` reports per-bucket shift, and a `distribution_drift` monitor alerts on it. A **scheduler**
+(`monitor.Scheduler`, `INTRAKTIBLE_MONITOR_INTERVAL`) sweeps on a timer and notifies only on the ok→firing
+edge (resetting on resolve). The alerting gap is closed end-to-end — rules + drift + delivery + scheduling.
 
 **Persona-aware UI (post-MVP).** The web UI gained a **persona** axis (`web/src/lib/persona.ts`) — a
 client-side "view-as" preference anyone can switch (not RBAC-gated), orthogonal to light/dark theme. It

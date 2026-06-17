@@ -293,7 +293,8 @@ export const MONITOR_METRICS = [
   'approve_rate',
   'decline_rate',
   'avg_latency_ms',
-  'volume'
+  'volume',
+  'distribution_drift'
 ] as const;
 export type MonitorMetric = (typeof MONITOR_METRICS)[number];
 
@@ -396,6 +397,50 @@ export async function checkMonitors(
     return errorOrStatus(res, 'POST monitor check');
   }
   return (await res.json()) as MonitorCheck;
+}
+
+export interface DriftBucket {
+  disposition: string;
+  baseline: number;
+  current: number;
+  delta: number;
+}
+
+export interface DriftReport {
+  has_baseline: boolean;
+  has_current: boolean;
+  max_drift: number;
+  baseline_total?: number;
+  current_total: number;
+  buckets?: DriftBucket[];
+}
+
+// captureBaseline snapshots the flow's current disposition distribution as the
+// reference that distribution_drift monitors measure against.
+export async function captureBaseline(
+  key: string,
+  flowId: string,
+  fetcher: typeof fetch = fetch
+): Promise<void> {
+  const res = await fetcher(`/v1/flows/${flowId}/baseline`, {
+    method: 'POST',
+    headers: jsonHeaders(key)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'POST baseline');
+  }
+}
+
+export async function getDrift(
+  key: string,
+  flowId: string,
+  fetcher: typeof fetch = fetch
+): Promise<DriftReport> {
+  const res = await fetcher(`/v1/flows/${flowId}/drift`, { headers: authHeaders(key) });
+  if (!res.ok) {
+    return errorOrStatus(res, 'GET drift');
+  }
+  return (await res.json()) as DriftReport;
 }
 
 // ---- Webhooks (outbound notification channel, shared across flows) ----

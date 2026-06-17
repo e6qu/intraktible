@@ -619,6 +619,87 @@ func TestMonitorCheckDeliversToWebhookOverHTTP(t *testing.T) {
 	}
 }
 
+func TestDistributionDriftOverHTTP(t *testing.T) {
+	api := startEngine(t)
+	var flow struct {
+		FlowID string `json:"flow_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows", map[string]any{"slug": "drifty", "name": "Drifty"}, http.StatusCreated, &flow)
+	api.Request(t, http.MethodPost, "/v1/flows/"+flow.FlowID+"/versions", map[string]any{
+		"graph": map[string]any{
+			"nodes": []map[string]any{
+				{"id": "in", "type": "input"},
+				{"id": "a", "type": "assignment", "config": map[string]any{"assignments": []map[string]any{{"target": "score", "expr": "score"}}}},
+				{"id": "out", "type": "output", "config": map[string]any{"fields": []string{"score"}}},
+			},
+			"edges": []map[string]any{{"from": "in", "to": "a"}, {"from": "a", "to": "out"}},
+		},
+	}, http.StatusCreated, nil)
+	// Policy: score >= 0.5 approve, else refer.
+	var pol struct {
+		PolicyID string `json:"policy_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/policies", map[string]any{"name": "d", "flow_slug": "drifty"}, http.StatusCreated, &pol)
+	api.Request(t, http.MethodPost, "/v1/policies/"+pol.PolicyID+"/versions", map[string]any{
+		"spec": map[string]any{"rules": []map[string]any{{"when": "score >= 0.5", "disposition": "approve"}}, "default": "refer"},
+	}, http.StatusCreated, nil)
+
+	decide := func(score float64) {
+		api.Request(t, http.MethodPost, "/v1/flows/drifty/production/decide",
+			map[string]any{"data": map[string]any{"score": score}}, http.StatusOK, nil)
+	}
+	// Baseline mix: one approve, one refer → 50/50.
+	decide(0.9)
+	decide(0.1)
+	type metrics struct {
+		ByDisposition map[string]int `json:"by_disposition"`
+	}
+	var m metrics
+	if !testutil.Eventually(t, func() bool {
+		m = metrics{}
+		api.Request(t, http.MethodGet, "/v1/flows/"+flow.FlowID+"/metrics", nil, http.StatusOK, &m)
+		return m.ByDisposition["approve"] == 1 && m.ByDisposition["refer"] == 1
+	}) {
+		t.Fatalf("baseline metrics never settled: %+v", m.ByDisposition)
+	}
+	api.Request(t, http.MethodPost, "/v1/flows/"+flow.FlowID+"/baseline", nil, http.StatusCreated, nil)
+
+	// Shift the mix hard toward approve: eight more approvals → 9 approve / 1 refer.
+	for range 8 {
+		decide(0.9)
+	}
+	type drift struct {
+		HasBaseline bool    `json:"has_baseline"`
+		MaxDrift    float64 `json:"max_drift"`
+	}
+	var d drift
+	if !testutil.Eventually(t, func() bool {
+		d = drift{}
+		api.Request(t, http.MethodGet, "/v1/flows/"+flow.FlowID+"/drift", nil, http.StatusOK, &d)
+		return d.HasBaseline && d.MaxDrift > 0.35 // approve 0.5 -> 0.9 ≈ 0.4
+	}) {
+		t.Fatalf("drift never registered the shift: %+v", d)
+	}
+
+	// A distribution_drift monitor fires on that shift.
+	api.Request(t, http.MethodPost, "/v1/flows/"+flow.FlowID+"/monitors",
+		map[string]any{"metric": "distribution_drift", "op": "gt", "threshold": 0.2}, http.StatusCreated, nil)
+	var listed struct {
+		Monitors []struct {
+			Status struct {
+				Firing bool `json:"firing"`
+			} `json:"status"`
+		} `json:"monitors"`
+	}
+	if !testutil.Eventually(t, func() bool {
+		listed.Monitors = nil
+		api.Request(t, http.MethodGet, "/v1/flows/"+flow.FlowID+"/monitors", nil, http.StatusOK, &listed)
+		return len(listed.Monitors) == 1 && listed.Monitors[0].Status.Firing
+	}) {
+		t.Fatalf("distribution_drift monitor never fired: %+v", listed.Monitors)
+	}
+}
+
 func TestPolicyBacktestOverHTTP(t *testing.T) {
 	api := startEngine(t)
 	var flow struct {

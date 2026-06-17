@@ -24,12 +24,15 @@
     defineMonitor,
     deleteMonitor,
     checkMonitors,
+    captureBaseline,
+    getDrift,
     listWebhooks,
     subscribeWebhook,
     deleteWebhook,
     MONITOR_METRICS,
     type Monitor,
     type MonitorCheck,
+    type DriftReport,
     type Webhook,
     backtestFlow,
     deployVersion,
@@ -842,11 +845,36 @@
     }
   }
 
+  // --- Distribution drift: capture a baseline, then compare current vs baseline ---
+  let drift = $state<DriftReport | null>(null);
+  async function loadDrift() {
+    try {
+      drift = await getDrift(key, flowId);
+    } catch {
+      drift = null;
+    }
+  }
+  async function captureBaselineNow() {
+    error = '';
+    try {
+      await captureBaseline(key, flowId);
+      toast.success('Baseline captured');
+      await loadDrift();
+      await loadMonitors();
+    } catch (e) {
+      error = msg(e);
+    }
+  }
+  function pct(n: number): string {
+    return `${Math.round(n * 100)}%`;
+  }
+
   onMount(() => {
     void load();
     void loadMetrics();
     void loadMonitors();
     void loadWebhooks();
+    void loadDrift();
   });
 </script>
 
@@ -966,6 +994,14 @@
         </button>
         <button
           class="ghost"
+          onclick={captureBaselineNow}
+          data-testid="capture-baseline"
+          title="Snapshot the current disposition mix as the drift baseline"
+        >
+          <Icon name="scorecard" size={14} /> Capture baseline
+        </button>
+        <button
+          class="ghost"
           onclick={checkNow}
           disabled={checking}
           data-testid="check-monitors"
@@ -1025,6 +1061,28 @@
       </ul>
     {:else}
       <p class="muted">No monitors yet.</p>
+    {/if}
+
+    {#if drift}
+      <div class="drift" data-testid="drift-panel">
+        <span class="exportlabel"><Icon name="scorecard" size={15} /> Distribution drift</span>
+        {#if !drift.has_baseline}
+          <span class="muted">No baseline captured — use <b>Capture baseline</b> to set one.</span>
+        {:else if !drift.has_current}
+          <span class="muted">Baseline set; no dispositioned decisions yet.</span>
+        {:else}
+          <span class:err={drift.max_drift > 0.2} class:ok={drift.max_drift <= 0.2}
+            >max drift {pct(drift.max_drift)}</span
+          >
+          {#each drift.buckets ?? [] as b (b.disposition)}
+            <span class="muted"
+              >{b.disposition}: {pct(b.baseline)}→{pct(b.current)} ({b.delta >= 0 ? '+' : ''}{pct(
+                b.delta
+              )})</span
+            >
+          {/each}
+        {/if}
+      </div>
     {/if}
 
     {#if lastCheck && lastCheck.deliveries && lastCheck.deliveries.length > 0}
@@ -2101,7 +2159,8 @@
     color: var(--fg-muted);
     font-variant-numeric: tabular-nums;
   }
-  .mon-deliveries {
+  .mon-deliveries,
+  .drift {
     display: flex;
     flex-wrap: wrap;
     gap: 0.6rem;
