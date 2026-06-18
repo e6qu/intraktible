@@ -318,8 +318,9 @@ domain`) emits structured adverse-action `{code, description}`s into a reserved 
 record and the decision UI shows (ECOA/Reg B + insurance explainability). **All five enterprise P0 items
 are done.** Connector credential fields are encrypted before connector-definition events when
 `INTRAKTIBLE_CONNECTOR_SECRET_KEY` is configured, with keyring-based key rotation
-(`…_KEYS_PREVIOUS`); remaining P1/P2 work is external KMS (vault-managed keys),
-broader encryption-at-rest/retention, alerting polish, SSO/SCIM, SDKs, SOC2 — sequenced in
+(`…_KEYS_PREVIOUS`) and an **external KMS** option (`platform/kms`, AWS KMS / GCP Cloud KMS via
+`INTRAKTIBLE_KMS_PROVIDER`); remaining P1/P2 work is
+broader encryption-at-rest/retention, alerting polish, SCIM, SOC2 — sequenced in
 `docs/ENTERPRISE.md`.
 
 **Decision-automation layer (post-MVP).** A shared disposition brain now sits over the engine:

@@ -58,6 +58,7 @@ import (
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/httpx"
 	"github.com/e6qu/intraktible/platform/identity"
+	"github.com/e6qu/intraktible/platform/kms"
 	"github.com/e6qu/intraktible/platform/notifications"
 	"github.com/e6qu/intraktible/platform/openapi"
 	"github.com/e6qu/intraktible/platform/privacy"
@@ -169,7 +170,7 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 	if egress.AllowPrivate {
 		slog.Warn("connectors: egress to private/loopback targets is ALLOWED (INTRAKTIBLE_CONNECTOR_ALLOW_PRIVATE)")
 	}
-	connectorSecrets, err := connectorSecretBoxFromEnv()
+	connectorSecrets, err := connectorSecretBoxFromEnv(ctx)
 	if err != nil {
 		return err
 	}
@@ -449,7 +450,15 @@ func oidcNames(as []*auth.OIDCAuthenticator) []string {
 // (encrypting) key is INTRAKTIBLE_CONNECTOR_SECRET_KEY; optional prior keys for
 // decrypting already-sealed values during a rotation are a comma-separated list
 // in INTRAKTIBLE_CONNECTOR_SECRET_KEYS_PREVIOUS. Returns nil when no key is set.
-func connectorSecretBoxFromEnv() (*connectors.Keyring, error) {
+func connectorSecretBoxFromEnv(ctx context.Context) (*connectors.Keyring, error) {
+	// An external KMS (AWS/GCP), when configured, takes precedence: the key never
+	// leaves the provider and the local env key is not needed.
+	if k, err := kms.FromEnv(ctx); err != nil {
+		return nil, err
+	} else if k != nil {
+		slog.Info("connectors: using external KMS", "provider", os.Getenv("INTRAKTIBLE_KMS_PROVIDER"))
+		return connectors.NewKMSKeyring("kms:"+os.Getenv("INTRAKTIBLE_KMS_PROVIDER"), k), nil
+	}
 	raw := strings.TrimSpace(os.Getenv("INTRAKTIBLE_CONNECTOR_SECRET_KEY"))
 	if raw == "" {
 		return nil, nil

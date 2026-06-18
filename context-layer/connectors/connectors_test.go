@@ -17,6 +17,7 @@ import (
 	"github.com/e6qu/intraktible/context-layer/connectors"
 	"github.com/e6qu/intraktible/context-layer/domain"
 	"github.com/e6qu/intraktible/platform/identity"
+	"github.com/e6qu/intraktible/platform/kms"
 	"github.com/e6qu/intraktible/platform/store"
 )
 
@@ -256,6 +257,32 @@ func TestEncryptDecryptSecrets(t *testing.T) {
 	nested := got["nested"].(map[string]any)
 	if got["dsn"] != "file:secret.db" || nested["api_key"] != "sk-123" || nested["keep"] != "ok" {
 		t.Fatalf("decrypted config mismatch: %s", dec)
+	}
+}
+
+func TestKMSKeyringRoundTrip(t *testing.T) {
+	kr := connectors.NewKMSKeyring("kms:test", kms.Fake{})
+	cfg := json.RawMessage(`{"dsn":"file:secret.db","token":"sk-123","keep":"ok"}`)
+	enc, err := connectors.EncryptSecrets(cfg, kr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(enc), "sk-123") || strings.Contains(string(enc), "file:secret.db") {
+		t.Fatalf("KMS-sealed config leaked plaintext: %s", enc)
+	}
+	if !strings.Contains(string(enc), "kms:test") {
+		t.Fatalf("envelope should record the KMS key id: %s", enc)
+	}
+	dec, err := connectors.DecryptSecrets(enc, kr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(dec, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["dsn"] != "file:secret.db" || got["token"] != "sk-123" || got["keep"] != "ok" {
+		t.Fatalf("KMS decrypt mismatch: %s", dec)
 	}
 }
 

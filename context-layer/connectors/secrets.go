@@ -3,6 +3,7 @@
 package connectors
 
 import (
+	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
@@ -13,6 +14,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/e6qu/intraktible/platform/kms"
 )
 
 const sealedEnvelopeVersion = "intraktible.sealed.v1"
@@ -115,6 +118,31 @@ func NewKeyring(keys ...[]byte) (*Keyring, error) {
 		}
 	}
 	return kr, nil
+}
+
+// NewKMSKeyring builds a keyring whose single key is backed by an external KMS
+// (AWS/GCP) — the key material never leaves the provider. keyID labels the
+// sealed envelopes (so a later rotation could add more keys for decrypt). The
+// rest of the seal/open path is unchanged: KMS is just the SecretBox.
+func NewKMSKeyring(keyID string, k kms.KMS) *Keyring {
+	return &Keyring{
+		primaryID: keyID,
+		byID:      map[string]SecretBox{keyID: kmsBox{kms: k}},
+		order:     []string{keyID},
+	}
+}
+
+// kmsBox adapts an external KMS to the local SecretBox interface. SecretBox has
+// no context, so KMS calls use a background context (the SDKs carry their own
+// timeouts).
+type kmsBox struct{ kms kms.KMS }
+
+func (b kmsBox) Encrypt(plain []byte) ([]byte, error) {
+	return b.kms.Encrypt(context.Background(), plain)
+}
+
+func (b kmsBox) Decrypt(ciphertext []byte) ([]byte, error) {
+	return b.kms.Decrypt(context.Background(), ciphertext)
 }
 
 // EncryptSecrets returns config with credential fields replaced by encrypted

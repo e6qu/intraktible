@@ -180,8 +180,11 @@ enterprise buyers; **P2** = differentiators / scale.
   sealed envelope records (a fingerprint of) the key that sealed it, so prior keys
   listed in `INTRAKTIBLE_CONNECTOR_SECRET_KEYS_PREVIOUS` keep already-sealed values
   readable while new writes move to the new key — rotate with no downtime, no
-  re-encryption pass. Remaining polish: external KMS (the key still lives in env, not
-  a managed vault) and per-template auth fields.*
+  re-encryption pass. For a managed vault, an **external KMS** (`platform/kms`,
+  `INTRAKTIBLE_KMS_PROVIDER=aws|gcp` + `INTRAKTIBLE_KMS_KEY`) seals credential fields
+  with a key that never leaves **AWS KMS** or **GCP Cloud KMS** — it slots in as the
+  keyring's SecretBox, so the envelope/seal path is unchanged. Remaining polish:
+  per-template auth fields.*
 - **P1 — Batch decisioning** (score a file / a population) — **DONE.** `POST
   /v1/flows/{slug}/{env}/decide/batch` runs a dataset through the recorded decide
   path (each row a real decision in history/metrics/audit; capped at 500), with a
@@ -248,7 +251,7 @@ enterprise buyers; **P2** = differentiators / scale.
 | 3 | **Backtesting on a dataset** — ✅ done | P0 — the user's #1 confidence tool | M |
 | 4 | **Audit API + UI** — ✅ done | P0 — surface the lineage we already record | S |
 | 5 | **Reason codes** — ✅ done | P0 — adverse-action / explainability | S–M |
-| 6 | **Connector credential encryption + key rotation** — ✅ done; external KMS remains | P1 | M |
+| 6 | **Connector credential encryption + key rotation + external KMS (AWS/GCP)** — ✅ done | P1 | M |
 | 7 | **Alerting / drift** | P1 | M |
 | 8 | **SSO/SCIM, batch decisioning, SDKs, networked log** | P1 | L each |
 | 9 | **SOC2/ISO, data residency, multi-region** | P2 / org-level | XL |
