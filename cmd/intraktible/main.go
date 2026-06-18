@@ -296,6 +296,13 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 	// it). Registered on root with exact patterns so they win over the /v1/ chain.
 	root.HandleFunc("POST /v1/login", httpx.LoginHandler(keyring, sessions))
 	root.HandleFunc("POST /v1/logout", httpx.LogoutHandler(sessions))
+	// SSO: OIDC login for the configured providers (Google, AWS Cognito, …). Each
+	// provider's discovery runs now; a provider that fails to initialize is skipped
+	// (logged) rather than blocking startup.
+	if authers := oidcAuthenticators(ctx); len(authers) > 0 {
+		httpx.NewOIDCHandler(sessions, authers...).Routes(root)
+		slog.Info("sso: OIDC enabled", "providers", oidcNames(authers))
+	}
 	root.Handle("/v1/", httpx.Chain(api, httpx.Authenticate(keyring, sessions), httpx.Authorize))
 	handler := httpx.Chain(root, httpx.Recover, httpx.RequestID, httpx.Logger)
 
@@ -359,6 +366,83 @@ func openLog(kind, dataDir string) (eventlog.Log, error) {
 	default:
 		return nil, fmt.Errorf("unknown --log %q (file|sqlite|postgres)", kind)
 	}
+}
+
+// oidcAuthenticators builds an OIDC authenticator per name in
+// INTRAKTIBLE_OIDC_PROVIDERS (e.g. "google,aws"), reading each provider's config
+// from INTRAKTIBLE_OIDC_<NAME>_* env vars. Discovery is a network call; a
+// provider that fails to initialize is skipped, not fatal.
+func oidcAuthenticators(ctx context.Context) []*auth.OIDCAuthenticator {
+	raw := strings.TrimSpace(os.Getenv("INTRAKTIBLE_OIDC_PROVIDERS"))
+	if raw == "" {
+		return nil
+	}
+	var out []*auth.OIDCAuthenticator
+	for _, name := range strings.Split(raw, ",") {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		a, err := auth.NewOIDCAuthenticator(ctx, oidcConfigFromEnv(name))
+		if err != nil {
+			slog.Warn("sso: skipping OIDC provider", "provider", name, "err", err)
+			continue
+		}
+		out = append(out, a)
+	}
+	return out
+}
+
+func oidcConfigFromEnv(name string) auth.OIDCConfig {
+	p := "INTRAKTIBLE_OIDC_" + strings.ToUpper(name) + "_"
+	cfg := auth.OIDCConfig{
+		Name:         name,
+		Issuer:       os.Getenv(p + "ISSUER"),
+		ClientID:     os.Getenv(p + "CLIENT_ID"),
+		ClientSecret: os.Getenv(p + "CLIENT_SECRET"),
+		RedirectURL:  os.Getenv(p + "REDIRECT_URL"),
+		Org:          os.Getenv(p + "ORG"),
+		Workspace:    os.Getenv(p + "WORKSPACE"),
+		GroupsClaim:  os.Getenv(p + "GROUPS_CLAIM"),
+		GroupRoles:   parseGroupRoles(os.Getenv(p + "GROUP_ROLES")),
+		DefaultRole:  auth.Role(os.Getenv(p + "DEFAULT_ROLE")),
+	}
+	// Sensible per-provider defaults so operators set the minimum.
+	if cfg.Issuer == "" && name == "google" {
+		cfg.Issuer = "https://accounts.google.com"
+	}
+	if cfg.GroupsClaim == "" {
+		switch name {
+		case "google":
+			cfg.GroupsClaim = "groups"
+		case "aws":
+			cfg.GroupsClaim = "cognito:groups"
+		}
+	}
+	return cfg
+}
+
+// parseGroupRoles parses "group1:role1,group2:role2" into a group→role map.
+func parseGroupRoles(s string) map[string]auth.Role {
+	m := map[string]auth.Role{}
+	for _, pair := range strings.Split(s, ",") {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+		if k, v, ok := strings.Cut(pair, ":"); ok {
+			m[strings.TrimSpace(k)] = auth.Role(strings.TrimSpace(v))
+		}
+	}
+	return m
+}
+
+func oidcNames(as []*auth.OIDCAuthenticator) []string {
+	out := make([]string, 0, len(as))
+	for _, a := range as {
+		out = append(out, a.Name())
+	}
+	return out
 }
 
 // connectorSecretBoxFromEnv builds the connector secret keyring. The primary

@@ -5,6 +5,7 @@ package httpx
 import (
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/e6qu/intraktible/platform/auth"
 	"github.com/e6qu/intraktible/platform/identity"
@@ -31,19 +32,24 @@ func LoginHandler(keyring *auth.Keyring, sessions auth.SessionStore) http.Handle
 			return
 		}
 		tok := sessions.Issue(key.Identity, key.Role)
-		// HttpOnly + SameSite are always set; Secure is gated on TLS so the cookie
-		// still works over plain http in local dev and is Secure behind TLS in prod.
-		http.SetCookie(w, &http.Cookie{ // #nosec G124 -- Secure is set when serving over TLS
-			Name:     sessionCookie,
-			Value:    tok,
-			Path:     "/",
-			HttpOnly: true,
-			Secure:   r.TLS != nil,
-			SameSite: http.SameSiteLaxMode,
-			MaxAge:   int(sessions.TTL().Seconds()),
-		})
+		setSessionCookie(w, r, tok, sessions.TTL())
 		writeIdentity(w, key.Identity)
 	}
+}
+
+// setSessionCookie writes the session cookie. HttpOnly + SameSite are always set;
+// Secure is gated on TLS so the cookie still works over plain http in local dev
+// and is Secure behind TLS in prod.
+func setSessionCookie(w http.ResponseWriter, r *http.Request, tok string, ttl time.Duration) {
+	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- Secure is set when serving over TLS
+		Name:     sessionCookie,
+		Value:    tok,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   r.TLS != nil,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   int(ttl.Seconds()),
+	})
 }
 
 // LogoutHandler revokes the request's session and clears the cookie. It is public

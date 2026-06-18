@@ -37,10 +37,17 @@ These are real strengths, not placeholders:
 Priorities: **P0** = blocks a regulated production rollout; **P1** = expected by
 enterprise buyers; **P2** = differentiators / scale.
 
-### Identity & access  (status: RBAC + managed tokens shipped)
+### Identity & access  (status: RBAC + managed tokens + OIDC SSO shipped)
 - **P0 — RBAC — ✅ done.** Roles (viewer / operator / editor / approver / admin)
   and authorization on mutating endpoints.
-- **P1 — SSO** (SAML / OIDC) and **SCIM** user provisioning; map IdP groups → roles.
+- **P1 — SSO (OIDC) — ✅ done.** OIDC Authorization-Code login (`platform/auth`
+  OIDCAuthenticator + `platform/httpx` `/v1/auth/oidc/{provider}/login|callback`):
+  the IdP's ID token is verified against its JWKS (issuer/audience/expiry + a nonce),
+  CSRF is covered by a state cookie, and the verified email + a configurable **groups
+  claim → role** mapping issues a normal session. Providers are env-configured
+  (`INTRAKTIBLE_OIDC_PROVIDERS`); **Google** and **AWS Cognito** ship with sensible
+  defaults (issuer / `cognito:groups`). The login page renders a "Sign in with …"
+  button per configured provider. *Remaining: SAML, and **SCIM** user provisioning.*
 - **P1 — API token management — ✅ done (backend + UI).** Admin-gated
   `GET/POST/DELETE /v1/api-keys` (+ `POST …/{id}/rotate`) manages durable, hashed API
   tokens for the current org/workspace; create returns the generated secret once, tokens

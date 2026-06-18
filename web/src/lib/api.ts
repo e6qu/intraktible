@@ -1969,6 +1969,21 @@ export async function logout(fetcher: typeof fetch = fetch): Promise<void> {
   }
 }
 
+// listSsoProviders returns the configured OIDC providers (e.g. ["google","aws"])
+// so the login page can offer a "Sign in with …" button for each. Returns an
+// empty list when SSO is not configured or the endpoint is unavailable.
+export async function listSsoProviders(fetcher: typeof fetch = fetch): Promise<string[]> {
+  try {
+    const res = await fetcher('/v1/auth/oidc/providers');
+    if (!res.ok) {
+      return [];
+    }
+    return ((await res.json()) as { providers?: string[] }).providers ?? [];
+  } catch {
+    return [];
+  }
+}
+
 // currentUser returns the signed-in identity from the session cookie, or null
 // when there is no valid session.
 export async function currentUser(fetcher: typeof fetch = fetch): Promise<Identity | null> {

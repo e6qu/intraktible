@@ -49,7 +49,8 @@ import {
   getRunSummary,
   login,
   logout,
-  currentUser
+  currentUser,
+  listSsoProviders
 } from './api';
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -717,6 +718,13 @@ describe('session auth', () => {
 
   it('currentUser returns null when unauthenticated', async () => {
     expect(await currentUser(fetcherReturning(401, {}))).toBeNull();
+  });
+
+  it('listSsoProviders unwraps the provider list and degrades to empty', async () => {
+    expect(await listSsoProviders(fetcherReturning(200, { providers: ['google', 'aws'] }))).toEqual(
+      ['google', 'aws']
+    );
+    expect(await listSsoProviders(fetcherReturning(404, {}))).toEqual([]);
   });
 
   it('currentUser returns the identity when signed in', async () => {

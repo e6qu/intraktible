@@ -378,6 +378,13 @@ connection pokes delivery) so cross-node delivery is near-instant rather than po
 stays as the correctness floor. Read/Head are immediately consistent; verified against a real Postgres
 including cross-node delivery and sub-poll NOTIFY latency. NATS/Kafka backends remain.
 
+**SSO / OIDC (post-MVP, enterprise identity).** `platform/auth.OIDCAuthenticator` + `platform/httpx`
+`/v1/auth/oidc/{provider}/login|callback` add OIDC Authorization-Code SSO: the IdP's ID token is
+verified against its JWKS (issuer/audience/expiry + nonce) via `coreos/go-oidc`, a state cookie covers
+CSRF, and the verified email plus a configurable **groups-claim → role** mapping issues a normal session.
+Providers are env-configured (`INTRAKTIBLE_OIDC_PROVIDERS`); **Google** and **AWS Cognito** ship with
+sensible defaults. The login page renders a "Sign in with …" button per provider. SAML + SCIM remain.
+
 **Comment threads (post-MVP, governance).** `platform/comments` is a general discussion capability — a
 durable, chronological thread keyed by `(subject_type, subject_id)` (`GET/POST /v1/comments/{type}/{id}`),
 reusable `CommentThread.svelte` component — wired onto the items that get approved/rejected/promoted
