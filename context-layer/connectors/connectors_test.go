@@ -233,19 +233,19 @@ func TestRedactedViewLeavesStoredConfigIntact(t *testing.T) {
 }
 
 func TestEncryptDecryptSecrets(t *testing.T) {
-	box, err := connectors.NewAESGCMSecretBox([]byte("0123456789abcdef0123456789abcdef"))
+	kr, err := connectors.NewKeyring([]byte("0123456789abcdef0123456789abcdef"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	cfg := json.RawMessage(`{"driver":"sqlite","dsn":"file:secret.db","nested":{"api_key":"sk-123","keep":"ok"}}`)
-	enc, err := connectors.EncryptSecrets(cfg, box)
+	enc, err := connectors.EncryptSecrets(cfg, kr)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if string(enc) == string(cfg) || strings.Contains(string(enc), "file:secret.db") || strings.Contains(string(enc), "sk-123") {
 		t.Fatalf("encrypted config leaked plaintext: %s", enc)
 	}
-	dec, err := connectors.DecryptSecrets(enc, box)
+	dec, err := connectors.DecryptSecrets(enc, kr)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -256,6 +256,69 @@ func TestEncryptDecryptSecrets(t *testing.T) {
 	nested := got["nested"].(map[string]any)
 	if got["dsn"] != "file:secret.db" || nested["api_key"] != "sk-123" || nested["keep"] != "ok" {
 		t.Fatalf("decrypted config mismatch: %s", dec)
+	}
+}
+
+func TestKeyringRotation(t *testing.T) {
+	oldKey := []byte("0123456789abcdef0123456789abcdef")
+	newKey := []byte("fedcba9876543210fedcba9876543210")
+	cfg := json.RawMessage(`{"token":"sk-secret","host":"db.example"}`)
+
+	// Seal under the old key alone.
+	oldRing, err := connectors.NewKeyring(oldKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed, err := connectors.EncryptSecrets(cfg, oldRing)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Rotate: new key is primary, old key retained for decryption.
+	rotated, err := connectors.NewKeyring(newKey, oldKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dec, err := connectors.DecryptSecrets(sealed, rotated)
+	if err != nil {
+		t.Fatalf("rotation must keep old values readable: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(dec, &got); err != nil || got["token"] != "sk-secret" {
+		t.Fatalf("decrypted mismatch after rotation: %s", dec)
+	}
+
+	// New values are sealed under the NEW key.
+	reSealed, err := connectors.EncryptSecrets(cfg, rotated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(reSealed), connectors.KeyFingerprint(newKey)) {
+		t.Fatalf("re-sealed value not under the new key: %s", reSealed)
+	}
+
+	// Once the old key is dropped, values it sealed fail loudly (never silently
+	// pass through), while values under the surviving key still open.
+	newOnly, err := connectors.NewKeyring(newKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := connectors.DecryptSecrets(sealed, newOnly); err == nil {
+		t.Fatal("a value sealed under a dropped key must not decrypt")
+	}
+	if _, err := connectors.DecryptSecrets(reSealed, newOnly); err != nil {
+		t.Fatalf("re-sealed value should open under the new key alone: %v", err)
+	}
+
+	// Back-compat: a value sealed before key ids were recorded (no "key" field)
+	// still opens via the try-each-key path.
+	legacy := json.RawMessage(strings.Replace(
+		string(sealed), `"key":"`+connectors.KeyFingerprint(oldKey)+`",`, "", 1))
+	if string(legacy) == string(sealed) {
+		t.Fatal("test setup: key field not stripped")
+	}
+	if _, err := connectors.DecryptSecrets(legacy, oldRing); err != nil {
+		t.Fatalf("legacy (no key id) value should still decrypt: %v", err)
 	}
 }
 
@@ -275,12 +338,12 @@ func TestInvokeWithEncryptedSQLConnector(t *testing.T) {
 	}
 	_ = db.Close()
 
-	box, err := connectors.NewAESGCMSecretBox([]byte("0123456789abcdef0123456789abcdef"))
+	kr, err := connectors.NewKeyring([]byte("0123456789abcdef0123456789abcdef"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	cfg := json.RawMessage(`{"dsn":"` + dsn + `","query":"SELECT risk FROM scores WHERE subject = :subject","args":["subject"]}`)
-	enc, err := connectors.EncryptSecrets(cfg, box)
+	enc, err := connectors.EncryptSecrets(cfg, kr)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -293,7 +356,7 @@ func TestInvokeWithEncryptedSQLConnector(t *testing.T) {
 	define(ctx, t, s, id, connectors.ConnectorView{
 		Name: "scores", Type: domain.ConnectorSQL, Config: enc,
 	})
-	resp, err := connectors.InvokeWithSecrets(ctx, s, id, "scores", json.RawMessage(`{"subject":"acme"}`), connectors.EgressPolicy{}, box)
+	resp, err := connectors.InvokeWithSecrets(ctx, s, id, "scores", json.RawMessage(`{"subject":"acme"}`), connectors.EgressPolicy{}, kr)
 	if err != nil {
 		t.Fatal(err)
 	}

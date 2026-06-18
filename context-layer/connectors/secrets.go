@@ -6,7 +6,9 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -71,38 +73,84 @@ func (b *AESGCMSecretBox) Decrypt(ciphertext []byte) ([]byte, error) {
 	return plain, nil
 }
 
-// EncryptSecrets returns config with credential fields replaced by encrypted
-// envelopes. It is intentionally narrow: only recognized credential field names
-// are protected, while non-secret routing/query config remains ordinary JSON.
-func EncryptSecrets(config json.RawMessage, box SecretBox) (json.RawMessage, error) {
-	return transformSecrets(config, box, encryptSecretValue)
+// Keyring holds one or more connector secret keys. The primary key seals new
+// values; any key can open a value sealed under it. This enables rotation
+// without downtime: promote a new key to primary and keep the old key for
+// decrypting values it sealed, until everything has been re-sealed.
+type Keyring struct {
+	primaryID string
+	byID      map[string]SecretBox
+	order     []string // decrypt-attempt order for legacy (no key id) envelopes
 }
 
-// DecryptSecrets opens encrypted credential envelopes in config. Plaintext
-// configs continue to work, which keeps dev/test definitions and old logs
-// readable.
-func DecryptSecrets(config json.RawMessage, box SecretBox) (json.RawMessage, error) {
-	return transformSecrets(config, box, decryptSecretValue)
+// KeyFingerprint derives a short, stable id from a key's bytes. Deriving the id
+// from the key means rotation needs no separate id bookkeeping: the same key
+// always maps to the same id, so a value records which key sealed it.
+func KeyFingerprint(key []byte) string {
+	sum := sha256.Sum256(key)
+	return hex.EncodeToString(sum[:6])
+}
+
+// NewKeyring builds a keyring. The first key is the primary (used to seal new
+// values); the rest are retained for decryption only. Each key's id is derived
+// from its bytes.
+func NewKeyring(keys ...[]byte) (*Keyring, error) {
+	if len(keys) == 0 {
+		return nil, fmt.Errorf("context-layer: connector keyring needs at least one key")
+	}
+	kr := &Keyring{byID: make(map[string]SecretBox, len(keys))}
+	for i, key := range keys {
+		box, err := NewAESGCMSecretBox(key)
+		if err != nil {
+			return nil, err
+		}
+		id := KeyFingerprint(key)
+		if _, dup := kr.byID[id]; dup {
+			continue // the same key listed twice — keep one entry
+		}
+		kr.byID[id] = box
+		kr.order = append(kr.order, id)
+		if i == 0 {
+			kr.primaryID = id
+		}
+	}
+	return kr, nil
+}
+
+// EncryptSecrets returns config with credential fields replaced by encrypted
+// envelopes sealed under the keyring's primary key. It is intentionally narrow:
+// only recognized credential field names are protected, while non-secret
+// routing/query config remains ordinary JSON.
+func EncryptSecrets(config json.RawMessage, kr *Keyring) (json.RawMessage, error) {
+	return transformSecrets(config, kr, encryptSecretValue)
+}
+
+// DecryptSecrets opens encrypted credential envelopes in config, selecting the
+// key that sealed each value. Plaintext configs continue to work, which keeps
+// dev/test definitions and old logs readable.
+func DecryptSecrets(config json.RawMessage, kr *Keyring) (json.RawMessage, error) {
+	return transformSecrets(config, kr, decryptSecretValue)
 }
 
 type secretEnvelope struct {
 	Version string `json:"$intraktible_sealed"`
+	Key     string `json:"key,omitempty"`
 	Value   string `json:"value"`
 }
 
 func transformSecrets(
 	config json.RawMessage,
-	box SecretBox,
-	fn func(any, SecretBox) (any, error),
+	kr *Keyring,
+	fn func(any, *Keyring) (any, error),
 ) (json.RawMessage, error) {
-	if len(config) == 0 || box == nil {
+	if len(config) == 0 || kr == nil {
 		return config, nil
 	}
 	var v any
 	if err := json.Unmarshal(config, &v); err != nil {
 		return nil, fmt.Errorf("context-layer: connector credential config: %w", err)
 	}
-	out, err := walkSecretFields(v, box, fn)
+	out, err := walkSecretFields(v, kr, fn)
 	if err != nil {
 		return nil, err
 	}
@@ -115,17 +163,17 @@ func transformSecrets(
 
 func walkSecretFields(
 	v any,
-	box SecretBox,
-	fn func(any, SecretBox) (any, error),
+	kr *Keyring,
+	fn func(any, *Keyring) (any, error),
 ) (any, error) {
 	switch t := v.(type) {
 	case map[string]any:
 		for k, val := range t {
 			var err error
 			if redactKeys[strings.ToLower(k)] {
-				t[k], err = fn(val, box)
+				t[k], err = fn(val, kr)
 			} else {
-				t[k], err = walkSecretFields(val, box, fn)
+				t[k], err = walkSecretFields(val, kr, fn)
 			}
 			if err != nil {
 				return nil, err
@@ -134,7 +182,7 @@ func walkSecretFields(
 		return t, nil
 	case []any:
 		for i := range t {
-			val, err := walkSecretFields(t[i], box, fn)
+			val, err := walkSecretFields(t[i], kr, fn)
 			if err != nil {
 				return nil, err
 			}
@@ -146,7 +194,7 @@ func walkSecretFields(
 	}
 }
 
-func encryptSecretValue(v any, box SecretBox) (any, error) {
+func encryptSecretValue(v any, kr *Keyring) (any, error) {
 	if isSecretEnvelope(v) {
 		return v, nil
 	}
@@ -154,17 +202,18 @@ func encryptSecretValue(v any, box SecretBox) (any, error) {
 	if err != nil {
 		return nil, fmt.Errorf("context-layer: connector secret encode: %w", err)
 	}
-	sealed, err := box.Encrypt(plain)
+	sealed, err := kr.byID[kr.primaryID].Encrypt(plain)
 	if err != nil {
 		return nil, err
 	}
 	return secretEnvelope{
 		Version: sealedEnvelopeVersion,
+		Key:     kr.primaryID,
 		Value:   base64.StdEncoding.EncodeToString(sealed),
 	}, nil
 }
 
-func decryptSecretValue(v any, box SecretBox) (any, error) {
+func decryptSecretValue(v any, kr *Keyring) (any, error) {
 	m, ok := v.(map[string]any)
 	if !ok || m["$intraktible_sealed"] != sealedEnvelopeVersion {
 		return v, nil
@@ -177,7 +226,7 @@ func decryptSecretValue(v any, box SecretBox) (any, error) {
 	if err != nil {
 		return nil, fmt.Errorf("context-layer: connector secret envelope decode: %w", err)
 	}
-	plain, err := box.Decrypt(sealed)
+	plain, err := kr.open(stringValue(m["key"]), sealed)
 	if err != nil {
 		return nil, err
 	}
@@ -186,6 +235,31 @@ func decryptSecretValue(v any, box SecretBox) (any, error) {
 		return nil, fmt.Errorf("context-layer: connector secret plaintext decode: %w", err)
 	}
 	return out, nil
+}
+
+// open decrypts a sealed value. With a key id it uses exactly that key (failing
+// loudly if the keyring lacks it). Without one — a value sealed before key ids
+// were recorded — it tries each key in turn; AEAD authentication rejects the
+// wrong key, so only the right one opens it.
+func (kr *Keyring) open(keyID string, sealed []byte) ([]byte, error) {
+	if keyID != "" {
+		box, ok := kr.byID[keyID]
+		if !ok {
+			return nil, fmt.Errorf("context-layer: connector secret sealed under unknown key %q", keyID)
+		}
+		return box.Decrypt(sealed)
+	}
+	for _, id := range kr.order {
+		if plain, err := kr.byID[id].Decrypt(sealed); err == nil {
+			return plain, nil
+		}
+	}
+	return nil, fmt.Errorf("context-layer: connector secret: no key in the ring could open it")
+}
+
+func stringValue(v any) string {
+	s, _ := v.(string)
+	return s
 }
 
 func isSecretEnvelope(v any) bool {

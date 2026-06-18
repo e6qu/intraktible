@@ -25,7 +25,7 @@ type Service struct {
 	cmd     *command.Handler
 	store   store.Store
 	egress  connectors.EgressPolicy
-	secrets connectors.SecretBox
+	secrets *connectors.Keyring
 }
 
 // Option configures a Service.
@@ -39,8 +39,8 @@ func WithEgress(p connectors.EgressPolicy) Option {
 
 // WithSecrets enables connector credential encryption/decryption at the HTTP
 // boundary. Credential fields are encrypted before ConnectorDefined is emitted.
-func WithSecrets(box connectors.SecretBox) Option {
-	return func(s *Service) { s.secrets = box }
+func WithSecrets(kr *connectors.Keyring) Option {
+	return func(s *Service) { s.secrets = kr }
 }
 
 // New builds the service.

@@ -27,10 +27,10 @@ func start(t *testing.T) *testutil.API {
 		entities.Projector{}, features.Projector{}, connectors.Projector{})
 }
 
-func startWithSecrets(t *testing.T, box connectors.SecretBox) (*testutil.API, store.Store) {
+func startWithSecrets(t *testing.T, kr *connectors.Keyring) (*testutil.API, store.Store) {
 	t.Helper()
 	log, st := testutil.NewLogStore(t)
-	svc := service.New(command.NewHandler(log), st, service.WithSecrets(box))
+	svc := service.New(command.NewHandler(log), st, service.WithSecrets(kr))
 	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "dev"}
 	return testutil.StartAPI(t, log, st, "test-key", id, svc.Routes,
 		entities.Projector{}, features.Projector{}, connectors.Projector{}), st
@@ -219,11 +219,11 @@ func TestConnectorCatalog(t *testing.T) {
 }
 
 func TestConnectorDefinitionEncryptsStoredSecrets(t *testing.T) {
-	box, err := connectors.NewAESGCMSecretBox([]byte("0123456789abcdef0123456789abcdef"))
+	kr, err := connectors.NewKeyring([]byte("0123456789abcdef0123456789abcdef"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	api, st := startWithSecrets(t, box)
+	api, st := startWithSecrets(t, kr)
 
 	api.Request(t, http.MethodPost, "/v1/context/connectors",
 		map[string]any{

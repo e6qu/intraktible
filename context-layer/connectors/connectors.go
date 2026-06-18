@@ -266,7 +266,7 @@ func InvokeWith(ctx context.Context, s store.Store, id identity.Identity, name s
 // InvokeWithSecrets is Invoke with explicit egress and connector-secret
 // decryption. It is used by the HTTP service and composition root when connector
 // configs are stored with encrypted credential fields.
-func InvokeWithSecrets(ctx context.Context, s store.Store, id identity.Identity, name string, params json.RawMessage, egress EgressPolicy, secrets SecretBox) (json.RawMessage, error) {
+func InvokeWithSecrets(ctx context.Context, s store.Store, id identity.Identity, name string, params json.RawMessage, egress EgressPolicy, secrets *Keyring) (json.RawMessage, error) {
 	def, ok, err := Read(ctx, s, id, name)
 	if err != nil {
 		return nil, err
@@ -293,7 +293,7 @@ func InvokeWithSecrets(ctx context.Context, s store.Store, id identity.Identity,
 type Provider struct {
 	Store   store.Store
 	Egress  EgressPolicy
-	Secrets SecretBox
+	Secrets *Keyring
 }
 
 // Fetch invokes the named connector with params under the provider's egress policy.

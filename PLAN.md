@@ -317,7 +317,8 @@ domain`) emits structured adverse-action `{code, description}`s into a reserved 
 (always surfaced by Output), which the history projector lifts to a first-class field on the decision
 record and the decision UI shows (ECOA/Reg B + insurance explainability). **All five enterprise P0 items
 are done.** Connector credential fields are encrypted before connector-definition events when
-`INTRAKTIBLE_CONNECTOR_SECRET_KEY` is configured; remaining P1/P2 work is external KMS/rotation,
+`INTRAKTIBLE_CONNECTOR_SECRET_KEY` is configured, with keyring-based key rotation
+(`…_KEYS_PREVIOUS`); remaining P1/P2 work is external KMS (vault-managed keys),
 broader encryption-at-rest/retention, alerting polish, SSO/SCIM, SDKs, SOC2 — sequenced in
 `docs/ENTERPRISE.md`.
 

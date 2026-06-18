@@ -348,16 +348,32 @@ func openLog(kind, dataDir string) (eventlog.Log, error) {
 	}
 }
 
-func connectorSecretBoxFromEnv() (connectors.SecretBox, error) {
+// connectorSecretBoxFromEnv builds the connector secret keyring. The primary
+// (encrypting) key is INTRAKTIBLE_CONNECTOR_SECRET_KEY; optional prior keys for
+// decrypting already-sealed values during a rotation are a comma-separated list
+// in INTRAKTIBLE_CONNECTOR_SECRET_KEYS_PREVIOUS. Returns nil when no key is set.
+func connectorSecretBoxFromEnv() (*connectors.Keyring, error) {
 	raw := strings.TrimSpace(os.Getenv("INTRAKTIBLE_CONNECTOR_SECRET_KEY"))
 	if raw == "" {
 		return nil, nil
 	}
-	key, err := decodeConnectorSecretKey(raw)
+	primary, err := decodeConnectorSecretKey(raw)
 	if err != nil {
 		return nil, err
 	}
-	return connectors.NewAESGCMSecretBox(key)
+	keys := [][]byte{primary}
+	for _, p := range strings.Split(os.Getenv("INTRAKTIBLE_CONNECTOR_SECRET_KEYS_PREVIOUS"), ",") {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		prev, err := decodeConnectorSecretKey(p)
+		if err != nil {
+			return nil, fmt.Errorf("INTRAKTIBLE_CONNECTOR_SECRET_KEYS_PREVIOUS: %w", err)
+		}
+		keys = append(keys, prev)
+	}
+	return connectors.NewKeyring(keys...)
 }
 
 func decodeConnectorSecretKey(raw string) ([]byte, error) {
