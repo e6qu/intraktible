@@ -377,7 +377,10 @@ polling `delivery` (factored out of the SQLite log) fans any node's newly-commit
 process's in-process bus, with a **LISTEN/NOTIFY fast path** (each append `NOTIFY`s; a dedicated listen
 connection pokes delivery) so cross-node delivery is near-instant rather than poll-bound — the poller
 stays as the correctness floor. Read/Head are immediately consistent; verified against a real Postgres
-including cross-node delivery and sub-poll NOTIFY latency. NATS/Kafka backends remain.
+including cross-node delivery and sub-poll NOTIFY latency. A **NATS JetStream** backend
+(`eventlog.OpenNATSLog`, `--log=nats`) is the other networked option — the stream sequence is the event
+Seq and a push consumer delivers live with no poller (verified against an embedded JetStream server).
+Kafka remains.
 
 **SSO / OIDC (post-MVP, enterprise identity).** `platform/auth.OIDCAuthenticator` + `platform/httpx`
 `/v1/auth/oidc/{provider}/login|callback` add OIDC Authorization-Code SSO: the IdP's ID token is

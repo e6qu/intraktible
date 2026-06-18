@@ -216,7 +216,11 @@ enterprise buyers; **P2** = differentiators / scale.
   delivery), so live delivery is near-instant rather than waiting out the poll — the
   poller stays as the correctness floor if a notification is missed. Verified against a
   real Postgres incl. cross-node delivery and sub-poll-interval NOTIFY latency.
-  *Remaining: NATS/Kafka backend options.*
+  A **NATS JetStream** backend (`eventlog.OpenNATSLog`, `--log=nats` +
+  `INTRAKTIBLE_NATS_URL`) is the other option: the stream's monotonic sequence is the
+  event Seq (one total order across nodes) and a push consumer delivers live with no
+  poller. Verified against an embedded JetStream server incl. cross-node ordering and
+  delivery. *Remaining: Kafka (franz-go), if a Kafka shop needs it.*
 - **P1 — Backups / DR runbook**, point-in-time recovery (replay already enables it).
 - **P2 — Horizontal scale & multi-region.**
 

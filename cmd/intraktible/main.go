@@ -107,7 +107,7 @@ func serveCmd(args []string) error {
 	modules := fs.String("modules", "all", "comma-separated modules (or 'all')")
 	devKey := fs.String("dev-api-key", "dev-sandbox-key", "seed a sandbox API key for local dev (empty to disable)")
 	storeKind := fs.String("store", "memory", "projection store: memory | sqlite (<data-dir>/projections.db) | postgres (INTRAKTIBLE_POSTGRES_DSN)")
-	logKind := fs.String("log", "file", "event log: file (single-process WAL) | sqlite (shared across processes, for the split profile) | postgres (networked, multi-node HA; INTRAKTIBLE_POSTGRES_DSN)")
+	logKind := fs.String("log", "file", "event log: file (single-process WAL) | sqlite (shared across processes, for the split profile) | postgres (networked HA; INTRAKTIBLE_POSTGRES_DSN) | nats (JetStream HA; INTRAKTIBLE_NATS_URL)")
 	_ = fs.Parse(args)
 	return run(*addr, *dataDir, *modules, *devKey, *storeKind, *logKind)
 }
@@ -384,8 +384,14 @@ func openLog(kind, dataDir string) (eventlog.Log, error) {
 			return nil, fmt.Errorf("--log=postgres requires INTRAKTIBLE_POSTGRES_DSN")
 		}
 		return eventlog.OpenPostgresLog(context.Background(), dsn, eventlog.DefaultPollInterval)
+	case "nats":
+		url := os.Getenv("INTRAKTIBLE_NATS_URL")
+		if url == "" {
+			return nil, fmt.Errorf("--log=nats requires INTRAKTIBLE_NATS_URL (a JetStream-enabled server)")
+		}
+		return eventlog.OpenNATSLog(url)
 	default:
-		return nil, fmt.Errorf("unknown --log %q (file|sqlite|postgres)", kind)
+		return nil, fmt.Errorf("unknown --log %q (file|sqlite|postgres|nats)", kind)
 	}
 }
 
