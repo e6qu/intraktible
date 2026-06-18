@@ -49,6 +49,15 @@ type AgentProvider interface {
 	RunAgent(ctx context.Context, id identity.Identity, agent, prompt string) (json.RawMessage, error)
 }
 
+// PIISealer crypto-shreds the configured PII fields of a recorded decision under
+// the subject (the referenced entity), so a later erasure of that subject makes
+// the recorded input/output PII unrecoverable. The port lives here so the engine
+// imports neither the erasure vault nor the privacy config directly; the
+// composition root supplies the adapter.
+type PIISealer interface {
+	SealPII(ctx context.Context, id identity.Identity, subject string, doc json.RawMessage) (json.RawMessage, error)
+}
+
 // DecideHandler executes published flows. It reads the flow registry read model
 // for the version to run, evaluates it with the pure core, and records the
 // decision as an event stream (started -> node-evaluated… -> completed/failed).
@@ -61,6 +70,7 @@ type DecideHandler struct {
 	features   FeatureProvider
 	connectors ConnectorProvider
 	agentsP    AgentProvider
+	sealer     PIISealer
 }
 
 // DecideOption customizes a DecideHandler (used by tests to make A/B routing
@@ -85,6 +95,13 @@ func WithConnectors(p ConnectorProvider) DecideOption {
 // decide time. Without it, a flow containing AI nodes fails loudly.
 func WithAgents(p AgentProvider) DecideOption {
 	return func(h *DecideHandler) { h.agentsP = p }
+}
+
+// WithPIISealer supplies the sealer that crypto-shreds a recorded decision's PII
+// fields under the referenced entity subject. Without it (or without an entity
+// ref), decisions are recorded in the clear as before.
+func WithPIISealer(s PIISealer) DecideOption {
+	return func(h *DecideHandler) { h.sealer = s }
 }
 
 // NewDecideHandler builds a DecideHandler using the system clock and random id +
@@ -197,6 +214,13 @@ func (h *DecideHandler) Decide(ctx context.Context, id identity.Identity, slug, 
 	if err != nil {
 		return DecideResult{}, fmt.Errorf("decision-engine: marshal data: %w", err)
 	}
+	// Seal the recorded input's PII under the entity subject (a no-op without a
+	// sealer or entity ref). Execution already ran on the plaintext `data` map, so
+	// sealing the recorded copy never affects the decision.
+	dataJSON, err = h.sealPII(ctx, id, ref, dataJSON)
+	if err != nil {
+		return DecideResult{}, err
+	}
 	if err := h.emit(ctx, id, events.TypeDecisionStarted, events.DecisionStarted{
 		DecisionID: decisionID, FlowID: fv.FlowID, Slug: slug,
 		Version: version.Version, Environment: env, Variant: variant,
@@ -229,6 +253,10 @@ func (h *DecideHandler) Decide(ctx context.Context, id identity.Identity, slug, 
 		outJSON, err := json.Marshal(run.Output)
 		if err != nil {
 			return DecideResult{}, fmt.Errorf("decision-engine: marshal output: %w", err)
+		}
+		outJSON, err = h.sealPII(ctx, id, ref, outJSON)
+		if err != nil {
+			return DecideResult{}, err
 		}
 		// Operational policy: assign a disposition over the output. A store error is
 		// fatal; a missing policy yields no disposition; a policy eval error refers
@@ -293,6 +321,15 @@ func (h *DecideHandler) runShadow(ctx context.Context, id identity.Identity, fv 
 			reflect.DeepEqual(live.Output, srun.Output)
 	}
 	return h.emit(ctx, id, events.TypeShadowEvaluated, ev)
+}
+
+// sealPII crypto-shreds the configured PII fields of a recorded document under
+// the referenced entity subject. A no-op without a sealer or an entity reference.
+func (h *DecideHandler) sealPII(ctx context.Context, id identity.Identity, ref EntityRef, doc json.RawMessage) (json.RawMessage, error) {
+	if h.sealer == nil || ref.Type == "" || ref.ID == "" {
+		return doc, nil
+	}
+	return h.sealer.SealPII(ctx, id, ref.Type+"/"+ref.ID, doc)
 }
 
 // injectFeatures returns data augmented with a "features" map of the referenced

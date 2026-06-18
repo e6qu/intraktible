@@ -138,8 +138,12 @@ enterprise buyers; **P2** = differentiators / scale.
   Layer: the configured PII fields of a custom event (`INTRAKTIBLE_ERASURE_PII_FIELDS`)
   are sealed under the entity subject before the event is recorded and opened on read —
   or shown `[erased]` once the subject is shredded — while non-PII fields stay plaintext,
-  so the **feature engine keeps working** over them (verified end-to-end). Sealing the
-  remaining surface (recorded decision input/output) follows the same per-field pattern.*
+  so the **feature engine keeps working** over them (verified end-to-end). The same
+  sealing also covers **recorded decision input/output** (sealed in the decide path after
+  execution, so decision logic is unaffected; unsealed at the history read before privacy
+  masking, `[erased]` once shredded). Erasing an entity now shreds its PII across both its
+  Context Layer events and its decision records (verified end-to-end). Right-to-erasure +
+  retention are complete.*
 - **P1 — Model risk management (SR 11-7 / SS1/23)**: documented model inventory,
   validation evidence, monitoring — supported by metrics + versioning but not
   packaged.

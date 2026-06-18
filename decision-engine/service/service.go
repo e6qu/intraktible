@@ -22,6 +22,7 @@ import (
 	"github.com/e6qu/intraktible/decision-engine/monitor"
 	"github.com/e6qu/intraktible/decision-engine/preapproval"
 	"github.com/e6qu/intraktible/decision-engine/shadow"
+	"github.com/e6qu/intraktible/platform/erasure"
 	"github.com/e6qu/intraktible/platform/httpx"
 	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/privacy"
@@ -34,6 +35,7 @@ type Service struct {
 	decide *command.DecideHandler
 	pa     *preapproval.Handler
 	store  store.Store
+	eraser *erasure.Vault
 }
 
 // New builds the service. The pre-approval handler is shared with the standalone
@@ -41,6 +43,11 @@ type Service struct {
 func New(cmd *command.Handler, decide *command.DecideHandler, pa *preapproval.Handler, st store.Store) *Service {
 	return &Service{cmd: cmd, decide: decide, pa: pa, store: st}
 }
+
+// UseEraser enables unsealing of a decision record's crypto-shredded PII fields
+// at the read boundary (sealed at decide time under the entity subject; shown
+// "[erased]" once the subject is erased).
+func (s *Service) UseEraser(v *erasure.Vault) { s.eraser = v }
 
 // Routes registers the flow-management, decide, and decision-history endpoints.
 func (s *Service) Routes(mux *http.ServeMux) {
@@ -883,6 +890,17 @@ func (s *Service) getDecision(w http.ResponseWriter, r *http.Request) {
 // maskRecord masks the configured sensitive fields in a decision record's input,
 // output, and per-node outputs at the read boundary (the raw event log is intact).
 func (s *Service) maskRecord(ctx context.Context, id identity.Identity, rec history.Record) history.Record {
+	// Unseal crypto-shredded PII first (or surface "[erased]" once the subject is
+	// erased), then apply read-boundary masking.
+	if s.eraser != nil && rec.EntityType != "" && rec.EntityID != "" {
+		subject := rec.EntityType + "/" + rec.EntityID
+		if d, err := s.eraser.OpenFields(ctx, id, subject, rec.Data); err == nil {
+			rec.Data = d
+		}
+		if o, err := s.eraser.OpenFields(ctx, id, subject, rec.Output); err == nil {
+			rec.Output = o
+		}
+	}
 	fields, err := privacy.Fields(ctx, s.store, id)
 	if err != nil {
 		return rec

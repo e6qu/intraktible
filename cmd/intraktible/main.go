@@ -199,15 +199,26 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 		// Layer connectors from Connect nodes, and run Agent Manager agents from AI
 		// nodes; each provider reads the shared store (a no-op when that module is
 		// not running / nothing is defined).
-		decide := enginecmd.NewDecideHandler(log, st,
+		decideOpts := []enginecmd.DecideOption{
 			enginecmd.WithFeatures(features.Provider{Store: st}),
 			enginecmd.WithConnectors(connectorProvider),
-			enginecmd.WithAgents(agents.Provider{Store: st, Registry: aiRegistry, Tools: toolbox}))
+			enginecmd.WithAgents(agents.Provider{Store: st, Registry: aiRegistry, Tools: toolbox}),
+		}
+		// Crypto-shred recorded decision PII under the entity subject when erasure
+		// fields are configured (same set as the Context Layer's event sealing).
+		if len(erasurePIIFields) > 0 {
+			decideOpts = append(decideOpts, enginecmd.WithPIISealer(newPIISealer(erasureVault, erasurePIIFields)))
+		}
+		decide := enginecmd.NewDecideHandler(log, st, decideOpts...)
 		// The pre-approval write side is shared: the engine service uses it to
 		// promote an approved batch into grants; the pre-approval service exposes
 		// the standalone grant/list/revoke surface.
 		paCmd := preapproval.NewHandler(log)
-		engineservice.New(enginecmd.NewHandler(log), decide, paCmd, st).Routes(api)
+		engineSvc := engineservice.New(enginecmd.NewHandler(log), decide, paCmd, st)
+		if len(erasurePIIFields) > 0 {
+			engineSvc.UseEraser(erasureVault)
+		}
+		engineSvc.Routes(api)
 		// Policies are the operational disposition layer over flows (auto-approve/
 		// decline/refer); a first-class artifact alongside the flow registry.
 		policy.New(policy.NewHandler(log), st).Routes(api)
@@ -898,6 +909,26 @@ func enabled(modules, m string) bool {
 }
 
 // truthy reports whether an env value reads as enabled (1/true/yes/on).
+// piiSealer adapts the erasure vault + a PII field set to the decision engine's
+// PIISealer port, sealing a recorded decision's PII fields under the entity
+// subject. It keeps the engine free of direct erasure/privacy imports.
+type piiSealer struct {
+	vault  *erasure.Vault
+	fields map[string]bool
+}
+
+func newPIISealer(v *erasure.Vault, fields []string) piiSealer {
+	set := make(map[string]bool, len(fields))
+	for _, f := range fields {
+		set[f] = true
+	}
+	return piiSealer{vault: v, fields: set}
+}
+
+func (p piiSealer) SealPII(ctx context.Context, id identity.Identity, subject string, doc json.RawMessage) (json.RawMessage, error) {
+	return p.vault.SealFields(ctx, id, subject, doc, p.fields)
+}
+
 // splitCSV parses a comma-separated env value into a trimmed, non-empty list.
 func splitCSV(s string) []string {
 	var out []string

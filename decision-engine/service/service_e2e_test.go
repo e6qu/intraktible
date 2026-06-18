@@ -27,6 +27,7 @@ import (
 	"github.com/e6qu/intraktible/decision-engine/preapproval"
 	"github.com/e6qu/intraktible/decision-engine/service"
 	"github.com/e6qu/intraktible/decision-engine/shadow"
+	"github.com/e6qu/intraktible/platform/erasure"
 	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/privacy"
 	"github.com/e6qu/intraktible/platform/testutil"
@@ -131,6 +132,88 @@ func TestImportFlowOverHTTP(t *testing.T) {
 	api.Request(t, http.MethodPost, "/v1/flows/import", fx, http.StatusOK, &imp)
 	if imp.Published {
 		t.Fatalf("re-importing an export of the latest version should be a no-op: %+v", imp)
+	}
+}
+
+type fieldSealer struct {
+	v      *erasure.Vault
+	fields map[string]bool
+}
+
+func (f fieldSealer) SealPII(ctx context.Context, id identity.Identity, subject string, doc json.RawMessage) (json.RawMessage, error) {
+	return f.v.SealFields(ctx, id, subject, doc, f.fields)
+}
+
+func TestDecisionRecordErasure(t *testing.T) {
+	log, st := testutil.NewLogStore(t)
+	vault := erasure.NewVault(st)
+	decide := command.NewDecideHandler(log, st,
+		command.WithPIISealer(fieldSealer{v: vault, fields: map[string]bool{"ssn": true}}))
+	svc := service.New(command.NewHandler(log), decide, preapproval.NewHandler(log), st)
+	svc.UseEraser(vault)
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "dev"}
+	api := testutil.StartAPI(t, log, st, "test-key", id, svc.Routes, flows.Projector{}, history.Projector{})
+
+	var created struct {
+		FlowID string `json:"flow_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows", map[string]any{"slug": "kyc", "name": "KYC"}, http.StatusCreated, &created)
+	// The flow reads only the non-PII "score"; "ssn" rides along in the input.
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/versions", map[string]any{
+		"graph": map[string]any{
+			"nodes": []map[string]any{
+				{"id": "in", "type": "input"},
+				{"id": "a", "type": "assignment", "config": map[string]any{
+					"assignments": []map[string]any{{"target": "decision", "expr": `score > 0 ? "OK":"NO"`}},
+				}},
+				{"id": "out", "type": "output", "config": map[string]any{"fields": []string{"decision"}}},
+			},
+			"edges": []map[string]any{{"from": "in", "to": "a"}, {"from": "a", "to": "out"}},
+		},
+	}, http.StatusCreated, nil)
+
+	var dec struct {
+		DecisionID string `json:"decision_id"`
+		Status     string `json:"status"`
+	}
+	if !testutil.Eventually(t, func() bool {
+		api.Request(t, http.MethodPost, "/v1/flows/kyc/sandbox/decide", map[string]any{
+			"entity_type": "customer", "entity_id": "ada",
+			"data": map[string]any{"score": 1, "ssn": "123-45-6789"},
+		}, http.StatusOK, &dec)
+		return dec.Status == "completed"
+	}) {
+		t.Fatal("decide never completed")
+	}
+
+	// The recorded decision input has the SSN sealed at rest.
+	rec, _, err := history.Read(context.Background(), st, id, dec.DecisionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(rec.Data), "123-45-6789") || !strings.Contains(string(rec.Data), "$intraktible_erased") {
+		t.Fatalf("decision SSN not sealed at rest: %s", rec.Data)
+	}
+
+	readSSN := func() string {
+		var got struct {
+			Data map[string]any `json:"data"`
+		}
+		api.Request(t, http.MethodGet, "/v1/decisions/"+dec.DecisionID, nil, http.StatusOK, &got)
+		s, _ := got.Data["ssn"].(string)
+		return s
+	}
+	// An authorized read unseals it; the non-PII score is untouched.
+	if got := readSSN(); got != "123-45-6789" {
+		t.Fatalf("unsealed decision ssn = %q", got)
+	}
+
+	// Erasing the subject shreds the recorded decision PII.
+	if err := vault.Erase(context.Background(), id, "customer/ada"); err != nil {
+		t.Fatal(err)
+	}
+	if got := readSSN(); got != "[erased]" {
+		t.Fatalf("decision ssn after erasure = %q, want [erased]", got)
 	}
 }
 

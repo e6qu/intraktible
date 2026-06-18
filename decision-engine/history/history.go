@@ -38,15 +38,19 @@ type ReasonCode struct {
 
 // Record is the materialized history of one decision.
 type Record struct {
-	Org         string          `json:"org"`
-	Workspace   string          `json:"workspace"`
-	DecisionID  string          `json:"decision_id"`
-	FlowID      string          `json:"flow_id"`
-	Slug        string          `json:"slug"`
-	Version     int             `json:"version"`
-	Environment string          `json:"environment"`
-	Variant     string          `json:"variant,omitempty"` // champion | challenger
-	Status      string          `json:"status"`            // started | completed | failed
+	Org         string `json:"org"`
+	Workspace   string `json:"workspace"`
+	DecisionID  string `json:"decision_id"`
+	FlowID      string `json:"flow_id"`
+	Slug        string `json:"slug"`
+	Version     int    `json:"version"`
+	Environment string `json:"environment"`
+	Variant     string `json:"variant,omitempty"` // champion | challenger
+	Status      string `json:"status"`            // started | completed | failed
+	// EntityType/EntityID identify the decision's subject (when referenced) — the
+	// erasure subject under which the recorded PII is sealed.
+	EntityType  string          `json:"entity_type,omitempty"`
+	EntityID    string          `json:"entity_id,omitempty"`
 	Data        json.RawMessage `json:"data,omitempty"`
 	Output      json.RawMessage `json:"output,omitempty"`
 	ReasonCodes []ReasonCode    `json:"reason_codes,omitempty"`
@@ -109,6 +113,7 @@ func applyStarted(ctx context.Context, e eventlog.Envelope, s store.Store) error
 		Org: e.Org, Workspace: e.Workspace,
 		DecisionID: p.DecisionID, FlowID: p.FlowID, Slug: p.Slug,
 		Version: p.Version, Environment: p.Environment, Variant: p.Variant, Status: "started",
+		EntityType: p.EntityType, EntityID: p.EntityID,
 		Data: p.Data, TimeOrdered: []string{}, Nodes: []NodeRecord{}, StartedAt: e.Time,
 	}
 	return store.PutDoc(ctx, s, Collection, store.Key(e.Org, e.Workspace, r.DecisionID), r)
