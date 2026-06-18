@@ -53,8 +53,11 @@ enterprise buyers; **P2** = differentiators / scale.
   IdP create / list / filter / **deactivate** / delete users; the OIDC login consults
   it through a gate so a user **deactivated in the IdP is refused a session** even with
   a valid token (deprovisioning), while unprovisioned users aren't locked out. PATCH
-  tolerates the Okta and Azure active-toggle shapes. *Remaining: SCIM Groups → role
-  sync, and SAML.*
+  tolerates the Okta and Azure active-toggle shapes. **SCIM Groups** are supported too
+  (`/scim/v2/Groups`, create/PUT-replace/PATCH-members/delete), and a group → role map
+  (`INTRAKTIBLE_SCIM_GROUP_ROLES`) **elevates a user's role** from their SCIM group
+  membership at login (additive — the highest of the token-derived and SCIM-derived
+  roles wins, never lower). *Remaining: SAML.*
 - **P1 — API token management — ✅ done (backend + UI).** Admin-gated
   `GET/POST/DELETE /v1/api-keys` (+ `POST …/{id}/rotate`) manages durable, hashed API
   tokens for the current org/workspace; create returns the generated secret once, tokens

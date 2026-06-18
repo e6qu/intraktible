@@ -315,6 +315,11 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 		oh := httpx.NewOIDCHandler(sessions, authers...)
 		if scimStore != nil {
 			oh.SetGate(scimStore.Allowed)
+			// Optional: elevate a user's role from their SCIM group membership
+			// (INTRAKTIBLE_SCIM_GROUP_ROLES="group:role,..."), taking the highest.
+			if groupRoles := parseGroupRoles(os.Getenv("INTRAKTIBLE_SCIM_GROUP_ROLES")); len(groupRoles) > 0 {
+				oh.SetRoleAugmenter(scimRoleAugmenter(scimStore, groupRoles))
+			}
 		}
 		oh.Routes(root)
 		slog.Info("sso: OIDC enabled", "providers", oidcNames(authers))
@@ -451,6 +456,24 @@ func parseGroupRoles(s string) map[string]auth.Role {
 		}
 	}
 	return m
+}
+
+// scimRoleAugmenter raises a verified user's role to the highest role mapped
+// from their SCIM group memberships (never below the token-derived base).
+func scimRoleAugmenter(users *scim.Store, groupRoles map[string]auth.Role) httpx.RoleAugmenter {
+	return func(ctx context.Context, org, workspace, email string, base auth.Role) auth.Role {
+		names, err := users.GroupsForUser(ctx, org, workspace, email)
+		if err != nil {
+			return base
+		}
+		role := base
+		for _, name := range names {
+			if r, ok := groupRoles[name]; ok && r.Rank() > role.Rank() {
+				role = r
+			}
+		}
+		return role
+	}
 }
 
 func oidcNames(as []*auth.OIDCAuthenticator) []string {

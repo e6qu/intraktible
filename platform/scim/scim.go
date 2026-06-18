@@ -25,9 +25,13 @@ func newID() string {
 }
 
 const collection = "scim_users"
+const groupCollection = "scim_groups"
 
-// UserSchema is the SCIM core user schema URN.
-const UserSchema = "urn:ietf:params:scim:schemas:core:2.0:User"
+// UserSchema / GroupSchema are the SCIM core resource schema URNs.
+const (
+	UserSchema  = "urn:ietf:params:scim:schemas:core:2.0:User"
+	GroupSchema = "urn:ietf:params:scim:schemas:core:2.0:Group"
+)
 
 // User is the subset of the SCIM core User resource we persist and serve.
 type User struct {
@@ -153,4 +157,121 @@ func (s *Store) byUserName(ctx context.Context, org, workspace, userName string)
 		return User{}, false, nil
 	}
 	return users[0], true, nil
+}
+
+// Member is a SCIM group member reference (value = a user id).
+type Member struct {
+	Value string `json:"value"`
+}
+
+// Group is the subset of the SCIM core Group resource we persist and serve.
+type Group struct {
+	Schemas     []string `json:"schemas,omitempty"`
+	ID          string   `json:"id"`
+	DisplayName string   `json:"displayName"`
+	Members     []Member `json:"members,omitempty"`
+	Meta        *Meta    `json:"meta,omitempty"`
+	Org         string   `json:"-"`
+	Workspace   string   `json:"-"`
+}
+
+// CreateGroup provisions a new group.
+func (s *Store) CreateGroup(ctx context.Context, g Group) (Group, error) {
+	g.DisplayName = strings.TrimSpace(g.DisplayName)
+	if g.DisplayName == "" {
+		return Group{}, fmt.Errorf("scim: group displayName is required")
+	}
+	if g.ID == "" {
+		g.ID = newID()
+	}
+	now := s.now().UTC()
+	g.Schemas = []string{GroupSchema}
+	g.Meta = &Meta{ResourceType: "Group", Created: now, LastModified: now}
+	if err := store.PutDoc(ctx, s.store, groupCollection, key(g.Org, g.Workspace, g.ID), g); err != nil {
+		return Group{}, err
+	}
+	return g, nil
+}
+
+// GetGroup loads one group by id.
+func (s *Store) GetGroup(ctx context.Context, org, workspace, id string) (Group, bool, error) {
+	return store.GetDoc[Group](ctx, s.store, groupCollection, key(org, workspace, id))
+}
+
+// ListGroups returns the tenant's groups.
+func (s *Store) ListGroups(ctx context.Context, org, workspace string) ([]Group, error) {
+	return store.ListDocs[Group](ctx, s.store, groupCollection, store.Key(org, workspace, ""))
+}
+
+// SetMembers replaces a group's members (PUT) or, with add=true/false, adds or
+// removes the given member ids (PATCH). It is the membership write path.
+func (s *Store) SetMembers(ctx context.Context, org, workspace, id string, memberIDs []string, mode MemberMode) (Group, error) {
+	g, ok, err := s.GetGroup(ctx, org, workspace, id)
+	if err != nil {
+		return Group{}, err
+	}
+	if !ok {
+		return Group{}, fmt.Errorf("scim: group %q not found", id)
+	}
+	set := map[string]bool{}
+	if mode != MembersReplace {
+		for _, m := range g.Members {
+			set[m.Value] = true
+		}
+	}
+	for _, mid := range memberIDs {
+		if mode == MembersRemove {
+			delete(set, mid)
+		} else {
+			set[mid] = true
+		}
+	}
+	g.Members = g.Members[:0]
+	for mid := range set {
+		g.Members = append(g.Members, Member{Value: mid})
+	}
+	if g.Meta != nil {
+		g.Meta.LastModified = s.now().UTC()
+	}
+	if err := store.PutDoc(ctx, s.store, groupCollection, key(org, workspace, id), g); err != nil {
+		return Group{}, err
+	}
+	return g, nil
+}
+
+// MemberMode selects how SetMembers applies the given ids.
+type MemberMode int
+
+const (
+	MembersReplace MemberMode = iota // set the membership to exactly these ids
+	MembersAdd                       // add these ids to the membership
+	MembersRemove                    // remove these ids from the membership
+)
+
+// DeleteGroup removes a group.
+func (s *Store) DeleteGroup(ctx context.Context, org, workspace, id string) error {
+	return s.store.Delete(ctx, groupCollection, key(org, workspace, id))
+}
+
+// GroupsForUser returns the display names of the groups the user (by email)
+// belongs to — the input to mapping SCIM group membership onto a role.
+func (s *Store) GroupsForUser(ctx context.Context, org, workspace, email string) ([]string, error) {
+	u, ok, err := s.byUserName(ctx, org, workspace, email)
+	if err != nil || !ok {
+		return nil, err
+	}
+	groups, err := s.ListGroups(ctx, org, workspace)
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, g := range groups {
+		for _, m := range g.Members {
+			if m.Value == u.ID {
+				names = append(names, g.DisplayName)
+				break
+			}
+		}
+	}
+	return names, nil
 }

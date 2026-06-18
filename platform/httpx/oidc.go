@@ -17,6 +17,11 @@ import (
 // SCIM uses to block a deactivated user. A nil gate allows every verified login.
 type LoginGate func(ctx context.Context, org, workspace, email string) bool
 
+// RoleAugmenter may raise a verified user's role from an external source (e.g.
+// SCIM group membership) — it takes the role derived from the IdP token and
+// returns the effective role. A nil augmenter leaves the token-derived role.
+type RoleAugmenter func(ctx context.Context, org, workspace, email string, base auth.Role) auth.Role
+
 const (
 	oidcStateCookie = "oidc_state"
 	oidcNonceCookie = "oidc_nonce"
@@ -30,11 +35,16 @@ type OIDCHandler struct {
 	sessions     auth.SessionStore
 	postLoginURL string
 	gate         LoginGate
+	roleAugment  RoleAugmenter
 }
 
 // SetGate installs a login gate (e.g. SCIM's active-user check) consulted after
 // token verification, before a session is issued.
 func (h *OIDCHandler) SetGate(g LoginGate) { h.gate = g }
+
+// SetRoleAugmenter installs a role augmenter (e.g. SCIM group → role) applied to
+// the token-derived role before the session is issued.
+func (h *OIDCHandler) SetRoleAugmenter(a RoleAugmenter) { h.roleAugment = a }
 
 // NewOIDCHandler builds the handler over the configured providers; the callback
 // redirects to "/" (the app) on success.
@@ -109,6 +119,9 @@ func (h *OIDCHandler) callback(w http.ResponseWriter, r *http.Request) {
 	if h.gate != nil && !h.gate(r.Context(), login.Identity.Org, login.Identity.Workspace, login.Identity.Actor) {
 		Error(w, http.StatusForbidden, errors.New("sso: user is deactivated"))
 		return
+	}
+	if h.roleAugment != nil {
+		login.Role = h.roleAugment(r.Context(), login.Identity.Org, login.Identity.Workspace, login.Identity.Actor, login.Role)
 	}
 	tok := h.sessions.Issue(login.Identity, login.Role)
 	setSessionCookie(w, r, tok, h.sessions.TTL())

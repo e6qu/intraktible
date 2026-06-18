@@ -386,8 +386,9 @@ CSRF, and the verified email plus a configurable **groups-claim → role** mappi
 Providers are env-configured (`INTRAKTIBLE_OIDC_PROVIDERS`); **Google** and **AWS Cognito** ship with
 sensible defaults. The login page renders a "Sign in with …" button per provider. **SCIM** provisioning (`platform/scim`,
 `/scim/v2/Users`, bearer-authed) is the companion: an IdP creates/deactivates users and the OIDC login
-consults it through a gate, so a user deactivated in the IdP is refused a session (deprovisioning). SAML
-and SCIM-Groups→role sync remain.
+consults it through a gate, so a user deactivated in the IdP is refused a session (deprovisioning). SCIM
+**Groups** (`/scim/v2/Groups`) plus a group→role map (`INTRAKTIBLE_SCIM_GROUP_ROLES`) additively elevate a
+user's role from their SCIM group membership at login (highest of token- and SCIM-derived wins). SAML remains.
 
 **Comment threads (post-MVP, governance).** `platform/comments` is a general discussion capability — a
 durable, chronological thread keyed by `(subject_type, subject_id)` (`GET/POST /v1/comments/{type}/{id}`),

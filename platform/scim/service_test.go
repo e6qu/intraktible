@@ -22,11 +22,7 @@ func TestSCIMProvisionAndDeprovision(t *testing.T) {
 	scim.NewService(users, "scim-token", "demo", "main").Routes(mux)
 
 	do := func(method, path, body string) *httptest.ResponseRecorder {
-		req := httptest.NewRequest(method, path, strings.NewReader(body))
-		req.Header.Set("Authorization", "Bearer scim-token")
-		rec := httptest.NewRecorder()
-		mux.ServeHTTP(rec, req)
-		return rec
+		return bearerDo(mux, method, path, body)
 	}
 
 	// Provision a user.
@@ -87,6 +83,67 @@ func TestSCIMProvisionAndDeprovision(t *testing.T) {
 	}
 	if d := do(http.MethodDelete, "/scim/v2/Users/"+created.ID, ""); d.Code != http.StatusNoContent {
 		t.Fatalf("delete -> %d", d.Code)
+	}
+}
+
+func bearerDo(mux *http.ServeMux, method, path, body string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer scim-token")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestSCIMGroupsDriveMembership(t *testing.T) {
+	st := store.NewMemory()
+	users := scim.NewStore(st)
+	mux := http.NewServeMux()
+	scim.NewService(users, "scim-token", "demo", "main").Routes(mux)
+	ctx := context.Background()
+
+	// Provision a user, then a group that includes them.
+	var u scim.User
+	_ = json.Unmarshal(bearerDo(mux, http.MethodPost, "/scim/v2/Users", `{"userName":"ada@acme.com","active":true}`).Body.Bytes(), &u)
+	g := bearerDo(mux, http.MethodPost, "/scim/v2/Groups",
+		`{"displayName":"engineers","members":[{"value":"`+u.ID+`"}]}`)
+	if g.Code != http.StatusCreated {
+		t.Fatalf("create group -> %d body=%s", g.Code, g.Body.String())
+	}
+	var group scim.Group
+	_ = json.Unmarshal(g.Body.Bytes(), &group)
+
+	names, err := users.GroupsForUser(ctx, "demo", "main", "ada@acme.com")
+	if err != nil || len(names) != 1 || names[0] != "engineers" {
+		t.Fatalf("GroupsForUser = %v err=%v", names, err)
+	}
+
+	// Azure-style PATCH remove drops the member; GroupsForUser reflects it.
+	rm := bearerDo(mux, http.MethodPatch, "/scim/v2/Groups/"+group.ID,
+		`{"Operations":[{"op":"remove","path":"members[value eq \"`+u.ID+`\"]"}]}`)
+	if rm.Code != http.StatusOK {
+		t.Fatalf("patch remove -> %d body=%s", rm.Code, rm.Body.String())
+	}
+	if names, _ := users.GroupsForUser(ctx, "demo", "main", "ada@acme.com"); len(names) != 0 {
+		t.Fatalf("member should have been removed, groups=%v", names)
+	}
+
+	// PATCH add puts them back.
+	add := bearerDo(mux, http.MethodPatch, "/scim/v2/Groups/"+group.ID,
+		`{"Operations":[{"op":"add","path":"members","value":[{"value":"`+u.ID+`"}]}]}`)
+	if add.Code != http.StatusOK {
+		t.Fatalf("patch add -> %d body=%s", add.Code, add.Body.String())
+	}
+	if names, _ := users.GroupsForUser(ctx, "demo", "main", "ada@acme.com"); len(names) != 1 {
+		t.Fatalf("member should be back, groups=%v", names)
+	}
+
+	// PUT replaces the membership wholesale (here: empty).
+	if r := bearerDo(mux, http.MethodPut, "/scim/v2/Groups/"+group.ID,
+		`{"displayName":"engineers","members":[]}`); r.Code != http.StatusOK {
+		t.Fatalf("put replace -> %d", r.Code)
+	}
+	if names, _ := users.GroupsForUser(ctx, "demo", "main", "ada@acme.com"); len(names) != 0 {
+		t.Fatalf("PUT should have cleared membership, groups=%v", names)
 	}
 }
 

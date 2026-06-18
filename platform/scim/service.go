@@ -33,6 +33,12 @@ func (svc *Service) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /scim/v2/Users/{id}", svc.auth(svc.get))
 	mux.HandleFunc("PATCH /scim/v2/Users/{id}", svc.auth(svc.patch))
 	mux.HandleFunc("DELETE /scim/v2/Users/{id}", svc.auth(svc.remove))
+	mux.HandleFunc("POST /scim/v2/Groups", svc.auth(svc.createGroup))
+	mux.HandleFunc("GET /scim/v2/Groups", svc.auth(svc.listGroups))
+	mux.HandleFunc("GET /scim/v2/Groups/{id}", svc.auth(svc.getGroup))
+	mux.HandleFunc("PUT /scim/v2/Groups/{id}", svc.auth(svc.replaceGroup))
+	mux.HandleFunc("PATCH /scim/v2/Groups/{id}", svc.auth(svc.patchGroup))
+	mux.HandleFunc("DELETE /scim/v2/Groups/{id}", svc.auth(svc.removeGroup))
 }
 
 func (svc *Service) auth(h http.HandlerFunc) http.HandlerFunc {
@@ -143,6 +149,141 @@ func (svc *Service) remove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (svc *Service) createGroup(w http.ResponseWriter, r *http.Request) {
+	var g Group
+	if err := json.NewDecoder(r.Body).Decode(&g); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid SCIM group body")
+		return
+	}
+	g.Org, g.Workspace, g.ID = svc.org, svc.workspace, ""
+	created, err := svc.store.CreateGroup(r.Context(), g)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	write(w, http.StatusCreated, created)
+}
+
+func (svc *Service) listGroups(w http.ResponseWriter, r *http.Request) {
+	groups, err := svc.store.ListGroups(r.Context(), svc.org, svc.workspace)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	write(w, http.StatusOK, map[string]any{
+		"schemas":      []string{"urn:ietf:params:scim:api:messages:2.0:ListResponse"},
+		"totalResults": len(groups),
+		"Resources":    groups,
+	})
+}
+
+func (svc *Service) getGroup(w http.ResponseWriter, r *http.Request) {
+	g, ok, err := svc.store.GetGroup(r.Context(), svc.org, svc.workspace, r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !ok {
+		writeError(w, http.StatusNotFound, "group not found")
+		return
+	}
+	write(w, http.StatusOK, g)
+}
+
+// replaceGroup (PUT) sets the membership to exactly the body's members — the
+// shape Okta uses to sync a group.
+func (svc *Service) replaceGroup(w http.ResponseWriter, r *http.Request) {
+	var g Group
+	if err := json.NewDecoder(r.Body).Decode(&g); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid SCIM group body")
+		return
+	}
+	out, err := svc.store.SetMembers(r.Context(), svc.org, svc.workspace, r.PathValue("id"), memberIDs(g.Members), MembersReplace)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	write(w, http.StatusOK, out)
+}
+
+// patchGroup applies member add/remove operations — the shape Azure AD uses.
+func (svc *Service) patchGroup(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Operations []struct {
+			Op    string          `json:"op"`
+			Path  string          `json:"path"`
+			Value json.RawMessage `json:"value"`
+		} `json:"Operations"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid SCIM patch body")
+		return
+	}
+	id := r.PathValue("id")
+	for _, op := range req.Operations {
+		if !strings.Contains(strings.ToLower(op.Path), "members") {
+			continue
+		}
+		mode := MembersAdd
+		ids := memberValuesFromPatch(op.Value)
+		switch {
+		case strings.EqualFold(op.Op, "remove"):
+			mode = MembersRemove
+			if filtered := memberIDFromPath(op.Path); filtered != "" {
+				ids = []string{filtered}
+			}
+		case strings.EqualFold(op.Op, "replace"):
+			mode = MembersReplace
+		}
+		if _, err := svc.store.SetMembers(r.Context(), svc.org, svc.workspace, id, ids, mode); err != nil {
+			writeError(w, http.StatusNotFound, err.Error())
+			return
+		}
+	}
+	g, ok, err := svc.store.GetGroup(r.Context(), svc.org, svc.workspace, id)
+	if err != nil || !ok {
+		writeError(w, http.StatusNotFound, "group not found")
+		return
+	}
+	write(w, http.StatusOK, g)
+}
+
+func (svc *Service) removeGroup(w http.ResponseWriter, r *http.Request) {
+	if err := svc.store.DeleteGroup(r.Context(), svc.org, svc.workspace, r.PathValue("id")); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func memberIDs(ms []Member) []string {
+	out := make([]string, 0, len(ms))
+	for _, m := range ms {
+		out = append(out, m.Value)
+	}
+	return out
+}
+
+// memberValuesFromPatch reads a PATCH op value that is an array of {value} member
+// references (the add/replace form).
+func memberValuesFromPatch(raw json.RawMessage) []string {
+	var ms []Member
+	if json.Unmarshal(raw, &ms) == nil {
+		return memberIDs(ms)
+	}
+	return nil
+}
+
+// memberIDFromPath extracts ID from a `members[value eq "ID"]` remove path (the
+// Azure single-member-remove form).
+func memberIDFromPath(path string) string {
+	i, j := strings.Index(path, `"`), strings.LastIndex(path, `"`)
+	if i >= 0 && j > i {
+		return path[i+1 : j]
+	}
+	return ""
 }
 
 // userNameFilter extracts X from a `userName eq "X"` SCIM filter (the only

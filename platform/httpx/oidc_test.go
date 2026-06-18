@@ -157,6 +157,46 @@ func TestOIDCCallbackHonorsLoginGate(t *testing.T) {
 	}
 }
 
+func TestOIDCCallbackAugmentsRole(t *testing.T) {
+	idp := mockIdP(t)
+	// No group→role mapping in the token, so the base role is the default (viewer).
+	a, err := auth.NewOIDCAuthenticator(context.Background(), auth.OIDCConfig{
+		Name: "test", Issuer: idp.URL, ClientID: oidcClientID, RedirectURL: "https://app/cb",
+		Org: "demo", Workspace: "main", DefaultRole: auth.RoleViewer,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessions := auth.NewSessions()
+	h := httpx.NewOIDCHandler(sessions, a)
+	// Augmenter elevates the verified user (as SCIM group→role would).
+	h.SetRoleAugmenter(func(_ context.Context, _, _, _ string, base auth.Role) auth.Role {
+		if auth.RoleEditor.Rank() > base.Rank() {
+			return auth.RoleEditor
+		}
+		return base
+	})
+	mux := http.NewServeMux()
+	h.Routes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/auth/oidc/test/callback?state=s1&code=xyz", http.NoBody)
+	req.AddCookie(&http.Cookie{Name: "oidc_state", Value: "s1"})
+	req.AddCookie(&http.Cookie{Name: "oidc_nonce", Value: oidcNonce})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	var session string
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == "session" {
+			session = c.Value
+		}
+	}
+	_, role, ok := sessions.Resolve(session)
+	if !ok || role != auth.RoleEditor {
+		t.Fatalf("augmented session role = %q ok=%v, want editor", role, ok)
+	}
+}
+
 func TestOIDCCallbackRejectsBadState(t *testing.T) {
 	h, _ := oidcHandler(t)
 	mux := http.NewServeMux()
