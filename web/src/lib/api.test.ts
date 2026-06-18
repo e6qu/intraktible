@@ -10,6 +10,7 @@ import {
   publishVersion,
   exportFlow,
   importFlow,
+  importFlowBundle,
   exportDecision,
   listDecisions,
   getDecision,
@@ -112,6 +113,23 @@ describe('export', () => {
     expect(url).toBe('/v1/flows/import');
     expect(init?.method).toBe('POST');
     expect(JSON.parse(init?.body as string)).toEqual(doc);
+  });
+
+  it('importFlowBundle posts the bundle and returns the per-flow report', async () => {
+    const fetcher = fetcherReturning(200, {
+      results: [
+        { slug: 'a', flow_id: 'f1', version: 1, created: true, published: true },
+        { slug: 'bad', created: false, published: false, error: 'invalid slug' }
+      ],
+      published: 1,
+      failed: 1,
+      unchanged: 0
+    });
+    const out = await importFlowBundle('k', { flows: [{ slug: 'a' }, { slug: 'bad' }] }, fetcher);
+    expect(out.published).toBe(1);
+    expect(out.failed).toBe(1);
+    expect(out.results[1].error).toBe('invalid slug');
+    expect(fetcher.mock.calls[0][0]).toBe('/v1/flows/import-bundle');
   });
 
   it('importFlow accepts a raw JSON string body', async () => {

@@ -54,6 +54,33 @@ test('imports a flow from an exported document', async ({ page }) => {
   await expect(page.getByText(/already at v1 — no change/)).toBeVisible();
 });
 
+test('imports a bundle of flows', async ({ page }) => {
+  const graph = {
+    nodes: [
+      { id: 'in', type: 'input' },
+      { id: 'out', type: 'output' }
+    ],
+    edges: [{ from: 'in', to: 'out' }]
+  };
+  const a = uniqueSlug();
+  const b = uniqueSlug();
+  const bundle = JSON.stringify({
+    flows: [
+      { slug: a, name: 'Bundle A', graph },
+      { slug: b, name: 'Bundle B', graph }
+    ]
+  });
+
+  await page.goto('/engine');
+  await page.getByTestId('import-flow').locator('summary').click();
+  await page.getByLabel('flow document').fill(bundle);
+  await page.getByTestId('import-submit').click();
+
+  // A bundle reports a summary (and stays on the list) rather than navigating.
+  await expect(page.getByText(/Bundle: 2 published/)).toBeVisible();
+  await expect(page.getByText(b)).toBeVisible();
+});
+
 test('renders a flow graph and runs a test decision', async ({ page, request }) => {
   const slug = uniqueSlug();
 

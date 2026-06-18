@@ -45,6 +45,7 @@ func New(cmd *command.Handler, decide *command.DecideHandler, pa *preapproval.Ha
 func (s *Service) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/flows", s.create)
 	mux.HandleFunc("POST /v1/flows/import", s.importFlow)
+	mux.HandleFunc("POST /v1/flows/import-bundle", s.importBundle)
 	mux.HandleFunc("GET /v1/flows", s.list)
 	mux.HandleFunc("GET /v1/flows/{flow_id}", s.get)
 	mux.HandleFunc("GET /v1/flows/{flow_id}/metrics", s.metrics)
@@ -137,6 +138,67 @@ func (s *Service) importFlow(w http.ResponseWriter, r *http.Request) {
 	body["event_id"] = res.Event.ID
 	body["seq"] = res.Event.Seq
 	httpx.JSON(w, http.StatusCreated, body)
+}
+
+type bundleRequest struct {
+	Flows []importRequest `json:"flows"`
+}
+
+// bundleResult is one flow's outcome within a bundle import.
+type bundleResult struct {
+	Slug      string `json:"slug"`
+	FlowID    string `json:"flow_id,omitempty"`
+	Version   int    `json:"version,omitempty"`
+	Created   bool   `json:"created"`
+	Published bool   `json:"published"`
+	Error     string `json:"error,omitempty"`
+}
+
+// importBundle imports many flows in one document (a GitOps repo of flows). It
+// is best-effort: each flow is imported independently against the authoritative
+// log, and a failing flow is reported in its result rather than aborting the
+// rest — so the response is the per-flow truth, not all-or-nothing. The status
+// is 200 (a batch report); per-flow success/failure is in each result.
+func (s *Service) importBundle(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	var req bundleRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	if len(req.Flows) == 0 {
+		httpx.Error(w, http.StatusBadRequest, fmt.Errorf("bundle: flows is required"))
+		return
+	}
+	results := make([]bundleResult, 0, len(req.Flows))
+	var published, failed int
+	for _, f := range req.Flows {
+		res, err := s.cmd.ImportFlow(r.Context(), id, domain.ImportFlow{
+			Slug:        f.Slug,
+			Name:        f.Name,
+			Graph:       f.Graph,
+			InputSchema: f.InputSchema,
+		})
+		if err != nil {
+			results = append(results, bundleResult{Slug: f.Slug, Error: err.Error()})
+			failed++
+			continue
+		}
+		results = append(results, bundleResult{
+			Slug: f.Slug, FlowID: res.FlowID, Version: res.Version,
+			Created: res.Created, Published: res.Published,
+		})
+		if res.Published {
+			published++
+		}
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"results": results, "published": published, "failed": failed,
+		"unchanged": len(req.Flows) - published - failed,
+	})
 }
 
 type publishRequest struct {

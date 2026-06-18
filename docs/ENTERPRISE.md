@@ -187,7 +187,10 @@ enterprise buyers; **P2** = differentiators / scale.
   Import folds the authoritative log (not the read projection), so back-to-back/CI runs
   are safe, and re-importing identical content is a no-op (`published:false`, 200) —
   idempotent GitOps. Surfaced as an **Import flow (as code)** panel (paste or upload JSON)
-  on the engine list. *Remaining: bundle/multi-flow import and a CLI/GitOps action.*
+  on the engine list. **Bundle import** (`POST /v1/flows/import-bundle`,
+  `{flows:[…]}`) imports a whole repo of flows in one request, best-effort with a
+  per-flow result (a bad flow is reported, not fatal); the same panel accepts a
+  bundle. *Remaining: a CLI/GitOps action wrapping the endpoints.*
 
 ### Security  (status: API key + SameSite session, gosec-clean, SSRF guard)
 - **P0 — Encryption at rest** for the durable stores + **secrets management**.

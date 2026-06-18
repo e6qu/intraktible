@@ -133,6 +133,66 @@ func TestImportFlowOverHTTP(t *testing.T) {
 	}
 }
 
+func TestImportBundleOverHTTP(t *testing.T) {
+	api := startEngine(t)
+
+	okGraph := map[string]any{
+		"nodes": []map[string]any{
+			{"id": "in", "type": "input"},
+			{"id": "out", "type": "output"},
+		},
+		"edges": []map[string]any{{"from": "in", "to": "out"}},
+	}
+
+	// A bundle with two good flows and one invalid (bad slug) flow.
+	bundle := map[string]any{
+		"flows": []map[string]any{
+			{"slug": "iac-a", "name": "A", "graph": okGraph},
+			{"slug": "iac-b", "name": "B", "graph": okGraph},
+			{"slug": "Bad Slug", "name": "nope", "graph": okGraph},
+		},
+	}
+	var out struct {
+		Results []struct {
+			Slug      string `json:"slug"`
+			Version   int    `json:"version"`
+			Created   bool   `json:"created"`
+			Published bool   `json:"published"`
+			Error     string `json:"error"`
+		} `json:"results"`
+		Published int `json:"published"`
+		Failed    int `json:"failed"`
+		Unchanged int `json:"unchanged"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows/import-bundle", bundle, http.StatusOK, &out)
+	if out.Published != 2 || out.Failed != 1 || len(out.Results) != 3 {
+		t.Fatalf("bundle summary: %+v", out)
+	}
+	// The good flows are created; the invalid one carries an error and no version.
+	for _, r := range out.Results {
+		switch r.Slug {
+		case "iac-a", "iac-b":
+			if !r.Created || !r.Published || r.Version != 1 || r.Error != "" {
+				t.Fatalf("good flow %q: %+v", r.Slug, r)
+			}
+		case "Bad Slug":
+			if r.Error == "" || r.Published {
+				t.Fatalf("invalid flow should report an error: %+v", r)
+			}
+		}
+	}
+
+	// Re-importing the same bundle is a no-op for the valid flows (idempotent).
+	out.Published, out.Failed, out.Unchanged = 0, 0, 0
+	api.Request(t, http.MethodPost, "/v1/flows/import-bundle", bundle, http.StatusOK, &out)
+	if out.Published != 0 || out.Failed != 1 || out.Unchanged != 2 {
+		t.Fatalf("idempotent re-import summary: %+v", out)
+	}
+
+	// An empty bundle is a 400.
+	api.Request(t, http.MethodPost, "/v1/flows/import-bundle", map[string]any{"flows": []any{}}, http.StatusBadRequest, nil)
+}
+
 func TestExportFlowOverHTTP(t *testing.T) {
 	api := startEngine(t)
 	var created struct {

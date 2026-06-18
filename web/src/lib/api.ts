@@ -212,6 +212,41 @@ export async function importFlow(
   return (await res.json()) as FlowImportResult;
 }
 
+export interface FlowBundleResult {
+  slug: string;
+  flow_id?: string;
+  version?: number;
+  created: boolean;
+  published: boolean;
+  error?: string;
+}
+
+export interface FlowBundleImport {
+  results: FlowBundleResult[];
+  published: number;
+  failed: number;
+  unchanged: number;
+}
+
+// importFlowBundle imports many flows in one document (`{ flows: [...] }`). It is
+// best-effort: each flow's outcome (including any error) is in its result, so a
+// bad flow does not abort the rest.
+export async function importFlowBundle(
+  key: string,
+  bundle: unknown,
+  fetcher: typeof fetch = fetch
+): Promise<FlowBundleImport> {
+  const res = await fetcher('/v1/flows/import-bundle', {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: typeof bundle === 'string' ? bundle : JSON.stringify(bundle)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'POST /v1/flows/import-bundle');
+  }
+  return (await res.json()) as FlowBundleImport;
+}
+
 // exportDecision fetches a decision run rendered as a Mermaid sequence diagram.
 // RunExportFormat is a decision-run export the UI offers.
 export type RunExportFormat = 'mermaid' | 'dot' | 'json';
