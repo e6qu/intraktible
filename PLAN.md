@@ -365,8 +365,9 @@ for the public data-plane (decide + batch, decision history, flow list/create/re
 `/v1/me`) and serves it unauthenticated at `GET /openapi.json`, with a dependency-free reference page at
 `GET /docs`. Integrators point codegen/Swagger-UI/Postman at the live instance's own contract. A typed
 **Go client SDK** (`client`) wraps that surface (decide/batch, decision history, flow management) over
-net/http with no third-party deps and a typed `*APIError`, tested end-to-end against a live engine; a
-TypeScript SDK is the next step.
+net/http with no third-party deps and a typed `*APIError`, tested end-to-end against a live engine. A
+matching **TypeScript SDK** (`web/src/lib/sdk.ts`, fetch-only and framework-agnostic) ships the same
+surface for browser/Node/edge consumers; packaging the SDKs for distribution is the next step.
 
 **Comment threads (post-MVP, governance).** `platform/comments` is a general discussion capability — a
 durable, chronological thread keyed by `(subject_type, subject_id)` (`GET/POST /v1/comments/{type}/{id}`),

@@ -197,8 +197,10 @@ enterprise buyers; **P2** = differentiators / scale.
   scheme. A typed **Go client SDK** (`client`) wraps that surface over net/http with
   no third-party deps — `client.New(baseURL, apiKey).Decide(…)` and friends, with
   errors surfaced as a typed `*APIError`; it is tested end-to-end against a live
-  engine. *Remaining: a TypeScript/other-language SDK, and widening the spec to the
-  admin/management endpoints.*
+  engine. A matching **TypeScript SDK** (`web/src/lib/sdk.ts`, framework-agnostic —
+  fetch-only, independent of the app's SvelteKit `api.ts`) ships the same surface
+  with a typed `ApiError`. *Remaining: packaging/publishing the SDKs, and widening
+  the spec to the admin/management endpoints.*
 - **P1 — Flow-as-code / IaC — ✅ first pass done.** Flows export as a JSON document
   (`GET …/export?format=json`) and **import** back via `POST /v1/flows/import`: the flow
   is created when its slug is new, otherwise the graph is published as a new version.
