@@ -11,6 +11,7 @@ import (
 	"sort"
 
 	"github.com/e6qu/intraktible/platform/auth"
+	"github.com/e6qu/intraktible/platform/identity"
 )
 
 // LoginGate decides whether a verified SSO user may obtain a session — the hook
@@ -25,6 +26,7 @@ type RoleAugmenter func(ctx context.Context, org, workspace, email string, base 
 const (
 	oidcStateCookie = "oidc_state"
 	oidcNonceCookie = "oidc_nonce"
+	oidcCookiePath  = "/v1/auth/oidc/"
 )
 
 // OIDCHandler serves SSO login for the configured OIDC providers: a redirect to
@@ -83,8 +85,8 @@ func (h *OIDCHandler) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	state, nonce := randToken(), randToken()
-	h.setFlowCookie(w, r, oidcStateCookie, state)
-	h.setFlowCookie(w, r, oidcNonceCookie, nonce)
+	setFlowCookie(w, r, oidcStateCookie, state, oidcCookiePath)
+	setFlowCookie(w, r, oidcNonceCookie, nonce, oidcCookiePath)
 	http.Redirect(w, r, a.AuthCodeURL(state, nonce), http.StatusFound)
 }
 
@@ -106,33 +108,44 @@ func (h *OIDCHandler) callback(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusBadRequest, errors.New("sso: missing nonce"))
 		return
 	}
-	h.clearFlowCookie(w, r, oidcStateCookie)
-	h.clearFlowCookie(w, r, oidcNonceCookie)
+	clearFlowCookie(w, r, oidcStateCookie, oidcCookiePath)
+	clearFlowCookie(w, r, oidcNonceCookie, oidcCookiePath)
 
 	login, err := a.Exchange(r.Context(), r.URL.Query().Get("code"), nonce.Value)
 	if err != nil {
 		Error(w, http.StatusUnauthorized, err)
 		return
 	}
-	// Honor deprovisioning: a user deactivated in the IdP (via SCIM) is refused a
-	// session even though the IdP still issued a valid token.
-	if h.gate != nil && !h.gate(r.Context(), login.Identity.Org, login.Identity.Workspace, login.Identity.Actor) {
-		Error(w, http.StatusForbidden, errors.New("sso: user is deactivated"))
+	if !finishLogin(w, r, h.sessions, h.gate, h.roleAugment, login.Identity, login.Role) {
 		return
 	}
-	if h.roleAugment != nil {
-		login.Role = h.roleAugment(r.Context(), login.Identity.Org, login.Identity.Workspace, login.Identity.Actor, login.Role)
-	}
-	tok := h.sessions.Issue(login.Identity, login.Role)
-	setSessionCookie(w, r, tok, h.sessions.TTL())
 	http.Redirect(w, r, h.postLoginURL, http.StatusFound)
 }
 
-func (h *OIDCHandler) setFlowCookie(w http.ResponseWriter, r *http.Request, name, value string) {
+// finishLogin applies the deprovisioning gate and role augmenter, then issues a
+// session cookie. It returns false (after writing 403) when the gate denies the
+// user — e.g. one deactivated in the IdP via SCIM, even with a valid token.
+// Shared by the OIDC and SAML callbacks.
+func finishLogin(w http.ResponseWriter, r *http.Request, sessions auth.SessionStore, gate LoginGate, aug RoleAugmenter, id identity.Identity, role auth.Role) bool {
+	if gate != nil && !gate(r.Context(), id.Org, id.Workspace, id.Actor) {
+		Error(w, http.StatusForbidden, errors.New("sso: user is deactivated"))
+		return false
+	}
+	if aug != nil {
+		role = aug(r.Context(), id.Org, id.Workspace, id.Actor, role)
+	}
+	setSessionCookie(w, r, sessions.Issue(id, role), sessions.TTL())
+	return true
+}
+
+// setFlowCookie writes a short-lived, path-scoped cookie that carries SSO
+// round-trip state (OIDC state/nonce, SAML relay-state/request-id). Shared by the
+// OIDC and SAML handlers.
+func setFlowCookie(w http.ResponseWriter, r *http.Request, name, value, path string) {
 	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- Secure is gated on TLS, like the session cookie
 		Name:     name,
 		Value:    value,
-		Path:     "/v1/auth/oidc/",
+		Path:     path,
 		HttpOnly: true,
 		Secure:   r.TLS != nil,
 		SameSite: http.SameSiteLaxMode,
@@ -140,9 +153,9 @@ func (h *OIDCHandler) setFlowCookie(w http.ResponseWriter, r *http.Request, name
 	})
 }
 
-func (h *OIDCHandler) clearFlowCookie(w http.ResponseWriter, r *http.Request, name string) {
+func clearFlowCookie(w http.ResponseWriter, r *http.Request, name, path string) {
 	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- expiring cookie (MaxAge<0, empty value)
-		Name: name, Value: "", Path: "/v1/auth/oidc/",
+		Name: name, Value: "", Path: path,
 		HttpOnly: true, Secure: r.TLS != nil, SameSite: http.SameSiteLaxMode, MaxAge: -1,
 	})
 }

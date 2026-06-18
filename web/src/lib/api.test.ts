@@ -50,7 +50,8 @@ import {
   login,
   logout,
   currentUser,
-  listSsoProviders
+  listSsoProviders,
+  listSamlProviders
 } from './api';
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -725,6 +726,13 @@ describe('session auth', () => {
       ['google', 'aws']
     );
     expect(await listSsoProviders(fetcherReturning(404, {}))).toEqual([]);
+  });
+
+  it('listSamlProviders unwraps the provider list and degrades to empty', async () => {
+    expect(await listSamlProviders(fetcherReturning(200, { providers: ['okta'] }))).toEqual([
+      'okta'
+    ]);
+    expect(await listSamlProviders(fetcherReturning(500, {}))).toEqual([]);
   });
 
   it('currentUser returns the identity when signed in', async () => {

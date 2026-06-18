@@ -1984,6 +1984,20 @@ export async function listSsoProviders(fetcher: typeof fetch = fetch): Promise<s
   }
 }
 
+// listSamlProviders returns the configured SAML providers, mirroring
+// listSsoProviders. Empty when SAML is not configured.
+export async function listSamlProviders(fetcher: typeof fetch = fetch): Promise<string[]> {
+  try {
+    const res = await fetcher('/v1/auth/saml/providers');
+    if (!res.ok) {
+      return [];
+    }
+    return ((await res.json()) as { providers?: string[] }).providers ?? [];
+  } catch {
+    return [];
+  }
+}
+
 // currentUser returns the signed-in identity from the session cookie, or null
 // when there is no valid session.
 export async function currentUser(fetcher: typeof fetch = fetch): Promise<Identity | null> {

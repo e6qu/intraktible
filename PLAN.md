@@ -391,7 +391,14 @@ sensible defaults. The login page renders a "Sign in with …" button per provid
 `/scim/v2/Users`, bearer-authed) is the companion: an IdP creates/deactivates users and the OIDC login
 consults it through a gate, so a user deactivated in the IdP is refused a session (deprovisioning). SCIM
 **Groups** (`/scim/v2/Groups`) plus a group→role map (`INTRAKTIBLE_SCIM_GROUP_ROLES`) additively elevate a
-user's role from their SCIM group membership at login (highest of token- and SCIM-derived wins). SAML remains.
+user's role from their SCIM group membership at login (highest of token- and SCIM-derived wins).
+
+**SAML 2.0 SSO (post-MVP, enterprise identity).** A second SSO protocol alongside OIDC:
+`platform/auth.SAMLAuthenticator` (via `crewjam/saml`) + `platform/httpx`
+`/v1/auth/saml/{provider}/{login,acs,metadata}` run the SP-initiated flow — relay-state CSRF, the ACS
+verifies the signed SAMLResponse against the IdP metadata (signature/conditions/audience/InResponseTo),
+and an email + groups-attribute → role mapping issues a session, sharing the SCIM deprovisioning gate and
+group→role augmenter with OIDC. SP cert/key + IdP metadata are file/env-configured.
 
 **Comment threads (post-MVP, governance).** `platform/comments` is a general discussion capability — a
 durable, chronological thread keyed by `(subject_type, subject_id)` (`GET/POST /v1/comments/{type}/{id}`),

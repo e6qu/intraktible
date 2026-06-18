@@ -311,18 +311,28 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 		scim.NewService(scimStore, token, org, ws).Routes(root)
 		slog.Info("scim: user provisioning enabled", "org", org, "workspace", ws)
 	}
+	// The SCIM gate + role augmenter are shared by both SSO protocols.
+	var ssoGate httpx.LoginGate
+	var ssoAugment httpx.RoleAugmenter
+	if scimStore != nil {
+		ssoGate = scimStore.Allowed
+		if groupRoles := parseGroupRoles(os.Getenv("INTRAKTIBLE_SCIM_GROUP_ROLES")); len(groupRoles) > 0 {
+			ssoAugment = scimRoleAugmenter(scimStore, groupRoles)
+		}
+	}
 	if authers := oidcAuthenticators(ctx); len(authers) > 0 {
 		oh := httpx.NewOIDCHandler(sessions, authers...)
-		if scimStore != nil {
-			oh.SetGate(scimStore.Allowed)
-			// Optional: elevate a user's role from their SCIM group membership
-			// (INTRAKTIBLE_SCIM_GROUP_ROLES="group:role,..."), taking the highest.
-			if groupRoles := parseGroupRoles(os.Getenv("INTRAKTIBLE_SCIM_GROUP_ROLES")); len(groupRoles) > 0 {
-				oh.SetRoleAugmenter(scimRoleAugmenter(scimStore, groupRoles))
-			}
-		}
+		oh.SetGate(ssoGate)
+		oh.SetRoleAugmenter(ssoAugment)
 		oh.Routes(root)
 		slog.Info("sso: OIDC enabled", "providers", oidcNames(authers))
+	}
+	if samlers := samlAuthenticators(); len(samlers) > 0 {
+		sh := httpx.NewSAMLHandler(sessions, samlers...)
+		sh.SetGate(ssoGate)
+		sh.SetRoleAugmenter(ssoAugment)
+		sh.Routes(root)
+		slog.Info("sso: SAML enabled", "providers", samlNames(samlers))
 	}
 	root.Handle("/v1/", httpx.Chain(api, httpx.Authenticate(keyring, sessions), httpx.Authorize))
 	handler := httpx.Chain(root, httpx.Recover, httpx.RequestID, httpx.Logger)
@@ -462,6 +472,87 @@ func parseGroupRoles(s string) map[string]auth.Role {
 		}
 	}
 	return m
+}
+
+// samlAuthenticators builds a SAML SP authenticator per name in
+// INTRAKTIBLE_SAML_PROVIDERS, reading each provider's config (incl. the IdP
+// metadata, SP cert, and SP key from files) from INTRAKTIBLE_SAML_<NAME>_* env.
+// A provider that fails to initialize is skipped, not fatal.
+func samlAuthenticators() []*auth.SAMLAuthenticator {
+	raw := strings.TrimSpace(os.Getenv("INTRAKTIBLE_SAML_PROVIDERS"))
+	if raw == "" {
+		return nil
+	}
+	var out []*auth.SAMLAuthenticator
+	for _, name := range strings.Split(raw, ",") {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		cfg, err := samlConfigFromEnv(name)
+		if err == nil {
+			var a *auth.SAMLAuthenticator
+			a, err = auth.NewSAMLAuthenticator(cfg)
+			if err == nil {
+				out = append(out, a)
+				continue
+			}
+		}
+		slog.Warn("sso: skipping SAML provider", "provider", name, "err", err)
+	}
+	return out
+}
+
+func samlConfigFromEnv(name string) (auth.SAMLConfig, error) {
+	p := "INTRAKTIBLE_SAML_" + strings.ToUpper(name) + "_"
+	idpMeta, err := readFileEnv(p + "IDP_METADATA_FILE")
+	if err != nil {
+		return auth.SAMLConfig{}, err
+	}
+	cert, err := readFileEnv(p + "CERT_FILE")
+	if err != nil {
+		return auth.SAMLConfig{}, err
+	}
+	keyPEM, err := readFileEnv(p + "KEY_FILE")
+	if err != nil {
+		return auth.SAMLConfig{}, err
+	}
+	return auth.SAMLConfig{
+		Name:            name,
+		EntityID:        os.Getenv(p + "ENTITY_ID"),
+		ACSURL:          os.Getenv(p + "ACS_URL"),
+		MetadataURL:     os.Getenv(p + "METADATA_URL"),
+		IDPMetadataXML:  idpMeta,
+		CertPEM:         cert,
+		KeyPEM:          keyPEM,
+		Org:             os.Getenv(p + "ORG"),
+		Workspace:       os.Getenv(p + "WORKSPACE"),
+		EmailAttribute:  os.Getenv(p + "EMAIL_ATTR"),
+		GroupsAttribute: os.Getenv(p + "GROUPS_ATTR"),
+		GroupRoles:      parseGroupRoles(os.Getenv(p + "GROUP_ROLES")),
+		DefaultRole:     auth.Role(os.Getenv(p + "DEFAULT_ROLE")),
+	}, nil
+}
+
+// readFileEnv reads the file named by an env var, or returns "" when unset.
+func readFileEnv(key string) (string, error) {
+	path := strings.TrimSpace(os.Getenv(key))
+	if path == "" {
+		return "", nil
+	}
+	b, err := os.ReadFile(path) // #nosec G304 G703 -- operator-provided config file path (env), not user input
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", key, err)
+	}
+	return string(b), nil
+}
+
+func samlNames(as []*auth.SAMLAuthenticator) []string {
+	out := make([]string, 0, len(as))
+	for _, a := range as {
+		out = append(out, a.Name())
+	}
+	return out
 }
 
 // scimRoleAugmenter raises a verified user's role to the highest role mapped

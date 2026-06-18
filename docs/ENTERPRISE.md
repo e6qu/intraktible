@@ -37,7 +37,7 @@ These are real strengths, not placeholders:
 Priorities: **P0** = blocks a regulated production rollout; **P1** = expected by
 enterprise buyers; **P2** = differentiators / scale.
 
-### Identity & access  (status: RBAC + managed tokens + OIDC SSO + SCIM shipped)
+### Identity & access  (status: RBAC + managed tokens + OIDC & SAML SSO + SCIM shipped)
 - **P0 — RBAC — ✅ done.** Roles (viewer / operator / editor / approver / admin)
   and authorization on mutating endpoints.
 - **P1 — SSO (OIDC) — ✅ done.** OIDC Authorization-Code login (`platform/auth`
@@ -57,7 +57,14 @@ enterprise buyers; **P2** = differentiators / scale.
   (`/scim/v2/Groups`, create/PUT-replace/PATCH-members/delete), and a group → role map
   (`INTRAKTIBLE_SCIM_GROUP_ROLES`) **elevates a user's role** from their SCIM group
   membership at login (additive — the highest of the token-derived and SCIM-derived
-  roles wins, never lower). *Remaining: SAML.*
+  roles wins, never lower).
+- **P1 — SAML 2.0 SSO — ✅ done.** A SAML SP (`platform/auth` SAMLAuthenticator via
+  `crewjam/saml` + `platform/httpx` `/v1/auth/saml/{provider}/{login,acs,metadata}`):
+  SP-initiated redirect with relay-state CSRF, the ACS verifies the signed SAMLResponse
+  against the IdP metadata (signature, conditions, audience, InResponseTo), and a
+  configurable email + groups-attribute → role mapping issues a session — sharing the
+  same SCIM deprovisioning gate and group→role augmenter as OIDC. SP cert/key + IdP
+  metadata are env/file-configured; the login page lists SAML providers alongside OIDC.
 - **P1 — API token management — ✅ done (backend + UI).** Admin-gated
   `GET/POST/DELETE /v1/api-keys` (+ `POST …/{id}/rotate`) manages durable, hashed API
   tokens for the current org/workspace; create returns the generated secret once, tokens

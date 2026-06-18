@@ -2,12 +2,14 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import { login, listSsoProviders } from '$lib/api';
+  import { login, listSsoProviders, listSamlProviders } from '$lib/api';
   import { user } from '$lib/session';
 
   let apiKey = $state('dev-sandbox-key');
   let error = $state('');
-  let ssoProviders = $state<string[]>([]);
+  // Each entry is a provider to render a "Sign in with …" button for, with the
+  // login path for its protocol.
+  let ssoButtons = $state<{ label: string; href: string }[]>([]);
 
   const PROVIDER_LABELS = new Map([
     ['google', 'Google'],
@@ -17,7 +19,14 @@
     PROVIDER_LABELS.get(p) ?? p.charAt(0).toUpperCase() + p.slice(1);
 
   onMount(async () => {
-    ssoProviders = await listSsoProviders();
+    const [oidc, saml] = await Promise.all([listSsoProviders(), listSamlProviders()]);
+    ssoButtons = [
+      ...oidc.map((p) => ({ label: providerLabel(p), href: `/v1/auth/oidc/${p}/login` })),
+      ...saml.map((p) => ({
+        label: `${providerLabel(p)} (SAML)`,
+        href: `/v1/auth/saml/${p}/login`
+      }))
+    ];
   });
 
   async function submit() {
@@ -46,11 +55,11 @@
   </form>
   {#if error}<p class="err" data-testid="login-error">{error}</p>{/if}
 
-  {#if ssoProviders.length > 0}
+  {#if ssoButtons.length > 0}
     <div class="sso" data-testid="sso-providers">
       <div class="divider"><span>or</span></div>
-      {#each ssoProviders as p (p)}
-        <a class="sso-btn" href={`/v1/auth/oidc/${p}/login`}>Sign in with {providerLabel(p)}</a>
+      {#each ssoButtons as b (b.href)}
+        <a class="sso-btn" href={b.href}>Sign in with {b.label}</a>
       {/each}
     </div>
   {/if}
