@@ -26,6 +26,7 @@ import (
 	"github.com/e6qu/intraktible/decision-engine/policy"
 	"github.com/e6qu/intraktible/decision-engine/preapproval"
 	"github.com/e6qu/intraktible/decision-engine/service"
+	"github.com/e6qu/intraktible/decision-engine/shadow"
 	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/privacy"
 	"github.com/e6qu/intraktible/platform/testutil"
@@ -130,6 +131,103 @@ func TestImportFlowOverHTTP(t *testing.T) {
 	api.Request(t, http.MethodPost, "/v1/flows/import", fx, http.StatusOK, &imp)
 	if imp.Published {
 		t.Fatalf("re-importing an export of the latest version should be a no-op: %+v", imp)
+	}
+}
+
+func TestShadowEvaluationOverHTTP(t *testing.T) {
+	api := startEngine(t)
+	var created struct {
+		FlowID string `json:"flow_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows", map[string]any{"slug": "shadowflow", "name": "Shadow"}, http.StatusCreated, &created)
+
+	publish := func(decision string) {
+		api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/versions", map[string]any{
+			"graph": map[string]any{
+				"nodes": []map[string]any{
+					{"id": "in", "type": "input"},
+					{"id": "a", "type": "assignment", "config": map[string]any{
+						"assignments": []map[string]any{{"target": "decision", "expr": "'" + decision + "'"}},
+					}},
+					{"id": "out", "type": "output", "config": map[string]any{"fields": []string{"decision"}}},
+				},
+				"edges": []map[string]any{{"from": "in", "to": "a"}, {"from": "a", "to": "out"}},
+			},
+		}, http.StatusCreated, nil)
+	}
+	publish("A") // v1
+	publish("B") // v2 — diverges
+	publish("A") // v3 — agrees with v1
+
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/deployments",
+		map[string]any{"environment": "sandbox", "version": 1}, http.StatusCreated, nil)
+	api.Request(t, http.MethodPut, "/v1/flows/"+created.FlowID+"/shadow",
+		map[string]any{"environment": "sandbox", "version": 2}, http.StatusOK, nil)
+
+	// Wait until v1 is the live champion (the deploy projection caught up), so the
+	// shadow (v2) actually runs alongside it rather than v2 being the latest.
+	decide := func() string {
+		var dec struct {
+			Status string         `json:"status"`
+			Data   map[string]any `json:"data"`
+		}
+		api.Request(t, http.MethodPost, "/v1/flows/shadowflow/sandbox/decide",
+			map[string]any{"data": map[string]any{}}, http.StatusOK, &dec)
+		if dec.Status != "completed" {
+			return ""
+		}
+		s, _ := dec.Data["decision"].(string)
+		return s
+	}
+	if !testutil.Eventually(t, func() bool { return decide() == "A" }) {
+		t.Fatal("v1 never became the live champion")
+	}
+
+	type envShadow struct {
+		ShadowVersion int `json:"shadow_version"`
+		Total         int `json:"total"`
+		Matched       int `json:"matched"`
+		Diverged      int `json:"diverged"`
+	}
+	readReport := func() (map[string]int, envShadow) {
+		var got struct {
+			Shadows map[string]int       `json:"shadows"`
+			Report  map[string]envShadow `json:"report"`
+		}
+		api.Request(t, http.MethodGet, "/v1/flows/"+created.FlowID+"/shadow", nil, http.StatusOK, &got)
+		return got.Shadows, got.Report["sandbox"]
+	}
+
+	// The shadow (v2 → "B") diverges from the live champion (v1 → "A").
+	if !testutil.Eventually(t, func() bool {
+		shadows, env := readReport()
+		return shadows["sandbox"] == 2 && env.ShadowVersion == 2 && env.Diverged >= 1 && env.Matched == 0
+	}) {
+		_, env := readReport()
+		t.Fatalf("expected divergence under shadow v2, got %+v", env)
+	}
+
+	// Switching the shadow to v3 (which agrees with v1) resets the comparison and
+	// records matches instead.
+	api.Request(t, http.MethodPut, "/v1/flows/"+created.FlowID+"/shadow",
+		map[string]any{"environment": "sandbox", "version": 3}, http.StatusOK, nil)
+	if !testutil.Eventually(t, func() bool {
+		decide()
+		_, env := readReport()
+		return env.ShadowVersion == 3 && env.Matched >= 1 && env.Diverged == 0
+	}) {
+		_, env := readReport()
+		t.Fatalf("expected matches under shadow v3, got %+v", env)
+	}
+
+	// Clearing the shadow removes the assignment.
+	api.Request(t, http.MethodPut, "/v1/flows/"+created.FlowID+"/shadow",
+		map[string]any{"environment": "sandbox", "version": 0}, http.StatusOK, nil)
+	if !testutil.Eventually(t, func() bool {
+		shadows, _ := readReport()
+		return shadows["sandbox"] == 0
+	}) {
+		t.Fatal("clearing the shadow did not remove the assignment")
 	}
 }
 
@@ -980,7 +1078,7 @@ func startEngine(t *testing.T, opts ...command.DecideOption) *testutil.API {
 		asserts.Routes(mux)
 	}
 	return testutil.StartAPI(t, log, st, "test-key", id, routes,
-		flows.Projector{}, history.Projector{}, analytics.Projector{}, policy.Projector{}, preapproval.Projector{}, monitor.Projector{}, notify.Projector{}, privacy.Projector{}, assertions.Projector{})
+		flows.Projector{}, history.Projector{}, analytics.Projector{}, policy.Projector{}, preapproval.Projector{}, monitor.Projector{}, notify.Projector{}, privacy.Projector{}, assertions.Projector{}, shadow.Projector{})
 }
 
 // stubFeatures is a fixed feature source for the decide HTTP test.

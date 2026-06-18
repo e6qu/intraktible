@@ -21,6 +21,7 @@ import (
 	"github.com/e6qu/intraktible/decision-engine/history"
 	"github.com/e6qu/intraktible/decision-engine/monitor"
 	"github.com/e6qu/intraktible/decision-engine/preapproval"
+	"github.com/e6qu/intraktible/decision-engine/shadow"
 	"github.com/e6qu/intraktible/platform/httpx"
 	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/privacy"
@@ -54,6 +55,8 @@ func (s *Service) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/flows/{flow_id}/promote", s.promote)
 	mux.HandleFunc("GET /v1/flows/{flow_id}/promotion-policy", s.getPromotionPolicy)
 	mux.HandleFunc("PUT /v1/flows/{flow_id}/promotion-policy", s.setPromotionPolicy)
+	mux.HandleFunc("GET /v1/flows/{flow_id}/shadow", s.getShadow)
+	mux.HandleFunc("PUT /v1/flows/{flow_id}/shadow", s.setShadow)
 	mux.HandleFunc("POST /v1/flows/{flow_id}/deployment-requests", s.requestDeployment)
 	mux.HandleFunc("POST /v1/flows/{flow_id}/deployment-requests/{req_id}/approve", s.approveDeployment)
 	mux.HandleFunc("POST /v1/flows/{flow_id}/deployment-requests/{req_id}/reject", s.rejectDeployment)
@@ -360,6 +363,60 @@ func mergePromotionPolicy(req map[string]promotionStageRequest) map[string]event
 		policy[env] = stage
 	}
 	return policy
+}
+
+type shadowRequest struct {
+	Environment string `json:"environment"`
+	Version     int    `json:"version"` // 0 clears the shadow
+}
+
+// getShadow returns the current shadow assignments and the divergence report.
+func (s *Service) getShadow(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	flowID := r.PathValue("flow_id")
+	fv, found, err := flows.Read(r.Context(), s.store, id, flowID)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	if !found {
+		httpx.Error(w, http.StatusNotFound, fmt.Errorf("flow not found"))
+		return
+	}
+	report, _, err := shadow.Read(r.Context(), s.store, id, flowID)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"shadows": fv.Shadows, "report": report.ByEnv})
+}
+
+// setShadow assigns (or clears, with version 0) the shadow version for an env.
+func (s *Service) setShadow(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	var req shadowRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	e, err := s.cmd.SetShadow(r.Context(), id, domain.SetShadow{
+		FlowID:      r.PathValue("flow_id"),
+		Environment: req.Environment,
+		Version:     req.Version,
+	})
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"environment": req.Environment, "version": req.Version, "event_id": e.ID, "seq": e.Seq,
+	})
 }
 
 // promote ships the version live in `from` to `to`, carrying the champion only

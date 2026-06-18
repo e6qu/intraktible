@@ -54,6 +54,50 @@ test('imports a flow from an exported document', async ({ page }) => {
   await expect(page.getByText(/already at v1 — no change/)).toBeVisible();
 });
 
+test('assigns a shadow version from the builder', async ({ page, request }) => {
+  const slug = uniqueSlug();
+  const created = await request.post('/v1/flows', {
+    headers: { 'X-Api-Key': KEY },
+    data: { slug, name: 'Shadow UI' }
+  });
+  const { flow_id } = await created.json();
+  const graph = (decision: string) => ({
+    nodes: [
+      { id: 'in', type: 'input' },
+      {
+        id: 'a',
+        type: 'assignment',
+        config: { assignments: [{ target: 'decision', expr: `'${decision}'` }] }
+      },
+      { id: 'out', type: 'output', config: { fields: ['decision'] } }
+    ],
+    edges: [
+      { from: 'in', to: 'a' },
+      { from: 'a', to: 'out' }
+    ]
+  });
+  for (const d of ['A', 'B']) {
+    await request.post(`/v1/flows/${flow_id}/versions`, {
+      headers: { 'X-Api-Key': KEY },
+      data: { graph: graph(d) }
+    });
+  }
+  await request.post(`/v1/flows/${flow_id}/deployments`, {
+    headers: { 'X-Api-Key': KEY },
+    data: { environment: 'sandbox', version: 1 }
+  });
+
+  await page.goto(`/engine/${flow_id}`);
+  await page.getByTestId('shadow-panel').locator('summary').click();
+  await page.getByLabel('shadow version for sandbox').selectOption('2');
+  await expect(page.getByText('Shadowing v2 in sandbox')).toBeVisible();
+
+  // The assignment round-trips: reloading rehydrates v2 as the sandbox shadow.
+  await page.reload();
+  await page.getByTestId('shadow-panel').locator('summary').click();
+  await expect(page.getByLabel('shadow version for sandbox')).toHaveValue('2');
+});
+
 test('imports a bundle of flows', async ({ page }) => {
   const graph = {
     nodes: [

@@ -948,6 +948,53 @@ export async function setPromotionPolicy(
   return ((await res.json()) as { policy: Record<string, PromotionStagePolicy> }).policy;
 }
 
+export interface EnvShadow {
+  shadow_version: number;
+  total: number;
+  matched: number;
+  diverged: number;
+  errored: number;
+  sample_diverged?: string[];
+}
+
+export interface ShadowState {
+  shadows: Record<string, number>;
+  report: Record<string, EnvShadow>;
+}
+
+// getShadow returns the per-environment shadow assignments and the divergence
+// report (how often a shadow version's outcome differs from the live decision).
+export async function getShadow(
+  key: string,
+  flowId: string,
+  fetcher: typeof fetch = fetch
+): Promise<ShadowState> {
+  const res = await fetcher(`/v1/flows/${flowId}/shadow`, { headers: authHeaders(key) });
+  if (!res.ok) {
+    return errorOrStatus(res, 'GET shadow');
+  }
+  const body = (await res.json()) as Partial<ShadowState>;
+  return { shadows: body.shadows ?? {}, report: body.report ?? {} };
+}
+
+// setShadow assigns (version 0 clears) the shadow version for an environment.
+export async function setShadow(
+  key: string,
+  flowId: string,
+  environment: string,
+  version: number,
+  fetcher: typeof fetch = fetch
+): Promise<void> {
+  const res = await fetcher(`/v1/flows/${flowId}/shadow`, {
+    method: 'PUT',
+    headers: jsonHeaders(key),
+    body: JSON.stringify({ environment, version })
+  });
+  if (!res.ok) {
+    await errorOrStatus(res, 'PUT shadow');
+  }
+}
+
 // requestDeployment proposes a deployment for review (maker side).
 export async function requestDeployment(
   key: string,

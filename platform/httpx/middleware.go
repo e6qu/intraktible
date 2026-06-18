@@ -180,6 +180,7 @@ func isAuthoringPath(path string) bool {
 		strings.HasSuffix(path, "/preapprove/batch") || // bulk-grant pre-approvals from a run
 		strings.Contains(path, "/monitors") || // define/delete a monitor; check pushes alerts
 		strings.HasSuffix(path, "/assertions") || // define a flow's test cases (run is separate)
+		strings.HasSuffix(path, "/shadow") || // assign a shadow version (PUT; GET is a viewer read)
 		strings.HasPrefix(path, "/v1/webhooks") || // register/remove a notification endpoint
 		strings.HasSuffix(path, "/versions") || // publish a flow or policy version
 		path == "/v1/agents" || // define an agent

@@ -48,6 +48,29 @@ func (c CreateFlow) Validate() error {
 	return nil
 }
 
+// SetShadow assigns the shadow version for an environment (Version 0 clears it).
+// The shadow version is evaluated alongside live decisions for divergence
+// analysis; its result is never returned.
+type SetShadow struct {
+	FlowID      string
+	Environment string
+	Version     int
+}
+
+// Validate requires a flow, a known environment, and a non-negative version.
+func (c SetShadow) Validate() error {
+	if strings.TrimSpace(c.FlowID) == "" {
+		return errors.New("decision-engine: flow_id is required")
+	}
+	if !ValidEnvironment(c.Environment) {
+		return fmt.Errorf("decision-engine: invalid environment %q", c.Environment)
+	}
+	if c.Version < 0 {
+		return fmt.Errorf("decision-engine: shadow version must be >= 0, got %d", c.Version)
+	}
+	return nil
+}
+
 // ImportFlow upserts a flow from an exported document (create-if-new, then
 // publish the graph as a new version), so flows can be managed as code.
 type ImportFlow struct {

@@ -20,6 +20,8 @@ import {
   requestDeployment,
   approveDeployment,
   rejectDeployment,
+  getShadow,
+  setShadow,
   listAudit,
   auditQuery,
   auditExportUrl,
@@ -267,6 +269,28 @@ describe('deployment & maker-checker', () => {
     const [url, init] = fetcher.mock.calls[0];
     expect(url).toBe('/v1/flows/f1/deployment-requests/req-9/reject');
     expect(JSON.parse(String(init?.body))).toMatchObject({ reason: 'nope' });
+  });
+});
+
+describe('shadow', () => {
+  it('getShadow returns assignments and the report, defaulting empties', async () => {
+    const fetcher = fetcherReturning(200, {
+      shadows: { sandbox: 2 },
+      report: { sandbox: { shadow_version: 2, total: 10, matched: 7, diverged: 3, errored: 0 } }
+    });
+    const s = await getShadow('k', 'f1', fetcher);
+    expect(s.shadows.sandbox).toBe(2);
+    expect(s.report.sandbox.diverged).toBe(3);
+    expect(fetcher.mock.calls[0][0]).toBe('/v1/flows/f1/shadow');
+  });
+
+  it('setShadow PUTs the environment and version', async () => {
+    const fetcher = fetcherReturning(200, {});
+    await setShadow('k', 'f1', 'sandbox', 3, fetcher);
+    const [url, init] = fetcher.mock.calls[0];
+    expect(url).toBe('/v1/flows/f1/shadow');
+    expect(init?.method).toBe('PUT');
+    expect(JSON.parse(String(init?.body))).toEqual({ environment: 'sandbox', version: 3 });
   });
 });
 

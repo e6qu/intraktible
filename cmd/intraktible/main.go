@@ -47,6 +47,7 @@ import (
 	"github.com/e6qu/intraktible/decision-engine/policy"
 	"github.com/e6qu/intraktible/decision-engine/preapproval"
 	engineservice "github.com/e6qu/intraktible/decision-engine/service"
+	"github.com/e6qu/intraktible/decision-engine/shadow"
 	hellocmd "github.com/e6qu/intraktible/hello/command"
 	helloservice "github.com/e6qu/intraktible/hello/service"
 	"github.com/e6qu/intraktible/hello/stats"
@@ -403,7 +404,7 @@ func moduleProjectors(modules string) []projection.Projector {
 		ps = append(ps, stats.Projector{})
 	}
 	if enabled(modules, "decision-engine") {
-		ps = append(ps, flows.Projector{}, history.Projector{}, analytics.Projector{}, policy.Projector{}, preapproval.Projector{}, monitor.Projector{}, notify.Projector{}, assertions.Projector{})
+		ps = append(ps, flows.Projector{}, history.Projector{}, analytics.Projector{}, policy.Projector{}, preapproval.Projector{}, monitor.Projector{}, notify.Projector{}, assertions.Projector{}, shadow.Projector{})
 	}
 	if enabled(modules, "case-manager") {
 		ps = append(ps, cases.Projector{})

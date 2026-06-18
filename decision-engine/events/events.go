@@ -20,7 +20,17 @@ const (
 	TypeDeploymentApproved  = "decision.flow.deployment_approved"
 	TypeDeploymentRejected  = "decision.flow.deployment_rejected"
 	TypePromotionPolicySet  = "decision.flow.promotion_policy_set"
+	// TypeShadowSet assigns (or clears) a per-environment shadow version: a
+	// candidate evaluated alongside live decisions for divergence analysis.
+	TypeShadowSet = "decision.flow.shadow_set"
 )
+
+// ShadowSet assigns the shadow version for one environment (Version 0 clears it).
+type ShadowSet struct {
+	FlowID      string `json:"flow_id"`
+	Environment string `json:"environment"`
+	Version     int    `json:"version"`
+}
 
 // NodeType enumerates the node kinds in the MVP palette (PLAN.md §4.1). Input
 // and Output bound the graph; the rest carry per-type config evaluated at decide

@@ -119,7 +119,16 @@ enterprise buyers; **P2** = differentiators / scale.
   I/O is performed. The builder exposes it as a panel that flags the records whose
   outcome changed. The deterministic engine makes this a natural, safe pre-deploy
   confidence check.
-- **P1 — Shadow / canary deploys** (the A/B challenger is a start).
+- **P1 — Shadow / canary deploys — ✅ shadow done.** A per-environment **shadow
+  version** (`PUT /v1/flows/{id}/shadow {environment, version}`, 0 clears) is
+  evaluated over the same input as every live decision in that environment; its
+  result is never returned to the caller. A `shadow.Projector` folds the
+  comparison into a per-env report (`GET …/shadow`) — total / matched / diverged /
+  errored with sample diverging decision ids — answering "how often would
+  promoting this candidate change the outcome?" at zero risk. Surfaced as a
+  **Shadow deploys** panel in the builder. The A/B challenger already covers canary
+  (a challenger takes a traffic share with its result returned). *Remaining: shadow
+  re-resolves connector/AI nodes against the live input only (not its own).*
 - **P1 — Flow unit tests / assertions — ✅ done.** Input→expected cases stored
   with the flow (`decision-engine/assertions`), run through the pure core via
   `POST /v1/flows/{id}/assertions/run`, and enforced as a **pre-promote gate**

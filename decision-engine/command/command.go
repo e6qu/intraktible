@@ -360,6 +360,35 @@ func (h *Handler) SetPromotionPolicy(ctx context.Context, id identity.Identity, 
 	return h.appendFlowEvent(ctx, id, events.TypePromotionPolicySet, payload)
 }
 
+// SetShadow assigns (or clears, with version 0) the shadow version for an
+// environment. A non-zero version must be published.
+func (h *Handler) SetShadow(ctx context.Context, id identity.Identity, cmd domain.SetShadow) (eventlog.Envelope, error) {
+	if err := id.Valid(); err != nil {
+		return eventlog.Envelope{}, err
+	}
+	if err := cmd.Validate(); err != nil {
+		return eventlog.Envelope{}, err
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	byID, _, err := h.foldTenant(ctx, id)
+	if err != nil {
+		return eventlog.Envelope{}, err
+	}
+	agg, ok := byID[cmd.FlowID]
+	if !ok {
+		return eventlog.Envelope{}, fmt.Errorf("decision-engine: unknown flow %q", cmd.FlowID)
+	}
+	if cmd.Version > agg.latest {
+		return eventlog.Envelope{}, fmt.Errorf("decision-engine: shadow version %d not published (latest is %d)", cmd.Version, agg.latest)
+	}
+	payload, err := json.Marshal(events.ShadowSet{FlowID: cmd.FlowID, Environment: cmd.Environment, Version: cmd.Version})
+	if err != nil {
+		return eventlog.Envelope{}, fmt.Errorf("decision-engine: marshal shadow set: %w", err)
+	}
+	return h.appendFlowEvent(ctx, id, events.TypeShadowSet, payload)
+}
+
 // deployReq is the folded state of one deployment request.
 type deployReq struct {
 	env                                       string

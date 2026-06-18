@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"time"
 
 	"github.com/e6qu/intraktible/decision-engine/domain"
@@ -255,7 +256,43 @@ func (h *DecideHandler) Decide(ctx context.Context, id identity.Identity, slug, 
 	if err := h.emitEscalations(ctx, id, decisionID, dataJSON, run); err != nil {
 		return DecideResult{}, err
 	}
+	// A shadow version, if configured for this environment, is evaluated over the
+	// same input for divergence analysis — its outcome never affects the result.
+	if err := h.runShadow(ctx, id, fv, env, decisionID, version.Version, data, run); err != nil {
+		return DecideResult{}, err
+	}
 	return result, nil
+}
+
+// runShadow evaluates the environment's shadow version (if any) over the same
+// input as the live decision and records the comparison. The shadow reuses the
+// live input (so its features/connector/AI context match the request); a shadow
+// node needing input the live graph did not inject simply fails in the shadow
+// run and is recorded as such. The shadow's outcome never affects the caller's
+// result; only a failure to record the comparison event is returned.
+func (h *DecideHandler) runShadow(ctx context.Context, id identity.Identity, fv flows.FlowView, env, decisionID string, liveVersion int, data map[string]any, live domain.Run) error {
+	shadowVer := fv.Shadows[env]
+	if shadowVer == 0 || shadowVer == liveVersion {
+		return nil
+	}
+	ev := events.ShadowEvaluated{
+		DecisionID: decisionID, FlowID: fv.FlowID, Environment: env,
+		LiveVersion: liveVersion, ShadowVersion: shadowVer, LiveStatus: live.Status,
+	}
+	sv, ok := versionByNumber(fv, shadowVer)
+	if !ok {
+		ev.ShadowError = fmt.Sprintf("shadow version %d not found", shadowVer)
+	} else {
+		srun := domain.Execute(sv.Graph, data)
+		ev.ShadowStatus = srun.Status
+		if srun.Status == domain.StatusFailed {
+			ev.ShadowError = srun.Err
+		}
+		ev.Matched = live.Status == domain.StatusCompleted &&
+			srun.Status == domain.StatusCompleted &&
+			reflect.DeepEqual(live.Output, srun.Output)
+	}
+	return h.emit(ctx, id, events.TypeShadowEvaluated, ev)
 }
 
 // injectFeatures returns data augmented with a "features" map of the referenced

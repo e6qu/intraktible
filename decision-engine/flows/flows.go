@@ -65,8 +65,11 @@ type FlowView struct {
 	Deployments        map[string]DeploymentView              `json:"deployments,omitempty"`
 	DeploymentRequests []DeploymentRequest                    `json:"deployment_requests,omitempty"`
 	PromotionPolicy    map[string]events.PromotionStagePolicy `json:"promotion_policy,omitempty"`
-	CreatedAt          time.Time                              `json:"created_at"`
-	UpdatedAt          time.Time                              `json:"updated_at"`
+	// Shadows maps an environment to a shadow version evaluated alongside live
+	// decisions for divergence analysis (absent = none).
+	Shadows   map[string]int `json:"shadows,omitempty"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
 }
 
 // Projector folds flow lifecycle events into FlowView documents.
@@ -88,6 +91,7 @@ var flowAppliers = map[string]func(context.Context, eventlog.Envelope, store.Sto
 	events.TypeDeploymentApproved:   applyDeploymentApproved,
 	events.TypeDeploymentRejected:   applyDeploymentRejected,
 	events.TypePromotionPolicySet:   applyPromotionPolicySet,
+	events.TypeShadowSet:            applyShadowSet,
 }
 
 // Apply maintains the flow document. Events of other types are not this
@@ -163,6 +167,23 @@ func applyPromotionPolicySet(ctx context.Context, e eventlog.Envelope, s store.S
 	}
 	return mutateFlow(ctx, s, e, p.FlowID, func(fv *FlowView) {
 		fv.PromotionPolicy = EffectivePromotionPolicy(p.Policy)
+	})
+}
+
+func applyShadowSet(ctx context.Context, e eventlog.Envelope, s store.Store) error {
+	var p events.ShadowSet
+	if err := json.Unmarshal(e.Payload, &p); err != nil {
+		return fmt.Errorf("decision_flows: decode shadow_set seq %d: %w", e.Seq, err)
+	}
+	return mutateFlow(ctx, s, e, p.FlowID, func(fv *FlowView) {
+		if p.Version == 0 {
+			delete(fv.Shadows, p.Environment)
+			return
+		}
+		if fv.Shadows == nil {
+			fv.Shadows = map[string]int{}
+		}
+		fv.Shadows[p.Environment] = p.Version
 	})
 }
 

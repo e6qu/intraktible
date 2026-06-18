@@ -43,6 +43,10 @@
     deployVersion,
     promoteFlow,
     setPromotionPolicy,
+    getShadow,
+    setShadow,
+    type ShadowState,
+    type EnvShadow,
     requestDeployment,
     approveDeployment,
     rejectDeployment,
@@ -892,6 +896,37 @@
     }
   }
 
+  // --- Shadow deploys (evaluate a candidate version alongside live decisions) ---
+  let shadow = $state<ShadowState>({ shadows: {}, report: {} });
+  let shadowSaving = $state(false);
+  async function loadShadow() {
+    try {
+      shadow = await getShadow(key, flowId);
+    } catch {
+      /* a viewer with no shadow data simply sees none */
+    }
+  }
+  // Entries lookups (not computed indexing) to stay clear of detect-object-injection.
+  function shadowVersionFor(environment: string): number {
+    return Object.entries(shadow.shadows).find(([k]) => k === environment)?.[1] ?? 0;
+  }
+  function shadowReportFor(environment: string): EnvShadow | undefined {
+    return Object.entries(shadow.report).find(([k]) => k === environment)?.[1];
+  }
+  async function updateShadow(environment: string, version: number) {
+    error = '';
+    shadowSaving = true;
+    try {
+      await setShadow(key, flowId, environment, version);
+      toast.success(version ? `Shadowing v${version} in ${environment}` : `Shadow cleared`);
+      await loadShadow();
+    } catch (e) {
+      error = msg(e);
+    } finally {
+      shadowSaving = false;
+    }
+  }
+
   async function submitPromote() {
     error = '';
     if (!flow) return;
@@ -1122,6 +1157,7 @@
     void loadWebhooks();
     void loadDrift();
     void loadAssertions();
+    void loadShadow();
   });
 </script>
 
@@ -1513,6 +1549,42 @@
               />
               review request
             </label>
+          </div>
+        {/each}
+      </div>
+    </details>
+
+    <details class="shadow-panel" data-testid="shadow-panel">
+      <summary><Icon name="diagram" size={15} /> Shadow deploys</summary>
+      <p class="hint muted">
+        Run a candidate version alongside live decisions to measure how often it would diverge — its
+        result is never returned to callers.
+      </p>
+      <div class="shadow-grid">
+        {#each ENVIRONMENTS as e (e)}
+          {@const rep = shadowReportFor(e)}
+          <div class="shadow-stage">
+            <b>{e}</b>
+            <select
+              value={shadowVersionFor(e)}
+              disabled={shadowSaving}
+              onchange={(ev) => updateShadow(e, parseInt(ev.currentTarget.value, 10))}
+              aria-label={`shadow version for ${e}`}
+            >
+              <option value={0}>none</option>
+              {#each flow?.versions ?? [] as v (v.version)}
+                <option value={v.version}>v{v.version}</option>
+              {/each}
+            </select>
+            {#if rep && rep.total > 0}
+              <span class="shadow-stats muted">
+                {rep.matched}/{rep.total} match{rep.diverged
+                  ? `, ${rep.diverged} diverged`
+                  : ''}{rep.errored ? `, ${rep.errored} errored` : ''}
+              </span>
+            {:else}
+              <span class="muted">no comparisons yet</span>
+            {/if}
           </div>
         {/each}
       </div>
@@ -2723,6 +2795,40 @@
     margin: 0;
     font-size: 0.78rem;
     color: var(--fg-muted);
+  }
+  .shadow-panel {
+    margin-top: 0.7rem;
+    font-size: 0.86rem;
+  }
+  .shadow-panel summary {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    cursor: pointer;
+    color: var(--fg-muted);
+  }
+  .shadow-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+    gap: 0.6rem;
+    margin-top: 0.55rem;
+  }
+  .shadow-stage {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    padding: 0.5rem 0.6rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface-1);
+  }
+  .shadow-stage b {
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    color: var(--fg-subtle);
+  }
+  .shadow-stats {
+    font-size: 0.78rem;
   }
   .requests {
     margin-top: 0.8rem;

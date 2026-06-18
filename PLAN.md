@@ -353,6 +353,13 @@ through the pure backtest core. The **promotion gate** refuses a promote (409) w
 are firing or its assertions fail on the target version — `force` overrides. Surfaced as an Assertions
 panel + a force toggle in the builder. Ties monitors + tests into the sandbox→staging→production chain.
 
+**Shadow deploys (post-MVP, safe rollout).** `decision-engine/shadow` adds a per-environment **shadow
+version** (`PUT/GET /v1/flows/{id}/shadow`) evaluated over the same input as every live decision in that
+environment via the pure core — its result is never returned. A projector folds each comparison into a
+per-env report (total / matched / diverged / errored + sample diverging decision ids), so an operator can
+measure how often promoting a candidate would change the outcome before doing it. Surfaced as a **Shadow
+deploys** panel in the builder; complements the A/B challenger (which serves a traffic share live).
+
 **Comment threads (post-MVP, governance).** `platform/comments` is a general discussion capability — a
 durable, chronological thread keyed by `(subject_type, subject_id)` (`GET/POST /v1/comments/{type}/{id}`),
 reusable `CommentThread.svelte` component — wired onto the items that get approved/rejected/promoted
