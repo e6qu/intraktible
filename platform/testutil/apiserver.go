@@ -104,3 +104,39 @@ func (a *API) Request(t *testing.T, method, path string, body any, wantStatus in
 		}
 	}
 }
+
+// RequestStatus issues an authenticated request and returns the status code
+// without asserting it — for polling an eventually-consistent read (e.g. a
+// decision record that the projection has not applied yet, which 404s until it
+// catches up). On a 2xx with a non-nil out it best-effort decodes the body.
+// Transport/build errors still fail the test.
+func (a *API) RequestStatus(t *testing.T, method, path string, body, out any) int {
+	t.Helper()
+	var rdr io.Reader
+	if body != nil {
+		b, err := json.Marshal(body)
+		if err != nil {
+			t.Fatalf("testutil: marshal request body: %v", err)
+		}
+		rdr = bytes.NewReader(b)
+	}
+	req, err := http.NewRequest(method, a.Server.URL+path, rdr)
+	if err != nil {
+		t.Fatalf("testutil: build request: %v", err)
+	}
+	req.Header.Set("X-Api-Key", a.Key)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := a.Server.Client().Do(req)
+	if err != nil {
+		t.Fatalf("testutil: %s %s: %v", method, path, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if out != nil && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+			t.Fatalf("testutil: decode response: %v", err)
+		}
+	}
+	return resp.StatusCode
+}

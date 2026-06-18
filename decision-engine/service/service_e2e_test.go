@@ -662,10 +662,17 @@ func TestDecideAppliesPolicyOverHTTP(t *testing.T) {
 		t.Fatalf("policy never auto-approved: %+v", dec)
 	}
 
-	// The disposition is recorded first-class on the decision record.
+	// The disposition is recorded first-class on the decision record (poll: the
+	// history projection applies the decision event asynchronously, so the record
+	// can 404 or read stale immediately after the decide response).
 	var rec history.Record
-	api.Request(t, http.MethodGet, "/v1/decisions/"+dec.DecisionID, nil, http.StatusOK, &rec)
-	if rec.Disposition != policy.Approve || rec.PolicyID != pol.PolicyID || rec.PolicyVersion != 1 {
+	if !testutil.Eventually(t, func() bool {
+		rec = history.Record{}
+		if api.RequestStatus(t, http.MethodGet, "/v1/decisions/"+dec.DecisionID, nil, &rec) != http.StatusOK {
+			return false
+		}
+		return rec.Disposition == policy.Approve && rec.PolicyID == pol.PolicyID && rec.PolicyVersion == 1
+	}) {
 		t.Fatalf("decision record missing policy disposition: %+v", rec)
 	}
 
@@ -769,10 +776,16 @@ func TestDecideHonorsPreApprovalOverHTTP(t *testing.T) {
 		t.Fatalf("honored decision should carry the pre-approval terms: %+v", d.Data)
 	}
 
-	// The decision record links the pre-approval and has no node trace (flow skipped).
+	// The decision record links the pre-approval and has no node trace (flow
+	// skipped). Poll: the history projection applies asynchronously.
 	var rec history.Record
-	api.Request(t, http.MethodGet, "/v1/decisions/"+d.DecisionID, nil, http.StatusOK, &rec)
-	if rec.PreApprovalID == "" || len(rec.Nodes) != 0 {
+	if !testutil.Eventually(t, func() bool {
+		rec = history.Record{}
+		if api.RequestStatus(t, http.MethodGet, "/v1/decisions/"+d.DecisionID, nil, &rec) != http.StatusOK {
+			return false
+		}
+		return rec.PreApprovalID != "" && len(rec.Nodes) == 0
+	}) {
 		t.Fatalf("expected a honored record with no node trace: %+v", rec)
 	}
 }
