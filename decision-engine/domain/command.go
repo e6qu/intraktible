@@ -48,6 +48,24 @@ func (c CreateFlow) Validate() error {
 	return nil
 }
 
+// ImportFlow upserts a flow from an exported document (create-if-new, then
+// publish the graph as a new version), so flows can be managed as code.
+type ImportFlow struct {
+	Slug        string
+	Name        string
+	Graph       events.Graph
+	InputSchema json.RawMessage
+}
+
+// Validate requires a well-formed slug and a structurally valid graph. Name is
+// optional on import — it defaults to the slug.
+func (c ImportFlow) Validate() error {
+	if !slugPattern.MatchString(c.Slug) {
+		return fmt.Errorf("decision-engine: invalid slug %q (lowercase letters, digits, hyphens)", c.Slug)
+	}
+	return ValidateGraph(c.Graph)
+}
+
 // PublishVersion is the command to publish a new immutable version of a flow.
 type PublishVersion struct {
 	FlowID      string

@@ -183,6 +183,35 @@ export async function exportFlow(
   return res.text();
 }
 
+export interface FlowImportResult {
+  flow_id: string;
+  slug: string;
+  version: number;
+  etag: string;
+  created: boolean;
+  published: boolean;
+}
+
+// importFlow upserts a flow from an exported document (the JSON `exportFlow`
+// produces): it creates the flow if its slug is new, then publishes the graph as
+// a new version. Re-importing identical content is a no-op (`published: false`),
+// so it is safe to run from CI / GitOps on every push.
+export async function importFlow(
+  key: string,
+  doc: unknown,
+  fetcher: typeof fetch = fetch
+): Promise<FlowImportResult> {
+  const res = await fetcher('/v1/flows/import', {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: typeof doc === 'string' ? doc : JSON.stringify(doc)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'POST /v1/flows/import');
+  }
+  return (await res.json()) as FlowImportResult;
+}
+
 // exportDecision fetches a decision run rendered as a Mermaid sequence diagram.
 // RunExportFormat is a decision-run export the UI offers.
 export type RunExportFormat = 'mermaid' | 'dot' | 'json';

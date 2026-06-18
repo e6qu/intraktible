@@ -173,6 +173,7 @@ func requiredRole(method, path string) auth.Role {
 // (vs. running it). These are the create/publish endpoints.
 func isAuthoringPath(path string) bool {
 	return path == "/v1/flows" || // create a flow
+		path == "/v1/flows/import" || // import a flow-as-code document (create + publish)
 		path == "/v1/policies" || // create a policy
 		path == "/v1/preapprovals" || // grant a pre-approval (material)
 		strings.HasSuffix(path, "/preapprove/batch") || // bulk-grant pre-approvals from a run

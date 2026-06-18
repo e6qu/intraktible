@@ -24,6 +24,36 @@ test('lists and creates a flow', async ({ page }) => {
   await expect(page.getByText(slug)).toBeVisible();
 });
 
+test('imports a flow from an exported document', async ({ page }) => {
+  const slug = uniqueSlug();
+  const doc = JSON.stringify({
+    slug,
+    name: 'Imported Flow',
+    graph: {
+      nodes: [
+        { id: 'in', type: 'input' },
+        { id: 'out', type: 'output' }
+      ],
+      edges: [{ from: 'in', to: 'out' }]
+    }
+  });
+
+  await page.goto('/engine');
+  await page.getByTestId('import-flow').locator('summary').click();
+  await page.getByLabel('flow document').fill(doc);
+  await page.getByTestId('import-submit').click();
+
+  // Import navigates straight into the new flow's builder.
+  await expect(page).toHaveURL(/\/engine\/[a-f0-9]+$/);
+
+  // Re-importing the same document is a no-op (no new version).
+  await page.goto('/engine');
+  await page.getByTestId('import-flow').locator('summary').click();
+  await page.getByLabel('flow document').fill(doc);
+  await page.getByTestId('import-submit').click();
+  await expect(page.getByText(/already at v1 — no change/)).toBeVisible();
+});
+
 test('renders a flow graph and runs a test decision', async ({ page, request }) => {
   const slug = uniqueSlug();
 

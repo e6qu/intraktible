@@ -49,6 +49,90 @@ func rawGet(t *testing.T, api *testutil.API, path string) (int, string) {
 	return resp.StatusCode, string(b)
 }
 
+func TestImportFlowOverHTTP(t *testing.T) {
+	api := startEngine(t)
+
+	v1 := map[string]any{
+		"slug": "iac",
+		"name": "Flow as Code",
+		"graph": map[string]any{
+			"nodes": []map[string]any{
+				{"id": "in", "type": "input"},
+				{"id": "out", "type": "output"},
+			},
+			"edges": []map[string]any{{"from": "in", "to": "out"}},
+		},
+	}
+
+	// First import creates the flow and publishes v1.
+	var imp struct {
+		FlowID    string `json:"flow_id"`
+		Version   int    `json:"version"`
+		Created   bool   `json:"created"`
+		Published bool   `json:"published"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows/import", v1, http.StatusCreated, &imp)
+	if !imp.Created || !imp.Published || imp.Version != 1 || imp.FlowID == "" {
+		t.Fatalf("first import: %+v", imp)
+	}
+	flowID := imp.FlowID
+
+	// Re-importing identical content is a no-op (200, nothing published) even
+	// back-to-back — the command folds the authoritative log, not the projection.
+	imp = struct {
+		FlowID    string `json:"flow_id"`
+		Version   int    `json:"version"`
+		Created   bool   `json:"created"`
+		Published bool   `json:"published"`
+	}{}
+	api.Request(t, http.MethodPost, "/v1/flows/import", v1, http.StatusOK, &imp)
+	if imp.Created || imp.Published || imp.Version != 1 || imp.FlowID != flowID {
+		t.Fatalf("idempotent re-import: %+v", imp)
+	}
+
+	// A changed graph under the same slug publishes v2 onto the same flow.
+	v2 := map[string]any{
+		"slug": "iac",
+		"graph": map[string]any{
+			"nodes": []map[string]any{
+				{"id": "in", "type": "input"},
+				{"id": "s", "type": "split", "name": "route"},
+				{"id": "out", "type": "output"},
+			},
+			"edges": []map[string]any{
+				{"from": "in", "to": "s"},
+				{"from": "s", "to": "out", "branch": "yes"},
+			},
+		},
+	}
+	api.Request(t, http.MethodPost, "/v1/flows/import", v2, http.StatusCreated, &imp)
+	if imp.Created || !imp.Published || imp.Version != 2 || imp.FlowID != flowID {
+		t.Fatalf("update import: %+v", imp)
+	}
+
+	// The flow ends up with both versions once the projection catches up.
+	if !testutil.Eventually(t, func() bool {
+		code, body := rawGet(t, api, "/v1/flows/"+flowID)
+		return code == http.StatusOK && strings.Contains(body, `"latest":2`)
+	}) {
+		t.Fatal("imported flow never reached latest version 2")
+	}
+
+	// An exported doc round-trips back through import unchanged (no-op).
+	code, raw := rawGet(t, api, "/v1/flows/"+flowID+"/export?format=json")
+	if code != http.StatusOK {
+		t.Fatalf("export for round-trip: %d\n%s", code, raw)
+	}
+	var fx export.FlowExport
+	if err := json.Unmarshal([]byte(raw), &fx); err != nil {
+		t.Fatalf("export not valid: %v", err)
+	}
+	api.Request(t, http.MethodPost, "/v1/flows/import", fx, http.StatusOK, &imp)
+	if imp.Published {
+		t.Fatalf("re-importing an export of the latest version should be a no-op: %+v", imp)
+	}
+}
+
 func TestExportFlowOverHTTP(t *testing.T) {
 	api := startEngine(t)
 	var created struct {

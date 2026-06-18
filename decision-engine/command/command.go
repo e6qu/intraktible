@@ -43,8 +43,9 @@ func NewHandler(log eventlog.Log) *Handler {
 // flowAgg is the command-side aggregate of one flow: its slug and highest
 // published version, folded from the log.
 type flowAgg struct {
-	slug   string
-	latest int
+	slug       string
+	latest     int
+	latestEtag string
 }
 
 // CreateFlow validates the command, ensures the slug is unique for the tenant,
@@ -119,6 +120,84 @@ func (h *Handler) PublishVersion(ctx context.Context, id identity.Identity, cmd 
 		return 0, "", eventlog.Envelope{}, err
 	}
 	return version, etag, e, nil
+}
+
+// ImportResult reports what an ImportFlow did: the (possibly new) flow id, the
+// resulting latest version, and whether a flow/version was actually written.
+type ImportResult struct {
+	FlowID    string
+	Version   int
+	Etag      string
+	Created   bool
+	Published bool
+	Event     eventlog.Envelope
+}
+
+// ImportFlow upserts a flow from an exported document: it creates the flow when
+// the slug is new, then publishes the graph as a new version — unless the
+// flow's current latest version already carries this exact content, which makes
+// a re-import a no-op. It folds the authoritative log (not the read-side
+// projection) under the write lock, so it is safe to run back-to-back from CI.
+func (h *Handler) ImportFlow(ctx context.Context, id identity.Identity, cmd domain.ImportFlow) (ImportResult, error) {
+	if err := id.Valid(); err != nil {
+		return ImportResult{}, err
+	}
+	if err := cmd.Validate(); err != nil {
+		return ImportResult{}, err
+	}
+	etag, err := domain.Etag(cmd.Graph, cmd.InputSchema)
+	if err != nil {
+		return ImportResult{}, err
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	byID, bySlug, err := h.foldTenant(ctx, id)
+	if err != nil {
+		return ImportResult{}, err
+	}
+
+	created := false
+	flowID, exists := bySlug[cmd.Slug]
+	if exists {
+		if agg := byID[flowID]; agg != nil && agg.latest > 0 && agg.latestEtag == etag {
+			return ImportResult{FlowID: flowID, Version: agg.latest, Etag: etag}, nil
+		}
+	} else {
+		flowID = h.newID()
+		name := cmd.Name
+		if name == "" {
+			name = cmd.Slug
+		}
+		payload, err := json.Marshal(events.FlowCreated{FlowID: flowID, Slug: cmd.Slug, Name: name})
+		if err != nil {
+			return ImportResult{}, fmt.Errorf("decision-engine: marshal created: %w", err)
+		}
+		if _, err := h.appendFlowEvent(ctx, id, events.TypeFlowCreated, payload); err != nil {
+			return ImportResult{}, err
+		}
+		created = true
+	}
+
+	version := 1
+	if agg := byID[flowID]; agg != nil {
+		version = agg.latest + 1
+	}
+	payload, err := json.Marshal(events.FlowVersionPublished{
+		FlowID:      flowID,
+		Version:     version,
+		Etag:        etag,
+		Graph:       cmd.Graph,
+		InputSchema: cmd.InputSchema,
+	})
+	if err != nil {
+		return ImportResult{}, fmt.Errorf("decision-engine: marshal published: %w", err)
+	}
+	e, err := h.appendFlowEvent(ctx, id, events.TypeFlowVersionPublished, payload)
+	if err != nil {
+		return ImportResult{}, err
+	}
+	return ImportResult{FlowID: flowID, Version: version, Etag: etag, Created: created, Published: true, Event: e}, nil
 }
 
 // Deploy makes a version (and optional challenger) live in an environment. It
@@ -372,6 +451,7 @@ func (h *Handler) foldTenant(ctx context.Context, id identity.Identity) (map[str
 			}
 			if a, ok := byID[p.FlowID]; ok && p.Version > a.latest {
 				a.latest = p.Version
+				a.latestEtag = p.Etag
 			}
 		}
 	}

@@ -9,6 +9,7 @@ import {
   decide,
   publishVersion,
   exportFlow,
+  importFlow,
   exportDecision,
   listDecisions,
   getDecision,
@@ -93,6 +94,35 @@ describe('export', () => {
 
   it('throws loudly on a non-2xx export', async () => {
     await expect(exportFlow('k', 'f1', 'mermaid', textFetcher(404, ''))).rejects.toThrow(/404/);
+  });
+
+  it('importFlow posts the document and returns the result', async () => {
+    const fetcher = fetcherReturning(201, {
+      flow_id: 'f9',
+      slug: 'iac',
+      version: 2,
+      etag: 'e',
+      created: false,
+      published: true
+    });
+    const doc = { slug: 'iac', name: 'IaC', graph: { nodes: [], edges: [] } };
+    const out = await importFlow('k', doc, fetcher);
+    expect(out).toMatchObject({ flow_id: 'f9', version: 2, published: true });
+    const [url, init] = fetcher.mock.calls[0];
+    expect(url).toBe('/v1/flows/import');
+    expect(init?.method).toBe('POST');
+    expect(JSON.parse(init?.body as string)).toEqual(doc);
+  });
+
+  it('importFlow accepts a raw JSON string body', async () => {
+    const fetcher = fetcherReturning(200, {
+      flow_id: 'f9',
+      slug: 'iac',
+      version: 1,
+      published: false
+    });
+    await importFlow('k', '{"slug":"iac"}', fetcher);
+    expect(fetcher.mock.calls[0][1]?.body).toBe('{"slug":"iac"}');
   });
 });
 

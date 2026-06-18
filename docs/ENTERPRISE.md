@@ -176,7 +176,13 @@ enterprise buyers; **P2** = differentiators / scale.
 ### Developer & platform experience  (status: REST + CLI + embedded UI)
 - **P1 — Client SDKs** (the `/decide` call is the product's hot path; a typed SDK
   matters) and a **stable, versioned API** contract (OpenAPI).
-- **P1 — Flow-as-code / IaC** (export+import flows, GitOps, CI promotion).
+- **P1 — Flow-as-code / IaC — ✅ first pass done.** Flows export as a JSON document
+  (`GET …/export?format=json`) and **import** back via `POST /v1/flows/import`: the flow
+  is created when its slug is new, otherwise the graph is published as a new version.
+  Import folds the authoritative log (not the read projection), so back-to-back/CI runs
+  are safe, and re-importing identical content is a no-op (`published:false`, 200) —
+  idempotent GitOps. Surfaced as an **Import flow (as code)** panel (paste or upload JSON)
+  on the engine list. *Remaining: bundle/multi-flow import and a CLI/GitOps action.*
 
 ### Security  (status: API key + SameSite session, gosec-clean, SSRF guard)
 - **P0 — Encryption at rest** for the durable stores + **secrets management**.

@@ -44,6 +44,7 @@ func New(cmd *command.Handler, decide *command.DecideHandler, pa *preapproval.Ha
 // Routes registers the flow-management, decide, and decision-history endpoints.
 func (s *Service) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/flows", s.create)
+	mux.HandleFunc("POST /v1/flows/import", s.importFlow)
 	mux.HandleFunc("GET /v1/flows", s.list)
 	mux.HandleFunc("GET /v1/flows/{flow_id}", s.get)
 	mux.HandleFunc("GET /v1/flows/{flow_id}/metrics", s.metrics)
@@ -86,6 +87,56 @@ func (s *Service) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusCreated, map[string]any{"flow_id": flowID, "event_id": e.ID, "seq": e.Seq})
+}
+
+// importRequest is the flow-as-code document — the same shape `…/export`
+// produces. Version and Etag are accepted so an exported doc round-trips, but
+// they are advisory: the import always publishes onto the live latest version.
+type importRequest struct {
+	Slug        string          `json:"slug"`
+	Name        string          `json:"name"`
+	Graph       events.Graph    `json:"graph"`
+	InputSchema json.RawMessage `json:"input_schema,omitempty"`
+	Version     int             `json:"version,omitempty"`
+	Etag        string          `json:"etag,omitempty"`
+}
+
+// importFlow upserts a flow from an exported document via the command layer,
+// which folds the authoritative log: it reuses the flow with the given slug (or
+// creates it) and publishes the graph as a new version. Re-importing identical
+// content is a no-op (the live latest version already matches), so it is safe to
+// run from CI / GitOps on every push. A 200 means no-op, a 201 means it wrote.
+func (s *Service) importFlow(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	var req importRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	res, err := s.cmd.ImportFlow(r.Context(), id, domain.ImportFlow{
+		Slug:        req.Slug,
+		Name:        req.Name,
+		Graph:       req.Graph,
+		InputSchema: req.InputSchema,
+	})
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	body := map[string]any{
+		"flow_id": res.FlowID, "slug": req.Slug, "version": res.Version,
+		"etag": res.Etag, "created": res.Created, "published": res.Published,
+	}
+	if !res.Published {
+		httpx.JSON(w, http.StatusOK, body)
+		return
+	}
+	body["event_id"] = res.Event.ID
+	body["seq"] = res.Event.Seq
+	httpx.JSON(w, http.StatusCreated, body)
 }
 
 type publishRequest struct {
