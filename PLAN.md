@@ -360,6 +360,12 @@ per-env report (total / matched / diverged / errored + sample diverging decision
 measure how often promoting a candidate would change the outcome before doing it. Surfaced as a **Shadow
 deploys** panel in the builder; complements the A/B challenger (which serves a traffic share live).
 
+**API contract (post-MVP, developer experience).** `platform/openapi` embeds an **OpenAPI 3.1** document
+for the public data-plane (decide + batch, decision history, flow list/create/read, flow-as-code import,
+`/v1/me`) and serves it unauthenticated at `GET /openapi.json`, with a dependency-free reference page at
+`GET /docs`. Integrators point codegen/Swagger-UI/Postman at the live instance's own contract; a typed
+client SDK off the spec is the next step.
+
 **Comment threads (post-MVP, governance).** `platform/comments` is a general discussion capability — a
 durable, chronological thread keyed by `(subject_type, subject_id)` (`GET/POST /v1/comments/{type}/{id}`),
 reusable `CommentThread.svelte` component — wired onto the items that get approved/rejected/promoted

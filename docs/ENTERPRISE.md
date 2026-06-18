@@ -188,8 +188,14 @@ enterprise buyers; **P2** = differentiators / scale.
 - **P2 — Horizontal scale & multi-region.**
 
 ### Developer & platform experience  (status: REST + CLI + embedded UI)
-- **P1 — Client SDKs** (the `/decide` call is the product's hot path; a typed SDK
-  matters) and a **stable, versioned API** contract (OpenAPI).
+- **P1 — Stable, versioned API contract — ✅ first pass done.** The binary serves
+  its own **OpenAPI 3.1** document at `GET /openapi.json` (unauthenticated, so
+  codegen/Swagger-UI/Postman can fetch it) plus a dependency-free reference page at
+  `GET /docs`. The document (`platform/openapi`, embedded) covers the public
+  data-plane surface — decide + batch-decide, decision history reads, flow
+  list/create/read, flow-as-code import, and `/v1/me` — with an `X-Api-Key` security
+  scheme. *Remaining: a generated/typed **client SDK** off this spec, and widening
+  coverage to the admin/management endpoints.*
 - **P1 — Flow-as-code / IaC — ✅ first pass done.** Flows export as a JSON document
   (`GET …/export?format=json`) and **import** back via `POST /v1/flows/import`: the flow
   is created when its slug is new, otherwise the graph is published as a new version.

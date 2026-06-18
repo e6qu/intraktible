@@ -59,6 +59,7 @@ import (
 	"github.com/e6qu/intraktible/platform/httpx"
 	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/notifications"
+	"github.com/e6qu/intraktible/platform/openapi"
 	"github.com/e6qu/intraktible/platform/privacy"
 	"github.com/e6qu/intraktible/platform/projection"
 	"github.com/e6qu/intraktible/platform/store"
@@ -281,6 +282,10 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 			go monitorScheduler.Run(ctx, d)
 		}
 	}
+
+	// The API contract (OpenAPI 3.1) + a reference page, served publicly so
+	// integrators and code generators can fetch it without a key.
+	openapi.Routes(root)
 
 	// /healthz reflects projection health: degraded (503) if a live apply error
 	// stopped the consumer, so an orchestrator does not keep routing to a node
