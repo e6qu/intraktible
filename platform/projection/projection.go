@@ -265,3 +265,12 @@ func (r *Runtime) Err() error {
 	defer r.mu.Unlock()
 	return r.err
 }
+
+// Applied returns the highest event Seq applied to the store this run. Tests use
+// it to wait for read-after-write consistency; live reads are eventually
+// consistent by design (bounded by bus/poll lag).
+func (r *Runtime) Applied() uint64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.applied
+}
