@@ -67,7 +67,8 @@ func OpenPostgresLog(ctx context.Context, dsn string, poll time.Duration) (*Post
 		pool.Close()
 		return nil, err
 	}
-	l.d = startDelivery(l.Read, poll, head)
+	l.d = newDelivery(l.Read, poll, head)
+	l.d.start()
 	// Start the LISTEN fast path. If it can't start, delivery still works via the
 	// poller — so a listener failure degrades latency, not correctness.
 	if err := l.startListener(ctx, dsn); err != nil {

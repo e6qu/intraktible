@@ -12,6 +12,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -137,12 +138,18 @@ func (s *Store) Delete(ctx context.Context, org, workspace, id string) error {
 	return s.store.Delete(ctx, collection, key(org, workspace, id))
 }
 
-// Allowed reports whether a login for email may proceed: it blocks only a user
-// that exists and is inactive. An unprovisioned user is allowed (SCIM gates
-// deprovisioning, not first login), so enabling SCIM never locks out new users.
+// Allowed reports whether a login for email may proceed: an unprovisioned user
+// is allowed (SCIM gates deprovisioning, not first login, so enabling it never
+// locks out new users), an active provisioned user is allowed, and a deactivated
+// one is blocked. A lookup error fails CLOSED (deny + log) — a transient store
+// fault must never let a deprovisioned user back in.
 func (s *Store) Allowed(ctx context.Context, org, workspace, email string) bool {
 	u, ok, err := s.byUserName(ctx, org, workspace, email)
-	if err != nil || !ok {
+	if err != nil {
+		slog.Error("scim: deprovisioning gate lookup failed; denying login", "email", email, "err", err)
+		return false
+	}
+	if !ok {
 		return true
 	}
 	return u.Active

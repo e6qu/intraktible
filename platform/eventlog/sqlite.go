@@ -74,7 +74,8 @@ func OpenSQLiteLog(dir string, poll time.Duration) (*SQLiteLog, error) {
 	}
 	// Seed at the current head so the poller delivers only events appended from now
 	// on (the runtime rebuilds history via Read; the bus is for live updates).
-	l.d = startDelivery(l.Read, poll, head)
+	l.d = newDelivery(l.Read, poll, head)
+	l.d.start()
 	return l, nil
 }
 

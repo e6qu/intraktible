@@ -41,14 +41,19 @@
     }
   }
 
+  let creating = $state(false);
   async function create() {
+    if (creating) return; // guard against double-submit (Enter + click) → duplicate cases
     error = '';
+    creating = true;
     try {
       await requestReview(key, { company_name: company, case_type: caseType, sla_days: slaDays });
       company = '';
       await load();
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
+    } finally {
+      creating = false;
     }
   }
 
@@ -98,7 +103,7 @@
     <input bind:value={company} placeholder="company name" aria-label="company name" />
     <input bind:value={caseType} placeholder="case type" aria-label="case type" />
     <input type="number" bind:value={slaDays} aria-label="sla days" min="0" style="width:5rem" />
-    <button type="submit">Open case</button>
+    <button type="submit" disabled={creating}>{creating ? 'Opening…' : 'Open case'}</button>
   </form>
 
   {#if error}<p class="err">{error}</p>{/if}

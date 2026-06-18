@@ -208,23 +208,36 @@ func (h *Handler) onExisting(ctx context.Context, id identity.Identity, caseID s
 	return h.append(ctx, id, typ, b)
 }
 
-// caseExists reports whether the tenant has opened the given case.
+// caseExists reports whether the tenant has opened the given case — by either
+// path: a manual ReviewRequested or a decision-escalated ManualReviewRequested.
+// (Matching only the manual path left escalated cases un-actionable: visible in
+// the queue but rejected as "unknown" by assign/status/note.)
 func (h *Handler) caseExists(ctx context.Context, id identity.Identity, caseID string) (bool, error) {
 	evs, err := h.log.Read(ctx, 0)
 	if err != nil {
 		return false, fmt.Errorf("case-manager: read log: %w", err)
 	}
 	for _, e := range evs {
-		if e.Stream != events.StreamCases || e.Type != events.TypeReviewRequested ||
-			e.Org != id.Org || e.Workspace != id.Workspace {
+		if e.Org != id.Org || e.Workspace != id.Workspace {
 			continue
 		}
-		var p events.ReviewRequested
-		if err := json.Unmarshal(e.Payload, &p); err != nil {
-			return false, fmt.Errorf("case-manager: decode requested seq %d: %w", e.Seq, err)
-		}
-		if p.CaseID == caseID {
-			return true, nil
+		switch e.Type {
+		case events.TypeReviewRequested:
+			var p events.ReviewRequested
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				return false, fmt.Errorf("case-manager: decode requested seq %d: %w", e.Seq, err)
+			}
+			if p.CaseID == caseID {
+				return true, nil
+			}
+		case decisionevents.TypeManualReviewRequested:
+			var p decisionevents.ManualReviewRequested
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				return false, fmt.Errorf("case-manager: decode escalated seq %d: %w", e.Seq, err)
+			}
+			if p.CaseID == caseID {
+				return true, nil
+			}
 		}
 	}
 	return false, nil

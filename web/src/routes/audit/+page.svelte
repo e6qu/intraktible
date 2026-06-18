@@ -80,16 +80,25 @@
   let maskFields = $state('');
   let maskSaving = $state(false);
   let maskNote = $state('');
+  // Gate Save on a successful load: without this, a failed/never-completed load
+  // leaves the field empty, and saving would silently wipe the existing config.
+  let privacyLoaded = $state(false);
   async function loadPrivacy() {
     try {
       const cfg = await getPrivacy(key);
       maskFields = (cfg.fields ?? []).join(', ');
       maskNote = cfg.updated_by ? `last set by ${cfg.updated_by}` : '';
+      privacyLoaded = true;
     } catch {
       /* non-admins simply do not see the editor populated */
+      privacyLoaded = false;
     }
   }
   async function savePrivacy() {
+    if (!privacyLoaded) {
+      toast.error('Masking config has not loaded — refusing to overwrite it');
+      return;
+    }
     maskSaving = true;
     try {
       const fields = maskFields
@@ -228,7 +237,11 @@
         aria-label="masked fields"
         placeholder="ssn, dob, email, phone"
       />
-      <button onclick={savePrivacy} disabled={maskSaving} data-testid="save-masking">
+      <button
+        onclick={savePrivacy}
+        disabled={maskSaving || !privacyLoaded}
+        data-testid="save-masking"
+      >
         {maskSaving ? 'Saving…' : 'Save'}
       </button>
     </div>

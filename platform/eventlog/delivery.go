@@ -34,20 +34,26 @@ type delivery struct {
 	lastPub uint64
 }
 
-// startDelivery begins polling read for events with Seq > head, publishing each
-// to the bus. Seeding at head means only events appended from now on are
-// delivered live (history is replayed via Read).
-func startDelivery(read func(ctx context.Context, fromSeq uint64) ([]Envelope, error), poll time.Duration, head uint64) *delivery {
+// newDelivery constructs a poller seeded at head (only events appended from now
+// on are delivered live; history is replayed via Read). It does NOT start the
+// goroutine — the caller must store the *delivery on its log and then call start,
+// so the poller never reads a half-initialised log (the goroutine calls back into
+// the log's Read, which dereferences the very field being assigned).
+func newDelivery(read func(ctx context.Context, fromSeq uint64) ([]Envelope, error), poll time.Duration, head uint64) *delivery {
 	if poll <= 0 {
 		poll = DefaultPollInterval
 	}
-	d := &delivery{
+	return &delivery{
 		bus: newBus(), poll: poll, read: read,
 		stop: make(chan struct{}), wake: make(chan struct{}, 1), lastPub: head,
 	}
+}
+
+// start launches the polling goroutine. Call it only after the *delivery is
+// published on the owning log (see newDelivery).
+func (d *delivery) start() {
 	d.wg.Add(1)
 	go d.loop()
-	return d
 }
 
 // subscribe hands out a live event channel (events appended after the call).

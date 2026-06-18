@@ -503,12 +503,22 @@ func (s *Service) checkPromotionGates(ctx context.Context, id identity.Identity,
 		advice = fmt.Sprintf("fix them; force is disabled for %s", target)
 	}
 	if stage.RequireNoFiringMonitors {
-		if firing := s.firingMonitors(ctx, id, flowID); len(firing) > 0 {
+		// Fail closed: if the monitor state can't be read, block rather than
+		// promote a flow whose health is unknown.
+		firing, err := s.firingMonitors(ctx, id, flowID)
+		if err != nil {
+			return fmt.Errorf("promote blocked: cannot evaluate monitors: %w", err)
+		}
+		if len(firing) > 0 {
 			return fmt.Errorf("promote blocked: monitors firing (%s) — %s", strings.Join(firing, ", "), advice)
 		}
 	}
 	if stage.RequireAssertions {
-		if rep, err := assertions.RunForFlow(ctx, s.store, id, flowID, version); err == nil && rep.Failed > 0 {
+		rep, err := assertions.RunForFlow(ctx, s.store, id, flowID, version)
+		if err != nil {
+			return fmt.Errorf("promote blocked: cannot run assertions: %w", err)
+		}
+		if rep.Failed > 0 {
 			return fmt.Errorf("promote blocked: %d/%d assertions failing on v%d — %s", rep.Failed, rep.Total, version, advice)
 		}
 	}
@@ -517,14 +527,17 @@ func (s *Service) checkPromotionGates(ctx context.Context, id identity.Identity,
 
 // firingMonitors returns the metrics of the flow's monitors that are currently
 // firing — the promotion gate's input.
-func (s *Service) firingMonitors(ctx context.Context, id identity.Identity, flowID string) []string {
+func (s *Service) firingMonitors(ctx context.Context, id identity.Identity, flowID string) ([]string, error) {
 	rules, err := monitor.ListByFlow(ctx, s.store, id, flowID)
-	if err != nil || len(rules) == 0 {
-		return nil
+	if err != nil {
+		return nil, err
+	}
+	if len(rules) == 0 {
+		return nil, nil
 	}
 	snap, err := monitor.LoadSnapshot(ctx, s.store, id, flowID)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	var firing []string
 	for _, m := range rules {
@@ -532,7 +545,7 @@ func (s *Service) firingMonitors(ctx context.Context, id identity.Identity, flow
 			firing = append(firing, m.Metric)
 		}
 	}
-	return firing
+	return firing, nil
 }
 
 // requestDeployment proposes a deployment for review (maker-checker maker side).
@@ -648,10 +661,15 @@ type batchRequest struct {
 	Dataset    []map[string]any `json:"dataset"`
 	EntityType string           `json:"entity_type,omitempty"`
 	EntityID   string           `json:"entity_id,omitempty"`
+	// EntityKey, when set, reads each row's entity id from that input field so a
+	// multi-entity batch records (and seals PII) under the correct per-row subject
+	// instead of misattributing every row to a single EntityID.
+	EntityKey string `json:"entity_key,omitempty"`
 }
 
 type batchResult struct {
 	Index       int            `json:"index"`
+	EntityID    string         `json:"entity_id,omitempty"`
 	DecisionID  string         `json:"decision_id,omitempty"`
 	Status      string         `json:"status"` // completed | failed | rejected
 	Data        map[string]any `json:"data,omitempty"`
@@ -692,13 +710,23 @@ func (s *Service) decideBatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	slug, env := r.PathValue("slug"), r.PathValue("env")
-	ref := command.EntityRef{Type: req.EntityType, ID: req.EntityID}
 	resp := batchResponse{Total: len(req.Dataset), Results: make([]batchResult, 0, len(req.Dataset))}
 	for i, input := range req.Dataset {
+		// Per-row entity id when entity_key is set, else the batch-level EntityID.
+		entityID := req.EntityID
+		if req.EntityKey != "" {
+			entityID = stringField(input, req.EntityKey)
+			if entityID == "" {
+				resp.Rejected++
+				resp.Results = append(resp.Results, batchResult{Index: i, Status: "rejected", Error: "missing entity id field " + req.EntityKey})
+				continue
+			}
+		}
+		ref := command.EntityRef{Type: req.EntityType, ID: entityID}
 		res, err := s.decide.Decide(r.Context(), id, slug, env, input, ref)
 		if err != nil {
 			resp.Rejected++
-			resp.Results = append(resp.Results, batchResult{Index: i, Status: "rejected", Error: err.Error()})
+			resp.Results = append(resp.Results, batchResult{Index: i, EntityID: entityID, Status: "rejected", Error: err.Error()})
 			continue
 		}
 		switch res.Status {
@@ -708,7 +736,7 @@ func (s *Service) decideBatch(w http.ResponseWriter, r *http.Request) {
 			resp.Failed++
 		}
 		resp.Results = append(resp.Results, batchResult{
-			Index: i, DecisionID: res.DecisionID, Status: res.Status, Data: res.Output,
+			Index: i, EntityID: entityID, DecisionID: res.DecisionID, Status: res.Status, Data: res.Output,
 			Disposition: res.Disposition, Error: res.Error,
 		})
 	}
@@ -866,7 +894,10 @@ func (s *Service) listDecisions(w http.ResponseWriter, r *http.Request) {
 	}
 	recs, err := history.List(r.Context(), s.store, id)
 	if err == nil {
-		if fields, ferr := privacy.Fields(r.Context(), s.store, id); ferr == nil {
+		// Fail closed: if the masking config can't be read, surface the error
+		// rather than serving records that should have been masked.
+		var fields map[string]bool
+		if fields, err = privacy.Fields(r.Context(), s.store, id); err == nil {
 			for i := range recs {
 				recs[i] = maskRecord(recs[i], fields)
 			}
@@ -882,30 +913,37 @@ func (s *Service) getDecision(w http.ResponseWriter, r *http.Request) {
 	}
 	rec, found, err := history.Read(r.Context(), s.store, id, r.PathValue("decision_id"))
 	if found && err == nil {
-		rec = s.maskRecord(r.Context(), id, rec)
+		rec, err = s.maskRecord(r.Context(), id, rec)
 	}
 	httpx.WriteOne(w, rec, found, err, "decision not found")
 }
 
 // maskRecord masks the configured sensitive fields in a decision record's input,
 // output, and per-node outputs at the read boundary (the raw event log is intact).
-func (s *Service) maskRecord(ctx context.Context, id identity.Identity, rec history.Record) history.Record {
+func (s *Service) maskRecord(ctx context.Context, id identity.Identity, rec history.Record) (history.Record, error) {
 	// Unseal crypto-shredded PII first (or surface "[erased]" once the subject is
 	// erased), then apply read-boundary masking.
 	if s.eraser != nil && rec.EntityType != "" && rec.EntityID != "" {
 		subject := rec.EntityType + "/" + rec.EntityID
-		if d, err := s.eraser.OpenFields(ctx, id, subject, rec.Data); err == nil {
-			rec.Data = d
+		// An erased subject yields "[erased]" inside OpenFields (not an error), so a
+		// non-nil error is a genuine vault/decrypt fault — fail loudly.
+		d, err := s.eraser.OpenFields(ctx, id, subject, rec.Data)
+		if err != nil {
+			return history.Record{}, fmt.Errorf("decision-engine: unseal data: %w", err)
 		}
-		if o, err := s.eraser.OpenFields(ctx, id, subject, rec.Output); err == nil {
-			rec.Output = o
+		rec.Data = d
+		o, err := s.eraser.OpenFields(ctx, id, subject, rec.Output)
+		if err != nil {
+			return history.Record{}, fmt.Errorf("decision-engine: unseal output: %w", err)
 		}
+		rec.Output = o
 	}
+	// Fail closed: a masking-config read error must block the record, not serve it raw.
 	fields, err := privacy.Fields(ctx, s.store, id)
 	if err != nil {
-		return rec
+		return history.Record{}, fmt.Errorf("decision-engine: read privacy config: %w", err)
 	}
-	return maskRecord(rec, fields)
+	return maskRecord(rec, fields), nil
 }
 
 func maskRecord(rec history.Record, fields map[string]bool) history.Record {

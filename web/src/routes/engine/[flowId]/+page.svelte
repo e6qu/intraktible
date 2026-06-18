@@ -1,6 +1,5 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
-  import { onMount } from 'svelte';
   import { page } from '$app/stores';
   import {
     SvelteFlow,
@@ -95,6 +94,7 @@
     'connect',
     'ai',
     'reason',
+    'manual_review',
     'output'
   ];
   const ENVIRONMENTS = ['sandbox', 'staging', 'production'];
@@ -163,7 +163,8 @@
   let entityID = $state('');
   let result = $state('');
 
-  const flowId = $page.params.flowId ?? '';
+  // Derive from the route param so navigating between sibling flows reloads.
+  const flowId = $derived($page.params.flowId ?? '');
   const selected = $derived(editNodes.find((n) => n.id === selectedId) ?? null);
   // Existing lane names, for the lane-input autocomplete.
   const laneNames = $derived([
@@ -186,6 +187,17 @@
       return p ? { ...n, pos: { x: p.x, y: p.y } } : n;
     });
   }
+  // cardSummary is nodeSummary for most nodes, but a split's branch count lives in
+  // its outgoing edges (the builder models branches as labelled edges, not a config
+  // key), so it is computed here rather than from the node config.
+  function cardSummary(n: { id: string; type: string; config: string }): string {
+    if (n.type === 'split') {
+      const count = editEdges.filter((e) => e.from === n.id).length;
+      return count ? `${count} branch${count === 1 ? '' : 'es'}` : 'branch';
+    }
+    return nodeSummary(n.type, n.config);
+  }
+
   function syncCanvas() {
     foldPositions();
     const { pos: auto } = layoutLanes(editNodes, editEdges);
@@ -197,7 +209,7 @@
       data: {
         type: n.type,
         name: n.name || n.id,
-        summary: nodeSummary(n.type, n.config),
+        summary: cardSummary(n),
         telemetry: nodeTelemetry.get(n.id)
       }
     }));
@@ -665,14 +677,23 @@
   // recorded decision's node trace (retries while the history projection catches up).
   async function loadTelemetry(decisionId: string) {
     if (!decisionId) return;
-    try {
-      const d = await getDecision(key, decisionId);
-      const t = new Map<string, string>();
-      for (const n of d.nodes ?? []) t.set(n.node_id, telemetrySummary(n.output));
-      nodeTelemetry = t;
-      syncCanvas();
-    } catch {
-      /* telemetry is best-effort; the run result still shows */
+    // The history projection lags the just-appended decision, so retry a few times
+    // until its node trace is available (best-effort; the run result still shows).
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        const d = await getDecision(key, decisionId);
+        const nodes = d.nodes ?? [];
+        if (nodes.length > 0) {
+          const t = new Map<string, string>();
+          for (const n of nodes) t.set(n.node_id, telemetrySummary(n.output));
+          nodeTelemetry = t;
+          syncCanvas();
+          return;
+        }
+      } catch {
+        /* not available yet — retry */
+      }
+      await new Promise((r) => setTimeout(r, 200));
     }
   }
   async function downloadTrace() {
@@ -1184,7 +1205,8 @@
     }
   }
 
-  onMount(() => {
+  $effect(() => {
+    void flowId; // reload every panel when the route flow changes (covers mount + sibling nav)
     void load();
     void loadMetrics();
     void loadMonitors();
@@ -2192,8 +2214,7 @@
     <h2>Test run</h2>
     <div class="row">
       <select bind:value={env} aria-label="environment">
-        <option value="sandbox">sandbox</option>
-        <option value="production">production</option>
+        {#each ENVIRONMENTS as e (e)}<option value={e}>{e}</option>{/each}
       </select>
       <button onclick={run} disabled={!flow || running}>{running ? 'Running…' : 'Run'}</button>
     </div>

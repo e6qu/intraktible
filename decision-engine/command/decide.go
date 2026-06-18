@@ -475,9 +475,20 @@ func (h *DecideHandler) honorPreApproval(ctx context.Context, id identity.Identi
 	if err != nil {
 		return DecideResult{}, false, fmt.Errorf("decision-engine: marshal data: %w", err)
 	}
+	// Seal recorded PII under the entity subject, same as the normal decide path —
+	// the fast path always has an entity ref, so skipping it would leave
+	// pre-approved entities' decision PII un-erasable.
+	dataJSON, err = h.sealPII(ctx, id, ref, dataJSON)
+	if err != nil {
+		return DecideResult{}, false, err
+	}
 	outJSON, err := json.Marshal(terms)
 	if err != nil {
 		return DecideResult{}, false, fmt.Errorf("decision-engine: marshal terms: %w", err)
+	}
+	outJSON, err = h.sealPII(ctx, id, ref, outJSON)
+	if err != nil {
+		return DecideResult{}, false, err
 	}
 	decisionID := h.newID()
 	if err := h.emit(ctx, id, events.TypeDecisionStarted, events.DecisionStarted{

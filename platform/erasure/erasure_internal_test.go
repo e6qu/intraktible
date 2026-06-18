@@ -108,6 +108,62 @@ func TestSealAndOpenFields(t *testing.T) {
 	}
 }
 
+// TestSealFieldsNestedAndCaseInsensitive guards the read/write symmetry with
+// privacy.Mask: sealing must reach nested objects and arrays and match field
+// names case-insensitively, or PII the read boundary masks would stay in the
+// clear in the log and survive erasure.
+func TestSealFieldsNestedAndCaseInsensitive(t *testing.T) {
+	ctx := context.Background()
+	v := NewVault(store.NewMemory())
+	id := identity.Identity{Org: "o", Workspace: "w", Actor: "admin"}
+	doc := []byte(`{"customer":{"SSN":"123-45-6789","name":"ada"},"contacts":[{"email":"a@b.c"},{"email":"d@e.f"}],"amount":100}`)
+	fields := map[string]bool{"ssn": true, "EMAIL": true}
+
+	sealed, err := v.SealFields(ctx, id, "ada", doc, fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(sealed)
+	if strings.Contains(got, "123-45-6789") || strings.Contains(got, "a@b.c") || strings.Contains(got, "d@e.f") {
+		t.Fatalf("nested/case-mismatched PII left in clear: %s", got)
+	}
+	if !strings.Contains(got, "ada") || !strings.Contains(got, "100") {
+		t.Fatalf("non-PII fields should survive: %s", got)
+	}
+
+	opened, err := v.OpenFields(ctx, id, "ada", sealed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(opened, &m); err != nil {
+		t.Fatal(err)
+	}
+	cust := m["customer"].(map[string]any)
+	if cust["SSN"] != "123-45-6789" || cust["name"] != "ada" {
+		t.Fatalf("nested open mismatch: %s", opened)
+	}
+	contacts := m["contacts"].([]any)
+	if contacts[0].(map[string]any)["email"] != "a@b.c" || contacts[1].(map[string]any)["email"] != "d@e.f" {
+		t.Fatalf("array open mismatch: %s", opened)
+	}
+
+	if err := v.Erase(ctx, id, "ada"); err != nil {
+		t.Fatal(err)
+	}
+	opened, err = v.OpenFields(ctx, id, "ada", sealed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = json.Unmarshal(opened, &m)
+	if m["customer"].(map[string]any)["SSN"] != "[erased]" {
+		t.Fatalf("nested erase mismatch: %s", opened)
+	}
+	if m["contacts"].([]any)[0].(map[string]any)["email"] != "[erased]" {
+		t.Fatalf("array erase mismatch: %s", opened)
+	}
+}
+
 func TestVaultRetentionSweep(t *testing.T) {
 	ctx := context.Background()
 	v := NewVault(store.NewMemory())

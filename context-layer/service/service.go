@@ -161,10 +161,16 @@ func (s *Service) listEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	recs, err := entities.ListEvents(r.Context(), s.store, id, r.PathValue("type"), r.PathValue("id"))
 	if err == nil && s.eraser != nil {
+		// Unseal crypto-shredded PII. An erased subject yields "[erased]" inside
+		// OpenFields (not an error), so a non-nil error is a genuine vault/decrypt
+		// fault — surface it rather than serving the raw sealed envelope.
 		for i := range recs {
-			if opened, oerr := s.eraser.OpenFields(r.Context(), id, eventSubject(recs[i].EntityType, recs[i].EntityID), recs[i].Data); oerr == nil {
-				recs[i].Data = opened
+			opened, oerr := s.eraser.OpenFields(r.Context(), id, eventSubject(recs[i].EntityType, recs[i].EntityID), recs[i].Data)
+			if oerr != nil {
+				err = oerr
+				break
 			}
+			recs[i].Data = opened
 		}
 	}
 	httpx.WriteList(w, "events", recs, err)

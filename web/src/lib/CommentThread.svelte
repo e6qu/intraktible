@@ -21,6 +21,7 @@
   let replyTo = $state(''); // comment_id being replied to ('' = top-level)
   let busy = $state(false);
   let error = $state('');
+  let loading = $state(true);
 
   // Top-level comments (no parent) and a parent_id → replies index. Replies are
   // only offered on top-level comments, so a single level of nesting is exact.
@@ -38,6 +39,8 @@
       comments = await listComments(key, subjectType, subjectId);
     } catch (e) {
       error = msg(e);
+    } finally {
+      loading = false;
     }
   }
   async function post() {
@@ -60,7 +63,9 @@
 <div class="thread" data-testid="comment-thread">
   <span class="label">{title}{comments.length ? ` (${comments.length})` : ''}</span>
   {#if error}<p class="err">{error}</p>{/if}
-  {#if topLevel.length > 0}
+  {#if loading}
+    <p class="muted empty">Loading…</p>
+  {:else if topLevel.length > 0}
     <ul>
       {#each topLevel as c (c.comment_id)}
         <li>

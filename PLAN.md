@@ -424,6 +424,24 @@ is deliberately exempt: an `.admin-surface` token set gives it one fixed, canoni
 for everyone. The Phase-0 hello slice moved off the landing to `/hello`; shared `EmptyState`/`Skeleton`
 primitives added designed empty and loading states across the list pages.
 
+**Correctness & security audit pass (post-MVP, hardening).** A codebase-wide audit fixed a real data
+**race** in the shared `eventlog` delivery poller (the SQLite/Postgres poller goroutine read the log's
+`delivery` field before the constructor published it — `startDelivery` is now `newDelivery`+`start()`,
+caught only under `-race`) and a batch of fail-open/fail-loudly gaps: promotion gates now block when
+monitor health can't be read; the pre-approval fast path seals PII like the normal decide path;
+`privacy.Fields` and the masking callers fail closed on a config-read error; **crypto-shredding** now
+recurses into nested objects/arrays and matches field names case-insensitively (mirroring `privacy.Mask`,
+so nested PII is actually sealed and erasable); decrypt/unseal failures surface instead of serving raw
+sealed envelopes; the monitor scheduler delivers **before** recording the alert (a failed delivery now
+retries rather than silencing the alert); `decideBatch` takes a per-row `entity_key` so a multi-entity
+batch records under the correct subject; audit CSV export defuses spreadsheet formula injection; and
+agent-manager run recovery/enqueue respects context cancellation. Frontend: leaked SSE/WebSocket cleanup
++ error surfacing on the agent page, double-load and stale-route-param fixes across detail pages, a
+double-submit guard on case creation, a privacy-config clobber guard on the Audit page, a
+stale-response race fix in the command palette, the `manual_review` node made creatable, and split-node
+card summaries computed from edges. Verified through the full strict gate (`-race` tests, lint/sast/
+deadcode/dupl, svelte-check/eslint/vitest).
+
 > Per project convention: at the **end of every phase**, update `PLAN.md` and `BUGS.md` in the same
 > PR as the phase's code.
 
