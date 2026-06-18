@@ -100,3 +100,50 @@ func TestPostgresLog(t *testing.T) {
 		t.Fatal("append after close should fail")
 	}
 }
+
+// TestPostgresLogNotifyFastPath proves the LISTEN/NOTIFY path delivers without
+// waiting for the poll: both logs use a 30s poll, so a sub-5s cross-node delivery
+// can only have come from a notification.
+func TestPostgresLogNotifyFastPath(t *testing.T) {
+	dsn := os.Getenv("INTRAKTIBLE_TEST_POSTGRES")
+	if dsn == "" {
+		t.Skip("set INTRAKTIBLE_TEST_POSTGRES (a pgx DSN) to run the Postgres log test")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `DROP TABLE IF EXISTS events`); err != nil {
+		t.Fatal(err)
+	}
+	pool.Close()
+
+	writer, err := eventlog.OpenPostgresLog(ctx, dsn, 30*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = writer.Close() }()
+	reader, err := eventlog.OpenPostgresLog(ctx, dsn, 30*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = reader.Close() }()
+
+	ch, cancel := reader.Subscribe()
+	defer cancel()
+
+	if _, err := writer.Append(ctx, eventlog.Envelope{
+		Org: "o", Workspace: "w", Actor: "a", Stream: "s", Type: "evt", Time: time.Unix(1, 0).UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case e := <-ch:
+		if e.Seq != 1 {
+			t.Fatalf("delivered seq %d, want 1", e.Seq)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("NOTIFY fast path did not deliver within 5s (poll interval is 30s)")
+	}
+}

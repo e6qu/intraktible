@@ -7,10 +7,16 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// pgNotifyChannel is the LISTEN/NOTIFY channel used to push "new events" hints
+// across nodes so live delivery does not wait out the poll interval.
+const pgNotifyChannel = "intraktible_events"
 
 // PostgresLog is a durable, append-only event log backed by PostgreSQL — the
 // networked backbone for true multi-node HA, where several intraktible processes
@@ -25,6 +31,13 @@ import (
 type PostgresLog struct {
 	pool *pgxpool.Pool
 	d    *delivery
+
+	// A dedicated connection LISTENs for cross-node "new events" notifications and
+	// pokes delivery; cancel/lwg stop it on Close. The poller runs regardless, so
+	// the listener is purely a latency optimization.
+	listen *pgx.Conn
+	cancel context.CancelFunc
+	lwg    sync.WaitGroup
 }
 
 // OpenPostgresLog connects to dsn, ensures the events table exists, and starts
@@ -55,7 +68,42 @@ func OpenPostgresLog(ctx context.Context, dsn string, poll time.Duration) (*Post
 		return nil, err
 	}
 	l.d = startDelivery(l.Read, poll, head)
+	// Start the LISTEN fast path. If it can't start, delivery still works via the
+	// poller — so a listener failure degrades latency, not correctness.
+	if err := l.startListener(ctx, dsn); err != nil {
+		slog.Warn("eventlog: postgres LISTEN unavailable, using poll-only delivery", "err", err)
+	}
 	return l, nil
+}
+
+// startListener opens a dedicated connection, LISTENs on the notify channel, and
+// pokes delivery on each notification so newly-committed events (from any node)
+// are delivered without waiting for the next poll.
+func (l *PostgresLog) startListener(ctx context.Context, dsn string) error {
+	conn, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		return err
+	}
+	if _, err := conn.Exec(ctx, "LISTEN "+pgNotifyChannel); err != nil {
+		_ = conn.Close(ctx)
+		return err
+	}
+	lctx, cancel := context.WithCancel(context.Background())
+	l.listen = conn
+	l.cancel = cancel
+	l.lwg.Add(1)
+	go l.listenLoop(lctx)
+	return nil
+}
+
+func (l *PostgresLog) listenLoop(ctx context.Context) {
+	defer l.lwg.Done()
+	for {
+		if _, err := l.listen.WaitForNotification(ctx); err != nil {
+			return // Close canceled us, or the connection dropped — the poller carries on.
+		}
+		l.d.poke()
+	}
 }
 
 // Append assigns the next global Seq (BIGSERIAL) and commits durably. The poller
@@ -84,6 +132,10 @@ func (l *PostgresLog) Append(ctx context.Context, e Envelope) (Envelope, error) 
 		return Envelope{}, fmt.Errorf("eventlog: postgres returned non-positive seq %d", seq)
 	}
 	e.Seq = uint64(seq)
+	// Best-effort push so other nodes' subscribers don't wait out the poll
+	// interval. The poller is the correctness guarantee, so a NOTIFY error is not
+	// fatal — delivery still happens, just at poll latency.
+	_, _ = l.pool.Exec(ctx, "NOTIFY "+pgNotifyChannel)
 	return e, nil
 }
 
@@ -155,8 +207,13 @@ func (l *PostgresLog) headCtx(ctx context.Context) (uint64, error) {
 	return uint64(*head), nil
 }
 
-// Close stops the poller, closes subscriptions, and closes the pool.
+// Close stops the listener and poller, closes subscriptions, and closes the pool.
 func (l *PostgresLog) Close() error {
+	if l.cancel != nil {
+		l.cancel()
+		l.lwg.Wait()
+		_ = l.listen.Close(context.Background())
+	}
 	return l.d.stopAndClose(func() error {
 		l.pool.Close()
 		return nil

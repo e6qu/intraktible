@@ -187,8 +187,12 @@ enterprise buyers; **P2** = differentiators / scale.
   every node appends to and reads from one database: a `BIGSERIAL` seq gives one total
   order across nodes, and a shared polling `delivery` (factored out of the SQLite log)
   fans newly-committed rows — any node's — onto each process's in-process bus. Read/Head
-  are immediately consistent. Verified against a real Postgres incl. cross-node live
-  delivery. *Remaining: a LISTEN/NOTIFY fast path over the poll, and NATS/Kafka options.*
+  are immediately consistent. A **LISTEN/NOTIFY fast path** pushes a "new events" hint
+  cross-node (each `Append` issues `NOTIFY`; a dedicated listen connection pokes
+  delivery), so live delivery is near-instant rather than waiting out the poll — the
+  poller stays as the correctness floor if a notification is missed. Verified against a
+  real Postgres incl. cross-node delivery and sub-poll-interval NOTIFY latency.
+  *Remaining: NATS/Kafka backend options.*
 - **P1 — Backups / DR runbook**, point-in-time recovery (replay already enables it).
 - **P2 — Horizontal scale & multi-region.**
 

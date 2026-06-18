@@ -373,8 +373,10 @@ surface for browser/Node/edge consumers; packaging the SDKs for distribution is 
 `INTRAKTIBLE_POSTGRES_DSN`) is a durable, shared log for true multi-node HA: every node appends to and
 reads from one Postgres database, a `BIGSERIAL` seq gives a single total order across nodes, and a shared
 polling `delivery` (factored out of the SQLite log) fans any node's newly-committed events onto each
-process's in-process bus. Read/Head are immediately consistent; verified against a real Postgres including
-cross-node live delivery. A LISTEN/NOTIFY fast path and NATS/Kafka backends remain.
+process's in-process bus, with a **LISTEN/NOTIFY fast path** (each append `NOTIFY`s; a dedicated listen
+connection pokes delivery) so cross-node delivery is near-instant rather than poll-bound — the poller
+stays as the correctness floor. Read/Head are immediately consistent; verified against a real Postgres
+including cross-node delivery and sub-poll NOTIFY latency. NATS/Kafka backends remain.
 
 **Comment threads (post-MVP, governance).** `platform/comments` is a general discussion capability — a
 durable, chronological thread keyed by `(subject_type, subject_id)` (`GET/POST /v1/comments/{type}/{id}`),

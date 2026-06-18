@@ -23,6 +23,11 @@ type delivery struct {
 	closed bool
 	stop   chan struct{}
 	wg     sync.WaitGroup
+	// wake triggers an immediate dispatch between ticks — a backend with a
+	// push signal (e.g. Postgres LISTEN/NOTIFY) pokes it so delivery does not
+	// wait out the poll interval. Buffered to 1: a poke while a dispatch is in
+	// flight coalesces into one follow-up pass.
+	wake chan struct{}
 
 	// lastPub is the highest Seq published to the bus. After start it is only
 	// touched by the single poller goroutine, so it needs no lock.
@@ -36,7 +41,10 @@ func startDelivery(read func(ctx context.Context, fromSeq uint64) ([]Envelope, e
 	if poll <= 0 {
 		poll = DefaultPollInterval
 	}
-	d := &delivery{bus: newBus(), poll: poll, read: read, stop: make(chan struct{}), lastPub: head}
+	d := &delivery{
+		bus: newBus(), poll: poll, read: read,
+		stop: make(chan struct{}), wake: make(chan struct{}, 1), lastPub: head,
+	}
 	d.wg.Add(1)
 	go d.loop()
 	return d
@@ -44,6 +52,16 @@ func startDelivery(read func(ctx context.Context, fromSeq uint64) ([]Envelope, e
 
 // subscribe hands out a live event channel (events appended after the call).
 func (d *delivery) subscribe() (<-chan Envelope, func()) { return d.bus.subscribe() }
+
+// poke requests an immediate dispatch (non-blocking). A backend's push signal
+// calls it; missing or coalescing pokes is harmless — the poll loop is the
+// correctness floor, poke is only a latency optimization.
+func (d *delivery) poke() {
+	select {
+	case d.wake <- struct{}{}:
+	default:
+	}
+}
 
 // isClosed reports whether the log has been closed.
 func (d *delivery) isClosed() bool {
@@ -77,6 +95,8 @@ func (d *delivery) loop() {
 		select {
 		case <-d.stop:
 			return
+		case <-d.wake:
+			d.dispatch()
 		case <-t.C:
 			d.dispatch()
 		}
