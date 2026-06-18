@@ -128,9 +128,14 @@ enterprise buyers; **P2** = differentiators / scale.
   configurable retention & purge, right-to-erasure (GDPR/CCPA). *Field-level
   **masking** now ships (`platform/privacy`): a per-workspace sensitive-field list
   (admin-gated) whose values are redacted in decision input/output, node traces,
-  and exports at the read boundary — the raw event log stays intact. Remaining:
-  configurable retention/purge and right-to-erasure (which the event-sourced model
-  makes non-trivial — likely crypto-shredding per subject).*
+  and exports at the read boundary — the raw event log stays intact. **Right-to-erasure
+  + retention** now ship via crypto-shredding (`platform/erasure`): each data subject's
+  PII is sealed under a per-subject AES-GCM key, and an admin **erasure** request
+  (`POST /v1/erasure/subjects/{subject}`) destroys the key — the ciphertext in the log
+  and projections becomes permanently unreadable (`ErrErased`) while the immutable events
+  stay for audit. A **retention sweep** (`POST /v1/erasure/retention?max_age_days=`)
+  auto-erases subjects past a cutoff. The vault is the shred mechanism; sealing each PII
+  surface under it proceeds surface by surface (Context Layer event data next).*
 - **P1 — Model risk management (SR 11-7 / SS1/23)**: documented model inventory,
   validation evidence, monitoring — supported by metrics + versioning but not
   packaged.

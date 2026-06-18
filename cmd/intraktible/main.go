@@ -55,6 +55,7 @@ import (
 	"github.com/e6qu/intraktible/platform/audit"
 	"github.com/e6qu/intraktible/platform/auth"
 	"github.com/e6qu/intraktible/platform/comments"
+	"github.com/e6qu/intraktible/platform/erasure"
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/httpx"
 	"github.com/e6qu/intraktible/platform/identity"
@@ -257,6 +258,8 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 
 	// Authenticated caller introspection (inside the /v1 auth chain).
 	httpx.NewAPIKeysHandler(apiKeys, log).Routes(api)
+	// Right-to-erasure (crypto-shredding) + retention, admin-gated.
+	erasure.NewService(erasure.NewVault(st)).Routes(api)
 	api.HandleFunc("GET /v1/me", httpx.MeHandler())
 
 	rt := projection.New(log, st, moduleProjectors(modules)...)
