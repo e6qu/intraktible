@@ -194,8 +194,11 @@ enterprise buyers; **P2** = differentiators / scale.
   `GET /docs`. The document (`platform/openapi`, embedded) covers the public
   data-plane surface — decide + batch-decide, decision history reads, flow
   list/create/read, flow-as-code import, and `/v1/me` — with an `X-Api-Key` security
-  scheme. *Remaining: a generated/typed **client SDK** off this spec, and widening
-  coverage to the admin/management endpoints.*
+  scheme. A typed **Go client SDK** (`client`) wraps that surface over net/http with
+  no third-party deps — `client.New(baseURL, apiKey).Decide(…)` and friends, with
+  errors surfaced as a typed `*APIError`; it is tested end-to-end against a live
+  engine. *Remaining: a TypeScript/other-language SDK, and widening the spec to the
+  admin/management endpoints.*
 - **P1 — Flow-as-code / IaC — ✅ first pass done.** Flows export as a JSON document
   (`GET …/export?format=json`) and **import** back via `POST /v1/flows/import`: the flow
   is created when its slug is new, otherwise the graph is published as a new version.
