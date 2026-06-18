@@ -369,6 +369,13 @@ net/http with no third-party deps and a typed `*APIError`, tested end-to-end aga
 matching **TypeScript SDK** (`web/src/lib/sdk.ts`, fetch-only and framework-agnostic) ships the same
 surface for browser/Node/edge consumers; packaging the SDKs for distribution is the next step.
 
+**Networked event log (post-MVP, HA).** `eventlog.OpenPostgresLog` (`--log=postgres`,
+`INTRAKTIBLE_POSTGRES_DSN`) is a durable, shared log for true multi-node HA: every node appends to and
+reads from one Postgres database, a `BIGSERIAL` seq gives a single total order across nodes, and a shared
+polling `delivery` (factored out of the SQLite log) fans any node's newly-committed events onto each
+process's in-process bus. Read/Head are immediately consistent; verified against a real Postgres including
+cross-node live delivery. A LISTEN/NOTIFY fast path and NATS/Kafka backends remain.
+
 **Comment threads (post-MVP, governance).** `platform/comments` is a general discussion capability — a
 durable, chronological thread keyed by `(subject_type, subject_id)` (`GET/POST /v1/comments/{type}/{id}`),
 reusable `CommentThread.svelte` component — wired onto the items that get approved/rejected/promoted

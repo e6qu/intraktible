@@ -182,8 +182,13 @@ enterprise buyers; **P2** = differentiators / scale.
   (PII, jailbreak), cost/rate limits. Critical now that AI nodes can drive outcomes.
 
 ### Reliability & scale  (status: monolith + sqlite-shared-log split profile)
-- **P1 — A networked log backend** (Postgres/Badger/NATS/Kafka) for true multi-node
-  HA — the `Log` interface is ready; the backend is polling-based today.
+- **P1 — A networked log backend — ✅ Postgres done.** `eventlog.OpenPostgresLog`
+  (`--log=postgres`, `INTRAKTIBLE_POSTGRES_DSN`) is a durable, shared event log where
+  every node appends to and reads from one database: a `BIGSERIAL` seq gives one total
+  order across nodes, and a shared polling `delivery` (factored out of the SQLite log)
+  fans newly-committed rows — any node's — onto each process's in-process bus. Read/Head
+  are immediately consistent. Verified against a real Postgres incl. cross-node live
+  delivery. *Remaining: a LISTEN/NOTIFY fast path over the poll, and NATS/Kafka options.*
 - **P1 — Backups / DR runbook**, point-in-time recovery (replay already enables it).
 - **P2 — Horizontal scale & multi-region.**
 

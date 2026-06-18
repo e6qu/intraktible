@@ -105,7 +105,7 @@ func serveCmd(args []string) error {
 	modules := fs.String("modules", "all", "comma-separated modules (or 'all')")
 	devKey := fs.String("dev-api-key", "dev-sandbox-key", "seed a sandbox API key for local dev (empty to disable)")
 	storeKind := fs.String("store", "memory", "projection store: memory | sqlite (<data-dir>/projections.db) | postgres (INTRAKTIBLE_POSTGRES_DSN)")
-	logKind := fs.String("log", "file", "event log: file (single-process WAL) | sqlite (shared across processes, for the split profile)")
+	logKind := fs.String("log", "file", "event log: file (single-process WAL) | sqlite (shared across processes, for the split profile) | postgres (networked, multi-node HA; INTRAKTIBLE_POSTGRES_DSN)")
 	_ = fs.Parse(args)
 	return run(*addr, *dataDir, *modules, *devKey, *storeKind, *logKind)
 }
@@ -341,16 +341,23 @@ func openStore(ctx context.Context, kind, dataDir string) (store.Store, error) {
 }
 
 // openLog selects the event-log backend. The file WAL is single-process; the
-// shared SQLite log lets the split-services profile (one process per module) all
-// append to and read from one ordered log.
+// shared SQLite log lets one box's split-services profile share an ordered log;
+// the Postgres log is the networked backbone for true multi-node HA (every node
+// appends to and reads from one database).
 func openLog(kind, dataDir string) (eventlog.Log, error) {
 	switch kind {
 	case "", "file":
 		return eventlog.OpenWAL(dataDir)
 	case "sqlite":
 		return eventlog.OpenSQLiteLog(dataDir, eventlog.DefaultPollInterval)
+	case "postgres":
+		dsn := os.Getenv("INTRAKTIBLE_POSTGRES_DSN")
+		if dsn == "" {
+			return nil, fmt.Errorf("--log=postgres requires INTRAKTIBLE_POSTGRES_DSN")
+		}
+		return eventlog.OpenPostgresLog(context.Background(), dsn, eventlog.DefaultPollInterval)
 	default:
-		return nil, fmt.Errorf("unknown --log %q (file|sqlite)", kind)
+		return nil, fmt.Errorf("unknown --log %q (file|sqlite|postgres)", kind)
 	}
 }
 
