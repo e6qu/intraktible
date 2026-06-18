@@ -83,6 +83,41 @@ describe('sdk Client', () => {
     expect(fetcher.mock.calls[0][0]).toBe('/v1/flows/import');
   });
 
+  it('deploy and promote post to the right endpoints', async () => {
+    const deployFetcher = fetcherReturning(201, { environment: 'sandbox', version: 2 });
+    const dc = new Client({ apiKey: 'k', fetch: deployFetcher });
+    await dc.deploy('f1', 'sandbox', 2);
+    const [durl, dinit] = deployFetcher.mock.calls[0];
+    expect(durl).toBe('/v1/flows/f1/deployments');
+    expect(JSON.parse(dinit?.body as string)).toEqual({ environment: 'sandbox', version: 2 });
+
+    const promFetcher = fetcherReturning(200, { promoted: true, version: 2 });
+    const pc = new Client({ apiKey: 'k', fetch: promFetcher });
+    const prom = await pc.promote('f1', 'sandbox', 'staging');
+    expect(prom.promoted).toBe(true);
+    expect(JSON.parse(promFetcher.mock.calls[0][1]?.body as string)).toEqual({
+      from: 'sandbox',
+      to: 'staging',
+      force: false
+    });
+  });
+
+  it('importBundle wraps the flows and returns the report', async () => {
+    const fetcher = fetcherReturning(200, {
+      results: [{ slug: 'a', created: true, published: true }],
+      published: 1,
+      failed: 0,
+      unchanged: 0
+    });
+    const c = new Client({ apiKey: 'k', fetch: fetcher });
+    const out = await c.importBundle([{ slug: 'a', graph: {} }]);
+    expect(out.published).toBe(1);
+    expect(fetcher.mock.calls[0][0]).toBe('/v1/flows/import-bundle');
+    expect(JSON.parse(fetcher.mock.calls[0][1]?.body as string)).toEqual({
+      flows: [{ slug: 'a', graph: {} }]
+    });
+  });
+
   it('unwraps list endpoints and defaults to empty', async () => {
     const c = new Client({ apiKey: 'k', fetch: fetcherReturning(200, {}) });
     expect(await c.listDecisions()).toEqual([]);

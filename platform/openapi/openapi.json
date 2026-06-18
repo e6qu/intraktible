@@ -3,7 +3,7 @@
   "info": {
     "title": "intraktible Decision API",
     "version": "0.1.0",
-    "description": "The public data-plane contract for intraktible: execute decision flows, read decision history, and manage flows as code. Administrative and module-management endpoints are intentionally out of scope of this document; this covers the integration surface external callers depend on. Authenticate every request with an API key in the X-Api-Key header.",
+    "description": "The public integration contract for intraktible: execute decision flows, read decision history, manage flows as code, and drive the deployment lifecycle (deploy / promote) for CI/CD. Other administrative endpoints (RBAC, audit, secrets) are out of scope of this document. Authenticate every request with an API key in the X-Api-Key header.",
     "license": { "name": "AGPL-3.0-or-later", "identifier": "AGPL-3.0-or-later" }
   },
   "servers": [{ "url": "/", "description": "This instance" }],
@@ -12,6 +12,7 @@
     { "name": "decide", "description": "Execute published flows (the hot path)." },
     { "name": "decisions", "description": "Read recorded decision history." },
     { "name": "flows", "description": "List, create, read, and import flows." },
+    { "name": "deployments", "description": "Deploy and promote versions across environments (CI/CD)." },
     { "name": "identity", "description": "Caller introspection." }
   ],
   "paths": {
@@ -163,6 +164,65 @@
         }
       }
     },
+    "/v1/flows/import-bundle": {
+      "post": {
+        "tags": ["flows"],
+        "summary": "Import many flows at once",
+        "description": "Imports a bundle of flow-as-code documents (a GitOps repo). Best-effort: a failing flow is reported in its result rather than aborting the rest.",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/FlowBundle" } } }
+        },
+        "responses": {
+          "200": {
+            "description": "A per-flow report with rollup counts.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/FlowBundleResult" } } }
+          },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/flows/{flow_id}/deployments": {
+      "post": {
+        "tags": ["deployments"],
+        "summary": "Deploy a version to an environment",
+        "description": "Makes a published version live in an environment (a direct deploy). Requires the approver role.",
+        "parameters": [{ "$ref": "#/components/parameters/FlowID" }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DeployRequest" } } }
+        },
+        "responses": {
+          "201": { "description": "The version is live in the environment." },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/flows/{flow_id}/promote": {
+      "post": {
+        "tags": ["deployments"],
+        "summary": "Promote a live version up the environment chain",
+        "description": "Ships the live version of `from` up to `to`. A non-production target deploys directly; production opens a maker-checker request. A promotion gate (firing monitors / failing assertions) can block it unless `force` is allowed for the stage. Requires the approver role.",
+        "parameters": [{ "$ref": "#/components/parameters/FlowID" }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PromoteRequest" } } }
+        },
+        "responses": {
+          "200": {
+            "description": "Promoted directly, or a maker-checker request was opened (pending).",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PromoteResult" } } }
+          },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/v1/me": {
       "get": {
         "tags": ["identity"],
@@ -292,6 +352,63 @@
           "version": { "type": "integer" },
           "created": { "type": "boolean" },
           "published": { "type": "boolean" }
+        }
+      },
+      "FlowBundle": {
+        "type": "object",
+        "required": ["flows"],
+        "properties": {
+          "flows": { "type": "array", "items": { "$ref": "#/components/schemas/FlowImport" } }
+        }
+      },
+      "FlowBundleResult": {
+        "type": "object",
+        "properties": {
+          "results": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "slug": { "type": "string" },
+                "flow_id": { "type": "string" },
+                "version": { "type": "integer" },
+                "created": { "type": "boolean" },
+                "published": { "type": "boolean" },
+                "error": { "type": "string" }
+              }
+            }
+          },
+          "published": { "type": "integer" },
+          "failed": { "type": "integer" },
+          "unchanged": { "type": "integer" }
+        }
+      },
+      "DeployRequest": {
+        "type": "object",
+        "required": ["environment", "version"],
+        "properties": {
+          "environment": { "type": "string", "enum": ["sandbox", "staging", "production"] },
+          "version": { "type": "integer" },
+          "challenger_version": { "type": "integer", "description": "Optional A/B challenger version." },
+          "challenger_pct": { "type": "integer", "description": "Percent of traffic routed to the challenger." }
+        }
+      },
+      "PromoteRequest": {
+        "type": "object",
+        "required": ["from", "to"],
+        "properties": {
+          "from": { "type": "string", "description": "Source environment whose live version is promoted." },
+          "to": { "type": "string", "description": "Target environment." },
+          "force": { "type": "boolean", "description": "Override the promotion gate where the stage allows it." }
+        }
+      },
+      "PromoteResult": {
+        "type": "object",
+        "properties": {
+          "promoted": { "type": "boolean", "description": "True when the version deployed directly." },
+          "pending": { "type": "boolean", "description": "True when a maker-checker request was opened (production)." },
+          "request_id": { "type": "string" },
+          "version": { "type": "integer" }
         }
       },
       "Me": {

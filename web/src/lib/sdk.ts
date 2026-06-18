@@ -84,6 +84,29 @@ export interface Identity {
   role: string;
 }
 
+export interface PromoteResult {
+  promoted: boolean;
+  pending?: boolean;
+  request_id?: string;
+  version: number;
+}
+
+export interface BundleFlowResult {
+  slug: string;
+  flow_id?: string;
+  version?: number;
+  created: boolean;
+  published: boolean;
+  error?: string;
+}
+
+export interface BundleResult {
+  results: BundleFlowResult[];
+  published: number;
+  failed: number;
+  unchanged: number;
+}
+
 // Client calls an intraktible instance.
 export class Client {
   private readonly apiKey: string;
@@ -135,6 +158,29 @@ export class Client {
   // importFlow upserts a flow from a flow-as-code document.
   importFlow(doc: FlowDoc): Promise<ImportResult> {
     return this.request<ImportResult>('POST', '/v1/flows/import', doc);
+  }
+
+  // importBundle imports many flows in one request (best-effort per flow).
+  importBundle(docs: FlowDoc[]): Promise<BundleResult> {
+    return this.request<BundleResult>('POST', '/v1/flows/import-bundle', { flows: docs });
+  }
+
+  // deploy makes a version live in an environment (a direct deploy).
+  async deploy(flowId: string, environment: string, version: number): Promise<void> {
+    await this.request<unknown>('POST', `/v1/flows/${encodeURIComponent(flowId)}/deployments`, {
+      environment,
+      version
+    });
+  }
+
+  // promote ships the live version of `from` up to `to`. A non-production target
+  // deploys directly; production opens a maker-checker request (pending).
+  promote(flowId: string, from: string, to: string, force = false): Promise<PromoteResult> {
+    return this.request<PromoteResult>('POST', `/v1/flows/${encodeURIComponent(flowId)}/promote`, {
+      from,
+      to,
+      force
+    });
   }
 
   me(): Promise<Identity> {

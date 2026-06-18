@@ -208,8 +208,10 @@ enterprise buyers; **P2** = differentiators / scale.
   errors surfaced as a typed `*APIError`; it is tested end-to-end against a live
   engine. A matching **TypeScript SDK** (`web/src/lib/sdk.ts`, framework-agnostic —
   fetch-only, independent of the app's SvelteKit `api.ts`) ships the same surface
-  with a typed `ApiError`. *Remaining: packaging/publishing the SDKs, and widening
-  the spec to the admin/management endpoints.*
+  with a typed `ApiError`. Both SDKs and the spec now also cover the **deployment
+  lifecycle** — bulk import, `deploy`, and `promote` — so a CI/CD pipeline can drive
+  flows-as-code → deploy → promote programmatically. *Remaining: packaging/publishing
+  the SDKs, and the remaining admin endpoints (RBAC/audit/secrets) in the spec.*
 - **P1 — Flow-as-code / IaC — ✅ first pass done.** Flows export as a JSON document
   (`GET …/export?format=json`) and **import** back via `POST /v1/flows/import`: the flow
   is created when its slug is new, otherwise the graph is published as a new version.

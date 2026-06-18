@@ -127,6 +127,30 @@ type Identity struct {
 	Role      string `json:"role"`
 }
 
+// PromoteResult reports a promotion: Promoted when it deployed directly, or
+// Pending with a RequestID when it opened a maker-checker request (production).
+type PromoteResult struct {
+	Promoted  bool   `json:"promoted"`
+	Pending   bool   `json:"pending"`
+	RequestID string `json:"request_id,omitempty"`
+	Version   int    `json:"version"`
+}
+
+// BundleResult is the outcome of a bundle import: a per-flow result plus rollups.
+type BundleResult struct {
+	Results []struct {
+		Slug      string `json:"slug"`
+		FlowID    string `json:"flow_id,omitempty"`
+		Version   int    `json:"version,omitempty"`
+		Created   bool   `json:"created"`
+		Published bool   `json:"published"`
+		Error     string `json:"error,omitempty"`
+	} `json:"results"`
+	Published int `json:"published"`
+	Failed    int `json:"failed"`
+	Unchanged int `json:"unchanged"`
+}
+
 // Decide runs the live version of slug in env against req and returns the
 // recorded decision.
 func (c *Client) Decide(ctx context.Context, slug, env string, req DecideRequest) (DecideResult, error) {
@@ -177,6 +201,29 @@ func (c *Client) GetFlow(ctx context.Context, flowID string) (Flow, error) {
 // publish a new version; identical content is a no-op).
 func (c *Client) ImportFlow(ctx context.Context, doc FlowDoc) (ImportResult, error) {
 	return do[ImportResult](ctx, c, http.MethodPost, "/v1/flows/import", doc)
+}
+
+// ImportBundle imports many flows in one request (best-effort; each flow's
+// outcome, including any error, is in its result).
+func (c *Client) ImportBundle(ctx context.Context, docs []FlowDoc) (BundleResult, error) {
+	return do[BundleResult](ctx, c, http.MethodPost, "/v1/flows/import-bundle",
+		map[string]any{"flows": docs})
+}
+
+// Deploy makes version live in env for the flow (a direct deploy; use Promote to
+// move a live version up the environment chain).
+func (c *Client) Deploy(ctx context.Context, flowID, env string, version int) error {
+	_, err := do[map[string]any](ctx, c, http.MethodPost, "/v1/flows/"+url.PathEscape(flowID)+"/deployments",
+		map[string]any{"environment": env, "version": version})
+	return err
+}
+
+// Promote ships the live version of `from` up to `to`. A non-production target
+// deploys directly; production opens a maker-checker request (Pending). force
+// overrides the promotion gate where the stage allows it.
+func (c *Client) Promote(ctx context.Context, flowID, from, to string, force bool) (PromoteResult, error) {
+	return do[PromoteResult](ctx, c, http.MethodPost, "/v1/flows/"+url.PathEscape(flowID)+"/promote",
+		map[string]any{"from": from, "to": to, "force": force})
 }
 
 // Me returns the authenticated caller's identity, scope, and role.

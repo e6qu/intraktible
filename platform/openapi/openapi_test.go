@@ -31,12 +31,15 @@ func TestCorePathsAndMethodsDocumented(t *testing.T) {
 	}
 	// The data-plane integration surface external callers depend on.
 	want := map[string]string{
-		"/v1/flows/{slug}/{env}/decide": "post",
-		"/v1/decisions":                 "get",
-		"/v1/decisions/{decision_id}":   "get",
-		"/v1/flows":                     "post",
-		"/v1/flows/import":              "post",
-		"/v1/me":                        "get",
+		"/v1/flows/{slug}/{env}/decide":   "post",
+		"/v1/decisions":                   "get",
+		"/v1/decisions/{decision_id}":     "get",
+		"/v1/flows":                       "post",
+		"/v1/flows/import":                "post",
+		"/v1/flows/import-bundle":         "post",
+		"/v1/flows/{flow_id}/deployments": "post",
+		"/v1/flows/{flow_id}/promote":     "post",
+		"/v1/me":                          "get",
 	}
 	for path, method := range want {
 		ops, ok := doc.Paths[path]

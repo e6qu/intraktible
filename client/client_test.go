@@ -140,4 +140,30 @@ func TestClientAgainstEngine(t *testing.T) {
 	if !errors.As(decErr, &apiErr) {
 		t.Fatalf("decide on an unknown flow: want *APIError, got %T (%v)", decErr, decErr)
 	}
+
+	// Deploy v1 to sandbox, then promote it up to staging (a non-prod target
+	// deploys directly, so it is not pending). Promote reads the source
+	// deployment from the projection, so retry while that catches up.
+	if err := c.Deploy(ctx, imp.FlowID, "sandbox", 1); err != nil {
+		t.Fatalf("Deploy: %v", err)
+	}
+	var prom client.PromoteResult
+	if !testutil.Eventually(t, func() bool {
+		prom, err = c.Promote(ctx, imp.FlowID, "sandbox", "staging", false)
+		return err == nil && prom.Promoted
+	}) {
+		t.Fatalf("Promote never succeeded: %+v err=%v", prom, err)
+	}
+	if prom.Pending || prom.Version != 1 {
+		t.Fatalf("Promote = %+v", prom)
+	}
+
+	// Import a bundle of two flows in one call.
+	bundle, err := c.ImportBundle(ctx, []client.FlowDoc{
+		{Slug: "sdk-bundle-a", Graph: graph},
+		{Slug: "sdk-bundle-b", Graph: graph},
+	})
+	if err != nil || bundle.Published != 2 || bundle.Failed != 0 {
+		t.Fatalf("ImportBundle = %+v, err=%v", bundle, err)
+	}
 }
