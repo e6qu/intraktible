@@ -859,6 +859,39 @@ export async function backtestFlow(
   return (await res.json()) as BacktestReport;
 }
 
+export interface SweepPoint {
+  value: unknown;
+  status: string;
+  output?: Record<string, unknown>;
+  error?: string;
+  changed: boolean;
+}
+
+export interface SweepReport {
+  field: string;
+  points: SweepPoint[];
+  transitions: number;
+}
+
+// whatif runs a sensitivity analysis: sweep one input field across values and
+// see how the flow's outcome shifts (record-nothing, pure engine).
+export async function whatif(
+  key: string,
+  flowId: string,
+  body: { base: Record<string, unknown>; field: string; values: unknown[]; version?: number },
+  fetcher: typeof fetch = fetch
+): Promise<SweepReport> {
+  const res = await fetcher(`/v1/flows/${flowId}/whatif`, {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'POST whatif');
+  }
+  return (await res.json()) as SweepReport;
+}
+
 export async function publishVersion(
   key: string,
   flowId: string,

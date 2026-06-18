@@ -24,6 +24,47 @@ test('lists and creates a flow', async ({ page }) => {
   await expect(page.getByText(slug)).toBeVisible();
 });
 
+test('runs a what-if sensitivity sweep from the builder', async ({ page, request }) => {
+  const slug = uniqueSlug();
+  const created = await request.post('/v1/flows', {
+    headers: { 'X-Api-Key': KEY },
+    data: { slug, name: 'What If UI' }
+  });
+  const { flow_id } = await created.json();
+  await request.post(`/v1/flows/${flow_id}/versions`, {
+    headers: { 'X-Api-Key': KEY },
+    data: {
+      graph: {
+        nodes: [
+          { id: 'in', type: 'input' },
+          {
+            id: 'a',
+            type: 'assignment',
+            config: { assignments: [{ target: 'decision', expr: `score > 5 ? "A":"B"` }] }
+          },
+          { id: 'out', type: 'output', config: { fields: ['decision'] } }
+        ],
+        edges: [
+          { from: 'in', to: 'a' },
+          { from: 'a', to: 'out' }
+        ]
+      }
+    }
+  });
+
+  await page.goto(`/engine/${flow_id}`);
+  await page.getByLabel('whatif field').fill('score');
+  await page.getByLabel('whatif values').fill('1, 3, 7, 9');
+  await page.getByTestId('run-whatif').click();
+
+  // The sweep flips from B to A once score crosses 5 — one transition.
+  await expect(page.getByTestId('whatif-summary')).toContainText('1 transition');
+  const rows = page.getByTestId('whatif-table').locator('tbody tr');
+  await expect(rows).toHaveCount(4);
+  await expect(rows.first()).toContainText('B');
+  await expect(rows.last()).toContainText('A');
+});
+
 test('imports a flow from an exported document', async ({ page }) => {
   const slug = uniqueSlug();
   const doc = JSON.stringify({

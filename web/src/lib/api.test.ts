@@ -16,6 +16,7 @@ import {
   getDecision,
   getFlowMetrics,
   backtestFlow,
+  whatif,
   deployVersion,
   requestDeployment,
   approveDeployment,
@@ -220,6 +221,23 @@ describe('backtest', () => {
         fetcherReturning(400, { error: 'dataset is required' })
       )
     ).rejects.toThrow(/dataset is required/);
+  });
+
+  it('whatif posts the sweep and returns the report', async () => {
+    const fetcher = fetcherReturning(200, {
+      field: 'score',
+      transitions: 1,
+      points: [
+        { value: 1, status: 'completed', output: { decision: 'B' }, changed: false },
+        { value: 9, status: 'completed', output: { decision: 'A' }, changed: true }
+      ]
+    });
+    const rep = await whatif('k', 'f1', { base: {}, field: 'score', values: [1, 9] }, fetcher);
+    expect(rep.transitions).toBe(1);
+    expect(rep.points[1].changed).toBe(true);
+    const [url, init] = fetcher.mock.calls[0];
+    expect(url).toBe('/v1/flows/f1/whatif');
+    expect(JSON.parse(String(init?.body))).toEqual({ base: {}, field: 'score', values: [1, 9] });
   });
 });
 

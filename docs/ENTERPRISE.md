@@ -135,7 +135,11 @@ enterprise buyers; **P2** = differentiators / scale.
   (a promote is blocked when assertions fail on the target version). UI: an
   Assertions panel in the builder. *Remaining: run them automatically in CI / a
   pre-deploy hook (today they gate promote and run on demand).*
-- **P2 — What-if / sensitivity analysis.**
+- **P2 — What-if / sensitivity analysis — ✅ done.** `POST /v1/flows/{id}/whatif`
+  sweeps one input field across a set of values through the pure engine (record-
+  nothing, like backtest) and reports how the outcome shifts — flagging each
+  **transition** where the decision changes (e.g. the score at which an approve flips
+  to a decline). Surfaced as a **What-if** panel in the builder.
 
 ### Observability & operations  (status: metrics + monitors + drift + scheduled webhook alerts + /healthz)
 - **P1 — Alerting — ✅ done (failure-rate, latency, volume, distribution drift).**

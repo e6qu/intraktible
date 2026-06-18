@@ -40,6 +40,8 @@
     type DriftReport,
     type Webhook,
     backtestFlow,
+    whatif,
+    type SweepReport,
     deployVersion,
     promoteFlow,
     setPromotionPolicy,
@@ -746,6 +748,38 @@
       error = msg(e);
     } finally {
       btRunning = false;
+    }
+  }
+
+  // What-if: sweep one input field across values and see how the outcome shifts
+  let wiBase = $state('{}');
+  let wiField = $state('');
+  let wiValues = $state('');
+  let wiReport = $state<SweepReport | null>(null);
+  let wiRunning = $state(false);
+  async function runWhatif() {
+    error = '';
+    wiReport = null;
+    if (!flow) return;
+    wiRunning = true;
+    try {
+      const base = JSON.parse(wiBase) as Record<string, unknown>;
+      // Values are comma-separated; numbers parse as numbers, everything else as a string.
+      const values = wiValues
+        .split(',')
+        .map((v) => v.trim())
+        .filter(Boolean)
+        .map((v) => (Number.isNaN(Number(v)) ? v : Number(v)));
+      if (!wiField.trim() || values.length === 0) {
+        error = 'Enter a field and at least one value';
+        return;
+      }
+      wiReport = await whatif(key, flowId, { base, field: wiField.trim(), values });
+      toast.success(`Swept ${values.length} values — ${wiReport.transitions} transition(s)`);
+    } catch (e) {
+      error = msg(e);
+    } finally {
+      wiRunning = false;
     }
   }
 
@@ -2252,6 +2286,56 @@
   </section>
 
   <section>
+    <h2>What-if</h2>
+    <p class="muted">
+      Sweep one input field across a range and see how the decision shifts — nothing is recorded. A
+      transition flags where the outcome changes (e.g. where an approve flips to a decline).
+    </p>
+    <div class="row">
+      <input
+        bind:value={wiField}
+        placeholder="field (e.g. score)"
+        aria-label="whatif field"
+        size="16"
+      />
+      <input
+        bind:value={wiValues}
+        placeholder="values, comma-separated (e.g. 600, 650, 700)"
+        aria-label="whatif values"
+        size="30"
+      />
+      <button onclick={runWhatif} disabled={!flow || wiRunning} data-testid="run-whatif">
+        {wiRunning ? 'Running…' : 'Run what-if'}
+      </button>
+    </div>
+    <textarea
+      bind:value={wiBase}
+      aria-label="whatif base input"
+      rows="2"
+      placeholder={'{ "other_field": 1 }'}
+    ></textarea>
+    {#if wiReport}
+      <div class="metrics" data-testid="whatif-summary">
+        <span>{wiReport.points.length} values</span>
+        <span class="changed">{wiReport.transitions} transition(s)</span>
+      </div>
+      <table class="bt-table" data-testid="whatif-table">
+        <thead>
+          <tr><th>{wiReport.field}</th><th>Outcome</th></tr>
+        </thead>
+        <tbody>
+          {#each wiReport.points as pt, i (i)}
+            <tr class:changed-row={pt.changed}>
+              <td>{JSON.stringify(pt.value)}</td>
+              <td>{pt.error || JSON.stringify(pt.output)}</td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    {/if}
+  </section>
+
+  <section>
     <h2>Assertions</h2>
     <p class="muted">
       Stored input→expected tests, run through the pure engine (no recorded decision). A case passes
@@ -2989,6 +3073,9 @@
   .bt-table th {
     color: var(--fg-subtle);
     font-weight: 600;
+  }
+  .changed-row td {
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
   }
   .muted {
     font-size: 0.8rem;

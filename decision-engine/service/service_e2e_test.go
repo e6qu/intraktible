@@ -134,6 +134,49 @@ func TestImportFlowOverHTTP(t *testing.T) {
 	}
 }
 
+func TestWhatifOverHTTP(t *testing.T) {
+	api := startEngine(t)
+	var created struct {
+		FlowID string `json:"flow_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows", map[string]any{"slug": "whatif", "name": "What If"}, http.StatusCreated, &created)
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/versions", map[string]any{
+		"graph": map[string]any{
+			"nodes": []map[string]any{
+				{"id": "in", "type": "input"},
+				{"id": "a", "type": "assignment", "config": map[string]any{
+					"assignments": []map[string]any{{"target": "decision", "expr": `score > 5 ? "A":"B"`}},
+				}},
+				{"id": "out", "type": "output", "config": map[string]any{"fields": []string{"decision"}}},
+			},
+			"edges": []map[string]any{{"from": "in", "to": "a"}, {"from": "a", "to": "out"}},
+		},
+	}, http.StatusCreated, nil)
+
+	var rep struct {
+		Field       string `json:"field"`
+		Transitions int    `json:"transitions"`
+		Points      []struct {
+			Value   float64        `json:"value"`
+			Output  map[string]any `json:"output"`
+			Changed bool           `json:"changed"`
+		} `json:"points"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/whatif", map[string]any{
+		"base": map[string]any{}, "field": "score", "values": []any{1, 3, 7, 9},
+	}, http.StatusOK, &rep)
+	if rep.Field != "score" || len(rep.Points) != 4 || rep.Transitions != 1 {
+		t.Fatalf("whatif report = %+v", rep)
+	}
+	if rep.Points[0].Output["decision"] != "B" || rep.Points[3].Output["decision"] != "A" {
+		t.Fatalf("whatif outcomes = %+v", rep.Points)
+	}
+
+	// A missing field is a 400.
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/whatif",
+		map[string]any{"values": []any{1}}, http.StatusBadRequest, nil)
+}
+
 func TestShadowEvaluationOverHTTP(t *testing.T) {
 	api := startEngine(t)
 	var created struct {

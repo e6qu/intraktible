@@ -53,6 +53,31 @@ func TestRunComparesVersionsAndFlagsChanges(t *testing.T) {
 	}
 }
 
+func TestSweepFlagsOutcomeTransitions(t *testing.T) {
+	// decision flips from B to A once score crosses 5.
+	g := graph(`score > 5 ? "A":"B"`)
+	rep := backtest.Sweep(g, map[string]any{}, "score", []any{1.0, 3.0, 7.0, 9.0})
+	if rep.Field != "score" || len(rep.Points) != 4 {
+		t.Fatalf("report = %+v", rep)
+	}
+	// Points: B, B, A, A -> exactly one transition (at index 2).
+	if rep.Transitions != 1 {
+		t.Fatalf("transitions = %d, want 1", rep.Transitions)
+	}
+	if rep.Points[0].Output["decision"] != "B" || rep.Points[2].Output["decision"] != "A" {
+		t.Fatalf("outcomes = %+v", rep.Points)
+	}
+	if rep.Points[2].Changed != true || rep.Points[1].Changed != false || rep.Points[0].Changed != false {
+		t.Fatalf("changed flags wrong: %+v", rep.Points)
+	}
+	// The base input is not mutated by the sweep.
+	base := map[string]any{"score": 99.0}
+	_ = backtest.Sweep(g, base, "score", []any{1.0})
+	if base["score"] != 99.0 {
+		t.Fatalf("sweep mutated the base input: %v", base["score"])
+	}
+}
+
 func TestRunCountsFailures(t *testing.T) {
 	// `score` is undefined for the empty input, so the expression fails loudly.
 	g := graph(`score > 5 ? "A":"B"`)
