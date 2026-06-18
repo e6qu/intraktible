@@ -3,6 +3,7 @@
 package service_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"github.com/e6qu/intraktible/context-layer/entities"
 	"github.com/e6qu/intraktible/context-layer/features"
 	"github.com/e6qu/intraktible/context-layer/service"
+	"github.com/e6qu/intraktible/platform/erasure"
 	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/store"
 	"github.com/e6qu/intraktible/platform/testutil"
@@ -38,6 +40,81 @@ func startWithSecrets(t *testing.T, kr *connectors.Keyring) (*testutil.API, stor
 
 func jsonContains(raw json.RawMessage, want string) bool {
 	return strings.Contains(string(raw), want)
+}
+
+func TestContextEventErasure(t *testing.T) {
+	log, st := testutil.NewLogStore(t)
+	vault := erasure.NewVault(st)
+	svc := service.New(command.NewHandler(log), st, service.WithErasure(vault, []string{"ssn"}))
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "dev"}
+	api := testutil.StartAPI(t, log, st, "test-key", id, svc.Routes, entities.Projector{}, features.Projector{})
+
+	// A feature that sums a NON-PII field, to prove erasure doesn't break the
+	// feature engine.
+	api.Request(t, http.MethodPost, "/v1/context/features",
+		map[string]any{"name": "spend", "entity_type": "customer", "event_name": "purchase", "aggregation": "sum", "field": "amount", "window_hours": 240000},
+		http.StatusAccepted, nil)
+	api.Request(t, http.MethodPost, "/v1/context/events",
+		map[string]any{"entity_type": "customer", "entity_id": "ada", "event_name": "purchase",
+			"data": map[string]any{"ssn": "123-45-6789", "amount": 100}},
+		http.StatusAccepted, nil)
+
+	// The read unseals the SSN for authorized callers (retry while the event
+	// projection catches up).
+	readSSN := func() string {
+		var out struct {
+			Events []struct {
+				Data map[string]any `json:"data"`
+			} `json:"events"`
+		}
+		api.Request(t, http.MethodGet, "/v1/context/entities/customer/ada/events", nil, http.StatusOK, &out)
+		if len(out.Events) != 1 {
+			return ""
+		}
+		s, _ := out.Events[0].Data["ssn"].(string)
+		return s
+	}
+	if !testutil.Eventually(t, func() bool { return readSSN() == "123-45-6789" }) {
+		t.Fatalf("event never projected with an unsealed ssn (got %q)", readSSN())
+	}
+
+	// At rest the SSN is sealed (the projected event is not plaintext).
+	recs, err := st.List(context.Background(), entities.CollectionEvents)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var anyDoc string
+	for _, r := range recs {
+		anyDoc += string(r.Doc)
+	}
+	if strings.Contains(anyDoc, "123-45-6789") || !strings.Contains(anyDoc, "$intraktible_erased") {
+		t.Fatalf("event SSN not sealed at rest: %s", anyDoc)
+	}
+
+	// Erase the subject (crypto-shred). The SSN is now permanently "[erased]".
+	if err := vault.Erase(context.Background(), id, "customer/ada"); err != nil {
+		t.Fatal(err)
+	}
+	if got := readSSN(); got != "[erased]" {
+		t.Fatalf("ssn after erasure = %q, want [erased]", got)
+	}
+
+	// The feature over the non-PII "amount" still computes — erasure did not
+	// touch it (retry while the feature definition projects).
+	if !testutil.Eventually(t, func() bool {
+		var out struct {
+			Features []features.Value `json:"features"`
+		}
+		api.Request(t, http.MethodGet, "/v1/context/entities/customer/ada/features", nil, http.StatusOK, &out)
+		for _, v := range out.Features {
+			if v.Name == "spend" {
+				return v.Value == 100
+			}
+		}
+		return false
+	}) {
+		t.Fatal("the non-PII 'spend' feature should still compute to 100 after erasure")
+	}
 }
 
 func TestContextAPIEndToEnd(t *testing.T) {

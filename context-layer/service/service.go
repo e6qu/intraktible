@@ -14,6 +14,7 @@ import (
 	"github.com/e6qu/intraktible/context-layer/domain"
 	"github.com/e6qu/intraktible/context-layer/entities"
 	"github.com/e6qu/intraktible/context-layer/features"
+	"github.com/e6qu/intraktible/platform/erasure"
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/httpx"
 	"github.com/e6qu/intraktible/platform/identity"
@@ -26,6 +27,10 @@ type Service struct {
 	store   store.Store
 	egress  connectors.EgressPolicy
 	secrets *connectors.Keyring
+	// eraser crypto-shreds the named PII fields of custom-event data, sealed per
+	// entity subject; piiFields is the set to seal.
+	eraser    *erasure.Vault
+	piiFields map[string]bool
 }
 
 // Option configures a Service.
@@ -41,6 +46,24 @@ func WithEgress(p connectors.EgressPolicy) Option {
 // boundary. Credential fields are encrypted before ConnectorDefined is emitted.
 func WithSecrets(kr *connectors.Keyring) Option {
 	return func(s *Service) { s.secrets = kr }
+}
+
+// WithErasure crypto-shreds the named PII fields of custom-event data: each is
+// sealed under its entity subject before the event is recorded, and opened (or
+// shown "[erased]" once the subject is erased) on read. Only the named fields
+// are sealed, so the feature engine and other readers of non-PII fields are
+// unaffected.
+func WithErasure(v *erasure.Vault, fields []string) Option {
+	return func(s *Service) {
+		if v == nil || len(fields) == 0 {
+			return
+		}
+		s.eraser = v
+		s.piiFields = make(map[string]bool, len(fields))
+		for _, f := range fields {
+			s.piiFields[f] = true
+		}
+	}
 }
 
 // New builds the service.
@@ -95,12 +118,23 @@ type eventRequest struct {
 func (s *Service) recordEvent(w http.ResponseWriter, r *http.Request) {
 	var req eventRequest
 	httpx.Emit(w, r, &req, func(id identity.Identity) (eventlog.Envelope, error) {
+		data := req.Data
+		if s.eraser != nil {
+			sealed, err := s.eraser.SealFields(r.Context(), id, eventSubject(req.EntityType, req.EntityID), data, s.piiFields)
+			if err != nil {
+				return eventlog.Envelope{}, err
+			}
+			data = sealed
+		}
 		return s.cmd.RecordEvent(r.Context(), id, domain.RecordEvent{
 			EntityType: req.EntityType, EntityID: req.EntityID, EventName: req.EventName,
-			Data: req.Data, OccurredAt: req.OccurredAt,
+			Data: data, OccurredAt: req.OccurredAt,
 		})
 	})
 }
+
+// eventSubject is the erasure subject for an entity's events.
+func eventSubject(entityType, entityID string) string { return entityType + "/" + entityID }
 
 func (s *Service) listEntities(w http.ResponseWriter, r *http.Request) {
 	id, ok := httpx.Caller(w, r)
@@ -126,6 +160,13 @@ func (s *Service) listEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	recs, err := entities.ListEvents(r.Context(), s.store, id, r.PathValue("type"), r.PathValue("id"))
+	if err == nil && s.eraser != nil {
+		for i := range recs {
+			if opened, oerr := s.eraser.OpenFields(r.Context(), id, eventSubject(recs[i].EntityType, recs[i].EntityID), recs[i].Data); oerr == nil {
+				recs[i].Data = opened
+			}
+		}
+	}
 	httpx.WriteList(w, "events", recs, err)
 }
 

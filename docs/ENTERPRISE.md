@@ -134,12 +134,12 @@ enterprise buyers; **P2** = differentiators / scale.
   (`POST /v1/erasure/subjects/{subject}`) destroys the key — the ciphertext in the log
   and projections becomes permanently unreadable (`ErrErased`) while the immutable events
   stay for audit. A **retention sweep** (`POST /v1/erasure/retention?max_age_days=`)
-  auto-erases subjects past a cutoff. The vault is the shred mechanism + the
-  erasure/retention control surface; sealing PII surfaces under it must seal only the
-  **privacy-classified, non-computed** fields per subject (so the feature engine and
-  decision logic, which read non-PII fields, keep working) — that field-level write
-  sealing across the decide/context paths is the remaining integration, deliberately
-  scoped separately to avoid breaking computation.*
+  auto-erases subjects past a cutoff. **Field-level sealing is wired** into the Context
+  Layer: the configured PII fields of a custom event (`INTRAKTIBLE_ERASURE_PII_FIELDS`)
+  are sealed under the entity subject before the event is recorded and opened on read —
+  or shown `[erased]` once the subject is shredded — while non-PII fields stay plaintext,
+  so the **feature engine keeps working** over them (verified end-to-end). Sealing the
+  remaining surface (recorded decision input/output) follows the same per-field pattern.*
 - **P1 — Model risk management (SR 11-7 / SS1/23)**: documented model inventory,
   validation evidence, monitoring — supported by metrics + versioning but not
   packaged.

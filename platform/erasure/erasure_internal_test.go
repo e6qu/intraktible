@@ -4,7 +4,9 @@ package erasure
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -57,6 +59,52 @@ func TestVaultSealOpenAndShred(t *testing.T) {
 	}
 	if _, err := v.Seal(ctx, id, "ghost", []byte("x")); !errors.Is(err, ErrErased) {
 		t.Fatalf("seal of pre-erased subject = %v, want ErrErased", err)
+	}
+}
+
+func TestSealAndOpenFields(t *testing.T) {
+	ctx := context.Background()
+	v := NewVault(store.NewMemory())
+	id := identity.Identity{Org: "o", Workspace: "w", Actor: "admin"}
+	doc := []byte(`{"ssn":"123-45-6789","amount":100,"note":"hi"}`)
+	fields := map[string]bool{"ssn": true}
+
+	sealed, err := v.SealFields(ctx, id, "ada", doc, fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The PII field is sealed; the non-PII fields (e.g. the feature-engine numeric
+	// "amount") stay in plaintext.
+	if got := string(sealed); strings.Contains(got, "123-45-6789") || !strings.Contains(got, "$intraktible_erased") ||
+		!strings.Contains(got, "100") || !strings.Contains(got, "hi") {
+		t.Fatalf("sealed = %s", got)
+	}
+
+	opened, err := v.OpenFields(ctx, id, "ada", sealed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	_ = json.Unmarshal(opened, &m)
+	if m["ssn"] != "123-45-6789" || m["amount"].(float64) != 100 || m["note"] != "hi" {
+		t.Fatalf("opened = %s", opened)
+	}
+
+	// After erasure the sealed field reads "[erased]" while the rest survives.
+	if err := v.Erase(ctx, id, "ada"); err != nil {
+		t.Fatal(err)
+	}
+	opened, err = v.OpenFields(ctx, id, "ada", sealed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = json.Unmarshal(opened, &m)
+	if m["ssn"] != "[erased]" || m["amount"].(float64) != 100 {
+		t.Fatalf("opened after erase = %s", opened)
+	}
+	// Sealing new data for an erased subject is refused.
+	if _, err := v.SealFields(ctx, id, "ada", doc, fields); !errors.Is(err, ErrErased) {
+		t.Fatalf("seal fields for erased subject = %v, want ErrErased", err)
 	}
 }
 

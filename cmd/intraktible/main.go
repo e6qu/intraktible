@@ -185,6 +185,11 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 	connectorProvider := connectors.Provider{Store: st, Egress: egress, Secrets: connectorSecrets}
 	toolbox := tools.ConnectorToolbox{Fetcher: connectorProvider}
 
+	// The erasure vault crypto-shreds PII: it backs the /v1/erasure admin surface
+	// and seals the Context Layer's configured PII event fields per subject.
+	erasureVault := erasure.NewVault(st)
+	erasurePIIFields := splitCSV(os.Getenv("INTRAKTIBLE_ERASURE_PII_FIELDS"))
+
 	if enabled(modules, "hello") {
 		helloservice.New(hellocmd.NewHandler(log), st).Routes(api)
 	}
@@ -228,6 +233,7 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 		contextservice.New(contextcmd.NewHandler(log), st,
 			contextservice.WithEgress(egress),
 			contextservice.WithSecrets(connectorSecrets),
+			contextservice.WithErasure(erasureVault, erasurePIIFields),
 		).Routes(api)
 	}
 	var agentHandler *agentcmd.Handler
@@ -258,8 +264,9 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 
 	// Authenticated caller introspection (inside the /v1 auth chain).
 	httpx.NewAPIKeysHandler(apiKeys, log).Routes(api)
-	// Right-to-erasure (crypto-shredding) + retention, admin-gated.
-	erasure.NewService(erasure.NewVault(st)).Routes(api)
+	// Right-to-erasure (crypto-shredding) + retention, admin-gated. erasureVault is
+	// built earlier and shared with the Context Layer's PII field sealing.
+	erasure.NewService(erasureVault).Routes(api)
 	api.HandleFunc("GET /v1/me", httpx.MeHandler())
 
 	rt := projection.New(log, st, moduleProjectors(modules)...)
@@ -891,6 +898,17 @@ func enabled(modules, m string) bool {
 }
 
 // truthy reports whether an env value reads as enabled (1/true/yes/on).
+// splitCSV parses a comma-separated env value into a trimmed, non-empty list.
+func splitCSV(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 func envOr(key, fallback string) string {
 	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
 		return v
