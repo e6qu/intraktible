@@ -63,6 +63,7 @@ import (
 	"github.com/e6qu/intraktible/platform/openapi"
 	"github.com/e6qu/intraktible/platform/privacy"
 	"github.com/e6qu/intraktible/platform/projection"
+	"github.com/e6qu/intraktible/platform/scim"
 	"github.com/e6qu/intraktible/platform/store"
 	"github.com/e6qu/intraktible/platform/web"
 )
@@ -300,8 +301,22 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 	// SSO: OIDC login for the configured providers (Google, AWS Cognito, …). Each
 	// provider's discovery runs now; a provider that fails to initialize is skipped
 	// (logged) rather than blocking startup.
+	// SCIM user provisioning (the SSO companion): an IdP creates/deactivates users
+	// here, and the OIDC login consults it so a deactivated user is refused.
+	var scimStore *scim.Store
+	if token := os.Getenv("INTRAKTIBLE_SCIM_TOKEN"); token != "" {
+		scimStore = scim.NewStore(st)
+		org := envOr("INTRAKTIBLE_SCIM_ORG", "demo")
+		ws := envOr("INTRAKTIBLE_SCIM_WORKSPACE", "main")
+		scim.NewService(scimStore, token, org, ws).Routes(root)
+		slog.Info("scim: user provisioning enabled", "org", org, "workspace", ws)
+	}
 	if authers := oidcAuthenticators(ctx); len(authers) > 0 {
-		httpx.NewOIDCHandler(sessions, authers...).Routes(root)
+		oh := httpx.NewOIDCHandler(sessions, authers...)
+		if scimStore != nil {
+			oh.SetGate(scimStore.Allowed)
+		}
+		oh.Routes(root)
 		slog.Info("sso: OIDC enabled", "providers", oidcNames(authers))
 	}
 	root.Handle("/v1/", httpx.Chain(api, httpx.Authenticate(keyring, sessions), httpx.Authorize))
@@ -753,6 +768,13 @@ func enabled(modules, m string) bool {
 }
 
 // truthy reports whether an env value reads as enabled (1/true/yes/on).
+func envOr(key, fallback string) string {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		return v
+	}
+	return fallback
+}
+
 func truthy(v string) bool {
 	switch strings.ToLower(strings.TrimSpace(v)) {
 	case "1", "true", "yes", "on":

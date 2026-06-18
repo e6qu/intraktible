@@ -135,6 +135,28 @@ func TestOIDCCallbackVerifiesAndIssuesSession(t *testing.T) {
 	}
 }
 
+func TestOIDCCallbackHonorsLoginGate(t *testing.T) {
+	h, _ := oidcHandler(t)
+	// A gate that denies the verified user (as SCIM would for a deactivated user).
+	h.SetGate(func(_ context.Context, _, _, email string) bool { return email != "ada@acme.com" })
+	mux := http.NewServeMux()
+	h.Routes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/auth/oidc/test/callback?state=s1&code=xyz", http.NoBody)
+	req.AddCookie(&http.Cookie{Name: "oidc_state", Value: "s1"})
+	req.AddCookie(&http.Cookie{Name: "oidc_nonce", Value: oidcNonce})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("deactivated user callback -> %d, want 403", rec.Code)
+	}
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == "session" && c.Value != "" {
+			t.Fatal("a gated-out user must not receive a session")
+		}
+	}
+}
+
 func TestOIDCCallbackRejectsBadState(t *testing.T) {
 	h, _ := oidcHandler(t)
 	mux := http.NewServeMux()

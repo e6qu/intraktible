@@ -3,6 +3,7 @@
 package httpx
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -11,6 +12,10 @@ import (
 
 	"github.com/e6qu/intraktible/platform/auth"
 )
+
+// LoginGate decides whether a verified SSO user may obtain a session — the hook
+// SCIM uses to block a deactivated user. A nil gate allows every verified login.
+type LoginGate func(ctx context.Context, org, workspace, email string) bool
 
 const (
 	oidcStateCookie = "oidc_state"
@@ -24,7 +29,12 @@ type OIDCHandler struct {
 	authers      map[string]*auth.OIDCAuthenticator
 	sessions     auth.SessionStore
 	postLoginURL string
+	gate         LoginGate
 }
+
+// SetGate installs a login gate (e.g. SCIM's active-user check) consulted after
+// token verification, before a session is issued.
+func (h *OIDCHandler) SetGate(g LoginGate) { h.gate = g }
 
 // NewOIDCHandler builds the handler over the configured providers; the callback
 // redirects to "/" (the app) on success.
@@ -92,6 +102,12 @@ func (h *OIDCHandler) callback(w http.ResponseWriter, r *http.Request) {
 	login, err := a.Exchange(r.Context(), r.URL.Query().Get("code"), nonce.Value)
 	if err != nil {
 		Error(w, http.StatusUnauthorized, err)
+		return
+	}
+	// Honor deprovisioning: a user deactivated in the IdP (via SCIM) is refused a
+	// session even though the IdP still issued a valid token.
+	if h.gate != nil && !h.gate(r.Context(), login.Identity.Org, login.Identity.Workspace, login.Identity.Actor) {
+		Error(w, http.StatusForbidden, errors.New("sso: user is deactivated"))
 		return
 	}
 	tok := h.sessions.Issue(login.Identity, login.Role)

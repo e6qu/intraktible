@@ -37,7 +37,7 @@ These are real strengths, not placeholders:
 Priorities: **P0** = blocks a regulated production rollout; **P1** = expected by
 enterprise buyers; **P2** = differentiators / scale.
 
-### Identity & access  (status: RBAC + managed tokens + OIDC SSO shipped)
+### Identity & access  (status: RBAC + managed tokens + OIDC SSO + SCIM shipped)
 - **P0 — RBAC — ✅ done.** Roles (viewer / operator / editor / approver / admin)
   and authorization on mutating endpoints.
 - **P1 — SSO (OIDC) — ✅ done.** OIDC Authorization-Code login (`platform/auth`
@@ -47,7 +47,14 @@ enterprise buyers; **P2** = differentiators / scale.
   claim → role** mapping issues a normal session. Providers are env-configured
   (`INTRAKTIBLE_OIDC_PROVIDERS`); **Google** and **AWS Cognito** ship with sensible
   defaults (issuer / `cognito:groups`). The login page renders a "Sign in with …"
-  button per configured provider. *Remaining: SAML, and **SCIM** user provisioning.*
+  button per configured provider.
+- **P1 — SCIM provisioning — ✅ done.** A SCIM 2.0 Users surface (`platform/scim`,
+  `/scim/v2/Users`, static-bearer-authed, provisioning one configured tenant) lets an
+  IdP create / list / filter / **deactivate** / delete users; the OIDC login consults
+  it through a gate so a user **deactivated in the IdP is refused a session** even with
+  a valid token (deprovisioning), while unprovisioned users aren't locked out. PATCH
+  tolerates the Okta and Azure active-toggle shapes. *Remaining: SCIM Groups → role
+  sync, and SAML.*
 - **P1 — API token management — ✅ done (backend + UI).** Admin-gated
   `GET/POST/DELETE /v1/api-keys` (+ `POST …/{id}/rotate`) manages durable, hashed API
   tokens for the current org/workspace; create returns the generated secret once, tokens
