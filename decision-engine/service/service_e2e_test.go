@@ -186,13 +186,19 @@ func TestDecisionRecordErasure(t *testing.T) {
 		t.Fatal("decide never completed")
 	}
 
-	// The recorded decision input has the SSN sealed at rest.
-	rec, _, err := history.Read(context.Background(), st, id, dec.DecisionID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(rec.Data), "123-45-6789") || !strings.Contains(string(rec.Data), "$intraktible_erased") {
+	// The recorded decision input has the SSN sealed at rest. Poll: the history
+	// projection applies the decision event asynchronously off the bus, so a read
+	// immediately after the decide HTTP response can race it (flaky under -race).
+	var rec history.Record
+	if !testutil.Eventually(t, func() bool {
+		var rerr error
+		rec, _, rerr = history.Read(context.Background(), st, id, dec.DecisionID)
+		return rerr == nil && strings.Contains(string(rec.Data), "$intraktible_erased")
+	}) {
 		t.Fatalf("decision SSN not sealed at rest: %s", rec.Data)
+	}
+	if strings.Contains(string(rec.Data), "123-45-6789") {
+		t.Fatalf("raw SSN present in recorded decision: %s", rec.Data)
 	}
 
 	readSSN := func() string {
