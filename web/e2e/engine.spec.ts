@@ -878,6 +878,37 @@ test('a scorecard panel edits factors and output without raw JSON', async ({ pag
   );
 });
 
+test('a decision-table panel sets a hit policy + aggregate without raw JSON', async ({
+  page,
+  request
+}) => {
+  const slug = uniqueSlug();
+  const created = await request.post('/v1/flows', {
+    headers: { 'X-Api-Key': KEY },
+    data: { slug, name: 'Table' }
+  });
+  const { flow_id } = await created.json();
+
+  await page.goto(`/engine/${flow_id}`);
+  await expect(page.getByLabel('new node type')).toBeVisible();
+
+  await page.getByLabel('new node type').selectOption('decision_table');
+  await page.getByRole('button', { name: 'Add', exact: true }).click();
+
+  // COLLECT reveals the aggregate picker; pick sum, then add a row + output.
+  await page.getByLabel('decision table hit policy').selectOption('collect');
+  await page.getByLabel('decision table aggregate').selectOption('sum');
+  await page.getByRole('button', { name: 'Add row' }).click();
+  await page.getByLabel('row 0 when').fill('score >= 80');
+  await page.getByRole('button', { name: 'Add output' }).click();
+  await page.getByLabel('row 0 output 0 target').fill('pts');
+  await page.getByLabel('row 0 output 0 expr').fill('2');
+
+  await expect(page.getByLabel('node config')).toHaveValue(
+    '{"hit":"collect","aggregate":"sum","rows":[{"when":"score >= 80","outputs":[{"target":"pts","expr":"2"}]}]}'
+  );
+});
+
 test('a rule panel edits when/then clauses without raw JSON', async ({ page, request }) => {
   const slug = uniqueSlug();
   const created = await request.post('/v1/flows', {

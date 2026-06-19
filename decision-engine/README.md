@@ -40,9 +40,13 @@ Done — execution runtime + decide API + decision history (the decision event s
   a **Reason** node emits structured adverse-action `{code, description}`s into the reserved
   `reason_codes` field — always surfaced by Output — which the history projector lifts to a first-class
   `reason_codes` field on the decision record for ECOA/Reg B + insurance explainability).
+  The **Decision Table** resolves rows under a DMN-style hit policy — `first` (default), `unique`
+  (one match else conflict), `any` (matches must agree), `rule_order` / `collect` (every match, per
+  target, with an optional `sum`/`min`/`max`/`count` aggregate).
   Conditions/expressions use **expr-lang**; the **Code** node runs **Starlark** (no
   clock/random/IO, recursion off, bounded by a step limit) with the context as a `data` dict and its
-  top-level assignments merged back. A **Connect** node calls a Context Layer connector and an **AI**
+  top-level assignments merged back. Both surfaces are a stable, versioned contract — see
+  [docs/EXPRESSIONS.md](../docs/EXPRESSIONS.md). A **Connect** node calls a Context Layer connector and an **AI**
   node runs an Agent Manager agent — both pre-resolved by the shell, with the result injected under
   `connect.<output>` / `ai.<output>` (see below).
 - Each `/decide` records a stream — `DecisionStarted` → `NodeEvaluated`…  → `DecisionCompleted` /
@@ -190,4 +194,5 @@ textarea kept as a per-type advanced view. The canvas supports **drag-to-connect
 handles to add an edge) alongside the from/to form (D10). It also **imports a flow JSON** (paste or
 upload a JSON export, or a bare `{graph}` / `{nodes,edges}` object) onto the canvas — the inverse of the
 JSON export — to review and publish; `input_schema` is preserved across edits, imports, and republishes.
-(CEL as a second condition engine was closed by decision — expr-lang + Starlark already cover it.)
+(CEL as a second condition engine was closed by decision — expr-lang + Starlark already cover it; see
+the [expression-language contract](../docs/EXPRESSIONS.md).)
