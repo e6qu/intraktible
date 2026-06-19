@@ -66,7 +66,7 @@
         section: 'View as',
         label: `View as ${p.label}`,
         hint: p.blurb,
-        icon: p.id,
+        icon: p.icon,
         keywords: `persona view as ${p.label} ${p.blurb}`,
         run: () => setPersona(p.id)
       })

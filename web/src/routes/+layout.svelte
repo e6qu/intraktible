@@ -7,7 +7,14 @@
   import { page } from '$app/stores';
   import Icon from '$lib/Icon.svelte';
   import { initTheme, toggleTheme, theme as themeStore } from '$lib/theme';
-  import { initPersona, setPersona, persona as personaStore, PERSONAS } from '$lib/persona';
+  import {
+    initPersona,
+    setPersona,
+    persona as personaStore,
+    PERSONAS,
+    personaConfig,
+    navFor
+  } from '$lib/persona';
   import { user, refreshUser, signOut } from '$lib/session';
   import { openPalette } from '$lib/palette';
   import Toasts from '$lib/Toasts.svelte';
@@ -31,16 +38,9 @@
     };
   });
 
-  const nav = [
-    { href: '/engine', label: 'Engine', icon: 'engine' },
-    { href: '/policies', label: 'Policies', icon: 'rule' },
-    { href: '/preapprovals', label: 'Approvals', icon: 'check' },
-    { href: '/decisions', label: 'Decisions', icon: 'diagram' },
-    { href: '/data', label: 'Data', icon: 'database' },
-    { href: '/cases', label: 'Cases', icon: 'cases' },
-    { href: '/agents', label: 'Agents', icon: 'agents' },
-    { href: '/audit', label: 'Audit', icon: 'shield' }
-  ];
+  // Navigation is the current persona's ordered (and optionally relabelled) subset
+  // of the shared catalog — each role sees the sections that matter to it.
+  const nav = $derived(navFor(persona));
 
   const path = $derived($page.url.pathname);
   // The sign-in screen shows only minimal chrome (brand + theme) — not the full
@@ -50,7 +50,7 @@
     return path === href || path.startsWith(href + '/');
   }
 
-  const currentPersona = $derived(PERSONAS.find((p) => p.id === persona) ?? PERSONAS[0]);
+  const currentPersona = $derived(personaConfig(persona));
   let personaEl = $state<HTMLDetailsElement | null>(null);
   let menuEl = $state<HTMLDivElement | null>(null);
 
@@ -152,7 +152,7 @@
           ? `Account and view — signed in as ${$user.actor}, viewing as ${currentPersona.label}`
           : `View as — current: ${currentPersona.label}`}
       >
-        <span class="avatar"><Icon name={currentPersona.id} size={16} /></span>
+        <span class="avatar"><Icon name={currentPersona.icon} size={16} /></span>
         <span class="persona-name">{currentPersona.label}</span>
         <span class="caret"><Icon name="chevron-down" size={13} /></span>
       </summary>
@@ -178,7 +178,7 @@
             aria-checked={persona === p.id}
             onclick={() => choose(p.id)}
           >
-            <span class="opt-avatar" data-p={p.id}><Icon name={p.id} size={16} /></span>
+            <span class="opt-avatar" data-p={p.id}><Icon name={p.icon} size={16} /></span>
             <span class="opt-text"><b>{p.label}</b><small>{p.blurb}</small></span>
             {#if persona === p.id}<span class="opt-check"><Icon name="check" size={14} /></span
               >{/if}
@@ -505,6 +505,18 @@
   }
   .opt-avatar[data-p='showcase'] {
     background: linear-gradient(135deg, #e11d48, #be123c);
+  }
+  .opt-avatar[data-p='developer'] {
+    background: linear-gradient(135deg, #6366f1, #4338ca);
+  }
+  .opt-avatar[data-p='manager'] {
+    background: linear-gradient(135deg, #0ea5e9, #0369a1);
+  }
+  .opt-avatar[data-p='product'] {
+    background: linear-gradient(135deg, #8b5cf6, #6d28d9);
+  }
+  .opt-avatar[data-p='evaluator'] {
+    background: linear-gradient(135deg, #64748b, #334155);
   }
   .opt-text {
     display: flex;
