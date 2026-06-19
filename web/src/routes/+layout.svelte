@@ -43,6 +43,9 @@
   ];
 
   const path = $derived($page.url.pathname);
+  // The sign-in screen shows only minimal chrome (brand + theme) — not the full
+  // authenticated nav/account controls.
+  const isLogin = $derived(path === '/login');
   function active(href: string): boolean {
     return path === href || path.startsWith(href + '/');
   }
@@ -107,82 +110,92 @@
     <span class="mark"><Icon name="logo" size={20} /></span>
     <span class="wordmark">intraktible</span>
   </a>
-  <nav aria-label="Primary">
-    {#each nav as item (item.href)}
-      <a
-        href={item.href}
-        class="navlink"
-        class:active={active(item.href)}
-        aria-current={active(item.href) ? 'page' : undefined}
-      >
-        <Icon name={item.icon} size={16} />
-        <span class="navlabel">{item.label}</span>
-      </a>
-    {/each}
-  </nav>
-  <span class="auth" data-testid="auth-status">
-    {#if $user}
-      <span class="who">Signed in as <b>{$user.actor}</b></span>
-      <button class="ghost" onclick={signOut} aria-label="Sign out">
-        <Icon name="signout" size={14} /> <span class="signout-label">Sign out</span>
-      </button>
-    {:else}
-      <span class="who muted">Not signed in</span>
-      <a class="navlink" href="/login">Sign in</a>
-    {/if}
-  </span>
-  <button
-    class="cmdk"
-    onclick={openPalette}
-    aria-label="Open command palette"
-    title="Command palette (⌘K)"
-    data-testid="cmdk-trigger"
-  >
-    <Icon name="search" size={14} />
-    <span class="cmdk-label">Search</span>
-    <kbd>⌘K</kbd>
-  </button>
-  {#if $user}<NotificationsBell />{/if}
-  <details
-    class="persona"
-    bind:this={personaEl}
-    data-testid="persona-switch"
-    ontoggle={onPersonaToggle}
-  >
-    <summary
-      class="persona-trigger"
-      title="Switch view — {currentPersona.blurb}"
-      aria-haspopup="menu"
-      aria-label="Switch view persona — current: {currentPersona.label}"
-    >
-      <span class="avatar"><Icon name={currentPersona.id} size={16} /></span>
-      <span class="persona-name">{currentPersona.label}</span>
-      <span class="caret"><Icon name="chevron-down" size={13} /></span>
-    </summary>
-    <div
-      class="persona-menu"
-      role="menu"
-      aria-label="View persona"
-      tabindex="-1"
-      bind:this={menuEl}
-      onkeydown={menuKeydown}
-    >
-      <p class="persona-hint">View as</p>
-      {#each PERSONAS as p (p.id)}
-        <button
-          class="persona-opt"
-          class:on={persona === p.id}
-          role="menuitemradio"
-          aria-checked={persona === p.id}
-          onclick={() => choose(p.id)}
+  {#if !isLogin}
+    <nav aria-label="Primary">
+      {#each nav as item (item.href)}
+        <a
+          href={item.href}
+          class="navlink"
+          class:active={active(item.href)}
+          aria-current={active(item.href) ? 'page' : undefined}
         >
-          <span class="opt-avatar" data-p={p.id}><Icon name={p.id} size={16} /></span>
-          <span class="opt-text"><b>{p.label}</b><small>{p.blurb}</small></span>
-          {#if persona === p.id}<span class="opt-check"><Icon name="check" size={14} /></span>{/if}
-        </button>
+          <Icon name={item.icon} size={16} />
+          <span class="navlabel">{item.label}</span>
+        </a>
       {/each}
-    </div>
-  </details>
+    </nav>
+    <button
+      class="cmdk"
+      onclick={openPalette}
+      aria-label="Open command palette"
+      title="Command palette (⌘K)"
+      data-testid="cmdk-trigger"
+    >
+      <Icon name="search" size={14} />
+      <span class="cmdk-label">Search</span>
+      <kbd>⌘K</kbd>
+    </button>
+    {#if $user}<NotificationsBell />{/if}
+    <!-- One account-and-view control: the role switcher (for everyone) plus the
+         signed-in identity and sign-out, instead of competing top-bar controls. -->
+    <details
+      class="persona"
+      bind:this={personaEl}
+      data-testid="persona-switch"
+      ontoggle={onPersonaToggle}
+    >
+      <summary
+        class="persona-trigger"
+        title="Account & view — {currentPersona.blurb}"
+        aria-haspopup="menu"
+        aria-label={$user
+          ? `Account and view — signed in as ${$user.actor}, viewing as ${currentPersona.label}`
+          : `View as — current: ${currentPersona.label}`}
+      >
+        <span class="avatar"><Icon name={currentPersona.id} size={16} /></span>
+        <span class="persona-name">{currentPersona.label}</span>
+        <span class="caret"><Icon name="chevron-down" size={13} /></span>
+      </summary>
+      <div
+        class="persona-menu"
+        role="menu"
+        aria-label="Account and view"
+        tabindex="-1"
+        bind:this={menuEl}
+        onkeydown={menuKeydown}
+      >
+        {#if $user}
+          <p class="acct-id" data-testid="auth-status">Signed in as <b>{$user.actor}</b></p>
+        {:else}
+          <p class="acct-id muted" data-testid="auth-status">Not signed in</p>
+        {/if}
+        <p class="persona-hint">View as</p>
+        {#each PERSONAS as p (p.id)}
+          <button
+            class="persona-opt"
+            class:on={persona === p.id}
+            role="menuitemradio"
+            aria-checked={persona === p.id}
+            onclick={() => choose(p.id)}
+          >
+            <span class="opt-avatar" data-p={p.id}><Icon name={p.id} size={16} /></span>
+            <span class="opt-text"><b>{p.label}</b><small>{p.blurb}</small></span>
+            {#if persona === p.id}<span class="opt-check"><Icon name="check" size={14} /></span
+              >{/if}
+          </button>
+        {/each}
+        {#if $user}
+          <button class="acct-action" onclick={signOut}>
+            <Icon name="signout" size={14} /> Sign out
+          </button>
+        {:else}
+          <a class="acct-action" href="/login">Sign in</a>
+        {/if}
+      </div>
+    </details>
+  {:else}
+    <span class="grow"></span>
+  {/if}
   <button
     class="toggle"
     onclick={() => (theme = toggleTheme(theme))}
@@ -239,15 +252,6 @@
     }
     .wordmark {
       display: none;
-    }
-    .signout-label {
-      display: none;
-    }
-    .auth {
-      gap: 0.25rem;
-    }
-    .auth .ghost {
-      padding: 0.3rem 0.3rem;
     }
     /* Let the nav shrink below its content width and scroll horizontally, so the
        brand, persona switcher, and theme toggle stay pinned and the header never
@@ -327,32 +331,34 @@
     background: color-mix(in srgb, var(--accent) 14%, transparent);
     color: var(--accent);
   }
-  .auth {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.6rem;
-    font-size: 0.85rem;
+  .grow {
+    flex: 1;
   }
-  .auth .who {
+  .acct-id {
+    margin: 0.2rem 0.5rem 0.35rem;
+    font-size: 0.82rem;
     color: var(--fg-muted);
   }
-  .auth .muted {
-    color: var(--fg-subtle);
-  }
-  .auth .ghost {
-    border-color: transparent;
+  .acct-action {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    width: 100%;
+    margin-top: 0.3rem;
+    padding: 0.45rem 0.5rem;
+    border: none;
+    border-top: 1px solid var(--border);
+    border-radius: 0 0 var(--radius-sm) var(--radius-sm);
     background: none;
     color: var(--fg-muted);
-    padding: 0.3rem 0.5rem;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
   }
-  .auth .ghost:hover {
+  .acct-action:hover {
     background: var(--surface-2);
     color: var(--fg);
-  }
-  @media (max-width: 640px) {
-    .auth .who {
-      display: none;
-    }
+    text-decoration: none;
   }
   .toggle {
     display: inline-flex;
