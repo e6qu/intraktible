@@ -3,6 +3,7 @@
   import { page } from '$app/stores';
   import Icon from '$lib/Icon.svelte';
   import Copyable from '$lib/Copyable.svelte';
+  import Breadcrumb from '$lib/Breadcrumb.svelte';
   import CommentThread from '$lib/CommentThread.svelte';
   import { getDecision, exportDecision, type Decision, type RunExportFormat } from '$lib/api';
   import { toast } from '$lib/toast';
@@ -71,7 +72,7 @@
 </script>
 
 <main>
-  <p><a href="/decisions">← all decisions</a></p>
+  <Breadcrumb sectionHref="/decisions" sectionLabel="Decisions" current={id} />
   {#if error}<p class="err">{error}</p>{/if}
   {#if d}
     <div class="head">

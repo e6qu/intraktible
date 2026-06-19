@@ -3006,6 +3006,12 @@
     background: none;
     color: var(--fg-subtle);
     cursor: pointer;
+    /* ≥24px touch/click target even though the glyph is small (WCAG 2.5.8). */
+    min-width: 24px;
+    min-height: 24px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     padding: 0.15rem;
   }
   button.x:hover {
