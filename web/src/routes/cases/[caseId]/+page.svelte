@@ -3,6 +3,7 @@
   import { page } from '$app/stores';
   import { getCase, assignCase, setCaseStatus, addCaseNote, type Case } from '$lib/api';
   import { displayEntries } from '$lib/kv';
+  import Breadcrumb from '$lib/Breadcrumb.svelte';
   import RelativeTime from '$lib/RelativeTime.svelte';
 
   // API calls authenticate via the session cookie (empty key -> no X-Api-Key header).
@@ -49,7 +50,7 @@
 </script>
 
 <main>
-  <p><a href="/cases">← queue</a></p>
+  <Breadcrumb sectionHref="/cases" sectionLabel="Cases" current={caseID} />
   {#if c}
     <h1>{c.company_name}</h1>
     <dl>

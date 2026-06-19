@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
-<!-- Predictive model registry: define models as data (logistic | gbm | expression),
-     evaluated deterministically by the engine and referenced from a Predict node.
+<!-- Predictive model registry: define models as data (logistic | gbm | expression |
+     external), evaluated by the engine and referenced from a Predict node.
      Everything goes through the documented /v1/models API. -->
 <script lang="ts">
   import { onMount } from 'svelte';
@@ -8,7 +8,14 @@
   import EmptyState from '$lib/EmptyState.svelte';
   import Skeleton from '$lib/Skeleton.svelte';
   import RelativeTime from '$lib/RelativeTime.svelte';
-  import { listModels, defineModel, type Model } from '$lib/api';
+  import {
+    listModels,
+    defineModel,
+    modelDrift,
+    captureModelBaseline,
+    type Model,
+    type ModelDrift
+  } from '$lib/api';
 
   // Authenticates via the session cookie (empty key → no X-Api-Key header).
   const key = '';
@@ -22,7 +29,11 @@
       'gbm',
       '{\n  "kind": "gbm",\n  "link": "logit",\n  "trees": [\n    { "feature": "fico", "threshold": 650,\n      "left": { "leaf": true, "value": -0.4 },\n      "right": { "leaf": true, "value": 0.3 } }\n  ]\n}'
     ],
-    ['expression', '{\n  "kind": "expression",\n  "expr": "fico * 0.001 + income * 0.00001"\n}']
+    ['expression', '{\n  "kind": "expression",\n  "expr": "fico * 0.001 + income * 0.00001"\n}'],
+    [
+      'external',
+      '{\n  "kind": "external",\n  "endpoint": "https://models.internal/score",\n  "timeout_ms": 5000\n}'
+    ]
   ]);
 
   let models = $state<Model[]>([]);
@@ -33,8 +44,41 @@
   let spec = $state(STARTERS.get('logistic') ?? '');
   let busy = $state(false);
 
+  // The model whose drift readout is open, plus its loaded report.
+  let driftOpen = $state('');
+  let drift = $state<ModelDrift | null>(null);
+
   function msg(e: unknown): string {
     return e instanceof Error ? e.message : String(e);
+  }
+  function psiLabel(psi: number): string {
+    if (psi < 0.1) return 'stable';
+    if (psi < 0.25) return 'moderate shift';
+    return 'significant drift';
+  }
+  async function toggleDrift(m: string) {
+    if (driftOpen === m) {
+      driftOpen = '';
+      drift = null;
+      return;
+    }
+    driftOpen = m;
+    drift = null;
+    error = '';
+    try {
+      drift = await modelDrift(key, m);
+    } catch (e) {
+      error = msg(e);
+    }
+  }
+  async function captureBaseline(m: string) {
+    error = '';
+    try {
+      await captureModelBaseline(key, m);
+      drift = await modelDrift(key, m);
+    } catch (e) {
+      error = msg(e);
+    }
   }
   function starter(kind: string) {
     spec = STARTERS.get(kind) ?? spec;
@@ -72,10 +116,11 @@
 <main>
   <h1><Icon name="scorecard" size={20} /> Models</h1>
   <p class="muted">
-    Predictive models hosted as data and evaluated deterministically — no external runtime.
-    Reference one from a <b>Predict</b> node (it injects <code>predict.&lt;output&gt;</code>).
-    Supported kinds:
-    <b>logistic</b> regression, a <b>gbm</b> tree ensemble, and an <b>expression</b> score.
+    Predictive models hosted as data. Reference one from a <b>Predict</b> node (it injects
+    <code>predict.&lt;output&gt;</code>). Three kinds evaluate in-process and deterministically —
+    <b>logistic</b> regression, a <b>gbm</b> tree ensemble, an <b>expression</b> score — and an
+    <b>external</b> kind serves a bring-your-own model over an egress-guarded HTTP endpoint (returns
+    <code>{'{'}score, probability{'}'}</code>).
   </p>
 
   <form
@@ -99,6 +144,7 @@
         <button type="button" onclick={() => starter('logistic')}>logistic</button>
         <button type="button" onclick={() => starter('gbm')}>gbm</button>
         <button type="button" onclick={() => starter('expression')}>expression</button>
+        <button type="button" onclick={() => starter('external')}>external</button>
       </span>
       <button type="submit" disabled={busy}>{busy ? 'Saving…' : 'Define model'}</button>
     </div>
@@ -123,7 +169,7 @@
     <div class="table-wrap">
       <table>
         <thead>
-          <tr><th>Name</th><th>Kind</th><th>Updated</th></tr>
+          <tr><th>Name</th><th>Kind</th><th>Updated</th><th></th></tr>
         </thead>
         <tbody>
           {#each models as m (m.name)}
@@ -131,7 +177,46 @@
               <td>{m.name}</td>
               <td><span class="badge">{m.kind || '—'}</span></td>
               <td class="muted"><RelativeTime value={m.updated_at} /></td>
+              <td
+                ><button class="link" onclick={() => toggleDrift(m.name)}
+                  >{driftOpen === m.name ? 'Hide drift' : 'Drift'}</button
+                ></td
+              >
             </tr>
+            {#if driftOpen === m.name && drift}
+              <tr class="drift-row" data-testid="model-drift">
+                <td colspan="4">
+                  {#if drift.count === 0}
+                    <p class="muted">
+                      No predictions recorded yet for this model — run decisions through a Predict
+                      node that references it.
+                    </p>
+                  {:else}
+                    <div class="drift-head">
+                      <span><b>{drift.count}</b> predictions</span>
+                      {#if drift.psi != null}
+                        <span class="psi {psiLabel(drift.psi).split(' ')[0]}"
+                          >PSI {drift.psi.toFixed(3)} · {psiLabel(drift.psi)}</span
+                        >
+                      {:else}
+                        <span class="muted">no baseline captured yet</span>
+                      {/if}
+                      <button onclick={() => captureBaseline(m.name)}>Capture baseline</button>
+                    </div>
+                    <div class="hist" aria-label="Predicted-probability distribution (deciles)">
+                      {#each drift.hist as c, i (i)}
+                        <div class="hist-col" title={`${i * 10}–${i * 10 + 10}%: ${c}`}>
+                          <div
+                            class="hist-bar"
+                            style="height:{Math.round((c / Math.max(1, ...drift.hist)) * 100)}%"
+                          ></div>
+                        </div>
+                      {/each}
+                    </div>
+                  {/if}
+                </td>
+              </tr>
+            {/if}
           {/each}
         </tbody>
       </table>
@@ -242,5 +327,56 @@
   }
   .err {
     color: var(--danger);
+  }
+  .link {
+    border: none;
+    background: none;
+    padding: 0;
+    color: var(--link, var(--accent-ink));
+    cursor: pointer;
+  }
+  .drift-row td {
+    background: var(--surface-2);
+  }
+  .drift-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.8rem;
+    margin-bottom: 0.6rem;
+    font-size: 0.9rem;
+  }
+  .psi {
+    padding: 0.1rem 0.5rem;
+    border-radius: 999px;
+    font-size: 0.78rem;
+    background: color-mix(in srgb, var(--ok, #16a34a) 16%, transparent);
+    color: var(--ok, #16a34a);
+  }
+  .psi.moderate {
+    background: color-mix(in srgb, #d97706 18%, transparent);
+    color: #b45309;
+  }
+  .psi.significant {
+    background: color-mix(in srgb, var(--danger) 16%, transparent);
+    color: var(--danger);
+  }
+  .hist {
+    display: flex;
+    align-items: flex-end;
+    gap: 0.2rem;
+    height: 4rem;
+  }
+  .hist-col {
+    flex: 1;
+    display: flex;
+    align-items: flex-end;
+    height: 100%;
+  }
+  .hist-bar {
+    width: 100%;
+    min-height: 2px;
+    border-radius: 2px 2px 0 0;
+    background: var(--accent);
   }
 </style>

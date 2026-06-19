@@ -13,14 +13,23 @@ const StreamFlows = "decision.flows"
 // StreamModels is the event stream for the predictive-model registry.
 const StreamModels = "decision.models"
 
-// TypeModelDefined registers (or redefines) a named predictive model.
-const TypeModelDefined = "decision.model.defined"
+// Model registry + drift event types.
+const (
+	TypeModelDefined          = "decision.model.defined"
+	TypeModelBaselineCaptured = "decision.model.baseline_captured"
+)
 
 // ModelDefined registers a named predictive model. Spec is the opaque, kind-specific
-// model definition (logistic | gbm | expression), validated by the models package.
+// model definition (logistic | gbm | expression | external), validated by the models package.
 type ModelDefined struct {
 	Name string          `json:"name"`
 	Spec json.RawMessage `json:"spec"`
+}
+
+// ModelBaselineCaptured snapshots a model's current prediction-probability
+// distribution as the reference that drift (PSI) is measured against.
+type ModelBaselineCaptured struct {
+	Name string `json:"name"`
 }
 
 // Flow lifecycle event types.

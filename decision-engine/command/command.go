@@ -483,6 +483,31 @@ func (h *Handler) DefineModel(ctx context.Context, id identity.Identity, name st
 	})
 }
 
+// CaptureModelBaseline snapshots a model's current prediction-probability
+// distribution as the drift baseline (the projector reads its accumulated histogram
+// at this event's position).
+func (h *Handler) CaptureModelBaseline(ctx context.Context, id identity.Identity, name string) (eventlog.Envelope, error) {
+	if err := id.Valid(); err != nil {
+		return eventlog.Envelope{}, err
+	}
+	if strings.TrimSpace(name) == "" {
+		return eventlog.Envelope{}, fmt.Errorf("decision-engine: model name is required")
+	}
+	payload, err := json.Marshal(events.ModelBaselineCaptured{Name: name})
+	if err != nil {
+		return eventlog.Envelope{}, fmt.Errorf("decision-engine: marshal model baseline: %w", err)
+	}
+	return h.log.Append(ctx, eventlog.Envelope{
+		Org:       id.Org,
+		Workspace: id.Workspace,
+		Actor:     id.Actor,
+		Stream:    events.StreamModels,
+		Type:      events.TypeModelBaselineCaptured,
+		Time:      h.now(),
+		Payload:   payload,
+	})
+}
+
 func (h *Handler) appendFlowEvent(ctx context.Context, id identity.Identity, typ string, payload json.RawMessage) (eventlog.Envelope, error) {
 	return h.log.Append(ctx, eventlog.Envelope{
 		Org:       id.Org,

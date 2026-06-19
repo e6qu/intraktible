@@ -5,6 +5,8 @@
 package service
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -32,13 +34,21 @@ import (
 	"github.com/e6qu/intraktible/platform/store"
 )
 
+// AICompleter is the LLM seam the authoring copilot uses: a single text completion
+// from a system + user prompt. The port lives here so the engine never imports the
+// AI provider directly; the composition root supplies an adapter over ai.Registry.
+type AICompleter interface {
+	Complete(ctx context.Context, system, prompt string) (string, error)
+}
+
 // Service wires flow commands, the decide runtime, and the read models to HTTP.
 type Service struct {
-	cmd    *command.Handler
-	decide *command.DecideHandler
-	pa     *preapproval.Handler
-	store  store.Store
-	eraser *erasure.Vault
+	cmd     *command.Handler
+	decide  *command.DecideHandler
+	pa      *preapproval.Handler
+	store   store.Store
+	eraser  *erasure.Vault
+	copilot AICompleter
 }
 
 // New builds the service. The pre-approval handler is shared with the standalone
@@ -51,6 +61,10 @@ func New(cmd *command.Handler, decide *command.DecideHandler, pa *preapproval.Ha
 // at the read boundary (sealed at decide time under the entity subject; shown
 // "[erased]" once the subject is erased).
 func (s *Service) UseEraser(v *erasure.Vault) { s.eraser = v }
+
+// UseCopilot enables the authoring copilot endpoints (explain / suggest), backed by
+// the given LLM completer. Without it, the copilot endpoints return 503.
+func (s *Service) UseCopilot(c AICompleter) { s.copilot = c }
 
 // Routes registers the flow-management, decide, and decision-history endpoints.
 func (s *Service) Routes(mux *http.ServeMux) {
@@ -73,6 +87,7 @@ func (s *Service) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/flows/{flow_id}/deployment-requests/{req_id}/reject", s.rejectDeployment)
 	mux.HandleFunc("POST /v1/flows/{slug}/{env}/decide", s.runDecide)
 	mux.HandleFunc("POST /v1/flows/{slug}/{env}/decide/batch", s.decideBatch)
+	mux.HandleFunc("POST /v1/flows/{slug}/{env}/decide/stream", s.decideStream)
 	mux.HandleFunc("POST /v1/flows/{slug}/{env}/preapprove/batch", s.preapproveBatch)
 	mux.HandleFunc("GET /v1/flows/{flow_id}/export", s.exportFlow)
 	mux.HandleFunc("POST /v1/flows/{flow_id}/backtest", s.backtestFlow)
@@ -83,6 +98,98 @@ func (s *Service) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/models", s.defineModel)
 	mux.HandleFunc("GET /v1/models", s.listModels)
 	mux.HandleFunc("GET /v1/models/{name}", s.getModel)
+	mux.HandleFunc("GET /v1/models/{name}/drift", s.modelDrift)
+	mux.HandleFunc("POST /v1/models/{name}/baseline", s.captureModelBaseline)
+	mux.HandleFunc("POST /v1/copilot/explain", s.copilotExplain)
+	mux.HandleFunc("POST /v1/copilot/suggest", s.copilotSuggest)
+}
+
+const copilotSystem = "You are a decisioning-platform assistant for the intraktible decision engine. " +
+	"Flows are DAGs of typed nodes (input, rule, split, scorecard, decision_table, 2d_matrix, code, " +
+	"connect, ai, predict, reason, manual_review, output); conditions/expressions are expr-lang and the " +
+	"code node runs Starlark. Be concise, concrete, and practical."
+
+// copilotExplain returns a plain-language explanation of a flow graph.
+func (s *Service) copilotExplain(w http.ResponseWriter, r *http.Request) {
+	if _, ok := httpx.Caller(w, r); !ok {
+		return
+	}
+	if s.copilot == nil {
+		httpx.Error(w, http.StatusServiceUnavailable, fmt.Errorf("copilot is not configured"))
+		return
+	}
+	var req struct {
+		Graph events.Graph `json:"graph"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	graphJSON, _ := json.Marshal(req.Graph)
+	prompt := "Explain, in plain language for a business reviewer, what this decision flow does — the " +
+		"path through it and what each meaningful node contributes. Flow graph JSON:\n" + string(graphJSON)
+	text, err := s.copilot.Complete(r.Context(), copilotSystem, prompt)
+	if err != nil {
+		httpx.Error(w, http.StatusBadGateway, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]string{"text": text})
+}
+
+// copilotSuggest turns a natural-language description into suggested decision logic.
+func (s *Service) copilotSuggest(w http.ResponseWriter, r *http.Request) {
+	if _, ok := httpx.Caller(w, r); !ok {
+		return
+	}
+	if s.copilot == nil {
+		httpx.Error(w, http.StatusServiceUnavailable, fmt.Errorf("copilot is not configured"))
+		return
+	}
+	var req struct {
+		Prompt string `json:"prompt"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	if strings.TrimSpace(req.Prompt) == "" {
+		httpx.Error(w, http.StatusBadRequest, fmt.Errorf("a prompt is required"))
+		return
+	}
+	prompt := "Propose decision logic for this requirement, as a short ordered list of nodes (type + what " +
+		"each does, with example expr-lang conditions where relevant) that an author can build:\n" + req.Prompt
+	text, err := s.copilot.Complete(r.Context(), copilotSystem, prompt)
+	if err != nil {
+		httpx.Error(w, http.StatusBadGateway, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]string{"text": text})
+}
+
+func (s *Service) modelDrift(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	rep, err := models.Drift(r.Context(), s.store, id, r.PathValue("name"))
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, rep)
+}
+
+func (s *Service) captureModelBaseline(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	e, err := s.cmd.CaptureModelBaseline(r.Context(), id, r.PathValue("name"))
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"status": "captured", "event_id": e.ID, "seq": e.Seq})
 }
 
 type defineModelRequest struct {
@@ -844,6 +951,82 @@ func (s *Service) decideBatch(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	httpx.JSON(w, http.StatusOK, resp)
+}
+
+// maxStreamLine caps a single NDJSON input row (1 MiB) on the streaming path.
+const maxStreamLine = 1 << 20
+
+// decideStream is the large-job batch path: the request body is NDJSON (one input
+// object per line) and the response is NDJSON streamed one result per line, flushed
+// as each row decides. Unlike decideBatch it holds no dataset in memory and has no
+// row cap, so it scales to very large jobs; entity_type / entity_key come from the
+// query string and apply to every row. (A dependency-light alternative to a gRPC/
+// Arrow wire — the same recorded decide path, just streamed.)
+func (s *Service) decideStream(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	slug, env := r.PathValue("slug"), r.PathValue("env")
+	if !allowEnv(w, r, env) {
+		return
+	}
+	entityType := r.URL.Query().Get("entity_type")
+	entityKey := r.URL.Query().Get("entity_key")
+
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	flusher, _ := w.(http.Flusher)
+	enc := json.NewEncoder(w)
+	emit := func(v any) {
+		_ = enc.Encode(v)
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}
+
+	sc := bufio.NewScanner(r.Body)
+	sc.Buffer(make([]byte, 0, 64*1024), maxStreamLine)
+	i := -1
+	for sc.Scan() {
+		line := bytes.TrimSpace(sc.Bytes())
+		if len(line) == 0 {
+			continue
+		}
+		i++
+		out := batchResult{Index: i}
+		var input map[string]any
+		if err := json.Unmarshal(line, &input); err != nil {
+			out.Status = "rejected"
+			out.Error = "invalid json: " + err.Error()
+			emit(out)
+			continue
+		}
+		entityID := ""
+		if entityKey != "" {
+			entityID = stringField(input, entityKey)
+			if entityID == "" {
+				out.Status = "rejected"
+				out.Error = "missing entity id field " + entityKey
+				emit(out)
+				continue
+			}
+		}
+		out.EntityID = entityID
+		res, err := s.decide.Decide(r.Context(), id, slug, env, input, command.EntityRef{Type: entityType, ID: entityID})
+		if err != nil {
+			out.Status = "rejected"
+			out.Error = err.Error()
+			emit(out)
+			continue
+		}
+		out.DecisionID, out.Status, out.Data = res.DecisionID, res.Status, res.Output
+		out.Disposition, out.Error = res.Disposition, res.Error
+		emit(out)
+	}
+	if err := sc.Err(); err != nil {
+		// The 200 + body already started, so surface the read failure as a final line.
+		emit(map[string]string{"error": "stream read: " + err.Error()})
+	}
 }
 
 type preapproveBatchRequest struct {

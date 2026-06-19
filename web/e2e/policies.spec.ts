@@ -54,6 +54,12 @@ test('creates a policy bound to a flow and publishes a band', async ({ page, req
   await page.getByRole('button', { name: 'Add band' }).click();
   await page.getByLabel('band 0 when').fill('score >= 0.85');
   await page.getByLabel('band 0 disposition').selectOption('approve');
+
+  // The plain-language band preview reflects the rule + the default, in order.
+  const bandPreview = page.getByTestId('band-preview');
+  await expect(bandPreview).toContainText('if score >= 0.85 → approve');
+  await expect(bandPreview).toContainText('otherwise → refer');
+
   await page.getByTestId('publish-policy').click();
 
   await expect(page.getByText(/Published policy v1/)).toBeVisible();

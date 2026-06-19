@@ -204,7 +204,7 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 			enginecmd.WithFeatures(features.Provider{Store: st}),
 			enginecmd.WithConnectors(connectorProvider),
 			enginecmd.WithAgents(agents.Provider{Store: st, Registry: aiRegistry, Tools: toolbox}),
-			enginecmd.WithModels(enginemodels.Provider{Store: st}),
+			enginecmd.WithModels(enginemodels.Provider{Store: st, HTTP: egress.Client(10 * time.Second)}),
 		}
 		// Crypto-shred recorded decision PII under the entity subject when erasure
 		// fields are configured (same set as the Context Layer's event sealing).
@@ -220,6 +220,7 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 		if len(erasurePIIFields) > 0 {
 			engineSvc.UseEraser(erasureVault)
 		}
+		engineSvc.UseCopilot(aiCompleter{reg: aiRegistry})
 		engineSvc.Routes(api)
 		// Policies are the operational disposition layer over flows (auto-approve/
 		// decline/refer); a first-class artifact alongside the flow registry.
@@ -667,7 +668,7 @@ func moduleProjectors(modules string) []projection.Projector {
 		ps = append(ps, stats.Projector{})
 	}
 	if enabled(modules, "decision-engine") {
-		ps = append(ps, flows.Projector{}, history.Projector{}, analytics.Projector{}, policy.Projector{}, preapproval.Projector{}, monitor.Projector{}, notify.Projector{}, assertions.Projector{}, shadow.Projector{}, enginemodels.Projector{})
+		ps = append(ps, flows.Projector{}, history.Projector{}, analytics.Projector{}, policy.Projector{}, preapproval.Projector{}, monitor.Projector{}, notify.Projector{}, assertions.Projector{}, shadow.Projector{}, enginemodels.Projector{}, enginemodels.DriftProjector{})
 	}
 	if enabled(modules, "case-manager") {
 		ps = append(ps, cases.Projector{})
@@ -917,6 +918,22 @@ func enabled(modules, m string) bool {
 type piiSealer struct {
 	vault  *erasure.Vault
 	fields map[string]bool
+}
+
+// aiCompleter adapts the AI registry to the engine's copilot AICompleter port (a
+// single system+user text completion via the default provider).
+type aiCompleter struct{ reg *ai.Registry }
+
+func (c aiCompleter) Complete(ctx context.Context, system, prompt string) (string, error) {
+	p, err := c.reg.Get("")
+	if err != nil {
+		return "", err
+	}
+	resp, err := p.Complete(ctx, ai.Request{System: system, Prompt: prompt})
+	if err != nil {
+		return "", err
+	}
+	return resp.Text, nil
 }
 
 func newPIISealer(v *erasure.Vault, fields []string) piiSealer {

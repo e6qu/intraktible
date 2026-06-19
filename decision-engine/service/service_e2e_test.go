@@ -716,6 +716,97 @@ func TestDecideBatchOverHTTP(t *testing.T) {
 	api.Request(t, http.MethodPost, "/v1/flows/batch/production/decide/batch", map[string]any{"dataset": []any{}}, http.StatusBadRequest, nil)
 }
 
+type fakeCompleter struct{}
+
+func (fakeCompleter) Complete(_ context.Context, _, prompt string) (string, error) {
+	return "FAKE-COMPLETION for: " + prompt, nil
+}
+
+func TestCopilotOverHTTP(t *testing.T) {
+	log, st := testutil.NewLogStore(t)
+	svc := service.New(command.NewHandler(log), command.NewDecideHandler(log, st), preapproval.NewHandler(log), st)
+	svc.UseCopilot(fakeCompleter{})
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "author"}
+	api := testutil.StartAPI(t, log, st, "test-key", id, svc.Routes, flows.Projector{}, history.Projector{})
+
+	var explain struct {
+		Text string `json:"text"`
+	}
+	api.Request(t, http.MethodPost, "/v1/copilot/explain", map[string]any{
+		"graph": map[string]any{"nodes": []any{map[string]any{"id": "in", "type": "input"}}, "edges": []any{}},
+	}, http.StatusOK, &explain)
+	if !strings.Contains(explain.Text, "FAKE-COMPLETION") {
+		t.Fatalf("explain text = %q", explain.Text)
+	}
+
+	var suggest struct {
+		Text string `json:"text"`
+	}
+	api.Request(t, http.MethodPost, "/v1/copilot/suggest", map[string]any{"prompt": "approve when fico >= 700"}, http.StatusOK, &suggest)
+	if !strings.Contains(suggest.Text, "FAKE-COMPLETION") {
+		t.Fatalf("suggest text = %q", suggest.Text)
+	}
+
+	// An empty suggest prompt is a 400.
+	api.Request(t, http.MethodPost, "/v1/copilot/suggest", map[string]any{"prompt": ""}, http.StatusBadRequest, nil)
+}
+
+func TestCopilotUnconfiguredReturns503(t *testing.T) {
+	// startEngine wires no copilot.
+	api := startEngine(t)
+	api.Request(t, http.MethodPost, "/v1/copilot/suggest", map[string]any{"prompt": "x"}, http.StatusServiceUnavailable, nil)
+}
+
+func TestDecideStreamOverHTTP(t *testing.T) {
+	api := startEngine(t)
+	var created struct {
+		FlowID string `json:"flow_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows", map[string]any{"slug": "stream", "name": "Stream"}, http.StatusCreated, &created)
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/versions", map[string]any{
+		"graph": map[string]any{
+			"nodes": []map[string]any{
+				{"id": "in", "type": "input"},
+				{"id": "a", "type": "assignment", "config": map[string]any{"assignments": []map[string]any{{"target": "d", "expr": "'OK'"}}}},
+				{"id": "out", "type": "output", "config": map[string]any{"fields": []string{"d"}}},
+			},
+			"edges": []map[string]any{{"from": "in", "to": "a"}, {"from": "a", "to": "out"}},
+		},
+		"input_schema": map[string]any{"type": "object", "required": []string{"x"}},
+	}, http.StatusCreated, nil)
+
+	// Stream three NDJSON rows: two valid, one missing the required field → rejected.
+	ndjson := "{\"x\":1}\n{\"x\":2}\n{}\n"
+	var body string
+	if !testutil.Eventually(t, func() bool {
+		req, err := http.NewRequest(http.MethodPost, api.Server.URL+"/v1/flows/stream/production/decide/stream", strings.NewReader(ndjson))
+		if err != nil {
+			return false
+		}
+		req.Header.Set("X-Api-Key", api.Key)
+		resp, err := api.Server.Client().Do(req)
+		if err != nil {
+			return false
+		}
+		defer func() { _ = resp.Body.Close() }()
+		if resp.StatusCode != http.StatusOK {
+			return false
+		}
+		b, _ := io.ReadAll(resp.Body)
+		body = string(b)
+		return strings.Count(body, `"status":"completed"`) == 2
+	}) {
+		t.Fatalf("stream never completed two rows:\n%s", body)
+	}
+	if !strings.Contains(body, `"status":"rejected"`) {
+		t.Fatalf("expected one rejected row (missing required field):\n%s", body)
+	}
+	// One NDJSON result line per input row.
+	if lines := strings.Split(strings.TrimSpace(body), "\n"); len(lines) != 3 {
+		t.Fatalf("expected 3 NDJSON result lines, got %d:\n%s", len(lines), body)
+	}
+}
+
 func TestDecideAppliesPolicyOverHTTP(t *testing.T) {
 	api := startEngine(t)
 	var created struct {

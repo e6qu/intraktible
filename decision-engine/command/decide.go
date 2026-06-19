@@ -479,10 +479,13 @@ func (h *DecideHandler) injectPredictions(ctx context.Context, id identity.Ident
 		if err != nil {
 			return nil, fmt.Errorf("decision-engine: predict node %q (model %q): %w", sp.NodeID, sp.Model, err)
 		}
-		var v any
+		// Tag the prediction with the model name so the read side can attribute it
+		// (drift monitoring); downstream still reads predict.<output>.{score,probability}.
+		v := map[string]any{}
 		if err := json.Unmarshal(resp, &v); err != nil {
 			return nil, fmt.Errorf("decision-engine: predict node %q response: %w", sp.NodeID, err)
 		}
+		v["model"] = sp.Model
 		resolved[sp.Output] = v
 	}
 	out := make(map[string]any, len(data)+1)
