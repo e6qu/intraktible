@@ -43,7 +43,9 @@ Done — flow model + versioning (vertical slice, command→event→projection�
     replayable. The in-process kinds need no external runtime (the §9 ONNX-at-scale non-goal stands);
     `external` is the bring-your-own-serving escape hatch. **Drift:** `GET /v1/models/{name}/drift`
     reports the model's predicted-probability distribution (deciles) + the PSI vs a captured baseline
-    (`POST …/baseline`) — `<0.1` stable, `0.1–0.25` moderate, `>0.25` significant.
+    (`POST …/baseline`) — `<0.1` stable, `0.1–0.25` moderate, `>0.25` significant. `?window=Nd` measures
+    only the most recent N day-buckets (a windowed view a cumulative one would dilute); `POST …/monitor
+    {threshold}` sets a PSI alert, and the report's `firing` flag trips when PSI exceeds it.
   - `GET /v1/decisions` — history; filter by `flow`/`env`/`status`/`q`, an RFC3339 range
     (`start_time`/`end_time`), and `include_node_results=false` to omit the per-node trace
 - Run it: `intraktible serve --modules=decision-engine`.

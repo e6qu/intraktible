@@ -317,6 +317,8 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 	// stopped the consumer, so an orchestrator does not keep routing to a node
 	// serving stale read models.
 	root.HandleFunc("GET /healthz", httpx.Health(rt.Err))
+	// /version reports the build (VCS revision + Go) so ops can confirm what's live.
+	root.HandleFunc("GET /version", httpx.Version())
 
 	// Public auth endpoints — exchange an API key for a session cookie (and clear
 	// it). Registered on root with exact patterns so they win over the /v1/ chain.
@@ -934,6 +936,18 @@ func (c aiCompleter) Complete(ctx context.Context, system, prompt string) (strin
 		return "", err
 	}
 	return resp.Text, nil
+}
+
+func (c aiCompleter) CompleteJSON(ctx context.Context, system, prompt string, schema json.RawMessage) (json.RawMessage, error) {
+	p, err := c.reg.Get("")
+	if err != nil {
+		return nil, err
+	}
+	resp, err := p.Complete(ctx, ai.Request{System: system, Prompt: prompt, Schema: schema})
+	if err != nil {
+		return nil, err
+	}
+	return resp.Structured, nil
 }
 
 func newPIISealer(v *erasure.Vault, fields []string) piiSealer {

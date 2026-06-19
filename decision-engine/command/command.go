@@ -508,6 +508,30 @@ func (h *Handler) CaptureModelBaseline(ctx context.Context, id identity.Identity
 	})
 }
 
+// SetModelMonitor sets (threshold > 0) or clears (<= 0) the PSI drift threshold a
+// model alerts on.
+func (h *Handler) SetModelMonitor(ctx context.Context, id identity.Identity, name string, threshold float64) (eventlog.Envelope, error) {
+	if err := id.Valid(); err != nil {
+		return eventlog.Envelope{}, err
+	}
+	if strings.TrimSpace(name) == "" {
+		return eventlog.Envelope{}, fmt.Errorf("decision-engine: model name is required")
+	}
+	payload, err := json.Marshal(events.ModelMonitorSet{Name: name, Threshold: threshold})
+	if err != nil {
+		return eventlog.Envelope{}, fmt.Errorf("decision-engine: marshal model monitor: %w", err)
+	}
+	return h.log.Append(ctx, eventlog.Envelope{
+		Org:       id.Org,
+		Workspace: id.Workspace,
+		Actor:     id.Actor,
+		Stream:    events.StreamModels,
+		Type:      events.TypeModelMonitorSet,
+		Time:      h.now(),
+		Payload:   payload,
+	})
+}
+
 func (h *Handler) appendFlowEvent(ctx context.Context, id identity.Identity, typ string, payload json.RawMessage) (eventlog.Envelope, error) {
 	return h.log.Append(ctx, eventlog.Envelope{
 		Org:       id.Org,

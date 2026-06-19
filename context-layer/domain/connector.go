@@ -15,10 +15,18 @@ import (
 const (
 	ConnectorHTTP       = "http"
 	ConnectorSQL        = "sql"
+	ConnectorGraphQL    = "graphql"
+	ConnectorStatic     = "static"
 	ConnectorMockBureau = "mock_bureau"
 )
 
-var connectorTypes = map[string]bool{ConnectorHTTP: true, ConnectorSQL: true, ConnectorMockBureau: true}
+var connectorTypes = map[string]bool{
+	ConnectorHTTP:       true,
+	ConnectorSQL:        true,
+	ConnectorGraphQL:    true,
+	ConnectorStatic:     true,
+	ConnectorMockBureau: true,
+}
 
 // ValidConnectorType reports whether t is a known connector type.
 func ValidConnectorType(t string) bool { return connectorTypes[t] }

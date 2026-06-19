@@ -16,6 +16,7 @@
     publishVersion,
     copilotExplain,
     copilotSuggest,
+    copilotGenerate,
     decide,
     batchDecide,
     preapproveBatch,
@@ -685,6 +686,24 @@
     error = '';
     try {
       copilotOut = await copilotSuggest(key, copilotPrompt.trim());
+    } catch (e) {
+      error = msg(e);
+    } finally {
+      copilotBusy = false;
+    }
+  }
+  // Generate a server-validated graph and apply it to the canvas (reuses importJSON,
+  // so the result is reviewed before publish). A model that can't produce a valid
+  // flow surfaces the server's 422 message rather than applying anything.
+  async function generateFlow() {
+    if (!copilotPrompt.trim() || copilotBusy) return;
+    copilotBusy = true;
+    copilotOut = '';
+    error = '';
+    try {
+      const graph = await copilotGenerate(key, copilotPrompt.trim());
+      importJSON(JSON.stringify(graph));
+      copilotOut = 'Generated a flow and applied it to the canvas — review it, then Publish.';
     } catch (e) {
       error = msg(e);
     } finally {
@@ -2744,9 +2763,19 @@
           rows="3"
           placeholder="e.g. Auto-approve applicants with fico ≥ 720 and income ≥ 50k; refer 640–720; decline below 640."
         ></textarea>
-        <button type="submit" disabled={copilotBusy || !copilotPrompt.trim()}>
-          {copilotBusy ? 'Thinking…' : 'Suggest logic'}
-        </button>
+        <div class="copilot-buttons">
+          <button type="submit" disabled={copilotBusy || !copilotPrompt.trim()}>
+            {copilotBusy ? 'Thinking…' : 'Suggest logic'}
+          </button>
+          <button
+            type="button"
+            class="primary"
+            onclick={generateFlow}
+            disabled={copilotBusy || !copilotPrompt.trim()}
+          >
+            Generate &amp; apply a flow
+          </button>
+        </div>
       </form>
       {#if copilotOut}
         <pre class="copilot-out" data-testid="copilot-output">{copilotOut}</pre>
@@ -2791,8 +2820,10 @@
     padding: 0.5rem 0.6rem;
     resize: vertical;
   }
-  .copilot-ask button {
-    align-self: flex-start;
+  .copilot-buttons {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
   }
   .copilot-out {
     margin-top: 0.8rem;

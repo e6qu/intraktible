@@ -97,6 +97,37 @@ func TestDecidePredictNodeWithoutProviderFailsLoudly(t *testing.T) {
 	decideFailsWithoutProvider(t, "score", flowtest.PredictGraph())
 }
 
+// TestModelMonitorThresholdPersists proves SetModelMonitor flows through the event
+// stream + DriftProjector onto the model's drift report.
+func TestModelMonitorThresholdPersists(t *testing.T) {
+	ctx := context.Background()
+	log, err := eventlog.OpenWAL(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = log.Close() }()
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "caller"}
+	st := store.NewMemory()
+
+	cmd := command.NewHandler(log)
+	if _, err := cmd.DefineModel(ctx, id, "risk", json.RawMessage(`{"kind":"logistic","coefficients":{"x":1}}`)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmd.SetModelMonitor(ctx, id, "risk", 0.3); err != nil {
+		t.Fatal(err)
+	}
+	if err := projection.New(log, st, models.DriftProjector{}).Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	rep, err := models.Drift(ctx, st, id, "risk", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Threshold != 0.3 {
+		t.Fatalf("threshold = %v, want 0.3", rep.Threshold)
+	}
+}
+
 // TestModelDriftMonitoring proves predictions accumulate into a per-model
 // probability histogram, a baseline can be captured, and a post-baseline shift in
 // the predicted distribution is detected as PSI > 0.
@@ -141,7 +172,7 @@ func TestModelDriftMonitoring(t *testing.T) {
 	if err := projection.New(log, st, models.DriftProjector{}).Start(ctx); err != nil {
 		t.Fatal(err)
 	}
-	rep, err := models.Drift(ctx, st, id, "risk")
+	rep, err := models.Drift(ctx, st, id, "risk", 0)
 	if err != nil {
 		t.Fatal(err)
 	}

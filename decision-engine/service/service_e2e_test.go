@@ -716,10 +716,44 @@ func TestDecideBatchOverHTTP(t *testing.T) {
 	api.Request(t, http.MethodPost, "/v1/flows/batch/production/decide/batch", map[string]any{"dataset": []any{}}, http.StatusBadRequest, nil)
 }
 
-type fakeCompleter struct{}
+type fakeCompleter struct{ graph string }
 
 func (fakeCompleter) Complete(_ context.Context, _, prompt string) (string, error) {
 	return "FAKE-COMPLETION for: " + prompt, nil
+}
+
+func (f fakeCompleter) CompleteJSON(_ context.Context, _, _ string, _ json.RawMessage) (json.RawMessage, error) {
+	if f.graph == "" {
+		return json.RawMessage(`{}`), nil // an unusable graph (no input/output) → 422
+	}
+	return json.RawMessage(f.graph), nil
+}
+
+func TestCopilotGenerate(t *testing.T) {
+	log, st := testutil.NewLogStore(t)
+	svc := service.New(command.NewHandler(log), command.NewDecideHandler(log, st), preapproval.NewHandler(log), st)
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "author"}
+
+	// A completer returning a valid graph → 200 with an applyable graph.
+	good := fakeCompleter{graph: `{"nodes":[{"id":"in","type":"input"},{"id":"out","type":"output","config":{"fields":["x"]}}],"edges":[{"from":"in","to":"out"}]}`}
+	svc.UseCopilot(good)
+	api := testutil.StartAPI(t, log, st, "test-key", id, svc.Routes, flows.Projector{})
+	var gen struct {
+		Graph struct {
+			Nodes []map[string]any `json:"nodes"`
+		} `json:"graph"`
+	}
+	api.Request(t, http.MethodPost, "/v1/copilot/generate", map[string]any{"prompt": "approve everyone"}, http.StatusOK, &gen)
+	if len(gen.Graph.Nodes) != 2 {
+		t.Fatalf("generated graph nodes = %d, want 2", len(gen.Graph.Nodes))
+	}
+
+	// A completer returning an unusable graph → 422 (validated server-side, never applied).
+	log2, st2 := testutil.NewLogStore(t)
+	svc2 := service.New(command.NewHandler(log2), command.NewDecideHandler(log2, st2), preapproval.NewHandler(log2), st2)
+	svc2.UseCopilot(fakeCompleter{})
+	api2 := testutil.StartAPI(t, log2, st2, "test-key", id, svc2.Routes, flows.Projector{})
+	api2.Request(t, http.MethodPost, "/v1/copilot/generate", map[string]any{"prompt": "x"}, http.StatusUnprocessableEntity, nil)
 }
 
 func TestCopilotOverHTTP(t *testing.T) {
