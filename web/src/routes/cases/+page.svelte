@@ -9,9 +9,15 @@
     getCaseSummary,
     requestReview,
     sweepSLA,
+    assignCase,
+    setCaseStatus,
     type Case,
     type CaseSummary
   } from '$lib/api';
+
+  function msg(e: unknown): string {
+    return e instanceof Error ? e.message : String(e);
+  }
 
   // API calls authenticate via the session cookie (empty key -> no X-Api-Key header).
   const key = '';
@@ -26,18 +32,64 @@
   let caseType = $state('aml');
   let slaDays = $state(5);
 
+  // Bulk selection on the queue (multi-select → assign / mark completed).
+  let selectedIds = $state<string[]>([]);
+  let bulkAssignee = $state('');
+  let bulkBusy = $state(false);
+  const allSelected = $derived(list.length > 0 && selectedIds.length === list.length);
+  function toggle(id: string) {
+    selectedIds = selectedIds.includes(id)
+      ? selectedIds.filter((x) => x !== id)
+      : [...selectedIds, id];
+  }
+  function toggleAll() {
+    selectedIds = allSelected ? [] : list.map((c) => c.case_id);
+  }
+
   async function load() {
     loading = true;
     error = '';
+    selectedIds = []; // the list is changing; drop a stale selection
     try {
       [list, summary] = await Promise.all([
         listCases(key, { status: statusFilter }),
         getCaseSummary(key)
       ]);
     } catch (e) {
-      error = e instanceof Error ? e.message : String(e);
+      error = msg(e);
     } finally {
       loading = false;
+    }
+  }
+
+  async function bulkAssign() {
+    if (bulkBusy || !bulkAssignee.trim() || selectedIds.length === 0) return;
+    bulkBusy = true;
+    error = '';
+    try {
+      for (const id of selectedIds) await assignCase(key, id, bulkAssignee.trim());
+      toast.success(`Assigned ${selectedIds.length} case(s) to ${bulkAssignee.trim()}`);
+      bulkAssignee = '';
+      await load();
+    } catch (e) {
+      error = msg(e);
+    } finally {
+      bulkBusy = false;
+    }
+  }
+  async function bulkComplete() {
+    if (bulkBusy || selectedIds.length === 0) return;
+    if (!confirm(`Mark ${selectedIds.length} case(s) completed?`)) return;
+    bulkBusy = true;
+    error = '';
+    try {
+      for (const id of selectedIds) await setCaseStatus(key, id, 'completed');
+      toast.success(`Completed ${selectedIds.length} case(s)`);
+      await load();
+    } catch (e) {
+      error = msg(e);
+    } finally {
+      bulkBusy = false;
     }
   }
 
@@ -100,9 +152,24 @@
       create();
     }}
   >
-    <input bind:value={company} placeholder="company name" aria-label="company name" />
-    <input bind:value={caseType} placeholder="case type" aria-label="case type" />
-    <input type="number" bind:value={slaDays} aria-label="sla days" min="0" style="width:5rem" />
+    <label
+      >Company <input
+        bind:value={company}
+        placeholder="Globex Corp"
+        aria-label="company name"
+      /></label
+    >
+    <label>Type <input bind:value={caseType} placeholder="aml" aria-label="case type" /></label>
+    <label
+      >SLA days
+      <input
+        type="number"
+        bind:value={slaDays}
+        aria-label="sla days"
+        min="0"
+        style="width:5rem"
+      /></label
+    >
     <button type="submit" disabled={creating}>{creating ? 'Opening…' : 'Open case'}</button>
   </form>
 
@@ -119,6 +186,16 @@
     </div>
   {/if}
 
+  {#if selectedIds.length > 0}
+    <div class="row bulk" data-testid="bulk-bar">
+      <span class="muted">{selectedIds.length} selected</span>
+      <input bind:value={bulkAssignee} placeholder="assignee" aria-label="bulk assignee" />
+      <button onclick={bulkAssign} disabled={bulkBusy || !bulkAssignee.trim()}>Assign</button>
+      <button onclick={bulkComplete} disabled={bulkBusy}>Mark completed</button>
+      <button class="link" onclick={() => (selectedIds = [])}>clear</button>
+    </div>
+  {/if}
+
   {#if loading}
     <Skeleton rows={5} />
   {:else if list.length === 0}
@@ -132,6 +209,13 @@
       <table>
         <thead>
           <tr
+            ><th
+              ><input
+                type="checkbox"
+                checked={allSelected}
+                onchange={toggleAll}
+                aria-label="select all cases"
+              /></th
             ><th>Company</th><th>Type</th><th>Status</th><th>Assignee</th><th>SLA</th><th
               >Days left</th
             ></tr
@@ -139,7 +223,15 @@
         </thead>
         <tbody>
           {#each list as c (c.case_id)}
-            <tr>
+            <tr class:sel={selectedIds.includes(c.case_id)}>
+              <td
+                ><input
+                  type="checkbox"
+                  checked={selectedIds.includes(c.case_id)}
+                  onchange={() => toggle(c.case_id)}
+                  aria-label={`select ${c.company_name}`}
+                /></td
+              >
               <td><a href={`/cases/${c.case_id}`}>{c.company_name}</a></td>
               <td>{c.case_type}</td>
               <td>{c.status}</td>
@@ -218,5 +310,28 @@
   .sla-overdue {
     color: var(--danger);
     font-weight: 600;
+  }
+  .row label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    margin: 0;
+    color: var(--fg-subtle);
+    font-size: 0.85rem;
+  }
+  .bulk {
+    padding: 0.5rem 0.7rem;
+    background: var(--surface-2);
+    border-radius: 6px;
+  }
+  tr.sel {
+    background: color-mix(in srgb, var(--accent) 8%, transparent);
+  }
+  button.link {
+    background: none;
+    border: none;
+    color: var(--accent);
+    cursor: pointer;
+    padding: 0.2rem;
   }
 </style>
