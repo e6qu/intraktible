@@ -13,6 +13,7 @@
     defineModel,
     modelDrift,
     captureModelBaseline,
+    setModelMonitor,
     type Model,
     type ModelDrift
   } from '$lib/api';
@@ -44,9 +45,11 @@
   let spec = $state(STARTERS.get('logistic') ?? '');
   let busy = $state(false);
 
-  // The model whose drift readout is open, plus its loaded report.
+  // The model whose drift readout is open, its loaded report, and the chosen window.
   let driftOpen = $state('');
   let drift = $state<ModelDrift | null>(null);
+  let driftWindow = $state(0); // 0 = all-time, else N days
+  let thresholdInput = $state('');
 
   function msg(e: unknown): string {
     return e instanceof Error ? e.message : String(e);
@@ -56,6 +59,16 @@
     if (psi < 0.25) return 'moderate shift';
     return 'significant drift';
   }
+  async function loadDrift(m: string) {
+    drift = null;
+    error = '';
+    try {
+      drift = await modelDrift(key, m, driftWindow);
+      thresholdInput = drift.threshold ? String(drift.threshold) : '';
+    } catch (e) {
+      error = msg(e);
+    }
+  }
   async function toggleDrift(m: string) {
     if (driftOpen === m) {
       driftOpen = '';
@@ -63,19 +76,23 @@
       return;
     }
     driftOpen = m;
-    drift = null;
-    error = '';
-    try {
-      drift = await modelDrift(key, m);
-    } catch (e) {
-      error = msg(e);
-    }
+    driftWindow = 0;
+    await loadDrift(m);
   }
   async function captureBaseline(m: string) {
     error = '';
     try {
       await captureModelBaseline(key, m);
-      drift = await modelDrift(key, m);
+      await loadDrift(m);
+    } catch (e) {
+      error = msg(e);
+    }
+  }
+  async function saveThreshold(m: string) {
+    error = '';
+    try {
+      await setModelMonitor(key, m, parseFloat(thresholdInput) || 0);
+      await loadDrift(m);
     } catch (e) {
       error = msg(e);
     }
@@ -194,14 +211,43 @@
                   {:else}
                     <div class="drift-head">
                       <span><b>{drift.count}</b> predictions</span>
+                      <label class="win">
+                        window
+                        <select
+                          aria-label="drift window"
+                          value={String(driftWindow)}
+                          onchange={(e) => {
+                            driftWindow = Number(e.currentTarget.value);
+                            loadDrift(m.name);
+                          }}
+                        >
+                          <option value="0">all-time</option>
+                          <option value="7">last 7 days</option>
+                          <option value="30">last 30 days</option>
+                        </select>
+                      </label>
                       {#if drift.psi != null}
                         <span class="psi {psiLabel(drift.psi).split(' ')[0]}"
                           >PSI {drift.psi.toFixed(3)} · {psiLabel(drift.psi)}</span
                         >
+                        {#if drift.firing}<span class="psi significant" data-testid="drift-firing"
+                            >⚠ firing (&gt; {drift.threshold})</span
+                          >{/if}
                       {:else}
                         <span class="muted">no baseline captured yet</span>
                       {/if}
                       <button onclick={() => captureBaseline(m.name)}>Capture baseline</button>
+                      <label class="win">
+                        alert PSI &gt;
+                        <input
+                          class="thresh"
+                          bind:value={thresholdInput}
+                          aria-label="drift threshold"
+                          placeholder="0.25"
+                          inputmode="decimal"
+                        />
+                      </label>
+                      <button onclick={() => saveThreshold(m.name)}>Set monitor</button>
                     </div>
                     <div class="hist" aria-label="Predicted-probability distribution (deciles)">
                       {#each drift.hist as c, i (i)}
@@ -360,6 +406,18 @@
   .psi.significant {
     background: color-mix(in srgb, var(--danger) 16%, transparent);
     color: var(--danger);
+  }
+  .win {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    font-size: 0.8rem;
+    color: var(--fg-subtle);
+  }
+  .thresh {
+    width: 4rem;
+    padding: 0.2rem 0.4rem;
+    font: inherit;
   }
   .hist {
     display: flex;

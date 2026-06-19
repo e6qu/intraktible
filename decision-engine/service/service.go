@@ -102,6 +102,7 @@ func (s *Service) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/models/{name}", s.getModel)
 	mux.HandleFunc("GET /v1/models/{name}/drift", s.modelDrift)
 	mux.HandleFunc("POST /v1/models/{name}/baseline", s.captureModelBaseline)
+	mux.HandleFunc("POST /v1/models/{name}/monitor", s.setModelMonitor)
 	mux.HandleFunc("POST /v1/copilot/explain", s.copilotExplain)
 	mux.HandleFunc("POST /v1/copilot/suggest", s.copilotSuggest)
 	mux.HandleFunc("POST /v1/copilot/generate", s.copilotGenerate)
@@ -231,12 +232,34 @@ func (s *Service) modelDrift(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	rep, err := models.Drift(r.Context(), s.store, id, r.PathValue("name"))
+	// ?window=7d or ?window=7 → measure the most recent 7 day-buckets; absent → all-time.
+	windowDays := atoiDefault(strings.TrimSuffix(r.URL.Query().Get("window"), "d"), 0)
+	rep, err := models.Drift(r.Context(), s.store, id, r.PathValue("name"), windowDays)
 	if err != nil {
 		httpx.Error(w, http.StatusInternalServerError, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, rep)
+}
+
+func (s *Service) setModelMonitor(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		Threshold float64 `json:"threshold"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	e, err := s.cmd.SetModelMonitor(r.Context(), id, r.PathValue("name"), req.Threshold)
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"status": "set", "threshold": req.Threshold, "event_id": e.ID, "seq": e.Seq})
 }
 
 func (s *Service) captureModelBaseline(w http.ResponseWriter, r *http.Request) {

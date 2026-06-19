@@ -17,7 +17,15 @@ const StreamModels = "decision.models"
 const (
 	TypeModelDefined          = "decision.model.defined"
 	TypeModelBaselineCaptured = "decision.model.baseline_captured"
+	TypeModelMonitorSet       = "decision.model.monitor_set"
 )
+
+// ModelMonitorSet sets (Threshold > 0) or clears (Threshold <= 0) the PSI drift
+// threshold a model alerts on.
+type ModelMonitorSet struct {
+	Name      string  `json:"name"`
+	Threshold float64 `json:"threshold"`
+}
 
 // ModelDefined registers a named predictive model. Spec is the opaque, kind-specific
 // model definition (logistic | gbm | expression | external), validated by the models package.

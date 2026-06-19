@@ -272,9 +272,15 @@
       "get": {
         "tags": ["models"],
         "summary": "Prediction-drift report for a model",
-        "description": "Returns the model's rolling distribution of predicted probabilities (deciles) and, once a baseline is captured, the PSI vs that baseline (<0.1 stable, 0.1–0.25 moderate, >0.25 significant).",
+        "description": "Returns the model's distribution of predicted probabilities (deciles) and, once a baseline is captured, the PSI vs that baseline (<0.1 stable, 0.1–0.25 moderate, >0.25 significant). ?window=Nd measures only the most recent N day-buckets (a windowed view; absent = all-time). firing is set when PSI exceeds the configured monitor threshold.",
         "parameters": [
-          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } },
+          {
+            "name": "window",
+            "in": "query",
+            "schema": { "type": "string" },
+            "description": "Recent-window size, e.g. \"7d\" or \"30d\"; absent = all-time."
+          }
         ],
         "responses": {
           "200": {
@@ -294,6 +300,32 @@
         ],
         "responses": {
           "200": { "description": "Baseline captured." },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/models/{name}/monitor": {
+      "post": {
+        "tags": ["models"],
+        "summary": "Set (or clear) the model's PSI drift alert threshold",
+        "description": "When set (threshold > 0), the drift report's `firing` flag is true once PSI exceeds it; threshold <= 0 clears the monitor.",
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["threshold"],
+                "properties": { "threshold": { "type": "number" } }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Monitor threshold set." },
           "401": { "$ref": "#/components/responses/Error" }
         }
       }
