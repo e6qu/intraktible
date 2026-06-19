@@ -513,6 +513,20 @@ never appear in-repo (neutral language only).
    gap: hosting/serving predictive models alongside rules (a predict node + model registry + monitoring).
    Larger than one PR and bounded by the §9 "ONNX serving at scale" non-goal — scope before building.
    Connector breadth, an authoring AI-copilot, and a gRPC/Arrow batch path ride here as stretch.
+9. **Persona-adaptive UI + API-first** (A42–A45, epic — a key differentiator) — make personas
+   **meaningful adaptations**, not skins. Today Builder/Operator/Showcase only swap accent/type/density
+   over one layout; instead each persona gets a distinct default landing, surfaced primary actions,
+   terminology, density, and emphasized data. Expand to a neatly-defined, config-driven, extensible set
+   covering the platform's real roles — proposed: **Workflow Designer** (visual flow authoring),
+   **Developer/Integrator** (API explorer, keys, webhooks, decision-trace debugging), **Risk Operator**
+   (queues, SLAs, monitors, case review), **Team Manager** (approvals, reviewer workload, SLA health),
+   **Product/Experimentation** (A/B, shadow, policy impact, backtests), **Executive/Director** (KPIs,
+   trends, governance posture), **Evaluator/Guest** (guided tour + sandbox for prospects / sales demos).
+   A persona is a composition over the API, not a fork. This depends on and reinforces an **API-first
+   guarantee**: every UI action is performed through the documented public API (no UI-only backdoors),
+   so the UI is flexible and adaptable and external/embedded UIs are first-class — which also underpins
+   PR7 (external API compatibility). Sizeable; likely several PRs (the persona model + API-first audit
+   first, then the per-persona views).
 
 > Per project convention: at the **end of every phase**, update `PLAN.md` and `BUGS.md` in the same
 > PR as the phase's code.
