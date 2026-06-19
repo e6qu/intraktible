@@ -557,8 +557,13 @@ never appear in-repo (neutral language only).
    adapt per role (no longer a skin). The 3 original archetypes keep bespoke decks; the 4 new role personas
    use a config-driven `PersonaHome`. The **API-first guarantee** is documented (`docs/API-FIRST.md`) and
    enforced by `web/src/lib/api-first.test.ts` (the audit confirmed it already held: all calls go through
-   `api.ts`/`/v1`, no server routes, only persona+theme are local). **Deferred to a follow-up:** deep
-   bespoke per-persona pages (Developer API-explorer/keys, Executive KPI/trends, Evaluator guided sandbox).
+   `api.ts`/`/v1`, no server routes, only persona+theme are local).
+   **Shipped in PR #14 (the deep per-persona views, A44):** Developer gained a real **API-keys management
+   page** (`/keys` — list/create/rotate/revoke via `/v1/api-keys`, secret revealed once) plus traces /
+   API-reference links; Executive's ShowcaseDeck gained a **decision-volume trend** (`decisionsByDay`) + a
+   **governance tile** (live flows / pending four-eyes); Evaluator gained a **guided 4-step tour**
+   (`EvaluatorTour`) over the live sandbox; Risk Operator keeps its OperatorDeck. The API reference is
+   linked (server `/docs` + per-flow `openapi.json`), not embedded. Both persona slices are now done.
 
 > Per project convention: at the **end of every phase**, update `PLAN.md` and `BUGS.md` in the same
 > PR as the phase's code.
