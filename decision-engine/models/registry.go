@@ -3,15 +3,29 @@
 package models
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"time"
 
 	"github.com/e6qu/intraktible/decision-engine/events"
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/store"
 )
+
+// HTTPDoer is the subset of *http.Client the external-model path needs. The
+// composition root supplies an egress-guarded client (the same SSRF protection the
+// HTTP connector uses); a fake satisfies it in tests.
+type HTTPDoer interface {
+	Do(*http.Request) (*http.Response, error)
+}
+
+// maxExternalBody caps an external model-serving response read into memory.
+const maxExternalBody = 1 << 20
 
 // Collection is the read-model collection for model definitions.
 const Collection = "decision_models"
@@ -71,10 +85,14 @@ func List(ctx context.Context, s store.Store, id identity.Identity) ([]ModelView
 // port without the engine importing this package's command surface).
 type Provider struct {
 	Store store.Store
+	// HTTP is the egress-guarded client for "external" (BYO served) models. When nil,
+	// external models fail loudly; the in-process kinds never need it.
+	HTTP HTTPDoer
 }
 
-// Predict resolves the named model from the registry and evaluates it over the
-// features, returning the prediction as JSON (the decision records it for replay).
+// Predict resolves the named model from the registry and returns its prediction as
+// JSON (the decision records it for replay). In-process kinds are evaluated purely;
+// an "external" model is served over the egress-guarded HTTP client.
 func (p Provider) Predict(ctx context.Context, id identity.Identity, model string, features map[string]any) (json.RawMessage, error) {
 	mv, ok, err := Read(ctx, p.Store, id, model)
 	if err != nil {
@@ -87,9 +105,53 @@ func (p Provider) Predict(ctx context.Context, id identity.Identity, model strin
 	if err != nil {
 		return nil, err
 	}
+	if spec.Kind == KindExternal {
+		return p.predictExternal(ctx, spec, features)
+	}
 	pred, err := Evaluate(spec, features)
 	if err != nil {
 		return nil, err
+	}
+	return json.Marshal(pred)
+}
+
+// predictExternal POSTs the features to the model's serving endpoint and reads back
+// a {score, probability?} prediction. The call goes through the egress-guarded
+// client, so it inherits the same SSRF protection as the HTTP connector.
+func (p Provider) predictExternal(ctx context.Context, spec Spec, features map[string]any) (json.RawMessage, error) {
+	if p.HTTP == nil {
+		return nil, fmt.Errorf("models: no HTTP client configured for external model serving")
+	}
+	body, err := json.Marshal(features)
+	if err != nil {
+		return nil, fmt.Errorf("models: marshal features: %w", err)
+	}
+	timeout := time.Duration(spec.TimeoutMs) * time.Millisecond
+	if timeout <= 0 {
+		timeout = 5 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, spec.Endpoint, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("models: external request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := p.HTTP.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("models: external model call: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("models: external model returned status %d", resp.StatusCode)
+	}
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxExternalBody))
+	if err != nil {
+		return nil, fmt.Errorf("models: read external response: %w", err)
+	}
+	var pred Prediction
+	if err := json.Unmarshal(raw, &pred); err != nil {
+		return nil, fmt.Errorf("models: external response is not a {score,probability} prediction: %w", err)
 	}
 	return json.Marshal(pred)
 }

@@ -909,6 +909,29 @@ test('a decision-table panel sets a hit policy + aggregate without raw JSON', as
   );
 });
 
+test('the authoring copilot explains a flow and suggests logic', async ({ page, request }) => {
+  const slug = uniqueSlug();
+  const created = await request.post('/v1/flows', {
+    headers: { 'X-Api-Key': KEY },
+    data: { slug, name: 'Copilot' }
+  });
+  const { flow_id } = await created.json();
+
+  await page.goto(`/engine/${flow_id}`);
+  await expect(page.getByLabel('new node type')).toBeVisible();
+  await page.getByTestId('tab-copilot').click();
+
+  // Suggest from a description (the dev server's Stub provider echoes deterministically).
+  await page.getByLabel('copilot prompt').fill('approve when fico >= 720');
+  await page.getByRole('button', { name: 'Suggest logic' }).click();
+  await expect(page.getByTestId('copilot-output')).toBeVisible();
+  await expect(page.getByTestId('copilot-output')).toContainText('fico >= 720');
+
+  // Explain the (empty) flow.
+  await page.getByRole('button', { name: 'Explain this flow' }).click();
+  await expect(page.getByTestId('copilot-output')).toBeVisible();
+});
+
 test('a rule panel edits when/then clauses without raw JSON', async ({ page, request }) => {
   const slug = uniqueSlug();
   const created = await request.post('/v1/flows', {

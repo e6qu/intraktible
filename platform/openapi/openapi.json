@@ -136,6 +136,46 @@
         }
       }
     },
+    "/v1/flows/{slug}/{env}/decide/stream": {
+      "post": {
+        "tags": ["decide"],
+        "summary": "Stream-execute a flow over a large NDJSON dataset",
+        "description": "The large-job batch path: the request body is NDJSON (one input object per line) and the response is NDJSON streamed one result per line, flushed as each row decides. No dataset is held in memory and there is no row cap, so it scales to very large jobs. entity_type / entity_key are query parameters applied to every row. Each row is a real recorded decision (history, metrics, audit), like /decide/batch.",
+        "parameters": [
+          { "$ref": "#/components/parameters/Slug" },
+          { "$ref": "#/components/parameters/Env" },
+          {
+            "name": "entity_type",
+            "in": "query",
+            "schema": { "type": "string" },
+            "description": "Entity type recorded for every row."
+          },
+          {
+            "name": "entity_key",
+            "in": "query",
+            "schema": { "type": "string" },
+            "description": "Input field each row's entity id is read from."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-ndjson": {
+              "schema": { "type": "string" },
+              "example": "{\"score\": 0.9}\n{\"score\": 0.2}\n"
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "NDJSON: one decision result per line, streamed.",
+            "content": { "application/x-ndjson": { "schema": { "type": "string" } } }
+          },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/v1/flows/{slug}/openapi.json": {
       "get": {
         "tags": [
@@ -188,7 +228,7 @@
       "post": {
         "tags": ["models"],
         "summary": "Define (or redefine) a predictive model",
-        "description": "Registers a named model evaluated deterministically by the engine and referenced from a Predict node. spec.kind is logistic | gbm | expression: logistic {intercept,coefficients:{feature:weight}} · gbm {base?,link?:logit,trees:[{feature,threshold,left,right}|{leaf:true,value}]} · expression {expr:<expr-lang over features>}.",
+        "description": "Registers a named model evaluated deterministically by the engine and referenced from a Predict node. spec.kind is logistic | gbm | expression | external: logistic {intercept,coefficients:{feature:weight}} · gbm {base?,link?:logit,trees:[{feature,threshold,left,right}|{leaf:true,value}]} · expression {expr:<expr-lang over features>} · external {endpoint:<https url>,timeout_ms?} (BYO served model — the shell POSTs the features and reads a {score,probability} response, egress-guarded).",
         "requestBody": {
           "required": true,
           "content": {
@@ -225,6 +265,98 @@
           },
           "401": { "$ref": "#/components/responses/Error" },
           "404": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/models/{name}/drift": {
+      "get": {
+        "tags": ["models"],
+        "summary": "Prediction-drift report for a model",
+        "description": "Returns the model's rolling distribution of predicted probabilities (deciles) and, once a baseline is captured, the PSI vs that baseline (<0.1 stable, 0.1–0.25 moderate, >0.25 significant).",
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Drift report: count, decile histogram, and PSI when a baseline exists.",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/models/{name}/baseline": {
+      "post": {
+        "tags": ["models"],
+        "summary": "Capture the current prediction distribution as the drift baseline",
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Baseline captured." },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/copilot/explain": {
+      "post": {
+        "tags": ["copilot"],
+        "summary": "Explain a flow graph in plain language",
+        "description": "Authoring copilot (backed by the configured AI provider). Returns a plain-language explanation of the posted {graph}. 503 if no provider is configured.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["graph"],
+                "properties": { "graph": { "type": "object" } }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The explanation.",
+            "content": {
+              "application/json": {
+                "schema": { "type": "object", "properties": { "text": { "type": "string" } } }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Error" },
+          "503": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/copilot/suggest": {
+      "post": {
+        "tags": ["copilot"],
+        "summary": "Suggest decision logic from a natural-language requirement",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["prompt"],
+                "properties": { "prompt": { "type": "string" } }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "A suggested node breakdown.",
+            "content": {
+              "application/json": {
+                "schema": { "type": "object", "properties": { "text": { "type": "string" } } }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "503": { "$ref": "#/components/responses/Error" }
         }
       }
     },

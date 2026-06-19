@@ -48,9 +48,64 @@ func Catalog() []Template {
 			Config:      json.RawMessage(`{"url":"https://ocr.example.com/v1/extract","method":"POST"}`),
 		},
 		{
+			ID: "income-verification", Name: "Income / employment verification", Category: "Credit", Type: "http",
+			Description: "A payroll/employment-verification service (The Work Number-style). POST the applicant, read verified income/employment.",
+			Config:      json.RawMessage(`{"url":"https://income.example.com/v1/verify","method":"POST"}`),
+		},
+		{
+			ID: "open-banking", Name: "Open banking / transactions", Category: "Credit", Type: "http",
+			Description: "A bank-transaction aggregator (Plaid/Tink/TrueLayer-style). POST the linked account, read cashflow signals.",
+			Config:      json.RawMessage(`{"url":"https://banking.example.com/v1/transactions","method":"POST"}`),
+		},
+		{
+			ID: "bank-account-verify", Name: "Bank-account verification", Category: "Payments", Type: "http",
+			Description: "Account ownership / micro-deposit verification. POST the account details, read the verification status.",
+			Config:      json.RawMessage(`{"url":"https://accounts.example.com/v1/verify","method":"POST"}`),
+		},
+		{
+			ID: "device-ip-risk", Name: "Device / IP risk", Category: "Risk", Type: "http",
+			Description: "Device fingerprint + IP reputation. POST the session signals, read a device-risk score.",
+			Config:      json.RawMessage(`{"url":"https://device.example.com/v1/risk","method":"POST"}`),
+		},
+		{
+			ID: "email-phone-risk", Name: "Email / phone risk", Category: "Identity", Type: "http",
+			Description: "Email + phone reputation/validation (Emailage/Telesign-style). POST the contact, read a risk signal.",
+			Config:      json.RawMessage(`{"url":"https://contact.example.com/v1/risk","method":"POST"}`),
+		},
+		{
+			ID: "address-verification", Name: "Address verification", Category: "Identity", Type: "http",
+			Description: "Address standardization + validation. POST the address, read the normalized/validated result.",
+			Config:      json.RawMessage(`{"url":"https://address.example.com/v1/verify","method":"POST"}`),
+		},
+		{
+			ID: "kyb-business", Name: "KYB / business verification", Category: "Identity", Type: "http",
+			Description: "Business-entity verification + beneficial ownership (Middesk-style). POST the business, read its profile.",
+			Config:      json.RawMessage(`{"url":"https://kyb.example.com/v1/verify","method":"POST"}`),
+		},
+		{
+			ID: "watchlist-screening", Name: "Watchlist / sanctions screening", Category: "Compliance", Type: "http",
+			Description: "PEP + sanctions + adverse-media screening. POST the entity, read the match verdict.",
+			Config:      json.RawMessage(`{"url":"https://screening.example.com/v1/watchlist","method":"POST"}`),
+		},
+		{
+			ID: "geo-ip", Name: "Geolocation (IP)", Category: "Risk", Type: "http",
+			Description: "IP geolocation + proxy/VPN detection. GET by IP, read country/region + anonymizer flags.",
+			Config:      json.RawMessage(`{"url":"https://geo.example.com/v1/lookup","method":"GET"}`),
+		},
+		{
+			ID: "collateral-valuation", Name: "Collateral valuation", Category: "Credit", Type: "http",
+			Description: "Asset/collateral valuation (vehicle/property). POST the asset, read its estimated value.",
+			Config:      json.RawMessage(`{"url":"https://valuation.example.com/v1/value","method":"POST"}`),
+		},
+		{
 			ID: "sql-lookup", Name: "SQL lookup", Category: "Data", Type: "sql",
 			Description: "A SQL SELECT with named (:name) placeholders. Built-in driver: sqlite.",
 			Config:      json.RawMessage(`{"driver":"sqlite","dsn":"file:reference.db","query":"SELECT score FROM applicants WHERE id = :id"}`),
+		},
+		{
+			ID: "sql-feature-store", Name: "SQL feature store", Category: "Data", Type: "sql",
+			Description: "Read precomputed features for an entity from a local feature table (sqlite).",
+			Config:      json.RawMessage(`{"driver":"sqlite","dsn":"file:features.db","query":"SELECT * FROM features WHERE entity_id = :entity_id"}`),
 		},
 	}
 }

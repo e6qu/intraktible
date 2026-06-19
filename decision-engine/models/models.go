@@ -13,15 +13,20 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"strings"
 
 	"github.com/expr-lang/expr"
 )
 
-// Model kinds. All three evaluate purely over a feature map.
+// Model kinds. The first three evaluate purely over a feature map; "external" is a
+// bring-your-own served model — the shell calls an HTTP endpoint (it is not pure,
+// so domain.Execute never touches it; the prediction is resolved + recorded like a
+// connector, keeping replay stable).
 const (
 	KindLogistic   = "logistic"   // sigmoid(intercept + Σ wᵢ·xᵢ)
 	KindGBM        = "gbm"        // sum of regression trees (+ base), optional logit link
 	KindExpression = "expression" // a single expr-lang scoring expression over features
+	KindExternal   = "external"   // POST features to an HTTP model-serving endpoint
 )
 
 // Spec is a model definition: a kind plus the kind-specific parameters. Unknown
@@ -40,6 +45,11 @@ type Spec struct {
 
 	// expression
 	Expr string `json:"expr,omitempty"`
+
+	// external (BYO served model): POST the features as JSON to Endpoint and read a
+	// {score, probability?} response. The call is egress-guarded by the shell.
+	Endpoint  string `json:"endpoint,omitempty"`
+	TimeoutMs int    `json:"timeout_ms,omitempty"`
 }
 
 // Tree is a binary regression tree: a leaf carries Value; a split sends the row to
@@ -94,6 +104,10 @@ func (s Spec) Validate() error {
 		if s.Expr == "" {
 			return fmt.Errorf("models: expression model needs an expr")
 		}
+	case KindExternal:
+		if !strings.HasPrefix(s.Endpoint, "http://") && !strings.HasPrefix(s.Endpoint, "https://") {
+			return fmt.Errorf("models: external model needs an http(s) endpoint")
+		}
 	default:
 		return fmt.Errorf("models: unknown model kind %q (logistic|gbm|expression)", s.Kind)
 	}
@@ -130,6 +144,8 @@ func Evaluate(s Spec, features map[string]any) (Prediction, error) {
 		return evalGBM(s, features)
 	case KindExpression:
 		return evalExpression(s, features)
+	case KindExternal:
+		return Prediction{}, fmt.Errorf("models: external models are served over HTTP and cannot be evaluated in the core")
 	default:
 		return Prediction{}, fmt.Errorf("models: unknown model kind %q", s.Kind)
 	}
