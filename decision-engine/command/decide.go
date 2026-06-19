@@ -169,7 +169,7 @@ func (h *DecideHandler) Decide(ctx context.Context, id identity.Identity, slug, 
 		return DecideResult{}, err
 	}
 	if !domain.ValidEnvironment(env) {
-		return DecideResult{}, fmt.Errorf("decision-engine: invalid environment %q (sandbox|production)", env)
+		return DecideResult{}, fmt.Errorf("decision-engine: invalid environment %q (sandbox|staging|production)", env)
 	}
 	fv, ok, err := flows.BySlug(ctx, h.store, id, slug)
 	if err != nil {

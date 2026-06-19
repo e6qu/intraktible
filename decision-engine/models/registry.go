@@ -35,7 +35,7 @@ type ModelView struct {
 	Org       string          `json:"org"`
 	Workspace string          `json:"workspace"`
 	Name      string          `json:"name"`
-	Kind      string          `json:"kind"`
+	Kind      ModelKind       `json:"kind"`
 	Spec      json.RawMessage `json:"spec"`
 	UpdatedAt string          `json:"updated_at"`
 }
