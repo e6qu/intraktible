@@ -28,14 +28,23 @@ type Handler struct {
 	mu    sync.Mutex
 	now   func() time.Time
 	newID func() string
+
+	// Incremental existence cache (guarded by mu, which every command path holds):
+	// the set of opened case ids (tenant-qualified) and the highest log seq folded
+	// into it, so caseExists reads only new events instead of re-folding the whole
+	// log per mutation. Reading up to head each call preserves read-after-write
+	// consistency, including decision-escalated cases on the shared log.
+	knownCases     map[string]bool
+	casesFoldedSeq uint64
 }
 
 // NewHandler builds a Handler using the system clock and a random id source.
 func NewHandler(log eventlog.Log) *Handler {
 	return &Handler{
-		log:   log,
-		now:   func() time.Time { return time.Now().UTC() },
-		newID: newID,
+		log:        log,
+		now:        func() time.Time { return time.Now().UTC() },
+		newID:      newID,
+		knownCases: map[string]bool{},
 	}
 }
 
@@ -213,34 +222,46 @@ func (h *Handler) onExisting(ctx context.Context, id identity.Identity, caseID s
 // (Matching only the manual path left escalated cases un-actionable: visible in
 // the queue but rejected as "unknown" by assign/status/note.)
 func (h *Handler) caseExists(ctx context.Context, id identity.Identity, caseID string) (bool, error) {
-	evs, err := h.log.Read(ctx, 0)
+	if err := h.refreshKnownCases(ctx); err != nil {
+		return false, err
+	}
+	return h.knownCases[caseKey(id.Org, id.Workspace, caseID)], nil
+}
+
+// refreshKnownCases folds the log events appended since the last call into the
+// opened-case set. Caller holds h.mu. Reading through to head keeps the set
+// current (read-after-write), while the incremental fromSeq avoids re-scanning
+// the whole log on every mutation.
+func (h *Handler) refreshKnownCases(ctx context.Context) error {
+	evs, err := h.log.Read(ctx, h.casesFoldedSeq+1)
 	if err != nil {
-		return false, fmt.Errorf("case-manager: read log: %w", err)
+		return fmt.Errorf("case-manager: read log: %w", err)
 	}
 	for _, e := range evs {
-		if e.Org != id.Org || e.Workspace != id.Workspace {
-			continue
-		}
 		switch e.Type {
 		case events.TypeReviewRequested:
 			var p events.ReviewRequested
 			if err := json.Unmarshal(e.Payload, &p); err != nil {
-				return false, fmt.Errorf("case-manager: decode requested seq %d: %w", e.Seq, err)
+				return fmt.Errorf("case-manager: decode requested seq %d: %w", e.Seq, err)
 			}
-			if p.CaseID == caseID {
-				return true, nil
-			}
+			h.knownCases[caseKey(e.Org, e.Workspace, p.CaseID)] = true
 		case decisionevents.TypeManualReviewRequested:
 			var p decisionevents.ManualReviewRequested
 			if err := json.Unmarshal(e.Payload, &p); err != nil {
-				return false, fmt.Errorf("case-manager: decode escalated seq %d: %w", e.Seq, err)
+				return fmt.Errorf("case-manager: decode escalated seq %d: %w", e.Seq, err)
 			}
-			if p.CaseID == caseID {
-				return true, nil
-			}
+			h.knownCases[caseKey(e.Org, e.Workspace, p.CaseID)] = true
+		}
+		if e.Seq > h.casesFoldedSeq {
+			h.casesFoldedSeq = e.Seq
 		}
 	}
-	return false, nil
+	return nil
+}
+
+// caseKey tenant-qualifies a case id for the existence set.
+func caseKey(org, workspace, caseID string) string {
+	return org + "\x00" + workspace + "\x00" + caseID
 }
 
 func (h *Handler) append(ctx context.Context, id identity.Identity, typ string, payload json.RawMessage) (eventlog.Envelope, error) {

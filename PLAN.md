@@ -463,6 +463,17 @@ uses a slug→id index with a scan fallback. Deferred to a focused follow-up (to
 regressions in a large PR): an API-key hash index, a policy-by-flow index, and moving the case-existence
 check off its (deliberately consistent) whole-log fold.
 
+**De-scan the auth + decide hot paths (post-MVP, performance).** The three perf items deferred above are
+now done. `StoreAPIKeys.ResolveSecret` resolves via a `hash→key-id` index (so a flood of bogus keys can't
+amplify into repeated full cross-tenant scans), with a one-time backfill of pre-index keys and a scan
+fallback only if that backfill can't complete — a valid key is never wrongly denied. `policy.ActiveForFlow`
+(decide hot path) uses a `flow-slug→[policy-id]` index in the policy projector, fetching only the bound
+candidates, again with a scan fallback. `caseExists` (hit on every case mutation, under the write lock)
+folds the log **incrementally** — an in-memory opened-case set plus the highest folded seq, reading only
+new events each call rather than re-scanning from seq 0 — while still reading through to head, so the
+deliberate read-after-write consistency (including decision-escalated cases on the shared log) is
+preserved. All three keep a fallback / full read so correctness never depends on the index.
+
 > Per project convention: at the **end of every phase**, update `PLAN.md` and `BUGS.md` in the same
 > PR as the phase's code.
 
