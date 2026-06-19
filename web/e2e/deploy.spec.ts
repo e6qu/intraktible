@@ -36,6 +36,9 @@ test('deploys to sandbox and runs the production four-eyes flow', async ({ page,
   }
 
   await page.goto(`/engine/${flow_id}`);
+  // The canvas is the primary surface; deploy/versions live behind their tab.
+  await expect(page.getByTestId('flow-canvas')).toBeVisible();
+  await page.getByTestId('tab-deploy').click();
   const panel = page.getByTestId('deploy-panel');
   await expect(panel).toBeVisible();
 
@@ -55,6 +58,11 @@ test('deploys to sandbox and runs the production four-eyes flow', async ({ page,
   // Promote sandbox -> staging (a non-prod target deploys directly).
   await page.getByLabel('promote from').selectOption('sandbox');
   await page.getByLabel('promote to').selectOption('staging');
+  // Promotion now confirms first (a high-stakes action); accept and assert the prompt.
+  page.once('dialog', (d) => {
+    expect(d.message()).toContain('staging');
+    void d.accept();
+  });
   await page.getByTestId('promote-submit').click();
   await expect(panel.getByText(/staging:/)).toContainText('v1');
 
