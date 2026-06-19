@@ -1,37 +1,200 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Persona: who is looking. The same data, re-skinned and re-prioritised for the
-// viewer. Persisted in localStorage and applied as <html data-persona="…"> so
-// app.css can swap the type scale, accent, and density per persona; mirrored into
-// a store so components (e.g. the landing dashboard) can branch on it. Persona is
-// orthogonal to light/dark theme — every persona works in both.
+// Persona: who is looking. A persona is a CONFIG-DRIVEN composition over the one
+// public API — not a fork and not just a skin. Each persona declares its own
+// navigation (an ordered subset of the shared catalog, optionally relabelled), a
+// default home, and the primary actions to surface, so the same platform data is
+// re-prioritised and re-routed for the viewer. It is persisted in localStorage and
+// applied as <html data-persona="…"> so app.css can also swap accent/type/density.
+// Persona is orthogonal to light/dark theme — every persona works in both.
 
 import { writable } from 'svelte/store';
 
-export type Persona = 'builder' | 'operator' | 'showcase';
+export type Persona =
+  | 'builder'
+  | 'developer'
+  | 'operator'
+  | 'manager'
+  | 'product'
+  | 'showcase'
+  | 'evaluator';
+
+// NavId names an entry in the shared navigation catalog below.
+export type NavId =
+  | 'engine'
+  | 'policies'
+  | 'preapprovals'
+  | 'decisions'
+  | 'data'
+  | 'cases'
+  | 'agents'
+  | 'audit';
+
+export type NavItem = { id: NavId; href: string; label: string; icon: string };
+
+// NAV is the full navigation catalog; each persona picks an ordered subset (and may
+// relabel an item via PersonaConfig.terms). One source of truth for hrefs/icons. A
+// Map (not a plain object) so variable-key lookups don't trip the object-injection lint.
+export const NAV = new Map<NavId, NavItem>([
+  ['engine', { id: 'engine', href: '/engine', label: 'Engine', icon: 'engine' }],
+  ['policies', { id: 'policies', href: '/policies', label: 'Policies', icon: 'rule' }],
+  [
+    'preapprovals',
+    { id: 'preapprovals', href: '/preapprovals', label: 'Approvals', icon: 'check' }
+  ],
+  ['decisions', { id: 'decisions', href: '/decisions', label: 'Decisions', icon: 'diagram' }],
+  ['data', { id: 'data', href: '/data', label: 'Data', icon: 'database' }],
+  ['cases', { id: 'cases', href: '/cases', label: 'Cases', icon: 'cases' }],
+  ['agents', { id: 'agents', href: '/agents', label: 'Agents', icon: 'agents' }],
+  ['audit', { id: 'audit', href: '/audit', label: 'Audit', icon: 'shield' }]
+]);
+
+export type Action = { label: string; href: string; icon: string };
+
+// Which home composition a persona lands on. The three original archetypes keep
+// their bespoke decks; the role personas use the config-driven PersonaHome.
+export type HomeKind = 'builder' | 'operator' | 'showcase' | 'persona';
+
+export type PersonaConfig = {
+  id: Persona;
+  label: string;
+  blurb: string;
+  icon: string; // an Icon name for the avatar/menu
+  home: HomeKind; // the landing composition on "/"
+  nav: NavId[]; // ordered navigation this persona sees
+  actions: Action[]; // primary actions surfaced on the persona home
+  terms?: Partial<Record<NavId, string>>; // per-persona nav relabels
+};
 
 const KEY = 'intraktible-persona';
+export const defaultPersona: Persona = 'builder';
 
-// The set of personas, in switcher order, with the copy the UI shows.
-export const PERSONAS: { id: Persona; label: string; blurb: string }[] = [
-  { id: 'builder', label: 'Builder', blurb: 'Developer & workflow maintainer' },
-  { id: 'operator', label: 'Operator', blurb: 'Risk & operations manager' },
-  { id: 'showcase', label: 'Showcase', blurb: 'Stakeholder & executive view' }
+// The persona set, in switcher order. Each is a real role over the same API.
+export const PERSONAS: PersonaConfig[] = [
+  {
+    id: 'builder',
+    label: 'Workflow Designer',
+    blurb: 'Author and version decision flows',
+    icon: 'builder',
+    home: 'builder',
+    nav: ['engine', 'policies', 'data', 'decisions', 'agents'],
+    actions: [
+      { label: 'Open the flow builder', href: '/engine', icon: 'engine' },
+      { label: 'Author policy bands', href: '/policies', icon: 'rule' },
+      { label: 'Define context data', href: '/data', icon: 'database' }
+    ]
+  },
+  {
+    id: 'developer',
+    label: 'Developer / Integrator',
+    blurb: 'Integrate the decision API and debug traces',
+    icon: 'agents',
+    home: 'persona',
+    nav: ['decisions', 'engine', 'agents', 'data', 'audit'],
+    actions: [
+      { label: 'Inspect decision traces', href: '/decisions', icon: 'diagram' },
+      { label: 'Browse the API reference', href: '/docs', icon: 'code' },
+      { label: 'Manage agents & tools', href: '/agents', icon: 'agents' }
+    ],
+    terms: { decisions: 'Traces' }
+  },
+  {
+    id: 'operator',
+    label: 'Risk Operator',
+    blurb: 'Work the queues, SLAs, and monitors',
+    icon: 'operator',
+    home: 'operator',
+    nav: ['cases', 'decisions', 'preapprovals', 'policies', 'audit'],
+    actions: [
+      { label: 'Work the case queue', href: '/cases', icon: 'cases' },
+      { label: 'Review pre-approvals', href: '/preapprovals', icon: 'check' },
+      { label: 'Scan recent decisions', href: '/decisions', icon: 'diagram' }
+    ]
+  },
+  {
+    id: 'manager',
+    label: 'Team Manager',
+    blurb: 'Approvals, reviewer workload, and SLA health',
+    icon: 'check',
+    home: 'persona',
+    nav: ['preapprovals', 'cases', 'decisions', 'audit'],
+    actions: [
+      { label: 'Clear pending approvals', href: '/preapprovals', icon: 'check' },
+      { label: 'Check case load', href: '/cases', icon: 'cases' },
+      { label: 'Review the audit trail', href: '/audit', icon: 'shield' }
+    ],
+    terms: { preapprovals: 'Approvals' }
+  },
+  {
+    id: 'product',
+    label: 'Product / Experimentation',
+    blurb: 'A/B, shadow, backtests, and policy impact',
+    icon: 'diagram',
+    home: 'persona',
+    nav: ['engine', 'policies', 'decisions', 'data'],
+    actions: [
+      { label: 'Backtest a flow', href: '/engine', icon: 'engine' },
+      { label: 'Tune policy impact', href: '/policies', icon: 'rule' },
+      { label: 'Analyse decisions', href: '/decisions', icon: 'diagram' }
+    ]
+  },
+  {
+    id: 'showcase',
+    label: 'Executive',
+    blurb: 'KPIs, trends, and governance posture',
+    icon: 'showcase',
+    home: 'showcase',
+    nav: ['decisions', 'cases', 'audit'],
+    actions: [{ label: 'View decision volume', href: '/decisions', icon: 'diagram' }]
+  },
+  {
+    id: 'evaluator',
+    label: 'Evaluator / Guest',
+    blurb: 'A guided look at the platform',
+    icon: 'search',
+    home: 'persona',
+    nav: ['engine', 'decisions'],
+    actions: [
+      { label: 'Explore the flow builder', href: '/engine', icon: 'engine' },
+      { label: 'See decisions in action', href: '/decisions', icon: 'diagram' }
+    ]
+  }
 ];
 
-// persona is the reactive current persona (kept in sync by initPersona/setPersona).
-export const persona = writable<Persona>('builder');
+const byID = new Map<Persona, PersonaConfig>(PERSONAS.map((p) => [p.id, p]));
+const fallbackConfig = PERSONAS[0]; // defaultPersona is the first entry
 
-function isPersona(v: string | null): v is Persona {
-  return v === 'builder' || v === 'operator' || v === 'showcase';
+// personaConfig returns the config for a persona (always defined for a valid id).
+export function personaConfig(p: Persona): PersonaConfig {
+  return byID.get(p) ?? fallbackConfig;
 }
 
-// resolvePersona is the stored choice, defaulting to Builder (the maintainer view).
+// navFor returns a persona's ordered, relabelled navigation items.
+export function navFor(p: Persona): NavItem[] {
+  const cfg = personaConfig(p);
+  const terms = new Map(Object.entries(cfg.terms ?? {}));
+  return cfg.nav
+    .map((id) => NAV.get(id))
+    .filter((item): item is NavItem => item !== undefined)
+    .map((item) => {
+      const label = terms.get(item.id);
+      return label ? { ...item, label } : item;
+    });
+}
+
+// persona is the reactive current persona (kept in sync by initPersona/setPersona).
+export const persona = writable<Persona>(defaultPersona);
+
+function isPersona(v: string | null): v is Persona {
+  return v != null && byID.has(v as Persona);
+}
+
+// resolvePersona is the stored choice, defaulting to the Workflow Designer.
 export function resolvePersona(): Persona {
   if (typeof localStorage !== 'undefined') {
     const stored = localStorage.getItem(KEY);
     if (isPersona(stored)) return stored;
   }
-  return 'builder';
+  return defaultPersona;
 }
 
 function applyPersona(p: Persona): void {

@@ -1,15 +1,20 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
-<!-- The landing page is a persona-aware dashboard: the same platform data, re-laid
-     out and re-prioritised for whoever is viewing (Builder / Operator / Showcase).
-     The persona is a client-side preference anyone can switch (see lib/persona). -->
+<!-- The landing page is persona-aware: the active persona's config picks its home
+     composition (a bespoke deck for the original archetypes, else the config-driven
+     PersonaHome). The persona is a client-side preference anyone can switch (lib/persona). -->
 <script lang="ts">
-  import { persona } from '$lib/persona';
+  import { persona, personaConfig } from '$lib/persona';
   import { user } from '$lib/session';
   import { loadDashboard, type DashboardData } from '$lib/dashboard';
   import BuilderDeck from '$lib/dashboards/BuilderDeck.svelte';
   import OperatorDeck from '$lib/dashboards/OperatorDeck.svelte';
   import ShowcaseDeck from '$lib/dashboards/ShowcaseDeck.svelte';
+  import PersonaHome from '$lib/dashboards/PersonaHome.svelte';
   import Welcome from '$lib/dashboards/Welcome.svelte';
+
+  // The persona's config picks its home composition — the three original
+  // archetypes keep bespoke decks; role personas use the config-driven home.
+  const home = $derived(personaConfig($persona).home);
 
   let data = $state<DashboardData | null>(null);
   let error = $state('');
@@ -53,12 +58,14 @@
 {:else if error}
   <main class="errwrap"><p class="err">Couldn’t load the dashboard: {error}</p></main>
 {:else if data}
-  {#if $persona === 'showcase'}
+  {#if home === 'showcase'}
     <ShowcaseDeck {data} />
-  {:else if $persona === 'operator'}
+  {:else if home === 'operator'}
     <OperatorDeck {data} />
-  {:else}
+  {:else if home === 'builder'}
     <BuilderDeck {data} />
+  {:else}
+    <PersonaHome {data} />
   {/if}
 {/if}
 
