@@ -20,6 +20,15 @@
   function pretty(v: unknown): string {
     return v === undefined || v === null ? '—' : JSON.stringify(v, null, 2);
   }
+  // A split node records which way it routed as { branch: "yes" | "no" }; surface
+  // that as the decisive routing rather than leaving it buried in the raw output.
+  function branchOf(output: unknown): string | null {
+    if (output && typeof output === 'object' && 'branch' in output) {
+      const b = (output as { branch?: unknown }).branch;
+      return typeof b === 'string' ? b : null;
+    }
+    return null;
+  }
   async function load() {
     error = '';
     try {
@@ -111,6 +120,9 @@
             <span class="nodeicon"><Icon name={n.type} size={15} /></span>
             <span class="nid">{n.node_id}</span>
             <span class="ntype">{n.type}</span>
+            {#if branchOf(n.output)}<span class="branch" data-testid="trace-branch"
+                >→ {branchOf(n.output)}</span
+              >{/if}
             {#if n.output !== undefined}<code class="nout">{pretty(n.output)}</code>{/if}
           </li>
         {/each}
@@ -272,6 +284,14 @@
     font-size: 0.75rem;
     color: var(--fg-subtle);
     font-family: var(--font-mono);
+  }
+  .branch {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+    padding: 0.05rem 0.4rem;
+    border-radius: 999px;
   }
   .nout {
     margin-left: auto;
