@@ -4,7 +4,6 @@
      level of threaded replies, and posts new comments. Drop it anywhere with a
      subject type + id. -->
 <script lang="ts">
-  import { onMount } from 'svelte';
   import RelativeTime from '$lib/RelativeTime.svelte';
   import { listComments, postComment, type Comment } from '$lib/api';
   import { toast } from '$lib/toast';
@@ -57,10 +56,15 @@
       busy = false;
     }
   }
-  // Callers that reuse the thread across subjects (e.g. the policies page swapping
-  // the selected policy in place) key on the subject id so the component remounts
-  // and reloads, rather than relying on this once-only mount load.
-  onMount(load);
+  // Reload whenever the subject changes, so a caller that swaps subjectId in place
+  // (without a keyed remount) shows the right thread instead of the first one
+  // forever. Reading subjectType/subjectId registers them as effect dependencies.
+  $effect(() => {
+    void subjectType;
+    void subjectId;
+    loading = true;
+    void load();
+  });
 </script>
 
 <div class="thread" data-testid="comment-thread">

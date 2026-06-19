@@ -58,10 +58,14 @@ func (Projector) Apply(ctx context.Context, e eventlog.Envelope, s store.Store) 
 	if err := json.Unmarshal(e.Payload, &p); err != nil {
 		return fmt.Errorf("models: decode %s seq %d: %w", e.Type, e.Seq, err)
 	}
-	var kind string
-	if s, err := ParseSpec(p.Spec); err == nil {
-		kind = s.Kind
+	// A ModelDefined event that can't be parsed is a projection failure, not a
+	// blank field — DefineModel validates first, so this is defense in depth that
+	// must still fail loudly rather than materialize a kind-less row.
+	spec, err := ParseSpec(p.Spec)
+	if err != nil {
+		return fmt.Errorf("models: decode spec %s seq %d: %w", e.Type, e.Seq, err)
 	}
+	kind := spec.Kind
 	v := ModelView{
 		Org: e.Org, Workspace: e.Workspace,
 		Name: p.Name, Kind: kind, Spec: p.Spec, UpdatedAt: e.Time.UTC().Format("2006-01-02T15:04:05Z07:00"),
@@ -104,6 +108,13 @@ func (p Provider) Predict(ctx context.Context, id identity.Identity, model strin
 	spec, err := ParseSpec(mv.Spec)
 	if err != nil {
 		return nil, err
+	}
+	// Validate before evaluating: Validate is the only thing that guarantees a GBM
+	// tree's children are non-nil, and (*Tree).eval dereferences them. DefineModel
+	// validates on the write path, but a replay of a pre-validation event or a
+	// future bulk-import must not be able to panic the evaluator with a nil child.
+	if err := spec.Validate(); err != nil {
+		return nil, fmt.Errorf("models: model %q has an invalid spec: %w", model, err)
 	}
 	if spec.Kind == KindExternal {
 		return p.predictExternal(ctx, spec, features)

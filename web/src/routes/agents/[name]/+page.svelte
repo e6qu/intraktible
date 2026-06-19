@@ -85,6 +85,25 @@
     activeWS = null;
   }
 
+  // Fail the stream loudly: a single malformed frame must surface an error and
+  // release the UI, not throw inside the event handler (which the EventSource /
+  // WebSocket dispatcher swallows, leaving the button stuck on "Streaming…").
+  function failStream(reason: string) {
+    error = reason;
+    streaming = false;
+    closeStream();
+  }
+  // Parse one chunk frame's text, returning null on malformed/ill-shaped data.
+  function chunkText(raw: string): string | null {
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      const t = (parsed as { text?: unknown })?.text;
+      return typeof t === 'string' ? t : null;
+    } catch {
+      return null;
+    }
+  }
+
   function streamSSE() {
     streamText = '';
     streaming = true;
@@ -93,18 +112,19 @@
     );
     activeES = es;
     es.addEventListener('chunk', (e) => {
-      streamText += (JSON.parse((e as MessageEvent).data) as { text: string }).text;
+      const t = chunkText((e as MessageEvent).data);
+      if (t === null) {
+        failStream('stream returned a malformed chunk');
+        return;
+      }
+      streamText += t;
     });
     es.addEventListener('done', () => {
       streaming = false;
       closeStream();
       void load();
     });
-    es.onerror = () => {
-      streaming = false;
-      error = 'stream failed';
-      closeStream();
-    };
+    es.onerror = () => failStream('stream failed');
   }
 
   function streamWS() {
@@ -117,19 +137,21 @@
     activeWS = ws;
     ws.onopen = () => ws.send(JSON.stringify({ prompt: streamPrompt }));
     ws.onmessage = (e) => {
-      const m = JSON.parse(e.data) as { type: string; text?: string };
-      if (m.type === 'chunk') streamText += m.text ?? '';
+      let m: { type?: unknown; text?: unknown };
+      try {
+        m = JSON.parse(e.data);
+      } catch {
+        failStream('stream returned a malformed message');
+        return;
+      }
+      if (m.type === 'chunk') streamText += typeof m.text === 'string' ? m.text : '';
       if (m.type === 'done' || m.type === 'error') {
         streaming = false;
         closeStream();
         void load();
       }
     };
-    ws.onerror = () => {
-      streaming = false;
-      error = 'stream failed';
-      closeStream();
-    };
+    ws.onerror = () => failStream('stream failed');
   }
 
   function runStream() {

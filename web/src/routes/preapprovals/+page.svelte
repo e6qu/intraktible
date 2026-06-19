@@ -63,6 +63,7 @@
   }
 
   async function grant() {
+    if (granting) return; // Enter submits the form directly, bypassing the disabled button
     error = '';
     let terms: Record<string, unknown> | undefined;
     const raw = gTerms.trim();
