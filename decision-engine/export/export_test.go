@@ -211,3 +211,36 @@ func TestBPMNSanitizesIDs(t *testing.T) {
 		t.Fatalf("BPMN used an invalid raw id as an id attribute:\n%s", out)
 	}
 }
+
+// TestBPMNDisambiguatesCollidingIDs proves distinct node ids that coerce to the
+// same NCName get unique ids, and the sequence-flow refs point at the right ones.
+func TestBPMNDisambiguatesCollidingIDs(t *testing.T) {
+	g := events.Graph{
+		Nodes: []events.Node{
+			{ID: "a/b", Type: events.NodeInput, Name: "first"},
+			{ID: "a b", Type: events.NodeOutput, Name: "second"}, // also coerces to a_b
+		},
+		Edges: []events.Edge{{From: "a/b", To: "a b"}},
+	}
+	out := export.BPMN(g, "collide")
+
+	if !strings.Contains(out, `id="a_b"`) || !strings.Contains(out, `id="a_b_2"`) {
+		t.Fatalf("expected disambiguated ids a_b and a_b_2:\n%s", out)
+	}
+	// The flow must connect the two distinct elements, not alias them together.
+	if !strings.Contains(out, `sourceRef="a_b" targetRef="a_b_2"`) {
+		t.Fatalf("sequence flow refs did not track the disambiguated ids:\n%s", out)
+	}
+	// Every element/shape id must be unique (no duplicate NCName).
+	ids := map[string]int{}
+	for _, tok := range strings.Split(out, `id="`) {
+		if i := strings.IndexByte(tok, '"'); i > 0 {
+			ids[tok[:i]]++
+		}
+	}
+	for id, n := range ids {
+		if n > 1 {
+			t.Fatalf("duplicate id %q appears %d times:\n%s", id, n, out)
+		}
+	}
+}

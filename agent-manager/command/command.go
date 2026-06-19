@@ -164,10 +164,18 @@ func (h *Handler) StartRun(ctx context.Context, id identity.Identity, agent, pro
 	case h.jobs <- job:
 		// queued for a worker
 	default:
-		// Queue full: run it inline rather than drop it (slower, but never lost).
-		// Use a background context — like the worker path — so a client disconnect
-		// mid-call doesn't abort the run into a spurious failure.
-		h.process(context.Background(), job)
+		// Queue full: run it rather than drop it (never lost), but in a tracked
+		// goroutine — not inline — so StartRun still returns immediately and keeps
+		// the 202 async contract. A background context (like the worker path) means
+		// a client disconnect mid-call doesn't abort the run into a spurious failure;
+		// h.wg lets DrainWorkers wait it out on shutdown.
+		h.wg.Add(1)
+		// #nosec G118 -- intentional: background ctx so a client disconnect doesn't
+		// abort the run; DrainWorkers bounds the wait via h.wg.
+		go func() {
+			defer h.wg.Done()
+			h.process(context.Background(), job)
+		}()
 	}
 	return runID, nil
 }
@@ -306,10 +314,24 @@ func (h *Handler) EscalateRun(ctx context.Context, id identity.Identity, cmd dom
 	return caseID, e, nil
 }
 
-// runAgentName folds the log to confirm a run exists for the tenant and returns
-// its agent. Reading the log (not the eventually-consistent projection) keeps the
-// existence check race-free right after a run is recorded.
+// runAgentName resolves a run for the tenant and returns its agent. It reads the
+// tenant-scoped projection first — an O(1) keyed lookup that avoids folding the
+// whole log (every tenant's events) on each escalate. The projection is eventually
+// consistent, so on a miss (e.g. a run escalated in the same breath it was recorded,
+// before the projection caught up) it falls back to a tenant-scoped fold of the log,
+// which is immediately consistent.
 func (h *Handler) runAgentName(ctx context.Context, id identity.Identity, runID string) (string, bool, error) {
+	if run, ok, err := agents.GetRun(ctx, h.store, id, runID); err != nil {
+		return "", false, fmt.Errorf("agent-manager: read run: %w", err)
+	} else if ok {
+		return run.Agent, true, nil
+	}
+	return h.runAgentNameFromLog(ctx, id, runID)
+}
+
+// runAgentNameFromLog folds the log (tenant-scoped) as the immediately-consistent
+// fallback when the projection hasn't yet observed a just-recorded run.
+func (h *Handler) runAgentNameFromLog(ctx context.Context, id identity.Identity, runID string) (string, bool, error) {
 	evs, err := h.log.Read(ctx, 0)
 	if err != nil {
 		return "", false, fmt.Errorf("agent-manager: read log: %w", err)

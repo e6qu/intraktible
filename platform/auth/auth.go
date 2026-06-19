@@ -8,7 +8,6 @@ package auth
 import (
 	"crypto/rand"
 	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/hex"
 	"sync"
 	"time"
@@ -95,15 +94,18 @@ func (k *Keyring) UseResolver(resolver KeyResolver) {
 	k.resolvers = append(k.resolvers, resolver)
 }
 
-// Resolve looks up a presented secret in constant-ish time.
+// Resolve looks up a presented secret. The key is the SHA-256 of the secret, so a
+// direct map lookup is both O(1) and constant-time in the number of registered
+// keys — the prior linear scan with a per-entry constant-time compare leaked the
+// keyring size through timing while adding no real protection (the lookup key is
+// already a fixed-width hash, not the secret).
 func (k *Keyring) Resolve(secret string) (APIKey, bool) {
 	h := hash(secret)
 	k.mu.RLock()
-	defer k.mu.RUnlock()
-	for stored, key := range k.keys {
-		if subtle.ConstantTimeCompare([]byte(stored), []byte(h)) == 1 {
-			return key, true
-		}
+	key, ok := k.keys[h]
+	k.mu.RUnlock()
+	if ok {
+		return key, true
 	}
 	for _, resolver := range k.resolvers {
 		if key, ok := resolver.ResolveSecret(secret); ok {

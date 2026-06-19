@@ -78,6 +78,54 @@ func TestStartRunCompletesAsynchronously(t *testing.T) {
 	}
 }
 
+// TestStartRunFullQueueFallbackStaysAsync proves the full-queue fallback runs the
+// agent off the request goroutine: StartRun returns promptly (the 202 contract)
+// even with no workers draining the queue, and the overflow run still completes.
+func TestStartRunFullQueueFallbackStaysAsync(t *testing.T) {
+	log, st := testutil.NewLogStore(t)
+	reg := ai.NewRegistry()
+	reg.Register(ai.Stub{})
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "dev"}
+	h := command.NewHandler(log, st, reg)
+	// Deliberately start NO workers, so the queue never drains and fills up.
+	seedAgent(t, st, id, "echo")
+
+	// Fill the buffered queue (asyncQueueSize = 256) so the next call overflows.
+	const queueSize = 256
+	for i := 0; i < queueSize; i++ {
+		if _, err := h.StartRun(context.Background(), id, "echo", "fill"); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	type res struct {
+		id  string
+		err error
+	}
+	done := make(chan res, 1)
+	go func() {
+		runID, err := h.StartRun(context.Background(), id, "echo", "overflow")
+		done <- res{runID, err}
+	}()
+
+	var r res
+	select {
+	case r = <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("StartRun blocked on the full-queue fallback instead of returning immediately")
+	}
+	if r.err != nil || r.id == "" {
+		t.Fatalf("fallback StartRun: id=%q err=%v", r.id, r.err)
+	}
+	if !testutil.Eventually(t, func() bool {
+		s, ok := terminalStatus(t, log, r.id)
+		return ok && s == "completed"
+	}) {
+		t.Fatal("full-queue fallback run never completed")
+	}
+	h.DrainWorkers() // waits out the tracked fallback goroutine
+}
+
 func TestStartRunRejectsUnknownAgent(t *testing.T) {
 	h, _, _, id, cancel := newAsyncHandler(t)
 	defer func() { cancel(); h.DrainWorkers() }()

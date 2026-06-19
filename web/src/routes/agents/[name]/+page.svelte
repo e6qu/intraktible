@@ -142,6 +142,12 @@
   $effect(() => {
     // Reload whenever the route param changes (covers initial mount and sibling nav).
     void name;
+    // Tear down any stream still running for the previous agent — otherwise the
+    // old EventSource/WebSocket leaks and its handlers keep mutating this page's
+    // state against the newly-selected agent — and clear its now-stale output.
+    closeStream();
+    streaming = false;
+    streamText = '';
     void load();
   });
 
