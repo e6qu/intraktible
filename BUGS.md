@@ -3,6 +3,66 @@
 Tracked alongside `PLAN.md`; updated in the same PR at the end of every phase.
 Format: `ID | severity | component | description | status`.
 
+## Open — audit round 3 (planned; sequenced into PRs, see PLAN.md roadmap)
+A third audit (code/security, a UI/UX review against screenshots of every page × persona × theme, and a competitive + API study vs. comparable decisioning and BPMN/DMN platforms) produced the backlog below. Grouped into healthy-sized PRs (one open at a time; no anemic PRs).
+
+PR1 — data protection + log usability
+- `A1 | HIGH | decision-engine | the per-node decision trace (NodeEvaluated → Record.Nodes[].Output) is recorded UNSEALED while the decide input/output ARE sealed, so node outputs echoing PII survive a crypto-shred erasure — seal node outputs via sealPII (same field set) before emit. | open — PR1`
+- `A2 | MED | web | Decisions list has no filter/search/pagination and shows "just now" for every row — add flow/env/status/variant/date filters, pagination, and relative+absolute sortable timestamps. | open — PR1`
+- `A3 | MED | web/audit | the Audit log is one flat unpaginated table dominated by node_evaluated rows — add date/actor/category/event-type filters, pagination, node_evaluated grouping/collapse, absolute timestamps. | open — PR1`
+
+PR2 — engine builder UX
+- `A4 | MED | web/engine | the builder is a single ~3,200px scroll with the canvas as a small top widget — pin/enlarge the canvas; move Test/Backtest/What-if/Assertions/Batch/Promote into tabs or a drawer. | open — PR2`
+- `A5 | LOW | web/engine | canvas polish — remove the Svelte Flow attribution, larger default height, rename "Relax"→"Auto-layout", tooltips on the Cards/BPMN/Relax toggles. | open — PR2`
+- `A6 | LOW | web/engine | raw-JSON inputs (test/assertions/batch/what-if) have no schema hint or validation — prefill a sample from the flow input_schema + inline JSON validation. | open — PR2`
+- `A7 | LOW | web/engine | Promote is a small control among muted text for a high-stakes action — raise prominence + add a confirm step. | open — PR2`
+- `A8 | LOW | web/engine | flow-create fields are placeholder-only and the production column "—" is ambiguous — add labels + a "not deployed" pill. | open — PR2`
+
+PR3 — decision explainability + case management
+- `A9 | MED | decision-engine/web | the decision Node Trace omits the decisive branch/rule, per-node duration, and reason codes — surface them (the reason node already emits codes). | open — PR3`
+- `A10 | MED | web/cases | no bulk actions — add multi-select assign/close on the queue. | open — PR3`
+- `A11 | MED | web/cases | case-detail actions + audit are flat — group Actions vs Activity and render the audit as a timeline. | open — PR3`
+- `A12 | LOW | web/cases | queue filter inputs unlabeled; "Run SLA sweep" unexplained — labels + tooltip. | open — PR3`
+
+PR4 — accessibility + visual consistency
+- `A13 | HIGH | web | secondary text (timestamps/metadata/helper copy) is low-contrast, likely fails WCAG AA — darken to ≥4.5:1. | open — PR4`
+- `A14 | MED | web | placeholder-as-label throughout + status communicated by color alone — add visible labels and non-color status cues. | open — PR4`
+- `A15 | MED | web | the top bar has competing identity ("Signed in as dev"/"Sign out") + a persona pill, and the login page renders the full authenticated chrome — consolidate into one account/role menu; minimal chrome on /login. | open — PR4`
+- `A16 | LOW | web | the showcase (editorial) and inner pages (utilitarian) feel like two products — carry the showcase type/spacing hierarchy inward; unify persona label casing. | open — PR4`
+- `A17 | LOW | web | assorted clarity — breadcrumbs on detail pages, a search-scope placeholder, ≥24px canvas/link hit areas, agents-form required-vs-optional grouping, a policies band preview, data feature-form labels. | open — PR4`
+
+PR5 — robustness & bug-fix round
+- `A18 | MED | eventlog/nats | Read forces fromSeq=1 and treats any GetMsg miss in [1,head] as fatal, with a separate Head() RPC (TOCTOU) — clamp to FirstSeq/LastSeq from one StreamInfo; only a gap strictly inside the range is corruption. | open — PR5`
+- `A19 | MED | agent-manager | StartRun's full-queue fallback runs process() synchronously on the request goroutine (background ctx), breaking the 202 async contract — run it in a tracked goroutine. | open — PR5`
+- `A20 | MED | agent-manager | EscalateRun resolves a run via h.log.Read(0) (whole log, all tenants) — use the tenant-scoped agents.GetRun projection read. | open — PR5`
+- `A21 | MED | eventlog | delivery.dispatch reads the unread tail with no LIMIT into RAM on the poll path and uses context.Background() with no stop-select — bounded batch + re-arm + stop-tied ctx. | open — PR5`
+- `A22 | MED | platform/kms | GCP KMS Encrypt/Decrypt skip CRC32C request/response integrity verification — set + verify, error on mismatch. | open — PR5`
+- `A23 | LOW | store | UpdateDoc is a non-atomic read-modify-write even on a TxStore — wrap in Begin/Commit when transactional, or document the single-writer requirement at call sites. | open — PR5`
+- `A24 | LOW | context-layer | the SQL connector's sqlite DSN is unrestricted (arbitrary local-file read; editor-gated) — allowlist/immutable/read-only enforcement (the long-deferred L2). | open — PR5`
+- `A25 | LOW | auth | Keyring.Resolve scans hashes with a constant-time compare + early return (a timing veneer over a hash compare) — replace with a map[hash] lookup. | open — PR5`
+- `A26 | LOW | scim | the userName filter SplitN-on-space mis-parses quoted/compound clauses, so the deprovisioning gate can miss a user — parse the quoted value properly. | open — PR5`
+- `A27 | LOW | decision-engine/export | BPMN bpmnID coerces distinct node ids to the same XML id — per-export uniqueness map with collision suffixing. | open — PR5`
+- `A28 | MED | web/policies | the CommentThread isn't keyed and loads only in onMount — switching policies shows the prior policy's comments; key it or make it reactive on subjectId. | open — PR5`
+- `A29 | MED | web/agents | the agent stream isn't closed on sibling navigation (the effect reloads on name but doesn't closeStream) — leaks the socket and pollutes the new page's state. | open — PR5`
+- `A30 | LOW | web/engine | nodeTelemetry is never cleared though its comment claims "cleared on edits" — clear it on node/edge edits or drop the claim. | open — PR5`
+- `A31 | LOW | web | BuilderDeck's recent-sort comparator never returns 0 (not a stable sort) — use a numeric/locale compare. | open — PR5`
+
+PR6 — decision-table hit policies + aggregators
+- `A32 | MED | decision-engine | decision_table supports only first/all — add the standard hit policies (UNIQUE with conflict detection, ANY, FIRST, RULE ORDER, COLLECT + SUM/MIN/MAX/COUNT), surfaced in the builder + OpenAPI + assertions. | open — PR6`
+- `A33 | LOW | docs | document the expression language (expr-lang conditions + Starlark code, per D9) as a stable, versioned contract — explicitly NOT adding a second/standard expression engine. | open — PR6`
+
+PR7 — external decision API (compatibility surface)
+- `A34 | — | — | PREREQ (not code): confirm the comparable platform's live API contract (decide envelope, decision-history endpoint, any flow-management REST) from a legitimate account — its current docs are auth-gated. | open — PR7`
+- `A35 | MED | platform/openapi | add a neutral-named, versioned compatibility decide endpoint accepting a JSON array of input rows (maps to /decide/batch) + per-flow generated OpenAPI/Swagger — faithful to the comparable platform's API where legally possible; functional API shapes only, no docs/branding copied, competitor never named in-repo. | open — PR7`
+- `A36 | MED | auth | add pattern/wildcard scoping to managed API keys (env/branch patterns, e.g. dev/*, *) to match the comparable platform's key model. | open — PR7`
+- `A37 | LOW | decision-engine | add decision-history query params to /v1/decisions (start_time, end_time, include_node_results) — useful natively and for compatibility. | open — PR7`
+
+PR8 — ML model hosting (epic; needs a product decision)
+- `A38 | — | decision-engine | EPIC: host/serve predictive models alongside rules — a predict node + model registry + serving + monitoring; the one sizeable in-scope feature gap, but bounded by the §9 "ONNX serving at scale" non-goal — scope before building (likely several PRs). | open — PR8`
+- `A39 | LOW | context-layer | connector breadth — more prebuilt connector templates/providers (we ship HTTP + SQL + templates vs. the comparable platform's large catalog). | open — PR8`
+- `A40 | LOW | web | authoring AI-copilot (generate/explain decision logic from natural language) — stretch. | open — PR8`
+- `A41 | LOW | api | a gRPC/Arrow batch path for very large decisioning/backtest jobs — stretch. | open — PR8`
+
 ## Closed by decision (won't implement)
 - `D9 | decision-engine | CEL conditions — won't implement. expr-lang already serves Rule/Split conditions + Assignment, and Starlark serves the Code node, so conditions/expressions are fully covered. A second expression engine (cel-go) would add a dependency and parallel semantics for no new capability. Revisit only if a concrete need for CEL specifically arises.`
 - `D11 | decision-engine | batching the per-node decision events — won't implement. The per-node DecisionStarted → NodeEvaluated… → Completed/Failed stream IS the replayable, node-by-node decision history (PLAN §3.3); batching would trade that granularity for throughput the MVP does not need. A future high-volume optimization, not a bug.`
