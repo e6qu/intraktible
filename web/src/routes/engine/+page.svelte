@@ -117,8 +117,8 @@
       create();
     }}
   >
-    <input bind:value={slug} placeholder="slug" aria-label="slug" />
-    <input bind:value={name} placeholder="name" aria-label="name" />
+    <label>Slug <input bind:value={slug} placeholder="loan-origination" aria-label="slug" /></label>
+    <label>Name <input bind:value={name} placeholder="Loan Origination" aria-label="name" /></label>
     <button type="submit" disabled={busy}>{busy ? 'Creating…' : 'Create flow'}</button>
   </form>
 
@@ -177,12 +177,12 @@
               <td>
                 {#if liveVersion(f, 'sandbox')}<span class="badge live"
                     >v{liveVersion(f, 'sandbox')}</span
-                  >{:else}<span class="muted">—</span>{/if}
+                  >{:else}<span class="badge none">not deployed</span>{/if}
               </td>
               <td>
                 {#if liveVersion(f, 'production')}<span class="badge live"
                     >v{liveVersion(f, 'production')}</span
-                  >{:else}<span class="muted">—</span>{/if}
+                  >{:else}<span class="badge none">not deployed</span>{/if}
               </td>
             </tr>
           {/each}
@@ -281,6 +281,18 @@
   .badge.live {
     background: color-mix(in srgb, var(--ok) 18%, transparent);
     color: var(--ok);
+  }
+  .badge.none {
+    color: var(--fg-subtle);
+    font-style: italic;
+  }
+  .row label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    margin: 0;
+    color: var(--fg-subtle);
+    font-size: 0.85rem;
   }
   .err {
     color: var(--danger);
