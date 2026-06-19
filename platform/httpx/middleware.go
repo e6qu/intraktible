@@ -143,6 +143,12 @@ func requiredRole(method, path string) auth.Role {
 	if path == "/v1/audit" || strings.HasPrefix(path, "/v1/api-keys") || strings.HasPrefix(path, "/v1/erasure") {
 		return auth.RoleAdmin
 	}
+	// The streaming run endpoints are GET (EventSource/WebSocket are GET-only) but
+	// they MUTATE — each invokes the agent (a billable provider call) and records a
+	// run. Gate them like the POST run path, before the "all GETs are reads" rule.
+	if strings.HasSuffix(path, "/run/stream") || strings.HasSuffix(path, "/run/ws") {
+		return auth.RoleOperator
+	}
 	if method == http.MethodGet || method == http.MethodHead || method == http.MethodOptions {
 		return auth.RoleViewer
 	}

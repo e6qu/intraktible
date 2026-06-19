@@ -72,7 +72,7 @@ export function nodeSummary(type: string, config: string): string {
     case 'connect':
       return typeof c.connector === 'string' && c.connector ? String(c.connector) : 'connector';
     case 'ai':
-      return typeof c.model === 'string' && c.model ? String(c.model) : 'AI';
+      return typeof c.agent === 'string' && c.agent ? String(c.agent) : 'AI';
     case 'reason':
       return plural(len(c.reasons), 'reason code');
     case 'manual_review':

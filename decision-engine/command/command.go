@@ -16,6 +16,7 @@ import (
 
 	"github.com/e6qu/intraktible/decision-engine/domain"
 	"github.com/e6qu/intraktible/decision-engine/events"
+	"github.com/e6qu/intraktible/decision-engine/layout"
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/identity"
 )
@@ -89,6 +90,10 @@ func (h *Handler) PublishVersion(ctx context.Context, id identity.Identity, cmd 
 	if err := cmd.Validate(); err != nil {
 		return 0, "", eventlog.Envelope{}, err
 	}
+	// Fill node positions when none were supplied, so an API-authored flow renders
+	// with a sensible default layout (a UI/custom layout is preserved). Done before
+	// the etag so the stored graph and its etag match.
+	cmd.Graph = layout.Apply(cmd.Graph)
 	etag, err := domain.Etag(cmd.Graph, cmd.InputSchema)
 	if err != nil {
 		return 0, "", eventlog.Envelope{}, err
@@ -145,6 +150,10 @@ func (h *Handler) ImportFlow(ctx context.Context, id identity.Identity, cmd doma
 	if err := cmd.Validate(); err != nil {
 		return ImportResult{}, err
 	}
+	// Default layout for a position-less import; deterministic, so a re-import of the
+	// same document still no-ops on the etag. A document that carries positions
+	// (e.g. a prior export) keeps them.
+	cmd.Graph = layout.Apply(cmd.Graph)
 	etag, err := domain.Etag(cmd.Graph, cmd.InputSchema)
 	if err != nil {
 		return ImportResult{}, err

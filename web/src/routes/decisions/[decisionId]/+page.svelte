@@ -1,6 +1,5 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
-  import { onMount } from 'svelte';
   import { page } from '$app/stores';
   import Icon from '$lib/Icon.svelte';
   import Copyable from '$lib/Copyable.svelte';
@@ -10,7 +9,8 @@
 
   // API calls authenticate via the session cookie (empty key → no X-Api-Key).
   const key = '';
-  const id = $page.params.decisionId ?? '';
+  // Derive from the route param so navigating between sibling decisions reloads.
+  const id = $derived($page.params.decisionId ?? '');
   let d = $state<Decision | null>(null);
   let error = $state('');
 
@@ -55,7 +55,10 @@
       error = msg(e);
     }
   }
-  onMount(load);
+  $effect(() => {
+    void id; // reload on initial mount and sibling navigation
+    void load();
+  });
 </script>
 
 <main>

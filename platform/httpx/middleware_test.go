@@ -150,6 +150,12 @@ func TestAuthorizeRBAC(t *testing.T) {
 		{"viewer-k", "GET", "/v1/privacy", 200}, // the masking config is readable
 		{"editor-k", "PUT", "/v1/privacy", 403}, // ...but changing it is admin-only
 		{"admin-k", "PUT", "/v1/privacy", 200},  // a compliance control
+		// The streaming run endpoints are GET but MUTATE (invoke + record a run), so
+		// they need operator like POST /run — a viewer must not trigger billable runs.
+		{"viewer-k", "GET", "/v1/agents/a1/run/stream", 403},
+		{"viewer-k", "GET", "/v1/agents/a1/run/ws", 403},
+		{"operator-k", "GET", "/v1/agents/a1/run/stream", 200},
+		{"operator-k", "GET", "/v1/agents/a1/run/ws", 200},
 	}
 	for _, c := range cases {
 		if got := do(c.secret, c.method, c.path); got != c.want {
@@ -162,7 +168,7 @@ func TestAuthenticateSession(t *testing.T) {
 	kr := auth.NewKeyring()
 	sessions := auth.NewSessions()
 	id := identity.Identity{Org: "o", Workspace: "w", Actor: "u"}
-	tok := sessions.Issue(id, auth.RoleEditor)
+	tok, _ := sessions.Issue(id, auth.RoleEditor)
 
 	h := httpx.Authenticate(kr, sessions)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got, ok := identity.From(r.Context()); !ok || got != id {

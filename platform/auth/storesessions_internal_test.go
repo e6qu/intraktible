@@ -24,7 +24,7 @@ func TestStoreSessions(t *testing.T) {
 	s.ttl = time.Hour
 	id := identity.Identity{Org: "o", Workspace: "w", Actor: "a"}
 
-	tok := s.Issue(id, RoleEditor)
+	tok, _ := s.Issue(id, RoleEditor)
 	if got, _, ok := s.Resolve(tok); !ok || got != id {
 		t.Fatalf("resolve fresh session: got=%v ok=%v", got, ok)
 	}
@@ -44,7 +44,7 @@ func TestStoreSessions(t *testing.T) {
 	}
 
 	// Revoke.
-	tok2 := s.Issue(id, RoleEditor)
+	tok2, _ := s.Issue(id, RoleEditor)
 	if _, _, ok := s.Resolve(tok2); !ok {
 		t.Fatal("fresh session should resolve")
 	}

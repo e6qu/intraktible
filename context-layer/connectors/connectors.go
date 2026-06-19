@@ -118,10 +118,31 @@ func (p EgressPolicy) Client(timeout time.Duration) *http.Client {
 	}
 }
 
+// extraBlockedRanges are SSRF-relevant ranges the standard net.IP predicates
+// miss: carrier-grade NAT (100.64.0.0/10, common for cloud/k8s internal infra)
+// and the benchmarking range (198.18.0.0/15).
+var extraBlockedRanges = func() []*net.IPNet {
+	var nets []*net.IPNet
+	for _, cidr := range []string{"100.64.0.0/10", "198.18.0.0/15"} {
+		if _, n, err := net.ParseCIDR(cidr); err == nil {
+			nets = append(nets, n)
+		}
+	}
+	return nets
+}()
+
 // blockedIP reports whether ip is in a range the default policy refuses to dial.
 func blockedIP(ip net.IP) bool {
-	return ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified() ||
-		ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast()
+	if ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified() ||
+		ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() {
+		return true
+	}
+	for _, n := range extraBlockedRanges {
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 // Projector folds connector definitions + fetches into read models.

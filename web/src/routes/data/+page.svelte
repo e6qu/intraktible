@@ -54,6 +54,7 @@
     if (!cName.trim()) cName = t.id;
   }
   async function addConnector() {
+    if (cBusy) return; // Enter fires onsubmit directly, bypassing the disabled button
     error = '';
     cBusy = true;
     try {
@@ -82,6 +83,7 @@
   let fWindow = $state('24');
   let fBusy = $state(false);
   async function addFeature() {
+    if (fBusy) return; // Enter fires onsubmit directly, bypassing the disabled button
     error = '';
     fBusy = true;
     try {

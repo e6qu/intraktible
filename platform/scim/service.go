@@ -222,6 +222,10 @@ func (svc *Service) patchGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
+	// Collect the member ops and apply them in one atomic read-modify-write, so a
+	// multi-op PATCH is all-or-nothing (a partial apply + IdP retry would otherwise
+	// double-apply adds/removes).
+	var ops []MemberOp
 	for _, op := range req.Operations {
 		if !strings.Contains(strings.ToLower(op.Path), "members") {
 			continue
@@ -237,7 +241,10 @@ func (svc *Service) patchGroup(w http.ResponseWriter, r *http.Request) {
 		case strings.EqualFold(op.Op, "replace"):
 			mode = MembersReplace
 		}
-		if _, err := svc.store.SetMembers(r.Context(), svc.org, svc.workspace, id, ids, mode); err != nil {
+		ops = append(ops, MemberOp{Mode: mode, IDs: ids})
+	}
+	if len(ops) > 0 {
+		if _, err := svc.store.PatchMembers(r.Context(), svc.org, svc.workspace, id, ops); err != nil {
 			writeError(w, http.StatusNotFound, err.Error())
 			return
 		}
