@@ -51,6 +51,13 @@ func OpenNATSLog(url string) (*NATSLog, error) {
 			Name:     natsStream,
 			Subjects: []string{natsSubject},
 			Storage:  nats.FileStorage,
+			// The event log is the system of record: never age/size/count out an
+			// event, or a projection rebuild would silently lose history.
+			Retention: nats.LimitsPolicy,
+			MaxAge:    0,
+			MaxMsgs:   -1,
+			MaxBytes:  -1,
+			Discard:   nats.DiscardNew, // refuse new writes at a limit rather than drop old ones
 		}); err != nil {
 			nc.Close()
 			return nil, fmt.Errorf("eventlog: nats add stream: %w", err)
@@ -135,7 +142,11 @@ func (l *NATSLog) Read(_ context.Context, fromSeq uint64) ([]Envelope, error) {
 	for seq := fromSeq; seq <= head; seq++ {
 		msg, err := l.js.GetMsg(natsStream, seq)
 		if errors.Is(err, nats.ErrMsgNotFound) {
-			continue // a purged/removed sequence leaves a gap; skip it
+			// The log is the system of record and is configured for unlimited
+			// retention, so a missing sequence in [fromSeq, head] is corruption,
+			// not an expected gap — fail loudly rather than silently drop the event
+			// (which would let a projection rebuild diverge undetectably).
+			return nil, fmt.Errorf("eventlog: nats sequence %d missing within [%d,%d]: event log integrity violation", seq, fromSeq, head)
 		}
 		if err != nil {
 			return nil, fmt.Errorf("eventlog: nats get msg %d: %w", seq, err)

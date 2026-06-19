@@ -4,361 +4,1783 @@
     "title": "intraktible Decision API",
     "version": "0.1.0",
     "description": "The public integration contract for intraktible: execute decision flows, read decision history, manage flows as code, and drive the deployment lifecycle (deploy / promote) for CI/CD. Other administrative endpoints (RBAC, audit, secrets) are out of scope of this document. Authenticate every request with an API key in the X-Api-Key header.",
-    "license": { "name": "AGPL-3.0-or-later", "identifier": "AGPL-3.0-or-later" }
+    "license": {
+      "name": "AGPL-3.0-or-later",
+      "identifier": "AGPL-3.0-or-later"
+    }
   },
-  "servers": [{ "url": "/", "description": "This instance" }],
-  "security": [{ "ApiKeyAuth": [] }],
+  "servers": [
+    {
+      "url": "/",
+      "description": "This instance"
+    }
+  ],
+  "security": [
+    {
+      "ApiKeyAuth": []
+    }
+  ],
   "tags": [
-    { "name": "decide", "description": "Execute published flows (the hot path)." },
-    { "name": "decisions", "description": "Read recorded decision history." },
-    { "name": "flows", "description": "List, create, read, and import flows." },
-    { "name": "deployments", "description": "Deploy and promote versions across environments (CI/CD)." },
-    { "name": "identity", "description": "Caller introspection." }
+    {
+      "name": "decide",
+      "description": "Execute published flows (the hot path)."
+    },
+    {
+      "name": "decisions",
+      "description": "Read recorded decision history."
+    },
+    {
+      "name": "flows",
+      "description": "List, create, read, and import flows."
+    },
+    {
+      "name": "deployments",
+      "description": "Deploy and promote versions across environments (CI/CD)."
+    },
+    {
+      "name": "identity",
+      "description": "Caller introspection."
+    }
   ],
   "paths": {
     "/v1/flows/{slug}/{env}/decide": {
       "post": {
-        "tags": ["decide"],
+        "tags": [
+          "decide"
+        ],
         "summary": "Execute a flow",
         "description": "Runs the live version of the flow (champion, or A/B challenger) in the given environment against the supplied data and records the decision.",
         "parameters": [
-          { "$ref": "#/components/parameters/Slug" },
-          { "$ref": "#/components/parameters/Env" }
+          {
+            "$ref": "#/components/parameters/Slug"
+          },
+          {
+            "$ref": "#/components/parameters/Env"
+          }
         ],
         "requestBody": {
           "required": true,
-          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DecideRequest" } } }
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DecideRequest"
+              }
+            }
+          }
         },
         "responses": {
           "200": {
             "description": "The decision was recorded (a flow whose logic errors is a recorded 'failed' decision, not an HTTP error).",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DecideResponse" } } }
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DecideResponse"
+                }
+              }
+            }
           },
-          "400": { "$ref": "#/components/responses/Error" },
-          "401": { "$ref": "#/components/responses/Error" },
-          "404": { "$ref": "#/components/responses/Error" }
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          }
         }
       }
     },
     "/v1/flows/{slug}/{env}/decide/batch": {
       "post": {
-        "tags": ["decide"],
+        "tags": [
+          "decide"
+        ],
         "summary": "Batch-execute a flow over a dataset",
         "description": "Runs each row of a dataset through the recorded decide path (capped at 500 rows).",
         "parameters": [
-          { "$ref": "#/components/parameters/Slug" },
-          { "$ref": "#/components/parameters/Env" }
+          {
+            "$ref": "#/components/parameters/Slug"
+          },
+          {
+            "$ref": "#/components/parameters/Env"
+          }
         ],
         "requestBody": {
           "required": true,
-          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BatchDecideRequest" } } }
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchDecideRequest"
+              }
+            }
+          }
         },
         "responses": {
           "200": {
             "description": "Per-row decisions plus a summary.",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BatchDecideResponse" } } }
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchDecideResponse"
+                }
+              }
+            }
           },
-          "400": { "$ref": "#/components/responses/Error" },
-          "401": { "$ref": "#/components/responses/Error" }
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          }
         }
       }
     },
     "/v1/decisions": {
       "get": {
-        "tags": ["decisions"],
+        "tags": [
+          "decisions"
+        ],
         "summary": "List recorded decisions",
         "parameters": [
-          { "name": "slug", "in": "query", "schema": { "type": "string" }, "description": "Filter by flow slug." },
-          { "name": "limit", "in": "query", "schema": { "type": "integer" }, "description": "Maximum rows to return." }
+          {
+            "name": "slug",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Filter by flow slug."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Maximum rows to return."
+          }
         ],
         "responses": {
           "200": {
             "description": "A page of decisions, newest first.",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DecisionList" } } }
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DecisionList"
+                }
+              }
+            }
           },
-          "401": { "$ref": "#/components/responses/Error" }
+          "401": {
+            "$ref": "#/components/responses/Error"
+          }
         }
       }
     },
     "/v1/decisions/{decision_id}": {
       "get": {
-        "tags": ["decisions"],
+        "tags": [
+          "decisions"
+        ],
         "summary": "Read one decision",
         "parameters": [
-          { "name": "decision_id", "in": "path", "required": true, "schema": { "type": "string" } }
+          {
+            "name": "decision_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
         ],
         "responses": {
           "200": {
             "description": "The decision record with its node-level trace.",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Decision" } } }
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Decision"
+                }
+              }
+            }
           },
-          "401": { "$ref": "#/components/responses/Error" },
-          "404": { "$ref": "#/components/responses/Error" }
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          }
         }
       }
     },
     "/v1/flows": {
       "get": {
-        "tags": ["flows"],
+        "tags": [
+          "flows"
+        ],
         "summary": "List flows",
         "responses": {
           "200": {
             "description": "All flows for the caller's tenant.",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/FlowList" } } }
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FlowList"
+                }
+              }
+            }
           },
-          "401": { "$ref": "#/components/responses/Error" }
+          "401": {
+            "$ref": "#/components/responses/Error"
+          }
         }
       },
       "post": {
-        "tags": ["flows"],
+        "tags": [
+          "flows"
+        ],
         "summary": "Create a flow",
         "requestBody": {
           "required": true,
-          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateFlowRequest" } } }
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateFlowRequest"
+              }
+            }
+          }
         },
         "responses": {
           "201": {
             "description": "The flow was created.",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateFlowResponse" } } }
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateFlowResponse"
+                }
+              }
+            }
           },
-          "400": { "$ref": "#/components/responses/Error" },
-          "401": { "$ref": "#/components/responses/Error" }
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          }
         }
       }
     },
     "/v1/flows/{flow_id}": {
       "get": {
-        "tags": ["flows"],
+        "tags": [
+          "flows"
+        ],
         "summary": "Read a flow",
-        "parameters": [{ "$ref": "#/components/parameters/FlowID" }],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/FlowID"
+          }
+        ],
         "responses": {
           "200": {
             "description": "The flow with its versions and deployments.",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Flow" } } }
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Flow"
+                }
+              }
+            }
           },
-          "401": { "$ref": "#/components/responses/Error" },
-          "404": { "$ref": "#/components/responses/Error" }
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          }
         }
       }
     },
     "/v1/flows/import": {
       "post": {
-        "tags": ["flows"],
+        "tags": [
+          "flows"
+        ],
         "summary": "Import a flow as code",
         "description": "Upserts a flow from an exported document: creates it when the slug is new, otherwise publishes the graph as a new version. Re-importing identical content is a no-op (200, published=false).",
         "requestBody": {
           "required": true,
-          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/FlowImport" } } }
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FlowImport"
+              }
+            }
+          }
         },
         "responses": {
           "200": {
             "description": "No change (the live latest version already matches).",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/FlowImportResult" } } }
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FlowImportResult"
+                }
+              }
+            }
           },
           "201": {
             "description": "A flow and/or version was written.",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/FlowImportResult" } } }
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FlowImportResult"
+                }
+              }
+            }
           },
-          "400": { "$ref": "#/components/responses/Error" },
-          "401": { "$ref": "#/components/responses/Error" }
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          }
         }
       }
     },
     "/v1/flows/import-bundle": {
       "post": {
-        "tags": ["flows"],
+        "tags": [
+          "flows"
+        ],
         "summary": "Import many flows at once",
         "description": "Imports a bundle of flow-as-code documents (a GitOps repo). Best-effort: a failing flow is reported in its result rather than aborting the rest.",
         "requestBody": {
           "required": true,
-          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/FlowBundle" } } }
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FlowBundle"
+              }
+            }
+          }
         },
         "responses": {
           "200": {
             "description": "A per-flow report with rollup counts.",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/FlowBundleResult" } } }
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FlowBundleResult"
+                }
+              }
+            }
           },
-          "400": { "$ref": "#/components/responses/Error" },
-          "401": { "$ref": "#/components/responses/Error" }
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          }
         }
       }
     },
     "/v1/flows/{flow_id}/deployments": {
       "post": {
-        "tags": ["deployments"],
+        "tags": [
+          "deployments"
+        ],
         "summary": "Deploy a version to an environment",
         "description": "Makes a published version live in an environment (a direct deploy). Requires the approver role.",
-        "parameters": [{ "$ref": "#/components/parameters/FlowID" }],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/FlowID"
+          }
+        ],
         "requestBody": {
           "required": true,
-          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DeployRequest" } } }
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeployRequest"
+              }
+            }
+          }
         },
         "responses": {
-          "201": { "description": "The version is live in the environment." },
-          "400": { "$ref": "#/components/responses/Error" },
-          "401": { "$ref": "#/components/responses/Error" },
-          "403": { "$ref": "#/components/responses/Error" }
+          "201": {
+            "description": "The version is live in the environment."
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
         }
       }
     },
     "/v1/flows/{flow_id}/promote": {
       "post": {
-        "tags": ["deployments"],
+        "tags": [
+          "deployments"
+        ],
         "summary": "Promote a live version up the environment chain",
         "description": "Ships the live version of `from` up to `to`. A non-production target deploys directly; production opens a maker-checker request. A promotion gate (firing monitors / failing assertions) can block it unless `force` is allowed for the stage. Requires the approver role.",
-        "parameters": [{ "$ref": "#/components/parameters/FlowID" }],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/FlowID"
+          }
+        ],
         "requestBody": {
           "required": true,
-          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PromoteRequest" } } }
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PromoteRequest"
+              }
+            }
+          }
         },
         "responses": {
           "200": {
             "description": "Promoted directly, or a maker-checker request was opened (pending).",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PromoteResult" } } }
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PromoteResult"
+                }
+              }
+            }
           },
-          "400": { "$ref": "#/components/responses/Error" },
-          "401": { "$ref": "#/components/responses/Error" },
-          "403": { "$ref": "#/components/responses/Error" },
-          "409": { "$ref": "#/components/responses/Error" }
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          }
         }
       }
     },
     "/v1/me": {
       "get": {
-        "tags": ["identity"],
+        "tags": [
+          "identity"
+        ],
         "summary": "The authenticated caller",
         "responses": {
           "200": {
             "description": "The resolved identity, scope, and role.",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Me" } } }
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Me"
+                }
+              }
+            }
           },
-          "401": { "$ref": "#/components/responses/Error" }
+          "401": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/flows/{flow_id}/versions": {
+      "post": {
+        "summary": "Publish a new flow version (the primary authoring write). Node positions are optional \u2014 omit them and the server fills a deterministic swimlane auto-layout.",
+        "tags": [
+          "Flows"
+        ],
+        "parameters": [
+          {
+            "name": "flow_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "path parameter"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublishVersionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublishVersionResult"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/flows/{flow_id}/metrics": {
+      "get": {
+        "summary": "Live decision metrics for a flow.",
+        "tags": [
+          "Flows"
+        ],
+        "parameters": [
+          {
+            "name": "flow_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "path parameter"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/v1/flows/{flow_id}/assertions": {
+      "get": {
+        "summary": "Get a flow's stored assertion cases.",
+        "tags": [
+          "Flows"
+        ],
+        "parameters": [
+          {
+            "name": "flow_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "path parameter"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssertionsDoc"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Replace a flow's assertion cases.",
+        "tags": [
+          "Flows"
+        ],
+        "parameters": [
+          {
+            "name": "flow_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "path parameter"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssertionsDoc"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventAck"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/flows/{flow_id}/assertions/run": {
+      "post": {
+        "summary": "Run a flow's assertions against a version.",
+        "tags": [
+          "Flows"
+        ],
+        "parameters": [
+          {
+            "name": "flow_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "path parameter"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/v1/flows/{flow_id}/backtest": {
+      "post": {
+        "summary": "Replay a dataset through a published version (no recorded decision).",
+        "tags": [
+          "Flows"
+        ],
+        "parameters": [
+          {
+            "name": "flow_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "path parameter"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/v1/flows/{flow_id}/whatif": {
+      "post": {
+        "summary": "Sweep one input field across a range and report disposition transitions.",
+        "tags": [
+          "Flows"
+        ],
+        "parameters": [
+          {
+            "name": "flow_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "path parameter"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/v1/flows/{flow_id}/monitors": {
+      "get": {
+        "summary": "List a flow's monitors.",
+        "tags": [
+          "Monitors"
+        ],
+        "parameters": [
+          {
+            "name": "flow_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "path parameter"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      },
+      "post": {
+        "summary": "Define a monitor rule.",
+        "tags": [
+          "Monitors"
+        ],
+        "parameters": [
+          {
+            "name": "flow_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "path parameter"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MonitorRule"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventAck"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/flows/{flow_id}/monitors/{monitor_id}": {
+      "delete": {
+        "summary": "Delete a monitor.",
+        "tags": [
+          "Monitors"
+        ],
+        "parameters": [
+          {
+            "name": "flow_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "path parameter"
+          },
+          {
+            "name": "monitor_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "path parameter"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/v1/flows/{flow_id}/monitors/check": {
+      "post": {
+        "summary": "Evaluate monitors now and push the firing set to webhooks.",
+        "tags": [
+          "Monitors"
+        ],
+        "parameters": [
+          {
+            "name": "flow_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "path parameter"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/v1/flows/{flow_id}/baseline": {
+      "post": {
+        "summary": "Snapshot the disposition mix as the drift baseline.",
+        "tags": [
+          "Monitors"
+        ],
+        "parameters": [
+          {
+            "name": "flow_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "path parameter"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/v1/flows/{flow_id}/drift": {
+      "get": {
+        "summary": "Per-bucket distribution drift vs the baseline.",
+        "tags": [
+          "Monitors"
+        ],
+        "parameters": [
+          {
+            "name": "flow_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "path parameter"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/v1/flows/{flow_id}/shadow": {
+      "get": {
+        "summary": "Get the per-environment shadow version + comparison report.",
+        "tags": [
+          "Flows"
+        ],
+        "parameters": [
+          {
+            "name": "flow_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "path parameter"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      },
+      "put": {
+        "summary": "Set the shadow version for an environment.",
+        "tags": [
+          "Flows"
+        ],
+        "parameters": [
+          {
+            "name": "flow_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "path parameter"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventAck"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/flows/{flow_id}/promotion-policy": {
+      "get": {
+        "summary": "Get the per-stage promotion gates.",
+        "tags": [
+          "Flows"
+        ],
+        "parameters": [
+          {
+            "name": "flow_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "path parameter"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      },
+      "put": {
+        "summary": "Set the per-stage promotion gates.",
+        "tags": [
+          "Flows"
+        ],
+        "parameters": [
+          {
+            "name": "flow_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "path parameter"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PromotionStagePolicy"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventAck"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/flows/{flow_id}/deployment-requests": {
+      "post": {
+        "summary": "Open a maker-checker deployment request (production).",
+        "tags": [
+          "Flows"
+        ],
+        "parameters": [
+          {
+            "name": "flow_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "path parameter"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeployRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/v1/flows/{flow_id}/deployment-requests/{req_id}/approve": {
+      "post": {
+        "summary": "Approve a deployment request (a different user).",
+        "tags": [
+          "Flows"
+        ],
+        "parameters": [
+          {
+            "name": "flow_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "path parameter"
+          },
+          {
+            "name": "req_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "path parameter"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/v1/flows/{flow_id}/deployment-requests/{req_id}/reject": {
+      "post": {
+        "summary": "Reject a deployment request.",
+        "tags": [
+          "Flows"
+        ],
+        "parameters": [
+          {
+            "name": "flow_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "path parameter"
+          },
+          {
+            "name": "req_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "path parameter"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/v1/flows/{slug}/{env}/preapprove/batch": {
+      "post": {
+        "summary": "Promote a population into pre-approvals via the decide path.",
+        "tags": [
+          "Decisions"
+        ],
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "path parameter"
+          },
+          {
+            "name": "env",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "path parameter"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/v1/decisions/{decision_id}/export": {
+      "get": {
+        "summary": "Export a decision trace (mermaid/dot/json).",
+        "tags": [
+          "Decisions"
+        ],
+        "parameters": [
+          {
+            "name": "decision_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "path parameter"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/v1/policies": {
+      "get": {
+        "summary": "List policies.",
+        "tags": [
+          "Policies"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      },
+      "post": {
+        "summary": "Create a policy bound to a flow.",
+        "tags": [
+          "Policies"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PolicyCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/v1/policies/{policy_id}/versions": {
+      "post": {
+        "summary": "Publish a policy version (disposition bands).",
+        "tags": [
+          "Policies"
+        ],
+        "parameters": [
+          {
+            "name": "policy_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "path parameter"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PolicySpec"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventAck"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/policies/{policy_id}/backtest": {
+      "post": {
+        "summary": "Backtest a policy over a dataset (records nothing).",
+        "tags": [
+          "Policies"
+        ],
+        "parameters": [
+          {
+            "name": "policy_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "path parameter"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/v1/preapprovals": {
+      "get": {
+        "summary": "List pre-approvals.",
+        "tags": [
+          "PreApprovals"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      },
+      "post": {
+        "summary": "Grant a pre-approval.",
+        "tags": [
+          "PreApprovals"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreApprovalGrant"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/v1/cases": {
+      "get": {
+        "summary": "List the case queue (filter by status/type/assignee).",
+        "tags": [
+          "Cases"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      },
+      "post": {
+        "summary": "Open a review case.",
+        "tags": [
+          "Cases"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CaseCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/v1/cases/{case_id}": {
+      "get": {
+        "summary": "Get one case with its notes + audit log.",
+        "tags": [
+          "Cases"
+        ],
+        "parameters": [
+          {
+            "name": "case_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "path parameter"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/v1/agents": {
+      "get": {
+        "summary": "List agents.",
+        "tags": [
+          "Agents"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      },
+      "post": {
+        "summary": "Define an agent.",
+        "tags": [
+          "Agents"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/v1/agents/{name}/run": {
+      "post": {
+        "summary": "Run an agent synchronously.",
+        "tags": [
+          "Agents"
+        ],
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "path parameter"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/v1/webhooks": {
+      "get": {
+        "summary": "List notification webhooks.",
+        "tags": [
+          "Notifications"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      },
+      "post": {
+        "summary": "Register a notification webhook.",
+        "tags": [
+          "Notifications"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebhookCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/v1/privacy": {
+      "get": {
+        "summary": "Get the PII masking config.",
+        "tags": [
+          "Privacy"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrivacyConfig"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Set the PII masking config (admin).",
+        "tags": [
+          "Privacy"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PrivacyConfig"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventAck"
+                }
+              }
+            }
+          }
         }
       }
     }
   },
   "components": {
     "securitySchemes": {
-      "ApiKeyAuth": { "type": "apiKey", "in": "header", "name": "X-Api-Key" }
+      "ApiKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Api-Key"
+      }
     },
     "parameters": {
-      "Slug": { "name": "slug", "in": "path", "required": true, "schema": { "type": "string" }, "description": "The flow's slug." },
-      "Env": { "name": "env", "in": "path", "required": true, "schema": { "type": "string", "enum": ["sandbox", "staging", "production"] }, "description": "The deployment environment." },
-      "FlowID": { "name": "flow_id", "in": "path", "required": true, "schema": { "type": "string" } }
+      "Slug": {
+        "name": "slug",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string"
+        },
+        "description": "The flow's slug."
+      },
+      "Env": {
+        "name": "env",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "enum": [
+            "sandbox",
+            "staging",
+            "production"
+          ]
+        },
+        "description": "The deployment environment."
+      },
+      "FlowID": {
+        "name": "flow_id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      }
     },
     "responses": {
       "Error": {
         "description": "An error.",
-        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
       }
     },
     "schemas": {
       "Error": {
         "type": "object",
-        "properties": { "error": { "type": "string", "description": "A human-readable message." } }
+        "properties": {
+          "error": {
+            "type": "string",
+            "description": "A human-readable message."
+          }
+        }
       },
       "DecideRequest": {
         "type": "object",
-        "required": ["data"],
+        "required": [
+          "data"
+        ],
         "properties": {
-          "data": { "type": "object", "description": "The decision input, validated against the version's input schema." },
-          "entity_type": { "type": "string", "description": "Optional Context Layer entity type; its features are injected under 'features'." },
-          "entity_id": { "type": "string", "description": "Optional Context Layer entity id." }
+          "data": {
+            "type": "object",
+            "description": "The decision input, validated against the version's input schema."
+          },
+          "entity_type": {
+            "type": "string",
+            "description": "Optional Context Layer entity type; its features are injected under 'features'."
+          },
+          "entity_id": {
+            "type": "string",
+            "description": "Optional Context Layer entity id."
+          }
         }
       },
       "DecideResponse": {
         "type": "object",
         "properties": {
-          "decision_id": { "type": "string" },
-          "status": { "type": "string", "enum": ["completed", "failed"] },
-          "data": { "type": "object", "description": "The flow output (on success)." },
-          "disposition": { "type": "string", "description": "The policy's automated outcome, when a policy is bound." },
-          "error": { "type": "string", "description": "The failure reason (on failure)." }
+          "decision_id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "completed",
+              "failed"
+            ]
+          },
+          "data": {
+            "type": "object",
+            "description": "The flow output (on success)."
+          },
+          "disposition": {
+            "type": "string",
+            "description": "The policy's automated outcome, when a policy is bound."
+          },
+          "error": {
+            "type": "string",
+            "description": "The failure reason (on failure)."
+          }
         }
       },
       "BatchDecideRequest": {
         "type": "object",
-        "required": ["dataset"],
+        "required": [
+          "dataset"
+        ],
         "properties": {
-          "dataset": { "type": "array", "items": { "type": "object" }, "description": "Up to 500 input rows." },
-          "entity_type": { "type": "string" },
-          "entity_id": { "type": "string" }
+          "dataset": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            },
+            "description": "Up to 500 input rows."
+          },
+          "entity_type": {
+            "type": "string"
+          },
+          "entity_id": {
+            "type": "string"
+          }
         }
       },
       "BatchDecideResponse": {
         "type": "object",
         "properties": {
-          "summary": { "type": "object", "description": "Totals across the batch." },
-          "results": { "type": "array", "items": { "type": "object" }, "description": "Per-row decision results." }
+          "summary": {
+            "type": "object",
+            "description": "Totals across the batch."
+          },
+          "results": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            },
+            "description": "Per-row decision results."
+          }
         }
       },
       "DecisionList": {
         "type": "object",
-        "properties": { "decisions": { "type": "array", "items": { "$ref": "#/components/schemas/Decision" } } }
+        "properties": {
+          "decisions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Decision"
+            }
+          }
+        }
       },
       "Decision": {
         "type": "object",
         "properties": {
-          "decision_id": { "type": "string" },
-          "slug": { "type": "string" },
-          "version": { "type": "integer" },
-          "environment": { "type": "string" },
-          "status": { "type": "string", "enum": ["completed", "failed"] },
-          "disposition": { "type": "string" },
-          "reason_codes": { "type": "array", "items": { "type": "object" } }
+          "decision_id": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer"
+          },
+          "environment": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "completed",
+              "failed"
+            ]
+          },
+          "disposition": {
+            "type": "string"
+          },
+          "reason_codes": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          }
         }
       },
       "FlowList": {
         "type": "object",
-        "properties": { "flows": { "type": "array", "items": { "$ref": "#/components/schemas/Flow" } } }
+        "properties": {
+          "flows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Flow"
+            }
+          }
+        }
       },
       "Flow": {
         "type": "object",
         "properties": {
-          "flow_id": { "type": "string" },
-          "slug": { "type": "string" },
-          "name": { "type": "string" },
-          "latest": { "type": "integer", "description": "The latest published version number." },
-          "deployments": { "type": "object", "description": "Live version per environment." }
+          "flow_id": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "latest": {
+            "type": "integer",
+            "description": "The latest published version number."
+          },
+          "deployments": {
+            "type": "object",
+            "description": "Live version per environment."
+          },
+          "versions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FlowVersion"
+            }
+          }
         }
       },
       "CreateFlowRequest": {
         "type": "object",
-        "required": ["slug", "name"],
+        "required": [
+          "slug",
+          "name"
+        ],
         "properties": {
-          "slug": { "type": "string", "description": "Lowercase letters, digits, hyphens." },
-          "name": { "type": "string" }
+          "slug": {
+            "type": "string",
+            "description": "Lowercase letters, digits, hyphens."
+          },
+          "name": {
+            "type": "string"
+          }
         }
       },
       "CreateFlowResponse": {
         "type": "object",
-        "properties": { "flow_id": { "type": "string" } }
+        "properties": {
+          "flow_id": {
+            "type": "string"
+          }
+        }
       },
       "FlowImport": {
         "type": "object",
-        "required": ["slug", "graph"],
+        "required": [
+          "slug",
+          "graph"
+        ],
         "properties": {
-          "slug": { "type": "string" },
-          "name": { "type": "string" },
-          "graph": { "type": "object", "description": "The flow graph (nodes + edges)." },
-          "input_schema": { "type": "object" }
+          "slug": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "graph": {
+            "$ref": "#/components/schemas/Graph"
+          },
+          "input_schema": {
+            "type": "object"
+          }
         }
       },
       "FlowImportResult": {
         "type": "object",
         "properties": {
-          "flow_id": { "type": "string" },
-          "slug": { "type": "string" },
-          "version": { "type": "integer" },
-          "created": { "type": "boolean" },
-          "published": { "type": "boolean" }
+          "flow_id": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer"
+          },
+          "created": {
+            "type": "boolean"
+          },
+          "published": {
+            "type": "boolean"
+          }
         }
       },
       "FlowBundle": {
         "type": "object",
-        "required": ["flows"],
+        "required": [
+          "flows"
+        ],
         "properties": {
-          "flows": { "type": "array", "items": { "$ref": "#/components/schemas/FlowImport" } }
+          "flows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FlowImport"
+            }
+          }
         }
       },
       "FlowBundleResult": {
@@ -369,56 +1791,610 @@
             "items": {
               "type": "object",
               "properties": {
-                "slug": { "type": "string" },
-                "flow_id": { "type": "string" },
-                "version": { "type": "integer" },
-                "created": { "type": "boolean" },
-                "published": { "type": "boolean" },
-                "error": { "type": "string" }
+                "slug": {
+                  "type": "string"
+                },
+                "flow_id": {
+                  "type": "string"
+                },
+                "version": {
+                  "type": "integer"
+                },
+                "created": {
+                  "type": "boolean"
+                },
+                "published": {
+                  "type": "boolean"
+                },
+                "error": {
+                  "type": "string"
+                }
               }
             }
           },
-          "published": { "type": "integer" },
-          "failed": { "type": "integer" },
-          "unchanged": { "type": "integer" }
+          "published": {
+            "type": "integer"
+          },
+          "failed": {
+            "type": "integer"
+          },
+          "unchanged": {
+            "type": "integer"
+          }
         }
       },
       "DeployRequest": {
         "type": "object",
-        "required": ["environment", "version"],
+        "required": [
+          "environment",
+          "version"
+        ],
         "properties": {
-          "environment": { "type": "string", "enum": ["sandbox", "staging", "production"] },
-          "version": { "type": "integer" },
-          "challenger_version": { "type": "integer", "description": "Optional A/B challenger version." },
-          "challenger_pct": { "type": "integer", "description": "Percent of traffic routed to the challenger." }
+          "environment": {
+            "type": "string",
+            "enum": [
+              "sandbox",
+              "staging",
+              "production"
+            ]
+          },
+          "version": {
+            "type": "integer"
+          },
+          "challenger_version": {
+            "type": "integer",
+            "description": "Optional A/B challenger version."
+          },
+          "challenger_pct": {
+            "type": "integer",
+            "description": "Percent of traffic routed to the challenger."
+          }
         }
       },
       "PromoteRequest": {
         "type": "object",
-        "required": ["from", "to"],
+        "required": [
+          "from",
+          "to"
+        ],
         "properties": {
-          "from": { "type": "string", "description": "Source environment whose live version is promoted." },
-          "to": { "type": "string", "description": "Target environment." },
-          "force": { "type": "boolean", "description": "Override the promotion gate where the stage allows it." }
+          "from": {
+            "type": "string",
+            "description": "Source environment whose live version is promoted."
+          },
+          "to": {
+            "type": "string",
+            "description": "Target environment."
+          },
+          "force": {
+            "type": "boolean",
+            "description": "Override the promotion gate where the stage allows it."
+          }
         }
       },
       "PromoteResult": {
         "type": "object",
         "properties": {
-          "promoted": { "type": "boolean", "description": "True when the version deployed directly." },
-          "pending": { "type": "boolean", "description": "True when a maker-checker request was opened (production)." },
-          "request_id": { "type": "string" },
-          "version": { "type": "integer" }
+          "promoted": {
+            "type": "boolean",
+            "description": "True when the version deployed directly."
+          },
+          "pending": {
+            "type": "boolean",
+            "description": "True when a maker-checker request was opened (production)."
+          },
+          "request_id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer"
+          }
         }
       },
       "Me": {
         "type": "object",
         "properties": {
-          "org": { "type": "string" },
-          "workspace": { "type": "string" },
-          "actor": { "type": "string" },
-          "scope": { "type": "string", "enum": ["sandbox", "production"] },
-          "role": { "type": "string", "enum": ["viewer", "operator", "editor", "approver", "admin"] }
+          "org": {
+            "type": "string"
+          },
+          "workspace": {
+            "type": "string"
+          },
+          "actor": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "sandbox",
+              "production"
+            ]
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "viewer",
+              "operator",
+              "editor",
+              "approver",
+              "admin"
+            ]
+          }
+        }
+      },
+      "NodePosition": {
+        "type": "object",
+        "description": "Saved canvas coordinate (presentation only; the runtime ignores it). Omit it and the server fills a deterministic auto-layout.",
+        "properties": {
+          "x": {
+            "type": "number"
+          },
+          "y": {
+            "type": "number"
+          }
+        }
+      },
+      "GraphNode": {
+        "type": "object",
+        "required": [
+          "id",
+          "type"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique within the graph."
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "input",
+              "rule",
+              "split",
+              "assignment",
+              "scorecard",
+              "decision_table",
+              "2d_matrix",
+              "code",
+              "connect",
+              "ai",
+              "reason",
+              "manual_review",
+              "output"
+            ]
+          },
+          "name": {
+            "type": "string",
+            "description": "Display label (optional)."
+          },
+          "config": {
+            "type": "object",
+            "description": "Opaque, node-type-specific configuration; the API stores it verbatim and each node engine validates it at decide time. Shapes by type: input {} \u00b7 assignment {assignments:[{target,expr}]} \u00b7 rule {rules:[{when,then:[{target,expr}]}]} \u00b7 split {condition:<bool expr>} (routes to the \"yes\"/\"no\" branch edges) \u00b7 scorecard {factors:[{when,weight}]} \u00b7 decision_table {rows:[{when,outputs}]} \u00b7 2d_matrix {rows,cols,cells} \u00b7 reason {reasons:[{when,code,description}]} \u00b7 manual_review {company_name,case_type,sla_days} (expressions) \u00b7 code {source:<Starlark>} \u00b7 connect {connector:<name>} \u00b7 ai {agent:<name>,prompt,output} \u00b7 output {fields:[...]}. expr/when/condition are CEL-like expressions over the decision input."
+          },
+          "position": {
+            "$ref": "#/components/schemas/NodePosition"
+          },
+          "lane": {
+            "type": "string",
+            "description": "Swimlane (presentation/organizational; optional)."
+          }
+        }
+      },
+      "GraphEdge": {
+        "type": "object",
+        "required": [
+          "from",
+          "to"
+        ],
+        "properties": {
+          "from": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          },
+          "branch": {
+            "type": "string",
+            "description": "Label for a conditional edge (e.g. \"yes\"/\"no\" out of a split); empty for unconditional flow."
+          }
+        }
+      },
+      "Graph": {
+        "type": "object",
+        "required": [
+          "nodes",
+          "edges"
+        ],
+        "description": "A flow version's node/edge structure. Must have exactly one input node and at least one output node, unique node ids, and be acyclic; edges must reference existing distinct nodes (no self-loops).",
+        "properties": {
+          "nodes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GraphNode"
+            }
+          },
+          "edges": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GraphEdge"
+            }
+          }
+        },
+        "example": {
+          "nodes": [
+            {
+              "id": "in",
+              "type": "input",
+              "lane": "Intake"
+            },
+            {
+              "id": "score",
+              "type": "assignment",
+              "lane": "Scoring",
+              "config": {
+                "assignments": [
+                  {
+                    "target": "score",
+                    "expr": "fico"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "route",
+              "type": "split",
+              "lane": "Decision",
+              "config": {
+                "condition": "score >= 720"
+              }
+            },
+            {
+              "id": "review",
+              "type": "manual_review",
+              "lane": "Review",
+              "config": {
+                "company_name": "'Acme'",
+                "case_type": "'kyc'",
+                "sla_days": 5
+              }
+            },
+            {
+              "id": "out",
+              "type": "output",
+              "lane": "Decision",
+              "config": {
+                "fields": [
+                  "score"
+                ]
+              }
+            }
+          ],
+          "edges": [
+            {
+              "from": "in",
+              "to": "score"
+            },
+            {
+              "from": "score",
+              "to": "route"
+            },
+            {
+              "from": "route",
+              "to": "out",
+              "branch": "yes"
+            },
+            {
+              "from": "route",
+              "to": "review",
+              "branch": "no"
+            }
+          ]
+        }
+      },
+      "FlowVersion": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer"
+          },
+          "etag": {
+            "type": "string",
+            "description": "SHA-256 of {graph, input_schema}; an identical re-publish is a detectable no-op."
+          },
+          "graph": {
+            "$ref": "#/components/schemas/Graph"
+          },
+          "input_schema": {
+            "type": "object",
+            "description": "JSON Schema for the decide input (optional)."
+          }
+        }
+      },
+      "PublishVersionRequest": {
+        "type": "object",
+        "required": [
+          "graph"
+        ],
+        "properties": {
+          "graph": {
+            "$ref": "#/components/schemas/Graph"
+          },
+          "input_schema": {
+            "type": "object",
+            "description": "JSON Schema for the decide input (optional)."
+          }
+        }
+      },
+      "PublishVersionResult": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer"
+          },
+          "etag": {
+            "type": "string"
+          },
+          "event_id": {
+            "type": "string"
+          },
+          "seq": {
+            "type": "integer"
+          }
+        }
+      },
+      "EventAck": {
+        "type": "object",
+        "description": "Acknowledges an appended event.",
+        "properties": {
+          "event_id": {
+            "type": "string"
+          },
+          "seq": {
+            "type": "integer"
+          }
+        }
+      },
+      "AssertionsDoc": {
+        "type": "object",
+        "description": "Stored input\u2192expected test cases for a flow.",
+        "properties": {
+          "cases": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "input": {
+                  "type": "object"
+                },
+                "expect": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      },
+      "MonitorRule": {
+        "type": "object",
+        "description": "A threshold rule over a flow's live metrics.",
+        "required": [
+          "metric",
+          "op",
+          "threshold"
+        ],
+        "properties": {
+          "metric": {
+            "type": "string",
+            "enum": [
+              "failure_rate",
+              "refer_rate",
+              "automation_rate",
+              "approve_rate",
+              "decline_rate",
+              "avg_latency_ms",
+              "volume",
+              "distribution_drift"
+            ]
+          },
+          "op": {
+            "type": "string",
+            "enum": [
+              ">",
+              ">=",
+              "<",
+              "<=",
+              "=="
+            ]
+          },
+          "threshold": {
+            "type": "number"
+          }
+        }
+      },
+      "PromotionStagePolicy": {
+        "type": "object",
+        "description": "Gates a promotion into one environment.",
+        "properties": {
+          "require_no_firing_monitors": {
+            "type": "boolean"
+          },
+          "require_assertions": {
+            "type": "boolean"
+          },
+          "require_review": {
+            "type": "boolean"
+          },
+          "allow_force": {
+            "type": "boolean"
+          }
+        }
+      },
+      "PolicyCreateRequest": {
+        "type": "object",
+        "required": [
+          "name",
+          "flow_slug"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "flow_slug": {
+            "type": "string"
+          }
+        }
+      },
+      "PolicySpec": {
+        "type": "object",
+        "description": "A policy version: disposition bands + default.",
+        "properties": {
+          "spec": {
+            "type": "object",
+            "properties": {
+              "rules": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "when": {
+                      "type": "string"
+                    },
+                    "disposition": {
+                      "type": "string",
+                      "enum": [
+                        "approve",
+                        "decline",
+                        "refer"
+                      ]
+                    },
+                    "code": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "default": {
+                "type": "string",
+                "enum": [
+                  "approve",
+                  "decline",
+                  "refer"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "PreApprovalGrant": {
+        "type": "object",
+        "description": "A durable, time-boxed pre-decision for one entity.",
+        "required": [
+          "entity_type",
+          "entity_id",
+          "valid_days"
+        ],
+        "properties": {
+          "entity_type": {
+            "type": "string"
+          },
+          "entity_id": {
+            "type": "string"
+          },
+          "disposition": {
+            "type": "string",
+            "enum": [
+              "approve",
+              "decline"
+            ]
+          },
+          "flow_slug": {
+            "type": "string"
+          },
+          "valid_days": {
+            "type": "integer"
+          },
+          "note": {
+            "type": "string"
+          },
+          "terms": {
+            "type": "object"
+          }
+        }
+      },
+      "CaseCreateRequest": {
+        "type": "object",
+        "required": [
+          "company_name",
+          "case_type"
+        ],
+        "properties": {
+          "company_name": {
+            "type": "string"
+          },
+          "case_type": {
+            "type": "string"
+          },
+          "sla_days": {
+            "type": "integer"
+          }
+        }
+      },
+      "AgentCreateRequest": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "system": {
+            "type": "string"
+          },
+          "schema": {
+            "type": "object"
+          },
+          "tools": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "WebhookCreateRequest": {
+        "type": "object",
+        "required": [
+          "url"
+        ],
+        "properties": {
+          "url": {
+            "type": "string"
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "PrivacyConfig": {
+        "type": "object",
+        "properties": {
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Case-insensitive field names masked at the read boundary."
+          }
         }
       }
     }

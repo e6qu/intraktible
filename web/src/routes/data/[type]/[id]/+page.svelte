@@ -1,6 +1,5 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
-  import { onMount } from 'svelte';
   import { page } from '$app/stores';
   import { displayEntries } from '$lib/kv';
   import RelativeTime from '$lib/RelativeTime.svelte';
@@ -14,8 +13,9 @@
   } from '$lib/api';
 
   const key = '';
-  const type = $page.params.type ?? '';
-  const id = $page.params.id ?? '';
+  // Derive from the route params so navigating between sibling entities reloads.
+  const type = $derived($page.params.type ?? '');
+  const id = $derived($page.params.id ?? '');
 
   let entity = $state<Entity | null>(null);
   let events = $state<EntityEvent[]>([]);
@@ -42,7 +42,11 @@
       loading = false;
     }
   }
-  onMount(load);
+  $effect(() => {
+    void type;
+    void id; // reload on initial mount and sibling navigation
+    void load();
+  });
 </script>
 
 <main>
