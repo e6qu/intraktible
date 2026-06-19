@@ -52,3 +52,31 @@ func TestDecodeJSON(t *testing.T) {
 		t.Fatal("expected unknown-field rejection")
 	}
 }
+
+func TestVersionHandler(t *testing.T) {
+	w := httptest.NewRecorder()
+	httpx.Version()(w, httptest.NewRequest(http.MethodGet, "/version", http.NoBody))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), `"go"`) {
+		t.Fatalf("version body missing go toolchain: %s", w.Body.String())
+	}
+}
+
+func TestDecodeJSONRejectsOversizedBody(t *testing.T) {
+	// A JSON string just past the cap must be rejected (guards against abusive bodies).
+	big := `"` + strings.Repeat("a", httpx.MaxJSONBody+16) + `"`
+	r := httptest.NewRequest(http.MethodPost, "/x", strings.NewReader(big))
+	var v string
+	if err := httpx.DecodeJSON(r, &v); err == nil {
+		t.Fatal("expected an oversized body to be rejected")
+	}
+
+	// A small body still decodes fine.
+	r2 := httptest.NewRequest(http.MethodPost, "/x", strings.NewReader(`"ok"`))
+	var v2 string
+	if err := httpx.DecodeJSON(r2, &v2); err != nil || v2 != "ok" {
+		t.Fatalf("small body decode: v=%q err=%v", v2, err)
+	}
+}

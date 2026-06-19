@@ -9,6 +9,8 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"runtime"
+	"runtime/debug"
 
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/identity"
@@ -33,8 +35,13 @@ func Error(w http.ResponseWriter, status int, err error) {
 }
 
 // DecodeJSON strictly decodes the request body into v (unknown fields rejected).
+// MaxJSONBody caps a JSON request body (8 MiB) to guard against unbounded or abusive
+// payloads. Endpoints that legitimately accept very large input stream it line-by-line
+// instead of DecodeJSON (e.g. /decide/stream), so they are not bound by this.
+const MaxJSONBody = 8 << 20
+
 func DecodeJSON(r *http.Request, v any) error {
-	dec := json.NewDecoder(r.Body)
+	dec := json.NewDecoder(http.MaxBytesReader(nil, r.Body, MaxJSONBody))
 	dec.DisallowUnknownFields()
 	return dec.Decode(v)
 }
@@ -62,6 +69,24 @@ func Health(check func() error) http.HandlerFunc {
 			}
 		}
 		JSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	}
+}
+
+// Version returns a /version handler reporting build metadata (VCS revision +
+// Go toolchain) from the embedded build info — so ops can confirm exactly what is
+// running. Read once at construction; unauthenticated, like /healthz.
+func Version() http.HandlerFunc {
+	rev, gover := "unknown", runtime.Version()
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		gover = bi.GoVersion
+		for _, s := range bi.Settings {
+			if s.Key == "vcs.revision" {
+				rev = s.Value
+			}
+		}
+	}
+	return func(w http.ResponseWriter, _ *http.Request) {
+		JSON(w, http.StatusOK, map[string]string{"revision": rev, "go": gover})
 	}
 }
 

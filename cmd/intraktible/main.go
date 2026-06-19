@@ -317,6 +317,8 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 	// stopped the consumer, so an orchestrator does not keep routing to a node
 	// serving stale read models.
 	root.HandleFunc("GET /healthz", httpx.Health(rt.Err))
+	// /version reports the build (VCS revision + Go) so ops can confirm what's live.
+	root.HandleFunc("GET /version", httpx.Version())
 
 	// Public auth endpoints — exchange an API key for a session cookie (and clear
 	// it). Registered on root with exact patterns so they win over the /v1/ chain.
