@@ -36,11 +36,11 @@ func TestKeyringResolve(t *testing.T) {
 func TestSessionsIssueResolve(t *testing.T) {
 	s := auth.NewSessions()
 	id := identity.Identity{Org: "o", Workspace: "w", Actor: "u"}
-	tok := s.Issue(id, auth.RoleEditor)
-	if tok == "" {
-		t.Fatal("Issue must return a non-empty token")
+	tok, err := s.Issue(id, auth.RoleEditor)
+	if err != nil || tok == "" {
+		t.Fatalf("Issue must return a non-empty token: tok=%q err=%v", tok, err)
 	}
-	if tok2 := s.Issue(id, auth.RoleEditor); tok2 == tok {
+	if tok2, _ := s.Issue(id, auth.RoleEditor); tok2 == tok {
 		t.Fatal("each Issue must return a distinct token")
 	}
 	got, _, ok := s.Resolve(tok)

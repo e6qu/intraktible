@@ -13,7 +13,9 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/e6qu/intraktible/platform/store"
@@ -58,6 +60,10 @@ type Meta struct {
 type Store struct {
 	store store.Store
 	now   func() time.Time
+	// memberMu serializes group-membership read-modify-write so concurrent
+	// SetMembers/PatchMembers calls cannot lose updates (in-process; cross-node
+	// atomicity would need store transactions).
+	memberMu sync.Mutex
 }
 
 // NewStore builds a store-backed SCIM user registry.
@@ -210,9 +216,25 @@ func (s *Store) ListGroups(ctx context.Context, org, workspace string) ([]Group,
 	return store.ListDocs[Group](ctx, s.store, groupCollection, store.Key(org, workspace, ""))
 }
 
-// SetMembers replaces a group's members (PUT) or, with add=true/false, adds or
-// removes the given member ids (PATCH). It is the membership write path.
+// SetMembers replaces a group's members (PUT) or adds/removes the given member
+// ids. It is one membership op; PatchMembers applies several atomically.
 func (s *Store) SetMembers(ctx context.Context, org, workspace, id string, memberIDs []string, mode MemberMode) (Group, error) {
+	return s.PatchMembers(ctx, org, workspace, id, []MemberOp{{Mode: mode, IDs: memberIDs}})
+}
+
+// MemberOp is one membership change (used by PatchMembers).
+type MemberOp struct {
+	Mode MemberMode
+	IDs  []string
+}
+
+// PatchMembers applies a sequence of membership ops as a single read-modify-write
+// (one GetGroup, one PutDoc) under a lock, so a SCIM PATCH with several ops is all
+// -or-nothing rather than partially applied (an IdP retry would otherwise
+// double-apply), and concurrent membership writes cannot lose updates.
+func (s *Store) PatchMembers(ctx context.Context, org, workspace, id string, ops []MemberOp) (Group, error) {
+	s.memberMu.Lock()
+	defer s.memberMu.Unlock()
 	g, ok, err := s.GetGroup(ctx, org, workspace, id)
 	if err != nil {
 		return Group{}, err
@@ -221,20 +243,33 @@ func (s *Store) SetMembers(ctx context.Context, org, workspace, id string, membe
 		return Group{}, fmt.Errorf("scim: group %q not found", id)
 	}
 	set := map[string]bool{}
-	if mode != MembersReplace {
-		for _, m := range g.Members {
-			set[m.Value] = true
+	for _, m := range g.Members {
+		set[m.Value] = true
+	}
+	for _, op := range ops {
+		switch op.Mode {
+		case MembersReplace:
+			set = map[string]bool{}
+			for _, mid := range op.IDs {
+				set[mid] = true
+			}
+		case MembersRemove:
+			for _, mid := range op.IDs {
+				delete(set, mid)
+			}
+		default: // MembersAdd
+			for _, mid := range op.IDs {
+				set[mid] = true
+			}
 		}
 	}
-	for _, mid := range memberIDs {
-		if mode == MembersRemove {
-			delete(set, mid)
-		} else {
-			set[mid] = true
-		}
-	}
-	g.Members = g.Members[:0]
+	ids := make([]string, 0, len(set))
 	for mid := range set {
+		ids = append(ids, mid)
+	}
+	sort.Strings(ids) // deterministic member order (map iteration is not)
+	g.Members = make([]Member, 0, len(ids))
+	for _, mid := range ids {
 		g.Members = append(g.Members, Member{Value: mid})
 	}
 	if g.Meta != nil {
@@ -246,7 +281,7 @@ func (s *Store) SetMembers(ctx context.Context, org, workspace, id string, membe
 	return g, nil
 }
 
-// MemberMode selects how SetMembers applies the given ids.
+// MemberMode selects how a membership op applies the given ids.
 type MemberMode int
 
 const (

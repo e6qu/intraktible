@@ -93,8 +93,9 @@ func NewSAMLAuthenticator(cfg SAMLConfig) (*SAMLAuthenticator, error) {
 }
 
 // parseIDPMetadata decodes IdP SAML metadata — a single EntityDescriptor or an
-// EntitiesDescriptor aggregate (take the first entity) — without pulling the
-// heavier samlsp helper.
+// EntitiesDescriptor aggregate — without pulling the heavier samlsp helper. A
+// multi-entity aggregate is rejected as ambiguous rather than silently binding
+// trust to whichever IdP happens to be listed first.
 func parseIDPMetadata(data []byte) (*saml.EntityDescriptor, error) {
 	var ed saml.EntityDescriptor
 	if err := xml.Unmarshal(data, &ed); err == nil && ed.EntityID != "" {
@@ -104,12 +105,20 @@ func parseIDPMetadata(data []byte) (*saml.EntityDescriptor, error) {
 	if err := xml.Unmarshal(data, &eds); err != nil {
 		return nil, err
 	}
+	var found *saml.EntityDescriptor
 	for i := range eds.EntityDescriptors {
-		if eds.EntityDescriptors[i].EntityID != "" {
-			return &eds.EntityDescriptors[i], nil
+		if eds.EntityDescriptors[i].EntityID == "" {
+			continue
 		}
+		if found != nil {
+			return nil, fmt.Errorf("auth: saml metadata lists multiple IdP entities; provide a single-entity descriptor")
+		}
+		found = &eds.EntityDescriptors[i]
 	}
-	return nil, fmt.Errorf("no entity descriptor in metadata")
+	if found == nil {
+		return nil, fmt.Errorf("no entity descriptor in metadata")
+	}
+	return found, nil
 }
 
 // Name is the provider's identifier (used in URLs).
@@ -149,7 +158,13 @@ func (a *SAMLAuthenticator) ParseACS(req *http.Request, possibleRequestIDs []str
 	if err != nil {
 		return SAMLLogin{}, fmt.Errorf("auth: saml %q parse response: %w", a.cfg.Name, err)
 	}
-	return mapSAMLAssertion(a.cfg, assertion), nil
+	login := mapSAMLAssertion(a.cfg, assertion)
+	// Reject an assertion with neither an email attribute nor a NameID: an empty
+	// actor would mint an anonymous session and pass the deprovisioning gate open.
+	if login.Identity.Actor == "" {
+		return SAMLLogin{}, fmt.Errorf("auth: saml %q assertion has no email attribute or NameID", a.cfg.Name)
+	}
+	return login, nil
 }
 
 // mapSAMLAssertion turns a verified assertion into an identity + role. It is a

@@ -106,12 +106,21 @@ func (a *OIDCAuthenticator) Exchange(ctx context.Context, code, nonce string) (O
 	if err := idTok.Claims(&claims); err != nil {
 		return OIDCLogin{}, fmt.Errorf("auth: oidc %q claims: %w", a.cfg.Name, err)
 	}
+	// Only adopt the email as identity when the IdP marks it verified; an absent or
+	// unverified email falls back to the provider-controlled subject (which a user
+	// cannot self-assert as someone else's). A token with neither is rejected rather
+	// than minting a session for an empty actor.
 	email, _ := claims["email"].(string)
-	if email == "" {
-		email = idTok.Subject
+	verified, _ := claims["email_verified"].(bool)
+	actor := email
+	if email == "" || !verified {
+		actor = idTok.Subject
+	}
+	if actor == "" {
+		return OIDCLogin{}, fmt.Errorf("auth: oidc %q token has no verified email or subject", a.cfg.Name)
 	}
 	return OIDCLogin{
-		Identity: identity.Identity{Org: a.cfg.Org, Workspace: a.cfg.Workspace, Actor: email},
+		Identity: identity.Identity{Org: a.cfg.Org, Workspace: a.cfg.Workspace, Actor: actor},
 		Role:     a.roleFor(claims),
 	}, nil
 }
