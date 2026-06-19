@@ -551,6 +551,14 @@ never appear in-repo (neutral language only).
    so the UI is flexible and adaptable and external/embedded UIs are first-class — which also underpins
    PR7 (external API compatibility). Sizeable; likely several PRs (the persona model + API-first audit
    first, then the per-persona views).
+   **Shipped in PR #13 (the model + API-first slice):** personas are now config-driven compositions
+   (`lib/persona.ts`) — each of 7 real roles declares its own navigation (ordered, relabelled subset of
+   the shared catalog), default home, and surfaced primary actions, so nav/landing/terminology/density all
+   adapt per role (no longer a skin). The 3 original archetypes keep bespoke decks; the 4 new role personas
+   use a config-driven `PersonaHome`. The **API-first guarantee** is documented (`docs/API-FIRST.md`) and
+   enforced by `web/src/lib/api-first.test.ts` (the audit confirmed it already held: all calls go through
+   `api.ts`/`/v1`, no server routes, only persona+theme are local). **Deferred to a follow-up:** deep
+   bespoke per-persona pages (Developer API-explorer/keys, Executive KPI/trends, Evaluator guided sandbox).
 
 > Per project convention: at the **end of every phase**, update `PLAN.md` and `BUGS.md` in the same
 > PR as the phase's code.
