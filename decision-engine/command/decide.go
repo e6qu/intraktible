@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"time"
@@ -18,6 +19,19 @@ import (
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/store"
+)
+
+// Decide-path error taxonomy. A caller (the HTTP layer) distinguishes a client
+// mistake from a missing resource from an infrastructure failure by errors.Is
+// against these sentinels, instead of mapping everything to one status code. An
+// unwrapped error is an infrastructure failure (HTTP 500).
+var (
+	// ErrBadRequest is a malformed request: a bad environment, or input that
+	// violates the flow's contract. (HTTP 400.)
+	ErrBadRequest = errors.New("decision-engine: bad request")
+	// ErrNotFound is a missing addressable resource: an unknown flow slug, or a
+	// flow with no such (or no published) version. (HTTP 404.)
+	ErrNotFound = errors.New("decision-engine: not found")
 )
 
 // FeatureProvider computes a Context Layer entity's feature values (name->value)
@@ -169,22 +183,22 @@ func (h *DecideHandler) Decide(ctx context.Context, id identity.Identity, slug, 
 		return DecideResult{}, err
 	}
 	if !domain.ValidEnvironment(env) {
-		return DecideResult{}, fmt.Errorf("decision-engine: invalid environment %q (sandbox|production)", env)
+		return DecideResult{}, fmt.Errorf("%w: invalid environment %q (sandbox|staging|production)", ErrBadRequest, env)
 	}
 	fv, ok, err := flows.BySlug(ctx, h.store, id, slug)
 	if err != nil {
 		return DecideResult{}, err
 	}
 	if !ok {
-		return DecideResult{}, fmt.Errorf("decision-engine: unknown flow %q", slug)
+		return DecideResult{}, fmt.Errorf("%w: unknown flow %q", ErrNotFound, slug)
 	}
 	if len(fv.Versions) == 0 {
-		return DecideResult{}, fmt.Errorf("decision-engine: flow %q has no published version", slug)
+		return DecideResult{}, fmt.Errorf("%w: flow %q has no published version", ErrNotFound, slug)
 	}
 	versionNo, variant := h.resolveVersion(fv, env)
 	version, ok := versionByNumber(fv, versionNo)
 	if !ok {
-		return DecideResult{}, fmt.Errorf("decision-engine: flow %q has no version %d", slug, versionNo)
+		return DecideResult{}, fmt.Errorf("%w: flow %q has no version %d", ErrNotFound, slug, versionNo)
 	}
 
 	// Pre-approval fast path: a valid pre-approval for the entity is honored
@@ -203,7 +217,7 @@ func (h *DecideHandler) Decide(ctx context.Context, id identity.Identity, slug, 
 	// is injected or recorded — a contract violation is a bad request, not a
 	// recorded decision.
 	if err := domain.ValidateInput(version.InputSchema, data); err != nil {
-		return DecideResult{}, err
+		return DecideResult{}, fmt.Errorf("%w: %w", ErrBadRequest, err)
 	}
 
 	// Features and connector calls are resolved at decide time and merged into the

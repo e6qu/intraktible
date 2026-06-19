@@ -18,21 +18,35 @@ import (
 	"github.com/expr-lang/expr"
 )
 
+// ModelKind names the evaluation strategy a model uses. It is a named type (not a
+// bare string) so an invalid kind is caught at the boundary, not deep in Evaluate.
+type ModelKind string
+
 // Model kinds. The first three evaluate purely over a feature map; "external" is a
 // bring-your-own served model — the shell calls an HTTP endpoint (it is not pure,
 // so domain.Execute never touches it; the prediction is resolved + recorded like a
 // connector, keeping replay stable).
 const (
-	KindLogistic   = "logistic"   // sigmoid(intercept + Σ wᵢ·xᵢ)
-	KindGBM        = "gbm"        // sum of regression trees (+ base), optional logit link
-	KindExpression = "expression" // a single expr-lang scoring expression over features
-	KindExternal   = "external"   // POST features to an HTTP model-serving endpoint
+	KindLogistic   ModelKind = "logistic"   // sigmoid(intercept + Σ wᵢ·xᵢ)
+	KindGBM        ModelKind = "gbm"        // sum of regression trees (+ base), optional logit link
+	KindExpression ModelKind = "expression" // a single expr-lang scoring expression over features
+	KindExternal   ModelKind = "external"   // POST features to an HTTP model-serving endpoint
 )
+
+// Valid reports whether k is a known model kind.
+func (k ModelKind) Valid() bool {
+	switch k {
+	case KindLogistic, KindGBM, KindExpression, KindExternal:
+		return true
+	default:
+		return false
+	}
+}
 
 // Spec is a model definition: a kind plus the kind-specific parameters. Unknown
 // fields are rejected at decode so a misconfigured model fails loudly.
 type Spec struct {
-	Kind string `json:"kind"`
+	Kind ModelKind `json:"kind"`
 
 	// logistic
 	Intercept    float64            `json:"intercept,omitempty"`
@@ -109,7 +123,7 @@ func (s Spec) Validate() error {
 			return fmt.Errorf("models: external model needs an http(s) endpoint")
 		}
 	default:
-		return fmt.Errorf("models: unknown model kind %q (logistic|gbm|expression)", s.Kind)
+		return fmt.Errorf("models: unknown model kind %q (logistic|gbm|expression|external)", s.Kind)
 	}
 	return nil
 }

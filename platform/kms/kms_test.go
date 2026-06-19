@@ -32,8 +32,8 @@ func TestFromEnvSelectsProvider(t *testing.T) {
 	ctx := context.Background()
 
 	t.Setenv("INTRAKTIBLE_KMS_PROVIDER", "")
-	if k, err := kms.FromEnv(ctx); k != nil || err != nil {
-		t.Fatalf("no provider should yield (nil,nil), got (%v,%v)", k, err)
+	if k, err := kms.FromEnv(ctx); k.IsSome() || err != nil {
+		t.Fatalf("no provider should yield (None,nil), got (%v,%v)", k, err)
 	}
 
 	// A configured provider with no key is an error.

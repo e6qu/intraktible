@@ -5,6 +5,7 @@
   import { get } from 'svelte/store';
   import Icon from '$lib/Icon.svelte';
   import RelativeTime from '$lib/RelativeTime.svelte';
+  import Skeleton from '$lib/Skeleton.svelte';
   import { onMount } from 'svelte';
   import { toast } from '$lib/toast';
   import {
@@ -26,6 +27,7 @@
   let list = $state<AuditEntry[]>([]);
   let error = $state('');
   let forbidden = $state(false);
+  let loading = $state(true);
 
   // Filter inputs (bound to the form). The URL query string is the source of
   // truth, so a filtered audit view is deep-linkable, bookmarkable, and the
@@ -97,6 +99,7 @@
   async function load() {
     error = '';
     forbidden = false;
+    loading = true;
     try {
       const page = await listAuditPage(key, filter());
       list = page.entries;
@@ -109,6 +112,8 @@
       } else {
         error = m;
       }
+    } finally {
+      loading = false;
     }
   }
 
@@ -394,7 +399,9 @@
     <button type="submit">Apply</button>
   </form>
 
-  {#if forbidden}
+  {#if loading}
+    <Skeleton rows={6} />
+  {:else if forbidden}
     <p class="muted" data-testid="audit-forbidden">
       The audit log is restricted to the <strong>admin</strong> role.
     </p>
