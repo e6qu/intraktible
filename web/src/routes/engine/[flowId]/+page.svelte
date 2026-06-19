@@ -2153,16 +2153,35 @@
           <button onclick={addReason}>Add reason</button>
         {:else if selected.type === 'decision_table'}
           <label
-            >mode
+            >hit policy
             <select
-              value={asText(nodeCfg().mode) || 'first'}
-              onchange={(e) => patchCfg({ mode: e.currentTarget.value })}
-              aria-label="decision table mode"
+              value={asText(nodeCfg().hit) || 'first'}
+              onchange={(e) => patchCfg({ hit: e.currentTarget.value, mode: undefined })}
+              aria-label="decision table hit policy"
             >
               <option value="first">first match</option>
-              <option value="all">all matches</option>
+              <option value="unique">unique (one match, else conflict)</option>
+              <option value="any">any (matches must agree)</option>
+              <option value="rule_order">rule order (collect, ordered)</option>
+              <option value="collect">collect (aggregate)</option>
             </select>
           </label>
+          {#if (asText(nodeCfg().hit) || 'first') === 'collect'}
+            <label
+              >aggregate
+              <select
+                value={asText(nodeCfg().aggregate) || ''}
+                onchange={(e) => patchCfg({ aggregate: e.currentTarget.value })}
+                aria-label="decision table aggregate"
+              >
+                <option value="">list (all values)</option>
+                <option value="sum">sum</option>
+                <option value="min">min</option>
+                <option value="max">max</option>
+                <option value="count">count</option>
+              </select>
+            </label>
+          {/if}
           <p class="muted">rows (when → outputs)</p>
           {#each tableRows() as row, i (i)}
             <div class="clause">

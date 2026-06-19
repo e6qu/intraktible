@@ -5,6 +5,8 @@ package domain
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
+	"strings"
 
 	"github.com/expr-lang/expr"
 	"github.com/expr-lang/expr/vm"
@@ -242,33 +244,217 @@ func existingReasonCodes(ctx map[string]any) []any {
 	return []any{}
 }
 
+// DMN-style hit policies for the decision table.
+const (
+	hitFirst     = "first"
+	hitUnique    = "unique"
+	hitAny       = "any"
+	hitRuleOrder = "rule_order"
+	hitCollect   = "collect"
+)
+
 func evalDecisionTable(n events.Node, ctx map[string]any, edges []events.Edge) (any, string, error) {
 	var cfg decisionTableConfig
 	if err := decodeConfig(n, &cfg); err != nil {
 		return nil, "", err
 	}
-	applied := make(map[string]any)
-	for i, row := range cfg.Rows {
-		match, err := evalBool(row.When, ctx)
-		if err != nil {
-			return nil, "", fmt.Errorf("decision-engine: node %q row %d condition: %w", n.ID, i, err)
+	hit := strings.ToLower(strings.TrimSpace(cfg.Hit))
+	if hit == "" {
+		// Back-compat with the predecessor "mode" field: "all" applied every
+		// matching row in order (last write wins per target); anything else was FIRST.
+		if strings.EqualFold(strings.TrimSpace(cfg.Mode), "all") {
+			return evalTableApplyAll(n, cfg, ctx, edges)
 		}
-		if !match {
+		hit = hitFirst
+	}
+
+	// Evaluate matching rows against the input context (rules are independent — a
+	// row's outputs are not visible to other rows). FIRST stops at the first match.
+	type rowOutput struct {
+		idx     int
+		outputs map[string]any
+	}
+	var matched []rowOutput
+	for i, row := range cfg.Rows {
+		// Conditions read the input context; outputs write to a per-row scratch env
+		// (a clone) so a later output in the SAME row can read an earlier one without
+		// leaking across rows.
+		out, ok, err := evalTableRow(n.ID, i, row, ctx, cloneEnv(ctx))
+		if err != nil {
+			return nil, "", err
+		}
+		if !ok {
 			continue
 		}
-		for _, a := range row.Outputs {
-			v, err := evalAny(a.Expr, ctx)
-			if err != nil {
-				return nil, "", fmt.Errorf("decision-engine: node %q row %d output %q: %w", n.ID, i, a.Target, err)
-			}
-			ctx[a.Target] = v
-			applied[a.Target] = v
-		}
-		if cfg.Mode != "all" {
+		matched = append(matched, rowOutput{i, out})
+		if hit == hitFirst {
 			break
 		}
 	}
+
+	applied := make(map[string]any)
+	switch hit {
+	case hitFirst, hitUnique, hitAny:
+		if hit == hitUnique && len(matched) > 1 {
+			return nil, "", fmt.Errorf("decision-engine: node %q UNIQUE hit policy: %d rows matched", n.ID, len(matched))
+		}
+		if hit == hitAny {
+			for _, m := range matched[1:] {
+				if !reflect.DeepEqual(m.outputs, matched[0].outputs) {
+					return nil, "", fmt.Errorf("decision-engine: node %q ANY hit policy: matching rows produce conflicting outputs", n.ID)
+				}
+			}
+		}
+		if len(matched) > 0 {
+			for k, v := range matched[0].outputs {
+				ctx[k] = v
+				applied[k] = v
+			}
+		}
+	case hitRuleOrder, hitCollect:
+		agg := ""
+		if hit == hitCollect {
+			agg = strings.ToLower(strings.TrimSpace(cfg.Aggregate))
+		}
+		// Collect each target's values across matching rows, in rule (then output-
+		// declaration) order, then reduce by the aggregator.
+		lists := map[string][]any{}
+		var order []string
+		for _, m := range matched {
+			for _, a := range cfg.Rows[m.idx].Outputs {
+				if _, seen := lists[a.Target]; !seen {
+					order = append(order, a.Target)
+				}
+				lists[a.Target] = append(lists[a.Target], m.outputs[a.Target])
+			}
+		}
+		for _, target := range order {
+			v, err := aggregateValues(agg, lists[target])
+			if err != nil {
+				return nil, "", fmt.Errorf("decision-engine: node %q COLLECT %q of %q: %w", n.ID, agg, target, err)
+			}
+			ctx[target] = v
+			applied[target] = v
+		}
+	default:
+		return nil, "", fmt.Errorf("decision-engine: node %q unknown hit policy %q", n.ID, hit)
+	}
 	return applied, firstEdge(edges), nil
+}
+
+// evalTableApplyAll is the deprecated mode:"all" path: apply every matching row's
+// outputs in order, last write winning per target (rows see earlier rows' writes,
+// so condition and outputs share the live context).
+func evalTableApplyAll(n events.Node, cfg decisionTableConfig, ctx map[string]any, edges []events.Edge) (any, string, error) {
+	applied := make(map[string]any)
+	for i, row := range cfg.Rows {
+		out, ok, err := evalTableRow(n.ID, i, row, ctx, ctx)
+		if err != nil {
+			return nil, "", err
+		}
+		if !ok {
+			continue
+		}
+		for k, v := range out {
+			applied[k] = v
+		}
+	}
+	return applied, firstEdge(edges), nil
+}
+
+// evalTableRow evaluates one row: its condition against condEnv and, on a match, its
+// outputs against outEnv (each output visible to later outputs in the same row, since
+// they are written back into outEnv). It returns the row's output map and whether it
+// matched. Callers pass outEnv == condEnv to apply outputs to the live context, or a
+// clone to keep rows independent.
+func evalTableRow(nodeID string, i int, row decisionRow, condEnv, outEnv map[string]any) (map[string]any, bool, error) {
+	ok, err := evalBool(row.When, condEnv)
+	if err != nil {
+		return nil, false, fmt.Errorf("decision-engine: node %q row %d condition: %w", nodeID, i, err)
+	}
+	if !ok {
+		return nil, false, nil
+	}
+	out := make(map[string]any, len(row.Outputs))
+	for _, a := range row.Outputs {
+		v, err := evalAny(a.Expr, outEnv)
+		if err != nil {
+			return nil, false, fmt.Errorf("decision-engine: node %q row %d output %q: %w", nodeID, i, a.Target, err)
+		}
+		outEnv[a.Target] = v
+		out[a.Target] = v
+	}
+	return out, true, nil
+}
+
+// cloneEnv shallow-copies an evaluation context so per-row output writes don't
+// mutate the shared context (which would leak one row's outputs into another's).
+func cloneEnv(ctx map[string]any) map[string]any {
+	c := make(map[string]any, len(ctx)+2)
+	for k, v := range ctx {
+		c[k] = v
+	}
+	return c
+}
+
+// aggregateValues reduces a COLLECT target's values by aggregator: "" or "list"
+// keeps the list, "count" yields the length, and sum/min/max reduce numerically.
+func aggregateValues(agg string, vals []any) (any, error) {
+	switch agg {
+	case "", "list":
+		return vals, nil
+	case "count":
+		return len(vals), nil
+	case "sum", "min", "max":
+		nums := make([]float64, len(vals))
+		for i, v := range vals {
+			f, ok := toFloat(v)
+			if !ok {
+				return nil, fmt.Errorf("non-numeric value %v", v)
+			}
+			nums[i] = f
+		}
+		if len(nums) == 0 {
+			if agg == "sum" {
+				return float64(0), nil
+			}
+			return nil, nil
+		}
+		acc := nums[0]
+		for _, f := range nums[1:] {
+			switch agg {
+			case "sum":
+				acc += f
+			case "min":
+				if f < acc {
+					acc = f
+				}
+			case "max":
+				if f > acc {
+					acc = f
+				}
+			}
+		}
+		return acc, nil
+	default:
+		return nil, fmt.Errorf("unknown aggregator %q", agg)
+	}
+}
+
+// toFloat coerces the numeric types expr-lang yields (and JSON's float64) to float64.
+func toFloat(v any) (float64, bool) {
+	switch n := v.(type) {
+	case int:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	case float64:
+		return n, true
+	case float32:
+		return float64(n), true
+	default:
+		return 0, false
+	}
 }
 
 func evalMatrix(n events.Node, ctx map[string]any, edges []events.Edge) (any, string, error) {

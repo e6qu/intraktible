@@ -4,6 +4,7 @@ package domain_test
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/e6qu/intraktible/decision-engine/domain"
@@ -82,6 +83,67 @@ func TestExecuteLinear(t *testing.T) {
 			// Same inputs must reproduce the same output (replay prerequisite).
 			if again := outputJSON(t, domain.Execute(c.graph, c.input)); again != got {
 				t.Fatalf("non-deterministic: %s != %s", again, got)
+			}
+		})
+	}
+}
+
+// TestDecisionTableHitPolicies covers the DMN hit-policy set over a table whose
+// two rows both match when score >= 80 (band/pts differ between them).
+func TestDecisionTableHitPolicies(t *testing.T) {
+	rows := `"rows":[{"when":"score >= 50","outputs":[{"target":"band","expr":"'mid'"},{"target":"pts","expr":"1"}]},` +
+		`{"when":"score >= 80","outputs":[{"target":"band","expr":"'high'"},{"target":"pts","expr":"2"}]}]`
+	tbl := func(prefix string) events.Node { return cfgNode("m", events.NodeDecisionTable, "{"+prefix+rows+"}") }
+	out := cfgNode("out", events.NodeOutput, `{"fields":["band","pts"]}`)
+
+	ok := []struct {
+		name, cfg string
+		input     map[string]any
+		want      string
+	}{
+		{"first picks the first match", `"hit":"first",`, map[string]any{"score": 85}, `{"band":"mid","pts":1}`},
+		{"unique single match", `"hit":"unique",`, map[string]any{"score": 60}, `{"band":"mid","pts":1}`},
+		{"rule_order collects per target in order", `"hit":"rule_order",`, map[string]any{"score": 85}, `{"band":["mid","high"],"pts":[1,2]}`},
+		{"collect list", `"hit":"collect",`, map[string]any{"score": 85}, `{"band":["mid","high"],"pts":[1,2]}`},
+		{"collect count", `"hit":"collect","aggregate":"count",`, map[string]any{"score": 85}, `{"band":2,"pts":2}`},
+	}
+	for _, c := range ok {
+		t.Run(c.name, func(t *testing.T) {
+			if got := outputJSON(t, domain.Execute(linear(tbl(c.cfg), out), c.input)); got != c.want {
+				t.Fatalf("output=%s, want %s", got, c.want)
+			}
+		})
+	}
+
+	// COLLECT sum reduces a numeric output across matching rows (1 + 2 = 3).
+	sumTbl := cfgNode("m", events.NodeDecisionTable,
+		`{"hit":"collect","aggregate":"sum","rows":[{"when":"score >= 50","outputs":[{"target":"pts","expr":"1"}]},{"when":"score >= 80","outputs":[{"target":"pts","expr":"2"}]}]}`)
+	if got := outputJSON(t, domain.Execute(linear(sumTbl, cfgNode("out", events.NodeOutput, `{"fields":["pts"]}`)), map[string]any{"score": 85})); got != `{"pts":3}` {
+		t.Fatalf("collect sum = %s, want {\"pts\":3}", got)
+	}
+
+	// ANY succeeds when every matching row agrees on its outputs.
+	anyTbl := cfgNode("m", events.NodeDecisionTable,
+		`{"hit":"any","rows":[{"when":"score >= 50","outputs":[{"target":"band","expr":"'ok'"}]},{"when":"score >= 80","outputs":[{"target":"band","expr":"'ok'"}]}]}`)
+	if got := outputJSON(t, domain.Execute(linear(anyTbl, cfgNode("out", events.NodeOutput, `{"fields":["band"]}`)), map[string]any{"score": 85})); got != `{"band":"ok"}` {
+		t.Fatalf("any agree = %s, want {\"band\":\"ok\"}", got)
+	}
+
+	// Conflict policies fail loudly when more than one row matches with differing output.
+	bad := []struct {
+		name, cfg, wantErr string
+	}{
+		{"unique conflict fails", `"hit":"unique",`, "UNIQUE"},
+		{"any conflict fails", `"hit":"any",`, "ANY"},
+	}
+	for _, c := range bad {
+		t.Run(c.name, func(t *testing.T) {
+			run := domain.Execute(linear(tbl(c.cfg), out), map[string]any{"score": 85})
+			if run.Status != domain.StatusFailed {
+				t.Fatalf("status=%s, want failed", run.Status)
+			}
+			if !strings.Contains(run.Err, c.wantErr) {
+				t.Fatalf("err=%q, want containing %q", run.Err, c.wantErr)
 			}
 		})
 	}
