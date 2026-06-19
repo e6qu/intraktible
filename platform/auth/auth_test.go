@@ -9,6 +9,42 @@ import (
 	"github.com/e6qu/intraktible/platform/identity"
 )
 
+func TestScopeAllows(t *testing.T) {
+	cases := []struct {
+		scope auth.Scope
+		env   string
+		want  bool
+	}{
+		{auth.Sandbox, "sandbox", true},
+		{auth.Sandbox, "production", false},
+		{auth.Production, "production", true},
+		{auth.Production, "sandbox", false},
+		{auth.ScopeAll, "sandbox", true},
+		{auth.ScopeAll, "production", true},
+		{"", "production", true}, // empty scope is unrestricted (legacy keys)
+		{"dev/*", "dev/pr-12", true},
+		{"dev/*", "production", false},
+	}
+	for _, c := range cases {
+		if got := c.scope.Allows(c.env); got != c.want {
+			t.Errorf("Scope(%q).Allows(%q) = %v, want %v", c.scope, c.env, got, c.want)
+		}
+	}
+}
+
+func TestValidScope(t *testing.T) {
+	for _, s := range []auth.Scope{auth.Sandbox, auth.Production, auth.ScopeAll, "dev/*"} {
+		if !auth.ValidScope(s) {
+			t.Errorf("ValidScope(%q) = false, want true", s)
+		}
+	}
+	for _, s := range []auth.Scope{"", "bogus", "prod"} {
+		if auth.ValidScope(s) {
+			t.Errorf("ValidScope(%q) = true, want false", s)
+		}
+	}
+}
+
 func TestKeyringResolve(t *testing.T) {
 	kr := auth.NewKeyring()
 	want := auth.APIKey{

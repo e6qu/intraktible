@@ -9,6 +9,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,13 +19,36 @@ import (
 // DefaultSessionTTL is how long an issued session stays valid.
 const DefaultSessionTTL = 24 * time.Hour
 
-// Scope distinguishes sandbox from production API keys.
+// Scope restricts which decision environments an API key may call. Beyond the two
+// concrete environments it supports a wildcard ("*" = any environment) and a
+// trailing-"/*" prefix pattern, so a key can be bound to one environment, all of
+// them, or a family — the model generalises as more environments are added.
 type Scope string
 
 const (
 	Sandbox    Scope = "sandbox"
 	Production Scope = "production"
+	ScopeAll   Scope = "*" // any environment
 )
+
+// Allows reports whether a key with this scope may call the given environment. An
+// empty scope is treated as unrestricted (legacy keys predate scoping).
+func (s Scope) Allows(env string) bool {
+	p := string(s)
+	switch {
+	case p == "" || p == string(ScopeAll):
+		return true
+	case strings.HasSuffix(p, "/*"):
+		return strings.HasPrefix(env, strings.TrimSuffix(p, "*"))
+	default:
+		return p == env
+	}
+}
+
+// ValidScope reports whether s is an acceptable scope value to store on a key.
+func ValidScope(s Scope) bool {
+	return s == Sandbox || s == Production || s == ScopeAll || strings.HasSuffix(string(s), "/*")
+}
 
 // Role is the authorization level of an authenticated principal. Roles are
 // ordered — each includes the capabilities of the ones below it:
