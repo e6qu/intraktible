@@ -11,6 +11,41 @@ import (
 	"github.com/e6qu/intraktible/platform/store"
 )
 
+// A key written before the hash index existed (no index entry) still resolves —
+// the one-time backfill indexes it on first use — and a revoked key is denied.
+func TestResolveBackfillsAndRevokes(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemory()
+	keys := NewStoreAPIKeys(st)
+	id := identity.Identity{Org: "o", Workspace: "w", Actor: "svc"}
+
+	// Simulate a pre-index key: write the key doc directly, with NO index entry.
+	const secret = "itk_legacy-secret"
+	legacy := ManagedAPIKey{ID: "legacy", Name: "legacy", Identity: id, Scope: Sandbox, Role: RoleOperator, Hash: hash(secret)}
+	if err := store.PutDoc(ctx, st, managedKeyCollection, legacy.ID, legacy); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := keys.ResolveSecret(secret)
+	if !ok || got.ID != "legacy" {
+		t.Fatalf("pre-index key should resolve via backfill: ok=%v id=%q", ok, got.ID)
+	}
+	// It is now indexed, so a second resolve takes the fast path (still correct).
+	if _, ok := keys.ResolveSecret(secret); !ok {
+		t.Fatal("indexed key should still resolve")
+	}
+	// A bogus secret never resolves.
+	if _, ok := keys.ResolveSecret("itk_nope"); ok {
+		t.Fatal("a bogus secret must not resolve")
+	}
+	// Revoking denies resolution even though the index entry remains.
+	if _, err := keys.Revoke(ctx, "legacy"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := keys.ResolveSecret(secret); ok {
+		t.Fatal("a revoked key must not resolve")
+	}
+}
+
 // White-box: drive the token clock to exercise rotation's grace window.
 func TestRotateGraceWindow(t *testing.T) {
 	ctx := context.Background()
