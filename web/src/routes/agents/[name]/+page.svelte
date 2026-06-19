@@ -49,8 +49,11 @@
     }
   }
 
+  let escalating = $state('');
   async function escalate(runID: string) {
+    if (escalating) return; // guard against double-click opening duplicate cases
     error = '';
+    escalating = runID;
     try {
       await escalateRun(key, name, runID, {
         company_name: 'Review from ' + name,
@@ -60,6 +63,8 @@
       await load();
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
+    } finally {
+      escalating = '';
     }
   }
 
@@ -196,8 +201,12 @@
         <li>
           <code>{r.status}</code>
           — {r.text || (r.error ? 'error: ' + r.error : '(structured)')}
-          <button onclick={() => escalate(r.run_id)} aria-label={`escalate ${r.run_id}`}>
-            Escalate
+          <button
+            onclick={() => escalate(r.run_id)}
+            disabled={!!escalating}
+            aria-label={`escalate ${r.run_id}`}
+          >
+            {escalating === r.run_id ? 'Escalating…' : 'Escalate'}
           </button>
         </li>
       {/each}

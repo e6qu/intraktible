@@ -11,6 +11,8 @@ describe('nodeSummary', () => {
     expect(nodeSummary('scorecard', '{"factors":[{},{},{}]}')).toBe('3 factors');
     expect(nodeSummary('2d_matrix', '{"rows":[{},{}],"cols":[{}]}')).toBe('2×1 matrix');
     expect(nodeSummary('connect', '{"connector":"bureau"}')).toBe('bureau');
+    expect(nodeSummary('ai', '{"agent":"screener"}')).toBe('screener'); // reads the configured agent
+    expect(nodeSummary('ai', '')).toBe('AI');
     expect(nodeSummary('code', 'anything')).toBe('Starlark');
     expect(nodeSummary('manual_review', '')).toBe('human review');
   });

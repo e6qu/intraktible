@@ -134,7 +134,12 @@ func finishLogin(w http.ResponseWriter, r *http.Request, sessions auth.SessionSt
 	if aug != nil {
 		role = aug(r.Context(), id.Org, id.Workspace, id.Actor, role)
 	}
-	setSessionCookie(w, r, sessions.Issue(id, role), sessions.TTL())
+	tok, err := sessions.Issue(id, role)
+	if err != nil {
+		Error(w, http.StatusInternalServerError, err)
+		return false
+	}
+	setSessionCookie(w, r, tok, sessions.TTL())
 	return true
 }
 

@@ -4,6 +4,7 @@ package auth
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -15,7 +16,7 @@ import (
 // in-memory Sessions and the store-backed StoreSessions satisfy it, so the auth
 // middleware and login handlers depend on the interface.
 type SessionStore interface {
-	Issue(id identity.Identity, role Role) string
+	Issue(id identity.Identity, role Role) (string, error)
 	Resolve(tok string) (identity.Identity, Role, bool)
 	Revoke(tok string)
 	TTL() time.Duration // session lifetime, used to align the cookie max-age
@@ -47,15 +48,16 @@ func NewStoreSessions(s store.Store) *StoreSessions {
 // TTL returns the session lifetime.
 func (s *StoreSessions) TTL() time.Duration { return s.ttl }
 
-// Issue creates a session token for id, valid for the TTL. A store error is logged
-// (the interface cannot return one); the token is still returned but won't resolve.
-func (s *StoreSessions) Issue(id identity.Identity, role Role) string {
+// Issue creates a session token for id, valid for the TTL. A persist failure is
+// returned so the caller can fail the login loudly rather than hand back a token
+// that will never resolve.
+func (s *StoreSessions) Issue(id identity.Identity, role Role) (string, error) {
 	tok := newToken()
 	rec := storedSession{Identity: id, Role: role, Expires: s.now().Add(s.ttl)}
 	if err := store.PutDoc(context.Background(), s.store, sessionCollection, hash(tok), rec); err != nil {
-		slog.Error("auth: persist session failed", "err", err)
+		return "", fmt.Errorf("auth: persist session: %w", err)
 	}
-	return tok
+	return tok, nil
 }
 
 // Resolve returns the identity + role for a token, treating an expired/missing one

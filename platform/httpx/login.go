@@ -31,7 +31,11 @@ func LoginHandler(keyring *auth.Keyring, sessions auth.SessionStore) http.Handle
 			Error(w, http.StatusUnauthorized, errors.New("invalid api key"))
 			return
 		}
-		tok := sessions.Issue(key.Identity, key.Role)
+		tok, err := sessions.Issue(key.Identity, key.Role)
+		if err != nil {
+			Error(w, http.StatusInternalServerError, err)
+			return
+		}
 		setSessionCookie(w, r, tok, sessions.TTL())
 		writeIdentity(w, key.Identity)
 	}

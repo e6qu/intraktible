@@ -46,7 +46,10 @@
       resource: fResource.trim() || undefined
     };
   }
-  let csvUrl = $derived(auditExportUrl(filter()));
+  // The CSV export must match the rows on screen, which are driven by the applied
+  // (URL) filter — not the inputs the user may have edited but not yet applied.
+  let applied = $state<AuditFilter>({});
+  let csvUrl = $derived(auditExportUrl(applied));
 
   // Apply pushes the current inputs into the URL; the effect below re-fetches.
   function applyFilters() {
@@ -202,6 +205,7 @@
     fActor = sp.get('actor') ?? '';
     fType = sp.get('type') ?? '';
     fResource = sp.get('resource') ?? '';
+    applied = filter(); // the on-screen rows and the CSV link track the applied filter
     void load();
   });
 </script>

@@ -17,8 +17,17 @@ import (
 	"github.com/e6qu/intraktible/platform/store"
 )
 
-// Collection is the store collection holding flow documents.
+// Collection is the store collection holding flow documents (keyed by flow id).
 const Collection = "decision_flows"
+
+// slugIndexCollection maps a tenant's flow slug to its flow id, so BySlug — on the
+// decide hot path — is a keyed lookup instead of a whole-collection scan. Slugs are
+// immutable per flow, so the mapping is stable.
+const slugIndexCollection = "decision_flows_by_slug"
+
+type slugRef struct {
+	FlowID string `json:"flow_id"`
+}
 
 // VersionView is one published, immutable flow version in the read model.
 type VersionView struct {
@@ -78,8 +87,8 @@ type Projector struct{}
 // Name identifies the projector.
 func (Projector) Name() string { return "decision_flows" }
 
-// Collections lists the store collection this projector owns.
-func (Projector) Collections() []string { return []string{Collection} }
+// Collections lists the store collections this projector owns (reset on rebuild).
+func (Projector) Collections() []string { return []string{Collection, slugIndexCollection} }
 
 // flowAppliers dispatches each flow event type to its handler (a map keeps the
 // dispatch flat — events of other types are simply absent and skipped).
@@ -215,7 +224,10 @@ func applyCreated(ctx context.Context, e eventlog.Envelope, s store.Store) error
 		CreatedAt: e.Time,
 		UpdatedAt: e.Time,
 	}
-	return store.PutDoc(ctx, s, Collection, store.Key(e.Org, e.Workspace, p.FlowID), fv)
+	if err := store.PutDoc(ctx, s, Collection, store.Key(e.Org, e.Workspace, p.FlowID), fv); err != nil {
+		return err
+	}
+	return store.PutDoc(ctx, s, slugIndexCollection, store.Key(e.Org, e.Workspace, p.Slug), slugRef{FlowID: p.FlowID})
 }
 
 func applyPublished(ctx context.Context, e eventlog.Envelope, s store.Store) error {
@@ -295,6 +307,16 @@ func GraphForVersion(fv FlowView, version int) (events.Graph, error) {
 // BySlug returns the flow with the given slug for id's tenant. Slugs are unique
 // per tenant, so at most one matches; it is the decide path's flow lookup.
 func BySlug(ctx context.Context, s store.Store, id identity.Identity, slug string) (FlowView, bool, error) {
+	// Fast path: the slug index resolves to a flow id without scanning the
+	// collection (this is the decide hot path).
+	if ref, ok, err := store.GetDoc[slugRef](ctx, s, slugIndexCollection, store.Key(id.Org, id.Workspace, slug)); err == nil && ok {
+		if fv, found, ferr := store.GetDoc[FlowView](ctx, s, Collection, store.Key(id.Org, id.Workspace, ref.FlowID)); ferr == nil && found {
+			fv.PromotionPolicy = EffectivePromotionPolicy(fv.PromotionPolicy)
+			return fv, true, nil
+		}
+	}
+	// Fallback: scan (e.g. a flow indexed before this index existed). Correctness
+	// never depends on the index — it only avoids the scan.
 	fvs, err := List(ctx, s, id)
 	if err != nil {
 		return FlowView{}, false, err
