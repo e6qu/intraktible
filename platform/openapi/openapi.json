@@ -188,7 +188,7 @@
       "post": {
         "tags": ["models"],
         "summary": "Define (or redefine) a predictive model",
-        "description": "Registers a named model evaluated deterministically by the engine and referenced from a Predict node. spec.kind is logistic | gbm | expression: logistic {intercept,coefficients:{feature:weight}} · gbm {base?,link?:logit,trees:[{feature,threshold,left,right}|{leaf:true,value}]} · expression {expr:<expr-lang over features>}.",
+        "description": "Registers a named model evaluated deterministically by the engine and referenced from a Predict node. spec.kind is logistic | gbm | expression | external: logistic {intercept,coefficients:{feature:weight}} · gbm {base?,link?:logit,trees:[{feature,threshold,left,right}|{leaf:true,value}]} · expression {expr:<expr-lang over features>} · external {endpoint:<https url>,timeout_ms?} (BYO served model — the shell POSTs the features and reads a {score,probability} response, egress-guarded).",
         "requestBody": {
           "required": true,
           "content": {
