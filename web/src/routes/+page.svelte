@@ -10,6 +10,7 @@
   import OperatorDeck from '$lib/dashboards/OperatorDeck.svelte';
   import ShowcaseDeck from '$lib/dashboards/ShowcaseDeck.svelte';
   import PersonaHome from '$lib/dashboards/PersonaHome.svelte';
+  import EvaluatorTour from '$lib/dashboards/EvaluatorTour.svelte';
   import Welcome from '$lib/dashboards/Welcome.svelte';
 
   // The persona's config picks its home composition — the three original
@@ -64,6 +65,8 @@
     <OperatorDeck {data} />
   {:else if home === 'builder'}
     <BuilderDeck {data} />
+  {:else if home === 'evaluator'}
+    <EvaluatorTour {data} />
   {:else}
     <PersonaHome {data} />
   {/if}

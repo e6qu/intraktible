@@ -30,7 +30,7 @@ describe('persona config', () => {
     // Developer relabels Decisions -> Traces and omits Cases.
     const nav = navFor('developer');
     const ids = nav.map((n) => n.id);
-    expect(ids).toEqual(['decisions', 'engine', 'agents', 'data', 'audit']);
+    expect(ids).toEqual(['decisions', 'engine', 'keys', 'agents', 'data', 'audit']);
     expect(nav.find((n) => n.id === 'decisions')?.label).toBe('Traces');
     expect(ids).not.toContain('cases');
   });

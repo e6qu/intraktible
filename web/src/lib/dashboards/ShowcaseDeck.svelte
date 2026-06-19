@@ -4,12 +4,20 @@
      narrative of the platform's surfaces. Atmosphere + staggered reveals. -->
 <script lang="ts">
   import Icon from '$lib/Icon.svelte';
-  import { decisionStats, deployStats, pct, type DashboardData } from '$lib/dashboard';
+  import {
+    decisionStats,
+    deployStats,
+    decisionsByDay,
+    pct,
+    type DashboardData
+  } from '$lib/dashboard';
 
   let { data }: { data: DashboardData } = $props();
 
   const ds = $derived(decisionStats(data.decisions));
   const dep = $derived(deployStats(data.flows));
+  const trend = $derived(decisionsByDay(data.decisions));
+  const trendMax = $derived(Math.max(1, ...trend.map((t) => t.count)));
 
   // Headline metrics — the numbers a stakeholder remembers.
   const metrics = $derived([
@@ -118,6 +126,24 @@
         </figure>
       {/each}
     </section>
+
+    {#if trend.length > 0}
+      <section class="trend" data-testid="exec-trend" style="--i:4">
+        <div class="trend-head">
+          <h2>Decision volume</h2>
+          <p class="gov">
+            <b>{dep.live}</b> in production · <b>{dep.pending}</b> awaiting four-eyes approval
+          </p>
+        </div>
+        <div class="bars" role="img" aria-label="Decisions per day">
+          {#each trend as t (t.day)}
+            <div class="bar-col" title={`${t.day}: ${t.count}`}>
+              <div class="bar" style="height:{Math.round((t.count / trendMax) * 100)}%"></div>
+            </div>
+          {/each}
+        </div>
+      </section>
+    {/if}
 
     <section class="surfaces">
       {#each surfaces as s, i (s.title)}
@@ -236,6 +262,51 @@
   .m-sub {
     color: var(--fg-subtle);
     font-size: 0.85rem;
+  }
+
+  .trend {
+    margin: 0 0 3.5rem;
+    animation: rise 0.6s ease both;
+    animation-delay: calc(0.15s + var(--i) * 80ms);
+  }
+  .trend-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+  .trend h2 {
+    font-family: var(--font-display);
+    font-size: 1.5rem;
+    font-weight: 600;
+    margin: 0;
+  }
+  .gov {
+    margin: 0;
+    color: var(--fg-muted);
+    font-size: 0.95rem;
+  }
+  .bars {
+    display: flex;
+    align-items: flex-end;
+    gap: 0.3rem;
+    height: 7rem;
+    margin-top: 1rem;
+    padding-top: 0.5rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .bar-col {
+    flex: 1;
+    display: flex;
+    align-items: flex-end;
+    height: 100%;
+  }
+  .bar {
+    width: 100%;
+    min-height: 2px;
+    border-radius: 3px 3px 0 0;
+    background: linear-gradient(to top, var(--accent), var(--accent-2));
   }
 
   .surfaces {
