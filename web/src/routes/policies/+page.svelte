@@ -62,6 +62,7 @@
     }
   }
   async function create() {
+    if (creating) return; // Enter fires onsubmit directly, bypassing the disabled button
     error = '';
     creating = true;
     try {

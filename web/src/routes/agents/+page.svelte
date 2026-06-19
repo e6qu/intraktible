@@ -34,6 +34,7 @@
   }
 
   async function create() {
+    if (busy) return; // Enter fires onsubmit directly, bypassing the disabled button
     error = '';
     busy = true;
     try {
