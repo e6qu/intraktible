@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"sort"
 
 	"github.com/e6qu/intraktible/decision-engine/events"
 	"github.com/e6qu/intraktible/platform/eventlog"
@@ -62,29 +63,38 @@ func PSI(base, cur Histogram) (float64, bool) {
 	return psi, true
 }
 
-// ModelStats is the materialized per-model prediction distribution: a rolling
-// histogram of predicted probabilities, plus a captured baseline to measure PSI
-// against. Predictions without a probability (e.g. an expression score) are counted
-// but not bucketed.
+// maxDailyDays caps how many per-day histograms are retained for windowing.
+const maxDailyDays = 90
+
+// ModelStats is the materialized per-model prediction distribution: a cumulative
+// histogram of predicted probabilities plus per-day histograms (for windowed drift),
+// a captured baseline to measure PSI against, and an optional alert threshold.
+// Predictions without a probability (e.g. an expression score) are counted but not
+// bucketed.
 type ModelStats struct {
-	Org           string    `json:"org"`
-	Workspace     string    `json:"workspace"`
-	Name          string    `json:"name"`
-	Count         int       `json:"count"`          // predictions seen with a probability
-	Hist          Histogram `json:"hist"`           // current distribution
-	HasBaseline   bool      `json:"has_baseline"`   // a baseline was captured
-	BaselineHist  Histogram `json:"baseline_hist"`  // distribution at capture time
-	BaselineCount int       `json:"baseline_count"` // predictions in the baseline
-	UpdatedAt     string    `json:"updated_at"`
+	Org           string               `json:"org"`
+	Workspace     string               `json:"workspace"`
+	Name          string               `json:"name"`
+	Count         int                  `json:"count"`               // predictions seen with a probability
+	Hist          Histogram            `json:"hist"`                // cumulative distribution
+	Daily         map[string]Histogram `json:"daily,omitempty"`     // day (YYYY-MM-DD) -> histogram
+	HasBaseline   bool                 `json:"has_baseline"`        // a baseline was captured
+	BaselineHist  Histogram            `json:"baseline_hist"`       // distribution at capture time
+	BaselineCount int                  `json:"baseline_count"`      // predictions in the baseline
+	Threshold     float64              `json:"threshold,omitempty"` // PSI alert threshold (0 = none)
+	UpdatedAt     string               `json:"updated_at"`
 }
 
 // DriftReport is the read-side drift view for one model.
 type DriftReport struct {
 	Model       string    `json:"model"`
-	Count       int       `json:"count"`
-	Hist        Histogram `json:"hist"`
+	Count       int       `json:"count"`       // predictions in the reported window
+	Hist        Histogram `json:"hist"`        // distribution over the window
+	WindowDays  int       `json:"window_days"` // 0 = all-time (cumulative)
 	HasBaseline bool      `json:"has_baseline"`
 	PSI         *float64  `json:"psi,omitempty"`
+	Threshold   float64   `json:"threshold,omitempty"`
+	Firing      bool      `json:"firing"` // PSI exceeds the (set) threshold
 }
 
 // DriftProjector folds Predict-node outputs into per-model probability histograms
@@ -101,6 +111,8 @@ func (DriftProjector) Apply(ctx context.Context, e eventlog.Envelope, s store.St
 		return applyPredictNode(ctx, e, s)
 	case events.TypeModelBaselineCaptured:
 		return applyBaseline(ctx, e, s)
+	case events.TypeModelMonitorSet:
+		return applyMonitorSet(ctx, e, s)
 	default:
 		return nil
 	}
@@ -145,6 +157,49 @@ func bumpModel(ctx context.Context, e eventlog.Envelope, s store.Store, model st
 	}
 	st.Hist[idx]++
 	st.Count++
+	day := e.Time.UTC().Format("2006-01-02")
+	if st.Daily == nil {
+		st.Daily = map[string]Histogram{}
+	}
+	d := st.Daily[day]
+	d[idx]++
+	st.Daily[day] = d
+	pruneDaily(st.Daily)
+	st.UpdatedAt = e.Time.UTC().Format("2006-01-02T15:04:05Z07:00")
+	return store.PutDoc(ctx, s, StatsCollection, key, st)
+}
+
+// pruneDaily keeps only the most recent maxDailyDays day-buckets (keys are
+// lexicographically sortable dates), bounding the doc size on a long-lived model.
+func pruneDaily(daily map[string]Histogram) {
+	if len(daily) <= maxDailyDays {
+		return
+	}
+	days := make([]string, 0, len(daily))
+	for d := range daily {
+		days = append(days, d)
+	}
+	sort.Strings(days)
+	for _, d := range days[:len(days)-maxDailyDays] {
+		delete(daily, d)
+	}
+}
+
+func applyMonitorSet(ctx context.Context, e eventlog.Envelope, s store.Store) error {
+	var p events.ModelMonitorSet
+	if err := json.Unmarshal(e.Payload, &p); err != nil {
+		return fmt.Errorf("models: decode monitor seq %d: %w", e.Seq, err)
+	}
+	// The model may have no predictions yet, so seed the doc if absent.
+	key := store.Key(e.Org, e.Workspace, p.Name)
+	st, ok, err := store.GetDoc[ModelStats](ctx, s, StatsCollection, key)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		st = ModelStats{Org: e.Org, Workspace: e.Workspace, Name: p.Name}
+	}
+	st.Threshold = p.Threshold
 	st.UpdatedAt = e.Time.UTC().Format("2006-01-02T15:04:05Z07:00")
 	return store.PutDoc(ctx, s, StatsCollection, key, st)
 }
@@ -163,24 +218,53 @@ func applyBaseline(ctx context.Context, e eventlog.Envelope, s store.Store) erro
 	return err
 }
 
-// Drift returns the current drift report for a model (PSI vs the baseline when one
-// has been captured).
-func Drift(ctx context.Context, s store.Store, id identity.Identity, model string) (DriftReport, error) {
+// Drift returns the drift report for a model. windowDays > 0 measures only the most
+// recent windowDays day-buckets (a windowed view that surfaces a recent shift the
+// cumulative view would dilute); 0 uses the all-time cumulative distribution. PSI is
+// computed against the captured baseline, and firing is set when it exceeds a
+// configured threshold.
+func Drift(ctx context.Context, s store.Store, id identity.Identity, model string, windowDays int) (DriftReport, error) {
 	st, ok, err := store.GetDoc[ModelStats](ctx, s, StatsCollection, store.Key(id.Org, id.Workspace, model))
 	if err != nil {
 		return DriftReport{}, err
 	}
-	rep := DriftReport{Model: model}
+	rep := DriftReport{Model: model, WindowDays: windowDays}
 	if !ok {
 		return rep, nil
 	}
-	rep.Count = st.Count
-	rep.Hist = st.Hist
+	hist := st.Hist
+	if windowDays > 0 {
+		hist = windowHist(st.Daily, windowDays)
+	}
+	rep.Hist = hist
+	rep.Count = hist.total()
 	rep.HasBaseline = st.HasBaseline
+	rep.Threshold = st.Threshold
 	if st.HasBaseline {
-		if psi, ok := PSI(st.BaselineHist, st.Hist); ok {
+		if psi, ok := PSI(st.BaselineHist, hist); ok {
 			rep.PSI = &psi
+			rep.Firing = st.Threshold > 0 && psi > st.Threshold
 		}
 	}
 	return rep, nil
+}
+
+// windowHist sums the most recent windowDays day-buckets (by date, latest first).
+func windowHist(daily map[string]Histogram, windowDays int) Histogram {
+	days := make([]string, 0, len(daily))
+	for d := range daily {
+		days = append(days, d)
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(days)))
+	if len(days) > windowDays {
+		days = days[:windowDays]
+	}
+	var sum Histogram
+	for _, d := range days {
+		h := daily[d]
+		for i := range sum {
+			sum[i] += h[i]
+		}
+	}
+	return sum
 }

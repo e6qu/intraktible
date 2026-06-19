@@ -102,6 +102,51 @@ func TestProviderExternalNon200FailsLoudly(t *testing.T) {
 	}
 }
 
+func TestWindowedDriftAndMonitor(t *testing.T) {
+	ctx := context.Background()
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "dev"}
+	st := store.NewMemory()
+
+	// Baseline concentrated in bucket 5; an old day matches it, the most recent day
+	// has shifted entirely to bucket 0. A monitor threshold of 0.25 is set.
+	stats := models.ModelStats{
+		Org: id.Org, Workspace: id.Workspace, Name: "risk",
+		Hist:          models.Histogram{10, 0, 0, 0, 0, 10},
+		Daily:         map[string]models.Histogram{"2026-06-01": {0, 0, 0, 0, 0, 10}, "2026-06-20": {10}},
+		HasBaseline:   true,
+		BaselineHist:  models.Histogram{0, 0, 0, 0, 0, 20},
+		BaselineCount: 20,
+		Threshold:     0.25,
+	}
+	if err := store.PutDoc(ctx, st, models.StatsCollection, store.Key(id.Org, id.Workspace, "risk"), stats); err != nil {
+		t.Fatal(err)
+	}
+
+	// A 1-day window sees only the shifted recent day → large PSI → firing.
+	win, err := models.Drift(ctx, st, id, "risk", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if win.WindowDays != 1 || win.Count != 10 {
+		t.Fatalf("windowed report = %+v", win)
+	}
+	if win.PSI == nil || !win.Firing {
+		t.Fatalf("expected a firing windowed PSI, got %+v", win)
+	}
+
+	// All-time dilutes the shift (half the mass still matches the baseline).
+	all, err := models.Drift(ctx, st, id, "risk", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if all.Count != 20 {
+		t.Fatalf("all-time count = %d, want 20", all.Count)
+	}
+	if all.PSI == nil || *all.PSI >= *win.PSI {
+		t.Fatalf("expected the windowed shift to read higher than all-time: window=%v all=%v", win.PSI, all.PSI)
+	}
+}
+
 func TestExternalSpecValidation(t *testing.T) {
 	good, _ := models.ParseSpec(json.RawMessage(`{"kind":"external","endpoint":"https://x/score"}`))
 	if err := good.Validate(); err != nil {
