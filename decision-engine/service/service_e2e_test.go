@@ -521,15 +521,20 @@ func TestExportDecisionTraceOverHTTP(t *testing.T) {
 	}
 
 	// The decision run exports as a Mermaid sequence diagram with its node trace.
+	// Poll until the FULL trace is projected: the history projection applies the
+	// node-evaluated events before the terminal DecisionCompleted, so waiting only
+	// for the node line can observe a partial trace missing "completed" (flaky).
 	var trace string
 	if !testutil.Eventually(t, func() bool {
 		code, body := rawGet(t, api, "/v1/decisions/"+dec.DecisionID+"/export")
 		trace = body
-		return code == http.StatusOK && strings.Contains(body, "Note over E: a (assignment)")
+		return code == http.StatusOK &&
+			strings.Contains(body, "Note over E: a (assignment)") &&
+			strings.Contains(body, "E-->>C: completed")
 	}) {
 		t.Fatalf("decision trace export incomplete:\n%s", trace)
 	}
-	if !strings.Contains(trace, "sequenceDiagram") || !strings.Contains(trace, "E-->>C: completed") {
+	if !strings.Contains(trace, "sequenceDiagram") {
 		t.Fatalf("sequence diagram incomplete:\n%s", trace)
 	}
 
