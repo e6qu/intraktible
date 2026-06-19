@@ -69,7 +69,9 @@
   --surface-2: #eef1f6;
   --fg: #1a1d23;
   --fg-muted: #586273;
-  --fg-subtle: #8a929e;
+  /* Secondary text (timestamps/metadata/helper): darkened to meet WCAG AA 4.5:1
+     on white/surface — the old #8a929e was ~3.1:1. */
+  --fg-subtle: #6b7280;
   --border: #e1e6ee;
   --border-strong: #cfd6e0;
   --danger: #dc2640;
@@ -105,7 +107,8 @@
   --surface-2: #1b222c;
   --fg: #e6e9ef;
   --fg-muted: #9aa4b2;
-  --fg-subtle: #6b7480;
+  /* Lightened to meet WCAG AA on the dark surface — the old #6b7480 was ~3.5:1. */
+  --fg-subtle: #828c99;
   --border: #2a313b;
   --border-strong: #3a424e;
   --danger: #ff6b6b;

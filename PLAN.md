@@ -493,7 +493,10 @@ never appear in-repo (neutral language only).
 4. **Accessibility + visual consistency** (A13–A17) — raise secondary-text contrast to WCAG AA, replace
    placeholder-only inputs with real labels, ensure status isn't color-only, consolidate the top-bar
    identity/role controls (minimal chrome on /login), carry the showcase's typographic hierarchy into the
-   working pages, plus breadcrumbs and form-clarity fixes.
+   working pages, plus breadcrumbs and form-clarity fixes. **Shipped in PR #9:** A13 (AA contrast tokens),
+   A14 (real labels on the agents/data forms; status badges already carry text), and A15 (one account &
+   view menu + minimal /login chrome) are fixed; A16/A17 partial — the editorial-vs-utilitarian unification,
+   breadcrumbs, search-scope placeholder, ≥24px hit areas, and policies band preview remain deferred.
 5. **Robustness & bug-fix round** (A18–A31) — backend: NATS Read clamping (FirstSeq/LastSeq + TOCTOU),
    async agent-run off the request goroutine, EscalateRun via the projection, bounded poller read +
    stop-tied context, GCP KMS CRC32C, atomic UpdateDoc on a TxStore, sqlite-connector DSN allowlist,
