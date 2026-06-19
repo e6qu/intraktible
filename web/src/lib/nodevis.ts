@@ -82,6 +82,24 @@ export function nodeSummary(type: string, config: string): string {
   }
 }
 
+// BpmnKind is the BPMN shape a node maps to in the process view.
+export type BpmnKind = 'start' | 'end' | 'gateway' | 'task';
+
+// bpmnKind maps a flow node type to its BPMN notation: the input is a start
+// event, the output an end event, a split a gateway, everything else a task.
+export function bpmnKind(type: string): BpmnKind {
+  switch (type) {
+    case 'input':
+      return 'start';
+    case 'output':
+      return 'end';
+    case 'split':
+      return 'gateway';
+    default:
+      return 'task';
+  }
+}
+
 // telemetrySummary renders a node's last test-run output compactly for the card's
 // status badge (e.g. {"score":72} → "score: 72"; a scalar → its value).
 export function telemetrySummary(output: unknown): string {

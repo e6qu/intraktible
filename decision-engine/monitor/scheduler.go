@@ -83,15 +83,13 @@ func (s *Scheduler) Tick(ctx context.Context) (TickSummary, error) {
 			return sum, err
 		}
 		var fired []firedMonitor
+		var toAlert []View
 		for _, v := range groups[k] {
 			st := Evaluate(snap, v.Rule())
 			switch transition(st.Firing, v.Alerting) {
 			case actionAlert:
 				fired = append(fired, firedFrom(v, st))
-				if _, err := s.cmd.MarkAlerted(ctx, id, v.FlowID, v.MonitorID); err != nil {
-					return sum, err
-				}
-				sum.Alerted++
+				toAlert = append(toAlert, v)
 			case actionResolve:
 				if _, err := s.cmd.MarkResolved(ctx, id, v.FlowID, v.MonitorID); err != nil {
 					return sum, err
@@ -100,12 +98,21 @@ func (s *Scheduler) Tick(ctx context.Context) (TickSummary, error) {
 			case actionNone:
 			}
 		}
+		// Deliver before recording the alert transition: if delivery fails we return
+		// without marking alerted, so the next tick re-delivers rather than the
+		// monitor being deduped into silence with the operator never notified.
 		if len(fired) > 0 && s.notifier != nil {
 			payload := map[string]any{"flow_id": k.flow, "checked_at": s.now(), "fired": fired}
 			if _, err := s.notifier.Deliver(ctx, id, "monitor scheduler", payload); err != nil {
 				return sum, err
 			}
 			sum.Delivered++
+		}
+		for _, v := range toAlert {
+			if _, err := s.cmd.MarkAlerted(ctx, id, v.FlowID, v.MonitorID); err != nil {
+				return sum, err
+			}
+			sum.Alerted++
 		}
 		sum.Flows++
 	}

@@ -52,11 +52,16 @@ func Read(ctx context.Context, s store.Store, id identity.Identity) (View, bool,
 }
 
 // Fields returns the workspace's sensitive-field lookup set (empty when unset),
-// the read-boundary masking input. A store error yields an empty set + the error.
+// the read-boundary masking input. A store error yields a nil set + the error —
+// callers must treat the error as fatal and refuse to serve, never mask with the
+// empty set, or masking would fail open on a transient read fault.
 func Fields(ctx context.Context, s store.Store, id identity.Identity) (map[string]bool, error) {
 	v, ok, err := Read(ctx, s, id)
-	if err != nil || !ok {
-		return map[string]bool{}, err
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return map[string]bool{}, nil
 	}
 	return FieldSet(v.Fields), nil
 }

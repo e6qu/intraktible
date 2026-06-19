@@ -295,16 +295,19 @@ login/durable sessions, a recursive JSON-Schema validator, an SSRF egress policy
 the Context Layer, pushed SLA-breach events, and full builder config panels (incl. the nested-table
 node types) + canvas drag-to-connect. What remains in `BUGS.md` is the small tail: incremental
 resume-from-Head for durable stores (D21b, a consistency project), the closed-by-decision items
-(D9 CEL, D11 batched events), and the §9 non-goals (SSO/RBAC, billing, 200+ real connectors, ONNX
+(D9 CEL, D11 batched events), and the §9 non-goals (SSO, billing, 200+ real connectors, ONNX
 serving, HA).
 
 **Enterprise-readiness track (post-MVP, ongoing).** Beyond the §9 non-goals, an enterprise-readiness
 pass began closing the gaps a regulated rollout needs (tracked in [`docs/ENTERPRISE.md`](docs/ENTERPRISE.md)).
 Shipped so far: **RBAC** (`platform/auth` role hierarchy viewer→admin + `platform/httpx` per-request
-authorization), **maker-checker / four-eyes approvals** for production deploys (propose-by-one,
+authorization) plus admin-managed durable API tokens (`GET/POST/DELETE /v1/api-keys`, hashed at rest,
+scoped by org/workspace, role, scope, actor, optional expiry, and revocation), **maker-checker /
+four-eyes approvals** for production deploys (propose-by-one,
 approve-by-a-different-user, recorded on the flow as an auditable trail) plus a **promotion workflow**
 (sandbox → staging → production; `POST …/promote {from,to}` ships the live version up the chain — direct
-into non-prod, maker-checker request into prod), **backtesting** —
+into non-prod, maker-checker request into prod) with per-stage promotion policy (`GET/PUT
+…/promotion-policy` controls assertions/monitors/review/force gates), **backtesting** —
 `POST /v1/flows/{flow_id}/backtest` (`decision-engine/backtest`, pure) replays a dataset through a
 published version and optionally diffs two versions over `domain.Execute` only (no recorded decision,
 no I/O), surfaced in the builder as a panel that flags the changed records — and the **immutable audit
@@ -313,8 +316,12 @@ event log, admin-gated, with an Audit log UI page; and **reason codes** — a Re
 domain`) emits structured adverse-action `{code, description}`s into a reserved `reason_codes` field
 (always surfaced by Output), which the history projector lifts to a first-class field on the decision
 record and the decision UI shows (ECOA/Reg B + insurance explainability). **All five enterprise P0 items
-are done.** Remaining work is P1/P2 (secrets management/encryption-at-rest, alerting/drift, SSO/SCIM,
-SDKs, SOC2) — sequenced in `docs/ENTERPRISE.md`.
+are done.** Connector credential fields are encrypted before connector-definition events when
+`INTRAKTIBLE_CONNECTOR_SECRET_KEY` is configured, with keyring-based key rotation
+(`…_KEYS_PREVIOUS`) and an **external KMS** option (`platform/kms`, AWS KMS / GCP Cloud KMS via
+`INTRAKTIBLE_KMS_PROVIDER`); remaining P1/P2 work is
+broader encryption-at-rest/retention, alerting polish, SCIM, SOC2 — sequenced in
+`docs/ENTERPRISE.md`.
 
 **Decision-automation layer (post-MVP).** A shared disposition brain now sits over the engine:
 **policies** (`decision-engine/policy`) attach auto-approve/decline/refer bands to a flow and assign a
@@ -347,6 +354,52 @@ through the pure backtest core. The **promotion gate** refuses a promote (409) w
 are firing or its assertions fail on the target version — `force` overrides. Surfaced as an Assertions
 panel + a force toggle in the builder. Ties monitors + tests into the sandbox→staging→production chain.
 
+**Shadow deploys (post-MVP, safe rollout).** `decision-engine/shadow` adds a per-environment **shadow
+version** (`PUT/GET /v1/flows/{id}/shadow`) evaluated over the same input as every live decision in that
+environment via the pure core — its result is never returned. A projector folds each comparison into a
+per-env report (total / matched / diverged / errored + sample diverging decision ids), so an operator can
+measure how often promoting a candidate would change the outcome before doing it. Surfaced as a **Shadow
+deploys** panel in the builder; complements the A/B challenger (which serves a traffic share live).
+
+**API contract (post-MVP, developer experience).** `platform/openapi` embeds an **OpenAPI 3.1** document
+for the public data-plane (decide + batch, decision history, flow list/create/read, flow-as-code import,
+`/v1/me`) and serves it unauthenticated at `GET /openapi.json`, with a dependency-free reference page at
+`GET /docs`. Integrators point codegen/Swagger-UI/Postman at the live instance's own contract. A typed
+**Go client SDK** (`client`) wraps that surface (decide/batch, decision history, flow management) over
+net/http with no third-party deps and a typed `*APIError`, tested end-to-end against a live engine. A
+matching **TypeScript SDK** (`web/src/lib/sdk.ts`, fetch-only and framework-agnostic) ships the same
+surface for browser/Node/edge consumers; packaging the SDKs for distribution is the next step.
+
+**Networked event log (post-MVP, HA).** `eventlog.OpenPostgresLog` (`--log=postgres`,
+`INTRAKTIBLE_POSTGRES_DSN`) is a durable, shared log for true multi-node HA: every node appends to and
+reads from one Postgres database, a `BIGSERIAL` seq gives a single total order across nodes, and a shared
+polling `delivery` (factored out of the SQLite log) fans any node's newly-committed events onto each
+process's in-process bus, with a **LISTEN/NOTIFY fast path** (each append `NOTIFY`s; a dedicated listen
+connection pokes delivery) so cross-node delivery is near-instant rather than poll-bound — the poller
+stays as the correctness floor. Read/Head are immediately consistent; verified against a real Postgres
+including cross-node delivery and sub-poll NOTIFY latency. A **NATS JetStream** backend
+(`eventlog.OpenNATSLog`, `--log=nats`) is the other networked option — the stream sequence is the event
+Seq and a push consumer delivers live with no poller (verified against an embedded JetStream server).
+Kafka remains.
+
+**SSO / OIDC (post-MVP, enterprise identity).** `platform/auth.OIDCAuthenticator` + `platform/httpx`
+`/v1/auth/oidc/{provider}/login|callback` add OIDC Authorization-Code SSO: the IdP's ID token is
+verified against its JWKS (issuer/audience/expiry + nonce) via `coreos/go-oidc`, a state cookie covers
+CSRF, and the verified email plus a configurable **groups-claim → role** mapping issues a normal session.
+Providers are env-configured (`INTRAKTIBLE_OIDC_PROVIDERS`); **Google** and **AWS Cognito** ship with
+sensible defaults. The login page renders a "Sign in with …" button per provider. **SCIM** provisioning (`platform/scim`,
+`/scim/v2/Users`, bearer-authed) is the companion: an IdP creates/deactivates users and the OIDC login
+consults it through a gate, so a user deactivated in the IdP is refused a session (deprovisioning). SCIM
+**Groups** (`/scim/v2/Groups`) plus a group→role map (`INTRAKTIBLE_SCIM_GROUP_ROLES`) additively elevate a
+user's role from their SCIM group membership at login (highest of token- and SCIM-derived wins).
+
+**SAML 2.0 SSO (post-MVP, enterprise identity).** A second SSO protocol alongside OIDC:
+`platform/auth.SAMLAuthenticator` (via `crewjam/saml`) + `platform/httpx`
+`/v1/auth/saml/{provider}/{login,acs,metadata}` run the SP-initiated flow — relay-state CSRF, the ACS
+verifies the signed SAMLResponse against the IdP metadata (signature/conditions/audience/InResponseTo),
+and an email + groups-attribute → role mapping issues a session, sharing the SCIM deprovisioning gate and
+group→role augmenter with OIDC. SP cert/key + IdP metadata are file/env-configured.
+
 **Comment threads (post-MVP, governance).** `platform/comments` is a general discussion capability — a
 durable, chronological thread keyed by `(subject_type, subject_id)` (`GET/POST /v1/comments/{type}/{id}`),
 reusable `CommentThread.svelte` component — wired onto the items that get approved/rejected/promoted
@@ -371,13 +424,31 @@ is deliberately exempt: an `.admin-surface` token set gives it one fixed, canoni
 for everyone. The Phase-0 hello slice moved off the landing to `/hello`; shared `EmptyState`/`Skeleton`
 primitives added designed empty and loading states across the list pages.
 
+**Correctness & security audit pass (post-MVP, hardening).** A codebase-wide audit fixed a real data
+**race** in the shared `eventlog` delivery poller (the SQLite/Postgres poller goroutine read the log's
+`delivery` field before the constructor published it — `startDelivery` is now `newDelivery`+`start()`,
+caught only under `-race`) and a batch of fail-open/fail-loudly gaps: promotion gates now block when
+monitor health can't be read; the pre-approval fast path seals PII like the normal decide path;
+`privacy.Fields` and the masking callers fail closed on a config-read error; **crypto-shredding** now
+recurses into nested objects/arrays and matches field names case-insensitively (mirroring `privacy.Mask`,
+so nested PII is actually sealed and erasable); decrypt/unseal failures surface instead of serving raw
+sealed envelopes; the monitor scheduler delivers **before** recording the alert (a failed delivery now
+retries rather than silencing the alert); `decideBatch` takes a per-row `entity_key` so a multi-entity
+batch records under the correct subject; audit CSV export defuses spreadsheet formula injection; and
+agent-manager run recovery/enqueue respects context cancellation. Frontend: leaked SSE/WebSocket cleanup
++ error surfacing on the agent page, double-load and stale-route-param fixes across detail pages, a
+double-submit guard on case creation, a privacy-config clobber guard on the Audit page, a
+stale-response race fix in the command palette, the `manual_review` node made creatable, and split-node
+card summaries computed from edges. Verified through the full strict gate (`-race` tests, lint/sast/
+deadcode/dupl, svelte-check/eslint/vitest).
+
 > Per project convention: at the **end of every phase**, update `PLAN.md` and `BUGS.md` in the same
 > PR as the phase's code.
 
 ---
 
 ## 9. MVP non-goals
-Full SSO/RBAC, multi-tenant billing, the 200+ real data connectors, ONNX model serving at scale,
+Full SSO, multi-tenant billing, the 200+ real data connectors, ONNX model serving at scale,
 production HA/clustering, and exact API/UX parity with any commercial product. These are post-MVP.
 
 ## 10. Open questions (to resolve as we go)

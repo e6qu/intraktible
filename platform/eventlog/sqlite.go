@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
-	"sync"
 	"time"
 
 	_ "modernc.org/sqlite" // pure-Go SQLite driver (CGO-free); registers "sqlite"
@@ -31,18 +30,8 @@ const DefaultPollInterval = 200 * time.Millisecond
 // projection runtime rebuilds from the log on boot and consumes the bus for live
 // updates, so a poll-interval delay is just projection lag, not data loss.
 type SQLiteLog struct {
-	db   *sql.DB
-	bus  *bus
-	poll time.Duration
-
-	mu     sync.Mutex
-	closed bool
-	stop   chan struct{}
-	wg     sync.WaitGroup
-
-	// lastPub is the highest Seq published to the bus. After Open it is only ever
-	// touched by the single poller goroutine, so it needs no lock.
-	lastPub uint64
+	db *sql.DB
+	d  *delivery
 }
 
 // OpenSQLiteLog opens (creating if needed) a shared SQLite event log at
@@ -77,7 +66,7 @@ func OpenSQLiteLog(dir string, poll time.Duration) (*SQLiteLog, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("eventlog: sqlite schema: %w", err)
 	}
-	l := &SQLiteLog{db: db, bus: newBus(), poll: poll, stop: make(chan struct{})}
+	l := &SQLiteLog{db: db}
 	head, err := l.headCtx(context.Background())
 	if err != nil {
 		_ = db.Close()
@@ -85,9 +74,8 @@ func OpenSQLiteLog(dir string, poll time.Duration) (*SQLiteLog, error) {
 	}
 	// Seed at the current head so the poller delivers only events appended from now
 	// on (the runtime rebuilds history via Read; the bus is for live updates).
-	l.lastPub = head
-	l.wg.Add(1)
-	go l.pollLoop()
+	l.d = newDelivery(l.Read, poll, head)
+	l.d.start()
 	return l, nil
 }
 
@@ -95,10 +83,7 @@ func OpenSQLiteLog(dir string, poll time.Duration) (*SQLiteLog, error) {
 // poller — not Append — publishes to the bus, so local and remote events arrive
 // by the same path and are never delivered twice.
 func (l *SQLiteLog) Append(ctx context.Context, e Envelope) (Envelope, error) {
-	l.mu.Lock()
-	closed := l.closed
-	l.mu.Unlock()
-	if closed {
+	if l.d.isClosed() {
 		return Envelope{}, ErrClosed
 	}
 	if e.Org == "" || e.Workspace == "" {
@@ -127,10 +112,7 @@ func (l *SQLiteLog) Append(ctx context.Context, e Envelope) (Envelope, error) {
 
 // Read returns all events with Seq >= fromSeq (0 = all), in order.
 func (l *SQLiteLog) Read(ctx context.Context, fromSeq uint64) ([]Envelope, error) {
-	l.mu.Lock()
-	closed := l.closed
-	l.mu.Unlock()
-	if closed {
+	if l.d.isClosed() {
 		return nil, ErrClosed
 	}
 	if fromSeq == 0 {
@@ -174,7 +156,7 @@ func scanEvent(rows *sql.Rows) (Envelope, error) {
 }
 
 // Subscribe returns events the poller publishes after the call.
-func (l *SQLiteLog) Subscribe() (<-chan Envelope, func()) { return l.bus.subscribe() }
+func (l *SQLiteLog) Subscribe() (<-chan Envelope, func()) { return l.d.subscribe() }
 
 // Head returns the highest assigned Seq (0 when empty).
 func (l *SQLiteLog) Head() uint64 {
@@ -198,44 +180,4 @@ func (l *SQLiteLog) headCtx(ctx context.Context) (uint64, error) {
 }
 
 // Close stops the poller, closes subscriptions, and closes the database.
-func (l *SQLiteLog) Close() error {
-	l.mu.Lock()
-	if l.closed {
-		l.mu.Unlock()
-		return nil
-	}
-	l.closed = true
-	close(l.stop)
-	l.mu.Unlock()
-
-	l.wg.Wait()
-	l.bus.closeAll()
-	return l.db.Close()
-}
-
-// pollLoop delivers newly-committed events (local + cross-process) to the bus.
-func (l *SQLiteLog) pollLoop() {
-	defer l.wg.Done()
-	t := time.NewTicker(l.poll)
-	defer t.Stop()
-	for {
-		select {
-		case <-l.stop:
-			return
-		case <-t.C:
-			l.dispatch()
-		}
-	}
-}
-
-func (l *SQLiteLog) dispatch() {
-	evs, err := l.Read(context.Background(), l.lastPub+1)
-	if err != nil {
-		slog.Error("eventlog: sqlite poll failed", "err", err)
-		return
-	}
-	for _, e := range evs {
-		l.bus.publish(e)
-		l.lastPub = e.Seq
-	}
-}
+func (l *SQLiteLog) Close() error { return l.d.stopAndClose(l.db.Close) }

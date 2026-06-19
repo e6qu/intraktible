@@ -140,7 +140,7 @@ func requiredRole(method, path string) auth.Role {
 	// The audit surface exposes every actor's activity across the tenant. It is
 	// read-only but sensitive, so it is gated to admins regardless of method —
 	// checked before the general read rule below.
-	if path == "/v1/audit" {
+	if path == "/v1/audit" || strings.HasPrefix(path, "/v1/api-keys") || strings.HasPrefix(path, "/v1/erasure") {
 		return auth.RoleAdmin
 	}
 	if method == http.MethodGet || method == http.MethodHead || method == http.MethodOptions {
@@ -156,9 +156,10 @@ func requiredRole(method, path string) auth.Role {
 	}
 	switch {
 	case strings.Contains(path, "/deployments"), // a direct deploy (non-prod)
-		strings.HasSuffix(path, "/promote"), // promote a live version up the chain
-		strings.HasSuffix(path, "/approve"), // the checker approving a deployment
-		strings.HasSuffix(path, "/reject"):  // the checker rejecting a deployment
+		strings.HasSuffix(path, "/promote"),          // promote a live version up the chain
+		strings.HasSuffix(path, "/promotion-policy"), // configure promotion gates
+		strings.HasSuffix(path, "/approve"),          // the checker approving a deployment
+		strings.HasSuffix(path, "/reject"):           // the checker rejecting a deployment
 		return auth.RoleApprover
 	case strings.HasSuffix(path, "/deployment-requests"), // proposing a deployment (maker)
 		isAuthoringPath(path):
@@ -172,11 +173,14 @@ func requiredRole(method, path string) auth.Role {
 // (vs. running it). These are the create/publish endpoints.
 func isAuthoringPath(path string) bool {
 	return path == "/v1/flows" || // create a flow
+		path == "/v1/flows/import" || // import a flow-as-code document (create + publish)
+		path == "/v1/flows/import-bundle" || // import many flows at once (GitOps repo)
 		path == "/v1/policies" || // create a policy
 		path == "/v1/preapprovals" || // grant a pre-approval (material)
 		strings.HasSuffix(path, "/preapprove/batch") || // bulk-grant pre-approvals from a run
 		strings.Contains(path, "/monitors") || // define/delete a monitor; check pushes alerts
 		strings.HasSuffix(path, "/assertions") || // define a flow's test cases (run is separate)
+		strings.HasSuffix(path, "/shadow") || // assign a shadow version (PUT; GET is a viewer read)
 		strings.HasPrefix(path, "/v1/webhooks") || // register/remove a notification endpoint
 		strings.HasSuffix(path, "/versions") || // publish a flow or policy version
 		path == "/v1/agents" || // define an agent

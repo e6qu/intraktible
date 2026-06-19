@@ -74,6 +74,45 @@ func Run(baseline events.Graph, candidate *events.Graph, inputs []map[string]any
 	return rep
 }
 
+// SweepPoint is one swept value's outcome in a sensitivity analysis.
+type SweepPoint struct {
+	Value   any            `json:"value"`
+	Status  string         `json:"status"`
+	Output  map[string]any `json:"output,omitempty"`
+	Error   string         `json:"error,omitempty"`
+	Changed bool           `json:"changed"` // outcome differs from the previous point
+}
+
+// SweepReport is a sensitivity analysis: how a flow's outcome shifts as one input
+// field is swept across a set of values.
+type SweepReport struct {
+	Field       string       `json:"field"`
+	Points      []SweepPoint `json:"points"`
+	Transitions int          `json:"transitions"` // count of points whose outcome changed
+}
+
+// Sweep runs graph against base with the top-level field set to each value in
+// turn, reporting how the outcome shifts across the range (e.g. the value at
+// which an approve flips to a decline). Pure and record-nothing, like Run: each
+// run gets its own deep copy of base.
+func Sweep(graph events.Graph, base map[string]any, field string, values []any) SweepReport {
+	rep := SweepReport{Field: field, Points: make([]SweepPoint, 0, len(values))}
+	var prev Outcome
+	for i, v := range values {
+		in := cloneInput(base)
+		in[field] = v
+		o := execute(graph, in)
+		pt := SweepPoint{Value: v, Status: o.Status, Output: o.Output, Error: o.Error}
+		if i > 0 && !sameOutcome(prev, o) {
+			pt.Changed = true
+			rep.Transitions++
+		}
+		prev = o
+		rep.Points = append(rep.Points, pt)
+	}
+	return rep
+}
+
 // execute runs one graph against a fresh copy of input and flattens the Run.
 func execute(g events.Graph, input map[string]any) Outcome {
 	run := domain.Execute(g, cloneInput(input))

@@ -165,7 +165,9 @@ func (h *Handler) StartRun(ctx context.Context, id identity.Identity, agent, pro
 		// queued for a worker
 	default:
 		// Queue full: run it inline rather than drop it (slower, but never lost).
-		h.process(ctx, job)
+		// Use a background context — like the worker path — so a client disconnect
+		// mid-call doesn't abort the run into a spurious failure.
+		h.process(context.Background(), job)
 	}
 	return runID, nil
 }
@@ -255,10 +257,20 @@ func (h *Handler) RecoverRunning(ctx context.Context) (int, error) {
 			delete(started, p.RunID) // terminal reached — not pending
 		}
 	}
+	enqueued := 0
 	for runID, p := range started {
-		h.jobs <- asyncJob{id: p.id, runID: runID, agent: p.agent, prompt: p.prompt}
+		job := asyncJob{id: p.id, runID: runID, agent: p.agent, prompt: p.prompt}
+		select {
+		case h.jobs <- job:
+			enqueued++
+		case <-ctx.Done():
+			// Shutdown during recovery: stop rather than block forever on a full
+			// queue whose workers have already exited. The not-yet-enqueued runs
+			// stay "running" and are recovered on the next boot.
+			return enqueued, ctx.Err()
+		}
 	}
-	return len(started), nil
+	return enqueued, nil
 }
 
 // EscalateRun opens a human-review case from an existing agent run. It emits the

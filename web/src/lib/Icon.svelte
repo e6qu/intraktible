@@ -35,6 +35,7 @@
       '<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h8"/>'
     ],
     ['download', '<path d="M12 3v12M7 11l5 5 5-5M5 21h14"/>'],
+    ['upload', '<path d="M12 21V9M7 13l5-5 5 5M5 3h14"/>'],
     [
       'diagram',
       '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><path d="M10 6h4a2 2 0 0 1 2 2v6"/>'

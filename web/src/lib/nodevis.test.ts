@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, it, expect } from 'vitest';
-import { nodeSummary, nodeAccent, telemetrySummary } from './nodevis';
+import { nodeSummary, nodeAccent, telemetrySummary, bpmnKind } from './nodevis';
 
 describe('nodeSummary', () => {
   it('summarizes config per type', () => {
@@ -29,6 +29,16 @@ describe('nodeAccent', () => {
   it('maps known types to a CSS var and unknown to the default accent', () => {
     expect(nodeAccent('scorecard')).toBe('var(--node-scorecard)');
     expect(nodeAccent('mystery')).toBe('var(--accent)');
+  });
+});
+
+describe('bpmnKind', () => {
+  it('maps node types to BPMN shapes', () => {
+    expect(bpmnKind('input')).toBe('start');
+    expect(bpmnKind('output')).toBe('end');
+    expect(bpmnKind('split')).toBe('gateway');
+    expect(bpmnKind('rule')).toBe('task');
+    expect(bpmnKind('manual_review')).toBe('task');
   });
 });
 

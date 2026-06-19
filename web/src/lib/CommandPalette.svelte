@@ -124,12 +124,15 @@
 
   // Load tenant entities into searchable commands (best-effort; a failed source
   // is simply omitted so the palette never breaks).
+  let loadSeq = 0;
   async function loadDynamic(): Promise<void> {
+    const seq = ++loadSeq;
     const [flows, agents, cases] = await Promise.all([
       listFlows('').catch(() => []),
       listAgents('').catch(() => []),
       listCases('', {}).catch(() => [])
     ]);
+    if (seq !== loadSeq) return; // a newer open superseded this load — drop the stale result
     dynamic = [
       ...flows.map(
         (f): Cmd => ({
@@ -149,7 +152,7 @@
           label: a.name,
           icon: 'agents',
           keywords: `agent ${a.name}`,
-          run: () => goto(`/agents/${a.name}`)
+          run: () => goto(`/agents/${encodeURIComponent(a.name)}`)
         })
       ),
       ...cases.map(
@@ -174,6 +177,8 @@
       selected = 0;
       queueMicrotask(() => inputEl?.focus());
       if ($user) void loadDynamic();
+    } else {
+      dynamic = []; // drop the stale index so a reopen never flashes old/other-tenant entities
     }
   });
   // Typing always re-highlights the top match.

@@ -1,6 +1,5 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
-  import { onMount } from 'svelte';
   import { page } from '$app/stores';
   import {
     SvelteFlow,
@@ -40,14 +39,22 @@
     type DriftReport,
     type Webhook,
     backtestFlow,
+    whatif,
+    type SweepReport,
     deployVersion,
     promoteFlow,
+    setPromotionPolicy,
+    getShadow,
+    setShadow,
+    type ShadowState,
+    type EnvShadow,
     requestDeployment,
     approveDeployment,
     rejectDeployment,
     type ExportFormat,
     type Flow,
     type FlowMetrics,
+    type PromotionStagePolicy,
     type BacktestReport,
     type BatchReport,
     type PreApproveBatchReport,
@@ -61,6 +68,7 @@
   import Icon from '$lib/Icon.svelte';
   import CommentThread from '$lib/CommentThread.svelte';
   import FlowNode from '$lib/FlowNode.svelte';
+  import BpmnNode from '$lib/BpmnNode.svelte';
   import LaneBand from '$lib/LaneBand.svelte';
   import { nodeSummary, telemetrySummary } from '$lib/nodevis';
   import {
@@ -86,8 +94,10 @@
     'connect',
     'ai',
     'reason',
+    'manual_review',
     'output'
   ];
+  const ENVIRONMENTS = ['sandbox', 'staging', 'production'];
 
   interface EditNode {
     id: string;
@@ -135,8 +145,10 @@
   let selectedId = $state<string | null>(null);
   let nodes = $state.raw<Node[]>([]);
   let edges = $state.raw<Edge[]>([]);
-  // Typed cards for flow nodes; labelled backdrops for swimlanes.
-  const nodeTypes = { flow: FlowNode, lane: LaneBand };
+  let canvasView = $state<'cards' | 'bpmn'>('cards');
+  // Typed cards and BPMN notation are alternate skins over the same flow model;
+  // labelled backdrops still render as swimlanes.
+  const nodeTypes = { flow: FlowNode, bpmn: BpmnNode, lane: LaneBand };
   // node id → last test-run output summary, shown on the card; cleared on edits.
   let nodeTelemetry = $state(new Map<string, string>());
 
@@ -151,7 +163,8 @@
   let entityID = $state('');
   let result = $state('');
 
-  const flowId = $page.params.flowId ?? '';
+  // Derive from the route param so navigating between sibling flows reloads.
+  const flowId = $derived($page.params.flowId ?? '');
   const selected = $derived(editNodes.find((n) => n.id === selectedId) ?? null);
   // Existing lane names, for the lane-input autocomplete.
   const laneNames = $derived([
@@ -174,17 +187,29 @@
       return p ? { ...n, pos: { x: p.x, y: p.y } } : n;
     });
   }
+  // cardSummary is nodeSummary for most nodes, but a split's branch count lives in
+  // its outgoing edges (the builder models branches as labelled edges, not a config
+  // key), so it is computed here rather than from the node config.
+  function cardSummary(n: { id: string; type: string; config: string }): string {
+    if (n.type === 'split') {
+      const count = editEdges.filter((e) => e.from === n.id).length;
+      return count ? `${count} branch${count === 1 ? '' : 'es'}` : 'branch';
+    }
+    return nodeSummary(n.type, n.config);
+  }
+
   function syncCanvas() {
     foldPositions();
     const { pos: auto } = layoutLanes(editNodes, editEdges);
+    const flowNodeType = canvasView === 'bpmn' ? 'bpmn' : 'flow';
     const flowNodes = editNodes.map((n) => ({
       id: n.id,
-      type: 'flow',
+      type: flowNodeType,
       position: n.pos ?? auto.get(n.id) ?? { x: 0, y: 0 },
       data: {
         type: n.type,
         name: n.name || n.id,
-        summary: nodeSummary(n.type, n.config),
+        summary: cardSummary(n),
         telemetry: nodeTelemetry.get(n.id)
       }
     }));
@@ -241,6 +266,11 @@
   function relax() {
     const { pos } = layoutLanes(editNodes, editEdges);
     editNodes = editNodes.map((n) => ({ ...n, pos: pos.get(n.id) ?? n.pos }));
+    syncCanvas();
+  }
+  function setCanvasView(view: 'cards' | 'bpmn') {
+    if (canvasView === view) return;
+    canvasView = view;
     syncCanvas();
   }
 
@@ -647,14 +677,23 @@
   // recorded decision's node trace (retries while the history projection catches up).
   async function loadTelemetry(decisionId: string) {
     if (!decisionId) return;
-    try {
-      const d = await getDecision(key, decisionId);
-      const t = new Map<string, string>();
-      for (const n of d.nodes ?? []) t.set(n.node_id, telemetrySummary(n.output));
-      nodeTelemetry = t;
-      syncCanvas();
-    } catch {
-      /* telemetry is best-effort; the run result still shows */
+    // The history projection lags the just-appended decision, so retry a few times
+    // until its node trace is available (best-effort; the run result still shows).
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        const d = await getDecision(key, decisionId);
+        const nodes = d.nodes ?? [];
+        if (nodes.length > 0) {
+          const t = new Map<string, string>();
+          for (const n of nodes) t.set(n.node_id, telemetrySummary(n.output));
+          nodeTelemetry = t;
+          syncCanvas();
+          return;
+        }
+      } catch {
+        /* not available yet — retry */
+      }
+      await new Promise((r) => setTimeout(r, 200));
     }
   }
   async function downloadTrace() {
@@ -730,6 +769,38 @@
       error = msg(e);
     } finally {
       btRunning = false;
+    }
+  }
+
+  // What-if: sweep one input field across values and see how the outcome shifts
+  let wiBase = $state('{}');
+  let wiField = $state('');
+  let wiValues = $state('');
+  let wiReport = $state<SweepReport | null>(null);
+  let wiRunning = $state(false);
+  async function runWhatif() {
+    error = '';
+    wiReport = null;
+    if (!flow) return;
+    wiRunning = true;
+    try {
+      const base = JSON.parse(wiBase) as Record<string, unknown>;
+      // Values are comma-separated; numbers parse as numbers, everything else as a string.
+      const values = wiValues
+        .split(',')
+        .map((v) => v.trim())
+        .filter(Boolean)
+        .map((v) => (Number.isNaN(Number(v)) ? v : Number(v)));
+      if (!wiField.trim() || values.length === 0) {
+        error = 'Enter a field and at least one value';
+        return;
+      }
+      wiReport = await whatif(key, flowId, { base, field: wiField.trim(), values });
+      toast.success(`Swept ${values.length} values — ${wiReport.transitions} transition(s)`);
+    } catch (e) {
+      error = msg(e);
+    } finally {
+      wiRunning = false;
     }
   }
 
@@ -841,6 +912,76 @@
   let promoteTo = $state('staging');
   let promoteForce = $state(false);
   let promoting = $state(false);
+  let policySaving = $state(false);
+
+  function promotionPolicyFor(environment: string): PromotionStagePolicy {
+    const found = Object.entries(flow?.promotion_policy ?? {}).find(([e]) => e === environment);
+    return (
+      found?.[1] ?? {
+        require_assertions: true,
+        require_no_firing_monitors: true,
+        allow_force: true,
+        require_review: environment === 'production'
+      }
+    );
+  }
+
+  async function updatePromotionPolicy(environment: string, patch: Partial<PromotionStagePolicy>) {
+    error = '';
+    if (!flow) return;
+    policySaving = true;
+    try {
+      const policy = Object.fromEntries(
+        ENVIRONMENTS.map((e) => [
+          e,
+          {
+            ...promotionPolicyFor(e),
+            ...(e === environment ? patch : {}),
+            ...(e === 'production' ? { require_review: true } : {})
+          }
+        ])
+      ) as Record<string, PromotionStagePolicy>;
+      const next = await setPromotionPolicy(key, flowId, policy);
+      flow = { ...flow, promotion_policy: next };
+      toast.success('Promotion policy saved');
+    } catch (e) {
+      error = msg(e);
+    } finally {
+      policySaving = false;
+    }
+  }
+
+  // --- Shadow deploys (evaluate a candidate version alongside live decisions) ---
+  let shadow = $state<ShadowState>({ shadows: {}, report: {} });
+  let shadowSaving = $state(false);
+  async function loadShadow() {
+    try {
+      shadow = await getShadow(key, flowId);
+    } catch {
+      /* a viewer with no shadow data simply sees none */
+    }
+  }
+  // Entries lookups (not computed indexing) to stay clear of detect-object-injection.
+  function shadowVersionFor(environment: string): number {
+    return Object.entries(shadow.shadows).find(([k]) => k === environment)?.[1] ?? 0;
+  }
+  function shadowReportFor(environment: string): EnvShadow | undefined {
+    return Object.entries(shadow.report).find(([k]) => k === environment)?.[1];
+  }
+  async function updateShadow(environment: string, version: number) {
+    error = '';
+    shadowSaving = true;
+    try {
+      await setShadow(key, flowId, environment, version);
+      toast.success(version ? `Shadowing v${version} in ${environment}` : `Shadow cleared`);
+      await loadShadow();
+    } catch (e) {
+      error = msg(e);
+    } finally {
+      shadowSaving = false;
+    }
+  }
+
   async function submitPromote() {
     error = '';
     if (!flow) return;
@@ -1064,13 +1205,15 @@
     }
   }
 
-  onMount(() => {
+  $effect(() => {
+    void flowId; // reload every panel when the route flow changes (covers mount + sibling nav)
     void load();
     void loadMetrics();
     void loadMonitors();
     void loadWebhooks();
     void loadDrift();
     void loadAssertions();
+    void loadShadow();
   });
 </script>
 
@@ -1413,6 +1556,95 @@
         >ships the live version up the chain; blocked if monitors are firing (prod via review).</span
       >
     </div>
+    <details class="promotion-policy" data-testid="promotion-policy">
+      <summary><Icon name="shield" size={15} /> Promotion policy</summary>
+      <div class="policy-grid">
+        {#each ENVIRONMENTS as e (e)}
+          {@const p = promotionPolicyFor(e)}
+          <div class="policy-stage">
+            <b>{e}</b>
+            <label>
+              <input
+                type="checkbox"
+                checked={p.require_no_firing_monitors}
+                disabled={policySaving}
+                onchange={(ev) =>
+                  updatePromotionPolicy(e, {
+                    require_no_firing_monitors: ev.currentTarget.checked
+                  })}
+              />
+              no firing monitors
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                checked={p.require_assertions}
+                disabled={policySaving}
+                onchange={(ev) =>
+                  updatePromotionPolicy(e, { require_assertions: ev.currentTarget.checked })}
+              />
+              passing assertions
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                checked={p.allow_force}
+                disabled={policySaving}
+                onchange={(ev) =>
+                  updatePromotionPolicy(e, { allow_force: ev.currentTarget.checked })}
+              />
+              force override
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                checked={p.require_review}
+                disabled={policySaving || e === 'production'}
+                onchange={(ev) =>
+                  updatePromotionPolicy(e, { require_review: ev.currentTarget.checked })}
+              />
+              review request
+            </label>
+          </div>
+        {/each}
+      </div>
+    </details>
+
+    <details class="shadow-panel" data-testid="shadow-panel">
+      <summary><Icon name="diagram" size={15} /> Shadow deploys</summary>
+      <p class="hint muted">
+        Run a candidate version alongside live decisions to measure how often it would diverge — its
+        result is never returned to callers.
+      </p>
+      <div class="shadow-grid">
+        {#each ENVIRONMENTS as e (e)}
+          {@const rep = shadowReportFor(e)}
+          <div class="shadow-stage">
+            <b>{e}</b>
+            <select
+              value={shadowVersionFor(e)}
+              disabled={shadowSaving}
+              onchange={(ev) => updateShadow(e, parseInt(ev.currentTarget.value, 10))}
+              aria-label={`shadow version for ${e}`}
+            >
+              <option value={0}>none</option>
+              {#each flow?.versions ?? [] as v (v.version)}
+                <option value={v.version}>v{v.version}</option>
+              {/each}
+            </select>
+            {#if rep && rep.total > 0}
+              <span class="shadow-stats muted">
+                {rep.matched}/{rep.total} match{rep.diverged
+                  ? `, ${rep.diverged} diverged`
+                  : ''}{rep.errored ? `, ${rep.errored} errored` : ''}
+              </span>
+            {:else}
+              <span class="muted">no comparisons yet</span>
+            {/if}
+          </div>
+        {/each}
+      </div>
+    </details>
 
     {#if allRequests.length > 0}
       <div class="requests" data-testid="deployment-requests">
@@ -1524,14 +1756,36 @@
 
   <div class="grid">
     <div class="canvas" data-testid="flow-canvas">
-      <button
-        class="relax-btn"
-        onclick={relax}
-        title="Auto-arrange every node by flow order (the only thing that moves nodes you've placed)"
-        data-testid="relax-layout"
-      >
-        <Icon name="diagram" size={14} /> Relax layout
-      </button>
+      <div class="canvas-tools">
+        <div class="view-toggle" aria-label="canvas view">
+          <button
+            class:active={canvasView === 'cards'}
+            aria-pressed={canvasView === 'cards'}
+            onclick={() => setCanvasView('cards')}
+            title="Show detailed node cards"
+            data-testid="canvas-view-cards"
+          >
+            <Icon name="clipboard" size={14} /> Cards
+          </button>
+          <button
+            class:active={canvasView === 'bpmn'}
+            aria-pressed={canvasView === 'bpmn'}
+            onclick={() => setCanvasView('bpmn')}
+            title="Show BPMN process notation"
+            data-testid="canvas-view-bpmn"
+          >
+            <Icon name="diagram" size={14} /> BPMN
+          </button>
+        </div>
+        <button
+          class="relax-btn"
+          onclick={relax}
+          title="Auto-arrange every node by flow order (the only thing that moves nodes you've placed)"
+          data-testid="relax-layout"
+        >
+          <Icon name="diagram" size={14} /> Relax
+        </button>
+      </div>
       <SvelteFlow
         bind:nodes
         bind:edges
@@ -1960,8 +2214,7 @@
     <h2>Test run</h2>
     <div class="row">
       <select bind:value={env} aria-label="environment">
-        <option value="sandbox">sandbox</option>
-        <option value="production">production</option>
+        {#each ENVIRONMENTS as e (e)}<option value={e}>{e}</option>{/each}
       </select>
       <button onclick={run} disabled={!flow || running}>{running ? 'Running…' : 'Run'}</button>
     </div>
@@ -2050,6 +2303,56 @@
           </tbody>
         </table>
       {/if}
+    {/if}
+  </section>
+
+  <section>
+    <h2>What-if</h2>
+    <p class="muted">
+      Sweep one input field across a range and see how the decision shifts — nothing is recorded. A
+      transition flags where the outcome changes (e.g. where an approve flips to a decline).
+    </p>
+    <div class="row">
+      <input
+        bind:value={wiField}
+        placeholder="field (e.g. score)"
+        aria-label="whatif field"
+        size="16"
+      />
+      <input
+        bind:value={wiValues}
+        placeholder="values, comma-separated (e.g. 600, 650, 700)"
+        aria-label="whatif values"
+        size="30"
+      />
+      <button onclick={runWhatif} disabled={!flow || wiRunning} data-testid="run-whatif">
+        {wiRunning ? 'Running…' : 'Run what-if'}
+      </button>
+    </div>
+    <textarea
+      bind:value={wiBase}
+      aria-label="whatif base input"
+      rows="2"
+      placeholder={'{ "other_field": 1 }'}
+    ></textarea>
+    {#if wiReport}
+      <div class="metrics" data-testid="whatif-summary">
+        <span>{wiReport.points.length} values</span>
+        <span class="changed">{wiReport.transitions} transition(s)</span>
+      </div>
+      <table class="bt-table" data-testid="whatif-table">
+        <thead>
+          <tr><th>{wiReport.field}</th><th>Outcome</th></tr>
+        </thead>
+        <tbody>
+          {#each wiReport.points as pt, i (i)}
+            <tr class:changed-row={pt.changed}>
+              <td>{JSON.stringify(pt.value)}</td>
+              <td>{pt.error || JSON.stringify(pt.output)}</td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
     {/if}
   </section>
 
@@ -2300,17 +2603,46 @@
     border: 1px solid var(--border-strong);
     border-radius: 0.5rem;
   }
-  .relax-btn {
+  .canvas-tools {
     position: absolute;
     top: 0.5rem;
     right: 0.5rem;
     z-index: 5;
     display: inline-flex;
     align-items: center;
+    gap: 0.4rem;
+  }
+  .view-toggle {
+    display: inline-flex;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--surface-1);
+    box-shadow: 0 1px 4px rgb(0 0 0 / 0.12);
+  }
+  .view-toggle button,
+  .relax-btn {
+    display: inline-flex;
+    align-items: center;
     gap: 0.3rem;
     padding: 0.25rem 0.6rem;
     font-size: 0.8rem;
     background: var(--surface-1);
+  }
+  .view-toggle button {
+    border: 0;
+    border-radius: 0;
+    color: var(--fg-muted);
+    box-shadow: none;
+  }
+  .view-toggle button + button {
+    border-left: 1px solid var(--border);
+  }
+  .view-toggle button.active {
+    color: var(--fg);
+    background: color-mix(in srgb, var(--accent) 14%, var(--surface-1));
+  }
+  .relax-btn {
     border: 1px solid var(--border);
     border-radius: 8px;
     box-shadow: 0 1px 4px rgb(0 0 0 / 0.12);
@@ -2530,6 +2862,79 @@
     font-size: 0.8rem;
     margin: 0.4rem 0 0;
   }
+  .promotion-policy {
+    margin-top: 0.7rem;
+    font-size: 0.86rem;
+  }
+  .promotion-policy summary {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    cursor: pointer;
+    color: var(--fg-muted);
+  }
+  .policy-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+    gap: 0.6rem;
+    margin-top: 0.55rem;
+  }
+  .policy-stage {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    padding: 0.5rem 0.6rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface-1);
+  }
+  .policy-stage b {
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    color: var(--fg-subtle);
+  }
+  .policy-stage label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    margin: 0;
+    font-size: 0.78rem;
+    color: var(--fg-muted);
+  }
+  .shadow-panel {
+    margin-top: 0.7rem;
+    font-size: 0.86rem;
+  }
+  .shadow-panel summary {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    cursor: pointer;
+    color: var(--fg-muted);
+  }
+  .shadow-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+    gap: 0.6rem;
+    margin-top: 0.55rem;
+  }
+  .shadow-stage {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    padding: 0.5rem 0.6rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface-1);
+  }
+  .shadow-stage b {
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    color: var(--fg-subtle);
+  }
+  .shadow-stats {
+    font-size: 0.78rem;
+  }
   .requests {
     margin-top: 0.8rem;
   }
@@ -2689,6 +3094,9 @@
   .bt-table th {
     color: var(--fg-subtle);
     font-weight: 600;
+  }
+  .changed-row td {
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
   }
   .muted {
     font-size: 0.8rem;

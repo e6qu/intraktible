@@ -14,6 +14,7 @@ import (
 	"github.com/e6qu/intraktible/context-layer/domain"
 	"github.com/e6qu/intraktible/context-layer/entities"
 	"github.com/e6qu/intraktible/context-layer/features"
+	"github.com/e6qu/intraktible/platform/erasure"
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/httpx"
 	"github.com/e6qu/intraktible/platform/identity"
@@ -22,9 +23,14 @@ import (
 
 // Service wires the Context Layer commands and read model to HTTP.
 type Service struct {
-	cmd    *command.Handler
-	store  store.Store
-	egress connectors.EgressPolicy
+	cmd     *command.Handler
+	store   store.Store
+	egress  connectors.EgressPolicy
+	secrets *connectors.Keyring
+	// eraser crypto-shreds the named PII fields of custom-event data, sealed per
+	// entity subject; piiFields is the set to seal.
+	eraser    *erasure.Vault
+	piiFields map[string]bool
 }
 
 // Option configures a Service.
@@ -34,6 +40,30 @@ type Option func(*Service)
 // (zero value) blocks loopback/private targets.
 func WithEgress(p connectors.EgressPolicy) Option {
 	return func(s *Service) { s.egress = p }
+}
+
+// WithSecrets enables connector credential encryption/decryption at the HTTP
+// boundary. Credential fields are encrypted before ConnectorDefined is emitted.
+func WithSecrets(kr *connectors.Keyring) Option {
+	return func(s *Service) { s.secrets = kr }
+}
+
+// WithErasure crypto-shreds the named PII fields of custom-event data: each is
+// sealed under its entity subject before the event is recorded, and opened (or
+// shown "[erased]" once the subject is erased) on read. Only the named fields
+// are sealed, so the feature engine and other readers of non-PII fields are
+// unaffected.
+func WithErasure(v *erasure.Vault, fields []string) Option {
+	return func(s *Service) {
+		if v == nil || len(fields) == 0 {
+			return
+		}
+		s.eraser = v
+		s.piiFields = make(map[string]bool, len(fields))
+		for _, f := range fields {
+			s.piiFields[f] = true
+		}
+	}
 }
 
 // New builds the service.
@@ -88,12 +118,23 @@ type eventRequest struct {
 func (s *Service) recordEvent(w http.ResponseWriter, r *http.Request) {
 	var req eventRequest
 	httpx.Emit(w, r, &req, func(id identity.Identity) (eventlog.Envelope, error) {
+		data := req.Data
+		if s.eraser != nil {
+			sealed, err := s.eraser.SealFields(r.Context(), id, eventSubject(req.EntityType, req.EntityID), data, s.piiFields)
+			if err != nil {
+				return eventlog.Envelope{}, err
+			}
+			data = sealed
+		}
 		return s.cmd.RecordEvent(r.Context(), id, domain.RecordEvent{
 			EntityType: req.EntityType, EntityID: req.EntityID, EventName: req.EventName,
-			Data: req.Data, OccurredAt: req.OccurredAt,
+			Data: data, OccurredAt: req.OccurredAt,
 		})
 	})
 }
+
+// eventSubject is the erasure subject for an entity's events.
+func eventSubject(entityType, entityID string) string { return entityType + "/" + entityID }
 
 func (s *Service) listEntities(w http.ResponseWriter, r *http.Request) {
 	id, ok := httpx.Caller(w, r)
@@ -119,6 +160,19 @@ func (s *Service) listEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	recs, err := entities.ListEvents(r.Context(), s.store, id, r.PathValue("type"), r.PathValue("id"))
+	if err == nil && s.eraser != nil {
+		// Unseal crypto-shredded PII. An erased subject yields "[erased]" inside
+		// OpenFields (not an error), so a non-nil error is a genuine vault/decrypt
+		// fault — surface it rather than serving the raw sealed envelope.
+		for i := range recs {
+			opened, oerr := s.eraser.OpenFields(r.Context(), id, eventSubject(recs[i].EntityType, recs[i].EntityID), recs[i].Data)
+			if oerr != nil {
+				err = oerr
+				break
+			}
+			recs[i].Data = opened
+		}
+	}
 	httpx.WriteList(w, "events", recs, err)
 }
 
@@ -168,7 +222,11 @@ type connectorRequest struct {
 func (s *Service) defineConnector(w http.ResponseWriter, r *http.Request) {
 	var req connectorRequest
 	httpx.Emit(w, r, &req, func(id identity.Identity) (eventlog.Envelope, error) {
-		return s.cmd.DefineConnector(r.Context(), id, domain.DefineConnector{Name: req.Name, Type: req.Type, Config: req.Config})
+		cfg, err := connectors.EncryptSecrets(req.Config, s.secrets)
+		if err != nil {
+			return eventlog.Envelope{}, err
+		}
+		return s.cmd.DefineConnector(r.Context(), id, domain.DefineConnector{Name: req.Name, Type: req.Type, Config: cfg})
 	})
 }
 
@@ -208,7 +266,7 @@ func (s *Service) fetchConnector(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := r.PathValue("name")
-	resp, err := connectors.InvokeWith(r.Context(), s.store, id, name, req.Params, s.egress)
+	resp, err := connectors.InvokeWithSecrets(r.Context(), s.store, id, name, req.Params, s.egress, s.secrets)
 	if err != nil {
 		httpx.Error(w, http.StatusBadGateway, err)
 		return

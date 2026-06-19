@@ -24,6 +24,148 @@ test('lists and creates a flow', async ({ page }) => {
   await expect(page.getByText(slug)).toBeVisible();
 });
 
+test('runs a what-if sensitivity sweep from the builder', async ({ page, request }) => {
+  const slug = uniqueSlug();
+  const created = await request.post('/v1/flows', {
+    headers: { 'X-Api-Key': KEY },
+    data: { slug, name: 'What If UI' }
+  });
+  const { flow_id } = await created.json();
+  await request.post(`/v1/flows/${flow_id}/versions`, {
+    headers: { 'X-Api-Key': KEY },
+    data: {
+      graph: {
+        nodes: [
+          { id: 'in', type: 'input' },
+          {
+            id: 'a',
+            type: 'assignment',
+            config: { assignments: [{ target: 'decision', expr: `score > 5 ? "A":"B"` }] }
+          },
+          { id: 'out', type: 'output', config: { fields: ['decision'] } }
+        ],
+        edges: [
+          { from: 'in', to: 'a' },
+          { from: 'a', to: 'out' }
+        ]
+      }
+    }
+  });
+
+  await page.goto(`/engine/${flow_id}`);
+  await page.getByLabel('whatif field').fill('score');
+  await page.getByLabel('whatif values').fill('1, 3, 7, 9');
+  await page.getByTestId('run-whatif').click();
+
+  // The sweep flips from B to A once score crosses 5 — one transition.
+  await expect(page.getByTestId('whatif-summary')).toContainText('1 transition');
+  const rows = page.getByTestId('whatif-table').locator('tbody tr');
+  await expect(rows).toHaveCount(4);
+  await expect(rows.first()).toContainText('B');
+  await expect(rows.last()).toContainText('A');
+});
+
+test('imports a flow from an exported document', async ({ page }) => {
+  const slug = uniqueSlug();
+  const doc = JSON.stringify({
+    slug,
+    name: 'Imported Flow',
+    graph: {
+      nodes: [
+        { id: 'in', type: 'input' },
+        { id: 'out', type: 'output' }
+      ],
+      edges: [{ from: 'in', to: 'out' }]
+    }
+  });
+
+  await page.goto('/engine');
+  await page.getByTestId('import-flow').locator('summary').click();
+  await page.getByLabel('flow document').fill(doc);
+  await page.getByTestId('import-submit').click();
+
+  // Import navigates straight into the new flow's builder.
+  await expect(page).toHaveURL(/\/engine\/[a-f0-9]+$/);
+
+  // Re-importing the same document is a no-op (no new version).
+  await page.goto('/engine');
+  await page.getByTestId('import-flow').locator('summary').click();
+  await page.getByLabel('flow document').fill(doc);
+  await page.getByTestId('import-submit').click();
+  await expect(page.getByText(/already at v1 — no change/)).toBeVisible();
+});
+
+test('assigns a shadow version from the builder', async ({ page, request }) => {
+  const slug = uniqueSlug();
+  const created = await request.post('/v1/flows', {
+    headers: { 'X-Api-Key': KEY },
+    data: { slug, name: 'Shadow UI' }
+  });
+  const { flow_id } = await created.json();
+  const graph = (decision: string) => ({
+    nodes: [
+      { id: 'in', type: 'input' },
+      {
+        id: 'a',
+        type: 'assignment',
+        config: { assignments: [{ target: 'decision', expr: `'${decision}'` }] }
+      },
+      { id: 'out', type: 'output', config: { fields: ['decision'] } }
+    ],
+    edges: [
+      { from: 'in', to: 'a' },
+      { from: 'a', to: 'out' }
+    ]
+  });
+  for (const d of ['A', 'B']) {
+    await request.post(`/v1/flows/${flow_id}/versions`, {
+      headers: { 'X-Api-Key': KEY },
+      data: { graph: graph(d) }
+    });
+  }
+  await request.post(`/v1/flows/${flow_id}/deployments`, {
+    headers: { 'X-Api-Key': KEY },
+    data: { environment: 'sandbox', version: 1 }
+  });
+
+  await page.goto(`/engine/${flow_id}`);
+  await page.getByTestId('shadow-panel').locator('summary').click();
+  await page.getByLabel('shadow version for sandbox').selectOption('2');
+  await expect(page.getByText('Shadowing v2 in sandbox')).toBeVisible();
+
+  // The assignment round-trips: reloading rehydrates v2 as the sandbox shadow.
+  await page.reload();
+  await page.getByTestId('shadow-panel').locator('summary').click();
+  await expect(page.getByLabel('shadow version for sandbox')).toHaveValue('2');
+});
+
+test('imports a bundle of flows', async ({ page }) => {
+  const graph = {
+    nodes: [
+      { id: 'in', type: 'input' },
+      { id: 'out', type: 'output' }
+    ],
+    edges: [{ from: 'in', to: 'out' }]
+  };
+  const a = uniqueSlug();
+  const b = uniqueSlug();
+  const bundle = JSON.stringify({
+    flows: [
+      { slug: a, name: 'Bundle A', graph },
+      { slug: b, name: 'Bundle B', graph }
+    ]
+  });
+
+  await page.goto('/engine');
+  await page.getByTestId('import-flow').locator('summary').click();
+  await page.getByLabel('flow document').fill(bundle);
+  await page.getByTestId('import-submit').click();
+
+  // A bundle reports a summary (and stays on the list) rather than navigating.
+  await expect(page.getByText(/Bundle: 2 published/)).toBeVisible();
+  await expect(page.getByText(b)).toBeVisible();
+});
+
 test('renders a flow graph and runs a test decision', async ({ page, request }) => {
   const slug = uniqueSlug();
 
@@ -74,6 +216,87 @@ test('renders a flow graph and runs a test decision', async ({ page, request }) 
   await expect(result).toContainText('SEEDED');
   // The run paints each node's last output onto its card (live status).
   await expect(canvas).toContainText('decision: SEEDED');
+});
+
+test('switches the flow canvas between card and BPMN views', async ({ page, request }) => {
+  const slug = uniqueSlug();
+  const created = await request.post('/v1/flows', {
+    headers: { 'X-Api-Key': KEY },
+    data: { slug, name: 'Process View' }
+  });
+  expect(created.ok()).toBeTruthy();
+  const { flow_id } = await created.json();
+
+  const pub = await request.post(`/v1/flows/${flow_id}/versions`, {
+    headers: { 'X-Api-Key': KEY },
+    data: {
+      graph: {
+        nodes: [
+          { id: 'in', type: 'input', name: 'Start' },
+          {
+            id: 'gate',
+            type: 'split',
+            name: 'Route',
+            config: { branches: [{ name: 'yes', when: 'true' }] }
+          },
+          { id: 'out', type: 'output', name: 'Finish' }
+        ],
+        edges: [
+          { from: 'in', to: 'gate' },
+          { from: 'gate', to: 'out', branch: 'yes' }
+        ]
+      }
+    }
+  });
+  expect(pub.ok()).toBeTruthy();
+
+  await page.goto(`/engine/${flow_id}`);
+  const canvas = page.getByTestId('flow-canvas');
+  await expect(page.locator('.svelte-flow__node')).toHaveCount(3);
+  await expect(canvas.locator('.node')).toHaveCount(3);
+
+  await page.getByTestId('canvas-view-bpmn').click();
+  await expect(canvas.locator('.bpmn.start')).toHaveCount(1);
+  await expect(canvas.locator('.bpmn.gateway')).toHaveCount(1);
+  await expect(canvas.locator('.bpmn.end')).toHaveCount(1);
+
+  await page.getByTestId('canvas-view-cards').click();
+  await expect(canvas.locator('.node')).toHaveCount(3);
+});
+
+test('edits per-stage promotion policy from the deployment panel', async ({ page, request }) => {
+  const slug = uniqueSlug();
+  const created = await request.post('/v1/flows', {
+    headers: { 'X-Api-Key': KEY },
+    data: { slug, name: 'Promotion Policy' }
+  });
+  const { flow_id } = await created.json();
+  await request.post(`/v1/flows/${flow_id}/versions`, {
+    headers: { 'X-Api-Key': KEY },
+    data: {
+      graph: {
+        nodes: [
+          { id: 'in', type: 'input' },
+          { id: 'out', type: 'output' }
+        ],
+        edges: [{ from: 'in', to: 'out' }]
+      }
+    }
+  });
+  await request.post(`/v1/flows/${flow_id}/deployments`, {
+    headers: { 'X-Api-Key': KEY },
+    data: { environment: 'sandbox', version: 1 }
+  });
+
+  await page.goto(`/engine/${flow_id}`);
+  await expect(page.getByTestId('deploy-panel')).toContainText('sandbox: v1');
+  await page.getByTestId('promotion-policy').locator('summary').click();
+  await page.locator('.policy-stage', { hasText: 'staging' }).getByLabel('review request').check();
+  await expect(page.getByText('Promotion policy saved')).toBeVisible();
+
+  await page.getByTestId('promote-submit').click();
+  await expect(page.getByText(/Proposed v1 for staging/)).toBeVisible();
+  await expect(page.getByTestId('deployment-requests')).toContainText('staging');
 });
 
 test('batch-decides a dataset from the builder', async ({ page, request }) => {

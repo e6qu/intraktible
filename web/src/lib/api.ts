@@ -96,6 +96,13 @@ export interface DeploymentRequest {
   decided_at?: string;
 }
 
+export interface PromotionStagePolicy {
+  require_assertions: boolean;
+  require_no_firing_monitors: boolean;
+  allow_force: boolean;
+  require_review: boolean;
+}
+
 export interface Flow {
   flow_id: string;
   slug: string;
@@ -104,6 +111,7 @@ export interface Flow {
   versions: FlowVersion[];
   deployments?: Record<string, DeploymentView>;
   deployment_requests?: DeploymentRequest[];
+  promotion_policy?: Record<string, PromotionStagePolicy>;
 }
 
 export interface DecideResult {
@@ -173,6 +181,70 @@ export async function exportFlow(
     throw new Error(`export (${format}) failed: ${res.status}`);
   }
   return res.text();
+}
+
+export interface FlowImportResult {
+  flow_id: string;
+  slug: string;
+  version: number;
+  etag: string;
+  created: boolean;
+  published: boolean;
+}
+
+// importFlow upserts a flow from an exported document (the JSON `exportFlow`
+// produces): it creates the flow if its slug is new, then publishes the graph as
+// a new version. Re-importing identical content is a no-op (`published: false`),
+// so it is safe to run from CI / GitOps on every push.
+export async function importFlow(
+  key: string,
+  doc: unknown,
+  fetcher: typeof fetch = fetch
+): Promise<FlowImportResult> {
+  const res = await fetcher('/v1/flows/import', {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: typeof doc === 'string' ? doc : JSON.stringify(doc)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'POST /v1/flows/import');
+  }
+  return (await res.json()) as FlowImportResult;
+}
+
+export interface FlowBundleResult {
+  slug: string;
+  flow_id?: string;
+  version?: number;
+  created: boolean;
+  published: boolean;
+  error?: string;
+}
+
+export interface FlowBundleImport {
+  results: FlowBundleResult[];
+  published: number;
+  failed: number;
+  unchanged: number;
+}
+
+// importFlowBundle imports many flows in one document (`{ flows: [...] }`). It is
+// best-effort: each flow's outcome (including any error) is in its result, so a
+// bad flow does not abort the rest.
+export async function importFlowBundle(
+  key: string,
+  bundle: unknown,
+  fetcher: typeof fetch = fetch
+): Promise<FlowBundleImport> {
+  const res = await fetcher('/v1/flows/import-bundle', {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: typeof bundle === 'string' ? bundle : JSON.stringify(bundle)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'POST /v1/flows/import-bundle');
+  }
+  return (await res.json()) as FlowBundleImport;
 }
 
 // exportDecision fetches a decision run rendered as a Mermaid sequence diagram.
@@ -787,6 +859,39 @@ export async function backtestFlow(
   return (await res.json()) as BacktestReport;
 }
 
+export interface SweepPoint {
+  value: unknown;
+  status: string;
+  output?: Record<string, unknown>;
+  error?: string;
+  changed: boolean;
+}
+
+export interface SweepReport {
+  field: string;
+  points: SweepPoint[];
+  transitions: number;
+}
+
+// whatif runs a sensitivity analysis: sweep one input field across values and
+// see how the flow's outcome shifts (record-nothing, pure engine).
+export async function whatif(
+  key: string,
+  flowId: string,
+  body: { base: Record<string, unknown>; field: string; values: unknown[]; version?: number },
+  fetcher: typeof fetch = fetch
+): Promise<SweepReport> {
+  const res = await fetcher(`/v1/flows/${flowId}/whatif`, {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'POST whatif');
+  }
+  return (await res.json()) as SweepReport;
+}
+
 export async function publishVersion(
   key: string,
   flowId: string,
@@ -857,6 +962,70 @@ export async function promoteFlow(
     request_id?: string;
     version: number;
   };
+}
+
+export async function setPromotionPolicy(
+  key: string,
+  flowId: string,
+  policy: Record<string, Partial<PromotionStagePolicy>>,
+  fetcher: typeof fetch = fetch
+): Promise<Record<string, PromotionStagePolicy>> {
+  const res = await fetcher(`/v1/flows/${flowId}/promotion-policy`, {
+    method: 'PUT',
+    headers: jsonHeaders(key),
+    body: JSON.stringify({ policy })
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'PUT promotion policy');
+  }
+  return ((await res.json()) as { policy: Record<string, PromotionStagePolicy> }).policy;
+}
+
+export interface EnvShadow {
+  shadow_version: number;
+  total: number;
+  matched: number;
+  diverged: number;
+  errored: number;
+  sample_diverged?: string[];
+}
+
+export interface ShadowState {
+  shadows: Record<string, number>;
+  report: Record<string, EnvShadow>;
+}
+
+// getShadow returns the per-environment shadow assignments and the divergence
+// report (how often a shadow version's outcome differs from the live decision).
+export async function getShadow(
+  key: string,
+  flowId: string,
+  fetcher: typeof fetch = fetch
+): Promise<ShadowState> {
+  const res = await fetcher(`/v1/flows/${flowId}/shadow`, { headers: authHeaders(key) });
+  if (!res.ok) {
+    return errorOrStatus(res, 'GET shadow');
+  }
+  const body = (await res.json()) as Partial<ShadowState>;
+  return { shadows: body.shadows ?? {}, report: body.report ?? {} };
+}
+
+// setShadow assigns (version 0 clears) the shadow version for an environment.
+export async function setShadow(
+  key: string,
+  flowId: string,
+  environment: string,
+  version: number,
+  fetcher: typeof fetch = fetch
+): Promise<void> {
+  const res = await fetcher(`/v1/flows/${flowId}/shadow`, {
+    method: 'PUT',
+    headers: jsonHeaders(key),
+    body: JSON.stringify({ environment, version })
+  });
+  if (!res.ok) {
+    await errorOrStatus(res, 'PUT shadow');
+  }
 }
 
 // requestDeployment proposes a deployment for review (maker side).
@@ -1261,6 +1430,91 @@ export async function setPrivacy(
   if (!res.ok) {
     return errorOrStatus(res, 'PUT /v1/privacy');
   }
+}
+
+export interface ManagedApiKey {
+  id: string;
+  name: string;
+  identity: { org: string; workspace: string; actor: string };
+  scope: string;
+  role: string;
+  created_at: string;
+  expires_at?: string;
+  revoked_at?: string;
+  rotated_at?: string;
+  prev_hash_expires_at?: string;
+}
+
+export interface CreateApiKeyRequest {
+  name: string;
+  actor: string;
+  role: string;
+  scope?: string;
+  expires_at?: string;
+}
+
+export async function listApiKeys(
+  key: string,
+  fetcher: typeof fetch = fetch
+): Promise<ManagedApiKey[]> {
+  const res = await fetcher('/v1/api-keys', { headers: authHeaders(key) });
+  if (!res.ok) {
+    return errorOrStatus(res, 'GET /v1/api-keys');
+  }
+  return ((await res.json()) as { api_keys: ManagedApiKey[] }).api_keys ?? [];
+}
+
+// createApiKey returns the new token's metadata plus the generated secret, which
+// the server reveals only once — the caller must surface it immediately.
+export async function createApiKey(
+  key: string,
+  req: CreateApiKeyRequest,
+  fetcher: typeof fetch = fetch
+): Promise<{ api_key: ManagedApiKey; secret: string }> {
+  const res = await fetcher('/v1/api-keys', {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify(req)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'POST /v1/api-keys');
+  }
+  return (await res.json()) as { api_key: ManagedApiKey; secret: string };
+}
+
+// rotateApiKey mints a fresh secret for a token, returning it once. The prior
+// secret keeps working for graceSeconds (0 = immediate) so it can be rolled out
+// without downtime.
+export async function rotateApiKey(
+  key: string,
+  id: string,
+  graceSeconds = 0,
+  fetcher: typeof fetch = fetch
+): Promise<{ api_key: ManagedApiKey; secret: string }> {
+  const res = await fetcher(`/v1/api-keys/${encodeURIComponent(id)}/rotate`, {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify({ grace_seconds: graceSeconds })
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'POST rotate api key');
+  }
+  return (await res.json()) as { api_key: ManagedApiKey; secret: string };
+}
+
+export async function revokeApiKey(
+  key: string,
+  id: string,
+  fetcher: typeof fetch = fetch
+): Promise<ManagedApiKey> {
+  const res = await fetcher(`/v1/api-keys/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    headers: jsonHeaders(key)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'DELETE /v1/api-keys');
+  }
+  return ((await res.json()) as { api_key: ManagedApiKey }).api_key;
 }
 
 export interface Connector {
@@ -1712,6 +1966,35 @@ export async function logout(fetcher: typeof fetch = fetch): Promise<void> {
   const res = await fetcher('/v1/logout', { method: 'POST' });
   if (!res.ok && res.status !== 204) {
     await errorOrStatus(res, 'POST /v1/logout');
+  }
+}
+
+// listSsoProviders returns the configured OIDC providers (e.g. ["google","aws"])
+// so the login page can offer a "Sign in with …" button for each. Returns an
+// empty list when SSO is not configured or the endpoint is unavailable.
+export async function listSsoProviders(fetcher: typeof fetch = fetch): Promise<string[]> {
+  try {
+    const res = await fetcher('/v1/auth/oidc/providers');
+    if (!res.ok) {
+      return [];
+    }
+    return ((await res.json()) as { providers?: string[] }).providers ?? [];
+  } catch {
+    return [];
+  }
+}
+
+// listSamlProviders returns the configured SAML providers, mirroring
+// listSsoProviders. Empty when SAML is not configured.
+export async function listSamlProviders(fetcher: typeof fetch = fetch): Promise<string[]> {
+  try {
+    const res = await fetcher('/v1/auth/saml/providers');
+    if (!res.ok) {
+      return [];
+    }
+    return ((await res.json()) as { providers?: string[] }).providers ?? [];
+  } catch {
+    return [];
   }
 }
 

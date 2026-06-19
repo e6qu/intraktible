@@ -19,7 +19,26 @@ const (
 	// TypeManualReviewRequested is emitted when a decision reaches a manual_review
 	// node; the Case Manager consumes it to open a case (escalation hook).
 	TypeManualReviewRequested = "decision.manual_review_requested"
+	// TypeShadowEvaluated records that a shadow version was run alongside a live
+	// decision for comparison; its result is never returned to the caller.
+	TypeShadowEvaluated = "decision.run.shadow_evaluated"
 )
+
+// ShadowEvaluated records a shadow run: a candidate version evaluated over the
+// same input as a live decision, for divergence analysis only. The shadow's
+// outcome never affects the caller's result. Matched is whether the shadow
+// reached the same status and output as the live decision.
+type ShadowEvaluated struct {
+	DecisionID    string `json:"decision_id"` // the live decision this shadows
+	FlowID        string `json:"flow_id"`
+	Environment   string `json:"environment"`
+	LiveVersion   int    `json:"live_version"`
+	ShadowVersion int    `json:"shadow_version"`
+	LiveStatus    string `json:"live_status"`
+	ShadowStatus  string `json:"shadow_status"`
+	Matched       bool   `json:"matched"`
+	ShadowError   string `json:"shadow_error,omitempty"`
+}
 
 // DecisionStarted records the start of a decision: which flow version ran against
 // what input, in which environment. The recorded Data makes the run replayable.

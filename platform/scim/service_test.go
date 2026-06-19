@@ -1,0 +1,161 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+package scim_test
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"testing"
+
+	"github.com/e6qu/intraktible/platform/scim"
+	"github.com/e6qu/intraktible/platform/store"
+)
+
+func TestSCIMProvisionAndDeprovision(t *testing.T) {
+	st := store.NewMemory()
+	users := scim.NewStore(st)
+	mux := http.NewServeMux()
+	scim.NewService(users, "scim-token", "demo", "main").Routes(mux)
+
+	do := func(method, path, body string) *httptest.ResponseRecorder {
+		return bearerDo(mux, method, path, body)
+	}
+
+	// Provision a user.
+	create := do(http.MethodPost, "/scim/v2/Users", `{"userName":"ada@acme.com","active":true}`)
+	if create.Code != http.StatusCreated {
+		t.Fatalf("create -> %d body=%s", create.Code, create.Body.String())
+	}
+	var created scim.User
+	if err := json.Unmarshal(create.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	if created.ID == "" || created.UserName != "ada@acme.com" || !created.Active {
+		t.Fatalf("created = %+v", created)
+	}
+
+	// A duplicate userName is a 409.
+	if dup := do(http.MethodPost, "/scim/v2/Users", `{"userName":"ada@acme.com"}`); dup.Code != http.StatusConflict {
+		t.Fatalf("duplicate create -> %d, want 409", dup.Code)
+	}
+
+	// Filter by userName finds it (the IdP's pre-create lookup).
+	list := do(http.MethodGet, "/scim/v2/Users?filter="+url.QueryEscape(`userName eq "ada@acme.com"`), "")
+	var lr struct {
+		TotalResults int         `json:"totalResults"`
+		Resources    []scim.User `json:"Resources"`
+	}
+	_ = json.Unmarshal(list.Body.Bytes(), &lr)
+	if lr.TotalResults != 1 || lr.Resources[0].ID != created.ID {
+		t.Fatalf("list/filter = %s", list.Body.String())
+	}
+
+	ctx := context.Background()
+	if !users.Allowed(ctx, "demo", "main", "ada@acme.com") {
+		t.Fatal("an active user should be allowed to log in")
+	}
+
+	// Deprovision via PATCH (the Azure shape: path=active, value=false).
+	patch := do(http.MethodPatch, "/scim/v2/Users/"+created.ID,
+		`{"Operations":[{"op":"replace","path":"active","value":false}]}`)
+	if patch.Code != http.StatusOK {
+		t.Fatalf("patch -> %d body=%s", patch.Code, patch.Body.String())
+	}
+	if users.Allowed(ctx, "demo", "main", "ada@acme.com") {
+		t.Fatal("a deactivated user must not be allowed to log in")
+	}
+	// An unprovisioned user is allowed (SCIM gates deprovisioning, not first login).
+	if !users.Allowed(ctx, "demo", "main", "newcomer@acme.com") {
+		t.Fatal("an unprovisioned user should be allowed")
+	}
+
+	// Reactivate via the Okta shape (value object), then delete.
+	if r := do(http.MethodPatch, "/scim/v2/Users/"+created.ID,
+		`{"Operations":[{"op":"replace","value":{"active":true}}]}`); r.Code != http.StatusOK {
+		t.Fatalf("reactivate -> %d", r.Code)
+	}
+	if !users.Allowed(ctx, "demo", "main", "ada@acme.com") {
+		t.Fatal("reactivated user should be allowed")
+	}
+	if d := do(http.MethodDelete, "/scim/v2/Users/"+created.ID, ""); d.Code != http.StatusNoContent {
+		t.Fatalf("delete -> %d", d.Code)
+	}
+}
+
+func bearerDo(mux *http.ServeMux, method, path, body string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer scim-token")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestSCIMGroupsDriveMembership(t *testing.T) {
+	st := store.NewMemory()
+	users := scim.NewStore(st)
+	mux := http.NewServeMux()
+	scim.NewService(users, "scim-token", "demo", "main").Routes(mux)
+	ctx := context.Background()
+
+	// Provision a user, then a group that includes them.
+	var u scim.User
+	_ = json.Unmarshal(bearerDo(mux, http.MethodPost, "/scim/v2/Users", `{"userName":"ada@acme.com","active":true}`).Body.Bytes(), &u)
+	g := bearerDo(mux, http.MethodPost, "/scim/v2/Groups",
+		`{"displayName":"engineers","members":[{"value":"`+u.ID+`"}]}`)
+	if g.Code != http.StatusCreated {
+		t.Fatalf("create group -> %d body=%s", g.Code, g.Body.String())
+	}
+	var group scim.Group
+	_ = json.Unmarshal(g.Body.Bytes(), &group)
+
+	names, err := users.GroupsForUser(ctx, "demo", "main", "ada@acme.com")
+	if err != nil || len(names) != 1 || names[0] != "engineers" {
+		t.Fatalf("GroupsForUser = %v err=%v", names, err)
+	}
+
+	// Azure-style PATCH remove drops the member; GroupsForUser reflects it.
+	rm := bearerDo(mux, http.MethodPatch, "/scim/v2/Groups/"+group.ID,
+		`{"Operations":[{"op":"remove","path":"members[value eq \"`+u.ID+`\"]"}]}`)
+	if rm.Code != http.StatusOK {
+		t.Fatalf("patch remove -> %d body=%s", rm.Code, rm.Body.String())
+	}
+	if names, _ := users.GroupsForUser(ctx, "demo", "main", "ada@acme.com"); len(names) != 0 {
+		t.Fatalf("member should have been removed, groups=%v", names)
+	}
+
+	// PATCH add puts them back.
+	add := bearerDo(mux, http.MethodPatch, "/scim/v2/Groups/"+group.ID,
+		`{"Operations":[{"op":"add","path":"members","value":[{"value":"`+u.ID+`"}]}]}`)
+	if add.Code != http.StatusOK {
+		t.Fatalf("patch add -> %d body=%s", add.Code, add.Body.String())
+	}
+	if names, _ := users.GroupsForUser(ctx, "demo", "main", "ada@acme.com"); len(names) != 1 {
+		t.Fatalf("member should be back, groups=%v", names)
+	}
+
+	// PUT replaces the membership wholesale (here: empty).
+	if r := bearerDo(mux, http.MethodPut, "/scim/v2/Groups/"+group.ID,
+		`{"displayName":"engineers","members":[]}`); r.Code != http.StatusOK {
+		t.Fatalf("put replace -> %d", r.Code)
+	}
+	if names, _ := users.GroupsForUser(ctx, "demo", "main", "ada@acme.com"); len(names) != 0 {
+		t.Fatalf("PUT should have cleared membership, groups=%v", names)
+	}
+}
+
+func TestSCIMRequiresBearerToken(t *testing.T) {
+	mux := http.NewServeMux()
+	scim.NewService(scim.NewStore(store.NewMemory()), "scim-token", "demo", "main").Routes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/scim/v2/Users", http.NoBody)
+	req.Header.Set("Authorization", "Bearer wrong")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("bad token -> %d, want 401", rec.Code)
+	}
+}
