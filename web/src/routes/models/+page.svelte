@@ -233,6 +233,12 @@
                         {#if drift.firing}<span class="psi significant" data-testid="drift-firing"
                             >⚠ firing (&gt; {drift.threshold})</span
                           >{/if}
+                        {#if drift.alerting}<span
+                            class="psi significant"
+                            data-testid="drift-alerting"
+                            title="The drift scheduler has pushed an alert to your webhooks"
+                            >📤 alert pushed</span
+                          >{/if}
                       {:else}
                         <span class="muted">no baseline captured yet</span>
                       {/if}

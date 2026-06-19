@@ -25,7 +25,13 @@ store always full-rebuilds from the log.
   opens private/loopback targets (logged loudly) — leave **off** unless connectors must reach
   internal hosts.
 - **Connector secrets at rest** — `INTRAKTIBLE_CONNECTOR_SECRET_KEY` (+ `…_KEYS_PREVIOUS` for
-  rotation) or an external KMS via `INTRAKTIBLE_KMS_PROVIDER` (AWS / GCP).
+  rotation) or an external KMS via `INTRAKTIBLE_KMS_PROVIDER` (AWS / GCP). Credential config
+  fields (`token`/`secret`/`api_key`/`auth`/…) are sealed under this key and never served back
+  unredacted. Connector config is validated at **define** time, so a bad endpoint/credential
+  fails on save, not on the first decide.
+- **Connector auth** — the `http`/`graphql` connectors take an `auth` block (`bearer` | `header` |
+  `basic` | `query`) plus custom `headers`; `plaid` and `stripe` are first-class provider adapters
+  (preconfigured base URL + auth scheme — supply only credentials + the request).
 - **SQL connector files** — `ITK_SQL_CONNECTOR_DIR` confines sqlite-connector databases to a
   directory (always read-only).
 - **PII erasure** — configure erasure fields so recorded decision PII is crypto-shreddable.
@@ -49,10 +55,14 @@ store always full-rebuilds from the log.
 - Flow monitors (`distribution_drift` etc.) + the immutable audit log (`GET /v1/audit`).
 - **Model drift** — `GET /v1/models/{name}/drift` (PSI vs a captured baseline; `?window=Nd`),
   with a `POST …/monitor` PSI threshold.
-- Optional monitor scheduler: `INTRAKTIBLE_MONITOR_INTERVAL` pushes firing monitors to webhooks.
+- Optional schedulers: `INTRAKTIBLE_MONITOR_INTERVAL` (e.g. `1m`) sweeps on that cadence and
+  pushes both firing **flow monitors** and **model-drift** crossings to webhooks — on the
+  ok→firing edge only (deduped), resetting on firing→ok. `INTRAKTIBLE_MODEL_DRIFT_WINDOW` (days)
+  narrows the drift window the scheduler fires on (default: all-time cumulative).
 
 ## Quality gate (CI parity)
 
-`make check` runs the full gate locally — go (gofmt, vet, golangci-lint, gosec, dupl, deadcode,
+`make ci` runs the full gate locally — go (gofmt, vet, golangci-lint, gosec, dupl, deadcode,
 govulncheck, AGPL licenses, `-race` tests) and web (prettier, eslint+security, svelte-check,
-vitest, Playwright + an embedded-binary smoke). Pre-commit + pre-push hooks run the same targets.
+vitest, Playwright + an embedded-binary smoke). `make check` is the fast subset (fmt, vet,
+typecheck, test). Pre-commit + pre-push hooks run the same targets.

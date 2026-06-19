@@ -45,7 +45,11 @@ Done — flow model + versioning (vertical slice, command→event→projection�
     reports the model's predicted-probability distribution (deciles) + the PSI vs a captured baseline
     (`POST …/baseline`) — `<0.1` stable, `0.1–0.25` moderate, `>0.25` significant. `?window=Nd` measures
     only the most recent N day-buckets (a windowed view a cumulative one would dilute); `POST …/monitor
-    {threshold}` sets a PSI alert, and the report's `firing` flag trips when PSI exceeds it.
+    {threshold}` sets a PSI alert, and the report's `firing` flag trips when PSI exceeds it. A
+    `models.Scheduler` (started on `INTRAKTIBLE_MONITOR_INTERVAL`, the same cadence as the flow
+    monitor) sweeps every tenant's models and **pushes the ok→firing PSI edge to webhooks** — deduped
+    via `drift_alerted`/`drift_resolved` events (the report's `alerting` flag), so a steadily-drifting
+    model is sent once; `INTRAKTIBLE_MODEL_DRIFT_WINDOW` narrows the firing window.
   - `GET /v1/decisions` — history; filter by `flow`/`env`/`status`/`q`, an RFC3339 range
     (`start_time`/`end_time`), and `include_node_results=false` to omit the per-node trace
 - Run it: `intraktible serve --modules=decision-engine`.

@@ -578,15 +578,23 @@ never appear in-repo (neutral language only).
 > Per project convention: at the **end of every phase**, update `PLAN.md` and `BUGS.md` in the same
 > PR as the phase's code.
 
-**Launch batches (post-audit, A1–A45 all merged).** With the round-3 backlog cleared, two large
+**Launch batches (post-audit, A1–A45 all merged).** With the round-3 backlog cleared, large
 "launch" PRs bundled the remaining stretch + hardening (deliberately fat, to conserve review/CI cycles
 into launch). **Batch 1 (PR #16):** ML phase 2 (BYO `external` served models), connector-catalog breadth,
 the large-job NDJSON `…/decide/stream`, model-drift PSI monitoring, the authoring AI-copilot
 (explain/suggest), and the A16/A17 visual polish. **Batch 2 (PR #17):** deeper copilot (server-validated
 graph **generation** applied to the canvas), **windowed/time-bucketed drift** + a per-model PSI monitor
 threshold, two **real connector adapters** (`graphql`, `static`) + more catalog templates, and a
-**launch-readiness sweep** (8 MiB JSON body cap, `GET /version`, `docs/LAUNCH.md`). Remaining ideas
-(connector providers needing SDKs/keys, a scheduled model-drift webhook push) stay open as future work.
+**launch-readiness sweep** (8 MiB JSON body cap, `GET /version`, `docs/LAUNCH.md`). **Batch 3 (PR #18):**
+the **scheduled model-drift push** (a `models.Scheduler` that sweeps every tenant's models on the
+`INTRAKTIBLE_MONITOR_INTERVAL` cadence and pushes the ok→firing PSI edge to webhooks, deduped via
+drift-`Alerted`/`Resolved` events — mirroring the flow monitor; `INTRAKTIBLE_MODEL_DRIFT_WINDOW`
+narrows the firing window); **first-class provider connectors** (`http`/`graphql` gain an `auth`
+block — bearer/header/basic/query — + custom headers; `plaid` and `stripe` adapters with sealed
+credentials) plus **define-time connector-config validation** (a bad endpoint/credential now fails
+on save, not on first fetch); and a **launch dry-run against Postgres** (`--store/--log=postgres`,
+full LAUNCH.md walk + the `INTRAKTIBLE_TEST_POSTGRES` contract tests green). The round-3 ideas are
+now all delivered.
 
 ---
 
