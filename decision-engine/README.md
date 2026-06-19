@@ -118,7 +118,10 @@ Done — execution runtime + decide API + decision history (the decision event s
   (in history, metrics, and the audit log), unlike backtest which records nothing. Returns a summary
   (completed/failed/rejected) + per-row results; a row that fails input validation/lookup is `rejected`
   (no decision), a row whose flow logic errors is a recorded `failed`. Dataset capped at 500. Surfaced as
-  a builder panel.
+  a builder panel. For **very large jobs**, `POST /v1/flows/{slug}/{env}/decide/stream` takes the dataset
+  as **NDJSON** (one input per line) and streams NDJSON results back one per line — constant memory, no
+  row cap (`entity_type`/`entity_key` are query params) — the same recorded decide path, just streamed
+  (a dependency-light alternative to a gRPC/Arrow batch wire).
 - **Policies (`decision-engine/policy`):** the operational disposition layer over a flow — a first-class,
   versioned, governed artifact (create/publish like flows; authoring needs `editor`) that maps a flow's
   output to a **disposition** (`approve` / `decline` / `refer`) via ordered expr-lang bands + a default.

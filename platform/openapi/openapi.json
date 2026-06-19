@@ -136,6 +136,46 @@
         }
       }
     },
+    "/v1/flows/{slug}/{env}/decide/stream": {
+      "post": {
+        "tags": ["decide"],
+        "summary": "Stream-execute a flow over a large NDJSON dataset",
+        "description": "The large-job batch path: the request body is NDJSON (one input object per line) and the response is NDJSON streamed one result per line, flushed as each row decides. No dataset is held in memory and there is no row cap, so it scales to very large jobs. entity_type / entity_key are query parameters applied to every row. Each row is a real recorded decision (history, metrics, audit), like /decide/batch.",
+        "parameters": [
+          { "$ref": "#/components/parameters/Slug" },
+          { "$ref": "#/components/parameters/Env" },
+          {
+            "name": "entity_type",
+            "in": "query",
+            "schema": { "type": "string" },
+            "description": "Entity type recorded for every row."
+          },
+          {
+            "name": "entity_key",
+            "in": "query",
+            "schema": { "type": "string" },
+            "description": "Input field each row's entity id is read from."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-ndjson": {
+              "schema": { "type": "string" },
+              "example": "{\"score\": 0.9}\n{\"score\": 0.2}\n"
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "NDJSON: one decision result per line, streamed.",
+            "content": { "application/x-ndjson": { "schema": { "type": "string" } } }
+          },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/v1/flows/{slug}/openapi.json": {
       "get": {
         "tags": [

@@ -5,6 +5,8 @@
 package service
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -73,6 +75,7 @@ func (s *Service) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/flows/{flow_id}/deployment-requests/{req_id}/reject", s.rejectDeployment)
 	mux.HandleFunc("POST /v1/flows/{slug}/{env}/decide", s.runDecide)
 	mux.HandleFunc("POST /v1/flows/{slug}/{env}/decide/batch", s.decideBatch)
+	mux.HandleFunc("POST /v1/flows/{slug}/{env}/decide/stream", s.decideStream)
 	mux.HandleFunc("POST /v1/flows/{slug}/{env}/preapprove/batch", s.preapproveBatch)
 	mux.HandleFunc("GET /v1/flows/{flow_id}/export", s.exportFlow)
 	mux.HandleFunc("POST /v1/flows/{flow_id}/backtest", s.backtestFlow)
@@ -844,6 +847,82 @@ func (s *Service) decideBatch(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	httpx.JSON(w, http.StatusOK, resp)
+}
+
+// maxStreamLine caps a single NDJSON input row (1 MiB) on the streaming path.
+const maxStreamLine = 1 << 20
+
+// decideStream is the large-job batch path: the request body is NDJSON (one input
+// object per line) and the response is NDJSON streamed one result per line, flushed
+// as each row decides. Unlike decideBatch it holds no dataset in memory and has no
+// row cap, so it scales to very large jobs; entity_type / entity_key come from the
+// query string and apply to every row. (A dependency-light alternative to a gRPC/
+// Arrow wire — the same recorded decide path, just streamed.)
+func (s *Service) decideStream(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	slug, env := r.PathValue("slug"), r.PathValue("env")
+	if !allowEnv(w, r, env) {
+		return
+	}
+	entityType := r.URL.Query().Get("entity_type")
+	entityKey := r.URL.Query().Get("entity_key")
+
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	flusher, _ := w.(http.Flusher)
+	enc := json.NewEncoder(w)
+	emit := func(v any) {
+		_ = enc.Encode(v)
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}
+
+	sc := bufio.NewScanner(r.Body)
+	sc.Buffer(make([]byte, 0, 64*1024), maxStreamLine)
+	i := -1
+	for sc.Scan() {
+		line := bytes.TrimSpace(sc.Bytes())
+		if len(line) == 0 {
+			continue
+		}
+		i++
+		out := batchResult{Index: i}
+		var input map[string]any
+		if err := json.Unmarshal(line, &input); err != nil {
+			out.Status = "rejected"
+			out.Error = "invalid json: " + err.Error()
+			emit(out)
+			continue
+		}
+		entityID := ""
+		if entityKey != "" {
+			entityID = stringField(input, entityKey)
+			if entityID == "" {
+				out.Status = "rejected"
+				out.Error = "missing entity id field " + entityKey
+				emit(out)
+				continue
+			}
+		}
+		out.EntityID = entityID
+		res, err := s.decide.Decide(r.Context(), id, slug, env, input, command.EntityRef{Type: entityType, ID: entityID})
+		if err != nil {
+			out.Status = "rejected"
+			out.Error = err.Error()
+			emit(out)
+			continue
+		}
+		out.DecisionID, out.Status, out.Data = res.DecisionID, res.Status, res.Output
+		out.Disposition, out.Error = res.Disposition, res.Error
+		emit(out)
+	}
+	if err := sc.Err(); err != nil {
+		// The 200 + body already started, so surface the read failure as a final line.
+		emit(map[string]string{"error": "stream read: " + err.Error()})
+	}
 }
 
 type preapproveBatchRequest struct {
