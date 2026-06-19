@@ -513,6 +513,12 @@ never appear in-repo (neutral language only).
    first/all to the standard set (UNIQUE with conflict detection, ANY, FIRST, RULE ORDER, COLLECT with
    SUM/MIN/MAX/COUNT), surfaced in the builder + OpenAPI + assertions; and document the expression language
    (expr-lang + Starlark, per D9) as a stable contract — explicitly not adding a second expression engine.
+   **Shipped in PR #11:** the `decision_table` config gained `hit` (first|unique|any|rule_order|collect) +
+   `aggregate` (sum|min|max|count for collect); UNIQUE/ANY fail loudly on conflicts, rule_order/collect
+   gather per-target values with rules independent, and `mode:"all"` stays back-compatible. Builder
+   hit-policy/aggregate selects + OpenAPI prose updated; assertions unchanged (they match the output map).
+   A33 landed as docs/EXPRESSIONS.md (linked from the engine README + OpenAPI). Domain hit-policy tests +
+   a builder e2e added.
 7. **External decision API (compatibility surface)** (A34–A37) — a neutral-named, versioned compatibility
    API faithful to the comparable platform's documented API to the extent legally possible: an
    array-of-rows decide endpoint, per-flow generated OpenAPI/Swagger, API-key pattern/wildcard scoping, and

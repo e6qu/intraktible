@@ -48,8 +48,8 @@ PR5 — robustness & bug-fix round
 - `A31 | LOW | web | BuilderDeck's recent-sort now uses localeCompare (returns 0 for equal timestamps), a consistent total order instead of the prior never-zero comparator. | fixed — PR #10`
 
 PR6 — decision-table hit policies + aggregators
-- `A32 | MED | decision-engine | decision_table supports only first/all — add the standard hit policies (UNIQUE with conflict detection, ANY, FIRST, RULE ORDER, COLLECT + SUM/MIN/MAX/COUNT), surfaced in the builder + OpenAPI + assertions. | open — PR6`
-- `A33 | LOW | docs | document the expression language (expr-lang conditions + Starlark code, per D9) as a stable, versioned contract — explicitly NOT adding a second/standard expression engine. | open — PR6`
+- `A32 | MED | decision-engine | decision_table now resolves rows under a DMN hit policy (config "hit": first|unique|any|rule_order|collect, with "aggregate" sum|min|max|count for collect). UNIQUE/ANY detect conflicts and fail loudly; rule_order/collect gather per-target values (rules independent). The deprecated "mode":"all" still works. Surfaced in the builder (hit-policy + aggregate selects) and the OpenAPI config prose; assertions need no change (they match the flow output map). Domain + builder e2e tests added. | fixed — PR #11`
+- `A33 | LOW | docs | docs/EXPRESSIONS.md documents expr-lang (conditions/expressions) + Starlark (code node) as a stable, versioned contract, incl. the D9 decision NOT to add a second/standard engine; linked from the decision-engine README and the OpenAPI config prose (also corrected from "CEL-like" to expr-lang). | fixed — PR #11`
 
 PR7 — external decision API (compatibility surface)
 - `A34 | — | — | PREREQ (not code): confirm the comparable platform's live API contract (decide envelope, decision-history endpoint, any flow-management REST) from a legitimate account — its current docs are auth-gated. | open — PR7`
