@@ -28,7 +28,7 @@ records the disposition on the decision — the shared brain for real-time/bulk/
 **pre-approvals** (`decision-engine/preapproval` — durable, time-boxed grants per entity that the decide
 path honors instantly: a pre-approved entity is completed from the grant's terms, skipping the flow,
 recorded with `preapproval_id`; `…/{env}/preapprove/batch` promotes a whole population — every row the
-bound policy approves becomes a grant keyed by a row field), **flow assertions** (`decision-engine/assertions` — input→expected test cases run through the pure core, a pre-promote gate), decision history, **analytics-lite** (per-flow metrics with champion/challenger breakdown), **monitors** (`decision-engine/monitor` — thresholds over a flow's live metrics: failure/refer/automation/approve/decline rate, latency, volume, and **distribution drift** vs a captured baseline, evaluated firing/ok at read time; an optional `monitor.Scheduler` sweeps on `INTRAKTIBLE_MONITOR_INTERVAL` and notifies on the ok→firing edge), and **notifications** (`decision-engine/notify` — webhook subscriptions + SSRF-safe delivery; a monitor `…/monitors/check` pushes firing rules to active webhooks and records each delivery) — all
+bound policy approves becomes a grant keyed by a row field), **flow assertions** (`decision-engine/assertions` — input→expected test cases run through the pure core, a pre-promote gate), decision history, **analytics-lite** (per-flow metrics with champion/challenger breakdown), **monitors** (`decision-engine/monitor` — thresholds over a flow's live metrics: failure/refer/automation/approve/decline rate, latency, volume, and **distribution drift** vs a captured baseline, evaluated firing/ok at read time; an optional `monitor.Scheduler` sweeps on `INTRAKTIBLE_MONITOR_INTERVAL` and notifies on the ok→firing edge — a sibling `models.Scheduler` on the same cadence pushes **model-drift** PSI crossings the same way), and **notifications** (`decision-engine/notify` — webhook subscriptions + SSRF-safe delivery; a monitor `…/monitors/check` pushes firing rules to active webhooks and records each delivery) — all
 command→event→projection→API, durable & replayable.
 The **Svelte Flow builder UI** (`web/src/routes/engine`) lists/creates flows and edits a flow's graph
 (add nodes from a palette, wire edges, edit per-node config via structured panels for common types or
@@ -58,8 +58,10 @@ command→event→projection→API. Decisions can carry an `{entity_type, entity
 folds that entity's features into the input under `features.*` (read by Rule/Split expressions,
 recorded in `DecisionStarted`); the engine reaches the Context Layer through a `FeatureProvider` port
 + adapter wired at the composition root (so the earlier-built engine never imports it). It also has a
-**connector** subsystem — a `Connect` interface + reference connectors (an arbitrary-HTTP one and a
-deterministic mock bureau) — where invoking a connector is an effect recorded as a `ConnectorFetched`
+**connector** subsystem — a `Connect` interface + connectors (http/graphql with an `auth` block +
+custom headers, sql, static, the first-class `plaid`/`stripe` provider adapters, and a deterministic
+mock bureau; credentials sealed by the keyring, config validated at define time) — where invoking a
+connector is an effect recorded as a `ConnectorFetched`
 event (so replay reads the stored response, never a re-fetch). Its **Context data UI** (`web/src/routes/data`)
 lists/defines connectors and features and browses entities + their per-entity event timelines (so the
 data a flow's Connect/Rule nodes depend on can be authored in the product, not just via the API).

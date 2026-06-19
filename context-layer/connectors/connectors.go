@@ -324,6 +324,16 @@ func (p Provider) Fetch(ctx context.Context, id identity.Identity, connector str
 	return InvokeWithSecrets(ctx, p.Store, id, connector, params, p.Egress, p.Secrets)
 }
 
+// ValidateConfig checks a connector's type-specific config by attempting to
+// construct it (construction only — no network or database I/O), so a malformed
+// definition fails loudly at define time instead of deferring the error to the
+// first fetch. It must be called on the plaintext config, before secrets are
+// sealed (the constructors read credential values).
+func ValidateConfig(connectorType string, config json.RawMessage) error {
+	_, err := build(ConnectorView{Type: connectorType, Config: config}, EgressPolicy{})
+	return err
+}
+
 // build constructs a Connector from its definition.
 func build(def ConnectorView, egress EgressPolicy) (Connector, error) {
 	switch def.Type {
@@ -335,6 +345,10 @@ func build(def ConnectorView, egress EgressPolicy) (Connector, error) {
 		return newGraphQL(def.Config, egress)
 	case domain.ConnectorStatic:
 		return newStatic(def.Config)
+	case domain.ConnectorPlaid:
+		return newPlaid(def.Config, egress)
+	case domain.ConnectorStripe:
+		return newStripe(def.Config, egress)
 	case domain.ConnectorMockBureau:
 		return mockBureau{}, nil
 	default:
@@ -345,14 +359,18 @@ func build(def ConnectorView, egress EgressPolicy) (Connector, error) {
 // --- HTTP connector ---
 
 type httpConfig struct {
-	URL    string `json:"url"`
-	Method string `json:"method"`
+	URL     string            `json:"url"`
+	Method  string            `json:"method"`
+	Headers map[string]string `json:"headers,omitempty"`
+	Auth    *authConfig       `json:"auth,omitempty"`
 }
 
 type httpConnector struct {
-	url    string
-	method string
-	client *http.Client
+	url     string
+	method  string
+	headers map[string]string
+	auth    *authConfig
+	client  *http.Client
 }
 
 func newHTTP(config json.RawMessage, egress EgressPolicy) (httpConnector, error) {
@@ -370,9 +388,15 @@ func newHTTP(config json.RawMessage, egress EgressPolicy) (httpConnector, error)
 	if method == "" {
 		method = http.MethodGet
 	}
+	if err := cfg.Auth.validate(); err != nil {
+		return httpConnector{}, err
+	}
 	// The egress policy is enforced at dial time (after DNS resolution) so it
 	// guards every redirect hop and resists DNS rebinding.
-	return httpConnector{url: cfg.URL, method: method, client: egress.Client(fetchTimeout)}, nil
+	return httpConnector{
+		url: cfg.URL, method: method, headers: cfg.Headers, auth: cfg.Auth,
+		client: egress.Client(fetchTimeout),
+	}, nil
 }
 
 // Fetch calls the configured endpoint (sending params as the JSON body for
@@ -391,6 +415,8 @@ func (h httpConnector) Fetch(ctx context.Context, params json.RawMessage) (json.
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	applyHeaders(req, h.headers)
+	h.auth.apply(req)
 	resp, err := h.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("context-layer: http connector fetch: %w", err)
@@ -412,14 +438,18 @@ func (h httpConnector) Fetch(ctx context.Context, params json.RawMessage) (json.
 // --- GraphQL connector ---
 
 type graphqlConfig struct {
-	URL   string `json:"url"`
-	Query string `json:"query"`
+	URL     string            `json:"url"`
+	Query   string            `json:"query"`
+	Headers map[string]string `json:"headers,omitempty"`
+	Auth    *authConfig       `json:"auth,omitempty"`
 }
 
 type graphqlConnector struct {
-	url    string
-	query  string
-	client *http.Client
+	url     string
+	query   string
+	headers map[string]string
+	auth    *authConfig
+	client  *http.Client
 }
 
 func newGraphQL(config json.RawMessage, egress EgressPolicy) (graphqlConnector, error) {
@@ -436,7 +466,13 @@ func newGraphQL(config json.RawMessage, egress EgressPolicy) (graphqlConnector, 
 	if cfg.Query == "" {
 		return graphqlConnector{}, fmt.Errorf("context-layer: graphql connector needs a query")
 	}
-	return graphqlConnector{url: cfg.URL, query: cfg.Query, client: egress.Client(fetchTimeout)}, nil
+	if err := cfg.Auth.validate(); err != nil {
+		return graphqlConnector{}, err
+	}
+	return graphqlConnector{
+		url: cfg.URL, query: cfg.Query, headers: cfg.Headers, auth: cfg.Auth,
+		client: egress.Client(fetchTimeout),
+	}, nil
 }
 
 // Fetch POSTs a GraphQL request ({query, variables}) — the decide input becomes the
@@ -459,6 +495,8 @@ func (g graphqlConnector) Fetch(ctx context.Context, params json.RawMessage) (js
 		return nil, fmt.Errorf("context-layer: graphql connector request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	applyHeaders(req, g.headers)
+	g.auth.apply(req)
 	resp, err := g.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("context-layer: graphql connector fetch: %w", err)

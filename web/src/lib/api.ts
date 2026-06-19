@@ -1766,6 +1766,7 @@ export interface ModelDrift {
   psi?: number;
   threshold?: number;
   firing: boolean;
+  alerting: boolean;
 }
 
 export async function modelDrift(

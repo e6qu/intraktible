@@ -3,8 +3,15 @@
 package models
 
 import (
+	"context"
+	"encoding/json"
 	"math"
 	"testing"
+	"time"
+
+	"github.com/e6qu/intraktible/decision-engine/events"
+	"github.com/e6qu/intraktible/platform/eventlog"
+	"github.com/e6qu/intraktible/platform/store"
 )
 
 func TestBucket(t *testing.T) {
@@ -34,5 +41,34 @@ func TestPSI(t *testing.T) {
 	// Empty either side → not computable.
 	if _, ok := PSI(Histogram{}, base); ok {
 		t.Fatal("empty baseline should be non-computable")
+	}
+}
+
+func TestDriftProjectorAlertResolve(t *testing.T) {
+	ctx := context.Background()
+	s := store.NewMemory()
+	key := store.Key("demo", "main", "risk")
+	seedStats(t, s, ModelStats{Org: "demo", Workspace: "main", Name: "risk"})
+
+	apply := func(typ string, payload any) {
+		t.Helper()
+		b, _ := json.Marshal(payload)
+		if err := (DriftProjector{}).Apply(ctx, eventlog.Envelope{
+			Org: "demo", Workspace: "main", Type: typ, Time: time.Now().UTC(), Payload: b,
+		}, s); err != nil {
+			t.Fatalf("apply %s: %v", typ, err)
+		}
+	}
+
+	apply(events.TypeModelDriftAlerted, events.ModelDriftAlerted{Name: "risk", PSI: 0.5, Threshold: 0.25})
+	st, _, _ := store.GetDoc[ModelStats](ctx, s, StatsCollection, key)
+	if !st.Alerting {
+		t.Fatal("alerted event should flip Alerting true")
+	}
+
+	apply(events.TypeModelDriftResolved, events.ModelDriftResolved{Name: "risk"})
+	st, _, _ = store.GetDoc[ModelStats](ctx, s, StatsCollection, key)
+	if st.Alerting {
+		t.Fatal("resolved event should flip Alerting false")
 	}
 }
