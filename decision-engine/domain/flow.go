@@ -121,13 +121,41 @@ func validateEdgesAcyclic(g events.Graph, types map[string]events.NodeType) erro
 // content yields an identical etag, so a no-op republish is detectable and the
 // value is stable across replay.
 func Etag(g events.Graph, inputSchema json.RawMessage) (string, error) {
+	// Hash a canonical form so the etag is a function of meaning, not byte-level
+	// formatting: each node's Config (a json.RawMessage) and the input schema are
+	// re-encoded with sorted keys + normalized whitespace, so a semantically
+	// identical re-import is still detected as a no-op republish.
+	canon := g
+	canon.Nodes = make([]events.Node, len(g.Nodes))
+	copy(canon.Nodes, g.Nodes)
+	for i := range canon.Nodes {
+		canon.Nodes[i].Config = canonicalJSON(canon.Nodes[i].Config)
+	}
 	b, err := json.Marshal(struct {
 		Graph       events.Graph    `json:"graph"`
 		InputSchema json.RawMessage `json:"input_schema,omitempty"`
-	}{Graph: g, InputSchema: inputSchema})
+	}{Graph: canon, InputSchema: canonicalJSON(inputSchema)})
 	if err != nil {
 		return "", fmt.Errorf("decision-engine: hash version: %w", err)
 	}
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:]), nil
+}
+
+// canonicalJSON re-encodes a JSON value with sorted object keys and normalized
+// whitespace (Go's json.Marshal sorts map keys). Empty or non-JSON input is
+// returned unchanged, so it never fails the hash.
+func canonicalJSON(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 {
+		return raw
+	}
+	var v any
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return raw
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return raw
+	}
+	return b
 }
