@@ -48,6 +48,47 @@ func (c CreateFlow) Validate() error {
 	return nil
 }
 
+// SetShadow assigns the shadow version for an environment (Version 0 clears it).
+// The shadow version is evaluated alongside live decisions for divergence
+// analysis; its result is never returned.
+type SetShadow struct {
+	FlowID      string
+	Environment string
+	Version     int
+}
+
+// Validate requires a flow, a known environment, and a non-negative version.
+func (c SetShadow) Validate() error {
+	if strings.TrimSpace(c.FlowID) == "" {
+		return errors.New("decision-engine: flow_id is required")
+	}
+	if !ValidEnvironment(c.Environment) {
+		return fmt.Errorf("decision-engine: invalid environment %q", c.Environment)
+	}
+	if c.Version < 0 {
+		return fmt.Errorf("decision-engine: shadow version must be >= 0, got %d", c.Version)
+	}
+	return nil
+}
+
+// ImportFlow upserts a flow from an exported document (create-if-new, then
+// publish the graph as a new version), so flows can be managed as code.
+type ImportFlow struct {
+	Slug        string
+	Name        string
+	Graph       events.Graph
+	InputSchema json.RawMessage
+}
+
+// Validate requires a well-formed slug and a structurally valid graph. Name is
+// optional on import — it defaults to the slug.
+func (c ImportFlow) Validate() error {
+	if !slugPattern.MatchString(c.Slug) {
+		return fmt.Errorf("decision-engine: invalid slug %q (lowercase letters, digits, hyphens)", c.Slug)
+	}
+	return ValidateGraph(c.Graph)
+}
+
 // PublishVersion is the command to publish a new immutable version of a flow.
 type PublishVersion struct {
 	FlowID      string
@@ -80,7 +121,7 @@ func (c DeployVersion) Validate() error {
 		return errors.New("decision-engine: flow_id is required")
 	}
 	if !ValidEnvironment(c.Environment) {
-		return fmt.Errorf("decision-engine: invalid environment %q (sandbox|production)", c.Environment)
+		return fmt.Errorf("decision-engine: invalid environment %q (sandbox|staging|production)", c.Environment)
 	}
 	if c.Version < 1 {
 		return fmt.Errorf("decision-engine: version must be >= 1, got %d", c.Version)
@@ -93,6 +134,32 @@ func (c DeployVersion) Validate() error {
 	}
 	if c.ChallengerPct > 0 && c.ChallengerVersion < 1 {
 		return errors.New("decision-engine: challenger_pct set without a challenger_version")
+	}
+	return nil
+}
+
+// SetPromotionPolicy configures promotion gates per target environment.
+type SetPromotionPolicy struct {
+	FlowID string
+	Policy map[string]events.PromotionStagePolicy
+}
+
+// Validate checks that each configured stage is known and cannot disable the
+// mandatory production maker-checker gate.
+func (c SetPromotionPolicy) Validate() error {
+	if strings.TrimSpace(c.FlowID) == "" {
+		return errors.New("decision-engine: flow_id is required")
+	}
+	if len(c.Policy) == 0 {
+		return errors.New("decision-engine: promotion policy is required")
+	}
+	for env, stage := range c.Policy {
+		if !ValidEnvironment(env) {
+			return fmt.Errorf("decision-engine: invalid promotion policy environment %q", env)
+		}
+		if env == EnvProduction && !stage.RequireReview {
+			return errors.New("decision-engine: production promotions require review")
+		}
 	}
 	return nil
 }

@@ -116,24 +116,55 @@ func (r *Runtime) bootstrap(ctx context.Context) error {
 		}
 		return nil
 	}
-	// Full rebuild from scratch.
-	if _, err := r.RebuildTo(ctx, 0); err != nil {
+	// Full rebuild from scratch — bounded to the head snapshot so events appended
+	// during boot are applied only once, by the live consumer (not re-applied here
+	// and then again off the bus).
+	if _, err := r.RebuildTo(ctx, head); err != nil {
 		return err
 	}
 	r.setApplied(head)
 	return r.writeCheckpoint(ctx, r.store, head)
 }
 
-// applyOne applies a single event and advances the checkpoint, atomically when
-// the store supports transactions. It skips events already applied this run (so
-// the boot-rebuild/live-bus overlap and resume can never double-apply).
+// applyOne applies a delivered event. Already-applied events are no-ops (the
+// boot-rebuild/live-bus overlap and resume can never double-apply). On a gap —
+// the in-process bus drops to a slow subscriber, or a backend delivers out of
+// order — it backfills the missing range from the authoritative, ordered log so
+// the read model never silently skips an event.
 func (r *Runtime) applyOne(ctx context.Context, e eventlog.Envelope) error {
 	r.mu.Lock()
-	already := e.Seq <= r.applied
+	applied := r.applied
 	r.mu.Unlock()
-	if already {
+	switch {
+	case e.Seq <= applied:
 		return nil
+	case e.Seq == applied+1:
+		return r.applyContiguous(ctx, e)
 	}
+	// Gap: re-read from the checkpoint and apply the missing events in order. The
+	// delivered event is within this range (its Seq <= the log head we read), so
+	// it is applied here and is a no-op when the bus redelivers it.
+	evs, err := r.log.Read(ctx, applied+1)
+	if err != nil {
+		return fmt.Errorf("projection: backfill from seq %d: %w", applied+1, err)
+	}
+	for _, be := range evs {
+		r.mu.Lock()
+		a := r.applied
+		r.mu.Unlock()
+		if be.Seq <= a {
+			continue
+		}
+		if err := r.applyContiguous(ctx, be); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// applyContiguous applies a single next-in-sequence event and advances the
+// checkpoint, atomically when the store supports transactions.
+func (r *Runtime) applyContiguous(ctx context.Context, e eventlog.Envelope) error {
 	if r.tx == nil {
 		// Ephemeral store (memory): no atomicity needed — a crash loses everything
 		// and the next boot fully rebuilds.
@@ -233,4 +264,13 @@ func (r *Runtime) Err() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.err
+}
+
+// Applied returns the highest event Seq applied to the store this run. Tests use
+// it to wait for read-after-write consistency; live reads are eventually
+// consistent by design (bounded by bus/poll lag).
+func (r *Runtime) Applied() uint64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.applied
 }

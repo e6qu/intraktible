@@ -3,7 +3,6 @@
      out and re-prioritised for whoever is viewing (Builder / Operator / Showcase).
      The persona is a client-side preference anyone can switch (see lib/persona). -->
 <script lang="ts">
-  import { onMount } from 'svelte';
   import { persona } from '$lib/persona';
   import { user } from '$lib/session';
   import { loadDashboard, type DashboardData } from '$lib/dashboard';
@@ -28,16 +27,19 @@
     }
   }
 
-  onMount(() => {
-    if ($user) load();
-    else loading = false;
-  });
-  // Load once the user signs in within the session.
+  // Load once per signed-in session — and reset on sign-out so a re-login within
+  // the session reloads. A single effect covers mount and later auth changes
+  // (the previous onMount + effect pair double-loaded on first paint).
   let loaded = $state(false);
   $effect(() => {
-    if ($user && !loaded) {
-      loaded = true;
-      load();
+    if ($user) {
+      if (!loaded) {
+        loaded = true;
+        load();
+      }
+    } else {
+      loaded = false;
+      loading = false;
     }
   });
 </script>

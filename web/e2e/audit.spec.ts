@@ -44,6 +44,44 @@ test('shows the event-log audit trail and filters it', async ({ page, request })
   await expect(rows.filter({ hasText: 'decision.flow.created' }).first()).toBeVisible();
 });
 
+test('creates and revokes a managed API token (admin)', async ({ page }) => {
+  await page.goto('/audit');
+  const panel = page.getByTestId('api-keys-config');
+  await panel.getByText('API tokens').click(); // open the <details>
+
+  const name = 'tok-' + Math.random().toString(36).slice(2, 7);
+  await panel.getByLabel('token name').fill(name);
+  await panel.getByLabel('token actor').fill('ci@acme');
+  await panel.getByLabel('token role').selectOption('editor');
+  await panel.getByTestId('create-token').click();
+
+  // The generated secret is revealed exactly once, right after creation.
+  await expect(panel.getByTestId('new-secret')).toContainText('itk_');
+
+  // The new token shows in the table as active.
+  const row = panel.locator('tbody tr', { hasText: name });
+  await expect(row.getByText('active')).toBeVisible();
+
+  // Rotating mints a fresh secret (shown once) and notes the grace window; the
+  // token stays active.
+  await row.getByRole('button', { name: 'Rotate' }).click();
+  await expect(panel.getByTestId('new-secret')).toContainText('itk_');
+  await expect(panel.getByTestId('new-secret')).toContainText('previous secret keeps working');
+  await expect(row.getByText('active')).toBeVisible();
+
+  // Revoking flips its status.
+  await row.getByRole('button', { name: 'Revoke' }).click();
+  await expect(row.getByText('revoked')).toBeVisible();
+
+  // The per-token Audit link deep-links to that token's trail — create, rotate,
+  // and revoke each left an event-log breadcrumb attributed to the admin.
+  await row.getByRole('link', { name: 'Audit' }).click();
+  const rows = page.locator('tbody tr');
+  await expect(rows.filter({ hasText: 'auth.managed_key.created' }).first()).toBeVisible();
+  await expect(rows.filter({ hasText: 'auth.managed_key.rotated' }).first()).toBeVisible();
+  await expect(rows.filter({ hasText: 'auth.managed_key.revoked' }).first()).toBeVisible();
+});
+
 test('configures PII masking fields (admin)', async ({ page }) => {
   await page.goto('/audit');
   const panel = page.getByTestId('masking-config');

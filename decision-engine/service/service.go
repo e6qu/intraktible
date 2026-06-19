@@ -21,6 +21,8 @@ import (
 	"github.com/e6qu/intraktible/decision-engine/history"
 	"github.com/e6qu/intraktible/decision-engine/monitor"
 	"github.com/e6qu/intraktible/decision-engine/preapproval"
+	"github.com/e6qu/intraktible/decision-engine/shadow"
+	"github.com/e6qu/intraktible/platform/erasure"
 	"github.com/e6qu/intraktible/platform/httpx"
 	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/privacy"
@@ -33,6 +35,7 @@ type Service struct {
 	decide *command.DecideHandler
 	pa     *preapproval.Handler
 	store  store.Store
+	eraser *erasure.Vault
 }
 
 // New builds the service. The pre-approval handler is shared with the standalone
@@ -41,15 +44,26 @@ func New(cmd *command.Handler, decide *command.DecideHandler, pa *preapproval.Ha
 	return &Service{cmd: cmd, decide: decide, pa: pa, store: st}
 }
 
+// UseEraser enables unsealing of a decision record's crypto-shredded PII fields
+// at the read boundary (sealed at decide time under the entity subject; shown
+// "[erased]" once the subject is erased).
+func (s *Service) UseEraser(v *erasure.Vault) { s.eraser = v }
+
 // Routes registers the flow-management, decide, and decision-history endpoints.
 func (s *Service) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/flows", s.create)
+	mux.HandleFunc("POST /v1/flows/import", s.importFlow)
+	mux.HandleFunc("POST /v1/flows/import-bundle", s.importBundle)
 	mux.HandleFunc("GET /v1/flows", s.list)
 	mux.HandleFunc("GET /v1/flows/{flow_id}", s.get)
 	mux.HandleFunc("GET /v1/flows/{flow_id}/metrics", s.metrics)
 	mux.HandleFunc("POST /v1/flows/{flow_id}/versions", s.publish)
 	mux.HandleFunc("POST /v1/flows/{flow_id}/deployments", s.deploy)
 	mux.HandleFunc("POST /v1/flows/{flow_id}/promote", s.promote)
+	mux.HandleFunc("GET /v1/flows/{flow_id}/promotion-policy", s.getPromotionPolicy)
+	mux.HandleFunc("PUT /v1/flows/{flow_id}/promotion-policy", s.setPromotionPolicy)
+	mux.HandleFunc("GET /v1/flows/{flow_id}/shadow", s.getShadow)
+	mux.HandleFunc("PUT /v1/flows/{flow_id}/shadow", s.setShadow)
 	mux.HandleFunc("POST /v1/flows/{flow_id}/deployment-requests", s.requestDeployment)
 	mux.HandleFunc("POST /v1/flows/{flow_id}/deployment-requests/{req_id}/approve", s.approveDeployment)
 	mux.HandleFunc("POST /v1/flows/{flow_id}/deployment-requests/{req_id}/reject", s.rejectDeployment)
@@ -58,6 +72,7 @@ func (s *Service) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/flows/{slug}/{env}/preapprove/batch", s.preapproveBatch)
 	mux.HandleFunc("GET /v1/flows/{flow_id}/export", s.exportFlow)
 	mux.HandleFunc("POST /v1/flows/{flow_id}/backtest", s.backtestFlow)
+	mux.HandleFunc("POST /v1/flows/{flow_id}/whatif", s.whatifFlow)
 	mux.HandleFunc("GET /v1/decisions", s.listDecisions)
 	mux.HandleFunc("GET /v1/decisions/{decision_id}", s.getDecision)
 	mux.HandleFunc("GET /v1/decisions/{decision_id}/export", s.exportDecision)
@@ -84,6 +99,117 @@ func (s *Service) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusCreated, map[string]any{"flow_id": flowID, "event_id": e.ID, "seq": e.Seq})
+}
+
+// importRequest is the flow-as-code document — the same shape `…/export`
+// produces. Version and Etag are accepted so an exported doc round-trips, but
+// they are advisory: the import always publishes onto the live latest version.
+type importRequest struct {
+	Slug        string          `json:"slug"`
+	Name        string          `json:"name"`
+	Graph       events.Graph    `json:"graph"`
+	InputSchema json.RawMessage `json:"input_schema,omitempty"`
+	Version     int             `json:"version,omitempty"`
+	Etag        string          `json:"etag,omitempty"`
+}
+
+// importFlow upserts a flow from an exported document via the command layer,
+// which folds the authoritative log: it reuses the flow with the given slug (or
+// creates it) and publishes the graph as a new version. Re-importing identical
+// content is a no-op (the live latest version already matches), so it is safe to
+// run from CI / GitOps on every push. A 200 means no-op, a 201 means it wrote.
+func (s *Service) importFlow(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	var req importRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	res, err := s.cmd.ImportFlow(r.Context(), id, domain.ImportFlow{
+		Slug:        req.Slug,
+		Name:        req.Name,
+		Graph:       req.Graph,
+		InputSchema: req.InputSchema,
+	})
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	body := map[string]any{
+		"flow_id": res.FlowID, "slug": req.Slug, "version": res.Version,
+		"etag": res.Etag, "created": res.Created, "published": res.Published,
+	}
+	if !res.Published {
+		httpx.JSON(w, http.StatusOK, body)
+		return
+	}
+	body["event_id"] = res.Event.ID
+	body["seq"] = res.Event.Seq
+	httpx.JSON(w, http.StatusCreated, body)
+}
+
+type bundleRequest struct {
+	Flows []importRequest `json:"flows"`
+}
+
+// bundleResult is one flow's outcome within a bundle import.
+type bundleResult struct {
+	Slug      string `json:"slug"`
+	FlowID    string `json:"flow_id,omitempty"`
+	Version   int    `json:"version,omitempty"`
+	Created   bool   `json:"created"`
+	Published bool   `json:"published"`
+	Error     string `json:"error,omitempty"`
+}
+
+// importBundle imports many flows in one document (a GitOps repo of flows). It
+// is best-effort: each flow is imported independently against the authoritative
+// log, and a failing flow is reported in its result rather than aborting the
+// rest — so the response is the per-flow truth, not all-or-nothing. The status
+// is 200 (a batch report); per-flow success/failure is in each result.
+func (s *Service) importBundle(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	var req bundleRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	if len(req.Flows) == 0 {
+		httpx.Error(w, http.StatusBadRequest, fmt.Errorf("bundle: flows is required"))
+		return
+	}
+	results := make([]bundleResult, 0, len(req.Flows))
+	var published, failed int
+	for _, f := range req.Flows {
+		res, err := s.cmd.ImportFlow(r.Context(), id, domain.ImportFlow{
+			Slug:        f.Slug,
+			Name:        f.Name,
+			Graph:       f.Graph,
+			InputSchema: f.InputSchema,
+		})
+		if err != nil {
+			results = append(results, bundleResult{Slug: f.Slug, Error: err.Error()})
+			failed++
+			continue
+		}
+		results = append(results, bundleResult{
+			Slug: f.Slug, FlowID: res.FlowID, Version: res.Version,
+			Created: res.Created, Published: res.Published,
+		})
+		if res.Published {
+			published++
+		}
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"results": results, "published": published, "failed": failed,
+		"unchanged": len(req.Flows) - published - failed,
+	})
 }
 
 type publishRequest struct {
@@ -173,6 +299,134 @@ type promoteRequest struct {
 	Force bool   `json:"force,omitempty"` // override the firing-monitor gate
 }
 
+type promotionStageRequest struct {
+	RequireAssertions       *bool `json:"require_assertions,omitempty"`
+	RequireNoFiringMonitors *bool `json:"require_no_firing_monitors,omitempty"`
+	AllowForce              *bool `json:"allow_force,omitempty"`
+	RequireReview           *bool `json:"require_review,omitempty"`
+}
+
+type promotionPolicyRequest struct {
+	Policy map[string]promotionStageRequest `json:"policy"`
+}
+
+func (s *Service) getPromotionPolicy(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	fv, found, err := flows.Read(r.Context(), s.store, id, r.PathValue("flow_id"))
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	if !found {
+		httpx.Error(w, http.StatusNotFound, fmt.Errorf("flow not found"))
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"policy": fv.PromotionPolicy})
+}
+
+func (s *Service) setPromotionPolicy(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	var req promotionPolicyRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	policy := mergePromotionPolicy(req.Policy)
+	e, err := s.cmd.SetPromotionPolicy(r.Context(), id, domain.SetPromotionPolicy{
+		FlowID: r.PathValue("flow_id"),
+		Policy: policy,
+	})
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"policy": policy, "event_id": e.ID, "seq": e.Seq})
+}
+
+func mergePromotionPolicy(req map[string]promotionStageRequest) map[string]events.PromotionStagePolicy {
+	policy := flows.DefaultPromotionPolicy()
+	for env, patch := range req {
+		stage := policy[env]
+		if patch.RequireAssertions != nil {
+			stage.RequireAssertions = *patch.RequireAssertions
+		}
+		if patch.RequireNoFiringMonitors != nil {
+			stage.RequireNoFiringMonitors = *patch.RequireNoFiringMonitors
+		}
+		if patch.AllowForce != nil {
+			stage.AllowForce = *patch.AllowForce
+		}
+		if patch.RequireReview != nil {
+			stage.RequireReview = *patch.RequireReview
+		}
+		if env == domain.EnvProduction {
+			stage.RequireReview = true
+		}
+		policy[env] = stage
+	}
+	return policy
+}
+
+type shadowRequest struct {
+	Environment string `json:"environment"`
+	Version     int    `json:"version"` // 0 clears the shadow
+}
+
+// getShadow returns the current shadow assignments and the divergence report.
+func (s *Service) getShadow(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	flowID := r.PathValue("flow_id")
+	fv, found, err := flows.Read(r.Context(), s.store, id, flowID)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	if !found {
+		httpx.Error(w, http.StatusNotFound, fmt.Errorf("flow not found"))
+		return
+	}
+	report, _, err := shadow.Read(r.Context(), s.store, id, flowID)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"shadows": fv.Shadows, "report": report.ByEnv})
+}
+
+// setShadow assigns (or clears, with version 0) the shadow version for an env.
+func (s *Service) setShadow(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	var req shadowRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	e, err := s.cmd.SetShadow(r.Context(), id, domain.SetShadow{
+		FlowID:      r.PathValue("flow_id"),
+		Environment: req.Environment,
+		Version:     req.Version,
+	})
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"environment": req.Environment, "version": req.Version, "event_id": e.ID, "seq": e.Seq,
+	})
+}
+
 // promote ships the version live in `from` to `to`, carrying the champion only
 // (a promotion is a known-good version moving up the chain, not an A/B split). It
 // honors the same gate as a direct action on the target: promoting into a
@@ -211,22 +465,13 @@ func (s *Service) promote(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, fmt.Errorf("promote: nothing deployed in %q to promote", req.From))
 		return
 	}
-	// Promotion gate: a flow with firing monitors or failing assertions is not
-	// healthy enough to promote. Refuse unless explicitly forced.
-	if !req.Force {
-		if firing := s.firingMonitors(r.Context(), id, flowID); len(firing) > 0 {
-			httpx.Error(w, http.StatusConflict,
-				fmt.Errorf("promote blocked: monitors firing (%s) — fix them or pass force to override", strings.Join(firing, ", ")))
-			return
-		}
-		if rep, err := assertions.RunForFlow(r.Context(), s.store, id, flowID, src.Version); err == nil && rep.Failed > 0 {
-			httpx.Error(w, http.StatusConflict,
-				fmt.Errorf("promote blocked: %d/%d assertions failing on v%d — fix them or pass force to override", rep.Failed, rep.Total, src.Version))
-			return
-		}
+	stage := fv.PromotionPolicy[req.To]
+	if err := s.checkPromotionGates(r.Context(), id, flowID, src.Version, req.To, stage, req.Force); err != nil {
+		httpx.Error(w, http.StatusConflict, err)
+		return
 	}
 	cmd := domain.DeployVersion{FlowID: flowID, Environment: req.To, Version: src.Version}
-	if req.To == domain.EnvProduction {
+	if stage.RequireReview {
 		reqID, e, derr := s.cmd.RequestDeployment(r.Context(), id, cmd)
 		if derr != nil {
 			httpx.Error(w, http.StatusBadRequest, derr)
@@ -249,16 +494,50 @@ func (s *Service) promote(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Service) checkPromotionGates(ctx context.Context, id identity.Identity, flowID string, version int, target string, stage events.PromotionStagePolicy, force bool) error {
+	if force && stage.AllowForce {
+		return nil
+	}
+	advice := "fix them or pass force to override"
+	if !stage.AllowForce {
+		advice = fmt.Sprintf("fix them; force is disabled for %s", target)
+	}
+	if stage.RequireNoFiringMonitors {
+		// Fail closed: if the monitor state can't be read, block rather than
+		// promote a flow whose health is unknown.
+		firing, err := s.firingMonitors(ctx, id, flowID)
+		if err != nil {
+			return fmt.Errorf("promote blocked: cannot evaluate monitors: %w", err)
+		}
+		if len(firing) > 0 {
+			return fmt.Errorf("promote blocked: monitors firing (%s) — %s", strings.Join(firing, ", "), advice)
+		}
+	}
+	if stage.RequireAssertions {
+		rep, err := assertions.RunForFlow(ctx, s.store, id, flowID, version)
+		if err != nil {
+			return fmt.Errorf("promote blocked: cannot run assertions: %w", err)
+		}
+		if rep.Failed > 0 {
+			return fmt.Errorf("promote blocked: %d/%d assertions failing on v%d — %s", rep.Failed, rep.Total, version, advice)
+		}
+	}
+	return nil
+}
+
 // firingMonitors returns the metrics of the flow's monitors that are currently
 // firing — the promotion gate's input.
-func (s *Service) firingMonitors(ctx context.Context, id identity.Identity, flowID string) []string {
+func (s *Service) firingMonitors(ctx context.Context, id identity.Identity, flowID string) ([]string, error) {
 	rules, err := monitor.ListByFlow(ctx, s.store, id, flowID)
-	if err != nil || len(rules) == 0 {
-		return nil
+	if err != nil {
+		return nil, err
+	}
+	if len(rules) == 0 {
+		return nil, nil
 	}
 	snap, err := monitor.LoadSnapshot(ctx, s.store, id, flowID)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	var firing []string
 	for _, m := range rules {
@@ -266,7 +545,7 @@ func (s *Service) firingMonitors(ctx context.Context, id identity.Identity, flow
 			firing = append(firing, m.Metric)
 		}
 	}
-	return firing
+	return firing, nil
 }
 
 // requestDeployment proposes a deployment for review (maker-checker maker side).
@@ -382,10 +661,15 @@ type batchRequest struct {
 	Dataset    []map[string]any `json:"dataset"`
 	EntityType string           `json:"entity_type,omitempty"`
 	EntityID   string           `json:"entity_id,omitempty"`
+	// EntityKey, when set, reads each row's entity id from that input field so a
+	// multi-entity batch records (and seals PII) under the correct per-row subject
+	// instead of misattributing every row to a single EntityID.
+	EntityKey string `json:"entity_key,omitempty"`
 }
 
 type batchResult struct {
 	Index       int            `json:"index"`
+	EntityID    string         `json:"entity_id,omitempty"`
 	DecisionID  string         `json:"decision_id,omitempty"`
 	Status      string         `json:"status"` // completed | failed | rejected
 	Data        map[string]any `json:"data,omitempty"`
@@ -426,13 +710,23 @@ func (s *Service) decideBatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	slug, env := r.PathValue("slug"), r.PathValue("env")
-	ref := command.EntityRef{Type: req.EntityType, ID: req.EntityID}
 	resp := batchResponse{Total: len(req.Dataset), Results: make([]batchResult, 0, len(req.Dataset))}
 	for i, input := range req.Dataset {
+		// Per-row entity id when entity_key is set, else the batch-level EntityID.
+		entityID := req.EntityID
+		if req.EntityKey != "" {
+			entityID = stringField(input, req.EntityKey)
+			if entityID == "" {
+				resp.Rejected++
+				resp.Results = append(resp.Results, batchResult{Index: i, Status: "rejected", Error: "missing entity id field " + req.EntityKey})
+				continue
+			}
+		}
+		ref := command.EntityRef{Type: req.EntityType, ID: entityID}
 		res, err := s.decide.Decide(r.Context(), id, slug, env, input, ref)
 		if err != nil {
 			resp.Rejected++
-			resp.Results = append(resp.Results, batchResult{Index: i, Status: "rejected", Error: err.Error()})
+			resp.Results = append(resp.Results, batchResult{Index: i, EntityID: entityID, Status: "rejected", Error: err.Error()})
 			continue
 		}
 		switch res.Status {
@@ -442,7 +736,7 @@ func (s *Service) decideBatch(w http.ResponseWriter, r *http.Request) {
 			resp.Failed++
 		}
 		resp.Results = append(resp.Results, batchResult{
-			Index: i, DecisionID: res.DecisionID, Status: res.Status, Data: res.Output,
+			Index: i, EntityID: entityID, DecisionID: res.DecisionID, Status: res.Status, Data: res.Output,
 			Disposition: res.Disposition, Error: res.Error,
 		})
 	}
@@ -600,7 +894,10 @@ func (s *Service) listDecisions(w http.ResponseWriter, r *http.Request) {
 	}
 	recs, err := history.List(r.Context(), s.store, id)
 	if err == nil {
-		if fields, ferr := privacy.Fields(r.Context(), s.store, id); ferr == nil {
+		// Fail closed: if the masking config can't be read, surface the error
+		// rather than serving records that should have been masked.
+		var fields map[string]bool
+		if fields, err = privacy.Fields(r.Context(), s.store, id); err == nil {
 			for i := range recs {
 				recs[i] = maskRecord(recs[i], fields)
 			}
@@ -616,19 +913,37 @@ func (s *Service) getDecision(w http.ResponseWriter, r *http.Request) {
 	}
 	rec, found, err := history.Read(r.Context(), s.store, id, r.PathValue("decision_id"))
 	if found && err == nil {
-		rec = s.maskRecord(r.Context(), id, rec)
+		rec, err = s.maskRecord(r.Context(), id, rec)
 	}
 	httpx.WriteOne(w, rec, found, err, "decision not found")
 }
 
 // maskRecord masks the configured sensitive fields in a decision record's input,
 // output, and per-node outputs at the read boundary (the raw event log is intact).
-func (s *Service) maskRecord(ctx context.Context, id identity.Identity, rec history.Record) history.Record {
+func (s *Service) maskRecord(ctx context.Context, id identity.Identity, rec history.Record) (history.Record, error) {
+	// Unseal crypto-shredded PII first (or surface "[erased]" once the subject is
+	// erased), then apply read-boundary masking.
+	if s.eraser != nil && rec.EntityType != "" && rec.EntityID != "" {
+		subject := rec.EntityType + "/" + rec.EntityID
+		// An erased subject yields "[erased]" inside OpenFields (not an error), so a
+		// non-nil error is a genuine vault/decrypt fault — fail loudly.
+		d, err := s.eraser.OpenFields(ctx, id, subject, rec.Data)
+		if err != nil {
+			return history.Record{}, fmt.Errorf("decision-engine: unseal data: %w", err)
+		}
+		rec.Data = d
+		o, err := s.eraser.OpenFields(ctx, id, subject, rec.Output)
+		if err != nil {
+			return history.Record{}, fmt.Errorf("decision-engine: unseal output: %w", err)
+		}
+		rec.Output = o
+	}
+	// Fail closed: a masking-config read error must block the record, not serve it raw.
 	fields, err := privacy.Fields(ctx, s.store, id)
 	if err != nil {
-		return rec
+		return history.Record{}, fmt.Errorf("decision-engine: read privacy config: %w", err)
 	}
-	return maskRecord(rec, fields)
+	return maskRecord(rec, fields), nil
 }
 
 func maskRecord(rec history.Record, fields map[string]bool) history.Record {

@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onDestroy } from 'svelte';
   import { page } from '$app/stores';
   import Icon from '$lib/Icon.svelte';
   import {
@@ -21,7 +21,9 @@
   let prompt = $state('');
   let lastRunID = $state('');
 
-  const name = $page.params.name ?? '';
+  // Derive from the route param so navigating between sibling agents reloads
+  // rather than showing the first agent's data.
+  const name = $derived($page.params.name ?? '');
 
   async function load() {
     error = '';
@@ -66,24 +68,37 @@
   let streamPrompt = $state('');
   let streamText = $state('');
   let streaming = $state(false);
+  // Track the live connection so we can tear it down on unmount or before
+  // starting a new one — a leaked socket keeps mutating $state after navigation.
+  let activeES: EventSource | null = null;
+  let activeWS: WebSocket | null = null;
+
+  function closeStream() {
+    activeES?.close();
+    activeES = null;
+    activeWS?.close();
+    activeWS = null;
+  }
 
   function streamSSE() {
     streamText = '';
     streaming = true;
     const es = new EventSource(
-      `/v1/agents/${name}/run/stream?prompt=${encodeURIComponent(streamPrompt)}`
+      `/v1/agents/${encodeURIComponent(name)}/run/stream?prompt=${encodeURIComponent(streamPrompt)}`
     );
+    activeES = es;
     es.addEventListener('chunk', (e) => {
       streamText += (JSON.parse((e as MessageEvent).data) as { text: string }).text;
     });
     es.addEventListener('done', () => {
       streaming = false;
-      es.close();
+      closeStream();
       void load();
     });
     es.onerror = () => {
       streaming = false;
-      es.close();
+      error = 'stream failed';
+      closeStream();
     };
   }
 
@@ -91,29 +106,41 @@
     streamText = '';
     streaming = true;
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    const ws = new WebSocket(`${proto}://${location.host}/v1/agents/${name}/run/ws`);
+    const ws = new WebSocket(
+      `${proto}://${location.host}/v1/agents/${encodeURIComponent(name)}/run/ws`
+    );
+    activeWS = ws;
     ws.onopen = () => ws.send(JSON.stringify({ prompt: streamPrompt }));
     ws.onmessage = (e) => {
       const m = JSON.parse(e.data) as { type: string; text?: string };
       if (m.type === 'chunk') streamText += m.text ?? '';
       if (m.type === 'done' || m.type === 'error') {
         streaming = false;
-        ws.close();
+        closeStream();
         void load();
       }
     };
     ws.onerror = () => {
       streaming = false;
+      error = 'stream failed';
+      closeStream();
     };
   }
 
   function runStream() {
     if (!agent || streaming) return;
+    closeStream();
     if (transport === 'ws') streamWS();
     else streamSSE();
   }
 
-  onMount(load);
+  $effect(() => {
+    // Reload whenever the route param changes (covers initial mount and sibling nav).
+    void name;
+    void load();
+  });
+
+  onDestroy(closeStream);
 </script>
 
 <main>

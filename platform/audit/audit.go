@@ -148,9 +148,24 @@ func CSV(entries []Entry) (string, error) {
 		_ = w.Write([]string{
 			strconv.FormatUint(e.Seq, 10),
 			e.Time.UTC().Format(time.RFC3339),
-			e.Actor, e.Stream, e.Type, string(e.Payload),
+			csvSafe(e.Actor), csvSafe(e.Stream), csvSafe(e.Type), csvSafe(string(e.Payload)),
 		})
 	}
 	w.Flush()
 	return b.String(), w.Error()
+}
+
+// csvSafe defuses spreadsheet formula injection: a cell whose first character is
+// one a spreadsheet treats as a formula (=, +, -, @) or a leading control char
+// is prefixed with a single quote so it is read as literal text. encoding/csv
+// already escapes delimiters and quotes, but not this.
+func csvSafe(s string) string {
+	if s == "" {
+		return s
+	}
+	switch s[0] {
+	case '=', '+', '-', '@', '\t', '\r':
+		return "'" + s
+	}
+	return s
 }

@@ -37,11 +37,44 @@ These are real strengths, not placeholders:
 Priorities: **P0** = blocks a regulated production rollout; **P1** = expected by
 enterprise buyers; **P2** = differentiators / scale.
 
-### Identity & access  (status: authentication only)
-- **P0 — RBAC.** Roles (admin / editor / viewer / approver) and authorization on
-  every mutating endpoint. Today any authenticated caller can publish/deploy.
-- **P1 — SSO** (SAML / OIDC) and **SCIM** user provisioning; map IdP groups → roles.
-- **P1 — API token management** (scoped tokens, rotation, expiry, per-token audit).
+### Identity & access  (status: RBAC + managed tokens + OIDC & SAML SSO + SCIM shipped)
+- **P0 — RBAC — ✅ done.** Roles (viewer / operator / editor / approver / admin)
+  and authorization on mutating endpoints.
+- **P1 — SSO (OIDC) — ✅ done.** OIDC Authorization-Code login (`platform/auth`
+  OIDCAuthenticator + `platform/httpx` `/v1/auth/oidc/{provider}/login|callback`):
+  the IdP's ID token is verified against its JWKS (issuer/audience/expiry + a nonce),
+  CSRF is covered by a state cookie, and the verified email + a configurable **groups
+  claim → role** mapping issues a normal session. Providers are env-configured
+  (`INTRAKTIBLE_OIDC_PROVIDERS`); **Google** and **AWS Cognito** ship with sensible
+  defaults (issuer / `cognito:groups`). The login page renders a "Sign in with …"
+  button per configured provider.
+- **P1 — SCIM provisioning — ✅ done.** A SCIM 2.0 Users surface (`platform/scim`,
+  `/scim/v2/Users`, static-bearer-authed, provisioning one configured tenant) lets an
+  IdP create / list / filter / **deactivate** / delete users; the OIDC login consults
+  it through a gate so a user **deactivated in the IdP is refused a session** even with
+  a valid token (deprovisioning), while unprovisioned users aren't locked out. PATCH
+  tolerates the Okta and Azure active-toggle shapes. **SCIM Groups** are supported too
+  (`/scim/v2/Groups`, create/PUT-replace/PATCH-members/delete), and a group → role map
+  (`INTRAKTIBLE_SCIM_GROUP_ROLES`) **elevates a user's role** from their SCIM group
+  membership at login (additive — the highest of the token-derived and SCIM-derived
+  roles wins, never lower).
+- **P1 — SAML 2.0 SSO — ✅ done.** A SAML SP (`platform/auth` SAMLAuthenticator via
+  `crewjam/saml` + `platform/httpx` `/v1/auth/saml/{provider}/{login,acs,metadata}`):
+  SP-initiated redirect with relay-state CSRF, the ACS verifies the signed SAMLResponse
+  against the IdP metadata (signature, conditions, audience, InResponseTo), and a
+  configurable email + groups-attribute → role mapping issues a session — sharing the
+  same SCIM deprovisioning gate and group→role augmenter as OIDC. SP cert/key + IdP
+  metadata are env/file-configured; the login page lists SAML providers alongside OIDC.
+- **P1 — API token management — ✅ done (backend + UI).** Admin-gated
+  `GET/POST/DELETE /v1/api-keys` (+ `POST …/{id}/rotate`) manages durable, hashed API
+  tokens for the current org/workspace; create returns the generated secret once, tokens
+  carry scope, role, actor, optional expiry, and revoke time. **Rotation** mints a fresh
+  secret while honoring the prior one through a grace window (zero-downtime roll-out;
+  `grace_seconds`, default immediate). Managed from an **API tokens** panel on the Audit
+  (admin) page — create, rotate, and revoke, each revealing the one-time secret. Token
+  create/rotate/revoke append `auth.managed_key.*` events to the log, so each token's
+  lifecycle shows in the immutable audit trail (per-token deep link from the panel),
+  attributed to the admin who acted.
 - **P2 — Fine-grained, per-flow/per-environment permissions.**
 
 ### Governance & change control  (status: deploy + maker-checker shipped, UI included)
@@ -58,8 +91,11 @@ enterprise buyers; **P2** = differentiators / scale.
   non-production target and opening a maker-checker request into production (the
   same four-eyes gate), and a **promotion gate** refuses to promote a flow whose
   monitors are firing or whose **assertions fail** on the target version (409 +
-  details; `force` overrides). Surfaced in the builder's Deployment panel.
-  *Remaining: per-stage promotion policy.*
+  details; `force` overrides when the stage allows it). A per-stage **promotion
+  policy** (`GET/PUT /v1/flows/{id}/promotion-policy`) now controls, for each
+  target environment, whether assertions, monitors, review, and force override
+  are required/allowed; production review remains mandatory. Surfaced in the
+  builder's Deployment panel.
 - **Comment threads / explanations — ✅ done.** A general commenting capability
   (`platform/comments`): a durable, chronological discussion attached to any subject
   (`GET/POST /v1/comments/{type}/{id}`), surfaced on the items that get approved /
@@ -92,9 +128,22 @@ enterprise buyers; **P2** = differentiators / scale.
   configurable retention & purge, right-to-erasure (GDPR/CCPA). *Field-level
   **masking** now ships (`platform/privacy`): a per-workspace sensitive-field list
   (admin-gated) whose values are redacted in decision input/output, node traces,
-  and exports at the read boundary — the raw event log stays intact. Remaining:
-  configurable retention/purge and right-to-erasure (which the event-sourced model
-  makes non-trivial — likely crypto-shredding per subject).*
+  and exports at the read boundary — the raw event log stays intact. **Right-to-erasure
+  + retention** now ship via crypto-shredding (`platform/erasure`): each data subject's
+  PII is sealed under a per-subject AES-GCM key, and an admin **erasure** request
+  (`POST /v1/erasure/subjects/{subject}`) destroys the key — the ciphertext in the log
+  and projections becomes permanently unreadable (`ErrErased`) while the immutable events
+  stay for audit. A **retention sweep** (`POST /v1/erasure/retention?max_age_days=`)
+  auto-erases subjects past a cutoff. **Field-level sealing is wired** into the Context
+  Layer: the configured PII fields of a custom event (`INTRAKTIBLE_ERASURE_PII_FIELDS`)
+  are sealed under the entity subject before the event is recorded and opened on read —
+  or shown `[erased]` once the subject is shredded — while non-PII fields stay plaintext,
+  so the **feature engine keeps working** over them (verified end-to-end). The same
+  sealing also covers **recorded decision input/output** (sealed in the decide path after
+  execution, so decision logic is unaffected; unsealed at the history read before privacy
+  masking, `[erased]` once shredded). Erasing an entity now shreds its PII across both its
+  Context Layer events and its decision records (verified end-to-end). Right-to-erasure +
+  retention are complete.*
 - **P1 — Model risk management (SR 11-7 / SS1/23)**: documented model inventory,
   validation evidence, monitoring — supported by metrics + versioning but not
   packaged.
@@ -107,14 +156,27 @@ enterprise buyers; **P2** = differentiators / scale.
   I/O is performed. The builder exposes it as a panel that flags the records whose
   outcome changed. The deterministic engine makes this a natural, safe pre-deploy
   confidence check.
-- **P1 — Shadow / canary deploys** (the A/B challenger is a start).
+- **P1 — Shadow / canary deploys — ✅ shadow done.** A per-environment **shadow
+  version** (`PUT /v1/flows/{id}/shadow {environment, version}`, 0 clears) is
+  evaluated over the same input as every live decision in that environment; its
+  result is never returned to the caller. A `shadow.Projector` folds the
+  comparison into a per-env report (`GET …/shadow`) — total / matched / diverged /
+  errored with sample diverging decision ids — answering "how often would
+  promoting this candidate change the outcome?" at zero risk. Surfaced as a
+  **Shadow deploys** panel in the builder. The A/B challenger already covers canary
+  (a challenger takes a traffic share with its result returned). *Remaining: shadow
+  re-resolves connector/AI nodes against the live input only (not its own).*
 - **P1 — Flow unit tests / assertions — ✅ done.** Input→expected cases stored
   with the flow (`decision-engine/assertions`), run through the pure core via
   `POST /v1/flows/{id}/assertions/run`, and enforced as a **pre-promote gate**
   (a promote is blocked when assertions fail on the target version). UI: an
   Assertions panel in the builder. *Remaining: run them automatically in CI / a
   pre-deploy hook (today they gate promote and run on demand).*
-- **P2 — What-if / sensitivity analysis.**
+- **P2 — What-if / sensitivity analysis — ✅ done.** `POST /v1/flows/{id}/whatif`
+  sweeps one input field across a set of values through the pure engine (record-
+  nothing, like backtest) and reports how the outcome shifts — flagging each
+  **transition** where the decision changes (e.g. the score at which an approve flips
+  to a decline). Surfaced as a **What-if** panel in the builder.
 
 ### Observability & operations  (status: metrics + monitors + drift + scheduled webhook alerts + /healthz)
 - **P1 — Alerting — ✅ done (failure-rate, latency, volume, distribution drift).**
@@ -140,8 +202,19 @@ enterprise buyers; **P2** = differentiators / scale.
   / fraud / document-OCR / SQL) that scaffold the connector config, surfaced as
   "start from a template" chips on the Data page. Credential config fields
   (dsn/password/token/…) are redacted at the HTTP boundary (`connectors.RedactConfig`),
-  so secrets never reach the client/UI — but are still stored in plaintext; a real
-  secret store / encryption-at-rest (and per-template auth fields) remains the P1 work.*
+  so secrets never reach the client/UI. Connector credential fields are now also
+  encrypted before `ConnectorDefined` is recorded when operators set
+  `INTRAKTIBLE_CONNECTOR_SECRET_KEY` (32-byte base64/hex key), so the event log and
+  projections hold ciphertext envelopes while fetches decrypt just in time. **Key
+  rotation** is supported via a keyring: the primary key seals new values and each
+  sealed envelope records (a fingerprint of) the key that sealed it, so prior keys
+  listed in `INTRAKTIBLE_CONNECTOR_SECRET_KEYS_PREVIOUS` keep already-sealed values
+  readable while new writes move to the new key — rotate with no downtime, no
+  re-encryption pass. For a managed vault, an **external KMS** (`platform/kms`,
+  `INTRAKTIBLE_KMS_PROVIDER=aws|gcp` + `INTRAKTIBLE_KMS_KEY`) seals credential fields
+  with a key that never leaves **AWS KMS** or **GCP Cloud KMS** — it slots in as the
+  keyring's SecretBox, so the envelope/seal path is unchanged. Remaining polish:
+  per-template auth fields.*
 - **P1 — Batch decisioning** (score a file / a population) — **DONE.** `POST
   /v1/flows/{slug}/{env}/decide/batch` runs a dataset through the recorded decide
   path (each row a real decision in history/metrics/audit; capped at 500), with a
@@ -153,15 +226,50 @@ enterprise buyers; **P2** = differentiators / scale.
   (PII, jailbreak), cost/rate limits. Critical now that AI nodes can drive outcomes.
 
 ### Reliability & scale  (status: monolith + sqlite-shared-log split profile)
-- **P1 — A networked log backend** (Postgres/Badger/NATS/Kafka) for true multi-node
-  HA — the `Log` interface is ready; the backend is polling-based today.
+- **P1 — A networked log backend — ✅ Postgres done.** `eventlog.OpenPostgresLog`
+  (`--log=postgres`, `INTRAKTIBLE_POSTGRES_DSN`) is a durable, shared event log where
+  every node appends to and reads from one database: a `BIGSERIAL` seq gives one total
+  order across nodes, and a shared polling `delivery` (factored out of the SQLite log)
+  fans newly-committed rows — any node's — onto each process's in-process bus. Read/Head
+  are immediately consistent. A **LISTEN/NOTIFY fast path** pushes a "new events" hint
+  cross-node (each `Append` issues `NOTIFY`; a dedicated listen connection pokes
+  delivery), so live delivery is near-instant rather than waiting out the poll — the
+  poller stays as the correctness floor if a notification is missed. Verified against a
+  real Postgres incl. cross-node delivery and sub-poll-interval NOTIFY latency.
+  A **NATS JetStream** backend (`eventlog.OpenNATSLog`, `--log=nats` +
+  `INTRAKTIBLE_NATS_URL`) is the other option: the stream's monotonic sequence is the
+  event Seq (one total order across nodes) and a push consumer delivers live with no
+  poller. Verified against an embedded JetStream server incl. cross-node ordering and
+  delivery. *Remaining: Kafka (franz-go), if a Kafka shop needs it.*
 - **P1 — Backups / DR runbook**, point-in-time recovery (replay already enables it).
 - **P2 — Horizontal scale & multi-region.**
 
 ### Developer & platform experience  (status: REST + CLI + embedded UI)
-- **P1 — Client SDKs** (the `/decide` call is the product's hot path; a typed SDK
-  matters) and a **stable, versioned API** contract (OpenAPI).
-- **P1 — Flow-as-code / IaC** (export+import flows, GitOps, CI promotion).
+- **P1 — Stable, versioned API contract — ✅ first pass done.** The binary serves
+  its own **OpenAPI 3.1** document at `GET /openapi.json` (unauthenticated, so
+  codegen/Swagger-UI/Postman can fetch it) plus a dependency-free reference page at
+  `GET /docs`. The document (`platform/openapi`, embedded) covers the public
+  data-plane surface — decide + batch-decide, decision history reads, flow
+  list/create/read, flow-as-code import, and `/v1/me` — with an `X-Api-Key` security
+  scheme. A typed **Go client SDK** (`client`) wraps that surface over net/http with
+  no third-party deps — `client.New(baseURL, apiKey).Decide(…)` and friends, with
+  errors surfaced as a typed `*APIError`; it is tested end-to-end against a live
+  engine. A matching **TypeScript SDK** (`web/src/lib/sdk.ts`, framework-agnostic —
+  fetch-only, independent of the app's SvelteKit `api.ts`) ships the same surface
+  with a typed `ApiError`. Both SDKs and the spec now also cover the **deployment
+  lifecycle** — bulk import, `deploy`, and `promote` — so a CI/CD pipeline can drive
+  flows-as-code → deploy → promote programmatically. *Remaining: packaging/publishing
+  the SDKs, and the remaining admin endpoints (RBAC/audit/secrets) in the spec.*
+- **P1 — Flow-as-code / IaC — ✅ first pass done.** Flows export as a JSON document
+  (`GET …/export?format=json`) and **import** back via `POST /v1/flows/import`: the flow
+  is created when its slug is new, otherwise the graph is published as a new version.
+  Import folds the authoritative log (not the read projection), so back-to-back/CI runs
+  are safe, and re-importing identical content is a no-op (`published:false`, 200) —
+  idempotent GitOps. Surfaced as an **Import flow (as code)** panel (paste or upload JSON)
+  on the engine list. **Bundle import** (`POST /v1/flows/import-bundle`,
+  `{flows:[…]}`) imports a whole repo of flows in one request, best-effort with a
+  per-flow result (a bad flow is reported, not fatal); the same panel accepts a
+  bundle. *Remaining: a CLI/GitOps action wrapping the endpoints.*
 
 ### Security  (status: API key + SameSite session, gosec-clean, SSRF guard)
 - **P0 — Encryption at rest** for the durable stores + **secrets management**.
@@ -177,7 +285,7 @@ enterprise buyers; **P2** = differentiators / scale.
 | 3 | **Backtesting on a dataset** — ✅ done | P0 — the user's #1 confidence tool | M |
 | 4 | **Audit API + UI** — ✅ done | P0 — surface the lineage we already record | S |
 | 5 | **Reason codes** — ✅ done | P0 — adverse-action / explainability | S–M |
-| 6 | **Secrets management** for connectors | P1 | M |
+| 6 | **Connector credential encryption + key rotation + external KMS (AWS/GCP)** — ✅ done | P1 | M |
 | 7 | **Alerting / drift** | P1 | M |
 | 8 | **SSO/SCIM, batch decisioning, SDKs, networked log** | P1 | L each |
 | 9 | **SOC2/ISO, data residency, multi-region** | P2 / org-level | XL |

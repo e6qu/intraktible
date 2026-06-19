@@ -19,7 +19,18 @@ const (
 	TypeDeploymentRequested = "decision.flow.deployment_requested"
 	TypeDeploymentApproved  = "decision.flow.deployment_approved"
 	TypeDeploymentRejected  = "decision.flow.deployment_rejected"
+	TypePromotionPolicySet  = "decision.flow.promotion_policy_set"
+	// TypeShadowSet assigns (or clears) a per-environment shadow version: a
+	// candidate evaluated alongside live decisions for divergence analysis.
+	TypeShadowSet = "decision.flow.shadow_set"
 )
+
+// ShadowSet assigns the shadow version for one environment (Version 0 clears it).
+type ShadowSet struct {
+	FlowID      string `json:"flow_id"`
+	Environment string `json:"environment"`
+	Version     int    `json:"version"`
+}
 
 // NodeType enumerates the node kinds in the MVP palette (PLAN.md §4.1). Input
 // and Output bound the graph; the rest carry per-type config evaluated at decide
@@ -138,4 +149,19 @@ type DeploymentRejected struct {
 	RequestID string `json:"request_id"`
 	FlowID    string `json:"flow_id"`
 	Reason    string `json:"reason,omitempty"`
+}
+
+// PromotionStagePolicy is the gate applied when promoting into one target
+// environment.
+type PromotionStagePolicy struct {
+	RequireAssertions       bool `json:"require_assertions"`
+	RequireNoFiringMonitors bool `json:"require_no_firing_monitors"`
+	AllowForce              bool `json:"allow_force"`
+	RequireReview           bool `json:"require_review"`
+}
+
+// PromotionPolicySet records a flow's per-stage promotion gate policy.
+type PromotionPolicySet struct {
+	FlowID string                          `json:"flow_id"`
+	Policy map[string]PromotionStagePolicy `json:"policy"`
 }

@@ -1,6 +1,5 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
-  import { onMount } from 'svelte';
   import { page } from '$app/stores';
   import { getCase, assignCase, setCaseStatus, addCaseNote, type Case } from '$lib/api';
   import { displayEntries } from '$lib/kv';
@@ -15,7 +14,8 @@
   let newStatus = $state('in_progress');
   let noteText = $state('');
 
-  const caseID = $page.params.caseId ?? '';
+  // Derive from the route param so navigating between sibling cases reloads.
+  const caseID = $derived($page.params.caseId ?? '');
 
   async function load() {
     error = '';
@@ -42,7 +42,10 @@
     }
   }
 
-  onMount(load);
+  $effect(() => {
+    void caseID; // reload on initial mount and sibling navigation
+    void load();
+  });
 </script>
 
 <main>
@@ -104,7 +107,11 @@
     <div class="row">
       <input bind:value={noteText} placeholder="note" aria-label="note" />
       <button
-        onclick={() => run(() => addCaseNote(key, caseID, noteText)).then(() => (noteText = ''))}
+        onclick={() =>
+          run(async () => {
+            await addCaseNote(key, caseID, noteText);
+            noteText = ''; // only clear after a successful save (run() swallows errors)
+          })}
         disabled={busy}
       >
         Add note

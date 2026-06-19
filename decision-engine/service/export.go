@@ -80,7 +80,11 @@ func (s *Service) exportDecision(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusNotFound, fmt.Errorf("decision not found"))
 		return
 	}
-	rec = s.maskRecord(r.Context(), id, rec) // mask PII in the exported data/output too
+	rec, err = s.maskRecord(r.Context(), id, rec) // mask PII in the exported data/output too
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, err)
+		return
+	}
 	steps := make([]export.RunStep, 0, len(rec.Nodes))
 	for _, n := range rec.Nodes {
 		steps = append(steps, export.RunStep{NodeID: n.NodeID, Type: string(n.Type)})

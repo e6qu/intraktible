@@ -9,18 +9,27 @@ import {
   decide,
   publishVersion,
   exportFlow,
+  importFlow,
+  importFlowBundle,
   exportDecision,
   listDecisions,
   getDecision,
   getFlowMetrics,
   backtestFlow,
+  whatif,
   deployVersion,
   requestDeployment,
   approveDeployment,
   rejectDeployment,
+  getShadow,
+  setShadow,
   listAudit,
   auditQuery,
   auditExportUrl,
+  listApiKeys,
+  createApiKey,
+  rotateApiKey,
+  revokeApiKey,
   listConnectors,
   defineConnector,
   listFeatures,
@@ -40,7 +49,9 @@ import {
   getRunSummary,
   login,
   logout,
-  currentUser
+  currentUser,
+  listSsoProviders,
+  listSamlProviders
 } from './api';
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -89,6 +100,52 @@ describe('export', () => {
 
   it('throws loudly on a non-2xx export', async () => {
     await expect(exportFlow('k', 'f1', 'mermaid', textFetcher(404, ''))).rejects.toThrow(/404/);
+  });
+
+  it('importFlow posts the document and returns the result', async () => {
+    const fetcher = fetcherReturning(201, {
+      flow_id: 'f9',
+      slug: 'iac',
+      version: 2,
+      etag: 'e',
+      created: false,
+      published: true
+    });
+    const doc = { slug: 'iac', name: 'IaC', graph: { nodes: [], edges: [] } };
+    const out = await importFlow('k', doc, fetcher);
+    expect(out).toMatchObject({ flow_id: 'f9', version: 2, published: true });
+    const [url, init] = fetcher.mock.calls[0];
+    expect(url).toBe('/v1/flows/import');
+    expect(init?.method).toBe('POST');
+    expect(JSON.parse(init?.body as string)).toEqual(doc);
+  });
+
+  it('importFlowBundle posts the bundle and returns the per-flow report', async () => {
+    const fetcher = fetcherReturning(200, {
+      results: [
+        { slug: 'a', flow_id: 'f1', version: 1, created: true, published: true },
+        { slug: 'bad', created: false, published: false, error: 'invalid slug' }
+      ],
+      published: 1,
+      failed: 1,
+      unchanged: 0
+    });
+    const out = await importFlowBundle('k', { flows: [{ slug: 'a' }, { slug: 'bad' }] }, fetcher);
+    expect(out.published).toBe(1);
+    expect(out.failed).toBe(1);
+    expect(out.results[1].error).toBe('invalid slug');
+    expect(fetcher.mock.calls[0][0]).toBe('/v1/flows/import-bundle');
+  });
+
+  it('importFlow accepts a raw JSON string body', async () => {
+    const fetcher = fetcherReturning(200, {
+      flow_id: 'f9',
+      slug: 'iac',
+      version: 1,
+      published: false
+    });
+    await importFlow('k', '{"slug":"iac"}', fetcher);
+    expect(fetcher.mock.calls[0][1]?.body).toBe('{"slug":"iac"}');
   });
 });
 
@@ -167,6 +224,23 @@ describe('backtest', () => {
       )
     ).rejects.toThrow(/dataset is required/);
   });
+
+  it('whatif posts the sweep and returns the report', async () => {
+    const fetcher = fetcherReturning(200, {
+      field: 'score',
+      transitions: 1,
+      points: [
+        { value: 1, status: 'completed', output: { decision: 'B' }, changed: false },
+        { value: 9, status: 'completed', output: { decision: 'A' }, changed: true }
+      ]
+    });
+    const rep = await whatif('k', 'f1', { base: {}, field: 'score', values: [1, 9] }, fetcher);
+    expect(rep.transitions).toBe(1);
+    expect(rep.points[1].changed).toBe(true);
+    const [url, init] = fetcher.mock.calls[0];
+    expect(url).toBe('/v1/flows/f1/whatif');
+    expect(JSON.parse(String(init?.body))).toEqual({ base: {}, field: 'score', values: [1, 9] });
+  });
 });
 
 describe('deployment & maker-checker', () => {
@@ -218,6 +292,28 @@ describe('deployment & maker-checker', () => {
   });
 });
 
+describe('shadow', () => {
+  it('getShadow returns assignments and the report, defaulting empties', async () => {
+    const fetcher = fetcherReturning(200, {
+      shadows: { sandbox: 2 },
+      report: { sandbox: { shadow_version: 2, total: 10, matched: 7, diverged: 3, errored: 0 } }
+    });
+    const s = await getShadow('k', 'f1', fetcher);
+    expect(s.shadows.sandbox).toBe(2);
+    expect(s.report.sandbox.diverged).toBe(3);
+    expect(fetcher.mock.calls[0][0]).toBe('/v1/flows/f1/shadow');
+  });
+
+  it('setShadow PUTs the environment and version', async () => {
+    const fetcher = fetcherReturning(200, {});
+    await setShadow('k', 'f1', 'sandbox', 3, fetcher);
+    const [url, init] = fetcher.mock.calls[0];
+    expect(url).toBe('/v1/flows/f1/shadow');
+    expect(init?.method).toBe('PUT');
+    expect(JSON.parse(String(init?.body))).toEqual({ environment: 'sandbox', version: 3 });
+  });
+});
+
 describe('audit', () => {
   it('builds the query string from a filter', () => {
     expect(auditQuery({})).toBe('');
@@ -247,6 +343,68 @@ describe('audit', () => {
   it('auditExportUrl appends format=csv', () => {
     expect(auditExportUrl({})).toBe('/v1/audit?format=csv');
     expect(auditExportUrl({ stream: 'cases' })).toBe('/v1/audit?stream=cases&format=csv');
+  });
+});
+
+describe('managed api keys', () => {
+  it('listApiKeys unwraps the api_keys array', async () => {
+    const fetcher = fetcherReturning(200, {
+      api_keys: [
+        {
+          id: 'k1',
+          name: 'CI',
+          identity: { org: 'o', workspace: 'w', actor: 'ci' },
+          scope: 'sandbox',
+          role: 'editor',
+          created_at: 't'
+        }
+      ]
+    });
+    const keys = await listApiKeys('k', fetcher);
+    expect(keys).toHaveLength(1);
+    expect(keys[0].name).toBe('CI');
+    expect(fetcher.mock.calls[0][0]).toBe('/v1/api-keys');
+  });
+
+  it('createApiKey posts the request and returns the one-time secret', async () => {
+    const fetcher = fetcherReturning(201, {
+      api_key: { id: 'k2', name: 'bot', role: 'viewer', scope: 'sandbox' },
+      secret: 'itk_abc123'
+    });
+    const out = await createApiKey('k', { name: 'bot', actor: 'a', role: 'viewer' }, fetcher);
+    expect(out.secret).toBe('itk_abc123');
+    const [url, init] = fetcher.mock.calls[0];
+    expect(url).toBe('/v1/api-keys');
+    expect(init?.method).toBe('POST');
+    expect(JSON.parse(init?.body as string)).toMatchObject({ name: 'bot', role: 'viewer' });
+  });
+
+  it('rotateApiKey posts the grace window and returns the new secret', async () => {
+    const fetcher = fetcherReturning(200, {
+      api_key: { id: 'k2', name: 'bot', prev_hash_expires_at: 't1' },
+      secret: 'itk_rotated'
+    });
+    const out = await rotateApiKey('k', 'k2', 3600, fetcher);
+    expect(out.secret).toBe('itk_rotated');
+    const [url, init] = fetcher.mock.calls[0];
+    expect(url).toBe('/v1/api-keys/k2/rotate');
+    expect(init?.method).toBe('POST');
+    expect(JSON.parse(init?.body as string)).toEqual({ grace_seconds: 3600 });
+  });
+
+  it('revokeApiKey deletes by id and unwraps the key', async () => {
+    const fetcher = fetcherReturning(200, { api_key: { id: 'k3', revoked_at: 't' } });
+    const k = await revokeApiKey('k', 'k3', fetcher);
+    expect(k.revoked_at).toBe('t');
+    const [url, init] = fetcher.mock.calls[0];
+    expect(url).toBe('/v1/api-keys/k3');
+    expect(init?.method).toBe('DELETE');
+  });
+
+  it('surfaces the 403 admin restriction loudly', async () => {
+    await expect(
+      listApiKeys('k', fetcherReturning(403, { error: 'requires at least the "admin" role' }))
+    ).rejects.toThrow(/admin/);
   });
 });
 
@@ -561,6 +719,20 @@ describe('session auth', () => {
 
   it('currentUser returns null when unauthenticated', async () => {
     expect(await currentUser(fetcherReturning(401, {}))).toBeNull();
+  });
+
+  it('listSsoProviders unwraps the provider list and degrades to empty', async () => {
+    expect(await listSsoProviders(fetcherReturning(200, { providers: ['google', 'aws'] }))).toEqual(
+      ['google', 'aws']
+    );
+    expect(await listSsoProviders(fetcherReturning(404, {}))).toEqual([]);
+  });
+
+  it('listSamlProviders unwraps the provider list and degrades to empty', async () => {
+    expect(await listSamlProviders(fetcherReturning(200, { providers: ['okta'] }))).toEqual([
+      'okta'
+    ]);
+    expect(await listSamlProviders(fetcherReturning(500, {}))).toEqual([]);
   });
 
   it('currentUser returns the identity when signed in', async () => {

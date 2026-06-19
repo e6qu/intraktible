@@ -26,6 +26,8 @@ import (
 	"github.com/e6qu/intraktible/decision-engine/policy"
 	"github.com/e6qu/intraktible/decision-engine/preapproval"
 	"github.com/e6qu/intraktible/decision-engine/service"
+	"github.com/e6qu/intraktible/decision-engine/shadow"
+	"github.com/e6qu/intraktible/platform/erasure"
 	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/privacy"
 	"github.com/e6qu/intraktible/platform/testutil"
@@ -47,6 +49,378 @@ func rawGet(t *testing.T, api *testutil.API, path string) (int, string) {
 	defer func() { _ = resp.Body.Close() }()
 	b, _ := io.ReadAll(resp.Body)
 	return resp.StatusCode, string(b)
+}
+
+func TestImportFlowOverHTTP(t *testing.T) {
+	api := startEngine(t)
+
+	v1 := map[string]any{
+		"slug": "iac",
+		"name": "Flow as Code",
+		"graph": map[string]any{
+			"nodes": []map[string]any{
+				{"id": "in", "type": "input"},
+				{"id": "out", "type": "output"},
+			},
+			"edges": []map[string]any{{"from": "in", "to": "out"}},
+		},
+	}
+
+	// First import creates the flow and publishes v1.
+	var imp struct {
+		FlowID    string `json:"flow_id"`
+		Version   int    `json:"version"`
+		Created   bool   `json:"created"`
+		Published bool   `json:"published"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows/import", v1, http.StatusCreated, &imp)
+	if !imp.Created || !imp.Published || imp.Version != 1 || imp.FlowID == "" {
+		t.Fatalf("first import: %+v", imp)
+	}
+	flowID := imp.FlowID
+
+	// Re-importing identical content is a no-op (200, nothing published) even
+	// back-to-back — the command folds the authoritative log, not the projection.
+	imp = struct {
+		FlowID    string `json:"flow_id"`
+		Version   int    `json:"version"`
+		Created   bool   `json:"created"`
+		Published bool   `json:"published"`
+	}{}
+	api.Request(t, http.MethodPost, "/v1/flows/import", v1, http.StatusOK, &imp)
+	if imp.Created || imp.Published || imp.Version != 1 || imp.FlowID != flowID {
+		t.Fatalf("idempotent re-import: %+v", imp)
+	}
+
+	// A changed graph under the same slug publishes v2 onto the same flow.
+	v2 := map[string]any{
+		"slug": "iac",
+		"graph": map[string]any{
+			"nodes": []map[string]any{
+				{"id": "in", "type": "input"},
+				{"id": "s", "type": "split", "name": "route"},
+				{"id": "out", "type": "output"},
+			},
+			"edges": []map[string]any{
+				{"from": "in", "to": "s"},
+				{"from": "s", "to": "out", "branch": "yes"},
+			},
+		},
+	}
+	api.Request(t, http.MethodPost, "/v1/flows/import", v2, http.StatusCreated, &imp)
+	if imp.Created || !imp.Published || imp.Version != 2 || imp.FlowID != flowID {
+		t.Fatalf("update import: %+v", imp)
+	}
+
+	// The flow ends up with both versions once the projection catches up.
+	if !testutil.Eventually(t, func() bool {
+		code, body := rawGet(t, api, "/v1/flows/"+flowID)
+		return code == http.StatusOK && strings.Contains(body, `"latest":2`)
+	}) {
+		t.Fatal("imported flow never reached latest version 2")
+	}
+
+	// An exported doc round-trips back through import unchanged (no-op).
+	code, raw := rawGet(t, api, "/v1/flows/"+flowID+"/export?format=json")
+	if code != http.StatusOK {
+		t.Fatalf("export for round-trip: %d\n%s", code, raw)
+	}
+	var fx export.FlowExport
+	if err := json.Unmarshal([]byte(raw), &fx); err != nil {
+		t.Fatalf("export not valid: %v", err)
+	}
+	api.Request(t, http.MethodPost, "/v1/flows/import", fx, http.StatusOK, &imp)
+	if imp.Published {
+		t.Fatalf("re-importing an export of the latest version should be a no-op: %+v", imp)
+	}
+}
+
+type fieldSealer struct {
+	v      *erasure.Vault
+	fields map[string]bool
+}
+
+func (f fieldSealer) SealPII(ctx context.Context, id identity.Identity, subject string, doc json.RawMessage) (json.RawMessage, error) {
+	return f.v.SealFields(ctx, id, subject, doc, f.fields)
+}
+
+func TestDecisionRecordErasure(t *testing.T) {
+	log, st := testutil.NewLogStore(t)
+	vault := erasure.NewVault(st)
+	decide := command.NewDecideHandler(log, st,
+		command.WithPIISealer(fieldSealer{v: vault, fields: map[string]bool{"ssn": true}}))
+	svc := service.New(command.NewHandler(log), decide, preapproval.NewHandler(log), st)
+	svc.UseEraser(vault)
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "dev"}
+	api := testutil.StartAPI(t, log, st, "test-key", id, svc.Routes, flows.Projector{}, history.Projector{})
+
+	var created struct {
+		FlowID string `json:"flow_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows", map[string]any{"slug": "kyc", "name": "KYC"}, http.StatusCreated, &created)
+	// The flow reads only the non-PII "score"; "ssn" rides along in the input.
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/versions", map[string]any{
+		"graph": map[string]any{
+			"nodes": []map[string]any{
+				{"id": "in", "type": "input"},
+				{"id": "a", "type": "assignment", "config": map[string]any{
+					"assignments": []map[string]any{{"target": "decision", "expr": `score > 0 ? "OK":"NO"`}},
+				}},
+				{"id": "out", "type": "output", "config": map[string]any{"fields": []string{"decision"}}},
+			},
+			"edges": []map[string]any{{"from": "in", "to": "a"}, {"from": "a", "to": "out"}},
+		},
+	}, http.StatusCreated, nil)
+
+	var dec struct {
+		DecisionID string `json:"decision_id"`
+		Status     string `json:"status"`
+	}
+	if !testutil.Eventually(t, func() bool {
+		api.Request(t, http.MethodPost, "/v1/flows/kyc/sandbox/decide", map[string]any{
+			"entity_type": "customer", "entity_id": "ada",
+			"data": map[string]any{"score": 1, "ssn": "123-45-6789"},
+		}, http.StatusOK, &dec)
+		return dec.Status == "completed"
+	}) {
+		t.Fatal("decide never completed")
+	}
+
+	// The recorded decision input has the SSN sealed at rest. Poll: the history
+	// projection applies the decision event asynchronously off the bus, so a read
+	// immediately after the decide HTTP response can race it (flaky under -race).
+	var rec history.Record
+	if !testutil.Eventually(t, func() bool {
+		var rerr error
+		rec, _, rerr = history.Read(context.Background(), st, id, dec.DecisionID)
+		return rerr == nil && strings.Contains(string(rec.Data), "$intraktible_erased")
+	}) {
+		t.Fatalf("decision SSN not sealed at rest: %s", rec.Data)
+	}
+	if strings.Contains(string(rec.Data), "123-45-6789") {
+		t.Fatalf("raw SSN present in recorded decision: %s", rec.Data)
+	}
+
+	readSSN := func() string {
+		var got struct {
+			Data map[string]any `json:"data"`
+		}
+		api.Request(t, http.MethodGet, "/v1/decisions/"+dec.DecisionID, nil, http.StatusOK, &got)
+		s, _ := got.Data["ssn"].(string)
+		return s
+	}
+	// An authorized read unseals it; the non-PII score is untouched.
+	if got := readSSN(); got != "123-45-6789" {
+		t.Fatalf("unsealed decision ssn = %q", got)
+	}
+
+	// Erasing the subject shreds the recorded decision PII.
+	if err := vault.Erase(context.Background(), id, "customer/ada"); err != nil {
+		t.Fatal(err)
+	}
+	if got := readSSN(); got != "[erased]" {
+		t.Fatalf("decision ssn after erasure = %q, want [erased]", got)
+	}
+}
+
+func TestWhatifOverHTTP(t *testing.T) {
+	api := startEngine(t)
+	var created struct {
+		FlowID string `json:"flow_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows", map[string]any{"slug": "whatif", "name": "What If"}, http.StatusCreated, &created)
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/versions", map[string]any{
+		"graph": map[string]any{
+			"nodes": []map[string]any{
+				{"id": "in", "type": "input"},
+				{"id": "a", "type": "assignment", "config": map[string]any{
+					"assignments": []map[string]any{{"target": "decision", "expr": `score > 5 ? "A":"B"`}},
+				}},
+				{"id": "out", "type": "output", "config": map[string]any{"fields": []string{"decision"}}},
+			},
+			"edges": []map[string]any{{"from": "in", "to": "a"}, {"from": "a", "to": "out"}},
+		},
+	}, http.StatusCreated, nil)
+
+	var rep struct {
+		Field       string `json:"field"`
+		Transitions int    `json:"transitions"`
+		Points      []struct {
+			Value   float64        `json:"value"`
+			Output  map[string]any `json:"output"`
+			Changed bool           `json:"changed"`
+		} `json:"points"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/whatif", map[string]any{
+		"base": map[string]any{}, "field": "score", "values": []any{1, 3, 7, 9},
+	}, http.StatusOK, &rep)
+	if rep.Field != "score" || len(rep.Points) != 4 || rep.Transitions != 1 {
+		t.Fatalf("whatif report = %+v", rep)
+	}
+	if rep.Points[0].Output["decision"] != "B" || rep.Points[3].Output["decision"] != "A" {
+		t.Fatalf("whatif outcomes = %+v", rep.Points)
+	}
+
+	// A missing field is a 400.
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/whatif",
+		map[string]any{"values": []any{1}}, http.StatusBadRequest, nil)
+}
+
+func TestShadowEvaluationOverHTTP(t *testing.T) {
+	api := startEngine(t)
+	var created struct {
+		FlowID string `json:"flow_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows", map[string]any{"slug": "shadowflow", "name": "Shadow"}, http.StatusCreated, &created)
+
+	publish := func(decision string) {
+		api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/versions", map[string]any{
+			"graph": map[string]any{
+				"nodes": []map[string]any{
+					{"id": "in", "type": "input"},
+					{"id": "a", "type": "assignment", "config": map[string]any{
+						"assignments": []map[string]any{{"target": "decision", "expr": "'" + decision + "'"}},
+					}},
+					{"id": "out", "type": "output", "config": map[string]any{"fields": []string{"decision"}}},
+				},
+				"edges": []map[string]any{{"from": "in", "to": "a"}, {"from": "a", "to": "out"}},
+			},
+		}, http.StatusCreated, nil)
+	}
+	publish("A") // v1
+	publish("B") // v2 — diverges
+	publish("A") // v3 — agrees with v1
+
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/deployments",
+		map[string]any{"environment": "sandbox", "version": 1}, http.StatusCreated, nil)
+	api.Request(t, http.MethodPut, "/v1/flows/"+created.FlowID+"/shadow",
+		map[string]any{"environment": "sandbox", "version": 2}, http.StatusOK, nil)
+
+	// Wait until v1 is the live champion (the deploy projection caught up), so the
+	// shadow (v2) actually runs alongside it rather than v2 being the latest.
+	decide := func() string {
+		var dec struct {
+			Status string         `json:"status"`
+			Data   map[string]any `json:"data"`
+		}
+		api.Request(t, http.MethodPost, "/v1/flows/shadowflow/sandbox/decide",
+			map[string]any{"data": map[string]any{}}, http.StatusOK, &dec)
+		if dec.Status != "completed" {
+			return ""
+		}
+		s, _ := dec.Data["decision"].(string)
+		return s
+	}
+	if !testutil.Eventually(t, func() bool { return decide() == "A" }) {
+		t.Fatal("v1 never became the live champion")
+	}
+
+	type envShadow struct {
+		ShadowVersion int `json:"shadow_version"`
+		Total         int `json:"total"`
+		Matched       int `json:"matched"`
+		Diverged      int `json:"diverged"`
+	}
+	readReport := func() (map[string]int, envShadow) {
+		var got struct {
+			Shadows map[string]int       `json:"shadows"`
+			Report  map[string]envShadow `json:"report"`
+		}
+		api.Request(t, http.MethodGet, "/v1/flows/"+created.FlowID+"/shadow", nil, http.StatusOK, &got)
+		return got.Shadows, got.Report["sandbox"]
+	}
+
+	// The shadow (v2 → "B") diverges from the live champion (v1 → "A").
+	if !testutil.Eventually(t, func() bool {
+		shadows, env := readReport()
+		return shadows["sandbox"] == 2 && env.ShadowVersion == 2 && env.Diverged >= 1 && env.Matched == 0
+	}) {
+		_, env := readReport()
+		t.Fatalf("expected divergence under shadow v2, got %+v", env)
+	}
+
+	// Switching the shadow to v3 (which agrees with v1) resets the comparison and
+	// records matches instead.
+	api.Request(t, http.MethodPut, "/v1/flows/"+created.FlowID+"/shadow",
+		map[string]any{"environment": "sandbox", "version": 3}, http.StatusOK, nil)
+	if !testutil.Eventually(t, func() bool {
+		decide()
+		_, env := readReport()
+		return env.ShadowVersion == 3 && env.Matched >= 1 && env.Diverged == 0
+	}) {
+		_, env := readReport()
+		t.Fatalf("expected matches under shadow v3, got %+v", env)
+	}
+
+	// Clearing the shadow removes the assignment.
+	api.Request(t, http.MethodPut, "/v1/flows/"+created.FlowID+"/shadow",
+		map[string]any{"environment": "sandbox", "version": 0}, http.StatusOK, nil)
+	if !testutil.Eventually(t, func() bool {
+		shadows, _ := readReport()
+		return shadows["sandbox"] == 0
+	}) {
+		t.Fatal("clearing the shadow did not remove the assignment")
+	}
+}
+
+func TestImportBundleOverHTTP(t *testing.T) {
+	api := startEngine(t)
+
+	okGraph := map[string]any{
+		"nodes": []map[string]any{
+			{"id": "in", "type": "input"},
+			{"id": "out", "type": "output"},
+		},
+		"edges": []map[string]any{{"from": "in", "to": "out"}},
+	}
+
+	// A bundle with two good flows and one invalid (bad slug) flow.
+	bundle := map[string]any{
+		"flows": []map[string]any{
+			{"slug": "iac-a", "name": "A", "graph": okGraph},
+			{"slug": "iac-b", "name": "B", "graph": okGraph},
+			{"slug": "Bad Slug", "name": "nope", "graph": okGraph},
+		},
+	}
+	var out struct {
+		Results []struct {
+			Slug      string `json:"slug"`
+			Version   int    `json:"version"`
+			Created   bool   `json:"created"`
+			Published bool   `json:"published"`
+			Error     string `json:"error"`
+		} `json:"results"`
+		Published int `json:"published"`
+		Failed    int `json:"failed"`
+		Unchanged int `json:"unchanged"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows/import-bundle", bundle, http.StatusOK, &out)
+	if out.Published != 2 || out.Failed != 1 || len(out.Results) != 3 {
+		t.Fatalf("bundle summary: %+v", out)
+	}
+	// The good flows are created; the invalid one carries an error and no version.
+	for _, r := range out.Results {
+		switch r.Slug {
+		case "iac-a", "iac-b":
+			if !r.Created || !r.Published || r.Version != 1 || r.Error != "" {
+				t.Fatalf("good flow %q: %+v", r.Slug, r)
+			}
+		case "Bad Slug":
+			if r.Error == "" || r.Published {
+				t.Fatalf("invalid flow should report an error: %+v", r)
+			}
+		}
+	}
+
+	// Re-importing the same bundle is a no-op for the valid flows (idempotent).
+	out.Published, out.Failed, out.Unchanged = 0, 0, 0
+	api.Request(t, http.MethodPost, "/v1/flows/import-bundle", bundle, http.StatusOK, &out)
+	if out.Published != 0 || out.Failed != 1 || out.Unchanged != 2 {
+		t.Fatalf("idempotent re-import summary: %+v", out)
+	}
+
+	// An empty bundle is a 400.
+	api.Request(t, http.MethodPost, "/v1/flows/import-bundle", map[string]any{"flows": []any{}}, http.StatusBadRequest, nil)
 }
 
 func TestExportFlowOverHTTP(t *testing.T) {
@@ -288,10 +662,17 @@ func TestDecideAppliesPolicyOverHTTP(t *testing.T) {
 		t.Fatalf("policy never auto-approved: %+v", dec)
 	}
 
-	// The disposition is recorded first-class on the decision record.
+	// The disposition is recorded first-class on the decision record (poll: the
+	// history projection applies the decision event asynchronously, so the record
+	// can 404 or read stale immediately after the decide response).
 	var rec history.Record
-	api.Request(t, http.MethodGet, "/v1/decisions/"+dec.DecisionID, nil, http.StatusOK, &rec)
-	if rec.Disposition != policy.Approve || rec.PolicyID != pol.PolicyID || rec.PolicyVersion != 1 {
+	if !testutil.Eventually(t, func() bool {
+		rec = history.Record{}
+		if api.RequestStatus(t, http.MethodGet, "/v1/decisions/"+dec.DecisionID, nil, &rec) != http.StatusOK {
+			return false
+		}
+		return rec.Disposition == policy.Approve && rec.PolicyID == pol.PolicyID && rec.PolicyVersion == 1
+	}) {
 		t.Fatalf("decision record missing policy disposition: %+v", rec)
 	}
 
@@ -395,10 +776,16 @@ func TestDecideHonorsPreApprovalOverHTTP(t *testing.T) {
 		t.Fatalf("honored decision should carry the pre-approval terms: %+v", d.Data)
 	}
 
-	// The decision record links the pre-approval and has no node trace (flow skipped).
+	// The decision record links the pre-approval and has no node trace (flow
+	// skipped). Poll: the history projection applies asynchronously.
 	var rec history.Record
-	api.Request(t, http.MethodGet, "/v1/decisions/"+d.DecisionID, nil, http.StatusOK, &rec)
-	if rec.PreApprovalID == "" || len(rec.Nodes) != 0 {
+	if !testutil.Eventually(t, func() bool {
+		rec = history.Record{}
+		if api.RequestStatus(t, http.MethodGet, "/v1/decisions/"+d.DecisionID, nil, &rec) != http.StatusOK {
+			return false
+		}
+		return rec.PreApprovalID != "" && len(rec.Nodes) == 0
+	}) {
 		t.Fatalf("expected a honored record with no node trace: %+v", rec)
 	}
 }
@@ -836,7 +1223,7 @@ func startEngine(t *testing.T, opts ...command.DecideOption) *testutil.API {
 		asserts.Routes(mux)
 	}
 	return testutil.StartAPI(t, log, st, "test-key", id, routes,
-		flows.Projector{}, history.Projector{}, analytics.Projector{}, policy.Projector{}, preapproval.Projector{}, monitor.Projector{}, notify.Projector{}, privacy.Projector{}, assertions.Projector{})
+		flows.Projector{}, history.Projector{}, analytics.Projector{}, policy.Projector{}, preapproval.Projector{}, monitor.Projector{}, notify.Projector{}, privacy.Projector{}, assertions.Projector{}, shadow.Projector{})
 }
 
 // stubFeatures is a fixed feature source for the decide HTTP test.
@@ -1313,6 +1700,75 @@ func TestPromoteGateOnFiringMonitorOverHTTP(t *testing.T) {
 	if !promo.Promoted {
 		t.Fatalf("forced promote should deploy: %+v", promo)
 	}
+}
+
+func TestPromotionPolicyOverHTTP(t *testing.T) {
+	api := startEngine(t)
+	var created struct {
+		FlowID string `json:"flow_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows",
+		map[string]string{"slug": "stage-policy", "name": "Stage Policy"}, http.StatusCreated, &created)
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/versions",
+		map[string]any{"graph": flowtest.ConstGraph("approve")}, http.StatusCreated, nil)
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/deployments",
+		map[string]any{"environment": "sandbox", "version": 1}, http.StatusCreated, nil)
+
+	// Failing assertions would normally block sandbox -> staging.
+	api.Request(t, http.MethodPut, "/v1/flows/"+created.FlowID+"/assertions", map[string]any{
+		"cases": []map[string]any{{"name": "bad", "input": map[string]any{}, "expect": map[string]any{"decision": "decline"}}},
+	}, http.StatusOK, nil)
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/promote",
+		map[string]any{"from": "sandbox", "to": "staging"}, http.StatusConflict, nil)
+
+	// Configure staging: skip assertions, but require review.
+	api.Request(t, http.MethodPut, "/v1/flows/"+created.FlowID+"/promotion-policy", map[string]any{
+		"policy": map[string]any{
+			"staging": map[string]any{"require_assertions": false, "require_review": true},
+		},
+	}, http.StatusOK, nil)
+	var got struct {
+		Policy map[string]events.PromotionStagePolicy `json:"policy"`
+	}
+	api.Request(t, http.MethodGet, "/v1/flows/"+created.FlowID+"/promotion-policy", nil, http.StatusOK, &got)
+	if !got.Policy["staging"].RequireReview || got.Policy["staging"].RequireAssertions {
+		t.Fatalf("promotion policy did not apply: %+v", got.Policy["staging"])
+	}
+
+	var promo struct {
+		Promoted  bool   `json:"promoted"`
+		Pending   bool   `json:"pending"`
+		RequestID string `json:"request_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/promote",
+		map[string]any{"from": "sandbox", "to": "staging"}, http.StatusCreated, &promo)
+	if promo.Promoted || !promo.Pending || promo.RequestID == "" {
+		t.Fatalf("staging policy should open a request: %+v", promo)
+	}
+}
+
+func TestPromotionPolicyCanDisableForce(t *testing.T) {
+	api := startEngine(t)
+	var created struct {
+		FlowID string `json:"flow_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows",
+		map[string]string{"slug": "noforce", "name": "No Force"}, http.StatusCreated, &created)
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/versions",
+		map[string]any{"graph": flowtest.ConstGraph("approve")}, http.StatusCreated, nil)
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/deployments",
+		map[string]any{"environment": "sandbox", "version": 1}, http.StatusCreated, nil)
+	api.Request(t, http.MethodPut, "/v1/flows/"+created.FlowID+"/assertions", map[string]any{
+		"cases": []map[string]any{{"name": "bad", "input": map[string]any{}, "expect": map[string]any{"decision": "decline"}}},
+	}, http.StatusOK, nil)
+	api.Request(t, http.MethodPut, "/v1/flows/"+created.FlowID+"/promotion-policy", map[string]any{
+		"policy": map[string]any{
+			"staging": map[string]any{"allow_force": false},
+		},
+	}, http.StatusOK, nil)
+
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/promote",
+		map[string]any{"from": "sandbox", "to": "staging", "force": true}, http.StatusConflict, nil)
 }
 
 func TestBacktestComparesVersions(t *testing.T) {

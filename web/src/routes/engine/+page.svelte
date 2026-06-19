@@ -1,10 +1,12 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { goto } from '$app/navigation';
   import Icon from '$lib/Icon.svelte';
   import EmptyState from '$lib/EmptyState.svelte';
   import Skeleton from '$lib/Skeleton.svelte';
-  import { listFlows, createFlow, type Flow } from '$lib/api';
+  import { toast } from '$lib/toast';
+  import { listFlows, createFlow, importFlow, importFlowBundle, type Flow } from '$lib/api';
 
   // API calls authenticate via the session cookie (empty key -> no X-Api-Key header).
   const key = '';
@@ -42,6 +44,55 @@
     }
   }
 
+  // --- Flow-as-code import (paste or upload one flow, or a { flows: [...] } bundle) ---
+  let importText = $state('');
+  let importing = $state(false);
+  const isBundle = (d: unknown): d is { flows: unknown[] } =>
+    typeof d === 'object' && d !== null && Array.isArray((d as { flows?: unknown }).flows);
+  async function runImport() {
+    error = '';
+    let doc: unknown;
+    try {
+      doc = JSON.parse(importText);
+    } catch {
+      error = 'Import document is not valid JSON';
+      return;
+    }
+    importing = true;
+    try {
+      if (isBundle(doc)) {
+        const res = await importFlowBundle(key, doc);
+        const parts = [`${res.published} published`, `${res.unchanged} unchanged`];
+        if (res.failed) parts.push(`${res.failed} failed`);
+        toast.success(`Bundle: ${parts.join(', ')}`);
+        importText = '';
+        await load();
+      } else {
+        const res = await importFlow(key, doc);
+        toast.success(
+          res.created
+            ? `Created ${res.slug} (v${res.version})`
+            : res.published
+              ? `Updated ${res.slug} → v${res.version}`
+              : `${res.slug} already at v${res.version} — no change`
+        );
+        importText = '';
+        await load();
+        await goto(`/engine/${res.flow_id}`);
+      }
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    } finally {
+      importing = false;
+    }
+  }
+  async function onImportFile(e: Event) {
+    const file = (e.currentTarget as HTMLInputElement).files?.[0];
+    if (file) {
+      importText = await file.text();
+    }
+  }
+
   // liveVersion reads a flow's deployed version for an environment (via entries,
   // not a computed index, to stay clear of detect-object-injection).
   function liveVersion(flow: Flow, env: string): number | undefined {
@@ -69,6 +120,36 @@
     <input bind:value={name} placeholder="name" aria-label="name" />
     <button type="submit" disabled={busy}>{busy ? 'Creating…' : 'Create flow'}</button>
   </form>
+
+  <details class="import" data-testid="import-flow">
+    <summary><Icon name="upload" size={14} /> Import flow (as code)</summary>
+    <p class="muted">
+      Paste or upload a flow exported as JSON (the builder's Export → JSON), or a bundle
+      <code>{'{ "flows": [ … ] }'}</code> of several. Each flow is created if its slug is new, otherwise
+      a new version is published; re-importing identical content is a no-op.
+    </p>
+    <textarea
+      bind:value={importText}
+      aria-label="flow document"
+      placeholder={'{ "slug": "…", "name": "…", "graph": { … } }'}
+      rows="6"
+    ></textarea>
+    <div class="import-actions">
+      <input
+        type="file"
+        accept="application/json,.json"
+        aria-label="import file"
+        onchange={onImportFile}
+      />
+      <button
+        onclick={runImport}
+        disabled={importing || !importText.trim()}
+        data-testid="import-submit"
+      >
+        {importing ? 'Importing…' : 'Import'}
+      </button>
+    </div>
+  </details>
 
   {#if error}<p class="err">{error}</p>{/if}
 
@@ -126,6 +207,38 @@
     gap: 0.5rem;
     flex-wrap: wrap;
     margin: 0.6rem 0;
+  }
+  .import {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 0.6rem 0.9rem;
+    margin: 0.6rem 0;
+  }
+  .import summary {
+    cursor: pointer;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+  .import textarea {
+    width: 100%;
+    box-sizing: border-box;
+    font-family: var(--mono, monospace);
+    font-size: 0.82rem;
+    padding: 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface-2);
+    color: inherit;
+    resize: vertical;
+  }
+  .import-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
   }
   input,
   button {

@@ -8,6 +8,8 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -45,6 +47,7 @@ import (
 	"github.com/e6qu/intraktible/decision-engine/policy"
 	"github.com/e6qu/intraktible/decision-engine/preapproval"
 	engineservice "github.com/e6qu/intraktible/decision-engine/service"
+	"github.com/e6qu/intraktible/decision-engine/shadow"
 	hellocmd "github.com/e6qu/intraktible/hello/command"
 	helloservice "github.com/e6qu/intraktible/hello/service"
 	"github.com/e6qu/intraktible/hello/stats"
@@ -52,12 +55,16 @@ import (
 	"github.com/e6qu/intraktible/platform/audit"
 	"github.com/e6qu/intraktible/platform/auth"
 	"github.com/e6qu/intraktible/platform/comments"
+	"github.com/e6qu/intraktible/platform/erasure"
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/httpx"
 	"github.com/e6qu/intraktible/platform/identity"
+	"github.com/e6qu/intraktible/platform/kms"
 	"github.com/e6qu/intraktible/platform/notifications"
+	"github.com/e6qu/intraktible/platform/openapi"
 	"github.com/e6qu/intraktible/platform/privacy"
 	"github.com/e6qu/intraktible/platform/projection"
+	"github.com/e6qu/intraktible/platform/scim"
 	"github.com/e6qu/intraktible/platform/store"
 	"github.com/e6qu/intraktible/platform/web"
 )
@@ -101,7 +108,7 @@ func serveCmd(args []string) error {
 	modules := fs.String("modules", "all", "comma-separated modules (or 'all')")
 	devKey := fs.String("dev-api-key", "dev-sandbox-key", "seed a sandbox API key for local dev (empty to disable)")
 	storeKind := fs.String("store", "memory", "projection store: memory | sqlite (<data-dir>/projections.db) | postgres (INTRAKTIBLE_POSTGRES_DSN)")
-	logKind := fs.String("log", "file", "event log: file (single-process WAL) | sqlite (shared across processes, for the split profile)")
+	logKind := fs.String("log", "file", "event log: file (single-process WAL) | sqlite (shared across processes, for the split profile) | postgres (networked HA; INTRAKTIBLE_POSTGRES_DSN) | nats (JetStream HA; INTRAKTIBLE_NATS_URL)")
 	_ = fs.Parse(args)
 	return run(*addr, *dataDir, *modules, *devKey, *storeKind, *logKind)
 }
@@ -126,6 +133,8 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 	// --store=sqlite (and stay in-memory with --store=memory). It is not a
 	// projection, so a rebuild never touches it.
 	sessions := auth.NewStoreSessions(st)
+	apiKeys := auth.NewStoreAPIKeys(st)
+	keyring.UseResolver(apiKeys)
 	if devKey != "" {
 		keyring.Add(devKey, auth.APIKey{
 			ID:       "dev",
@@ -163,10 +172,23 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 	if egress.AllowPrivate {
 		slog.Warn("connectors: egress to private/loopback targets is ALLOWED (INTRAKTIBLE_CONNECTOR_ALLOW_PRIVATE)")
 	}
+	connectorSecrets, err := connectorSecretBoxFromEnv(ctx)
+	if err != nil {
+		return err
+	}
+	if connectorSecrets != nil {
+		slog.Info("connectors: credential-field encryption enabled")
+	}
 
 	// Agents that declare tools call Context Layer connectors through this toolbox
 	// during a tool-calling run (shared by the Agent Manager and the engine's AI node).
-	toolbox := tools.ConnectorToolbox{Fetcher: connectors.Provider{Store: st, Egress: egress}}
+	connectorProvider := connectors.Provider{Store: st, Egress: egress, Secrets: connectorSecrets}
+	toolbox := tools.ConnectorToolbox{Fetcher: connectorProvider}
+
+	// The erasure vault crypto-shreds PII: it backs the /v1/erasure admin surface
+	// and seals the Context Layer's configured PII event fields per subject.
+	erasureVault := erasure.NewVault(st)
+	erasurePIIFields := splitCSV(os.Getenv("INTRAKTIBLE_ERASURE_PII_FIELDS"))
 
 	if enabled(modules, "hello") {
 		helloservice.New(hellocmd.NewHandler(log), st).Routes(api)
@@ -177,15 +199,26 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 		// Layer connectors from Connect nodes, and run Agent Manager agents from AI
 		// nodes; each provider reads the shared store (a no-op when that module is
 		// not running / nothing is defined).
-		decide := enginecmd.NewDecideHandler(log, st,
+		decideOpts := []enginecmd.DecideOption{
 			enginecmd.WithFeatures(features.Provider{Store: st}),
-			enginecmd.WithConnectors(connectors.Provider{Store: st, Egress: egress}),
-			enginecmd.WithAgents(agents.Provider{Store: st, Registry: aiRegistry, Tools: toolbox}))
+			enginecmd.WithConnectors(connectorProvider),
+			enginecmd.WithAgents(agents.Provider{Store: st, Registry: aiRegistry, Tools: toolbox}),
+		}
+		// Crypto-shred recorded decision PII under the entity subject when erasure
+		// fields are configured (same set as the Context Layer's event sealing).
+		if len(erasurePIIFields) > 0 {
+			decideOpts = append(decideOpts, enginecmd.WithPIISealer(newPIISealer(erasureVault, erasurePIIFields)))
+		}
+		decide := enginecmd.NewDecideHandler(log, st, decideOpts...)
 		// The pre-approval write side is shared: the engine service uses it to
 		// promote an approved batch into grants; the pre-approval service exposes
 		// the standalone grant/list/revoke surface.
 		paCmd := preapproval.NewHandler(log)
-		engineservice.New(enginecmd.NewHandler(log), decide, paCmd, st).Routes(api)
+		engineSvc := engineservice.New(enginecmd.NewHandler(log), decide, paCmd, st)
+		if len(erasurePIIFields) > 0 {
+			engineSvc.UseEraser(erasureVault)
+		}
+		engineSvc.Routes(api)
 		// Policies are the operational disposition layer over flows (auto-approve/
 		// decline/refer); a first-class artifact alongside the flow registry.
 		policy.New(policy.NewHandler(log), st).Routes(api)
@@ -208,7 +241,11 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 		caseservice.New(casecmd.NewHandler(log), st).Routes(api)
 	}
 	if enabled(modules, "context-layer") {
-		contextservice.New(contextcmd.NewHandler(log), st, contextservice.WithEgress(egress)).Routes(api)
+		contextservice.New(contextcmd.NewHandler(log), st,
+			contextservice.WithEgress(egress),
+			contextservice.WithSecrets(connectorSecrets),
+			contextservice.WithErasure(erasureVault, erasurePIIFields),
+		).Routes(api)
 	}
 	var agentHandler *agentcmd.Handler
 	if enabled(modules, "agent-manager") {
@@ -237,6 +274,10 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 	notifications.New(notifications.NewHandler(log), st).Routes(api)
 
 	// Authenticated caller introspection (inside the /v1 auth chain).
+	httpx.NewAPIKeysHandler(apiKeys, log).Routes(api)
+	// Right-to-erasure (crypto-shredding) + retention, admin-gated. erasureVault is
+	// built earlier and shared with the Context Layer's PII field sealing.
+	erasure.NewService(erasureVault).Routes(api)
 	api.HandleFunc("GET /v1/me", httpx.MeHandler())
 
 	rt := projection.New(log, st, moduleProjectors(modules)...)
@@ -265,6 +306,10 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 		}
 	}
 
+	// The API contract (OpenAPI 3.1) + a reference page, served publicly so
+	// integrators and code generators can fetch it without a key.
+	openapi.Routes(root)
+
 	// /healthz reflects projection health: degraded (503) if a live apply error
 	// stopped the consumer, so an orchestrator does not keep routing to a node
 	// serving stale read models.
@@ -274,6 +319,42 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 	// it). Registered on root with exact patterns so they win over the /v1/ chain.
 	root.HandleFunc("POST /v1/login", httpx.LoginHandler(keyring, sessions))
 	root.HandleFunc("POST /v1/logout", httpx.LogoutHandler(sessions))
+	// SSO: OIDC login for the configured providers (Google, AWS Cognito, …). Each
+	// provider's discovery runs now; a provider that fails to initialize is skipped
+	// (logged) rather than blocking startup.
+	// SCIM user provisioning (the SSO companion): an IdP creates/deactivates users
+	// here, and the OIDC login consults it so a deactivated user is refused.
+	var scimStore *scim.Store
+	if token := os.Getenv("INTRAKTIBLE_SCIM_TOKEN"); token != "" {
+		scimStore = scim.NewStore(st)
+		org := envOr("INTRAKTIBLE_SCIM_ORG", "demo")
+		ws := envOr("INTRAKTIBLE_SCIM_WORKSPACE", "main")
+		scim.NewService(scimStore, token, org, ws).Routes(root)
+		slog.Info("scim: user provisioning enabled", "org", org, "workspace", ws)
+	}
+	// The SCIM gate + role augmenter are shared by both SSO protocols.
+	var ssoGate httpx.LoginGate
+	var ssoAugment httpx.RoleAugmenter
+	if scimStore != nil {
+		ssoGate = scimStore.Allowed
+		if groupRoles := parseGroupRoles(os.Getenv("INTRAKTIBLE_SCIM_GROUP_ROLES")); len(groupRoles) > 0 {
+			ssoAugment = scimRoleAugmenter(scimStore, groupRoles)
+		}
+	}
+	if authers := oidcAuthenticators(ctx); len(authers) > 0 {
+		oh := httpx.NewOIDCHandler(sessions, authers...)
+		oh.SetGate(ssoGate)
+		oh.SetRoleAugmenter(ssoAugment)
+		oh.Routes(root)
+		slog.Info("sso: OIDC enabled", "providers", oidcNames(authers))
+	}
+	if samlers := samlAuthenticators(); len(samlers) > 0 {
+		sh := httpx.NewSAMLHandler(sessions, samlers...)
+		sh.SetGate(ssoGate)
+		sh.SetRoleAugmenter(ssoAugment)
+		sh.Routes(root)
+		slog.Info("sso: SAML enabled", "providers", samlNames(samlers))
+	}
 	root.Handle("/v1/", httpx.Chain(api, httpx.Authenticate(keyring, sessions), httpx.Authorize))
 	handler := httpx.Chain(root, httpx.Recover, httpx.RequestID, httpx.Logger)
 
@@ -319,17 +400,258 @@ func openStore(ctx context.Context, kind, dataDir string) (store.Store, error) {
 }
 
 // openLog selects the event-log backend. The file WAL is single-process; the
-// shared SQLite log lets the split-services profile (one process per module) all
-// append to and read from one ordered log.
+// shared SQLite log lets one box's split-services profile share an ordered log;
+// the Postgres log is the networked backbone for true multi-node HA (every node
+// appends to and reads from one database).
 func openLog(kind, dataDir string) (eventlog.Log, error) {
 	switch kind {
 	case "", "file":
 		return eventlog.OpenWAL(dataDir)
 	case "sqlite":
 		return eventlog.OpenSQLiteLog(dataDir, eventlog.DefaultPollInterval)
+	case "postgres":
+		dsn := os.Getenv("INTRAKTIBLE_POSTGRES_DSN")
+		if dsn == "" {
+			return nil, fmt.Errorf("--log=postgres requires INTRAKTIBLE_POSTGRES_DSN")
+		}
+		return eventlog.OpenPostgresLog(context.Background(), dsn, eventlog.DefaultPollInterval)
+	case "nats":
+		url := os.Getenv("INTRAKTIBLE_NATS_URL")
+		if url == "" {
+			return nil, fmt.Errorf("--log=nats requires INTRAKTIBLE_NATS_URL (a JetStream-enabled server)")
+		}
+		return eventlog.OpenNATSLog(url)
 	default:
-		return nil, fmt.Errorf("unknown --log %q (file|sqlite)", kind)
+		return nil, fmt.Errorf("unknown --log %q (file|sqlite|postgres|nats)", kind)
 	}
+}
+
+// oidcAuthenticators builds an OIDC authenticator per name in
+// INTRAKTIBLE_OIDC_PROVIDERS (e.g. "google,aws"), reading each provider's config
+// from INTRAKTIBLE_OIDC_<NAME>_* env vars. Discovery is a network call; a
+// provider that fails to initialize is skipped, not fatal.
+func oidcAuthenticators(ctx context.Context) []*auth.OIDCAuthenticator {
+	raw := strings.TrimSpace(os.Getenv("INTRAKTIBLE_OIDC_PROVIDERS"))
+	if raw == "" {
+		return nil
+	}
+	var out []*auth.OIDCAuthenticator
+	for _, name := range strings.Split(raw, ",") {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		a, err := auth.NewOIDCAuthenticator(ctx, oidcConfigFromEnv(name))
+		if err != nil {
+			slog.Warn("sso: skipping OIDC provider", "provider", name, "err", err)
+			continue
+		}
+		out = append(out, a)
+	}
+	return out
+}
+
+func oidcConfigFromEnv(name string) auth.OIDCConfig {
+	p := "INTRAKTIBLE_OIDC_" + strings.ToUpper(name) + "_"
+	cfg := auth.OIDCConfig{
+		Name:         name,
+		Issuer:       os.Getenv(p + "ISSUER"),
+		ClientID:     os.Getenv(p + "CLIENT_ID"),
+		ClientSecret: os.Getenv(p + "CLIENT_SECRET"),
+		RedirectURL:  os.Getenv(p + "REDIRECT_URL"),
+		Org:          os.Getenv(p + "ORG"),
+		Workspace:    os.Getenv(p + "WORKSPACE"),
+		GroupsClaim:  os.Getenv(p + "GROUPS_CLAIM"),
+		GroupRoles:   parseGroupRoles(os.Getenv(p + "GROUP_ROLES")),
+		DefaultRole:  auth.Role(os.Getenv(p + "DEFAULT_ROLE")),
+	}
+	// Sensible per-provider defaults so operators set the minimum.
+	if cfg.Issuer == "" && name == "google" {
+		cfg.Issuer = "https://accounts.google.com"
+	}
+	if cfg.GroupsClaim == "" {
+		switch name {
+		case "google":
+			cfg.GroupsClaim = "groups"
+		case "aws":
+			cfg.GroupsClaim = "cognito:groups"
+		}
+	}
+	return cfg
+}
+
+// parseGroupRoles parses "group1:role1,group2:role2" into a group→role map.
+func parseGroupRoles(s string) map[string]auth.Role {
+	m := map[string]auth.Role{}
+	for _, pair := range strings.Split(s, ",") {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+		if k, v, ok := strings.Cut(pair, ":"); ok {
+			m[strings.TrimSpace(k)] = auth.Role(strings.TrimSpace(v))
+		}
+	}
+	return m
+}
+
+// samlAuthenticators builds a SAML SP authenticator per name in
+// INTRAKTIBLE_SAML_PROVIDERS, reading each provider's config (incl. the IdP
+// metadata, SP cert, and SP key from files) from INTRAKTIBLE_SAML_<NAME>_* env.
+// A provider that fails to initialize is skipped, not fatal.
+func samlAuthenticators() []*auth.SAMLAuthenticator {
+	raw := strings.TrimSpace(os.Getenv("INTRAKTIBLE_SAML_PROVIDERS"))
+	if raw == "" {
+		return nil
+	}
+	var out []*auth.SAMLAuthenticator
+	for _, name := range strings.Split(raw, ",") {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		cfg, err := samlConfigFromEnv(name)
+		if err == nil {
+			var a *auth.SAMLAuthenticator
+			a, err = auth.NewSAMLAuthenticator(cfg)
+			if err == nil {
+				out = append(out, a)
+				continue
+			}
+		}
+		slog.Warn("sso: skipping SAML provider", "provider", name, "err", err)
+	}
+	return out
+}
+
+func samlConfigFromEnv(name string) (auth.SAMLConfig, error) {
+	p := "INTRAKTIBLE_SAML_" + strings.ToUpper(name) + "_"
+	idpMeta, err := readFileEnv(p + "IDP_METADATA_FILE")
+	if err != nil {
+		return auth.SAMLConfig{}, err
+	}
+	cert, err := readFileEnv(p + "CERT_FILE")
+	if err != nil {
+		return auth.SAMLConfig{}, err
+	}
+	keyPEM, err := readFileEnv(p + "KEY_FILE")
+	if err != nil {
+		return auth.SAMLConfig{}, err
+	}
+	return auth.SAMLConfig{
+		Name:            name,
+		EntityID:        os.Getenv(p + "ENTITY_ID"),
+		ACSURL:          os.Getenv(p + "ACS_URL"),
+		MetadataURL:     os.Getenv(p + "METADATA_URL"),
+		IDPMetadataXML:  idpMeta,
+		CertPEM:         cert,
+		KeyPEM:          keyPEM,
+		Org:             os.Getenv(p + "ORG"),
+		Workspace:       os.Getenv(p + "WORKSPACE"),
+		EmailAttribute:  os.Getenv(p + "EMAIL_ATTR"),
+		GroupsAttribute: os.Getenv(p + "GROUPS_ATTR"),
+		GroupRoles:      parseGroupRoles(os.Getenv(p + "GROUP_ROLES")),
+		DefaultRole:     auth.Role(os.Getenv(p + "DEFAULT_ROLE")),
+	}, nil
+}
+
+// readFileEnv reads the file named by an env var, or returns "" when unset.
+func readFileEnv(key string) (string, error) {
+	path := strings.TrimSpace(os.Getenv(key))
+	if path == "" {
+		return "", nil
+	}
+	b, err := os.ReadFile(path) // #nosec G304 G703 -- operator-provided config file path (env), not user input
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", key, err)
+	}
+	return string(b), nil
+}
+
+func samlNames(as []*auth.SAMLAuthenticator) []string {
+	out := make([]string, 0, len(as))
+	for _, a := range as {
+		out = append(out, a.Name())
+	}
+	return out
+}
+
+// scimRoleAugmenter raises a verified user's role to the highest role mapped
+// from their SCIM group memberships (never below the token-derived base).
+func scimRoleAugmenter(users *scim.Store, groupRoles map[string]auth.Role) httpx.RoleAugmenter {
+	return func(ctx context.Context, org, workspace, email string, base auth.Role) auth.Role {
+		names, err := users.GroupsForUser(ctx, org, workspace, email)
+		if err != nil {
+			return base
+		}
+		role := base
+		for _, name := range names {
+			if r, ok := groupRoles[name]; ok && r.Rank() > role.Rank() {
+				role = r
+			}
+		}
+		return role
+	}
+}
+
+func oidcNames(as []*auth.OIDCAuthenticator) []string {
+	out := make([]string, 0, len(as))
+	for _, a := range as {
+		out = append(out, a.Name())
+	}
+	return out
+}
+
+// connectorSecretBoxFromEnv builds the connector secret keyring. The primary
+// (encrypting) key is INTRAKTIBLE_CONNECTOR_SECRET_KEY; optional prior keys for
+// decrypting already-sealed values during a rotation are a comma-separated list
+// in INTRAKTIBLE_CONNECTOR_SECRET_KEYS_PREVIOUS. Returns nil when no key is set.
+func connectorSecretBoxFromEnv(ctx context.Context) (*connectors.Keyring, error) {
+	// An external KMS (AWS/GCP), when configured, takes precedence: the key never
+	// leaves the provider and the local env key is not needed.
+	if k, err := kms.FromEnv(ctx); err != nil {
+		return nil, err
+	} else if k != nil {
+		slog.Info("connectors: using external KMS", "provider", os.Getenv("INTRAKTIBLE_KMS_PROVIDER"))
+		return connectors.NewKMSKeyring("kms:"+os.Getenv("INTRAKTIBLE_KMS_PROVIDER"), k), nil
+	}
+	raw := strings.TrimSpace(os.Getenv("INTRAKTIBLE_CONNECTOR_SECRET_KEY"))
+	if raw == "" {
+		return nil, nil
+	}
+	primary, err := decodeConnectorSecretKey(raw)
+	if err != nil {
+		return nil, err
+	}
+	keys := [][]byte{primary}
+	for _, p := range strings.Split(os.Getenv("INTRAKTIBLE_CONNECTOR_SECRET_KEYS_PREVIOUS"), ",") {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		prev, err := decodeConnectorSecretKey(p)
+		if err != nil {
+			return nil, fmt.Errorf("INTRAKTIBLE_CONNECTOR_SECRET_KEYS_PREVIOUS: %w", err)
+		}
+		keys = append(keys, prev)
+	}
+	return connectors.NewKeyring(keys...)
+}
+
+func decodeConnectorSecretKey(raw string) ([]byte, error) {
+	decoders := []func(string) ([]byte, error){
+		base64.StdEncoding.DecodeString,
+		base64.RawStdEncoding.DecodeString,
+		base64.RawURLEncoding.DecodeString,
+		hex.DecodeString,
+	}
+	for _, decode := range decoders {
+		key, err := decode(raw)
+		if err == nil && len(key) == 32 {
+			return key, nil
+		}
+	}
+	return nil, fmt.Errorf("INTRAKTIBLE_CONNECTOR_SECRET_KEY must be a 32-byte key encoded as base64 or hex")
 }
 
 // moduleProjectors returns the read-model projectors for the enabled modules —
@@ -343,7 +665,7 @@ func moduleProjectors(modules string) []projection.Projector {
 		ps = append(ps, stats.Projector{})
 	}
 	if enabled(modules, "decision-engine") {
-		ps = append(ps, flows.Projector{}, history.Projector{}, analytics.Projector{}, policy.Projector{}, preapproval.Projector{}, monitor.Projector{}, notify.Projector{}, assertions.Projector{})
+		ps = append(ps, flows.Projector{}, history.Projector{}, analytics.Projector{}, policy.Projector{}, preapproval.Projector{}, monitor.Projector{}, notify.Projector{}, assertions.Projector{}, shadow.Projector{})
 	}
 	if enabled(modules, "case-manager") {
 		ps = append(ps, cases.Projector{})
@@ -587,6 +909,44 @@ func enabled(modules, m string) bool {
 }
 
 // truthy reports whether an env value reads as enabled (1/true/yes/on).
+// piiSealer adapts the erasure vault + a PII field set to the decision engine's
+// PIISealer port, sealing a recorded decision's PII fields under the entity
+// subject. It keeps the engine free of direct erasure/privacy imports.
+type piiSealer struct {
+	vault  *erasure.Vault
+	fields map[string]bool
+}
+
+func newPIISealer(v *erasure.Vault, fields []string) piiSealer {
+	set := make(map[string]bool, len(fields))
+	for _, f := range fields {
+		set[f] = true
+	}
+	return piiSealer{vault: v, fields: set}
+}
+
+func (p piiSealer) SealPII(ctx context.Context, id identity.Identity, subject string, doc json.RawMessage) (json.RawMessage, error) {
+	return p.vault.SealFields(ctx, id, subject, doc, p.fields)
+}
+
+// splitCSV parses a comma-separated env value into a trimmed, non-empty list.
+func splitCSV(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func envOr(key, fallback string) string {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		return v
+	}
+	return fallback
+}
+
 func truthy(v string) bool {
 	switch strings.ToLower(strings.TrimSpace(v)) {
 	case "1", "true", "yes", "on":
