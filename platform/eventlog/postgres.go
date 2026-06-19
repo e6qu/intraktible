@@ -67,7 +67,7 @@ func OpenPostgresLog(ctx context.Context, dsn string, poll time.Duration) (*Post
 		pool.Close()
 		return nil, err
 	}
-	l.d = newDelivery(l.Read, poll, head)
+	l.d = newDelivery(l.readFrom, poll, head)
 	l.d.start()
 	// Start the LISTEN fast path. If it can't start, delivery still works via the
 	// poller — so a listener failure degrades latency, not correctness.
@@ -142,6 +142,13 @@ func (l *PostgresLog) Append(ctx context.Context, e Envelope) (Envelope, error) 
 
 // Read returns all events with Seq >= fromSeq (0 = all), in order.
 func (l *PostgresLog) Read(ctx context.Context, fromSeq uint64) ([]Envelope, error) {
+	return l.readFrom(ctx, fromSeq, 0)
+}
+
+// readFrom returns events with Seq >= fromSeq in order, capped at limit rows
+// (limit <= 0 = unbounded). The poller passes a bound so one pass never loads
+// the whole unread tail into memory; Read passes 0 for full replay.
+func (l *PostgresLog) readFrom(ctx context.Context, fromSeq uint64, limit int) ([]Envelope, error) {
 	if l.d.isClosed() {
 		return nil, ErrClosed
 	}
@@ -151,9 +158,14 @@ func (l *PostgresLog) Read(ctx context.Context, fromSeq uint64) ([]Envelope, err
 	if fromSeq > math.MaxInt64 {
 		return nil, fmt.Errorf("eventlog: postgres fromSeq %d out of range", fromSeq)
 	}
-	rows, err := l.pool.Query(ctx,
-		`SELECT seq, id, org, workspace, stream, type, time, actor, payload
-		 FROM events WHERE seq >= $1 ORDER BY seq`, int64(fromSeq))
+	query := `SELECT seq, id, org, workspace, stream, type, time, actor, payload
+		 FROM events WHERE seq >= $1 ORDER BY seq`
+	args := []any{int64(fromSeq)}
+	if limit > 0 {
+		query += ` LIMIT $2`
+		args = append(args, limit)
+	}
+	rows, err := l.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("eventlog: postgres read: %w", err)
 	}

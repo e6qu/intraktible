@@ -72,6 +72,27 @@ func TestEscalateRunOpensCase(t *testing.T) {
 	}
 }
 
+// TestEscalateRunUnknownRun proves a run that exists in neither the projection nor
+// the log is rejected (the projection-miss falls through to the scoped log fold,
+// which also misses).
+func TestEscalateRunUnknownRun(t *testing.T) {
+	ctx := context.Background()
+	log, err := eventlog.OpenWAL(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = log.Close() }()
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "dev"}
+	st := store.NewMemory()
+	h := command.NewHandler(log, st, registry())
+
+	if _, _, err := h.EscalateRun(ctx, id, domain.EscalateRun{
+		RunID: "does-not-exist", CompanyName: "Acme", CaseType: "aml", SLADays: 3,
+	}); err == nil {
+		t.Fatal("escalating an unknown run should fail")
+	}
+}
+
 func TestSummarizeRuns(t *testing.T) {
 	runs := []agents.RunView{
 		{Agent: "triage", Status: "completed"},

@@ -21,6 +21,7 @@ func BPMN(g events.Graph, flowName string) string {
 		defsID = "Definitions_1"
 	)
 	pos := bpmnLayout(g)
+	ids := assignBPMNIDs(g.Nodes)
 
 	type flow struct{ id, from, to, name string }
 	flows := make([]flow, 0, len(g.Edges))
@@ -45,7 +46,7 @@ func BPMN(g events.Graph, flowName string) string {
 	fmt.Fprintf(&b, "  <bpmn:process id=\"%s\" name=\"%s\" isExecutable=\"false\">\n", procID, attr(flowName))
 	for _, n := range g.Nodes {
 		el := bpmnElement(n.Type)
-		id := bpmnID(n.ID)
+		id := ids[n.ID]
 		fmt.Fprintf(&b, "    <bpmn:%s id=\"%s\" name=\"%s\">\n", el, id, attr(displayName(n)))
 		for _, f := range incoming[n.ID] {
 			fmt.Fprintf(&b, "      <bpmn:incoming>%s</bpmn:incoming>\n", f)
@@ -58,10 +59,10 @@ func BPMN(g events.Graph, flowName string) string {
 	for _, f := range flows {
 		if f.name != "" {
 			fmt.Fprintf(&b, "    <bpmn:sequenceFlow id=\"%s\" sourceRef=\"%s\" targetRef=\"%s\" name=\"%s\" />\n",
-				f.id, bpmnID(f.from), bpmnID(f.to), attr(f.name))
+				f.id, idFor(ids, f.from), idFor(ids, f.to), attr(f.name))
 		} else {
 			fmt.Fprintf(&b, "    <bpmn:sequenceFlow id=\"%s\" sourceRef=\"%s\" targetRef=\"%s\" />\n",
-				f.id, bpmnID(f.from), bpmnID(f.to))
+				f.id, idFor(ids, f.from), idFor(ids, f.to))
 		}
 	}
 	b.WriteString("  </bpmn:process>\n")
@@ -71,7 +72,7 @@ func BPMN(g events.Graph, flowName string) string {
 	fmt.Fprintf(&b, "    <bpmndi:BPMNPlane id=\"BPMNPlane_1\" bpmnElement=\"%s\">\n", procID)
 	for _, n := range g.Nodes {
 		bx := pos[n.ID]
-		id := bpmnID(n.ID)
+		id := ids[n.ID]
 		fmt.Fprintf(&b, "      <bpmndi:BPMNShape id=\"Shape_%s\" bpmnElement=\"%s\">\n", id, id)
 		fmt.Fprintf(&b, "        <dc:Bounds x=\"%d\" y=\"%d\" width=\"%d\" height=\"%d\" />\n", bx.x, bx.y, bx.w, bx.h)
 		b.WriteString("      </bpmndi:BPMNShape>\n")
@@ -198,6 +199,36 @@ func displayName(n events.Node) string {
 		return n.Name
 	}
 	return n.ID
+}
+
+// assignBPMNIDs maps each node id to a unique BPMN NCName. bpmnID on its own can
+// coerce two distinct node ids to the same NCName (e.g. "a/b" and "a b" both become
+// "a_b"), which would emit duplicate element ids and cross-wire the sequence-flow
+// refs. A per-export uniqueness map suffixes collisions (_2, _3, …) so element ids
+// and every ref pointing at them stay distinct and consistent.
+func assignBPMNIDs(nodes []events.Node) map[string]string {
+	used := map[string]bool{}
+	ids := make(map[string]string, len(nodes))
+	for _, n := range nodes {
+		base := bpmnID(n.ID)
+		cand := base
+		for i := 2; used[cand]; i++ {
+			cand = fmt.Sprintf("%s_%d", base, i)
+		}
+		used[cand] = true
+		ids[n.ID] = cand
+	}
+	return ids
+}
+
+// idFor returns the assigned unique id for a node, falling back to a direct coercion
+// for an edge that references an id not present among the nodes (a best effort that
+// still produces valid XML).
+func idFor(ids map[string]string, raw string) string {
+	if id, ok := ids[raw]; ok {
+		return id
+	}
+	return bpmnID(raw)
 }
 
 // bpmnID coerces an id into a valid XML NCName (BPMN ids are NCNames).

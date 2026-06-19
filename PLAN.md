@@ -502,6 +502,13 @@ never appear in-repo (neutral language only).
    stop-tied context, GCP KMS CRC32C, atomic UpdateDoc on a TxStore, sqlite-connector DSN allowlist,
    Keyring map lookup, SCIM filter parsing, BPMN export id uniqueness; frontend: keyed/reactive policy
    CommentThread, agent-stream cleanup on sibling nav, telemetry-clear, stable BuilderDeck sort.
+   **Shipped in PR #10:** all of A18–A31 fixed. Notable refinements vs the sketch: A20 keeps a
+   tenant-scoped log-fold fallback behind the projection read (read-after-write); A23 also serializes the
+   SQLite writer with a mutex and applies pragmas pool-wide so the atomic wrap is actually safe under
+   concurrency; A24 enforces read-only + an ITK_SQL_CONNECTOR_DIR allowlist; A28 uses a keyed remount and
+   folded in an incidental null-deref fix (a policy's versions can be null before first publish). New
+   tests accompany the riskier changes (delivery bounding/stop, full-queue async, KMS integrity, UpdateDoc
+   atomicity, DSN hardening, BPMN collisions, SCIM filter, policy-switch e2e).
 6. **Decision-table hit policies + aggregators** (A32–A33) — extend the decision-table node beyond
    first/all to the standard set (UNIQUE with conflict detection, ANY, FIRST, RULE ORDER, COLLECT with
    SUM/MIN/MAX/COUNT), surfaced in the builder + OpenAPI + assertions; and document the expression language

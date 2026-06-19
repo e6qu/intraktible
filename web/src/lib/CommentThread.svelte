@@ -57,6 +57,9 @@
       busy = false;
     }
   }
+  // Callers that reuse the thread across subjects (e.g. the policies page swapping
+  // the selected policy in place) key on the subject id so the component remounts
+  // and reloads, rather than relying on this once-only mount load.
   onMount(load);
 </script>
 
