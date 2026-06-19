@@ -1705,6 +1705,40 @@ export async function defineModel(
   }
 }
 
+// copilotExplain returns a plain-language explanation of a flow graph.
+export async function copilotExplain(
+  key: string,
+  graph: unknown,
+  fetcher: typeof fetch = fetch
+): Promise<string> {
+  const res = await fetcher('/v1/copilot/explain', {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify({ graph })
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'POST /v1/copilot/explain');
+  }
+  return ((await res.json()) as { text: string }).text ?? '';
+}
+
+// copilotSuggest turns a natural-language requirement into suggested decision logic.
+export async function copilotSuggest(
+  key: string,
+  prompt: string,
+  fetcher: typeof fetch = fetch
+): Promise<string> {
+  const res = await fetcher('/v1/copilot/suggest', {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify({ prompt })
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'POST /v1/copilot/suggest');
+  }
+  return ((await res.json()) as { text: string }).text ?? '';
+}
+
 export interface ModelDrift {
   model: string;
   count: number;
