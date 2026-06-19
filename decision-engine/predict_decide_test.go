@@ -96,3 +96,62 @@ func TestDecidePreResolvesPredictNode(t *testing.T) {
 func TestDecidePredictNodeWithoutProviderFailsLoudly(t *testing.T) {
 	decideFailsWithoutProvider(t, "score", flowtest.PredictGraph())
 }
+
+// TestModelDriftMonitoring proves predictions accumulate into a per-model
+// probability histogram, a baseline can be captured, and a post-baseline shift in
+// the predicted distribution is detected as PSI > 0.
+func TestModelDriftMonitoring(t *testing.T) {
+	ctx := context.Background()
+	log, err := eventlog.OpenWAL(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = log.Close() }()
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "caller"}
+	st := store.NewMemory()
+	publishFlow(t, ctx, log, st, id, "score", "Score", flowtest.PredictGraph())
+
+	cmd := command.NewHandler(log)
+	if _, err := cmd.DefineModel(ctx, id, "risk",
+		json.RawMessage(`{"kind":"logistic","intercept":-3,"coefficients":{"fico":0.005}}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := projection.New(log, st, models.Projector{}).Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	dh := command.NewDecideHandler(log, st, command.WithModels(models.Provider{Store: st}))
+
+	// Three decisions at fico=700 (probability ≈ 0.62), then capture the baseline,
+	// then two at fico=400 (probability ≈ 0.27) — a real shift in the distribution.
+	for i := 0; i < 3; i++ {
+		if _, err := dh.Decide(ctx, id, "score", "production", map[string]any{"fico": 700}, command.EntityRef{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := cmd.CaptureModelBaseline(ctx, id, "risk"); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if _, err := dh.Decide(ctx, id, "score", "production", map[string]any{"fico": 400}, command.EntityRef{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Fold the predict-node outputs + the baseline into the drift stats.
+	if err := projection.New(log, st, models.DriftProjector{}).Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	rep, err := models.Drift(ctx, st, id, "risk")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Count != 5 {
+		t.Fatalf("drift count = %d, want 5", rep.Count)
+	}
+	if !rep.HasBaseline || rep.PSI == nil {
+		t.Fatalf("expected a baseline + PSI, got %+v", rep)
+	}
+	if *rep.PSI <= 0 {
+		t.Fatalf("expected PSI > 0 after a distribution shift, got %v", *rep.PSI)
+	}
+}

@@ -19,6 +19,12 @@ test('defines a predictive model from the registry page', async ({ page }) => {
   const row = page.locator('tbody tr').filter({ hasText: name });
   await expect(row).toBeVisible();
   await expect(row.getByText('logistic')).toBeVisible();
+
+  // The drift readout opens; with no predictions yet it explains how to get data.
+  await row.getByRole('button', { name: 'Drift' }).click();
+  const driftRow = page.getByTestId('model-drift');
+  await expect(driftRow).toBeVisible();
+  await expect(driftRow).toContainText('No predictions recorded yet');
 });
 
 test('a predict node panel edits model + output without raw JSON', async ({ page, request }) => {

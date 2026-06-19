@@ -667,7 +667,7 @@ func moduleProjectors(modules string) []projection.Projector {
 		ps = append(ps, stats.Projector{})
 	}
 	if enabled(modules, "decision-engine") {
-		ps = append(ps, flows.Projector{}, history.Projector{}, analytics.Projector{}, policy.Projector{}, preapproval.Projector{}, monitor.Projector{}, notify.Projector{}, assertions.Projector{}, shadow.Projector{}, enginemodels.Projector{})
+		ps = append(ps, flows.Projector{}, history.Projector{}, analytics.Projector{}, policy.Projector{}, preapproval.Projector{}, monitor.Projector{}, notify.Projector{}, assertions.Projector{}, shadow.Projector{}, enginemodels.Projector{}, enginemodels.DriftProjector{})
 	}
 	if enabled(modules, "case-manager") {
 		ps = append(ps, cases.Projector{})

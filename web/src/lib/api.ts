@@ -1705,6 +1705,42 @@ export async function defineModel(
   }
 }
 
+export interface ModelDrift {
+  model: string;
+  count: number;
+  hist: number[];
+  has_baseline: boolean;
+  psi?: number;
+}
+
+export async function modelDrift(
+  key: string,
+  name: string,
+  fetcher: typeof fetch = fetch
+): Promise<ModelDrift> {
+  const res = await fetcher(`/v1/models/${encodeURIComponent(name)}/drift`, {
+    headers: authHeaders(key)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'GET model drift');
+  }
+  return (await res.json()) as ModelDrift;
+}
+
+export async function captureModelBaseline(
+  key: string,
+  name: string,
+  fetcher: typeof fetch = fetch
+): Promise<void> {
+  const res = await fetcher(`/v1/models/${encodeURIComponent(name)}/baseline`, {
+    method: 'POST',
+    headers: jsonHeaders(key)
+  });
+  if (!res.ok) {
+    await errorOrStatus(res, 'POST model baseline');
+  }
+}
+
 export async function listFeatures(key: string, fetcher: typeof fetch = fetch): Promise<Feature[]> {
   const res = await fetcher('/v1/context/features', { headers: authHeaders(key) });
   if (!res.ok) {
