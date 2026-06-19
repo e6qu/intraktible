@@ -58,7 +58,7 @@ PR7 — external decision API (compatibility surface)
 - `A37 | LOW | decision-engine | /v1/decisions accepts start_time/end_time (RFC3339; aliases of since/until) and include_node_results (default true; set false to omit the heavy per-node trace from list rows). Documented in the spec. | fixed — PR #12`
 
 PR8 — ML model hosting (epic; needs a product decision)
-- `A38 | — | decision-engine | EPIC: host/serve predictive models alongside rules — a predict node + model registry + serving + monitoring; the one sizeable in-scope feature gap, but bounded by the §9 "ONNX serving at scale" non-goal — scope before building (likely several PRs). | open — PR8`
+- `A38 | — | decision-engine | the models-as-data slice landed (PR #15): a model registry (POST/GET /v1/models, command→ModelDefined→projection→ModelView) + a Predict node, evaluated in a pure, deterministic decision-engine/models package (logistic | gbm tree-ensemble | expr-lang expression). The shell resolves+evaluates a Predict node from the registry and injects predict.<output> (recorded for replay — mirrors Connect/AI). Builder: a /models registry page + a predict node panel; OpenAPI + docs updated. BYO external model serving is the planned follow-up. Monitoring rides on the existing decision history/analytics (no bespoke model-monitor yet). | fixed — PR #15`
 - `A39 | LOW | context-layer | connector breadth — more prebuilt connector templates/providers (we ship HTTP + SQL + templates vs. the comparable platform's large catalog). | open — PR8`
 - `A40 | LOW | web | authoring AI-copilot (generate/explain decision logic from natural language) — stretch. | open — PR8`
 - `A41 | LOW | api | a gRPC/Arrow batch path for very large decisioning/backtest jobs — stretch. | open — PR8`
