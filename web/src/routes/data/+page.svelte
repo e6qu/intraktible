@@ -89,6 +89,13 @@
   async function addFeature() {
     if (fBusy) return; // Enter fires onsubmit directly, bypassing the disabled button
     error = '';
+    // A non-numeric window is a mistake — surface it rather than silently defining
+    // a 0-hour feature that will never aggregate anything.
+    const windowHours = Number(fWindow.trim());
+    if (!Number.isInteger(windowHours) || windowHours < 0) {
+      error = 'Window (hours) must be a non-negative whole number.';
+      return;
+    }
     fBusy = true;
     try {
       const body = {
@@ -97,7 +104,7 @@
         event_name: fEventName.trim(),
         aggregation: fAgg,
         field: fField.trim() || undefined,
-        window_hours: parseInt(fWindow, 10) || 0
+        window_hours: windowHours
       };
       await defineFeature(key, body);
       toast.success(`Feature ${fName} defined`);
