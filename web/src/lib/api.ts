@@ -1739,26 +1739,65 @@ export async function copilotSuggest(
   return ((await res.json()) as { text: string }).text ?? '';
 }
 
+// copilotGenerate returns a server-validated flow graph for a requirement (throws
+// with the server message on 422 when the model can't produce a valid flow).
+export async function copilotGenerate(
+  key: string,
+  prompt: string,
+  fetcher: typeof fetch = fetch
+): Promise<unknown> {
+  const res = await fetcher('/v1/copilot/generate', {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify({ prompt })
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'POST /v1/copilot/generate');
+  }
+  return ((await res.json()) as { graph: unknown }).graph;
+}
+
 export interface ModelDrift {
   model: string;
   count: number;
   hist: number[];
+  window_days: number;
   has_baseline: boolean;
   psi?: number;
+  threshold?: number;
+  firing: boolean;
 }
 
 export async function modelDrift(
   key: string,
   name: string,
+  windowDays = 0,
   fetcher: typeof fetch = fetch
 ): Promise<ModelDrift> {
-  const res = await fetcher(`/v1/models/${encodeURIComponent(name)}/drift`, {
+  const q = windowDays > 0 ? `?window=${windowDays}d` : '';
+  const res = await fetcher(`/v1/models/${encodeURIComponent(name)}/drift${q}`, {
     headers: authHeaders(key)
   });
   if (!res.ok) {
     return errorOrStatus(res, 'GET model drift');
   }
   return (await res.json()) as ModelDrift;
+}
+
+export async function setModelMonitor(
+  key: string,
+  name: string,
+  threshold: number,
+  fetcher: typeof fetch = fetch
+): Promise<void> {
+  const res = await fetcher(`/v1/models/${encodeURIComponent(name)}/monitor`, {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify({ threshold })
+  });
+  if (!res.ok) {
+    await errorOrStatus(res, 'POST model monitor');
+  }
 }
 
 export async function captureModelBaseline(

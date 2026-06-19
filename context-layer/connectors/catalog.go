@@ -107,5 +107,15 @@ func Catalog() []Template {
 			Description: "Read precomputed features for an entity from a local feature table (sqlite).",
 			Config:      json.RawMessage(`{"driver":"sqlite","dsn":"file:features.db","query":"SELECT * FROM features WHERE entity_id = :entity_id"}`),
 		},
+		{
+			ID: "graphql", Name: "GraphQL endpoint", Category: "Generic", Type: "graphql",
+			Description: "POST a GraphQL query to an endpoint; the decide input becomes the query variables.",
+			Config:      json.RawMessage(`{"url":"https://api.example.com/graphql","query":"query($id: ID!) { applicant(id: $id) { score } }"}`),
+		},
+		{
+			ID: "static-flags", Name: "Static / feature flags", Category: "Data", Type: "static",
+			Description: "Serve a fixed JSON value (constants, thresholds, feature flags) with no I/O — also handy for stubbing.",
+			Config:      json.RawMessage(`{"data":{"min_score":650,"flags":{"new_model":true}}}`),
+		},
 	}
 }
