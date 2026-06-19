@@ -146,6 +146,17 @@
   let nodes = $state.raw<Node[]>([]);
   let edges = $state.raw<Edge[]>([]);
   let canvasView = $state<'cards' | 'bpmn'>('cards');
+  // The canvas is the always-visible primary surface (floated to the top via CSS
+  // order); the operational panels live behind tabs so the page is no longer one
+  // endless scroll. Default to Test — the most common post-edit action.
+  type Tab = 'test' | 'deploy' | 'monitor' | 'discuss';
+  let tab = $state<Tab>('test');
+  const TABS: { id: Tab; label: string }[] = [
+    { id: 'test', label: 'Test & analyze' },
+    { id: 'deploy', label: 'Deploy & versions' },
+    { id: 'monitor', label: 'Monitors' },
+    { id: 'discuss', label: 'Discussion' }
+  ];
   // Typed cards and BPMN notation are alternate skins over the same flow model;
   // labelled backdrops still render as swimlanes.
   const nodeTypes = { flow: FlowNode, bpmn: BpmnNode, lane: LaneBand };
@@ -159,6 +170,44 @@
 
   let env = $state('production');
   let dataText = $state('{}');
+  // Live JSON validity for the test-run input, and a one-click skeleton built from
+  // the flow's input schema so you don't have to hand-write the shape.
+  const dataValid = $derived.by(() => {
+    try {
+      JSON.parse(dataText);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+  function sampleValue(type?: string): unknown {
+    switch (type) {
+      case 'number':
+      case 'integer':
+        return 0;
+      case 'boolean':
+        return false;
+      case 'array':
+        return [];
+      case 'object':
+        return {};
+      default:
+        return '';
+    }
+  }
+  function sampleFromSchema() {
+    const props = (inputSchema as { properties?: Record<string, { type?: string }> } | undefined)
+      ?.properties;
+    if (!props) {
+      dataText = '{}';
+      return;
+    }
+    // Build via fromEntries (no dynamic-key writes — keeps eslint-security clean).
+    const obj = Object.fromEntries(
+      Object.entries(props).map(([k, p]) => [k, sampleValue(p?.type)])
+    );
+    dataText = JSON.stringify(obj, null, 2);
+  }
   let entityType = $state('');
   let entityID = $state('');
   let result = $state('');
@@ -985,6 +1034,12 @@
   async function submitPromote() {
     error = '';
     if (!flow) return;
+    // Promotion changes which version serves live traffic — confirm before doing it.
+    const intoProd = promoteTo === 'production';
+    const verb = intoProd ? 'open a four-eyes deploy request for' : 'promote the live version to';
+    if (!confirm(`Really ${verb} ${promoteTo}? (from ${promoteFrom})`)) {
+      return;
+    }
     promoting = true;
     try {
       const r = await promoteFlow(key, flowId, promoteFrom, promoteTo, promoteForce);
@@ -1324,432 +1379,445 @@
     </div>
   {/if}
 
-  <section class="monitors" data-testid="monitors-panel">
-    <div class="mon-head">
-      <h2>Monitors</h2>
-      <div class="row">
-        <button class="ghost" onclick={loadMonitors} title="Re-evaluate against current metrics">
-          <Icon name="reload" size={14} /> Refresh
-        </button>
-        <button
-          class="ghost"
-          onclick={captureBaselineNow}
-          data-testid="capture-baseline"
-          title="Snapshot the current disposition mix as the drift baseline"
-        >
-          <Icon name="scorecard" size={14} /> Capture baseline
-        </button>
-        <button
-          class="ghost"
-          onclick={checkNow}
-          disabled={checking}
-          data-testid="check-monitors"
-          title="Evaluate and push firing monitors to webhooks"
-        >
-          <Icon name="check" size={14} /> Check &amp; notify
-        </button>
-      </div>
-    </div>
-    <p class="muted">
-      Thresholds over this flow's live metrics — failure / refer / automation rate, latency, and
-      volume. Each is evaluated against the analytics roll-up; a breached rule shows as
-      <b>firing</b>.
-    </p>
-    <div class="row mon-form">
-      <label>
-        Metric
-        <select bind:value={monMetric} aria-label="monitor metric">
-          {#each MONITOR_METRICS as m (m)}<option value={m}>{m}</option>{/each}
-        </select>
-      </label>
-      <label>
-        When
-        <select bind:value={monOp} aria-label="monitor op">
-          <option value="gt">above</option>
-          <option value="lt">below</option>
-        </select>
-      </label>
-      <label>
-        Threshold {monIsRate ? '(0–1)' : ''}
-        <input
-          type="number"
-          step={monIsRate ? '0.01' : '1'}
-          bind:value={monThreshold}
-          aria-label="monitor threshold"
-        />
-      </label>
-      <label class="grow">
-        Note
-        <input bind:value={monDesc} aria-label="monitor description" placeholder="optional" />
-      </label>
-      <button onclick={addMonitor} disabled={monBusy} data-testid="add-monitor">Add monitor</button>
-    </div>
-    {#if monitors.length > 0}
-      <ul class="mon-list">
-        {#each monitors as m (m.monitor_id)}
-          <li class:firing={m.status.firing}>
-            <span class="mon-state" class:firing={m.status.firing}
-              >{m.status.firing ? 'firing' : m.status.computable ? 'ok' : 'no data'}</span
-            >
-            <span class="mon-rule"><b>{m.metric}</b> {fmtThreshold(m)}</span>
-            <span class="mon-actual">now: {fmtActual(m)}</span>
-            {#if m.description}<span class="muted">{m.description}</span>{/if}
-            <button class="link danger" onclick={() => removeMonitor(m)}>remove</button>
-          </li>
-        {/each}
-      </ul>
-    {:else}
-      <p class="muted">No monitors yet.</p>
-    {/if}
-
-    {#if drift}
-      <div class="drift" data-testid="drift-panel">
-        <span class="exportlabel"><Icon name="scorecard" size={15} /> Distribution drift</span>
-        {#if !drift.has_baseline}
-          <span class="muted">No baseline captured — use <b>Capture baseline</b> to set one.</span>
-        {:else if !drift.has_current}
-          <span class="muted">Baseline set; no dispositioned decisions yet.</span>
-        {:else}
-          <span class:err={drift.max_drift > 0.2} class:ok={drift.max_drift <= 0.2}
-            >max drift {pct(drift.max_drift)}</span
+  {#if tab === 'monitor'}
+    <section class="monitors" data-testid="monitors-panel">
+      <div class="mon-head">
+        <h2>Monitors</h2>
+        <div class="row">
+          <button class="ghost" onclick={loadMonitors} title="Re-evaluate against current metrics">
+            <Icon name="reload" size={14} /> Refresh
+          </button>
+          <button
+            class="ghost"
+            onclick={captureBaselineNow}
+            data-testid="capture-baseline"
+            title="Snapshot the current disposition mix as the drift baseline"
           >
-          {#each drift.buckets ?? [] as b (b.disposition)}
-            <span class="muted"
-              >{b.disposition}: {pct(b.baseline)}→{pct(b.current)} ({b.delta >= 0 ? '+' : ''}{pct(
-                b.delta
-              )})</span
-            >
-          {/each}
-        {/if}
-      </div>
-    {/if}
-
-    {#if lastCheck && lastCheck.deliveries && lastCheck.deliveries.length > 0}
-      <div class="mon-deliveries" data-testid="check-deliveries">
-        <span class="exportlabel">Last check delivered to:</span>
-        {#each lastCheck.deliveries as d (d.webhook_id)}
-          <span class={d.ok ? 'ok' : 'err'}
-            >{d.ok ? '✓' : '✗'} {d.url}{d.status ? ` (${d.status})` : ''}</span
+            <Icon name="scorecard" size={14} /> Capture baseline
+          </button>
+          <button
+            class="ghost"
+            onclick={checkNow}
+            disabled={checking}
+            data-testid="check-monitors"
+            title="Evaluate and push firing monitors to webhooks"
           >
-        {/each}
+            <Icon name="check" size={14} /> Check &amp; notify
+          </button>
+        </div>
       </div>
-    {/if}
-
-    <details class="webhooks">
-      <summary
-        >Notification webhooks <span class="muted">(shared across flows · {webhooks.length})</span
-        ></summary
-      >
+      <p class="muted">
+        Thresholds over this flow's live metrics — failure / refer / automation rate, latency, and
+        volume. Each is evaluated against the analytics roll-up; a breached rule shows as
+        <b>firing</b>.
+      </p>
       <div class="row mon-form">
-        <label class="grow">
-          Endpoint URL
-          <input
-            bind:value={hookURL}
-            aria-label="webhook url"
-            placeholder="https://hooks.example.com/alerts"
-          />
+        <label>
+          Metric
+          <select bind:value={monMetric} aria-label="monitor metric">
+            {#each MONITOR_METRICS as m (m)}<option value={m}>{m}</option>{/each}
+          </select>
         </label>
         <label>
-          Note
-          <input bind:value={hookNote} aria-label="webhook note" placeholder="optional" />
+          When
+          <select bind:value={monOp} aria-label="monitor op">
+            <option value="gt">above</option>
+            <option value="lt">below</option>
+          </select>
         </label>
-        <button
-          onclick={addWebhook}
-          disabled={hookBusy || !hookURL.trim()}
-          data-testid="add-webhook">Add webhook</button
+        <label>
+          Threshold {monIsRate ? '(0–1)' : ''}
+          <input
+            type="number"
+            step={monIsRate ? '0.01' : '1'}
+            bind:value={monThreshold}
+            aria-label="monitor threshold"
+          />
+        </label>
+        <label class="grow">
+          Note
+          <input bind:value={monDesc} aria-label="monitor description" placeholder="optional" />
+        </label>
+        <button onclick={addMonitor} disabled={monBusy} data-testid="add-monitor"
+          >Add monitor</button
         >
       </div>
-      {#if webhooks.length > 0}
+      {#if monitors.length > 0}
         <ul class="mon-list">
-          {#each webhooks as h (h.webhook_id)}
-            <li>
-              <span class="mon-rule">{h.url}</span>
-              {#if h.note}<span class="muted">{h.note}</span>{/if}
-              <span class="mon-actual"
-                >{h.delivery_count} sent{h.delivery_count > 0
-                  ? h.last_ok
-                    ? ' · last ok'
-                    : ' · last failed'
-                  : ''}</span
+          {#each monitors as m (m.monitor_id)}
+            <li class:firing={m.status.firing}>
+              <span class="mon-state" class:firing={m.status.firing}
+                >{m.status.firing ? 'firing' : m.status.computable ? 'ok' : 'no data'}</span
               >
-              <button class="link danger" onclick={() => removeWebhook(h.webhook_id)}>remove</button
-              >
+              <span class="mon-rule"><b>{m.metric}</b> {fmtThreshold(m)}</span>
+              <span class="mon-actual">now: {fmtActual(m)}</span>
+              {#if m.description}<span class="muted">{m.description}</span>{/if}
+              <button class="link danger" onclick={() => removeMonitor(m)}>remove</button>
             </li>
           {/each}
         </ul>
       {:else}
-        <p class="muted">
-          No webhooks. Add one, then <b>Check &amp; notify</b> pushes firing monitors to it.
-        </p>
+        <p class="muted">No monitors yet.</p>
       {/if}
-    </details>
-  </section>
 
-  <section class="deploy" data-testid="deploy-panel">
-    <h2>Deployment</h2>
-    <div class="live">
-      <span class="exportlabel"><Icon name="check" size={15} /> Live</span>
-      {#each ['sandbox', 'staging', 'production'] as e (e)}
-        <span class="env">
-          {e}:
-          {#if liveVersion(e)}<b>v{liveVersion(e)}</b>{:else}<span class="muted">—</span>{/if}
-        </span>
-      {/each}
-    </div>
-    <div class="row">
-      <input
-        bind:value={depVersion}
-        placeholder={`version (default latest v${flow?.latest ?? '?'})`}
-        aria-label="deploy version"
-        size="22"
-        inputmode="numeric"
-      />
-      <select bind:value={depEnv} aria-label="deploy environment">
-        <option value="sandbox">sandbox</option>
-        <option value="staging">staging</option>
-        <option value="production">production (four-eyes)</option>
-      </select>
-      <input
-        bind:value={depChallenger}
-        placeholder="challenger ver (optional)"
-        aria-label="challenger version"
-        size="18"
-        inputmode="numeric"
-      />
-      <input
-        bind:value={depChallengerPct}
-        placeholder="challenger %"
-        aria-label="challenger pct"
-        size="10"
-        inputmode="numeric"
-      />
-      <button
-        class="primary"
-        onclick={submitDeploy}
-        disabled={!flow || deploying}
-        data-testid="deploy-submit"
-      >
-        {#if deploying}Working…{:else if depEnv === 'production'}Propose for review{:else}Deploy{/if}
-      </button>
-    </div>
-    <p class="hint muted">
-      Production deploys require maker-checker approval: proposing creates a request that a
-      <em>different</em> user must approve.
-    </p>
-
-    <div class="row promote-row">
-      <span class="exportlabel"><Icon name="split" size={14} /> Promote</span>
-      <select bind:value={promoteFrom} aria-label="promote from">
-        {#each ['sandbox', 'staging', 'production'] as e (e)}<option value={e}>{e}</option>{/each}
-      </select>
-      <span aria-hidden="true">→</span>
-      <select bind:value={promoteTo} aria-label="promote to">
-        {#each ['sandbox', 'staging', 'production'] as e (e)}<option value={e}>{e}</option>{/each}
-      </select>
-      <button onclick={submitPromote} disabled={!flow || promoting} data-testid="promote-submit">
-        {promoting ? 'Working…' : promoteTo === 'production' ? 'Promote (review)' : 'Promote'}
-      </button>
-      <label class="force"
-        ><input type="checkbox" bind:checked={promoteForce} aria-label="force promote" /> force</label
-      >
-      <span class="hint muted"
-        >ships the live version up the chain; blocked if monitors are firing (prod via review).</span
-      >
-    </div>
-    <details class="promotion-policy" data-testid="promotion-policy">
-      <summary><Icon name="shield" size={15} /> Promotion policy</summary>
-      <div class="policy-grid">
-        {#each ENVIRONMENTS as e (e)}
-          {@const p = promotionPolicyFor(e)}
-          <div class="policy-stage">
-            <b>{e}</b>
-            <label>
-              <input
-                type="checkbox"
-                checked={p.require_no_firing_monitors}
-                disabled={policySaving}
-                onchange={(ev) =>
-                  updatePromotionPolicy(e, {
-                    require_no_firing_monitors: ev.currentTarget.checked
-                  })}
-              />
-              no firing monitors
-            </label>
-            <label>
-              <input
-                type="checkbox"
-                checked={p.require_assertions}
-                disabled={policySaving}
-                onchange={(ev) =>
-                  updatePromotionPolicy(e, { require_assertions: ev.currentTarget.checked })}
-              />
-              passing assertions
-            </label>
-            <label>
-              <input
-                type="checkbox"
-                checked={p.allow_force}
-                disabled={policySaving}
-                onchange={(ev) =>
-                  updatePromotionPolicy(e, { allow_force: ev.currentTarget.checked })}
-              />
-              force override
-            </label>
-            <label>
-              <input
-                type="checkbox"
-                checked={p.require_review}
-                disabled={policySaving || e === 'production'}
-                onchange={(ev) =>
-                  updatePromotionPolicy(e, { require_review: ev.currentTarget.checked })}
-              />
-              review request
-            </label>
-          </div>
-        {/each}
-      </div>
-    </details>
-
-    <details class="shadow-panel" data-testid="shadow-panel">
-      <summary><Icon name="diagram" size={15} /> Shadow deploys</summary>
-      <p class="hint muted">
-        Run a candidate version alongside live decisions to measure how often it would diverge — its
-        result is never returned to callers.
-      </p>
-      <div class="shadow-grid">
-        {#each ENVIRONMENTS as e (e)}
-          {@const rep = shadowReportFor(e)}
-          <div class="shadow-stage">
-            <b>{e}</b>
-            <select
-              value={shadowVersionFor(e)}
-              disabled={shadowSaving}
-              onchange={(ev) => updateShadow(e, parseInt(ev.currentTarget.value, 10))}
-              aria-label={`shadow version for ${e}`}
+      {#if drift}
+        <div class="drift" data-testid="drift-panel">
+          <span class="exportlabel"><Icon name="scorecard" size={15} /> Distribution drift</span>
+          {#if !drift.has_baseline}
+            <span class="muted">No baseline captured — use <b>Capture baseline</b> to set one.</span
             >
-              <option value={0}>none</option>
-              {#each flow?.versions ?? [] as v (v.version)}
-                <option value={v.version}>v{v.version}</option>
-              {/each}
-            </select>
-            {#if rep && rep.total > 0}
-              <span class="shadow-stats muted">
-                {rep.matched}/{rep.total} match{rep.diverged
-                  ? `, ${rep.diverged} diverged`
-                  : ''}{rep.errored ? `, ${rep.errored} errored` : ''}
-              </span>
-            {:else}
-              <span class="muted">no comparisons yet</span>
-            {/if}
-          </div>
-        {/each}
-      </div>
-    </details>
-
-    {#if allRequests.length > 0}
-      <div class="requests" data-testid="deployment-requests">
-        <h3>Deployment requests</h3>
-        <table>
-          <thead>
-            <tr><th>Env</th><th>Version</th><th>Status</th><th>Proposed by</th><th></th></tr>
-          </thead>
-          <tbody>
-            {#each allRequests as r (r.request_id)}
-              <tr>
-                <td>{r.environment}</td>
-                <td
-                  >v{r.version}{#if r.challenger_version}
-                    + v{r.challenger_version} @ {r.challenger_pct ?? 0}%{/if}</td
-                >
-                <td><span class="reqstatus {r.status}">{r.status}</span></td>
-                <td>{r.requested_by}</td>
-                <td class="reqactions">
-                  {#if r.status === 'pending'}
-                    <button class="primary" onclick={() => approve(r.request_id)}>Approve</button>
-                    <button onclick={() => reject(r.request_id)}>Reject</button>
-                  {:else}
-                    <span class="muted"
-                      >{r.status} by {r.decided_by ?? '—'}{#if r.reason}: {r.reason}{/if}</span
-                    >
-                  {/if}
-                </td>
-              </tr>
-              <tr class="threadrow">
-                <td colspan="5">
-                  <CommentThread
-                    subjectType="deployment_request"
-                    subjectId={r.request_id}
-                    title="Approval discussion"
-                  />
-                </td>
-              </tr>
+          {:else if !drift.has_current}
+            <span class="muted">Baseline set; no dispositioned decisions yet.</span>
+          {:else}
+            <span class:err={drift.max_drift > 0.2} class:ok={drift.max_drift <= 0.2}
+              >max drift {pct(drift.max_drift)}</span
+            >
+            {#each drift.buckets ?? [] as b (b.disposition)}
+              <span class="muted"
+                >{b.disposition}: {pct(b.baseline)}→{pct(b.current)} ({b.delta >= 0 ? '+' : ''}{pct(
+                  b.delta
+                )})</span
+              >
             {/each}
-          </tbody>
-        </table>
-      </div>
-    {/if}
-  </section>
+          {/if}
+        </div>
+      {/if}
 
-  {#if flow && flow.versions.length > 0}
-    <section class="versions" data-testid="versions-panel">
-      <h2>Versions</h2>
-      <div class="vlist">
-        {#each [...flow.versions].reverse() as v (v.version)}
-          <span class="vchip">
-            <b>v{v.version}</b>
-            <code>{v.etag.slice(0, 8)}</code>
-            {#if v.published_by}<span class="muted">by {v.published_by}</span>{/if}
+      {#if lastCheck && lastCheck.deliveries && lastCheck.deliveries.length > 0}
+        <div class="mon-deliveries" data-testid="check-deliveries">
+          <span class="exportlabel">Last check delivered to:</span>
+          {#each lastCheck.deliveries as d (d.webhook_id)}
+            <span class={d.ok ? 'ok' : 'err'}
+              >{d.ok ? '✓' : '✗'} {d.url}{d.status ? ` (${d.status})` : ''}</span
+            >
+          {/each}
+        </div>
+      {/if}
+
+      <details class="webhooks">
+        <summary
+          >Notification webhooks <span class="muted">(shared across flows · {webhooks.length})</span
+          ></summary
+        >
+        <div class="row mon-form">
+          <label class="grow">
+            Endpoint URL
+            <input
+              bind:value={hookURL}
+              aria-label="webhook url"
+              placeholder="https://hooks.example.com/alerts"
+            />
+          </label>
+          <label>
+            Note
+            <input bind:value={hookNote} aria-label="webhook note" placeholder="optional" />
+          </label>
+          <button
+            onclick={addWebhook}
+            disabled={hookBusy || !hookURL.trim()}
+            data-testid="add-webhook">Add webhook</button
+          >
+        </div>
+        {#if webhooks.length > 0}
+          <ul class="mon-list">
+            {#each webhooks as h (h.webhook_id)}
+              <li>
+                <span class="mon-rule">{h.url}</span>
+                {#if h.note}<span class="muted">{h.note}</span>{/if}
+                <span class="mon-actual"
+                  >{h.delivery_count} sent{h.delivery_count > 0
+                    ? h.last_ok
+                      ? ' · last ok'
+                      : ' · last failed'
+                    : ''}</span
+                >
+                <button class="link danger" onclick={() => removeWebhook(h.webhook_id)}
+                  >remove</button
+                >
+              </li>
+            {/each}
+          </ul>
+        {:else}
+          <p class="muted">
+            No webhooks. Add one, then <b>Check &amp; notify</b> pushes firing monitors to it.
+          </p>
+        {/if}
+      </details>
+    </section>
+  {/if}
+
+  {#if tab === 'deploy'}
+    <section class="deploy" data-testid="deploy-panel">
+      <h2>Deployment</h2>
+      <div class="live">
+        <span class="exportlabel"><Icon name="check" size={15} /> Live</span>
+        {#each ['sandbox', 'staging', 'production'] as e (e)}
+          <span class="env">
+            {e}:
+            {#if liveVersion(e)}<b>v{liveVersion(e)}</b>{:else}<span class="muted">—</span>{/if}
           </span>
         {/each}
       </div>
-      {#if flow.versions.length >= 2}
-        <div class="row">
-          <label
-            >diff <select bind:value={diffA} aria-label="diff base version">
+      <div class="row">
+        <input
+          bind:value={depVersion}
+          placeholder={`version (default latest v${flow?.latest ?? '?'})`}
+          aria-label="deploy version"
+          size="22"
+          inputmode="numeric"
+        />
+        <select bind:value={depEnv} aria-label="deploy environment">
+          <option value="sandbox">sandbox</option>
+          <option value="staging">staging</option>
+          <option value="production">production (four-eyes)</option>
+        </select>
+        <input
+          bind:value={depChallenger}
+          placeholder="challenger ver (optional)"
+          aria-label="challenger version"
+          size="18"
+          inputmode="numeric"
+        />
+        <input
+          bind:value={depChallengerPct}
+          placeholder="challenger %"
+          aria-label="challenger pct"
+          size="10"
+          inputmode="numeric"
+        />
+        <button
+          class="primary"
+          onclick={submitDeploy}
+          disabled={!flow || deploying}
+          data-testid="deploy-submit"
+        >
+          {#if deploying}Working…{:else if depEnv === 'production'}Propose for review{:else}Deploy{/if}
+        </button>
+      </div>
+      <p class="hint muted">
+        Production deploys require maker-checker approval: proposing creates a request that a
+        <em>different</em> user must approve.
+      </p>
+
+      <div class="row promote-row">
+        <span class="exportlabel"><Icon name="split" size={14} /> Promote</span>
+        <select bind:value={promoteFrom} aria-label="promote from">
+          {#each ['sandbox', 'staging', 'production'] as e (e)}<option value={e}>{e}</option>{/each}
+        </select>
+        <span aria-hidden="true">→</span>
+        <select bind:value={promoteTo} aria-label="promote to">
+          {#each ['sandbox', 'staging', 'production'] as e (e)}<option value={e}>{e}</option>{/each}
+        </select>
+        <button
+          class="primary"
+          onclick={submitPromote}
+          disabled={!flow || promoting}
+          data-testid="promote-submit"
+        >
+          {promoting ? 'Working…' : promoteTo === 'production' ? 'Promote (review)' : 'Promote'}
+        </button>
+        <label class="force"
+          ><input type="checkbox" bind:checked={promoteForce} aria-label="force promote" /> force</label
+        >
+        <span class="hint muted"
+          >ships the live version up the chain; blocked if monitors are firing (prod via review).</span
+        >
+      </div>
+      <details class="promotion-policy" data-testid="promotion-policy">
+        <summary><Icon name="shield" size={15} /> Promotion policy</summary>
+        <div class="policy-grid">
+          {#each ENVIRONMENTS as e (e)}
+            {@const p = promotionPolicyFor(e)}
+            <div class="policy-stage">
+              <b>{e}</b>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={p.require_no_firing_monitors}
+                  disabled={policySaving}
+                  onchange={(ev) =>
+                    updatePromotionPolicy(e, {
+                      require_no_firing_monitors: ev.currentTarget.checked
+                    })}
+                />
+                no firing monitors
+              </label>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={p.require_assertions}
+                  disabled={policySaving}
+                  onchange={(ev) =>
+                    updatePromotionPolicy(e, { require_assertions: ev.currentTarget.checked })}
+                />
+                passing assertions
+              </label>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={p.allow_force}
+                  disabled={policySaving}
+                  onchange={(ev) =>
+                    updatePromotionPolicy(e, { allow_force: ev.currentTarget.checked })}
+                />
+                force override
+              </label>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={p.require_review}
+                  disabled={policySaving || e === 'production'}
+                  onchange={(ev) =>
+                    updatePromotionPolicy(e, { require_review: ev.currentTarget.checked })}
+                />
+                review request
+              </label>
+            </div>
+          {/each}
+        </div>
+      </details>
+
+      <details class="shadow-panel" data-testid="shadow-panel">
+        <summary><Icon name="diagram" size={15} /> Shadow deploys</summary>
+        <p class="hint muted">
+          Run a candidate version alongside live decisions to measure how often it would diverge —
+          its result is never returned to callers.
+        </p>
+        <div class="shadow-grid">
+          {#each ENVIRONMENTS as e (e)}
+            {@const rep = shadowReportFor(e)}
+            <div class="shadow-stage">
+              <b>{e}</b>
+              <select
+                value={shadowVersionFor(e)}
+                disabled={shadowSaving}
+                onchange={(ev) => updateShadow(e, parseInt(ev.currentTarget.value, 10))}
+                aria-label={`shadow version for ${e}`}
+              >
+                <option value={0}>none</option>
+                {#each flow?.versions ?? [] as v (v.version)}
+                  <option value={v.version}>v{v.version}</option>
+                {/each}
+              </select>
+              {#if rep && rep.total > 0}
+                <span class="shadow-stats muted">
+                  {rep.matched}/{rep.total} match{rep.diverged
+                    ? `, ${rep.diverged} diverged`
+                    : ''}{rep.errored ? `, ${rep.errored} errored` : ''}
+                </span>
+              {:else}
+                <span class="muted">no comparisons yet</span>
+              {/if}
+            </div>
+          {/each}
+        </div>
+      </details>
+
+      {#if allRequests.length > 0}
+        <div class="requests" data-testid="deployment-requests">
+          <h3>Deployment requests</h3>
+          <table>
+            <thead>
+              <tr><th>Env</th><th>Version</th><th>Status</th><th>Proposed by</th><th></th></tr>
+            </thead>
+            <tbody>
+              {#each allRequests as r (r.request_id)}
+                <tr>
+                  <td>{r.environment}</td>
+                  <td
+                    >v{r.version}{#if r.challenger_version}
+                      + v{r.challenger_version} @ {r.challenger_pct ?? 0}%{/if}</td
+                  >
+                  <td><span class="reqstatus {r.status}">{r.status}</span></td>
+                  <td>{r.requested_by}</td>
+                  <td class="reqactions">
+                    {#if r.status === 'pending'}
+                      <button class="primary" onclick={() => approve(r.request_id)}>Approve</button>
+                      <button onclick={() => reject(r.request_id)}>Reject</button>
+                    {:else}
+                      <span class="muted"
+                        >{r.status} by {r.decided_by ?? '—'}{#if r.reason}: {r.reason}{/if}</span
+                      >
+                    {/if}
+                  </td>
+                </tr>
+                <tr class="threadrow">
+                  <td colspan="5">
+                    <CommentThread
+                      subjectType="deployment_request"
+                      subjectId={r.request_id}
+                      title="Approval discussion"
+                    />
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+      {/if}
+    </section>
+
+    {#if flow && flow.versions.length > 0}
+      <section class="versions" data-testid="versions-panel">
+        <h2>Versions</h2>
+        <div class="vlist">
+          {#each [...flow.versions].reverse() as v (v.version)}
+            <span class="vchip">
+              <b>v{v.version}</b>
+              <code>{v.etag.slice(0, 8)}</code>
+              {#if v.published_by}<span class="muted">by {v.published_by}</span>{/if}
+            </span>
+          {/each}
+        </div>
+        {#if flow.versions.length >= 2}
+          <div class="row">
+            <label
+              >diff <select bind:value={diffA} aria-label="diff base version">
+                {#each flow.versions as v (v.version)}<option value={String(v.version)}
+                    >v{v.version}</option
+                  >{/each}
+              </select></label
+            >
+            <span>→</span>
+            <select bind:value={diffB} aria-label="diff candidate version">
               {#each flow.versions as v (v.version)}<option value={String(v.version)}
                   >v{v.version}</option
                 >{/each}
-            </select></label
-          >
-          <span>→</span>
-          <select bind:value={diffB} aria-label="diff candidate version">
-            {#each flow.versions as v (v.version)}<option value={String(v.version)}
-                >v{v.version}</option
-              >{/each}
-          </select>
-        </div>
-        {#if graphDiff}
-          {#if diffIsEmpty(graphDiff)}
-            <p class="muted" data-testid="version-diff">v{diffA} and v{diffB} are identical.</p>
-          {:else}
-            <ul class="diff" data-testid="version-diff">
-              {#each graphDiff.nodesAdded as id (id)}<li>
-                  <span class="add">+ node</span>
-                  {id}
-                </li>{/each}
-              {#each graphDiff.nodesRemoved as id (id)}<li>
-                  <span class="del">− node</span>
-                  {id}
-                </li>{/each}
-              {#each graphDiff.nodesChanged as id (id)}<li>
-                  <span class="chg">~ node</span>
-                  {id}
-                </li>{/each}
-              {#each graphDiff.edgesAdded as e (e)}<li>
-                  <span class="add">+ edge</span>
-                  {e}
-                </li>{/each}
-              {#each graphDiff.edgesRemoved as e (e)}<li>
-                  <span class="del">− edge</span>
-                  {e}
-                </li>{/each}
-            </ul>
+            </select>
+          </div>
+          {#if graphDiff}
+            {#if diffIsEmpty(graphDiff)}
+              <p class="muted" data-testid="version-diff">v{diffA} and v{diffB} are identical.</p>
+            {:else}
+              <ul class="diff" data-testid="version-diff">
+                {#each graphDiff.nodesAdded as id (id)}<li>
+                    <span class="add">+ node</span>
+                    {id}
+                  </li>{/each}
+                {#each graphDiff.nodesRemoved as id (id)}<li>
+                    <span class="del">− node</span>
+                    {id}
+                  </li>{/each}
+                {#each graphDiff.nodesChanged as id (id)}<li>
+                    <span class="chg">~ node</span>
+                    {id}
+                  </li>{/each}
+                {#each graphDiff.edgesAdded as e (e)}<li>
+                    <span class="add">+ edge</span>
+                    {e}
+                  </li>{/each}
+                {#each graphDiff.edgesRemoved as e (e)}<li>
+                    <span class="del">− edge</span>
+                    {e}
+                  </li>{/each}
+              </ul>
+            {/if}
           {/if}
+        {:else}
+          <p class="muted">Publish another version to compare.</p>
         {/if}
-      {:else}
-        <p class="muted">Publish another version to compare.</p>
-      {/if}
-    </section>
+      </section>
+    {/if}
   {/if}
 
   {#if error}<p class="err">{error}</p>{/if}
@@ -1783,7 +1851,7 @@
           title="Auto-arrange every node by flow order (the only thing that moves nodes you've placed)"
           data-testid="relax-layout"
         >
-          <Icon name="diagram" size={14} /> Relax
+          <Icon name="diagram" size={14} /> Auto-layout
         </button>
       </div>
       <SvelteFlow
@@ -1792,6 +1860,7 @@
         {nodeTypes}
         onconnect={onConnect}
         colorMode={$theme}
+        proOptions={{ hideAttribution: true }}
         fitView
       >
         <Background />
@@ -2210,325 +2279,352 @@
     </aside>
   </div>
 
-  <section>
-    <h2>Test run</h2>
-    <div class="row">
-      <select bind:value={env} aria-label="environment">
-        {#each ENVIRONMENTS as e (e)}<option value={e}>{e}</option>{/each}
-      </select>
-      <button onclick={run} disabled={!flow || running}>{running ? 'Running…' : 'Run'}</button>
-    </div>
-    <div class="row">
-      <input
-        bind:value={entityType}
-        placeholder="entity type (optional)"
-        aria-label="entity type"
-        size="16"
-      />
-      <input
-        bind:value={entityID}
-        placeholder="entity id (optional)"
-        aria-label="entity id"
-        size="16"
-      />
-    </div>
-    <textarea bind:value={dataText} aria-label="input data" rows="3"></textarea>
-    <pre data-testid="run-result">{result}</pre>
-    {#if lastDecisionId}
-      <div class="row">
-        <span class="exportlabel"><Icon name="diagram" size={15} /> Run trace</span>
-        <button onclick={downloadTrace} title="Download the run as a Mermaid sequence diagram">
-          <Icon name="download" size={14} /> Sequence
-        </button>
-        <button
-          class="icon"
-          aria-label="Copy run trace"
-          title="Copy sequence diagram"
-          onclick={copyTrace}
-        >
-          <Icon name="copy" size={14} />
-        </button>
-      </div>
-    {/if}
-  </section>
+  <nav class="tabbar" aria-label="builder panels">
+    {#each TABS as t (t.id)}
+      <button
+        class:active={tab === t.id}
+        aria-pressed={tab === t.id}
+        onclick={() => (tab = t.id)}
+        data-testid={`tab-${t.id}`}>{t.label}</button
+      >
+    {/each}
+  </nav>
 
-  <section>
-    <h2>Backtest</h2>
-    <p class="muted">
-      Replay a dataset of inputs through the published flow — nothing is recorded. Leave the compare
-      version blank to check the latest version, or set it to diff two versions before deploying.
-    </p>
-    <div class="row">
-      <input
-        bind:value={btCompare}
-        placeholder="compare version (optional)"
-        aria-label="compare version"
-        size="20"
-        inputmode="numeric"
-      />
-      <button onclick={runBacktest} disabled={!flow || btRunning} data-testid="run-backtest">
-        {btRunning ? 'Running…' : 'Run backtest'}
-      </button>
-    </div>
-    <textarea
-      bind:value={btDataset}
-      aria-label="backtest dataset"
-      rows="4"
-      placeholder={'[\n  {"score": 720},\n  {"score": 540}\n]'}
-    ></textarea>
-    {#if btReport}
-      <div class="metrics" data-testid="backtest-summary">
-        <span>{btReport.summary.total} records</span>
-        <span class="ok">{btReport.summary.baseline_completed} completed</span>
-        {#if btReport.summary.baseline_failed > 0}
-          <span class="err">{btReport.summary.baseline_failed} failed</span>
-        {/if}
-        {#if btReport.summary.compare}
-          <span class="changed">{btReport.summary.changed} changed</span>
-        {/if}
+  {#if tab === 'test'}
+    <section>
+      <h2>Test run</h2>
+      <div class="row">
+        <select bind:value={env} aria-label="environment">
+          {#each ENVIRONMENTS as e (e)}<option value={e}>{e}</option>{/each}
+        </select>
+        <button onclick={run} disabled={!flow || running || !dataValid}
+          >{running ? 'Running…' : 'Run'}</button
+        >
+        <button type="button" class="link" onclick={sampleFromSchema}>Sample input</button>
       </div>
-      {#if btReport.summary.compare && btReport.records.length > 0}
-        <table class="bt-table">
+      <div class="row">
+        <input
+          bind:value={entityType}
+          placeholder="entity type (optional)"
+          aria-label="entity type"
+          size="16"
+        />
+        <input
+          bind:value={entityID}
+          placeholder="entity id (optional)"
+          aria-label="entity id"
+          size="16"
+        />
+      </div>
+      <textarea bind:value={dataText} aria-label="input data" rows="3" class:invalid={!dataValid}
+      ></textarea>
+      {#if !dataValid}<p class="json-err">Not valid JSON — fix it before running.</p>{/if}
+      <pre data-testid="run-result">{result}</pre>
+      {#if lastDecisionId}
+        <div class="row">
+          <span class="exportlabel"><Icon name="diagram" size={15} /> Run trace</span>
+          <button onclick={downloadTrace} title="Download the run as a Mermaid sequence diagram">
+            <Icon name="download" size={14} /> Sequence
+          </button>
+          <button
+            class="icon"
+            aria-label="Copy run trace"
+            title="Copy sequence diagram"
+            onclick={copyTrace}
+          >
+            <Icon name="copy" size={14} />
+          </button>
+        </div>
+      {/if}
+    </section>
+
+    <section>
+      <h2>Backtest</h2>
+      <p class="muted">
+        Replay a dataset of inputs through the published flow — nothing is recorded. Leave the
+        compare version blank to check the latest version, or set it to diff two versions before
+        deploying.
+      </p>
+      <div class="row">
+        <input
+          bind:value={btCompare}
+          placeholder="compare version (optional)"
+          aria-label="compare version"
+          size="20"
+          inputmode="numeric"
+        />
+        <button onclick={runBacktest} disabled={!flow || btRunning} data-testid="run-backtest">
+          {btRunning ? 'Running…' : 'Run backtest'}
+        </button>
+      </div>
+      <textarea
+        bind:value={btDataset}
+        aria-label="backtest dataset"
+        rows="4"
+        placeholder={'[\n  {"score": 720},\n  {"score": 540}\n]'}
+      ></textarea>
+      {#if btReport}
+        <div class="metrics" data-testid="backtest-summary">
+          <span>{btReport.summary.total} records</span>
+          <span class="ok">{btReport.summary.baseline_completed} completed</span>
+          {#if btReport.summary.baseline_failed > 0}
+            <span class="err">{btReport.summary.baseline_failed} failed</span>
+          {/if}
+          {#if btReport.summary.compare}
+            <span class="changed">{btReport.summary.changed} changed</span>
+          {/if}
+        </div>
+        {#if btReport.summary.compare && btReport.records.length > 0}
+          <table class="bt-table">
+            <thead>
+              <tr><th>#</th><th>Baseline</th><th>Candidate</th></tr>
+            </thead>
+            <tbody>
+              {#each btReport.records as rec (rec.index)}
+                <tr>
+                  <td>{rec.index}</td>
+                  <td>{rec.baseline.error || JSON.stringify(rec.baseline.output)}</td>
+                  <td>{rec.candidate?.error || JSON.stringify(rec.candidate?.output)}</td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        {/if}
+      {/if}
+    </section>
+
+    <section>
+      <h2>What-if</h2>
+      <p class="muted">
+        Sweep one input field across a range and see how the decision shifts — nothing is recorded.
+        A transition flags where the outcome changes (e.g. where an approve flips to a decline).
+      </p>
+      <div class="row">
+        <input
+          bind:value={wiField}
+          placeholder="field (e.g. score)"
+          aria-label="whatif field"
+          size="16"
+        />
+        <input
+          bind:value={wiValues}
+          placeholder="values, comma-separated (e.g. 600, 650, 700)"
+          aria-label="whatif values"
+          size="30"
+        />
+        <button onclick={runWhatif} disabled={!flow || wiRunning} data-testid="run-whatif">
+          {wiRunning ? 'Running…' : 'Run what-if'}
+        </button>
+      </div>
+      <textarea
+        bind:value={wiBase}
+        aria-label="whatif base input"
+        rows="2"
+        placeholder={'{ "other_field": 1 }'}
+      ></textarea>
+      {#if wiReport}
+        <div class="metrics" data-testid="whatif-summary">
+          <span>{wiReport.points.length} values</span>
+          <span class="changed">{wiReport.transitions} transition(s)</span>
+        </div>
+        <table class="bt-table" data-testid="whatif-table">
           <thead>
-            <tr><th>#</th><th>Baseline</th><th>Candidate</th></tr>
+            <tr><th>{wiReport.field}</th><th>Outcome</th></tr>
           </thead>
           <tbody>
-            {#each btReport.records as rec (rec.index)}
-              <tr>
-                <td>{rec.index}</td>
-                <td>{rec.baseline.error || JSON.stringify(rec.baseline.output)}</td>
-                <td>{rec.candidate?.error || JSON.stringify(rec.candidate?.output)}</td>
+            {#each wiReport.points as pt, i (i)}
+              <tr class:changed-row={pt.changed}>
+                <td>{JSON.stringify(pt.value)}</td>
+                <td>{pt.error || JSON.stringify(pt.output)}</td>
               </tr>
             {/each}
           </tbody>
         </table>
       {/if}
-    {/if}
-  </section>
+    </section>
 
-  <section>
-    <h2>What-if</h2>
-    <p class="muted">
-      Sweep one input field across a range and see how the decision shifts — nothing is recorded. A
-      transition flags where the outcome changes (e.g. where an approve flips to a decline).
-    </p>
-    <div class="row">
-      <input
-        bind:value={wiField}
-        placeholder="field (e.g. score)"
-        aria-label="whatif field"
-        size="16"
-      />
-      <input
-        bind:value={wiValues}
-        placeholder="values, comma-separated (e.g. 600, 650, 700)"
-        aria-label="whatif values"
-        size="30"
-      />
-      <button onclick={runWhatif} disabled={!flow || wiRunning} data-testid="run-whatif">
-        {wiRunning ? 'Running…' : 'Run what-if'}
-      </button>
-    </div>
-    <textarea
-      bind:value={wiBase}
-      aria-label="whatif base input"
-      rows="2"
-      placeholder={'{ "other_field": 1 }'}
-    ></textarea>
-    {#if wiReport}
-      <div class="metrics" data-testid="whatif-summary">
-        <span>{wiReport.points.length} values</span>
-        <span class="changed">{wiReport.transitions} transition(s)</span>
+    <section>
+      <h2>Assertions</h2>
+      <p class="muted">
+        Stored input→expected tests, run through the pure engine (no recorded decision). A case
+        passes when every field in <code>expect</code> equals the flow's output. Failing assertions
+        block a
+        <b>promote</b> (override with force).
+      </p>
+      <div class="row">
+        <button
+          onclick={saveAssertions}
+          disabled={!flow || assertBusy}
+          data-testid="save-assertions">Save tests</button
+        >
+        <button
+          onclick={runAssertionsNow}
+          disabled={!flow || assertBusy}
+          data-testid="run-assertions">Run tests</button
+        >
       </div>
-      <table class="bt-table" data-testid="whatif-table">
-        <thead>
-          <tr><th>{wiReport.field}</th><th>Outcome</th></tr>
-        </thead>
-        <tbody>
-          {#each wiReport.points as pt, i (i)}
-            <tr class:changed-row={pt.changed}>
-              <td>{JSON.stringify(pt.value)}</td>
-              <td>{pt.error || JSON.stringify(pt.output)}</td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
-    {/if}
-  </section>
+      <textarea bind:value={assertText} aria-label="assertion cases" rows="6" spellcheck="false"
+      ></textarea>
+      {#if assertReport}
+        <div class="metrics" data-testid="assert-summary">
+          <span>{assertReport.total} cases</span>
+          <span class="ok">{assertReport.passed} passed</span>
+          {#if assertReport.failed > 0}<span class="err">{assertReport.failed} failed</span>{/if}
+        </div>
+        <table class="bt-table">
+          <thead>
+            <tr><th>Case</th><th>Result</th><th>Detail</th></tr>
+          </thead>
+          <tbody>
+            {#each assertReport.results as r (r.name)}
+              <tr>
+                <td>{r.name}</td>
+                <td class={r.passed ? 'ok' : 'err'}>{r.passed ? 'pass' : 'fail'}</td>
+                <td
+                  >{r.error ||
+                    (r.mismatch && r.mismatch.length
+                      ? `mismatch: ${r.mismatch.join(', ')}`
+                      : 'ok')}</td
+                >
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      {/if}
+    </section>
 
-  <section>
-    <h2>Assertions</h2>
-    <p class="muted">
-      Stored input→expected tests, run through the pure engine (no recorded decision). A case passes
-      when every field in <code>expect</code> equals the flow's output. Failing assertions block a
-      <b>promote</b> (override with force).
-    </p>
-    <div class="row">
-      <button onclick={saveAssertions} disabled={!flow || assertBusy} data-testid="save-assertions"
-        >Save tests</button
-      >
-      <button onclick={runAssertionsNow} disabled={!flow || assertBusy} data-testid="run-assertions"
-        >Run tests</button
-      >
-    </div>
-    <textarea bind:value={assertText} aria-label="assertion cases" rows="6" spellcheck="false"
-    ></textarea>
-    {#if assertReport}
-      <div class="metrics" data-testid="assert-summary">
-        <span>{assertReport.total} cases</span>
-        <span class="ok">{assertReport.passed} passed</span>
-        {#if assertReport.failed > 0}<span class="err">{assertReport.failed} failed</span>{/if}
+    <section>
+      <h2>Batch decide</h2>
+      <p class="muted">
+        Decide a whole dataset on the <b>{env}</b> environment (from Test run above) — each row is a
+        <b>recorded</b> decision (it shows in history, metrics, and the audit log), unlike a backtest.
+        Up to 500 rows.
+      </p>
+      <div class="row">
+        <button onclick={runBatch} disabled={!flow || batchRunning} data-testid="run-batch">
+          {batchRunning ? 'Deciding…' : 'Run batch'}
+        </button>
       </div>
-      <table class="bt-table">
-        <thead>
-          <tr><th>Case</th><th>Result</th><th>Detail</th></tr>
-        </thead>
-        <tbody>
-          {#each assertReport.results as r (r.name)}
-            <tr>
-              <td>{r.name}</td>
-              <td class={r.passed ? 'ok' : 'err'}>{r.passed ? 'pass' : 'fail'}</td>
-              <td
-                >{r.error ||
-                  (r.mismatch && r.mismatch.length
-                    ? `mismatch: ${r.mismatch.join(', ')}`
-                    : 'ok')}</td
-              >
-            </tr>
-          {/each}
-        </tbody>
-      </table>
-    {/if}
-  </section>
+      <textarea
+        bind:value={batchDataset}
+        aria-label="batch dataset"
+        rows="4"
+        placeholder={'[\n  {"score": 720},\n  {"score": 540}\n]'}
+      ></textarea>
+      {#if batchReport}
+        <div class="metrics" data-testid="batch-summary">
+          <span>{batchReport.total} decided</span>
+          <span class="ok">{batchReport.completed} completed</span>
+          {#if batchReport.failed > 0}<span class="err">{batchReport.failed} failed</span>{/if}
+          {#if batchReport.rejected > 0}<span class="changed">{batchReport.rejected} rejected</span
+            >{/if}
+        </div>
+        <table class="bt-table">
+          <thead>
+            <tr><th>#</th><th>Status</th><th>Disposition</th><th>Decision</th><th>Detail</th></tr>
+          </thead>
+          <tbody>
+            {#each batchReport.results as r (r.index)}
+              <tr>
+                <td>{r.index}</td>
+                <td
+                  class={r.status === 'completed'
+                    ? 'ok'
+                    : r.status === 'failed'
+                      ? 'err'
+                      : 'changed'}>{r.status}</td
+                >
+                <td>{r.disposition ?? '—'}</td>
+                <td>
+                  {#if r.decision_id}<a href={`/decisions/${r.decision_id}`}>view</a>{:else}—{/if}
+                </td>
+                <td>{r.error || JSON.stringify(r.data)}</td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      {/if}
+    </section>
 
-  <section>
-    <h2>Batch decide</h2>
-    <p class="muted">
-      Decide a whole dataset on the <b>{env}</b> environment (from Test run above) — each row is a
-      <b>recorded</b> decision (it shows in history, metrics, and the audit log), unlike a backtest. Up
-      to 500 rows.
-    </p>
-    <div class="row">
-      <button onclick={runBatch} disabled={!flow || batchRunning} data-testid="run-batch">
-        {batchRunning ? 'Deciding…' : 'Run batch'}
-      </button>
-    </div>
-    <textarea
-      bind:value={batchDataset}
-      aria-label="batch dataset"
-      rows="4"
-      placeholder={'[\n  {"score": 720},\n  {"score": 540}\n]'}
-    ></textarea>
-    {#if batchReport}
-      <div class="metrics" data-testid="batch-summary">
-        <span>{batchReport.total} decided</span>
-        <span class="ok">{batchReport.completed} completed</span>
-        {#if batchReport.failed > 0}<span class="err">{batchReport.failed} failed</span>{/if}
-        {#if batchReport.rejected > 0}<span class="changed">{batchReport.rejected} rejected</span
-          >{/if}
+    <section>
+      <h2>Promote to pre-approvals</h2>
+      <p class="muted">
+        Run the dataset above through the flow's bound <a href="/policies">policy</a> and grant a
+        time-boxed <a href="/preapprovals">pre-approval</a> for every row it disposes to the chosen disposition
+        — keyed by a field in each row. Each grant's decision output becomes the stored offer terms, honored
+        instantly the next time that entity is decided.
+      </p>
+      <div class="row pa-controls">
+        <label>
+          Entity type
+          <input
+            bind:value={paEntityType}
+            aria-label="pre-approve entity type"
+            placeholder="applicant"
+          />
+        </label>
+        <label>
+          Key field
+          <input
+            bind:value={paEntityKey}
+            aria-label="pre-approve entity key"
+            placeholder="applicant_id"
+          />
+        </label>
+        <label>
+          Grant on
+          <select bind:value={paDisposition} aria-label="pre-approve disposition">
+            <option value="approve">approve</option>
+            <option value="decline">decline</option>
+          </select>
+        </label>
+        <label>
+          Valid (days)
+          <input
+            type="number"
+            min="1"
+            max="3650"
+            bind:value={paValidDays}
+            aria-label="pre-approve valid days"
+          />
+        </label>
+        <button
+          onclick={runPreapproveBatch}
+          disabled={!flow || paRunning || !paEntityType.trim() || !paEntityKey.trim()}
+          data-testid="run-preapprove"
+        >
+          {paRunning ? 'Granting…' : 'Promote'}
+        </button>
       </div>
-      <table class="bt-table">
-        <thead>
-          <tr><th>#</th><th>Status</th><th>Disposition</th><th>Decision</th><th>Detail</th></tr>
-        </thead>
-        <tbody>
-          {#each batchReport.results as r (r.index)}
-            <tr>
-              <td>{r.index}</td>
-              <td
-                class={r.status === 'completed' ? 'ok' : r.status === 'failed' ? 'err' : 'changed'}
-                >{r.status}</td
-              >
-              <td>{r.disposition ?? '—'}</td>
-              <td>
-                {#if r.decision_id}<a href={`/decisions/${r.decision_id}`}>view</a>{:else}—{/if}
-              </td>
-              <td>{r.error || JSON.stringify(r.data)}</td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
-    {/if}
-  </section>
+      {#if paReport}
+        <div class="metrics" data-testid="preapprove-summary">
+          <span>{paReport.total} rows</span>
+          <span class="ok">{paReport.granted} granted</span>
+          {#if paReport.skipped > 0}<span class="changed">{paReport.skipped} skipped</span>{/if}
+          {#if paReport.failed > 0}<span class="err">{paReport.failed} failed</span>{/if}
+          {#if paReport.rejected > 0}<span class="changed">{paReport.rejected} rejected</span>{/if}
+        </div>
+        <table class="bt-table">
+          <thead>
+            <tr><th>#</th><th>Entity</th><th>Disposition</th><th>Granted</th><th>Detail</th></tr>
+          </thead>
+          <tbody>
+            {#each paReport.results as r (r.index)}
+              <tr>
+                <td>{r.index}</td>
+                <td>{r.entity_id || '—'}</td>
+                <td>{r.disposition ?? '—'}</td>
+                <td class={r.granted ? 'ok' : 'changed'}>{r.granted ? 'yes' : 'no'}</td>
+                <td>{r.error || r.reason || (r.granted ? 'pre-approved' : '')}</td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      {/if}
+    </section>
+  {/if}
 
-  <section>
-    <h2>Promote to pre-approvals</h2>
-    <p class="muted">
-      Run the dataset above through the flow's bound <a href="/policies">policy</a> and grant a
-      time-boxed <a href="/preapprovals">pre-approval</a> for every row it disposes to the chosen disposition
-      — keyed by a field in each row. Each grant's decision output becomes the stored offer terms, honored
-      instantly the next time that entity is decided.
-    </p>
-    <div class="row pa-controls">
-      <label>
-        Entity type
-        <input
-          bind:value={paEntityType}
-          aria-label="pre-approve entity type"
-          placeholder="applicant"
-        />
-      </label>
-      <label>
-        Key field
-        <input
-          bind:value={paEntityKey}
-          aria-label="pre-approve entity key"
-          placeholder="applicant_id"
-        />
-      </label>
-      <label>
-        Grant on
-        <select bind:value={paDisposition} aria-label="pre-approve disposition">
-          <option value="approve">approve</option>
-          <option value="decline">decline</option>
-        </select>
-      </label>
-      <label>
-        Valid (days)
-        <input
-          type="number"
-          min="1"
-          max="3650"
-          bind:value={paValidDays}
-          aria-label="pre-approve valid days"
-        />
-      </label>
-      <button
-        onclick={runPreapproveBatch}
-        disabled={!flow || paRunning || !paEntityType.trim() || !paEntityKey.trim()}
-        data-testid="run-preapprove"
-      >
-        {paRunning ? 'Granting…' : 'Promote'}
-      </button>
-    </div>
-    {#if paReport}
-      <div class="metrics" data-testid="preapprove-summary">
-        <span>{paReport.total} rows</span>
-        <span class="ok">{paReport.granted} granted</span>
-        {#if paReport.skipped > 0}<span class="changed">{paReport.skipped} skipped</span>{/if}
-        {#if paReport.failed > 0}<span class="err">{paReport.failed} failed</span>{/if}
-        {#if paReport.rejected > 0}<span class="changed">{paReport.rejected} rejected</span>{/if}
-      </div>
-      <table class="bt-table">
-        <thead>
-          <tr><th>#</th><th>Entity</th><th>Disposition</th><th>Granted</th><th>Detail</th></tr>
-        </thead>
-        <tbody>
-          {#each paReport.results as r (r.index)}
-            <tr>
-              <td>{r.index}</td>
-              <td>{r.entity_id || '—'}</td>
-              <td>{r.disposition ?? '—'}</td>
-              <td class={r.granted ? 'ok' : 'changed'}>{r.granted ? 'yes' : 'no'}</td>
-              <td>{r.error || r.reason || (r.granted ? 'pre-approved' : '')}</td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
-    {/if}
-  </section>
-
-  {#if flow}
+  {#if tab === 'discuss' && flow}
     <section class="discussion" data-testid="flow-discussion">
       <h2>Discussion</h2>
       <CommentThread subjectType="flow" subjectId={flowId} title="Flow discussion" />
@@ -2542,6 +2638,58 @@
     margin: 2rem auto;
     padding: 0 1rem;
     font-family: var(--font-ui);
+    /* Float the canvas to the top as the primary surface; the operational panels
+       sit behind the tab bar below it (CSS order avoids reordering the markup). */
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+  main > .grid {
+    order: 1;
+  }
+  main > .tabbar {
+    order: 2;
+  }
+  main > section {
+    order: 3;
+  }
+  .tabbar {
+    display: flex;
+    gap: 0.25rem;
+    flex-wrap: wrap;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 0;
+  }
+  .tabbar button {
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    border-radius: 0;
+    padding: 0.5rem 0.8rem;
+    color: var(--fg-muted);
+    cursor: pointer;
+    font-weight: 500;
+  }
+  .tabbar button.active {
+    color: var(--fg);
+    border-bottom-color: var(--accent);
+  }
+  button.primary {
+    background: var(--accent);
+    color: var(--accent-fg, #fff);
+    border: 1px solid var(--accent);
+    font-weight: 600;
+  }
+  button.primary:disabled {
+    opacity: 0.6;
+  }
+  textarea.invalid {
+    border-color: var(--danger);
+  }
+  .json-err {
+    margin: 0.2rem 0;
+    color: var(--danger);
+    font-size: 0.8rem;
   }
   .grid {
     display: grid;
@@ -2599,7 +2747,7 @@
   }
   .canvas {
     position: relative;
-    height: 460px;
+    height: 560px;
     border: 1px solid var(--border-strong);
     border-radius: 0.5rem;
   }

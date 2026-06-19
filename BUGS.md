@@ -11,12 +11,12 @@ PR1 — data protection + log usability (DONE, PR #6)
 - `A2 | MED | web | Decisions list: history.ListPage adds flow/env/status/variant + decision-id search + time range + pagination (limit/offset, total; limit<=0 = unpaginated for the dashboard/SDK); the page gained filter controls, a pager, and absolute-time-on-hover. | fixed — PR #6`
 - `A3 | MED | web/audit | Audit log: ReadPage adds offset+total + an exclude_type param; the page gained a date range, a "Hide node steps" toggle, a pager, and absolute timestamps; CSV exports the whole filtered set. | fixed — PR #6`
 
-PR2 — engine builder UX
-- `A4 | MED | web/engine | the builder is a single ~3,200px scroll with the canvas as a small top widget — pin/enlarge the canvas; move Test/Backtest/What-if/Assertions/Batch/Promote into tabs or a drawer. | open — PR2`
-- `A5 | LOW | web/engine | canvas polish — remove the Svelte Flow attribution, larger default height, rename "Relax"→"Auto-layout", tooltips on the Cards/BPMN/Relax toggles. | open — PR2`
-- `A6 | LOW | web/engine | raw-JSON inputs (test/assertions/batch/what-if) have no schema hint or validation — prefill a sample from the flow input_schema + inline JSON validation. | open — PR2`
-- `A7 | LOW | web/engine | Promote is a small control among muted text for a high-stakes action — raise prominence + add a confirm step. | open — PR2`
-- `A8 | LOW | web/engine | flow-create fields are placeholder-only and the production column "—" is ambiguous — add labels + a "not deployed" pill. | open — PR2`
+PR2 — engine builder UX (DONE, PR #7)
+- `A4 | MED | web/engine | the canvas is now the primary surface, floated to the top (CSS order), with the operational panels behind a tab bar (Test & analyze · Deploy & versions · Monitors · Discussion) instead of one ~3,200px scroll. | fixed — PR #7`
+- `A5 | LOW | web/engine | canvas polish — Svelte Flow attribution hidden (proOptions), taller default (560px), "Relax"→"Auto-layout", descriptive toggle tooltips. | fixed — PR #7`
+- `A6 | LOW | web/engine | the test-run input shows a live "not valid JSON" hint (Run disabled while invalid) and a "Sample input" button that prefills a skeleton from the flow input_schema. | fixed — PR #7`
+- `A7 | LOW | web/engine | Promote is now a primary button with a confirm() step (wording differs for the production four-eyes path). | fixed — PR #7`
+- `A8 | LOW | web/engine | flow-create fields are labelled (Slug/Name) and the deployment columns show a "not deployed" pill instead of a bare "—". | fixed — PR #7`
 
 PR3 — decision explainability + case management
 - `A9 | MED | decision-engine/web | the decision Node Trace omits the decisive branch/rule, per-node duration, and reason codes — surface them (the reason node already emits codes). | open — PR3`
