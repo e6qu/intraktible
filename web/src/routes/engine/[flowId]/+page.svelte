@@ -14,6 +14,8 @@
     getFlow,
     getDecision,
     publishVersion,
+    copilotExplain,
+    copilotSuggest,
     decide,
     batchDecide,
     preapproveBatch,
@@ -150,13 +152,14 @@
   // The canvas is the always-visible primary surface (floated to the top via CSS
   // order); the operational panels live behind tabs so the page is no longer one
   // endless scroll. Default to Test — the most common post-edit action.
-  type Tab = 'test' | 'deploy' | 'monitor' | 'discuss';
+  type Tab = 'test' | 'deploy' | 'monitor' | 'discuss' | 'copilot';
   let tab = $state<Tab>('test');
   const TABS: { id: Tab; label: string }[] = [
     { id: 'test', label: 'Test & analyze' },
     { id: 'deploy', label: 'Deploy & versions' },
     { id: 'monitor', label: 'Monitors' },
-    { id: 'discuss', label: 'Discussion' }
+    { id: 'discuss', label: 'Discussion' },
+    { id: 'copilot', label: 'Copilot' }
   ];
   // Typed cards and BPMN notation are alternate skins over the same flow model;
   // labelled backdrops still render as swimlanes.
@@ -629,27 +632,63 @@
     syncCanvas();
   }
 
+  // currentGraph maps the editor state to the {nodes, edges} graph shape — shared by
+  // publish and the copilot (which explains the live, unpublished graph).
+  function currentGraph(): { nodes: GraphNode[]; edges: typeof editEdges } {
+    const nodes: GraphNode[] = editNodes.map((n) => ({
+      id: n.id,
+      type: n.type,
+      name: n.name || undefined,
+      config: n.config.trim() ? JSON.parse(n.config) : undefined,
+      position: n.pos,
+      lane: n.lane || undefined
+    }));
+    return { nodes, edges: editEdges };
+  }
+
   let publishing = $state(false);
   async function publish() {
     error = '';
     publishing = true;
     try {
       foldPositions(); // persist the current canvas layout with the version
-      const gnodes: GraphNode[] = editNodes.map((n) => ({
-        id: n.id,
-        type: n.type,
-        name: n.name || undefined,
-        config: n.config.trim() ? JSON.parse(n.config) : undefined,
-        position: n.pos,
-        lane: n.lane || undefined
-      }));
-      const r = await publishVersion(key, flowId, { nodes: gnodes, edges: editEdges }, inputSchema);
+      const r = await publishVersion(key, flowId, currentGraph(), inputSchema);
       toast.success(`Published v${r.version}`);
       await load();
     } catch (e) {
       error = msg(e);
     } finally {
       publishing = false;
+    }
+  }
+
+  // Authoring copilot: explain the live graph, or suggest logic from a description.
+  let copilotPrompt = $state('');
+  let copilotOut = $state('');
+  let copilotBusy = $state(false);
+  async function explainFlow() {
+    copilotBusy = true;
+    copilotOut = '';
+    error = '';
+    try {
+      copilotOut = await copilotExplain(key, currentGraph());
+    } catch (e) {
+      error = msg(e);
+    } finally {
+      copilotBusy = false;
+    }
+  }
+  async function suggestLogic() {
+    if (!copilotPrompt.trim() || copilotBusy) return;
+    copilotBusy = true;
+    copilotOut = '';
+    error = '';
+    try {
+      copilotOut = await copilotSuggest(key, copilotPrompt.trim());
+    } catch (e) {
+      error = msg(e);
+    } finally {
+      copilotBusy = false;
     }
   }
 
@@ -2681,6 +2720,39 @@
       <CommentThread subjectType="flow" subjectId={flowId} title="Flow discussion" />
     </section>
   {/if}
+
+  {#if tab === 'copilot'}
+    <section class="copilot" data-testid="copilot">
+      <h2>Authoring copilot</h2>
+      <p class="muted">
+        Ask the AI to explain this flow, or describe the decision logic you want and get a suggested
+        node breakdown to build. (Backed by the configured AI provider.)
+      </p>
+      <div class="copilot-actions">
+        <button onclick={explainFlow} disabled={copilotBusy}>Explain this flow</button>
+      </div>
+      <form
+        class="copilot-ask"
+        onsubmit={(e) => {
+          e.preventDefault();
+          suggestLogic();
+        }}
+      >
+        <textarea
+          bind:value={copilotPrompt}
+          aria-label="copilot prompt"
+          rows="3"
+          placeholder="e.g. Auto-approve applicants with fico ≥ 720 and income ≥ 50k; refer 640–720; decline below 640."
+        ></textarea>
+        <button type="submit" disabled={copilotBusy || !copilotPrompt.trim()}>
+          {copilotBusy ? 'Thinking…' : 'Suggest logic'}
+        </button>
+      </form>
+      {#if copilotOut}
+        <pre class="copilot-out" data-testid="copilot-output">{copilotOut}</pre>
+      {/if}
+    </section>
+  {/if}
 </main>
 
 <style>
@@ -2703,6 +2775,35 @@
   }
   main > section {
     order: 3;
+  }
+  .copilot-actions {
+    margin: 0.6rem 0;
+  }
+  .copilot-ask {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  .copilot-ask textarea {
+    width: 100%;
+    box-sizing: border-box;
+    font: inherit;
+    padding: 0.5rem 0.6rem;
+    resize: vertical;
+  }
+  .copilot-ask button {
+    align-self: flex-start;
+  }
+  .copilot-out {
+    margin-top: 0.8rem;
+    padding: 0.8rem 1rem;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    white-space: pre-wrap;
+    font-family: var(--font-ui);
+    font-size: 0.92rem;
+    line-height: 1.45;
   }
   .tabbar {
     display: flex;

@@ -716,6 +716,47 @@ func TestDecideBatchOverHTTP(t *testing.T) {
 	api.Request(t, http.MethodPost, "/v1/flows/batch/production/decide/batch", map[string]any{"dataset": []any{}}, http.StatusBadRequest, nil)
 }
 
+type fakeCompleter struct{}
+
+func (fakeCompleter) Complete(_ context.Context, _, prompt string) (string, error) {
+	return "FAKE-COMPLETION for: " + prompt, nil
+}
+
+func TestCopilotOverHTTP(t *testing.T) {
+	log, st := testutil.NewLogStore(t)
+	svc := service.New(command.NewHandler(log), command.NewDecideHandler(log, st), preapproval.NewHandler(log), st)
+	svc.UseCopilot(fakeCompleter{})
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "author"}
+	api := testutil.StartAPI(t, log, st, "test-key", id, svc.Routes, flows.Projector{}, history.Projector{})
+
+	var explain struct {
+		Text string `json:"text"`
+	}
+	api.Request(t, http.MethodPost, "/v1/copilot/explain", map[string]any{
+		"graph": map[string]any{"nodes": []any{map[string]any{"id": "in", "type": "input"}}, "edges": []any{}},
+	}, http.StatusOK, &explain)
+	if !strings.Contains(explain.Text, "FAKE-COMPLETION") {
+		t.Fatalf("explain text = %q", explain.Text)
+	}
+
+	var suggest struct {
+		Text string `json:"text"`
+	}
+	api.Request(t, http.MethodPost, "/v1/copilot/suggest", map[string]any{"prompt": "approve when fico >= 700"}, http.StatusOK, &suggest)
+	if !strings.Contains(suggest.Text, "FAKE-COMPLETION") {
+		t.Fatalf("suggest text = %q", suggest.Text)
+	}
+
+	// An empty suggest prompt is a 400.
+	api.Request(t, http.MethodPost, "/v1/copilot/suggest", map[string]any{"prompt": ""}, http.StatusBadRequest, nil)
+}
+
+func TestCopilotUnconfiguredReturns503(t *testing.T) {
+	// startEngine wires no copilot.
+	api := startEngine(t)
+	api.Request(t, http.MethodPost, "/v1/copilot/suggest", map[string]any{"prompt": "x"}, http.StatusServiceUnavailable, nil)
+}
+
 func TestDecideStreamOverHTTP(t *testing.T) {
 	api := startEngine(t)
 	var created struct {

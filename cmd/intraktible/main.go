@@ -220,6 +220,7 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 		if len(erasurePIIFields) > 0 {
 			engineSvc.UseEraser(erasureVault)
 		}
+		engineSvc.UseCopilot(aiCompleter{reg: aiRegistry})
 		engineSvc.Routes(api)
 		// Policies are the operational disposition layer over flows (auto-approve/
 		// decline/refer); a first-class artifact alongside the flow registry.
@@ -917,6 +918,22 @@ func enabled(modules, m string) bool {
 type piiSealer struct {
 	vault  *erasure.Vault
 	fields map[string]bool
+}
+
+// aiCompleter adapts the AI registry to the engine's copilot AICompleter port (a
+// single system+user text completion via the default provider).
+type aiCompleter struct{ reg *ai.Registry }
+
+func (c aiCompleter) Complete(ctx context.Context, system, prompt string) (string, error) {
+	p, err := c.reg.Get("")
+	if err != nil {
+		return "", err
+	}
+	resp, err := p.Complete(ctx, ai.Request{System: system, Prompt: prompt})
+	if err != nil {
+		return "", err
+	}
+	return resp.Text, nil
 }
 
 func newPIISealer(v *erasure.Vault, fields []string) piiSealer {

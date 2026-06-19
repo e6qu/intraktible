@@ -34,13 +34,21 @@ import (
 	"github.com/e6qu/intraktible/platform/store"
 )
 
+// AICompleter is the LLM seam the authoring copilot uses: a single text completion
+// from a system + user prompt. The port lives here so the engine never imports the
+// AI provider directly; the composition root supplies an adapter over ai.Registry.
+type AICompleter interface {
+	Complete(ctx context.Context, system, prompt string) (string, error)
+}
+
 // Service wires flow commands, the decide runtime, and the read models to HTTP.
 type Service struct {
-	cmd    *command.Handler
-	decide *command.DecideHandler
-	pa     *preapproval.Handler
-	store  store.Store
-	eraser *erasure.Vault
+	cmd     *command.Handler
+	decide  *command.DecideHandler
+	pa      *preapproval.Handler
+	store   store.Store
+	eraser  *erasure.Vault
+	copilot AICompleter
 }
 
 // New builds the service. The pre-approval handler is shared with the standalone
@@ -53,6 +61,10 @@ func New(cmd *command.Handler, decide *command.DecideHandler, pa *preapproval.Ha
 // at the read boundary (sealed at decide time under the entity subject; shown
 // "[erased]" once the subject is erased).
 func (s *Service) UseEraser(v *erasure.Vault) { s.eraser = v }
+
+// UseCopilot enables the authoring copilot endpoints (explain / suggest), backed by
+// the given LLM completer. Without it, the copilot endpoints return 503.
+func (s *Service) UseCopilot(c AICompleter) { s.copilot = c }
 
 // Routes registers the flow-management, decide, and decision-history endpoints.
 func (s *Service) Routes(mux *http.ServeMux) {
@@ -88,6 +100,70 @@ func (s *Service) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/models/{name}", s.getModel)
 	mux.HandleFunc("GET /v1/models/{name}/drift", s.modelDrift)
 	mux.HandleFunc("POST /v1/models/{name}/baseline", s.captureModelBaseline)
+	mux.HandleFunc("POST /v1/copilot/explain", s.copilotExplain)
+	mux.HandleFunc("POST /v1/copilot/suggest", s.copilotSuggest)
+}
+
+const copilotSystem = "You are a decisioning-platform assistant for the intraktible decision engine. " +
+	"Flows are DAGs of typed nodes (input, rule, split, scorecard, decision_table, 2d_matrix, code, " +
+	"connect, ai, predict, reason, manual_review, output); conditions/expressions are expr-lang and the " +
+	"code node runs Starlark. Be concise, concrete, and practical."
+
+// copilotExplain returns a plain-language explanation of a flow graph.
+func (s *Service) copilotExplain(w http.ResponseWriter, r *http.Request) {
+	if _, ok := httpx.Caller(w, r); !ok {
+		return
+	}
+	if s.copilot == nil {
+		httpx.Error(w, http.StatusServiceUnavailable, fmt.Errorf("copilot is not configured"))
+		return
+	}
+	var req struct {
+		Graph events.Graph `json:"graph"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	graphJSON, _ := json.Marshal(req.Graph)
+	prompt := "Explain, in plain language for a business reviewer, what this decision flow does — the " +
+		"path through it and what each meaningful node contributes. Flow graph JSON:\n" + string(graphJSON)
+	text, err := s.copilot.Complete(r.Context(), copilotSystem, prompt)
+	if err != nil {
+		httpx.Error(w, http.StatusBadGateway, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]string{"text": text})
+}
+
+// copilotSuggest turns a natural-language description into suggested decision logic.
+func (s *Service) copilotSuggest(w http.ResponseWriter, r *http.Request) {
+	if _, ok := httpx.Caller(w, r); !ok {
+		return
+	}
+	if s.copilot == nil {
+		httpx.Error(w, http.StatusServiceUnavailable, fmt.Errorf("copilot is not configured"))
+		return
+	}
+	var req struct {
+		Prompt string `json:"prompt"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	if strings.TrimSpace(req.Prompt) == "" {
+		httpx.Error(w, http.StatusBadRequest, fmt.Errorf("a prompt is required"))
+		return
+	}
+	prompt := "Propose decision logic for this requirement, as a short ordered list of nodes (type + what " +
+		"each does, with example expr-lang conditions where relevant) that an author can build:\n" + req.Prompt
+	text, err := s.copilot.Complete(r.Context(), copilotSystem, prompt)
+	if err != nil {
+		httpx.Error(w, http.StatusBadGateway, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]string{"text": text})
 }
 
 func (s *Service) modelDrift(w http.ResponseWriter, r *http.Request) {
