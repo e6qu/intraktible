@@ -173,6 +173,61 @@
         }
       }
     },
+    "/v1/models": {
+      "get": {
+        "tags": ["models"],
+        "summary": "List predictive models",
+        "responses": {
+          "200": {
+            "description": "The tenant's registered models.",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "post": {
+        "tags": ["models"],
+        "summary": "Define (or redefine) a predictive model",
+        "description": "Registers a named model evaluated deterministically by the engine and referenced from a Predict node. spec.kind is logistic | gbm | expression: logistic {intercept,coefficients:{feature:weight}} · gbm {base?,link?:logit,trees:[{feature,threshold,left,right}|{leaf:true,value}]} · expression {expr:<expr-lang over features>}.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["name", "spec"],
+                "properties": {
+                  "name": { "type": "string" },
+                  "spec": { "type": "object", "description": "Kind-specific model spec." }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "The model was registered." },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/models/{name}": {
+      "get": {
+        "tags": ["models"],
+        "summary": "Get one model definition",
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "The model definition.",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "401": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/v1/decisions": {
       "get": {
         "tags": [
@@ -2024,6 +2079,7 @@
               "code",
               "connect",
               "ai",
+              "predict",
               "reason",
               "manual_review",
               "output"
@@ -2035,7 +2091,7 @@
           },
           "config": {
             "type": "object",
-            "description": "Opaque, node-type-specific configuration; the API stores it verbatim and each node engine validates it at decide time. Shapes by type: input {} \u00b7 assignment {assignments:[{target,expr}]} \u00b7 rule {rules:[{when,then:[{target,expr}]}]} \u00b7 split {condition:<bool expr>} (routes to the \"yes\"/\"no\" branch edges) \u00b7 scorecard {factors:[{when,weight}]} \u00b7 decision_table {hit:first|unique|any|rule_order|collect, aggregate?:sum|min|max|count (collect only), rows:[{when,outputs:[{target,expr}]}]} \u00b7 2d_matrix {rows,cols,cells} \u00b7 reason {reasons:[{when,code,description}]} \u00b7 manual_review {company_name,case_type,sla_days} (expressions) \u00b7 code {source:<Starlark>} \u00b7 connect {connector:<name>} \u00b7 ai {agent:<name>,prompt,output} \u00b7 output {fields:[...]}. expr/when/condition are expr-lang expressions over the decision input; the code node runs Starlark (see docs/EXPRESSIONS.md)."
+            "description": "Opaque, node-type-specific configuration; the API stores it verbatim and each node engine validates it at decide time. Shapes by type: input {} \u00b7 assignment {assignments:[{target,expr}]} \u00b7 rule {rules:[{when,then:[{target,expr}]}]} \u00b7 split {condition:<bool expr>} (routes to the \"yes\"/\"no\" branch edges) \u00b7 scorecard {factors:[{when,weight}]} \u00b7 decision_table {hit:first|unique|any|rule_order|collect, aggregate?:sum|min|max|count (collect only), rows:[{when,outputs:[{target,expr}]}]} \u00b7 2d_matrix {rows,cols,cells} \u00b7 reason {reasons:[{when,code,description}]} \u00b7 manual_review {company_name,case_type,sla_days} (expressions) \u00b7 code {source:<Starlark>} \u00b7 connect {connector:<name>} \u00b7 ai {agent:<name>,prompt,output} \u00b7 predict {model:<name>,output} (injects predict.<output> {score,probability}) \u00b7 output {fields:[...]}. expr/when/condition are expr-lang expressions over the decision input; the code node runs Starlark (see docs/EXPRESSIONS.md)."
           },
           "position": {
             "$ref": "#/components/schemas/NodePosition"

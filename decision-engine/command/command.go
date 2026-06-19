@@ -11,12 +11,14 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/e6qu/intraktible/decision-engine/domain"
 	"github.com/e6qu/intraktible/decision-engine/events"
 	"github.com/e6qu/intraktible/decision-engine/layout"
+	"github.com/e6qu/intraktible/decision-engine/models"
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/identity"
 )
@@ -447,6 +449,38 @@ func (h *Handler) foldRequest(ctx context.Context, id identity.Identity, flowID,
 		}
 	}
 	return req, found, nil
+}
+
+// DefineModel registers (or redefines) a named predictive model after validating
+// its spec (kind + kind-specific shape). The spec is stored opaquely on the models
+// stream; the registry projector materializes it for the Predict node to resolve.
+func (h *Handler) DefineModel(ctx context.Context, id identity.Identity, name string, spec json.RawMessage) (eventlog.Envelope, error) {
+	if err := id.Valid(); err != nil {
+		return eventlog.Envelope{}, err
+	}
+	if strings.TrimSpace(name) == "" {
+		return eventlog.Envelope{}, fmt.Errorf("decision-engine: model name is required")
+	}
+	s, err := models.ParseSpec(spec)
+	if err != nil {
+		return eventlog.Envelope{}, err
+	}
+	if err := s.Validate(); err != nil {
+		return eventlog.Envelope{}, err
+	}
+	payload, err := json.Marshal(events.ModelDefined{Name: name, Spec: spec})
+	if err != nil {
+		return eventlog.Envelope{}, fmt.Errorf("decision-engine: marshal model: %w", err)
+	}
+	return h.log.Append(ctx, eventlog.Envelope{
+		Org:       id.Org,
+		Workspace: id.Workspace,
+		Actor:     id.Actor,
+		Stream:    events.StreamModels,
+		Type:      events.TypeModelDefined,
+		Time:      h.now(),
+		Payload:   payload,
+	})
 }
 
 func (h *Handler) appendFlowEvent(ctx context.Context, id identity.Identity, typ string, payload json.RawMessage) (eventlog.Envelope, error) {

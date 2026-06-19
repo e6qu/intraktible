@@ -10,6 +10,19 @@ import "encoding/json"
 // StreamFlows is the event stream for flow lifecycle (creation, version publish).
 const StreamFlows = "decision.flows"
 
+// StreamModels is the event stream for the predictive-model registry.
+const StreamModels = "decision.models"
+
+// TypeModelDefined registers (or redefines) a named predictive model.
+const TypeModelDefined = "decision.model.defined"
+
+// ModelDefined registers a named predictive model. Spec is the opaque, kind-specific
+// model definition (logistic | gbm | expression), validated by the models package.
+type ModelDefined struct {
+	Name string          `json:"name"`
+	Spec json.RawMessage `json:"spec"`
+}
+
 // Flow lifecycle event types.
 const (
 	TypeFlowCreated          = "decision.flow.created"
@@ -49,6 +62,7 @@ const (
 	NodeCode          NodeType = "code"
 	NodeAI            NodeType = "ai"
 	NodeConnect       NodeType = "connect"
+	NodePredict       NodeType = "predict"
 	NodeManualReview  NodeType = "manual_review"
 	NodeReason        NodeType = "reason"
 	NodeOutput        NodeType = "output"
