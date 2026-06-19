@@ -99,14 +99,31 @@ type reasonConfig struct {
 }
 
 // decisionTableConfig is the config of a Decision Table node: ordered rows, each
-// a condition with its output assignments. Mode "first" (default) applies the
-// first matching row; "all" applies every matching row in order.
+// a condition with its output assignments, resolved under a DMN-style hit policy.
+//
+// Hit (default "first"):
+//   - first      — the first matching row wins.
+//   - unique     — exactly one row may match; >1 is a conflict (error).
+//   - any        — multiple rows may match but must all produce identical outputs.
+//   - rule_order — every matching row's outputs, collected per target as a list in
+//     rule order.
+//   - collect    — like rule_order, but each target may be reduced by Aggregate.
+//
+// Aggregate (collect only): sum | min | max | count (empty = the list itself).
+//
+// Mode is the deprecated predecessor of Hit: "all" applies every matching row in
+// order (last write wins per target); it is honoured when Hit is unset.
 type decisionTableConfig struct {
-	Mode string `json:"mode"`
-	Rows []struct {
-		When    string   `json:"when"`
-		Outputs []assign `json:"outputs"`
-	} `json:"rows"`
+	Hit       string        `json:"hit"`
+	Aggregate string        `json:"aggregate"`
+	Mode      string        `json:"mode"`
+	Rows      []decisionRow `json:"rows"`
+}
+
+// decisionRow is one row of a decision table: a condition and its output assignments.
+type decisionRow struct {
+	When    string   `json:"when"`
+	Outputs []assign `json:"outputs"`
 }
 
 // axisCond is one bucket of a matrix axis, selected when its condition holds.
