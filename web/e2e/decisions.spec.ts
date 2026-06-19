@@ -78,6 +78,50 @@ test('a decision run shows in the history and its detail has the node trace', as
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(decisionId);
 });
 
+test('the decision trace surfaces the split branch it routed through', async ({
+  page,
+  request
+}) => {
+  const slug = uniqueSlug();
+  const created = await request.post('/v1/flows', {
+    headers: { 'X-Api-Key': KEY },
+    data: { slug, name: 'Branch Flow' }
+  });
+  const { flow_id } = await created.json();
+  await request.post(`/v1/flows/${flow_id}/versions`, {
+    headers: { 'X-Api-Key': KEY },
+    data: {
+      graph: {
+        nodes: [
+          { id: 'in', type: 'input' },
+          { id: 'gate', type: 'split', config: { condition: 'score >= 700' } },
+          { id: 'out', type: 'output' }
+        ],
+        edges: [
+          { from: 'in', to: 'gate' },
+          { from: 'gate', to: 'out', branch: 'yes' },
+          { from: 'gate', to: 'out', branch: 'no' }
+        ]
+      }
+    }
+  });
+
+  let decisionId = '';
+  await expect(async () => {
+    const r = await request.post(`/v1/flows/${slug}/production/decide`, {
+      headers: { 'X-Api-Key': KEY },
+      data: { data: { score: 800 } }
+    });
+    const body = await r.json();
+    expect(body.status).toBe('completed');
+    decisionId = body.decision_id;
+  }).toPass({ timeout: 5000 });
+
+  // The trace shows which way the split routed (score 800 ≥ 700 → "yes").
+  await page.goto(`/decisions/${decisionId}`);
+  await expect(page.getByTestId('trace-branch')).toContainText('yes');
+});
+
 test('a bound policy assigns a disposition shown on the decision detail', async ({
   page,
   request

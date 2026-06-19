@@ -29,6 +29,33 @@ test('opens a case from the queue and shows SLA + summary', async ({ page }) => 
   await expect(page.locator('p.err')).toHaveCount(0);
 });
 
+test('bulk-assigns selected cases from the queue', async ({ page, request }) => {
+  const tag = 'bulk-' + Math.random().toString(36).slice(2, 7);
+  for (const n of [1, 2]) {
+    await request.post('/v1/cases', {
+      headers: { 'X-Api-Key': KEY },
+      data: { company_name: `${tag}-${n}`, case_type: 'aml', sla_days: 5 }
+    });
+  }
+  await page.goto('/cases');
+
+  // Select the two cases this test created via their row checkboxes.
+  for (const n of [1, 2]) {
+    await page.getByRole('checkbox', { name: `select ${tag}-${n}` }).check();
+  }
+  const bar = page.getByTestId('bulk-bar');
+  await expect(bar).toContainText('2 selected');
+  await bar.getByLabel('bulk assignee').fill('reviewer@x');
+  await bar.getByRole('button', { name: 'Assign' }).click();
+
+  // Both rows now show the assignee; the bulk bar clears after the action.
+  for (const n of [1, 2]) {
+    const row = page.locator('tbody tr').filter({ hasText: `${tag}-${n}` });
+    await expect(row).toContainText('reviewer@x');
+  }
+  await expect(page.getByTestId('bulk-bar')).toHaveCount(0);
+});
+
 test('case detail shows computed days-left', async ({ page, request }) => {
   // A freshly opened 5-day case is on track with ~5 days left.
   const created = await request.post('/v1/cases', {

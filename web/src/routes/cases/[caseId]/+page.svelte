@@ -87,6 +87,7 @@
     <button onclick={load}>Reload</button>
   </div>
 
+  <h2>Actions</h2>
   <div class="actions">
     <div class="row">
       <input bind:value={assignee} placeholder="assignee" aria-label="assignee" />
@@ -128,13 +129,18 @@
         </li>{/each}
     </ul>
 
-    <h2>Audit</h2>
-    <ul data-testid="audit">
-      {#each c.audit as a (a.at + a.type)}<li>
-          <code>{a.type}</code> — {a.detail}
-          <span class="muted">({a.actor}, <RelativeTime value={a.at} />)</span>
-        </li>{/each}
-    </ul>
+    <h2>Activity</h2>
+    <ol class="timeline" data-testid="audit">
+      {#each c.audit as a (a.at + a.type)}
+        <li>
+          <span class="when muted" title={new Date(a.at).toLocaleString()}>
+            <RelativeTime value={a.at} />
+          </span>
+          <span class="what"><code>{a.type}</code> {a.detail}</span>
+          <span class="who muted">{a.actor}</span>
+        </li>
+      {/each}
+    </ol>
   {/if}
 </main>
 
@@ -192,5 +198,36 @@
   .sla-overdue {
     color: var(--danger);
     font-weight: 600;
+  }
+  ol.timeline {
+    list-style: none;
+    padding: 0;
+    margin: 0.5rem 0;
+    border-left: 2px solid var(--border);
+  }
+  ol.timeline li {
+    position: relative;
+    padding: 0.4rem 0 0.4rem 1rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: baseline;
+  }
+  ol.timeline li::before {
+    content: '';
+    position: absolute;
+    left: -5px;
+    top: 0.75rem;
+    width: 8px;
+    height: 8px;
+    border-radius: 999px;
+    background: var(--accent);
+  }
+  ol.timeline .when {
+    min-width: 7rem;
+    font-size: 0.82rem;
+  }
+  ol.timeline .who {
+    font-size: 0.82rem;
   }
 </style>
