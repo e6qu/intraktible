@@ -930,6 +930,11 @@ test('the authoring copilot explains a flow and suggests logic', async ({ page, 
   // Explain the (empty) flow.
   await page.getByRole('button', { name: 'Explain this flow' }).click();
   await expect(page.getByTestId('copilot-output')).toBeVisible();
+
+  // Generate validates server-side; the Stub can't produce a valid flow, so the
+  // 422 surfaces gracefully (nothing is applied) rather than crashing.
+  await page.getByRole('button', { name: 'Generate & apply a flow' }).click();
+  await expect(page.getByText(/not valid|did not return a usable graph/)).toBeVisible();
 });
 
 test('a rule panel edits when/then clauses without raw JSON', async ({ page, request }) => {
