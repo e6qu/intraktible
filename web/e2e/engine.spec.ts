@@ -22,6 +22,89 @@ test('lists and creates a flow', async ({ page }) => {
   // runs; the unique slug below pins down the one this test created.
   await expect(page.getByRole('link', { name: 'UI Flow' }).first()).toBeVisible();
   await expect(page.getByText(slug)).toBeVisible();
+  // A brand-new flow is undeployed everywhere — the columns say so explicitly.
+  const row = page.locator('tbody tr').filter({ hasText: slug });
+  await expect(row.getByText('not deployed').first()).toBeVisible();
+});
+
+test('organizes the builder into tabs with the canvas pinned', async ({ page, request }) => {
+  const slug = uniqueSlug();
+  const created = await request.post('/v1/flows', {
+    headers: { 'X-Api-Key': KEY },
+    data: { slug, name: 'Tabbed' }
+  });
+  const { flow_id } = await created.json();
+  await request.post(`/v1/flows/${flow_id}/versions`, {
+    headers: { 'X-Api-Key': KEY },
+    data: {
+      graph: {
+        nodes: [
+          { id: 'in', type: 'input' },
+          { id: 'out', type: 'output' }
+        ],
+        edges: [{ from: 'in', to: 'out' }]
+      }
+    }
+  });
+
+  await page.goto(`/engine/${flow_id}`);
+  const canvas = page.getByTestId('flow-canvas');
+  await expect(canvas).toBeVisible();
+
+  // Default tab is Test & analyze: the test-run heading is visible; deploy is not
+  // even in the DOM (it lives behind its tab).
+  await expect(page.getByRole('heading', { name: 'Test run' })).toBeVisible();
+  await expect(page.getByTestId('deploy-panel')).toHaveCount(0);
+
+  // Switching tabs swaps the panel while the canvas stays pinned at the top.
+  await page.getByTestId('tab-deploy').click();
+  await expect(page.getByTestId('deploy-panel')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Test run' })).toHaveCount(0);
+  await expect(canvas).toBeVisible();
+
+  await page.getByTestId('tab-monitor').click();
+  await expect(page.getByTestId('monitors-panel')).toBeVisible();
+  await expect(canvas).toBeVisible();
+});
+
+test('the test-run input guards invalid JSON and prefills a schema sample', async ({
+  page,
+  request
+}) => {
+  const slug = uniqueSlug();
+  const created = await request.post('/v1/flows', {
+    headers: { 'X-Api-Key': KEY },
+    data: { slug, name: 'Guarded' }
+  });
+  const { flow_id } = await created.json();
+  await request.post(`/v1/flows/${flow_id}/versions`, {
+    headers: { 'X-Api-Key': KEY },
+    data: {
+      graph: {
+        nodes: [
+          { id: 'in', type: 'input' },
+          { id: 'out', type: 'output' }
+        ],
+        edges: [{ from: 'in', to: 'out' }]
+      },
+      input_schema: {
+        type: 'object',
+        properties: { score: { type: 'number' }, name: { type: 'string' } }
+      }
+    }
+  });
+
+  await page.goto(`/engine/${flow_id}`);
+  const data = page.getByLabel('input data');
+  await data.fill('{ not json');
+  await expect(page.getByText('Not valid JSON')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Run', exact: true })).toBeDisabled();
+
+  // "Sample input" prefills a valid skeleton from the flow's input schema.
+  await page.getByRole('button', { name: 'Sample input' }).click();
+  await expect(page.getByText('Not valid JSON')).toHaveCount(0);
+  await expect(data).toHaveValue(/"score": 0/);
+  await expect(page.getByRole('button', { name: 'Run', exact: true })).toBeEnabled();
 });
 
 test('runs a what-if sensitivity sweep from the builder', async ({ page, request }) => {
@@ -129,12 +212,14 @@ test('assigns a shadow version from the builder', async ({ page, request }) => {
   });
 
   await page.goto(`/engine/${flow_id}`);
+  await page.getByTestId('tab-deploy').click(); // shadow lives under Deploy & versions
   await page.getByTestId('shadow-panel').locator('summary').click();
   await page.getByLabel('shadow version for sandbox').selectOption('2');
   await expect(page.getByText('Shadowing v2 in sandbox')).toBeVisible();
 
   // The assignment round-trips: reloading rehydrates v2 as the sandbox shadow.
   await page.reload();
+  await page.getByTestId('tab-deploy').click(); // reload resets to the default tab
   await page.getByTestId('shadow-panel').locator('summary').click();
   await expect(page.getByLabel('shadow version for sandbox')).toHaveValue('2');
 });
@@ -289,11 +374,13 @@ test('edits per-stage promotion policy from the deployment panel', async ({ page
   });
 
   await page.goto(`/engine/${flow_id}`);
+  await page.getByTestId('tab-deploy').click();
   await expect(page.getByTestId('deploy-panel')).toContainText('sandbox: v1');
   await page.getByTestId('promotion-policy').locator('summary').click();
   await page.locator('.policy-stage', { hasText: 'staging' }).getByLabel('review request').check();
   await expect(page.getByText('Promotion policy saved')).toBeVisible();
 
+  page.once('dialog', (d) => void d.accept()); // promotion confirms first
   await page.getByTestId('promote-submit').click();
   await expect(page.getByText(/Proposed v1 for staging/)).toBeVisible();
   await expect(page.getByTestId('deployment-requests')).toContainText('staging');
@@ -457,6 +544,7 @@ test('defines an outcome monitor and sees it fire', async ({ page, request }) =>
 
   await page.goto(`/engine/${flow_id}`);
   await expect(page.locator('.svelte-flow__node')).toHaveCount(2);
+  await page.getByTestId('tab-monitor').click(); // monitors/drift live behind their tab
 
   // The drift panel renders; with no baseline yet it prompts to capture one.
   const drift = page.getByTestId('drift-panel');
