@@ -11,13 +11,16 @@ import (
 
 // Connector types. HTTP calls an arbitrary configured REST endpoint (the "Custom
 // Connect" case); SQL runs a parameterized query against a configured database;
-// MockBureau is a deterministic in-process reference connector.
+// MockBureau is a deterministic in-process reference connector. Plaid and Stripe
+// are first-class provider adapters (preconfigured base URL + auth scheme).
 const (
 	ConnectorHTTP       = "http"
 	ConnectorSQL        = "sql"
 	ConnectorGraphQL    = "graphql"
 	ConnectorStatic     = "static"
 	ConnectorMockBureau = "mock_bureau"
+	ConnectorPlaid      = "plaid"
+	ConnectorStripe     = "stripe"
 )
 
 var connectorTypes = map[string]bool{
@@ -26,14 +29,17 @@ var connectorTypes = map[string]bool{
 	ConnectorGraphQL:    true,
 	ConnectorStatic:     true,
 	ConnectorMockBureau: true,
+	ConnectorPlaid:      true,
+	ConnectorStripe:     true,
 }
 
 // ValidConnectorType reports whether t is a known connector type.
 func ValidConnectorType(t string) bool { return connectorTypes[t] }
 
 // DefineConnector registers (or redefines) a named connector. Config is
-// type-specific JSON (http: {"url","method"}; sql: {"dsn","query","args"};
-// mock_bureau: optional {"dataset"}).
+// type-specific JSON (http: {"url","method","headers","auth"}; sql:
+// {"dsn","query","args"}; plaid: {"env","client_id","secret","path"}; stripe:
+// {"secret_key","path"}; mock_bureau: optional {"dataset"}).
 type DefineConnector struct {
 	Name   string
 	Type   string
@@ -46,7 +52,7 @@ func (c DefineConnector) Validate() error {
 		return errors.New("context-layer: connector name is required")
 	}
 	if !ValidConnectorType(c.Type) {
-		return fmt.Errorf("context-layer: unknown connector type %q (http|sql|mock_bureau)", c.Type)
+		return fmt.Errorf("context-layer: unknown connector type %q (http|graphql|sql|static|plaid|stripe|mock_bureau)", c.Type)
 	}
 	return validJSONObject("config", c.Config)
 }

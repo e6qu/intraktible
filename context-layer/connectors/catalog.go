@@ -5,14 +5,14 @@ package connectors
 import "encoding/json"
 
 // Template is a starting point for a connector: a category, the connector type,
-// and a config scaffold the operator edits (replacing the placeholder URL/DSN).
-// Credentials are not part of the scaffold — the HTTP connector config carries
-// only url+method today; managed secrets remain separate, deferred work.
+// and a config scaffold the operator edits (replacing the placeholder URL/DSN and
+// filling in credentials). Credential fields (token/secret/api_key/…) are sealed
+// at rest by the connector secret keyring and never served back unredacted.
 type Template struct {
 	ID          string          `json:"id"`
 	Name        string          `json:"name"`
 	Category    string          `json:"category"`
-	Type        string          `json:"type"` // http | sql
+	Type        string          `json:"type"` // http | graphql | sql | static | plaid | stripe
 	Description string          `json:"description"`
 	Config      json.RawMessage `json:"config"`
 }
@@ -26,6 +26,16 @@ func Catalog() []Template {
 			ID: "rest", Name: "HTTP REST", Category: "Generic", Type: "http",
 			Description: "Any JSON HTTP endpoint. Replace the URL; the response is available to Connect nodes.",
 			Config:      json.RawMessage(`{"url":"https://api.example.com/resource","method":"GET"}`),
+		},
+		{
+			ID: "rest-bearer", Name: "HTTP REST (bearer token)", Category: "Generic", Type: "http",
+			Description: "An authenticated JSON HTTP endpoint. The bearer token is sealed at rest; add custom headers as needed.",
+			Config:      json.RawMessage(`{"url":"https://api.example.com/resource","method":"POST","auth":{"type":"bearer","token":""},"headers":{"X-Tenant":""}}`),
+		},
+		{
+			ID: "rest-apikey", Name: "HTTP REST (API-key header)", Category: "Generic", Type: "http",
+			Description: "An HTTP endpoint authenticated by an API-key header. The key value is sealed at rest.",
+			Config:      json.RawMessage(`{"url":"https://api.example.com/resource","method":"POST","auth":{"type":"header","name":"X-Api-Key","value":""}}`),
 		},
 		{
 			ID: "credit-bureau", Name: "Credit bureau", Category: "Credit", Type: "http",
@@ -116,6 +126,16 @@ func Catalog() []Template {
 			ID: "static-flags", Name: "Static / feature flags", Category: "Data", Type: "static",
 			Description: "Serve a fixed JSON value (constants, thresholds, feature flags) with no I/O — also handy for stubbing.",
 			Config:      json.RawMessage(`{"data":{"min_score":650,"flags":{"new_model":true}}}`),
+		},
+		{
+			ID: "plaid", Name: "Plaid (open banking)", Category: "Credit", Type: "plaid",
+			Description: "First-class Plaid adapter. client_id+secret are sealed and injected into the request body; set env + the endpoint path.",
+			Config:      json.RawMessage(`{"env":"sandbox","client_id":"","secret":"","path":"/accounts/balance/get"}`),
+		},
+		{
+			ID: "stripe", Name: "Stripe (payments)", Category: "Payments", Type: "stripe",
+			Description: "First-class Stripe read adapter. The secret key is sealed and sent as a bearer token; set the resource path (params become the query).",
+			Config:      json.RawMessage(`{"secret_key":"","path":"/v1/charges"}`),
 		},
 	}
 }

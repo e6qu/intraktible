@@ -82,7 +82,34 @@ type ModelStats struct {
 	BaselineHist  Histogram            `json:"baseline_hist"`       // distribution at capture time
 	BaselineCount int                  `json:"baseline_count"`      // predictions in the baseline
 	Threshold     float64              `json:"threshold,omitempty"` // PSI alert threshold (0 = none)
+	Alerting      bool                 `json:"alerting"`            // last-known firing state (scheduler dedup)
 	UpdatedAt     string               `json:"updated_at"`
+}
+
+// Firing reports whether the model's PSI over the given window exceeds its
+// configured threshold. windowDays > 0 measures the most recent day-buckets; 0
+// uses the cumulative histogram. ok is false when drift is undefined (no
+// baseline, no threshold, or an empty side) — the scheduler treats that as not
+// firing. It shares the windowing + PSI math with Drift so the read endpoint and
+// the scheduler never diverge.
+func (st ModelStats) Firing(windowDays int) (psi float64, firing, ok bool) {
+	if !st.HasBaseline || st.Threshold <= 0 {
+		return 0, false, false
+	}
+	psi, ok = PSI(st.BaselineHist, st.histFor(windowDays))
+	if !ok {
+		return 0, false, false
+	}
+	return psi, psi > st.Threshold, true
+}
+
+// histFor returns the histogram to measure drift over: a recent window (latest
+// windowDays day-buckets) when windowDays > 0, else the all-time cumulative one.
+func (st ModelStats) histFor(windowDays int) Histogram {
+	if windowDays > 0 {
+		return windowHist(st.Daily, windowDays)
+	}
+	return st.Hist
 }
 
 // DriftReport is the read-side drift view for one model.
@@ -94,7 +121,8 @@ type DriftReport struct {
 	HasBaseline bool      `json:"has_baseline"`
 	PSI         *float64  `json:"psi,omitempty"`
 	Threshold   float64   `json:"threshold,omitempty"`
-	Firing      bool      `json:"firing"` // PSI exceeds the (set) threshold
+	Firing      bool      `json:"firing"`   // PSI exceeds the (set) threshold, computed live
+	Alerting    bool      `json:"alerting"` // the drift scheduler has pushed an alert (firing edge crossed)
 }
 
 // DriftProjector folds Predict-node outputs into per-model probability histograms
@@ -113,9 +141,26 @@ func (DriftProjector) Apply(ctx context.Context, e eventlog.Envelope, s store.St
 		return applyBaseline(ctx, e, s)
 	case events.TypeModelMonitorSet:
 		return applyMonitorSet(ctx, e, s)
+	case events.TypeModelDriftAlerted:
+		return applyDriftAlerting(ctx, e, s, true)
+	case events.TypeModelDriftResolved:
+		return applyDriftAlerting(ctx, e, s, false)
 	default:
 		return nil
 	}
+}
+
+// applyDriftAlerting flips a model's last-known firing state (scheduler dedup).
+// Alerted and Resolved share the leading {name} field, so one decoder serves both.
+func applyDriftAlerting(ctx context.Context, e eventlog.Envelope, s store.Store, alerting bool) error {
+	var p events.ModelDriftResolved
+	if err := json.Unmarshal(e.Payload, &p); err != nil {
+		return fmt.Errorf("models: decode drift alert seq %d: %w", e.Seq, err)
+	}
+	_, err := store.UpdateDoc(ctx, s, StatsCollection, store.Key(e.Org, e.Workspace, p.Name), func(st *ModelStats) {
+		st.Alerting = alerting
+	})
+	return err // an alert/resolve for an unseen model is a no-op
 }
 
 // applyPredictNode bumps the histogram for each model named in a Predict node's
@@ -232,15 +277,15 @@ func Drift(ctx context.Context, s store.Store, id identity.Identity, model strin
 	if !ok {
 		return rep, nil
 	}
-	hist := st.Hist
-	if windowDays > 0 {
-		hist = windowHist(st.Daily, windowDays)
-	}
+	hist := st.histFor(windowDays)
 	rep.Hist = hist
 	rep.Count = hist.total()
 	rep.HasBaseline = st.HasBaseline
 	rep.Threshold = st.Threshold
+	rep.Alerting = st.Alerting
 	if st.HasBaseline {
+		// PSI is reported whenever a baseline exists (so drift is visible before a
+		// threshold is set); firing additionally requires the threshold to be crossed.
 		if psi, ok := PSI(st.BaselineHist, hist); ok {
 			rep.PSI = &psi
 			rep.Firing = st.Threshold > 0 && psi > st.Threshold

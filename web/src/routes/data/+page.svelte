@@ -155,6 +155,8 @@
         <option value="graphql">graphql</option>
         <option value="sql">sql</option>
         <option value="static">static</option>
+        <option value="plaid">plaid</option>
+        <option value="stripe">stripe</option>
       </select>
       <input
         bind:value={cConfig}

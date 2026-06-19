@@ -18,6 +18,11 @@ const (
 	TypeModelDefined          = "decision.model.defined"
 	TypeModelBaselineCaptured = "decision.model.baseline_captured"
 	TypeModelMonitorSet       = "decision.model.monitor_set"
+	// Drift alert-transition events: the model-drift scheduler records the ok→firing
+	// edge (Alerted) and the firing→ok edge (Resolved) so a steadily-drifting model
+	// is pushed to webhooks once, not every tick — mirroring the flow monitor.
+	TypeModelDriftAlerted  = "decision.model.drift_alerted"
+	TypeModelDriftResolved = "decision.model.drift_resolved"
 )
 
 // ModelMonitorSet sets (Threshold > 0) or clears (Threshold <= 0) the PSI drift
@@ -25,6 +30,20 @@ const (
 type ModelMonitorSet struct {
 	Name      string  `json:"name"`
 	Threshold float64 `json:"threshold"`
+}
+
+// ModelDriftAlerted records that a model's PSI crossed its threshold (and the
+// drift was pushed to webhooks). PSI/Threshold are captured for the audit trail.
+type ModelDriftAlerted struct {
+	Name      string  `json:"name"`
+	PSI       float64 `json:"psi"`
+	Threshold float64 `json:"threshold"`
+}
+
+// ModelDriftResolved records that a previously-alerting model's PSI fell back
+// under its threshold.
+type ModelDriftResolved struct {
+	Name string `json:"name"`
 }
 
 // ModelDefined registers a named predictive model. Spec is the opaque, kind-specific
