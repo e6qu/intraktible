@@ -6,10 +6,10 @@ Format: `ID | severity | component | description | status`.
 ## Open — audit round 3 (planned; sequenced into PRs, see PLAN.md roadmap)
 A third audit (code/security, a UI/UX review against screenshots of every page × persona × theme, and a competitive + API study vs. comparable decisioning and BPMN/DMN platforms) produced the backlog below. Grouped into healthy-sized PRs (one open at a time; no anemic PRs).
 
-PR1 — data protection + log usability
-- `A1 | HIGH | decision-engine | the per-node decision trace (NodeEvaluated → Record.Nodes[].Output) is recorded UNSEALED while the decide input/output ARE sealed, so node outputs echoing PII survive a crypto-shred erasure — seal node outputs via sealPII (same field set) before emit. | open — PR1`
-- `A2 | MED | web | Decisions list has no filter/search/pagination and shows "just now" for every row — add flow/env/status/variant/date filters, pagination, and relative+absolute sortable timestamps. | open — PR1`
-- `A3 | MED | web/audit | the Audit log is one flat unpaginated table dominated by node_evaluated rows — add date/actor/category/event-type filters, pagination, node_evaluated grouping/collapse, absolute timestamps. | open — PR1`
+PR1 — data protection + log usability (DONE, PR #6)
+- `A1 | HIGH | decision-engine | the per-node decision trace was recorded UNSEALED while the decide input/output were sealed, so node outputs echoing PII survived a crypto-shred erasure — node outputs are now sealed via sealPII before emit and unsealed (or "[erased]") in maskRecord; regression test TestNodeTraceErasure. | fixed — PR #6`
+- `A2 | MED | web | Decisions list: history.ListPage adds flow/env/status/variant + decision-id search + time range + pagination (limit/offset, total; limit<=0 = unpaginated for the dashboard/SDK); the page gained filter controls, a pager, and absolute-time-on-hover. | fixed — PR #6`
+- `A3 | MED | web/audit | Audit log: ReadPage adds offset+total + an exclude_type param; the page gained a date range, a "Hide node steps" toggle, a pager, and absolute timestamps; CSV exports the whole filtered set. | fixed — PR #6`
 
 PR2 — engine builder UX
 - `A4 | MED | web/engine | the builder is a single ~3,200px scroll with the canvas as a small top widget — pin/enlarge the canvas; move Test/Backtest/What-if/Assertions/Batch/Promote into tabs or a drawer. | open — PR2`
@@ -62,6 +62,12 @@ PR8 — ML model hosting (epic; needs a product decision)
 - `A39 | LOW | context-layer | connector breadth — more prebuilt connector templates/providers (we ship HTTP + SQL + templates vs. the comparable platform's large catalog). | open — PR8`
 - `A40 | LOW | web | authoring AI-copilot (generate/explain decision logic from natural language) — stretch. | open — PR8`
 - `A41 | LOW | api | a gRPC/Arrow batch path for very large decisioning/backtest jobs — stretch. | open — PR8`
+
+PR9 — persona-adaptive UI (epic; key differentiator) + API-first
+- `A42 | HIGH | web | personas are skins today (Builder/Operator/Showcase swap accent/type/density over the same layout) — make each persona a MEANINGFUL adaptation: distinct default landing, surfaced primary actions, terminology, density, and emphasized data, not a re-skin. | open — PR9`
+- `A43 | MED | web | expand to a neatly-defined persona set covering the platform's real roles — proposed: Workflow Designer, Developer/Integrator, Risk Operator, Team Manager, Product/Experimentation, Executive/Director, Evaluator/Guest — each config-driven and extensible (persona = a composition over the API, not a fork). | open — PR9`
+- `A44 | MED | web/api | per-persona views: design each persona's landing + navigation + surfaced actions (e.g. Developer → API explorer/keys/traces; Risk Operator → queues/SLAs/monitors; Executive → KPIs/trends/governance posture; Evaluator → guided tour + sandbox). | open — PR9`
+- `A45 | HIGH | platform/api | API-first guarantee: every UI action goes through the documented public API (no UI-only backdoors), so personas and external/embedded UIs are flexible adaptations over one API. Audit the web client for any non-API path and document the contract. Underpins A42–A44 and the external-API work (PR7). | open — PR9`
 
 ## Closed by decision (won't implement)
 - `D9 | decision-engine | CEL conditions — won't implement. expr-lang already serves Rule/Split conditions + Assignment, and Starlark serves the Code node, so conditions/expressions are fully covered. A second expression engine (cel-go) would add a dependency and parallel semantics for no new capability. Revisit only if a concrete need for CEL specifically arises.`

@@ -311,6 +311,51 @@ export async function listDecisions(
   return ((await res.json()) as { decisions: Decision[] }).decisions ?? [];
 }
 
+// DecisionFilter narrows the decisions list; empty fields are "any". A positive
+// limit paginates (offset into the matched set); omit it for the full list.
+export interface DecisionFilter {
+  flow?: string;
+  env?: string;
+  status?: string;
+  variant?: string;
+  q?: string; // decision-id search (substring)
+  since?: string; // RFC3339
+  until?: string; // RFC3339
+  limit?: number;
+  offset?: number;
+}
+
+export interface DecisionPage {
+  decisions: Decision[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+// listDecisionsPage is the filtered/paginated decisions query backing the list UI.
+export async function listDecisionsPage(
+  key: string,
+  filter: DecisionFilter = {},
+  fetcher: typeof fetch = fetch
+): Promise<DecisionPage> {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(filter)) {
+    if (v !== undefined && v !== '' && v !== null) qs.set(k, String(v));
+  }
+  const url = `/v1/decisions${qs.toString() ? `?${qs}` : ''}`;
+  const res = await fetcher(url, { headers: authHeaders(key) });
+  if (!res.ok) {
+    throw new Error(`GET /v1/decisions failed: ${res.status}`);
+  }
+  const d = (await res.json()) as Partial<DecisionPage>;
+  return {
+    decisions: d.decisions ?? [],
+    total: d.total ?? d.decisions?.length ?? 0,
+    limit: d.limit ?? 0,
+    offset: d.offset ?? 0
+  };
+}
+
 export async function getDecision(
   key: string,
   id: string,
@@ -1284,7 +1329,16 @@ export interface AuditFilter {
   resource?: string;
   since?: string;
   until?: string;
+  exclude_type?: string; // drop one event type (e.g. the node-evaluated noise)
   limit?: number;
+  offset?: number;
+}
+
+export interface AuditPage {
+  entries: AuditEntry[];
+  total: number;
+  limit: number;
+  offset: number;
 }
 
 export function auditQuery(filter: AuditFilter): string {
@@ -1295,7 +1349,9 @@ export function auditQuery(filter: AuditFilter): string {
   if (filter.resource) q.set('resource', filter.resource);
   if (filter.since) q.set('since', filter.since);
   if (filter.until) q.set('until', filter.until);
+  if (filter.exclude_type) q.set('exclude_type', filter.exclude_type);
   if (filter.limit) q.set('limit', String(filter.limit));
+  if (filter.offset) q.set('offset', String(filter.offset));
   const qs = q.toString();
   return qs ? '?' + qs : '';
 }
@@ -1305,11 +1361,26 @@ export async function listAudit(
   filter: AuditFilter = {},
   fetcher: typeof fetch = fetch
 ): Promise<AuditEntry[]> {
+  return (await listAuditPage(key, filter, fetcher)).entries;
+}
+
+// listAuditPage is the filtered/paginated audit read backing the Audit UI.
+export async function listAuditPage(
+  key: string,
+  filter: AuditFilter = {},
+  fetcher: typeof fetch = fetch
+): Promise<AuditPage> {
   const res = await fetcher(`/v1/audit${auditQuery(filter)}`, { headers: authHeaders(key) });
   if (!res.ok) {
     return errorOrStatus(res, 'GET /v1/audit');
   }
-  return ((await res.json()) as { entries: AuditEntry[] }).entries ?? [];
+  const d = (await res.json()) as Partial<AuditPage>;
+  return {
+    entries: d.entries ?? [],
+    total: d.total ?? d.entries?.length ?? 0,
+    limit: d.limit ?? 0,
+    offset: d.offset ?? 0
+  };
 }
 
 // auditExportUrl is the CSV download URL for the current filter (the browser
