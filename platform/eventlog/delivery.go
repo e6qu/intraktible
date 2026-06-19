@@ -17,7 +17,12 @@ import (
 type delivery struct {
 	bus  *bus
 	poll time.Duration
-	read func(ctx context.Context, fromSeq uint64) ([]Envelope, error)
+	read func(ctx context.Context, fromSeq uint64, limit int) ([]Envelope, error)
+
+	// ctx is cancelled on close so an in-flight backend read on the poll path
+	// unblocks promptly rather than holding up shutdown until it finishes.
+	ctx    context.Context
+	cancel context.CancelFunc
 
 	mu     sync.Mutex
 	closed bool
@@ -39,12 +44,14 @@ type delivery struct {
 // goroutine — the caller must store the *delivery on its log and then call start,
 // so the poller never reads a half-initialised log (the goroutine calls back into
 // the log's Read, which dereferences the very field being assigned).
-func newDelivery(read func(ctx context.Context, fromSeq uint64) ([]Envelope, error), poll time.Duration, head uint64) *delivery {
+func newDelivery(read func(ctx context.Context, fromSeq uint64, limit int) ([]Envelope, error), poll time.Duration, head uint64) *delivery {
 	if poll <= 0 {
 		poll = DefaultPollInterval
 	}
+	ctx, cancel := context.WithCancel(context.Background())
 	return &delivery{
 		bus: newBus(), poll: poll, read: read,
+		ctx: ctx, cancel: cancel,
 		stop: make(chan struct{}), wake: make(chan struct{}, 1), lastPub: head,
 	}
 }
@@ -86,6 +93,7 @@ func (d *delivery) stopAndClose(closeBackend func() error) error {
 	}
 	d.closed = true
 	close(d.stop)
+	d.cancel() // unblock any in-flight poll read
 	d.mu.Unlock()
 
 	d.wg.Wait()
@@ -109,14 +117,27 @@ func (d *delivery) loop() {
 	}
 }
 
+// dispatchBatch caps how many events one poll pass pulls into memory. A larger
+// backlog (e.g. a node that was offline) drains across successive passes, which
+// are re-armed immediately, instead of loading the whole unread tail at once.
+const dispatchBatch = 1024
+
 func (d *delivery) dispatch() {
-	evs, err := d.read(context.Background(), d.lastPub+1)
+	evs, err := d.read(d.ctx, d.lastPub+1, dispatchBatch)
 	if err != nil {
+		if d.ctx.Err() != nil {
+			return // shutting down: the cancelled read is expected, not a failure
+		}
 		slog.Error("eventlog: poll failed", "err", err)
 		return
 	}
 	for _, e := range evs {
 		d.bus.publish(e)
 		d.lastPub = e.Seq
+	}
+	if len(evs) == dispatchBatch {
+		// A full batch means more may be waiting; re-arm without waiting out the
+		// poll interval (poke coalesces, so this never piles up).
+		d.poke()
 	}
 }

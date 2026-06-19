@@ -11,7 +11,9 @@
   const ds = $derived(decisionStats(data.decisions));
   const dep = $derived(deployStats(data.flows));
   const recent = $derived(
-    [...data.decisions].sort((a, b) => (a.started_at < b.started_at ? 1 : -1)).slice(0, 9)
+    // Newest first; localeCompare returns 0 for equal timestamps so the order is a
+    // consistent total order (a comparator that never returns 0 sorts unstably).
+    [...data.decisions].sort((a, b) => b.started_at.localeCompare(a.started_at)).slice(0, 9)
   );
   const attention = $derived(
     data.flows.filter((f) => (f.deployment_requests ?? []).some((r) => r.status === 'pending'))

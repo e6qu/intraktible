@@ -293,14 +293,22 @@ func memberIDFromPath(path string) string {
 	return ""
 }
 
-// userNameFilter extracts X from a `userName eq "X"` SCIM filter (the only
-// filter IdPs use to find an existing user); anything else yields no filter.
+// userNameFilter extracts X from a `userName eq "X"` SCIM filter (the only filter
+// IdPs use to find an existing user); anything else yields no filter. The value is
+// the quoted string between the first and last double-quote, so a value containing
+// spaces (e.g. `userName eq "B Jensen"`) parses correctly — splitting on spaces
+// would truncate it and let the deprovisioning gate miss the user.
 func userNameFilter(filter string) string {
-	parts := strings.SplitN(strings.TrimSpace(filter), " ", 3)
-	if len(parts) == 3 && strings.EqualFold(parts[0], "userName") && strings.EqualFold(parts[1], "eq") {
-		return strings.Trim(parts[2], `"`)
+	f := strings.TrimSpace(filter)
+	open := strings.IndexByte(f, '"')
+	if open < 0 || f[len(f)-1] != '"' || len(f) < open+2 {
+		return ""
 	}
-	return ""
+	head := strings.Fields(f[:open])
+	if len(head) != 2 || !strings.EqualFold(head[0], "userName") || !strings.EqualFold(head[1], "eq") {
+		return ""
+	}
+	return f[open+1 : len(f)-1]
 }
 
 func parseBool(raw json.RawMessage) (bool, bool) {

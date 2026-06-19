@@ -32,20 +32,20 @@ PR4 — accessibility + visual consistency
 - `A17 | LOW | web | partial — agents-form required-vs-optional grouping and data feature-form labels + a plain-language feature preview done. Breadcrumbs on detail pages, a search-scope placeholder, ≥24px hit areas, and a policies band preview remain deferred. | partial — PR #9`
 
 PR5 — robustness & bug-fix round
-- `A18 | MED | eventlog/nats | Read forces fromSeq=1 and treats any GetMsg miss in [1,head] as fatal, with a separate Head() RPC (TOCTOU) — clamp to FirstSeq/LastSeq from one StreamInfo; only a gap strictly inside the range is corruption. | open — PR5`
-- `A19 | MED | agent-manager | StartRun's full-queue fallback runs process() synchronously on the request goroutine (background ctx), breaking the 202 async contract — run it in a tracked goroutine. | open — PR5`
-- `A20 | MED | agent-manager | EscalateRun resolves a run via h.log.Read(0) (whole log, all tenants) — use the tenant-scoped agents.GetRun projection read. | open — PR5`
-- `A21 | MED | eventlog | delivery.dispatch reads the unread tail with no LIMIT into RAM on the poll path and uses context.Background() with no stop-select — bounded batch + re-arm + stop-tied ctx. | open — PR5`
-- `A22 | MED | platform/kms | GCP KMS Encrypt/Decrypt skip CRC32C request/response integrity verification — set + verify, error on mismatch. | open — PR5`
-- `A23 | LOW | store | UpdateDoc is a non-atomic read-modify-write even on a TxStore — wrap in Begin/Commit when transactional, or document the single-writer requirement at call sites. | open — PR5`
-- `A24 | LOW | context-layer | the SQL connector's sqlite DSN is unrestricted (arbitrary local-file read; editor-gated) — allowlist/immutable/read-only enforcement (the long-deferred L2). | open — PR5`
-- `A25 | LOW | auth | Keyring.Resolve scans hashes with a constant-time compare + early return (a timing veneer over a hash compare) — replace with a map[hash] lookup. | open — PR5`
-- `A26 | LOW | scim | the userName filter SplitN-on-space mis-parses quoted/compound clauses, so the deprovisioning gate can miss a user — parse the quoted value properly. | open — PR5`
-- `A27 | LOW | decision-engine/export | BPMN bpmnID coerces distinct node ids to the same XML id — per-export uniqueness map with collision suffixing. | open — PR5`
-- `A28 | MED | web/policies | the CommentThread isn't keyed and loads only in onMount — switching policies shows the prior policy's comments; key it or make it reactive on subjectId. | open — PR5`
-- `A29 | MED | web/agents | the agent stream isn't closed on sibling navigation (the effect reloads on name but doesn't closeStream) — leaks the socket and pollutes the new page's state. | open — PR5`
-- `A30 | LOW | web/engine | nodeTelemetry is never cleared though its comment claims "cleared on edits" — clear it on node/edge edits or drop the claim. | open — PR5`
-- `A31 | LOW | web | BuilderDeck's recent-sort comparator never returns 0 (not a stable sort) — use a numeric/locale compare. | open — PR5`
+- `A18 | MED | eventlog/nats | Read now takes both bounds from one StreamInfo (no separate Head() RPC to race) and clamps fromSeq up to FirstSeq; only a gap strictly inside [first,last] is corruption. Test asserts past-head clamps empty + tail read. | fixed — PR #10`
+- `A19 | MED | agent-manager | StartRun's full-queue fallback now runs process() in a tracked goroutine (h.wg), so StartRun returns immediately (202 contract) and shutdown still drains it. Test fills the queue and asserts prompt return + completion. | fixed — PR #10`
+- `A20 | MED | agent-manager | EscalateRun resolves a run via the tenant-scoped agents.GetRun projection (O(1)); on a projection miss it falls back to a tenant-scoped log fold for read-after-write. Unknown-run test added. | fixed — PR #10`
+- `A21 | MED | eventlog | the poll path now reads a bounded batch (readFrom with LIMIT on sqlite/postgres; public Read stays unbounded for replay), re-arms on a full batch, and runs on a stop-tied context cancelled on Close. Internal tests cover both. | fixed — PR #10`
+- `A22 | MED | platform/kms | GCP KMS now sets + verifies CRC32C (request VerifiedPlaintextCrc32C + response checksums) per Google's data-integrity guidance, erroring on mismatch; the client is an interface so a fake exercises the integrity paths. | fixed — PR #10`
+- `A23 | LOW | store | UpdateDoc wraps the read-modify-write in a transaction on a TxStore (direct path inside an existing Tx / the in-memory store); the SQLite store now serializes writers with a mutex (so a concurrent write tx waits rather than tripping SQLITE_LOCKED) and applies pragmas pool-wide via the DSN. Concurrent-update test added. | fixed — PR #10`
+- `A24 | LOW | context-layer | the sqlite connector DSN is now hardened: forced read-only (mode=ro), in-memory rejected, and — when ITK_SQL_CONNECTOR_DIR is set — confined to that directory (the long-deferred L2). Unit tests cover read-only/in-memory/allowlist. | fixed — PR #10`
+- `A25 | LOW | auth | Keyring.Resolve is now a direct map[hash] lookup (O(1), constant in keyring size) — the lookup key is already a fixed-width hash, so the prior linear constant-time scan only leaked the keyring size. | fixed — PR #10`
+- `A26 | LOW | scim | userNameFilter now extracts the quoted value between the first and last quote (handles values with spaces, case-insensitive attr/op), so the deprovisioning gate no longer misses a user. Table-driven unit test added. | fixed — PR #10`
+- `A27 | LOW | decision-engine/export | BPMN now assigns ids via a per-export uniqueness map (collisions suffixed _2,_3…), and element/flow/DI refs all read from it so distinct node ids never alias. Collision test added. | fixed — PR #10`
+- `A28 | MED | web/policies | the CommentThread is now keyed on the policy id so switching policies remounts and reloads its comments. Fixed an incidental null-deref (versions can be null for an unpublished policy) surfaced by the new switch-reload e2e. | fixed — PR #10`
+- `A29 | MED | web/agents | the name-change effect now closeStream()s and clears the stale streaming output before reloading, so a live stream is torn down on sibling navigation rather than leaking the socket and polluting the new page. | fixed — PR #10`
+- `A30 | LOW | web/engine | nodeTelemetry is now cleared (clearTelemetry) on every structure/config edit (add/delete node, update config, add/connect/delete edge), matching the "cleared on edits" contract. | fixed — PR #10`
+- `A31 | LOW | web | BuilderDeck's recent-sort now uses localeCompare (returns 0 for equal timestamps), a consistent total order instead of the prior never-zero comparator. | fixed — PR #10`
 
 PR6 — decision-table hit policies + aggregators
 - `A32 | MED | decision-engine | decision_table supports only first/all — add the standard hit policies (UNIQUE with conflict detection, ANY, FIRST, RULE ORDER, COLLECT + SUM/MIN/MAX/COUNT), surfaced in the builder + OpenAPI + assertions. | open — PR6`

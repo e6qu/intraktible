@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"sync"
 
 	_ "modernc.org/sqlite" // pure-Go SQLite driver (CGO-free); registers "sqlite"
 )
@@ -18,23 +19,23 @@ import (
 // with a busy timeout (concurrent readers + a single writer).
 type SQLite struct {
 	db *sql.DB
+	// wmu serializes writers. SQLite admits only one writer at a time; without
+	// this a second concurrent write transaction trips SQLITE_LOCKED (which the
+	// busy timeout does not retry) instead of waiting its turn. Readers (Get/List)
+	// don't take it, so WAL still serves them concurrently with the writer.
+	wmu sync.Mutex
 }
 
 // NewSQLite opens (creating if needed) the SQLite store at path.
 func NewSQLite(path string) (*SQLite, error) {
-	db, err := sql.Open("sqlite", path)
+	// Apply the pragmas via the DSN so they take on EVERY pooled connection — a
+	// one-off `db.Exec("PRAGMA …")` only configures whichever connection served
+	// it, leaving the rest of the pool without the busy timeout (so a second
+	// writer would get SQLITE_BUSY immediately instead of waiting its turn).
+	dsn := "file:" + path + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(ON)"
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("store: open sqlite %q: %w", path, err)
-	}
-	for _, pragma := range []string{
-		"PRAGMA journal_mode=WAL",
-		"PRAGMA busy_timeout=5000",
-		"PRAGMA foreign_keys=ON",
-	} {
-		if _, err := db.Exec(pragma); err != nil {
-			_ = db.Close()
-			return nil, fmt.Errorf("store: sqlite %s: %w", pragma, err)
-		}
 	}
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS docs (
 		collection TEXT NOT NULL,
@@ -49,6 +50,8 @@ func NewSQLite(path string) (*SQLite, error) {
 }
 
 func (s *SQLite) Put(ctx context.Context, collection, key string, doc json.RawMessage) error {
+	s.wmu.Lock()
+	defer s.wmu.Unlock()
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO docs (collection, key, doc) VALUES (?, ?, ?)
 		 ON CONFLICT (collection, key) DO UPDATE SET doc = excluded.doc`,
@@ -100,6 +103,8 @@ func scanSQLRecords(rows *sql.Rows, collection string) ([]Record, error) {
 }
 
 func (s *SQLite) Delete(ctx context.Context, collection, key string) error {
+	s.wmu.Lock()
+	defer s.wmu.Unlock()
 	_, err := s.db.ExecContext(ctx, `DELETE FROM docs WHERE collection = ? AND key = ?`, collection, key)
 	if err != nil {
 		return fmt.Errorf("store: sqlite delete %s/%s: %w", collection, key, err)
@@ -108,6 +113,8 @@ func (s *SQLite) Delete(ctx context.Context, collection, key string) error {
 }
 
 func (s *SQLite) Reset(ctx context.Context, collection string) error {
+	s.wmu.Lock()
+	defer s.wmu.Unlock()
 	_, err := s.db.ExecContext(ctx, `DELETE FROM docs WHERE collection = ?`, collection)
 	if err != nil {
 		return fmt.Errorf("store: sqlite reset %s: %w", collection, err)
@@ -115,13 +122,17 @@ func (s *SQLite) Reset(ctx context.Context, collection string) error {
 	return nil
 }
 
-// Begin starts a transaction; its writes commit or roll back atomically.
+// Begin starts a transaction; its writes commit or roll back atomically. It holds
+// the writer lock for the transaction's lifetime (released on Commit/Rollback) so
+// only one writer is ever in flight.
 func (s *SQLite) Begin(ctx context.Context) (Tx, error) {
+	s.wmu.Lock()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
+		s.wmu.Unlock()
 		return nil, fmt.Errorf("store: sqlite begin: %w", err)
 	}
-	return &sqliteTx{tx: tx, ctx: ctx}, nil
+	return &sqliteTx{tx: tx, ctx: ctx, unlock: s.wmu.Unlock}, nil
 }
 
 // Close closes the underlying database.
@@ -129,8 +140,16 @@ func (s *SQLite) Close() error { return s.db.Close() }
 
 // sqliteTx is a Store backed by an open *sql.Tx (read-your-writes within the tx).
 type sqliteTx struct {
-	tx  *sql.Tx
-	ctx context.Context
+	tx     *sql.Tx
+	ctx    context.Context
+	unlock func() // releases the store's writer lock; idempotent via once
+	once   sync.Once
+}
+
+func (t *sqliteTx) release() {
+	if t.unlock != nil {
+		t.once.Do(t.unlock)
+	}
 }
 
 func (t *sqliteTx) Put(ctx context.Context, collection, key string, doc json.RawMessage) error {
@@ -181,8 +200,8 @@ func (t *sqliteTx) Reset(ctx context.Context, collection string) error {
 	return nil
 }
 
-func (t *sqliteTx) Commit() error   { return t.tx.Commit() }
-func (t *sqliteTx) Rollback() error { return t.tx.Rollback() }
+func (t *sqliteTx) Commit() error   { defer t.release(); return t.tx.Commit() }
+func (t *sqliteTx) Rollback() error { defer t.release(); return t.tx.Rollback() }
 
 // Close is a no-op on a tx (Commit/Rollback end it); it exists to satisfy Store.
 func (t *sqliteTx) Close() error { return nil }

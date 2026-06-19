@@ -131,22 +131,30 @@ func (l *NATSLog) Read(_ context.Context, fromSeq uint64) ([]Envelope, error) {
 	if closed {
 		return nil, ErrClosed
 	}
-	head := l.Head()
-	if head == 0 {
+	// One StreamInfo gives both bounds consistently — no separate Head() RPC to
+	// race against (a TOCTOU where the head advances between the two calls). Clamp
+	// fromSeq up to FirstSeq rather than assuming 1, so a purged prefix (if
+	// retention is ever bounded) reads cleanly instead of tripping the gap check.
+	si, err := l.js.StreamInfo(natsStream)
+	if err != nil {
+		return nil, fmt.Errorf("eventlog: nats stream info: %w", err)
+	}
+	first, last := si.State.FirstSeq, si.State.LastSeq
+	if last == 0 {
 		return nil, nil
 	}
-	if fromSeq == 0 {
-		fromSeq = 1
+	if fromSeq < first {
+		fromSeq = first
 	}
 	var out []Envelope
-	for seq := fromSeq; seq <= head; seq++ {
+	for seq := fromSeq; seq <= last; seq++ {
 		msg, err := l.js.GetMsg(natsStream, seq)
 		if errors.Is(err, nats.ErrMsgNotFound) {
-			// The log is the system of record and is configured for unlimited
-			// retention, so a missing sequence in [fromSeq, head] is corruption,
-			// not an expected gap — fail loudly rather than silently drop the event
-			// (which would let a projection rebuild diverge undetectably).
-			return nil, fmt.Errorf("eventlog: nats sequence %d missing within [%d,%d]: event log integrity violation", seq, fromSeq, head)
+			// Within [first,last] every sequence must exist: only a gap strictly
+			// inside the live range is corruption, not an expected gap — fail loudly
+			// rather than silently drop the event (which would let a projection
+			// rebuild diverge undetectably).
+			return nil, fmt.Errorf("eventlog: nats sequence %d missing within [%d,%d]: event log integrity violation", seq, first, last)
 		}
 		if err != nil {
 			return nil, fmt.Errorf("eventlog: nats get msg %d: %w", seq, err)

@@ -27,7 +27,37 @@ func GetDoc[T any](ctx context.Context, s Store, collection, key string) (T, boo
 // UpdateDoc loads collection[key] as T, applies mutate, and writes it back. It
 // returns false (and does not write) when the key is absent — projectors use this
 // to fail loudly on an event for an aggregate that should already exist.
+//
+// The read-modify-write is atomic when the backend supports it: a transactional
+// store (SQLite, Postgres) runs it inside a single transaction so a concurrent
+// writer can't interleave between the read and the write. A caller already inside
+// a transaction (a Tx, which is a Store but not a TxStore) takes the direct path —
+// the outer transaction is its atomicity boundary — as does the single-writer
+// in-memory store.
 func UpdateDoc[T any](ctx context.Context, s Store, collection, key string, mutate func(*T)) (bool, error) {
+	if _, inTx := s.(Tx); inTx {
+		return updateDocDirect(ctx, s, collection, key, mutate)
+	}
+	txs, ok := s.(TxStore)
+	if !ok {
+		return updateDocDirect(ctx, s, collection, key, mutate)
+	}
+	tx, err := txs.Begin(ctx)
+	if err != nil {
+		return false, fmt.Errorf("store: update %s/%s begin: %w", collection, key, err)
+	}
+	applied, err := updateDocDirect(ctx, tx, collection, key, mutate)
+	if err != nil || !applied {
+		_ = tx.Rollback()
+		return applied, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("store: update %s/%s commit: %w", collection, key, err)
+	}
+	return true, nil
+}
+
+func updateDocDirect[T any](ctx context.Context, s Store, collection, key string, mutate func(*T)) (bool, error) {
 	v, ok, err := GetDoc[T](ctx, s, collection, key)
 	if err != nil || !ok {
 		return ok, err

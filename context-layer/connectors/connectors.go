@@ -20,6 +20,8 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"syscall"
@@ -438,7 +440,54 @@ func newSQL(config json.RawMessage) (sqlConnector, error) {
 	if cfg.DSN == "" || cfg.Query == "" {
 		return sqlConnector{}, fmt.Errorf("context-layer: sql connector needs a dsn and a query")
 	}
+	dsn, err := resolveSQLiteDSN(cfg.DSN)
+	if err != nil {
+		return sqlConnector{}, err
+	}
+	cfg.DSN = dsn
 	return sqlConnector{cfg: cfg}, nil
+}
+
+// sqliteConnectorDirEnv, when set, confines SQL-connector databases to files under
+// that directory — defense in depth against an editor pointing a connector at an
+// arbitrary local file (another tenant's database, a secrets file).
+const sqliteConnectorDirEnv = "ITK_SQL_CONNECTOR_DIR"
+
+// resolveSQLiteDSN validates a sqlite DSN and returns a hardened, read-only form:
+// it rejects non-file (in-memory) DSNs, forces mode=ro so a connector can never
+// write, and — when ITK_SQL_CONNECTOR_DIR is set — requires the database file to
+// live within that allowlisted directory.
+func resolveSQLiteDSN(dsn string) (string, error) {
+	raw := strings.TrimPrefix(dsn, "file:")
+	path := raw
+	params := url.Values{}
+	if i := strings.IndexByte(raw, '?'); i >= 0 {
+		var err error
+		path = raw[:i]
+		if params, err = url.ParseQuery(raw[i+1:]); err != nil {
+			return "", fmt.Errorf("context-layer: sql connector dsn query: %w", err)
+		}
+	}
+	if path == "" || strings.EqualFold(path, ":memory:") {
+		return "", fmt.Errorf("context-layer: sql connector needs a file-backed sqlite database")
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("context-layer: sql connector dsn path: %w", err)
+	}
+	if root := os.Getenv(sqliteConnectorDirEnv); root != "" {
+		rootAbs, err := filepath.Abs(root)
+		if err != nil {
+			return "", fmt.Errorf("context-layer: sql connector dir: %w", err)
+		}
+		rel, err := filepath.Rel(rootAbs, abs)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return "", fmt.Errorf("context-layer: sql connector database %q is outside the allowed directory %q", abs, rootAbs)
+		}
+	}
+	// Force read-only, dropping any caller-supplied (possibly writable) mode.
+	params.Set("mode", "ro")
+	return "file:" + abs + "?" + params.Encode(), nil
 }
 
 // Fetch opens the configured database, runs the parameterized query (binding the
