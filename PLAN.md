@@ -474,6 +474,46 @@ new events each call rather than re-scanning from seq 0 — while still reading 
 deliberate read-after-write consistency (including decision-escalated cases on the shared log) is
 preserved. All three keep a fallback / full read so correctness never depends on the index.
 
+**Planned — audit round 3 roadmap (sequenced, healthy-sized PRs).** A third audit (code/security, a UI/UX
+review against screenshots of every page × persona × theme, and a competitive + API study vs. comparable
+decisioning and BPMN/DMN platforms) produced the backlog in `BUGS.md` (`A1`–`A41`). It is sequenced into
+the PRs below — each a substantial, coherent slice (no anemic PRs), one open at a time. Competitor names
+never appear in-repo (neutral language only).
+
+1. **Data protection + log usability** (A1–A3) — seal the per-node decision trace so PII is actually
+   erasable (HIGH: today node outputs are recorded unsealed and survive a crypto-shred), and make the two
+   unbounded logs usable: filter/search/pagination + legible (relative+absolute, sortable) timestamps on
+   Decisions and the Audit log (the latter also grouping the high-volume node-evaluated rows).
+2. **Engine builder UX** (A4–A8) — stop the single ~3,200px scroll: pin/enlarge the canvas and move
+   Test/Backtest/What-if/Assertions/Batch/Promote into tabs or a drawer; canvas polish; prefill/validate
+   the raw-JSON inputs from the flow's input schema; a confirm step on Promote; labelled create fields.
+3. **Decision explainability + case management** (A9–A12) — surface the decisive branch/rule, per-node
+   duration, and reason codes in the decision trace; bulk multi-select assign/close on the case queue, a
+   real activity timeline on case detail, labelled queue filters.
+4. **Accessibility + visual consistency** (A13–A17) — raise secondary-text contrast to WCAG AA, replace
+   placeholder-only inputs with real labels, ensure status isn't color-only, consolidate the top-bar
+   identity/role controls (minimal chrome on /login), carry the showcase's typographic hierarchy into the
+   working pages, plus breadcrumbs and form-clarity fixes.
+5. **Robustness & bug-fix round** (A18–A31) — backend: NATS Read clamping (FirstSeq/LastSeq + TOCTOU),
+   async agent-run off the request goroutine, EscalateRun via the projection, bounded poller read +
+   stop-tied context, GCP KMS CRC32C, atomic UpdateDoc on a TxStore, sqlite-connector DSN allowlist,
+   Keyring map lookup, SCIM filter parsing, BPMN export id uniqueness; frontend: keyed/reactive policy
+   CommentThread, agent-stream cleanup on sibling nav, telemetry-clear, stable BuilderDeck sort.
+6. **Decision-table hit policies + aggregators** (A32–A33) — extend the decision-table node beyond
+   first/all to the standard set (UNIQUE with conflict detection, ANY, FIRST, RULE ORDER, COLLECT with
+   SUM/MIN/MAX/COUNT), surfaced in the builder + OpenAPI + assertions; and document the expression language
+   (expr-lang + Starlark, per D9) as a stable contract — explicitly not adding a second expression engine.
+7. **External decision API (compatibility surface)** (A34–A37) — a neutral-named, versioned compatibility
+   API faithful to the comparable platform's documented API to the extent legally possible: an
+   array-of-rows decide endpoint, per-flow generated OpenAPI/Swagger, API-key pattern/wildcard scoping, and
+   decision-history query params (time range + include-node-results). Only functional API shapes are
+   reimplemented (interoperability); no docs/branding copied; the competitor is never named in-repo.
+   Prereq: confirm the live contract from a legitimate account (its current docs are auth-gated).
+8. **ML model hosting** (A38–A41, epic — needs a product decision) — the one sizeable in-scope feature
+   gap: hosting/serving predictive models alongside rules (a predict node + model registry + monitoring).
+   Larger than one PR and bounded by the §9 "ONNX serving at scale" non-goal — scope before building.
+   Connector breadth, an authoring AI-copilot, and a gRPC/Arrow batch path ride here as stretch.
+
 > Per project convention: at the **end of every phase**, update `PLAN.md` and `BUGS.md` in the same
 > PR as the phase's code.
 
