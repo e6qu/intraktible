@@ -159,7 +159,7 @@ func (s *Service) copilotGenerate(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusUnprocessableEntity, fmt.Errorf("the model did not return a usable graph: %w", err))
 		return
 	}
-	if err := domain.ValidateGraph(graph); err != nil {
+	if err := domain.ValidateFlow(graph); err != nil {
 		httpx.Error(w, http.StatusUnprocessableEntity, fmt.Errorf("the generated flow is not valid (try rephrasing): %w", err))
 		return
 	}
