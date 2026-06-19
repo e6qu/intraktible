@@ -79,7 +79,7 @@
   function edit(policyId: string) {
     selectedId = policyId;
     const p = policies.find((x) => x.policy_id === policyId);
-    const spec = p?.versions.at(-1)?.spec;
+    const spec = p?.versions?.at(-1)?.spec;
     rules = spec ? spec.rules.map((r) => ({ ...r })) : [];
     dflt = spec?.default || 'refer';
   }
@@ -190,7 +190,7 @@
               <td>{p.name}</td>
               <td class="mono">{p.flow_slug}</td>
               <td>{p.latest > 0 ? `v${p.latest}` : '—'}</td>
-              <td>{p.versions.at(-1)?.spec.rules.length ?? 0}</td>
+              <td>{p.versions?.at(-1)?.spec.rules.length ?? 0}</td>
               <td><button class="link" onclick={() => edit(p.policy_id)}>Edit bands</button></td>
             </tr>
           {/each}
@@ -309,11 +309,15 @@
         </p>
       {/if}
 
-      <CommentThread
-        subjectType="policy"
-        subjectId={selected.policy_id}
-        title="Policy discussion"
-      />
+      <!-- Key on the policy id: switching the selected policy remounts the thread
+           so it reloads that policy's comments (it loads once, on mount). -->
+      {#key selected.policy_id}
+        <CommentThread
+          subjectType="policy"
+          subjectId={selected.policy_id}
+          title="Policy discussion"
+        />
+      {/key}
     </section>
   {/if}
 </main>

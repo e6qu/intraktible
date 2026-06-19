@@ -71,6 +71,14 @@ func TestNATSLog(t *testing.T) {
 	if h := node1.Head(); h != 2 {
 		t.Fatalf("node1 Head = %d, want 2", h)
 	}
+	// A fromSeq past the head clamps to an empty read (no spurious gap error).
+	if past, err := node2.Read(ctx, 99); err != nil || len(past) != 0 {
+		t.Fatalf("node2 Read(99) = %+v err=%v, want empty", past, err)
+	}
+	// Reading from the second sequence returns just the tail.
+	if tail, err := node2.Read(ctx, 2); err != nil || len(tail) != 1 || tail[0].Seq != 2 {
+		t.Fatalf("node2 Read(2) = %+v err=%v, want [seq 2]", tail, err)
+	}
 
 	// Both appends reach node1's subscriber over the push consumer.
 	deadline := time.After(5 * time.Second)

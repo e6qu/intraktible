@@ -3,6 +3,11 @@ import { test, expect } from '@playwright/test';
 
 const KEY = 'dev-sandbox-key';
 
+// Both tests drive the same tenant's policy list and discussion threads; run them
+// serially so they don't race each other's global-list/thread state under the
+// suite's fullyParallel default.
+test.describe.configure({ mode: 'serial' });
+
 test.beforeEach(async ({ page }) => {
   await page.context().request.post('/v1/login', { data: { api_key: KEY } });
 });
@@ -73,4 +78,55 @@ test('creates a policy bound to a flow and publishes a band', async ({ page, req
   await thread.getByLabel('new comment').fill('Approved by risk for the quarter.');
   await thread.getByTestId('post-comment').click();
   await expect(thread.locator('.reply')).toContainText('Approved by risk for the quarter.');
+});
+
+test('switching policies reloads the discussion thread (not the prior policy)', async ({
+  page,
+  request
+}) => {
+  const slug = 'pol2-' + Math.random().toString(36).slice(2, 8);
+  const created = await request.post('/v1/flows', {
+    headers: { 'X-Api-Key': KEY },
+    data: { slug, name: `PolFlow2 ${slug}` }
+  });
+  const { flow_id } = await created.json();
+  await request.post(`/v1/flows/${flow_id}/versions`, {
+    headers: { 'X-Api-Key': KEY },
+    data: {
+      graph: {
+        nodes: [
+          { id: 'in', type: 'input' },
+          { id: 'out', type: 'output', config: { fields: ['score'] } }
+        ],
+        edges: [{ from: 'in', to: 'out' }]
+      }
+    }
+  });
+
+  await page.goto('/policies');
+
+  // First policy: post a comment that must NOT bleed into a different policy.
+  await page.getByLabel('policy name').fill(`alpha-${slug}`);
+  await page.getByLabel('flow', { exact: true }).selectOption(slug);
+  await page.getByRole('button', { name: /Create policy/ }).click();
+  await expect(page.getByTestId('band-editor')).toBeVisible();
+  const thread = page.getByTestId('comment-thread');
+  await thread.getByLabel('new comment').fill('Only-on-alpha note.');
+  await thread.getByTestId('post-comment').click();
+  await expect(thread).toContainText('Only-on-alpha note.');
+
+  // Second policy: creating it selects it; the keyed thread remounts and loads the
+  // (empty) second policy's comments rather than showing the first's.
+  await page.getByLabel('policy name').fill(`beta-${slug}`);
+  await page.getByLabel('flow', { exact: true }).selectOption(slug);
+  await page.getByRole('button', { name: /Create policy/ }).click();
+  await expect(page.getByTestId('band-editor')).toContainText(`beta-${slug}`);
+  await expect(thread).not.toContainText('Only-on-alpha note.');
+
+  // Switching back to the first policy shows its comment again.
+  await page
+    .locator('tr', { hasText: `alpha-${slug}` })
+    .getByRole('button', { name: 'Edit bands' })
+    .click();
+  await expect(thread).toContainText('Only-on-alpha note.');
 });

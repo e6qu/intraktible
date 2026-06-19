@@ -74,7 +74,7 @@ func OpenSQLiteLog(dir string, poll time.Duration) (*SQLiteLog, error) {
 	}
 	// Seed at the current head so the poller delivers only events appended from now
 	// on (the runtime rebuilds history via Read; the bus is for live updates).
-	l.d = newDelivery(l.Read, poll, head)
+	l.d = newDelivery(l.readFrom, poll, head)
 	l.d.start()
 	return l, nil
 }
@@ -112,15 +112,27 @@ func (l *SQLiteLog) Append(ctx context.Context, e Envelope) (Envelope, error) {
 
 // Read returns all events with Seq >= fromSeq (0 = all), in order.
 func (l *SQLiteLog) Read(ctx context.Context, fromSeq uint64) ([]Envelope, error) {
+	return l.readFrom(ctx, fromSeq, 0)
+}
+
+// readFrom returns events with Seq >= fromSeq in order, capped at limit rows
+// (limit <= 0 = unbounded). The poller passes a bound so one pass never loads
+// the whole unread tail into memory; Read passes 0 for full replay.
+func (l *SQLiteLog) readFrom(ctx context.Context, fromSeq uint64, limit int) ([]Envelope, error) {
 	if l.d.isClosed() {
 		return nil, ErrClosed
 	}
 	if fromSeq == 0 {
 		fromSeq = 1
 	}
-	rows, err := l.db.QueryContext(ctx,
-		`SELECT seq, id, org, workspace, stream, type, time, actor, payload
-		 FROM events WHERE seq >= ? ORDER BY seq`, fromSeq)
+	query := `SELECT seq, id, org, workspace, stream, type, time, actor, payload
+		 FROM events WHERE seq >= ? ORDER BY seq`
+	args := []any{fromSeq}
+	if limit > 0 {
+		query += ` LIMIT ?`
+		args = append(args, limit)
+	}
+	rows, err := l.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("eventlog: sqlite read: %w", err)
 	}

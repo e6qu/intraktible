@@ -160,8 +160,12 @@
   // Typed cards and BPMN notation are alternate skins over the same flow model;
   // labelled backdrops still render as swimlanes.
   const nodeTypes = { flow: FlowNode, bpmn: BpmnNode, lane: LaneBand };
-  // node id → last test-run output summary, shown on the card; cleared on edits.
+  // node id → last test-run output summary, shown on the card; cleared on edits
+  // (a structure/config change makes the prior run's per-node output stale).
   let nodeTelemetry = $state(new Map<string, string>());
+  function clearTelemetry() {
+    if (nodeTelemetry.size > 0) nodeTelemetry = new Map();
+  }
 
   let newType = $state('input');
   let edgeFrom = $state('');
@@ -371,6 +375,7 @@
     const id = `n${++counter}`;
     editNodes = [...editNodes, { id, type: newType, name: '', config: '', pos: nextNodePos() }];
     selectedId = id;
+    clearTelemetry();
     syncCanvas();
   }
   // nextNodePos drops a new node just below-right of the selected one (or the last
@@ -385,10 +390,12 @@
     editNodes = editNodes.filter((n) => n.id !== id);
     editEdges = editEdges.filter((e) => e.from !== id && e.to !== id);
     if (selectedId === id) selectedId = null;
+    clearTelemetry();
     syncCanvas();
   }
   function updateSelected(patch: Partial<EditNode>) {
     editNodes = editNodes.map((n) => (n.id === selectedId ? { ...n, ...patch } : n));
+    clearTelemetry();
     syncCanvas();
   }
 
@@ -604,16 +611,19 @@
     if (!edgeFrom || !edgeTo) return;
     editEdges = [...editEdges, { from: edgeFrom, to: edgeTo, branch: edgeBranch || undefined }];
     edgeFrom = edgeTo = edgeBranch = '';
+    clearTelemetry();
     syncCanvas();
   }
   // Drag-to-connect on the canvas: dragging from a node's handle to another adds
   // an (unbranched) edge, deduplicated against the existing ones.
   function onConnect(conn: Connection) {
     editEdges = addUniqueEdge(editEdges, conn.source, conn.target);
+    clearTelemetry();
     syncCanvas();
   }
   function deleteEdge(i: number) {
     editEdges = editEdges.filter((_, j) => j !== i);
+    clearTelemetry();
     syncCanvas();
   }
 
