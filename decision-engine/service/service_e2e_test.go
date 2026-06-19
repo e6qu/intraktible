@@ -223,6 +223,99 @@ func TestDecisionRecordErasure(t *testing.T) {
 	}
 }
 
+// PII that flows through a NODE output (not just the final input/output) is sealed
+// at rest and erasable too — otherwise the node trace would defeat crypto-shred.
+func TestNodeTraceErasure(t *testing.T) {
+	log, st := testutil.NewLogStore(t)
+	vault := erasure.NewVault(st)
+	decide := command.NewDecideHandler(log, st,
+		command.WithPIISealer(fieldSealer{v: vault, fields: map[string]bool{"ssn": true}}))
+	svc := service.New(command.NewHandler(log), decide, preapproval.NewHandler(log), st)
+	svc.UseEraser(vault)
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "dev"}
+	api := testutil.StartAPI(t, log, st, "test-key", id, svc.Routes, flows.Projector{}, history.Projector{})
+
+	var created struct {
+		FlowID string `json:"flow_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows", map[string]any{"slug": "trace", "name": "Trace"}, http.StatusCreated, &created)
+	// An assignment node echoes the PII "ssn" into its output, so the node-trace
+	// output carries PII that must be sealed.
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/versions", map[string]any{
+		"graph": map[string]any{
+			"nodes": []map[string]any{
+				{"id": "in", "type": "input"},
+				{"id": "a", "type": "assignment", "config": map[string]any{"assignments": []map[string]any{{"target": "ssn", "expr": "ssn"}}}},
+				{"id": "out", "type": "output", "config": map[string]any{"fields": []string{"ssn"}}},
+			},
+			"edges": []map[string]any{{"from": "in", "to": "a"}, {"from": "a", "to": "out"}},
+		},
+	}, http.StatusCreated, nil)
+
+	var dec struct {
+		DecisionID string `json:"decision_id"`
+		Status     string `json:"status"`
+	}
+	if !testutil.Eventually(t, func() bool {
+		dec = struct {
+			DecisionID string `json:"decision_id"`
+			Status     string `json:"status"`
+		}{}
+		api.Request(t, http.MethodPost, "/v1/flows/trace/sandbox/decide", map[string]any{
+			"entity_type": "customer", "entity_id": "ada", "data": map[string]any{"ssn": "123-45-6789"},
+		}, http.StatusOK, &dec)
+		return dec.Status == "completed"
+	}) {
+		t.Fatal("decide never completed")
+	}
+
+	// The 'a' node's recorded output has the SSN sealed at rest.
+	var rec history.Record
+	if !testutil.Eventually(t, func() bool {
+		rec = history.Record{}
+		var rerr error
+		rec, _, rerr = history.Read(context.Background(), st, id, dec.DecisionID)
+		return rerr == nil && len(rec.Nodes) > 0
+	}) {
+		t.Fatal("decision record never projected")
+	}
+	var aOut string
+	for _, n := range rec.Nodes {
+		if n.NodeID == "a" {
+			aOut = string(n.Output)
+		}
+	}
+	if aOut == "" || strings.Contains(aOut, "123-45-6789") || !strings.Contains(aOut, "$intraktible_erased") {
+		t.Fatalf("node 'a' output not sealed at rest: %s", aOut)
+	}
+
+	nodeSSN := func() string {
+		var got struct {
+			Nodes []struct {
+				NodeID string         `json:"node_id"`
+				Output map[string]any `json:"output"`
+			} `json:"nodes"`
+		}
+		api.Request(t, http.MethodGet, "/v1/decisions/"+dec.DecisionID, nil, http.StatusOK, &got)
+		for _, n := range got.Nodes {
+			if n.NodeID == "a" {
+				s, _ := n.Output["ssn"].(string)
+				return s
+			}
+		}
+		return ""
+	}
+	if got := nodeSSN(); got != "123-45-6789" {
+		t.Fatalf("authorized read should unseal the node-trace ssn, got %q", got)
+	}
+	if err := vault.Erase(context.Background(), id, "customer/ada"); err != nil {
+		t.Fatal(err)
+	}
+	if got := nodeSSN(); got != "[erased]" {
+		t.Fatalf("node-trace ssn after erasure = %q, want [erased]", got)
+	}
+}
+
 func TestWhatifOverHTTP(t *testing.T) {
 	api := startEngine(t)
 	var created struct {

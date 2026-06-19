@@ -40,12 +40,17 @@ func (s *Service) list(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, err)
 		return
 	}
-	entries, err := Read(r.Context(), s.log, id, q)
-	if err != nil {
-		httpx.Error(w, http.StatusInternalServerError, err)
-		return
-	}
+	// CSV export covers the whole filtered set (capped at MaxLimit), independent of
+	// the on-screen page.
 	if r.URL.Query().Get("format") == "csv" {
+		entries, err := Read(r.Context(), s.log, id, Query{
+			Stream: q.Stream, Actor: q.Actor, Type: q.Type, Resource: q.Resource,
+			Since: q.Since, Until: q.Until, ExcludeType: q.ExcludeType, Limit: MaxLimit,
+		})
+		if err != nil {
+			httpx.Error(w, http.StatusInternalServerError, err)
+			return
+		}
 		doc, err := CSV(entries)
 		if err != nil {
 			httpx.Error(w, http.StatusInternalServerError, err)
@@ -54,16 +59,22 @@ func (s *Service) list(w http.ResponseWriter, r *http.Request) {
 		httpx.Download(w, "text/csv; charset=utf-8", "audit.csv", doc)
 		return
 	}
-	httpx.WriteList(w, "entries", entries, nil)
+	page, err := ReadPage(r.Context(), s.log, id, q)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, page)
 }
 
 func parseQuery(r *http.Request) (Query, error) {
 	qp := r.URL.Query()
 	q := Query{
-		Stream:   qp.Get("stream"),
-		Actor:    qp.Get("actor"),
-		Type:     qp.Get("type"),
-		Resource: qp.Get("resource"),
+		Stream:      qp.Get("stream"),
+		Actor:       qp.Get("actor"),
+		Type:        qp.Get("type"),
+		Resource:    qp.Get("resource"),
+		ExcludeType: qp.Get("exclude_type"),
 	}
 	for _, b := range []struct {
 		key string
@@ -83,6 +94,13 @@ func parseQuery(r *http.Request) (Query, error) {
 			return Query{}, fmt.Errorf("invalid limit %q", v)
 		}
 		q.Limit = n
+	}
+	if v := qp.Get("offset"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 {
+			return Query{}, fmt.Errorf("invalid offset %q", v)
+		}
+		q.Offset = n
 	}
 	return q, nil
 }

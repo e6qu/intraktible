@@ -35,13 +35,24 @@ type Entry struct {
 // inclusive time bounds; Resource keeps only events whose payload references the
 // given id. Limit caps the result to the most recent N matches.
 type Query struct {
-	Stream   string
-	Actor    string
-	Type     string
-	Resource string
-	Since    time.Time
-	Until    time.Time
-	Limit    int
+	Stream      string
+	Actor       string
+	Type        string
+	Resource    string
+	Since       time.Time
+	Until       time.Time
+	ExcludeType string // drop events of this type (e.g. the high-volume node-evaluated noise)
+	Limit       int
+	Offset      int
+}
+
+// Page is one page of audit entries plus the total matching the filter (before
+// limit/offset), so the UI can paginate.
+type Page struct {
+	Entries []Entry `json:"entries"`
+	Total   int     `json:"total"`
+	Limit   int     `json:"limit"`
+	Offset  int     `json:"offset"`
 }
 
 const (
@@ -56,6 +67,42 @@ const (
 // folds the whole log — the same O(n) read the projection rebuild and the
 // existence checks use; the SQLite log is the indexed backend for large logs.
 func Read(ctx context.Context, log eventlog.Log, id identity.Identity, q Query) ([]Entry, error) {
+	out, err := matched(ctx, log, id, q)
+	if err != nil {
+		return nil, err
+	}
+	if limit := clampLimit(q.Limit); len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+// ReadPage is Read with offset+total, for the paginated UI. Total is the full
+// match count (before limit/offset); Entries is the requested window.
+func ReadPage(ctx context.Context, log eventlog.Log, id identity.Identity, q Query) (Page, error) {
+	all, err := matched(ctx, log, id, q)
+	if err != nil {
+		return Page{}, err
+	}
+	total := len(all)
+	limit := clampLimit(q.Limit)
+	lo := q.Offset
+	if lo < 0 {
+		lo = 0
+	}
+	if lo > total {
+		lo = total
+	}
+	hi := lo + limit
+	if hi > total {
+		hi = total
+	}
+	return Page{Entries: all[lo:hi], Total: total, Limit: limit, Offset: lo}, nil
+}
+
+// matched folds the log for the caller's tenant and returns all entries matching
+// q, most-recent first (no limit/offset applied).
+func matched(ctx context.Context, log eventlog.Log, id identity.Identity, q Query) ([]Entry, error) {
 	evs, err := log.Read(ctx, 0)
 	if err != nil {
 		return nil, err
@@ -71,9 +118,6 @@ func Read(ctx context.Context, log eventlog.Log, id identity.Identity, q Query) 
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Seq > out[j].Seq })
-	if limit := clampLimit(q.Limit); len(out) > limit {
-		out = out[:limit]
-	}
 	return out, nil
 }
 
@@ -95,6 +139,8 @@ func match(e eventlog.Envelope, q Query) bool {
 	case q.Actor != "" && e.Actor != q.Actor:
 		return false
 	case q.Type != "" && e.Type != q.Type:
+		return false
+	case q.ExcludeType != "" && e.Type == q.ExcludeType:
 		return false
 	case !q.Since.IsZero() && e.Time.Before(q.Since):
 		return false
