@@ -38,6 +38,12 @@
   let selectedId = $state('');
   let rules = $state<PolicyRule[]>([]);
   let dflt = $state('refer');
+
+  // Plain-language read of the bands in order (first match wins) + the default.
+  const bandPreview = $derived([
+    ...rules.filter((r) => r.when.trim()).map((r) => `if ${r.when.trim()} → ${r.disposition}`),
+    `otherwise → ${dflt}`
+  ]);
   let publishing = $state(false);
 
   // disposition backtest (preview the draft over a dataset)
@@ -242,6 +248,14 @@
           </button>
         </div>
       {/each}
+      {#if rules.some((r) => r.when.trim())}
+        <div class="band-preview" data-testid="band-preview">
+          <p class="muted">This policy reads, in order:</p>
+          <ol>
+            {#each bandPreview as line, i (i)}<li>{line}</li>{/each}
+          </ol>
+        </div>
+      {/if}
       <div class="row">
         <button onclick={addRule}><Icon name="plus" size={14} /> Add band</button>
         <label class="dflt">
@@ -337,6 +351,23 @@
   }
   .muted {
     color: var(--fg-subtle);
+  }
+  .band-preview {
+    margin: 0.6rem 0;
+    padding: 0.6rem 0.9rem;
+    border-left: 3px solid var(--accent);
+    background: var(--surface-2);
+    border-radius: var(--radius-sm);
+  }
+  .band-preview p {
+    margin: 0 0 0.3rem;
+    font-size: 0.8rem;
+  }
+  .band-preview ol {
+    margin: 0;
+    padding-left: 1.2rem;
+    font-size: 0.9rem;
+    font-family: var(--font-mono);
   }
   .err {
     color: var(--danger);
