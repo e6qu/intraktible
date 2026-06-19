@@ -331,6 +331,10 @@ func build(def ConnectorView, egress EgressPolicy) (Connector, error) {
 		return newHTTP(def.Config, egress)
 	case domain.ConnectorSQL:
 		return newSQL(def.Config)
+	case domain.ConnectorGraphQL:
+		return newGraphQL(def.Config, egress)
+	case domain.ConnectorStatic:
+		return newStatic(def.Config)
 	case domain.ConnectorMockBureau:
 		return mockBureau{}, nil
 	default:
@@ -403,6 +407,115 @@ func (h httpConnector) Fetch(ctx context.Context, params json.RawMessage) (json.
 		return nil, fmt.Errorf("context-layer: http connector returned non-JSON body")
 	}
 	return json.RawMessage(b), nil
+}
+
+// --- GraphQL connector ---
+
+type graphqlConfig struct {
+	URL   string `json:"url"`
+	Query string `json:"query"`
+}
+
+type graphqlConnector struct {
+	url    string
+	query  string
+	client *http.Client
+}
+
+func newGraphQL(config json.RawMessage, egress EgressPolicy) (graphqlConnector, error) {
+	var cfg graphqlConfig
+	if len(config) > 0 {
+		if err := json.Unmarshal(config, &cfg); err != nil {
+			return graphqlConnector{}, fmt.Errorf("context-layer: graphql connector config: %w", err)
+		}
+	}
+	u, err := url.Parse(cfg.URL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+		return graphqlConnector{}, fmt.Errorf("context-layer: graphql connector needs an http(s) url, got %q", cfg.URL)
+	}
+	if cfg.Query == "" {
+		return graphqlConnector{}, fmt.Errorf("context-layer: graphql connector needs a query")
+	}
+	return graphqlConnector{url: cfg.URL, query: cfg.Query, client: egress.Client(fetchTimeout)}, nil
+}
+
+// Fetch POSTs a GraphQL request ({query, variables}) — the decide input becomes the
+// query variables — and returns the response, failing loudly on a non-2xx status or
+// any GraphQL errors. Egress is dial-time guarded like the HTTP connector.
+func (g graphqlConnector) Fetch(ctx context.Context, params json.RawMessage) (json.RawMessage, error) {
+	variables := params
+	if len(variables) == 0 {
+		variables = json.RawMessage(`{}`)
+	}
+	reqBody, err := json.Marshal(map[string]json.RawMessage{
+		"query":     json.RawMessage(mustJSONString(g.query)),
+		"variables": variables,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("context-layer: graphql connector request: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, g.url, bytes.NewReader(reqBody)) // #nosec G107
+	if err != nil {
+		return nil, fmt.Errorf("context-layer: graphql connector request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := g.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("context-layer: graphql connector fetch: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	b, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return nil, fmt.Errorf("context-layer: graphql connector read: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("context-layer: graphql connector status %d", resp.StatusCode)
+	}
+	var envelope struct {
+		Errors []json.RawMessage `json:"errors"`
+	}
+	if err := json.Unmarshal(b, &envelope); err != nil {
+		return nil, fmt.Errorf("context-layer: graphql connector returned non-JSON body")
+	}
+	if len(envelope.Errors) > 0 {
+		return nil, fmt.Errorf("context-layer: graphql connector returned %d error(s)", len(envelope.Errors))
+	}
+	return json.RawMessage(b), nil
+}
+
+// mustJSONString JSON-encodes s as a quoted string (for embedding the query).
+func mustJSONString(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
+}
+
+// --- Static connector ---
+
+type staticConfig struct {
+	Data json.RawMessage `json:"data"`
+}
+
+type staticConnector struct {
+	data json.RawMessage
+}
+
+// newStatic returns a connector that serves fixed JSON verbatim — useful for
+// constants, feature flags, or stubbing an integration during development. No I/O.
+func newStatic(config json.RawMessage) (staticConnector, error) {
+	var cfg staticConfig
+	if len(config) > 0 {
+		if err := json.Unmarshal(config, &cfg); err != nil {
+			return staticConnector{}, fmt.Errorf("context-layer: static connector config: %w", err)
+		}
+	}
+	if len(cfg.Data) == 0 {
+		return staticConnector{}, fmt.Errorf("context-layer: static connector needs a data value")
+	}
+	return staticConnector{data: cfg.Data}, nil
+}
+
+func (s staticConnector) Fetch(_ context.Context, _ json.RawMessage) (json.RawMessage, error) {
+	return s.data, nil
 }
 
 // --- SQL connector ---

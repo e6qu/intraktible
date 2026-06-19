@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/e6qu/intraktible/context-layer/connectors"
+	"github.com/e6qu/intraktible/context-layer/domain"
 )
 
 func TestCatalogIsWellFormed(t *testing.T) {
@@ -23,25 +24,29 @@ func TestCatalogIsWellFormed(t *testing.T) {
 			t.Fatalf("duplicate template id %q", tpl.ID)
 		}
 		seen[tpl.ID] = true
-		if tpl.Type != "http" && tpl.Type != "sql" {
+		if !domain.ValidConnectorType(tpl.Type) {
 			t.Fatalf("template %q has unsupported type %q", tpl.ID, tpl.Type)
 		}
 		var cfg map[string]any
 		if err := json.Unmarshal(tpl.Config, &cfg); err != nil {
 			t.Fatalf("template %q config is not a JSON object: %v", tpl.ID, err)
 		}
+		need := func(field string) {
+			if _, ok := cfg[field]; !ok {
+				t.Fatalf("%s template %q is missing %q", tpl.Type, tpl.ID, field)
+			}
+		}
 		switch tpl.Type {
 		case "http":
-			if _, ok := cfg["url"]; !ok {
-				t.Fatalf("http template %q is missing a url", tpl.ID)
-			}
+			need("url")
+		case "graphql":
+			need("url")
+			need("query")
 		case "sql":
-			if _, ok := cfg["dsn"]; !ok {
-				t.Fatalf("sql template %q is missing a dsn", tpl.ID)
-			}
-			if _, ok := cfg["query"]; !ok {
-				t.Fatalf("sql template %q is missing a query", tpl.ID)
-			}
+			need("dsn")
+			need("query")
+		case "static":
+			need("data")
 		}
 	}
 }

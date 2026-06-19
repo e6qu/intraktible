@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -87,6 +88,71 @@ func TestHTTPConnector(t *testing.T) {
 	}
 	if !out.OK || out.Score != 42 {
 		t.Fatalf("http connector response: %s", resp)
+	}
+}
+
+func TestGraphQLConnector(t *testing.T) {
+	ctx := context.Background()
+	var gotBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"applicant":{"score":73}}}`))
+	}))
+	defer srv.Close()
+
+	s := store.NewMemory()
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "dev"}
+	define(ctx, t, s, id, connectors.ConnectorView{
+		Name: "gql", Type: domain.ConnectorGraphQL,
+		Config: json.RawMessage(`{"url":"` + srv.URL + `","query":"query($id:ID!){applicant(id:$id){score}}"}`),
+	})
+
+	resp, err := connectors.InvokeWith(ctx, s, id, "gql", json.RawMessage(`{"id":"a1"}`), connectors.EgressPolicy{AllowPrivate: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The decide input was sent as the GraphQL variables.
+	if !strings.Contains(gotBody, `"variables":{"id":"a1"}`) || !strings.Contains(gotBody, `"query"`) {
+		t.Fatalf("graphql request body: %s", gotBody)
+	}
+	if !strings.Contains(string(resp), `"score":73`) {
+		t.Fatalf("graphql response: %s", resp)
+	}
+}
+
+func TestGraphQLConnectorFailsOnErrors(t *testing.T) {
+	ctx := context.Background()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"errors":[{"message":"boom"}]}`))
+	}))
+	defer srv.Close()
+	s := store.NewMemory()
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "dev"}
+	define(ctx, t, s, id, connectors.ConnectorView{
+		Name: "gql", Type: domain.ConnectorGraphQL,
+		Config: json.RawMessage(`{"url":"` + srv.URL + `","query":"{x}"}`),
+	})
+	if _, err := connectors.InvokeWith(ctx, s, id, "gql", nil, connectors.EgressPolicy{AllowPrivate: true}); err == nil {
+		t.Fatal("expected a GraphQL errors response to fail loudly")
+	}
+}
+
+func TestStaticConnector(t *testing.T) {
+	ctx := context.Background()
+	s := store.NewMemory()
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "dev"}
+	define(ctx, t, s, id, connectors.ConnectorView{
+		Name: "flags", Type: domain.ConnectorStatic,
+		Config: json.RawMessage(`{"data":{"min_score":650,"on":true}}`),
+	})
+	resp, err := connectors.Invoke(ctx, s, id, "flags", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(resp), `"min_score":650`) {
+		t.Fatalf("static connector response: %s", resp)
 	}
 }
 
