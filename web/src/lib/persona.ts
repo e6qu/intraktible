@@ -27,6 +27,7 @@ export type NavId =
   | 'data'
   | 'cases'
   | 'agents'
+  | 'keys'
   | 'audit';
 
 export type NavItem = { id: NavId; href: string; label: string; icon: string };
@@ -45,6 +46,7 @@ export const NAV = new Map<NavId, NavItem>([
   ['data', { id: 'data', href: '/data', label: 'Data', icon: 'database' }],
   ['cases', { id: 'cases', href: '/cases', label: 'Cases', icon: 'cases' }],
   ['agents', { id: 'agents', href: '/agents', label: 'Agents', icon: 'agents' }],
+  ['keys', { id: 'keys', href: '/keys', label: 'API keys', icon: 'connect' }],
   ['audit', { id: 'audit', href: '/audit', label: 'Audit', icon: 'shield' }]
 ]);
 
@@ -52,7 +54,7 @@ export type Action = { label: string; href: string; icon: string };
 
 // Which home composition a persona lands on. The three original archetypes keep
 // their bespoke decks; the role personas use the config-driven PersonaHome.
-export type HomeKind = 'builder' | 'operator' | 'showcase' | 'persona';
+export type HomeKind = 'builder' | 'operator' | 'showcase' | 'evaluator' | 'persona';
 
 export type PersonaConfig = {
   id: Persona;
@@ -89,9 +91,10 @@ export const PERSONAS: PersonaConfig[] = [
     blurb: 'Integrate the decision API and debug traces',
     icon: 'agents',
     home: 'persona',
-    nav: ['decisions', 'engine', 'agents', 'data', 'audit'],
+    nav: ['decisions', 'engine', 'keys', 'agents', 'data', 'audit'],
     actions: [
       { label: 'Inspect decision traces', href: '/decisions', icon: 'diagram' },
+      { label: 'Manage API keys', href: '/keys', icon: 'connect' },
       { label: 'Browse the API reference', href: '/docs', icon: 'code' },
       { label: 'Manage agents & tools', href: '/agents', icon: 'agents' }
     ],
@@ -151,7 +154,7 @@ export const PERSONAS: PersonaConfig[] = [
     label: 'Evaluator / Guest',
     blurb: 'A guided look at the platform',
     icon: 'search',
-    home: 'persona',
+    home: 'evaluator',
     nav: ['engine', 'decisions'],
     actions: [
       { label: 'Explore the flow builder', href: '/engine', icon: 'engine' },

@@ -2,6 +2,10 @@
 // Enforces the API-first guarantee (see docs/API-FIRST.md): the UI is one client of
 // the public /v1 API with no UI-only backdoors. These tests fail if a change adds a
 // raw fetch(), a SvelteKit server route, or a non-/v1 endpoint in api.ts.
+//
+// This test deliberately walks the source tree, so its fs paths are computed, not
+// literal — the non-literal-fs lint doesn't apply to a build-time source scanner.
+/* eslint-disable security/detect-non-literal-fs-filename */
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
