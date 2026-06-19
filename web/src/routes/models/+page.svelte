@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
-<!-- Predictive model registry: define models as data (logistic | gbm | expression),
-     evaluated deterministically by the engine and referenced from a Predict node.
+<!-- Predictive model registry: define models as data (logistic | gbm | expression |
+     external), evaluated by the engine and referenced from a Predict node.
      Everything goes through the documented /v1/models API. -->
 <script lang="ts">
   import { onMount } from 'svelte';
@@ -22,7 +22,11 @@
       'gbm',
       '{\n  "kind": "gbm",\n  "link": "logit",\n  "trees": [\n    { "feature": "fico", "threshold": 650,\n      "left": { "leaf": true, "value": -0.4 },\n      "right": { "leaf": true, "value": 0.3 } }\n  ]\n}'
     ],
-    ['expression', '{\n  "kind": "expression",\n  "expr": "fico * 0.001 + income * 0.00001"\n}']
+    ['expression', '{\n  "kind": "expression",\n  "expr": "fico * 0.001 + income * 0.00001"\n}'],
+    [
+      'external',
+      '{\n  "kind": "external",\n  "endpoint": "https://models.internal/score",\n  "timeout_ms": 5000\n}'
+    ]
   ]);
 
   let models = $state<Model[]>([]);
@@ -72,10 +76,11 @@
 <main>
   <h1><Icon name="scorecard" size={20} /> Models</h1>
   <p class="muted">
-    Predictive models hosted as data and evaluated deterministically — no external runtime.
-    Reference one from a <b>Predict</b> node (it injects <code>predict.&lt;output&gt;</code>).
-    Supported kinds:
-    <b>logistic</b> regression, a <b>gbm</b> tree ensemble, and an <b>expression</b> score.
+    Predictive models hosted as data. Reference one from a <b>Predict</b> node (it injects
+    <code>predict.&lt;output&gt;</code>). Three kinds evaluate in-process and deterministically —
+    <b>logistic</b> regression, a <b>gbm</b> tree ensemble, an <b>expression</b> score — and an
+    <b>external</b> kind serves a bring-your-own model over an egress-guarded HTTP endpoint (returns
+    <code>{'{'}score, probability{'}'}</code>).
   </p>
 
   <form
@@ -99,6 +104,7 @@
         <button type="button" onclick={() => starter('logistic')}>logistic</button>
         <button type="button" onclick={() => starter('gbm')}>gbm</button>
         <button type="button" onclick={() => starter('expression')}>expression</button>
+        <button type="button" onclick={() => starter('external')}>external</button>
       </span>
       <button type="submit" disabled={busy}>{busy ? 'Saving…' : 'Define model'}</button>
     </div>

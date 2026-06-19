@@ -36,10 +36,12 @@ Done — flow model + versioning (vertical slice, command→event→projection�
   - `GET /v1/flows/{slug}/openapi.json` — a generated, flow-specific OpenAPI 3.1 contract (the flow's
     published `input_schema` as the request data schema) for codegen / Swagger
   - `POST /v1/models` · `GET /v1/models[/{name}]` — the predictive-model registry (models hosted as
-    **data** and evaluated deterministically: `logistic` regression, a `gbm` tree-ensemble, or an
-    `expression` score). A **Predict** node references one by name; the shell evaluates it and injects
+    **data** and evaluated deterministically: `logistic` regression, a `gbm` tree-ensemble, an
+    `expression` score, or an `external` BYO model served over an egress-guarded HTTP endpoint). A
+    **Predict** node references one by name; the shell evaluates (or, for `external`, calls) it and injects
     `predict.<output>` ({score, probability}) — pre-resolved + recorded like Connect/AI, so it stays
-    replayable. No external runtime (the §9 ONNX-at-scale non-goal stands).
+    replayable. The in-process kinds need no external runtime (the §9 ONNX-at-scale non-goal stands);
+    `external` is the bring-your-own-serving escape hatch.
   - `GET /v1/decisions` — history; filter by `flow`/`env`/`status`/`q`, an RFC3339 range
     (`start_time`/`end_time`), and `include_node_results=false` to omit the per-node trace
 - Run it: `intraktible serve --modules=decision-engine`.

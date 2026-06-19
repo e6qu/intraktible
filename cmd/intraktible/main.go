@@ -204,7 +204,7 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 			enginecmd.WithFeatures(features.Provider{Store: st}),
 			enginecmd.WithConnectors(connectorProvider),
 			enginecmd.WithAgents(agents.Provider{Store: st, Registry: aiRegistry, Tools: toolbox}),
-			enginecmd.WithModels(enginemodels.Provider{Store: st}),
+			enginecmd.WithModels(enginemodels.Provider{Store: st, HTTP: egress.Client(10 * time.Second)}),
 		}
 		// Crypto-shred recorded decision PII under the entity subject when erasure
 		// fields are configured (same set as the Context Layer's event sealing).
