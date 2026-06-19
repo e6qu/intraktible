@@ -42,7 +42,7 @@ func mockIdP(t *testing.T) *httptest.Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/token", func(w http.ResponseWriter, _ *http.Request) {
 		claims := fmt.Sprintf(
-			`{"iss":%q,"aud":%q,"sub":"u-1","email":"ada@acme.com","groups":["admins","staff"],"nonce":%q,"exp":%d,"iat":%d}`,
+			`{"iss":%q,"aud":%q,"sub":"u-1","email":"ada@acme.com","email_verified":true,"groups":["admins","staff"],"nonce":%q,"exp":%d,"iat":%d}`,
 			issuer, oidcClientID, oidcNonce, time.Now().Add(time.Hour).Unix(), time.Now().Unix())
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{

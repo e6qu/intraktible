@@ -7,6 +7,7 @@ package identity
 import (
 	"context"
 	"errors"
+	"strings"
 )
 
 // Identity is the authenticated caller's tenancy + actor scope.
@@ -26,6 +27,13 @@ func (i Identity) Valid() error {
 		return errors.New("identity: missing workspace")
 	case i.Actor == "":
 		return errors.New("identity: missing actor")
+	// Tenant isolation across the store is enforced by the "org/workspace/" key
+	// prefix, so a '/' in either segment could let one tenant's prefix match
+	// another's keys. Reject it rather than rely on every writer to sanitize.
+	case strings.ContainsRune(i.Org, '/'):
+		return errors.New("identity: org must not contain '/'")
+	case strings.ContainsRune(i.Workspace, '/'):
+		return errors.New("identity: workspace must not contain '/'")
 	default:
 		return nil
 	}

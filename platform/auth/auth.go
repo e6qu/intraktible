@@ -140,13 +140,14 @@ func NewSessions() *Sessions {
 // TTL returns the session lifetime (used to align the cookie's max-age).
 func (s *Sessions) TTL() time.Duration { return s.ttl }
 
-// Issue creates a session token for id with role, valid for the TTL.
-func (s *Sessions) Issue(id identity.Identity, role Role) string {
+// Issue creates a session token for id with role, valid for the TTL. The
+// in-memory store never fails; the error is part of the SessionStore contract.
+func (s *Sessions) Issue(id identity.Identity, role Role) (string, error) {
 	tok := newToken()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.sessions[tok] = session{id: id, role: role, expires: s.now().Add(s.ttl)}
-	return tok
+	return tok, nil
 }
 
 // Resolve returns the identity + role for a token, treating an expired one as absent.
