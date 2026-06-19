@@ -442,6 +442,27 @@ stale-response race fix in the command palette, the `manual_review` node made cr
 card summaries computed from edges. Verified through the full strict gate (`-race` tests, lint/sast/
 deadcode/dupl, svelte-check/eslint/vitest).
 
+**Audit round 2 + builder-parity API (post-MVP, hardening).** A second audit pass (informed by
+screenshots of every page across personas/themes) closed more findings and completed the public API for
+flow authoring. Security: a viewer could trigger billable agent runs via the GET SSE/WS run endpoints
+(the authz layer treated all GETs as reads); OIDC now requires `email_verified` before trusting the email
+claim (else falls back to the subject) and both SSO paths reject an empty actor (which would have minted
+an anonymous session past the deprovisioning gate); SAML rejects an ambiguous multi-entity metadata
+aggregate; the SSRF egress policy also blocks CGNAT (`100.64.0.0/10`); `Identity.Valid` rejects `/` in
+org/workspace (tenant-prefix isolation). Correctness: SCIM group PATCH applies all member ops as one
+atomic, locked read-modify-write (no partial apply / lost updates); session `Issue` returns an error so a
+persist failure fails the login loudly; the SSE/WS run `done` frames include structured output. **API /
+builder parity:** flow authoring was already fully expressible over the API, so the gap was (1)
+**server-side auto-layout** — a position-less publish/import now gets a deterministic swimlane layout
+(new `decision-engine/layout`, a Go port of the builder's `layoutLanes`), preserving any supplied
+positions; and (2) **OpenAPI completeness** — the flow graph contract (Graph/Node/Edge schemas, node-type
+enum, per-type config), the previously-undocumented `POST …/versions` write, and the control plane are now
+documented (11→39 paths). Performance: the NATS log fails loudly on a missing sequence (was a silent skip
+that could diverge a rebuild) and is configured for unlimited retention; `flows.BySlug` (decide hot path)
+uses a slug→id index with a scan fallback. Deferred to a focused follow-up (to avoid auth/projection
+regressions in a large PR): an API-key hash index, a policy-by-flow index, and moving the case-existence
+check off its (deliberately consistent) whole-log fold.
+
 > Per project convention: at the **end of every phase**, update `PLAN.md` and `BUGS.md` in the same
 > PR as the phase's code.
 
