@@ -20,6 +20,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -195,6 +196,7 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 		helloservice.New(hellocmd.NewHandler(log), st).Routes(api)
 	}
 	var monitorScheduler *monitor.Scheduler
+	var driftScheduler *enginemodels.Scheduler
 	if enabled(modules, "decision-engine") {
 		// A decision can fold in a Context Layer entity's features, call Context
 		// Layer connectors from Connect nodes, and run Agent Manager agents from AI
@@ -216,7 +218,8 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 		// promote an approved batch into grants; the pre-approval service exposes
 		// the standalone grant/list/revoke surface.
 		paCmd := preapproval.NewHandler(log)
-		engineSvc := engineservice.New(enginecmd.NewHandler(log), decide, paCmd, st)
+		engineCmd := enginecmd.NewHandler(log)
+		engineSvc := engineservice.New(engineCmd, decide, paCmd, st)
 		if len(erasurePIIFields) > 0 {
 			engineSvc.UseEraser(erasureVault)
 		}
@@ -236,6 +239,11 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 		monCmd := monitor.NewHandler(log)
 		monitor.New(monCmd, st, notifier).Routes(api)
 		monitorScheduler = monitor.NewScheduler(st, monCmd, notifier)
+		// Model drift: the same scheduler cadence sweeps every model's PSI vs its
+		// configured threshold and pushes the firing edge to webhooks. The window is
+		// cumulative by default; INTRAKTIBLE_MODEL_DRIFT_WINDOW (days) narrows it to a
+		// recent slice so a fresh shift isn't diluted by all-time history.
+		driftScheduler = enginemodels.NewScheduler(st, engineCmd, notifier, driftWindowDays())
 		// Flow assertions: input→expected test cases, run through the pure core and
 		// used as a pre-promote gate.
 		assertions.New(assertions.NewHandler(log), st).Routes(api)
@@ -306,6 +314,10 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 				return fmt.Errorf("INTRAKTIBLE_MONITOR_INTERVAL %q: must be a positive duration", iv)
 			}
 			go monitorScheduler.Run(ctx, d)
+			// Model-drift push shares the cadence: one interval drives both sweeps.
+			if driftScheduler != nil {
+				go driftScheduler.Run(ctx, d)
+			}
 		}
 	}
 
@@ -978,6 +990,16 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// driftWindowDays reads INTRAKTIBLE_MODEL_DRIFT_WINDOW (in days) for the drift
+// scheduler's firing window. 0 (absent/invalid/non-positive) means all-time.
+func driftWindowDays() int {
+	n, err := strconv.Atoi(strings.TrimSpace(os.Getenv("INTRAKTIBLE_MODEL_DRIFT_WINDOW")))
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
 }
 
 func truthy(v string) bool {

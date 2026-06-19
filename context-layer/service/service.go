@@ -222,6 +222,14 @@ type connectorRequest struct {
 func (s *Service) defineConnector(w http.ResponseWriter, r *http.Request) {
 	var req connectorRequest
 	httpx.Emit(w, r, &req, func(id identity.Identity) (eventlog.Envelope, error) {
+		// Validate the type-specific config up front (known types only — an unknown
+		// type falls through to the command's domain validation for its canonical
+		// error). Runs on the plaintext config, before secrets are sealed.
+		if domain.ValidConnectorType(req.Type) {
+			if err := connectors.ValidateConfig(req.Type, req.Config); err != nil {
+				return eventlog.Envelope{}, err
+			}
+		}
 		cfg, err := connectors.EncryptSecrets(req.Config, s.secrets)
 		if err != nil {
 			return eventlog.Envelope{}, err

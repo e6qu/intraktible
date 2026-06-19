@@ -33,10 +33,14 @@ Done — custom entities + events + feature engine + connectors (command→event
   entity; the **decision engine** consumes it through a port so a decide call carrying an
   `{entity_type, entity_id}` ref gets these folded into its input under `features.*` (read by Rule
   nodes).
-- **Connectors** fetch external data. A definition is `{name, type, config}` for one of the reference
-  types: **http** (calls an operator-configured REST endpoint — the "Custom Connect" case) or
-  **mock_bureau** (a deterministic in-process bureau, derives a stable risk score from the params'
-  `subject`). Invoking a connector is an effect performed by the shell and **recorded as a
+- **Connectors** fetch external data. A definition is `{name, type, config}` for one of the
+  types: **http**/**graphql** (operator-configured REST/GraphQL — the "Custom Connect" case — with
+  an optional `auth` block (bearer | header | basic | query) + custom headers), **sql**, **static**,
+  the first-class provider adapters **plaid** (credentials injected into the request body, env-selected
+  base URL) and **stripe** (bearer secret key, GET retrieval), or **mock_bureau** (a deterministic
+  in-process bureau). Credential fields are sealed by the secret keyring and masked at the HTTP
+  boundary; config is **validated at define time** (a bad endpoint/credential fails on save, not on
+  first fetch). Invoking a connector is an effect performed by the shell and **recorded as a
   `ConnectorFetched` event**, so the stored response — never a re-fetch — is what replay/audit reads.
   The `Connect` interface + a registry make new connector types pluggable.
 - HTTP (under `/v1/`, X-Api-Key / session auth, org+workspace scoped):

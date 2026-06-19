@@ -532,6 +532,38 @@ func (h *Handler) SetModelMonitor(ctx context.Context, id identity.Identity, nam
 	})
 }
 
+// MarkModelDriftAlerted records that a model's PSI crossed its threshold (the
+// drift was pushed to webhooks) — the ok→firing edge the drift scheduler dedups on.
+func (h *Handler) MarkModelDriftAlerted(ctx context.Context, id identity.Identity, name string, psi, threshold float64) (eventlog.Envelope, error) {
+	payload, err := json.Marshal(events.ModelDriftAlerted{Name: name, PSI: psi, Threshold: threshold})
+	if err != nil {
+		return eventlog.Envelope{}, fmt.Errorf("decision-engine: marshal model drift alert: %w", err)
+	}
+	return h.appendModelEvent(ctx, id, events.TypeModelDriftAlerted, payload)
+}
+
+// MarkModelDriftResolved records that a previously-alerting model's PSI fell back
+// under its threshold (firing→ok).
+func (h *Handler) MarkModelDriftResolved(ctx context.Context, id identity.Identity, name string) (eventlog.Envelope, error) {
+	payload, err := json.Marshal(events.ModelDriftResolved{Name: name})
+	if err != nil {
+		return eventlog.Envelope{}, fmt.Errorf("decision-engine: marshal model drift resolve: %w", err)
+	}
+	return h.appendModelEvent(ctx, id, events.TypeModelDriftResolved, payload)
+}
+
+func (h *Handler) appendModelEvent(ctx context.Context, id identity.Identity, typ string, payload json.RawMessage) (eventlog.Envelope, error) {
+	return h.log.Append(ctx, eventlog.Envelope{
+		Org:       id.Org,
+		Workspace: id.Workspace,
+		Actor:     id.Actor,
+		Stream:    events.StreamModels,
+		Type:      typ,
+		Time:      h.now(),
+		Payload:   payload,
+	})
+}
+
 func (h *Handler) appendFlowEvent(ctx context.Context, id identity.Identity, typ string, payload json.RawMessage) (eventlog.Envelope, error) {
 	return h.log.Append(ctx, eventlog.Envelope{
 		Org:       id.Org,
