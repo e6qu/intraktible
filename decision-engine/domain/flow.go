@@ -27,6 +27,7 @@ var nodeTypes = map[events.NodeType]bool{
 	events.NodeCode:          true,
 	events.NodeAI:            true,
 	events.NodeConnect:       true,
+	events.NodePredict:       true,
 	events.NodeManualReview:  true,
 	events.NodeReason:        true,
 	events.NodeOutput:        true,

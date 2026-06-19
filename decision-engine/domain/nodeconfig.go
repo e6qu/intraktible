@@ -58,6 +58,14 @@ type connectConfig struct {
 	Output    string `json:"output"`
 }
 
+// predictConfig is the config of a Predict node: it names a registered model to
+// evaluate and the key its prediction is injected under (read downstream as
+// predict.<output>, e.g. predict.risk.probability).
+type predictConfig struct {
+	Model  string `json:"model"`
+	Output string `json:"output"`
+}
+
 // aiConfig is the config of an AI node: it names an Agent Manager agent to run and
 // the key its output is injected under (read downstream as ai.<output>). Prompt is
 // the literal prompt; when empty the node sends the current input as the prompt.

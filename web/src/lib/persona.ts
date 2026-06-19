@@ -27,6 +27,7 @@ export type NavId =
   | 'data'
   | 'cases'
   | 'agents'
+  | 'models'
   | 'keys'
   | 'audit';
 
@@ -46,6 +47,7 @@ export const NAV = new Map<NavId, NavItem>([
   ['data', { id: 'data', href: '/data', label: 'Data', icon: 'database' }],
   ['cases', { id: 'cases', href: '/cases', label: 'Cases', icon: 'cases' }],
   ['agents', { id: 'agents', href: '/agents', label: 'Agents', icon: 'agents' }],
+  ['models', { id: 'models', href: '/models', label: 'Models', icon: 'scorecard' }],
   ['keys', { id: 'keys', href: '/keys', label: 'API keys', icon: 'connect' }],
   ['audit', { id: 'audit', href: '/audit', label: 'Audit', icon: 'shield' }]
 ]);
@@ -78,7 +80,7 @@ export const PERSONAS: PersonaConfig[] = [
     blurb: 'Author and version decision flows',
     icon: 'builder',
     home: 'builder',
-    nav: ['engine', 'policies', 'data', 'decisions', 'agents'],
+    nav: ['engine', 'policies', 'data', 'models', 'decisions', 'agents'],
     actions: [
       { label: 'Open the flow builder', href: '/engine', icon: 'engine' },
       { label: 'Author policy bands', href: '/policies', icon: 'rule' },
@@ -133,10 +135,11 @@ export const PERSONAS: PersonaConfig[] = [
     blurb: 'A/B, shadow, backtests, and policy impact',
     icon: 'diagram',
     home: 'persona',
-    nav: ['engine', 'policies', 'decisions', 'data'],
+    nav: ['engine', 'policies', 'models', 'decisions', 'data'],
     actions: [
       { label: 'Backtest a flow', href: '/engine', icon: 'engine' },
       { label: 'Tune policy impact', href: '/policies', icon: 'rule' },
+      { label: 'Manage models', href: '/models', icon: 'scorecard' },
       { label: 'Analyse decisions', href: '/decisions', icon: 'diagram' }
     ]
   },
