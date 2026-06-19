@@ -578,6 +578,16 @@ never appear in-repo (neutral language only).
 > Per project convention: at the **end of every phase**, update `PLAN.md` and `BUGS.md` in the same
 > PR as the phase's code.
 
+**Launch batches (post-audit, A1–A45 all merged).** With the round-3 backlog cleared, two large
+"launch" PRs bundled the remaining stretch + hardening (deliberately fat, to conserve review/CI cycles
+into launch). **Batch 1 (PR #16):** ML phase 2 (BYO `external` served models), connector-catalog breadth,
+the large-job NDJSON `…/decide/stream`, model-drift PSI monitoring, the authoring AI-copilot
+(explain/suggest), and the A16/A17 visual polish. **Batch 2 (PR #17):** deeper copilot (server-validated
+graph **generation** applied to the canvas), **windowed/time-bucketed drift** + a per-model PSI monitor
+threshold, two **real connector adapters** (`graphql`, `static`) + more catalog templates, and a
+**launch-readiness sweep** (8 MiB JSON body cap, `GET /version`, `docs/LAUNCH.md`). Remaining ideas
+(connector providers needing SDKs/keys, a scheduled model-drift webhook push) stay open as future work.
+
 ---
 
 ## 9. MVP non-goals
