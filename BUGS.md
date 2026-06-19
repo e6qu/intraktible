@@ -25,11 +25,11 @@ PR3 — decision explainability + case management (DONE, PR #8)
 - `A12 | LOW | web/cases | the open-case form inputs are labelled (Company/Type/SLA days); the SLA-sweep tooltip already existed. | fixed — PR #8`
 
 PR4 — accessibility + visual consistency
-- `A13 | HIGH | web | secondary text (timestamps/metadata/helper copy) is low-contrast, likely fails WCAG AA — darken to ≥4.5:1. | open — PR4`
-- `A14 | MED | web | placeholder-as-label throughout + status communicated by color alone — add visible labels and non-color status cues. | open — PR4`
-- `A15 | MED | web | the top bar has competing identity ("Signed in as dev"/"Sign out") + a persona pill, and the login page renders the full authenticated chrome — consolidate into one account/role menu; minimal chrome on /login. | open — PR4`
-- `A16 | LOW | web | the showcase (editorial) and inner pages (utilitarian) feel like two products — carry the showcase type/spacing hierarchy inward; unify persona label casing. | open — PR4`
-- `A17 | LOW | web | assorted clarity — breadcrumbs on detail pages, a search-scope placeholder, ≥24px canvas/link hit areas, agents-form required-vs-optional grouping, a policies band preview, data feature-form labels. | open — PR4`
+- `A13 | HIGH | web | --fg-subtle darkened in both themes (light #8a929e→#6b7280, dark #6b7480→#828c99) so secondary text clears WCAG AA 4.5:1. | fixed — PR #9`
+- `A14 | MED | web | placeholder-as-label replaced with real <label>s on the worst offenders (agents define form grouped Identity/Behavior; data feature form). Status badges already render their text (e.g. decisions <span class="badge {status}">{status}</span>), so status is not color-alone. | fixed — PR #9`
+- `A15 | MED | web | one "account & view" menu now carries identity (Signed in as / Not signed in), the view-as persona switcher, and sign-in/out — the competing top-bar controls are gone; /login renders minimal chrome (brand + theme only, no Primary nav or account control). e2e (login.spec) asserts both states. | fixed — PR #9`
+- `A16 | LOW | web | partial — contrast tokens unified app-wide (A13) and persona labels render verbatim from PERSONAS (consistent casing). The deeper editorial-vs-utilitarian unification (carrying the showcase type/spacing hierarchy inward) is deferred. | partial — PR #9`
+- `A17 | LOW | web | partial — agents-form required-vs-optional grouping and data feature-form labels + a plain-language feature preview done. Breadcrumbs on detail pages, a search-scope placeholder, ≥24px hit areas, and a policies band preview remain deferred. | partial — PR #9`
 
 PR5 — robustness & bug-fix round
 - `A18 | MED | eventlog/nats | Read forces fromSeq=1 and treats any GetMsg miss in [1,head] as fatal, with a separate Head() RPC (TOCTOU) — clamp to FirstSeq/LastSeq from one StreamInfo; only a gap strictly inside the range is corruption. | open — PR5`

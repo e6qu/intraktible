@@ -4,11 +4,17 @@ import { test, expect } from '@playwright/test';
 test('sign in with an API key, then sign out', async ({ page }) => {
   await page.goto('/login');
   await expect(page.getByRole('heading', { name: /Sign in/i })).toBeVisible();
+  // Minimal chrome on the sign-in screen: no primary nav or account control.
+  await expect(page.getByRole('navigation', { name: 'Primary' })).toHaveCount(0);
+  await expect(page.getByTestId('persona-switch')).toHaveCount(0);
 
   await page.getByLabel('API key').fill('dev-sandbox-key');
   await page.getByRole('button', { name: 'Sign in' }).click();
 
-  // Redirected home; the session cookie now authenticates /v1/me.
+  // Redirected home; the full chrome returns and identity + sign-out live in the
+  // account & view menu.
+  await expect(page.getByRole('navigation', { name: 'Primary' })).toBeVisible();
+  await page.getByTestId('persona-switch').locator('summary').click();
   const status = page.getByTestId('auth-status');
   await expect(status).toContainText('Signed in as');
   await expect(status).toContainText('dev');
