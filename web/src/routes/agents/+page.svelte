@@ -87,19 +87,46 @@
       create();
     }}
   >
+    <p class="grouphdr">Identity</p>
     <div class="row">
-      <input bind:value={name} placeholder="agent name" aria-label="agent name" required />
-      <input bind:value={provider} placeholder="provider (optional)" aria-label="provider" />
-      <input bind:value={model} placeholder="model (optional)" aria-label="model" />
+      <label
+        >Name (required) <input
+          bind:value={name}
+          placeholder="sanctions-screener"
+          aria-label="agent name"
+          required
+        /></label
+      >
+      <label
+        >Provider <input
+          bind:value={provider}
+          placeholder="optional"
+          aria-label="provider"
+        /></label
+      >
+      <label>Model <input bind:value={model} placeholder="optional" aria-label="model" /></label>
     </div>
-    <input bind:value={system} placeholder="system prompt (optional)" aria-label="system prompt" />
-    <input bind:value={tools} placeholder="tools, comma-separated (optional)" aria-label="tools" />
-    <textarea
-      bind:value={schema}
-      placeholder={'structured-output schema JSON (optional) e.g. {"type":"object","required":["risk"]}'}
-      aria-label="output schema"
-      rows="3"
-    ></textarea>
+    <p class="grouphdr">Behavior</p>
+    <label class="field"
+      >System prompt
+      <input bind:value={system} placeholder="optional" aria-label="system prompt" /></label
+    >
+    <label class="field"
+      >Tools <input
+        bind:value={tools}
+        placeholder="comma-separated (optional)"
+        aria-label="tools"
+      /></label
+    >
+    <label class="field"
+      >Output schema (optional)
+      <textarea
+        bind:value={schema}
+        placeholder={'JSON Schema, e.g. {"type":"object","required":["risk"]}'}
+        aria-label="output schema"
+        rows="3"
+      ></textarea></label
+    >
     <div class="row">
       <button type="submit" disabled={busy}>{busy ? 'Saving…' : 'Define agent'}</button>
     </div>
@@ -183,9 +210,33 @@
     box-sizing: border-box;
     resize: vertical;
   }
-  .define > input {
+  .grouphdr {
+    margin: 0.5rem 0 0.1rem;
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--fg-subtle);
+  }
+  label.field {
+    display: block;
+    margin: 0;
+    font-size: 0.78rem;
+    color: var(--fg-subtle);
+  }
+  label.field input,
+  label.field textarea {
+    display: block;
     width: 100%;
     box-sizing: border-box;
+    margin-top: 0.15rem;
+    color: var(--fg);
+  }
+  .define .row label {
+    display: inline-flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    font-size: 0.78rem;
+    color: var(--fg-subtle);
   }
   .badge {
     display: inline-block;

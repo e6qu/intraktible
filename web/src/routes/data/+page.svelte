@@ -81,6 +81,10 @@
   let fAgg = $state('count');
   let fField = $state('');
   let fWindow = $state('24');
+  // Plain-language preview of the feature being defined.
+  const featurePreview = $derived(
+    `${fAgg}${fAgg === 'sum' ? ` of ${fField || '…'}` : ''} of "${fEventName || '…'}" events per ${fEntityType || '…'} over ${fWindow || '…'}h`
+  );
   let fBusy = $state(false);
   async function addFeature() {
     if (fBusy) return; // Enter fires onsubmit directly, bypassing the disabled button
@@ -190,35 +194,60 @@
         void addFeature();
       }}
     >
-      <input bind:value={fName} placeholder="name" aria-label="feature name" size="14" required />
-      <input
-        bind:value={fEntityType}
-        placeholder="entity type"
-        aria-label="feature entity type"
-        size="12"
-        required
-      />
-      <input
-        bind:value={fEventName}
-        placeholder="event name"
-        aria-label="feature event name"
-        size="12"
-        required
-      />
-      <select bind:value={fAgg} aria-label="feature aggregation">
-        <option value="count">count</option>
-        <option value="sum">sum</option>
-      </select>
-      <input bind:value={fField} placeholder="field (sum)" aria-label="feature field" size="10" />
-      <input
-        bind:value={fWindow}
-        placeholder="window h"
-        aria-label="feature window hours"
-        size="8"
-        inputmode="numeric"
-      />
+      <label
+        >Name <input
+          bind:value={fName}
+          placeholder="txns_24h"
+          aria-label="feature name"
+          size="12"
+          required
+        /></label
+      >
+      <label
+        >Entity <input
+          bind:value={fEntityType}
+          placeholder="applicant"
+          aria-label="feature entity type"
+          size="10"
+          required
+        /></label
+      >
+      <label
+        >Event <input
+          bind:value={fEventName}
+          placeholder="transaction"
+          aria-label="feature event name"
+          size="10"
+          required
+        /></label
+      >
+      <label
+        >Aggregation
+        <select bind:value={fAgg} aria-label="feature aggregation">
+          <option value="count">count</option>
+          <option value="sum">sum</option>
+        </select></label
+      >
+      <label
+        >Field (for sum) <input
+          bind:value={fField}
+          placeholder="amount"
+          aria-label="feature field"
+          size="8"
+        /></label
+      >
+      <label
+        >Window (hours) <input
+          bind:value={fWindow}
+          placeholder="24"
+          aria-label="feature window hours"
+          size="6"
+          inputmode="numeric"
+        /></label
+      >
       <button type="submit" disabled={fBusy}>{fBusy ? 'Saving…' : 'Define feature'}</button>
     </form>
+    <p class="muted preview" data-testid="feature-preview">{featurePreview}</p>
     {#if features.length === 0}
       <p class="muted">No features yet.</p>
     {:else}
@@ -374,6 +403,19 @@
     white-space: nowrap;
   }
   .muted {
+    color: var(--fg-subtle);
+  }
+  .preview {
+    font-style: italic;
+    font-size: 0.85rem;
+    margin: 0.3rem 0 0;
+  }
+  .row label {
+    display: inline-flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    margin: 0;
+    font-size: 0.74rem;
     color: var(--fg-subtle);
   }
   .err {
