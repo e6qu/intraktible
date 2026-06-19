@@ -138,6 +138,7 @@ Pluggable storage (SQLite/Postgres) and pluggable AI provider. Details: [PLAN.md
 - **Deterministic core** (prereq for replay): no wall-clock/random in core except via injected, recorded effects.
 - **Fail loudly** — no silent fallbacks / empty catches / "log & continue" in logic (network retries are fine).
 - **License**: `AGPL-3.0-or-later`; SPDX header on every file (`SPDX-License-Identifier: AGPL-3.0-or-later`); deps must pass the license gate ([docs/LICENSING.md](docs/LICENSING.md)).
+- **One open PR at a time**: never keep more than one pull request open on this repo simultaneously. Land (or close) the current PR before opening the next; serialize work into a single review queue.
 - **Docs cadence**: update [PLAN.md](PLAN.md) and [BUGS.md](BUGS.md) in the **same PR** that ends a phase.
 - **No phase/issue refs in source** — keep the "why" in commit messages, not code comments.
 - Strict linting + **dead-code** + **copy-paste** detection are CI gates.
