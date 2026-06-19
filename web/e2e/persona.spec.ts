@@ -27,3 +27,14 @@ test('a persona composes its own navigation and landing', async ({ page, context
   await expect(designerNav.getByText('Traces')).toHaveCount(0);
   await expect(page.getByTestId('persona-home')).toHaveCount(0);
 });
+
+test('the Evaluator persona lands on a guided tour', async ({ page, context }) => {
+  await context.request.post('/v1/login', { data: { api_key: KEY } });
+  await page.goto('/');
+  await page.evaluate(() => localStorage.setItem('intraktible-persona', 'evaluator'));
+  await page.reload();
+  const tour = page.getByTestId('evaluator-tour');
+  await expect(tour).toBeVisible();
+  await expect(tour).toContainText('four steps');
+  await expect(tour.getByRole('link', { name: /Open the builder/ })).toBeVisible();
+});
