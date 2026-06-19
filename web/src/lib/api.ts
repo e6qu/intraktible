@@ -1675,6 +1675,36 @@ export async function defineConnector(
   }
 }
 
+export interface Model {
+  name: string;
+  kind: string;
+  spec: unknown;
+  updated_at: string;
+}
+
+export async function listModels(key: string, fetcher: typeof fetch = fetch): Promise<Model[]> {
+  const res = await fetcher('/v1/models', { headers: authHeaders(key) });
+  if (!res.ok) {
+    return errorOrStatus(res, 'GET /v1/models');
+  }
+  return ((await res.json()) as { models: Model[] }).models ?? [];
+}
+
+export async function defineModel(
+  key: string,
+  body: { name: string; spec: unknown },
+  fetcher: typeof fetch = fetch
+): Promise<void> {
+  const res = await fetcher('/v1/models', {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) {
+    await errorOrStatus(res, 'POST /v1/models');
+  }
+}
+
 export async function listFeatures(key: string, fetcher: typeof fetch = fetch): Promise<Feature[]> {
   const res = await fetcher('/v1/context/features', { headers: authHeaders(key) });
   if (!res.ok) {

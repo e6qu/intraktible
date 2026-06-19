@@ -35,6 +35,11 @@ Done — flow model + versioning (vertical slice, command→event→projection�
     the API key's `Scope` (`sandbox`/`production`/`*`) must permit `{env}` (else 403)
   - `GET /v1/flows/{slug}/openapi.json` — a generated, flow-specific OpenAPI 3.1 contract (the flow's
     published `input_schema` as the request data schema) for codegen / Swagger
+  - `POST /v1/models` · `GET /v1/models[/{name}]` — the predictive-model registry (models hosted as
+    **data** and evaluated deterministically: `logistic` regression, a `gbm` tree-ensemble, or an
+    `expression` score). A **Predict** node references one by name; the shell evaluates it and injects
+    `predict.<output>` ({score, probability}) — pre-resolved + recorded like Connect/AI, so it stays
+    replayable. No external runtime (the §9 ONNX-at-scale non-goal stands).
   - `GET /v1/decisions` — history; filter by `flow`/`env`/`status`/`q`, an RFC3339 range
     (`start_time`/`end_time`), and `include_node_results=false` to omit the per-node trace
 - Run it: `intraktible serve --modules=decision-engine`.
@@ -42,7 +47,7 @@ Done — flow model + versioning (vertical slice, command→event→projection�
 Done — execution runtime + decide API + decision history (the decision event stream, PLAN.md §3.3):
 - `domain.Execute` is a **pure, deterministic** DAG traversal (input → … → output) over a published
   graph. Node engines: **Input, Assignment, Rule, Split, Scorecard, Decision Table, 2D Matrix, Code,
-  ManualReview, Reason, Output** (a ManualReview node escalates to the Case Manager — opens a case;
+  Connect, AI, Predict, ManualReview, Reason, Output** (a ManualReview node escalates to the Case Manager — opens a case;
   a **Reason** node emits structured adverse-action `{code, description}`s into the reserved
   `reason_codes` field — always surfaced by Output — which the history projector lifts to a first-class
   `reason_codes` field on the decision record for ECOA/Reg B + insurance explainability).

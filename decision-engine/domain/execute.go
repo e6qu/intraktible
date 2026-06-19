@@ -109,6 +109,8 @@ func evalNode(n events.Node, ctx map[string]any, edges []events.Edge) (any, stri
 		return evalConnect(n, ctx, edges)
 	case events.NodeAI:
 		return evalAI(n, ctx, edges)
+	case events.NodePredict:
+		return evalPredict(n, ctx, edges)
 	case events.NodeManualReview:
 		return evalManualReview(n, ctx, edges)
 	case events.NodeReason:
@@ -577,6 +579,45 @@ func evalAI(n events.Node, ctx map[string]any, edges []events.Edge) (any, string
 		return nil, "", err
 	}
 	return preResolved(n, ctx, edges, "ai", cfg.Output, "agent")
+}
+
+// PredictSpec names a Predict node's model + the key its prediction lands under.
+type PredictSpec struct {
+	NodeID string
+	Model  string
+	Output string
+}
+
+// PredictSpecs extracts the Predict nodes from a graph so the shell can pre-resolve
+// their model evaluations before execution (keeping Execute pure). It fails loudly
+// on a Predict node missing its model or output.
+func PredictSpecs(g events.Graph) ([]PredictSpec, error) {
+	var out []PredictSpec
+	for _, n := range g.Nodes {
+		if n.Type != events.NodePredict {
+			continue
+		}
+		var cfg predictConfig
+		if err := decodeConfig(n, &cfg); err != nil {
+			return nil, err
+		}
+		if cfg.Model == "" || cfg.Output == "" {
+			return nil, fmt.Errorf("decision-engine: predict node %q needs a model and an output", n.ID)
+		}
+		out = append(out, PredictSpec{NodeID: n.ID, Model: cfg.Model, Output: cfg.Output})
+	}
+	return out, nil
+}
+
+// evalPredict is pass-through: the shell pre-resolves the model evaluation and
+// injects the prediction under predict.<output>; the node echoes that into its
+// recorded output.
+func evalPredict(n events.Node, ctx map[string]any, edges []events.Edge) (any, string, error) {
+	var cfg predictConfig
+	if err := decodeConfig(n, &cfg); err != nil {
+		return nil, "", err
+	}
+	return preResolved(n, ctx, edges, "predict", cfg.Output, "model")
 }
 
 // preResolved echoes a shell-injected value at ctx[bucket][output] as the node's

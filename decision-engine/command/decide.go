@@ -49,6 +49,14 @@ type AgentProvider interface {
 	RunAgent(ctx context.Context, id identity.Identity, agent, prompt string) (json.RawMessage, error)
 }
 
+// ModelProvider evaluates a named predictive model from the registry over the
+// decision input and returns its prediction as JSON. The port lives here so the
+// engine never imports the models registry's command surface; a missing model or a
+// bad feature is returned as an error so the decision fails loudly.
+type ModelProvider interface {
+	Predict(ctx context.Context, id identity.Identity, model string, features map[string]any) (json.RawMessage, error)
+}
+
 // PIISealer crypto-shreds the configured PII fields of a recorded decision under
 // the subject (the referenced entity), so a later erasure of that subject makes
 // the recorded input/output PII unrecoverable. The port lives here so the engine
@@ -70,6 +78,7 @@ type DecideHandler struct {
 	features   FeatureProvider
 	connectors ConnectorProvider
 	agentsP    AgentProvider
+	models     ModelProvider
 	sealer     PIISealer
 }
 
@@ -95,6 +104,12 @@ func WithConnectors(p ConnectorProvider) DecideOption {
 // decide time. Without it, a flow containing AI nodes fails loudly.
 func WithAgents(p AgentProvider) DecideOption {
 	return func(h *DecideHandler) { h.agentsP = p }
+}
+
+// WithModels supplies the model provider that pre-resolves a flow's Predict nodes
+// at decide time. Without it, a flow containing Predict nodes fails loudly.
+func WithModels(p ModelProvider) DecideOption {
+	return func(h *DecideHandler) { h.models = p }
 }
 
 // WithPIISealer supplies the sealer that crypto-shreds a recorded decision's PII
@@ -204,6 +219,10 @@ func (h *DecideHandler) Decide(ctx context.Context, id identity.Identity, slug, 
 		return DecideResult{}, err
 	}
 	data, err = h.injectAI(ctx, id, version.Graph, data)
+	if err != nil {
+		return DecideResult{}, err
+	}
+	data, err = h.injectPredictions(ctx, id, version.Graph, data)
 	if err != nil {
 		return DecideResult{}, err
 	}
@@ -438,6 +457,39 @@ func (h *DecideHandler) injectAI(ctx context.Context, id identity.Identity, grap
 		out[k] = v
 	}
 	out["ai"] = resolved
+	return out, nil
+}
+
+// injectPredictions pre-resolves a flow's Predict nodes: it evaluates each named
+// model over the current input (so a model can read features/connect/ai resolved
+// above) and injects the predictions under "predict" (keyed by each node's output).
+// Evaluation is the only "effect"; doing it here keeps domain.Execute pure. Without
+// a provider it is a no-op and any Predict node fails loudly during execution.
+func (h *DecideHandler) injectPredictions(ctx context.Context, id identity.Identity, graph events.Graph, data map[string]any) (map[string]any, error) {
+	specs, err := domain.PredictSpecs(graph)
+	if err != nil {
+		return nil, err
+	}
+	if h.models == nil || len(specs) == 0 {
+		return data, nil
+	}
+	resolved := make(map[string]any, len(specs))
+	for _, sp := range specs {
+		resp, err := h.models.Predict(ctx, id, sp.Model, data)
+		if err != nil {
+			return nil, fmt.Errorf("decision-engine: predict node %q (model %q): %w", sp.NodeID, sp.Model, err)
+		}
+		var v any
+		if err := json.Unmarshal(resp, &v); err != nil {
+			return nil, fmt.Errorf("decision-engine: predict node %q response: %w", sp.NodeID, err)
+		}
+		resolved[sp.Output] = v
+	}
+	out := make(map[string]any, len(data)+1)
+	for k, v := range data {
+		out[k] = v
+	}
+	out["predict"] = resolved
 	return out, nil
 }
 

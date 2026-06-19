@@ -122,6 +122,19 @@ func AIGraph() events.Graph {
 	return g
 }
 
+// PredictGraph is a flow that scores an input with a model then branches on the
+// prediction: input -> predict(risk) -> split(predict.risk.probability >= 0.5) ->
+// high/low -> output(tier). The model evaluation is pre-resolved by the shell.
+func PredictGraph() events.Graph {
+	g := tierBranch("predict.risk.probability >= 0.5", "p")
+	g.Nodes = append([]events.Node{
+		{ID: "in", Type: events.NodeInput},
+		{ID: "p", Type: events.NodePredict, Config: json.RawMessage(`{"model":"risk","output":"risk"}`)},
+	}, g.Nodes...)
+	g.Edges = append([]events.Edge{{From: "in", To: "p"}}, g.Edges...)
+	return g
+}
+
 // FeatureGraph is a flow whose Split reads an injected Context Layer feature
 // (features.txn_count_24h): input -> split(>= 3) -> high/low -> output(tier).
 func FeatureGraph() events.Graph {

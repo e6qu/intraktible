@@ -93,6 +93,7 @@
     'code',
     'connect',
     'ai',
+    'predict',
     'reason',
     'manual_review',
     'output'
@@ -405,6 +406,7 @@
     'split',
     'connect',
     'ai',
+    'predict',
     'manual_review',
     'output',
     'assignment',
@@ -1979,6 +1981,26 @@
               aria-label="ai prompt"
             /></label
           >
+        {:else if selected.type === 'predict'}
+          <label
+            >model <input
+              value={asText(nodeCfg().model)}
+              oninput={(e) => patchCfg({ model: e.currentTarget.value })}
+              aria-label="predict model"
+              placeholder="risk"
+            /></label
+          >
+          <label
+            >output key <input
+              value={asText(nodeCfg().output)}
+              oninput={(e) => patchCfg({ output: e.currentTarget.value })}
+              aria-label="predict output"
+              placeholder="risk"
+            /></label
+          >
+          <p class="muted">
+            Reads <code>predict.&lt;output&gt;.probability</code> / <code>.score</code> downstream.
+          </p>
         {:else if selected.type === 'manual_review'}
           <label
             >company_name expr <input

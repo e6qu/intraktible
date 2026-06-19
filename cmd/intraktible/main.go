@@ -42,6 +42,7 @@ import (
 	"github.com/e6qu/intraktible/decision-engine/export"
 	"github.com/e6qu/intraktible/decision-engine/flows"
 	"github.com/e6qu/intraktible/decision-engine/history"
+	enginemodels "github.com/e6qu/intraktible/decision-engine/models"
 	"github.com/e6qu/intraktible/decision-engine/monitor"
 	"github.com/e6qu/intraktible/decision-engine/notify"
 	"github.com/e6qu/intraktible/decision-engine/policy"
@@ -203,6 +204,7 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 			enginecmd.WithFeatures(features.Provider{Store: st}),
 			enginecmd.WithConnectors(connectorProvider),
 			enginecmd.WithAgents(agents.Provider{Store: st, Registry: aiRegistry, Tools: toolbox}),
+			enginecmd.WithModels(enginemodels.Provider{Store: st}),
 		}
 		// Crypto-shred recorded decision PII under the entity subject when erasure
 		// fields are configured (same set as the Context Layer's event sealing).
@@ -665,7 +667,7 @@ func moduleProjectors(modules string) []projection.Projector {
 		ps = append(ps, stats.Projector{})
 	}
 	if enabled(modules, "decision-engine") {
-		ps = append(ps, flows.Projector{}, history.Projector{}, analytics.Projector{}, policy.Projector{}, preapproval.Projector{}, monitor.Projector{}, notify.Projector{}, assertions.Projector{}, shadow.Projector{})
+		ps = append(ps, flows.Projector{}, history.Projector{}, analytics.Projector{}, policy.Projector{}, preapproval.Projector{}, monitor.Projector{}, notify.Projector{}, assertions.Projector{}, shadow.Projector{}, enginemodels.Projector{})
 	}
 	if enabled(modules, "case-manager") {
 		ps = append(ps, cases.Projector{})

@@ -20,6 +20,7 @@ import (
 	"github.com/e6qu/intraktible/decision-engine/events"
 	"github.com/e6qu/intraktible/decision-engine/flows"
 	"github.com/e6qu/intraktible/decision-engine/history"
+	"github.com/e6qu/intraktible/decision-engine/models"
 	"github.com/e6qu/intraktible/decision-engine/monitor"
 	"github.com/e6qu/intraktible/decision-engine/preapproval"
 	"github.com/e6qu/intraktible/decision-engine/shadow"
@@ -79,6 +80,54 @@ func (s *Service) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/decisions", s.listDecisions)
 	mux.HandleFunc("GET /v1/decisions/{decision_id}", s.getDecision)
 	mux.HandleFunc("GET /v1/decisions/{decision_id}/export", s.exportDecision)
+	mux.HandleFunc("POST /v1/models", s.defineModel)
+	mux.HandleFunc("GET /v1/models", s.listModels)
+	mux.HandleFunc("GET /v1/models/{name}", s.getModel)
+}
+
+type defineModelRequest struct {
+	Name string          `json:"name"`
+	Spec json.RawMessage `json:"spec"`
+}
+
+func (s *Service) defineModel(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	var req defineModelRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	e, err := s.cmd.DefineModel(r.Context(), id, req.Name, req.Spec)
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	httpx.JSON(w, http.StatusCreated, map[string]any{"name": req.Name, "event_id": e.ID, "seq": e.Seq})
+}
+
+func (s *Service) listModels(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	list, err := models.List(r.Context(), s.store, id)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"models": list})
+}
+
+func (s *Service) getModel(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	mv, found, err := models.Read(r.Context(), s.store, id, r.PathValue("name"))
+	httpx.WriteOne(w, mv, found, err, "model not found")
 }
 
 type createRequest struct {

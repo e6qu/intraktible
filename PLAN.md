@@ -537,6 +537,16 @@ never appear in-repo (neutral language only).
    gap: hosting/serving predictive models alongside rules (a predict node + model registry + monitoring).
    Larger than one PR and bounded by the §9 "ONNX serving at scale" non-goal — scope before building.
    Connector breadth, an authoring AI-copilot, and a gRPC/Arrow batch path ride here as stretch.
+   **Shipped in PR #15 (the models-as-data slice):** `decision-engine/models` hosts models as data and
+   evaluates them in a pure, deterministic function — three kinds in one PR (logistic regression, a gbm
+   tree-ensemble, an expr-lang scoring expression), no external runtime (the non-goal stands). A model
+   registry (`POST/GET /v1/models`, command→`ModelDefined`→projection→`ModelView`) + a **Predict node**:
+   the shell resolves the model from the registry, evaluates it over the input, and injects
+   `predict.<output>` (recorded for replay — mirrors Connect/AI). Builder gained a `/models` registry page
+   and a predict node panel; OpenAPI + the engine README updated. **Follow-ups:** BYO external model
+   serving (the "both, phased" second half), and the A39–A41 stretch items (connector breadth, authoring
+   AI-copilot, gRPC/Arrow batch) remain open. Bespoke model monitoring (drift) rides on the existing
+   decision history/analytics for now.
 9. **Persona-adaptive UI + API-first** (A42–A45, epic — a key differentiator) — make personas
    **meaningful adaptations**, not skins. Today Builder/Operator/Showcase only swap accent/type/density
    over one layout; instead each persona gets a distinct default landing, surfaced primary actions,
