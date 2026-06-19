@@ -49,12 +49,19 @@ func NewLogStore(t *testing.T) (eventlog.Log, store.Store) {
 // StartAPI assembles the same handler chain as cmd/intraktible (auth-gated /v1,
 // recover/request-id/logger middleware) over a real httptest server, with the
 // given module routes and projections wired to log/st. It seeds an API key
-// resolving to id and tears everything down on test cleanup.
+// resolving to id and tears everything down on test cleanup. The key is scoped to
+// all environments; use StartAPIScoped to test environment scoping.
 func StartAPI(t *testing.T, log eventlog.Log, st store.Store, key string, id identity.Identity, routes func(*http.ServeMux), projectors ...projection.Projector) *API {
+	return StartAPIScoped(t, log, st, key, auth.ScopeAll, id, routes, projectors...)
+}
+
+// StartAPIScoped is StartAPI with an explicit API-key scope, for exercising the
+// environment-scope enforcement on the decide endpoints.
+func StartAPIScoped(t *testing.T, log eventlog.Log, st store.Store, key string, scope auth.Scope, id identity.Identity, routes func(*http.ServeMux), projectors ...projection.Projector) *API {
 	t.Helper()
 
 	keyring := auth.NewKeyring()
-	keyring.Add(key, auth.APIKey{ID: "test", Identity: id, Scope: auth.Sandbox, Role: auth.RoleAdmin})
+	keyring.Add(key, auth.APIKey{ID: "test", Identity: id, Scope: scope, Role: auth.RoleAdmin})
 	sessions := auth.NewSessions()
 
 	api := http.NewServeMux()

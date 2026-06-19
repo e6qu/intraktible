@@ -31,6 +31,12 @@ Done — flow model + versioning (vertical slice, command→event→projection�
   - `POST /v1/flows/{flow_id}/versions` — publish `{graph, input_schema}` → `{version, etag}`
   - `GET /v1/flows` · `GET /v1/flows/{flow_id}` — registry read model
   - `POST /v1/flows/{flow_id}/backtest` — replay `{version?, compare_version?, dataset}` → outcome diff
+  - `POST /v1/flows/{slug}/{env}/decide` · `…/decide/batch` — decide one input / an array of rows;
+    the API key's `Scope` (`sandbox`/`production`/`*`) must permit `{env}` (else 403)
+  - `GET /v1/flows/{slug}/openapi.json` — a generated, flow-specific OpenAPI 3.1 contract (the flow's
+    published `input_schema` as the request data schema) for codegen / Swagger
+  - `GET /v1/decisions` — history; filter by `flow`/`env`/`status`/`q`, an RFC3339 range
+    (`start_time`/`end_time`), and `include_node_results=false` to omit the per-node trace
 - Run it: `intraktible serve --modules=decision-engine`.
 
 Done — execution runtime + decide API + decision history (the decision event stream, PLAN.md §3.3):

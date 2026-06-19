@@ -525,6 +525,14 @@ never appear in-repo (neutral language only).
    decision-history query params (time range + include-node-results). Only functional API shapes are
    reimplemented (interoperability); no docs/branding copied; the competitor is never named in-repo.
    Prereq: confirm the live contract from a legitimate account (its current docs are auth-gated).
+   **Shipped in PR #12:** the live contract was NOT fetched (auth-gated) — by decision we implemented the
+   neutral functional shapes. The array-of-rows decide endpoint already existed (`/decide/batch`); the
+   missing piece, a per-flow generated OpenAPI 3.1 contract, landed at `GET /v1/flows/{slug}/openapi.json`
+   (embeds the flow's published input schema). API-key `Scope` gained a `*` wildcard + `/*` prefix patterns
+   AND the first real enforcement on the decide/batch/preapprove endpoints (403 on a non-matching env; dev +
+   test keys set to `*` to preserve behaviour). `/v1/decisions` gained `start_time`/`end_time` (since/until
+   aliases) and `include_node_results`. Tests: ForFlow generator, per-flow endpoint e2e, scope Allows/Valid
+   unit + decide-enforcement e2e.
 8. **ML model hosting** (A38–A41, epic — needs a product decision) — the one sizeable in-scope feature
    gap: hosting/serving predictive models alongside rules (a predict node + model registry + monitoring).
    Larger than one PR and bounded by the §9 "ONNX serving at scale" non-goal — scope before building.

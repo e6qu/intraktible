@@ -26,6 +26,7 @@ import (
 	"github.com/e6qu/intraktible/platform/erasure"
 	"github.com/e6qu/intraktible/platform/httpx"
 	"github.com/e6qu/intraktible/platform/identity"
+	"github.com/e6qu/intraktible/platform/openapi"
 	"github.com/e6qu/intraktible/platform/privacy"
 	"github.com/e6qu/intraktible/platform/store"
 )
@@ -57,6 +58,7 @@ func (s *Service) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/flows/import-bundle", s.importBundle)
 	mux.HandleFunc("GET /v1/flows", s.list)
 	mux.HandleFunc("GET /v1/flows/{flow_id}", s.get)
+	mux.HandleFunc("GET /v1/flows/{slug}/openapi.json", s.flowOpenAPI)
 	mux.HandleFunc("GET /v1/flows/{flow_id}/metrics", s.metrics)
 	mux.HandleFunc("POST /v1/flows/{flow_id}/versions", s.publish)
 	mux.HandleFunc("POST /v1/flows/{flow_id}/deployments", s.deploy)
@@ -632,9 +634,57 @@ type decideResponse struct {
 // runDecide executes a published flow. A flow whose logic errors is a recorded
 // "failed" decision returned with HTTP 200 and status "failed" (the call
 // succeeded; the decision outcome did not); only lookup/validation problems 4xx.
+// flowOpenAPI serves a generated, flow-specific OpenAPI 3.1 contract: the decide /
+// decide/batch endpoints for this flow, with its latest published input schema as
+// the request `data` schema. Integrators point codegen/Swagger at it per flow.
+func (s *Service) flowOpenAPI(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	slug := r.PathValue("slug")
+	fv, found, err := flows.BySlug(r.Context(), s.store, id, slug)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	if !found {
+		httpx.Error(w, http.StatusNotFound, fmt.Errorf("flow %q not found", slug))
+		return
+	}
+	var inputSchema json.RawMessage
+	for i := range fv.Versions {
+		if fv.Versions[i].Version == fv.Latest {
+			inputSchema = fv.Versions[i].InputSchema
+		}
+	}
+	doc, err := openapi.ForFlow(fv.Slug, fv.Name, inputSchema)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(doc)
+}
+
+// allowEnv enforces the caller's API-key scope against the path environment. It
+// writes a 403 and returns false when a scoped key may not call this environment;
+// session callers (no key scope) and unrestricted keys pass through.
+func allowEnv(w http.ResponseWriter, r *http.Request, env string) bool {
+	if scope, ok := httpx.Scope(r.Context()); ok && !scope.Allows(env) {
+		httpx.Error(w, http.StatusForbidden, fmt.Errorf("api key scope %q does not permit environment %q", scope, env))
+		return false
+	}
+	return true
+}
+
 func (s *Service) runDecide(w http.ResponseWriter, r *http.Request) {
 	id, ok := httpx.Caller(w, r)
 	if !ok {
+		return
+	}
+	env := r.PathValue("env")
+	if !allowEnv(w, r, env) {
 		return
 	}
 	var req decideRequest
@@ -642,7 +692,7 @@ func (s *Service) runDecide(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, err)
 		return
 	}
-	result, err := s.decide.Decide(r.Context(), id, r.PathValue("slug"), r.PathValue("env"), req.Data,
+	result, err := s.decide.Decide(r.Context(), id, r.PathValue("slug"), env, req.Data,
 		command.EntityRef{Type: req.EntityType, ID: req.EntityID})
 	if err != nil {
 		httpx.Error(w, http.StatusBadRequest, err)
@@ -711,6 +761,9 @@ func (s *Service) decideBatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	slug, env := r.PathValue("slug"), r.PathValue("env")
+	if !allowEnv(w, r, env) {
+		return
+	}
 	resp := batchResponse{Total: len(req.Dataset), Results: make([]batchResult, 0, len(req.Dataset))}
 	for i, input := range req.Dataset {
 		// Per-row entity id when entity_key is set, else the batch-level EntityID.
@@ -813,6 +866,9 @@ func (s *Service) preapproveBatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	slug, env := r.PathValue("slug"), r.PathValue("env")
+	if !allowEnv(w, r, env) {
+		return
+	}
 	resp := preapproveBatchResponse{Total: len(req.Dataset), Results: make([]preapproveResult, 0, len(req.Dataset))}
 	for i, input := range req.Dataset {
 		row := preapproveResult{Index: i, EntityID: stringField(input, req.EntityKey)}
@@ -908,11 +964,20 @@ func (s *Service) listDecisions(w http.ResponseWriter, r *http.Request) {
 	for i := range page.Records {
 		page.Records[i] = maskRecord(page.Records[i], fields)
 	}
+	// The per-node trace is heavy and belongs on the detail endpoint; a list caller
+	// can drop it for a lighter response (it defaults to included for back-compat).
+	if !includeNodeResults(r) {
+		for i := range page.Records {
+			page.Records[i].Nodes = nil
+			page.Records[i].TimeOrdered = nil
+		}
+	}
 	httpx.JSON(w, http.StatusOK, page)
 }
 
-// decisionFilter parses the Decisions list query string (flow/env/status/variant,
-// a decision-id search q, an RFC3339 since/until range, and limit/offset).
+// decisionFilter parses the Decisions list query string: flow/env/status/variant,
+// a decision-id search q, an RFC3339 time range (start_time/end_time, with since/
+// until accepted as aliases), and limit/offset.
 func decisionFilter(r *http.Request) history.Filter {
 	q := r.URL.Query()
 	f := history.Filter{
@@ -924,13 +989,33 @@ func decisionFilter(r *http.Request) history.Filter {
 		Limit:       atoiDefault(q.Get("limit"), 0),
 		Offset:      atoiDefault(q.Get("offset"), 0),
 	}
-	if t, err := time.Parse(time.RFC3339, q.Get("since")); err == nil {
+	if t, err := time.Parse(time.RFC3339, firstNonEmpty(q.Get("start_time"), q.Get("since"))); err == nil {
 		f.Since = t
 	}
-	if t, err := time.Parse(time.RFC3339, q.Get("until")); err == nil {
+	if t, err := time.Parse(time.RFC3339, firstNonEmpty(q.Get("end_time"), q.Get("until"))); err == nil {
 		f.Until = t
 	}
 	return f
+}
+
+// includeNodeResults reports whether the list should carry each decision's per-node
+// trace. It defaults to true (back-compat); pass include_node_results=false to omit.
+func includeNodeResults(r *http.Request) bool {
+	switch strings.ToLower(r.URL.Query().Get("include_node_results")) {
+	case "false", "0", "no":
+		return false
+	default:
+		return true
+	}
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func atoiDefault(s string, def int) int {
