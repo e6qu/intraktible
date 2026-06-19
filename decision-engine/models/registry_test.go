@@ -81,6 +81,20 @@ func TestProviderExternalModel(t *testing.T) {
 	}
 }
 
+// A malformed GBM spec (a non-leaf tree with nil children) seeded directly into
+// the store bypasses DefineModel's validation; Predict must reject it rather than
+// nil-deref in (*Tree).eval.
+func TestProviderRejectsInvalidGBMSpec(t *testing.T) {
+	ctx := context.Background()
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "dev"}
+	st := store.NewMemory()
+	seedModel(t, st, id, "broken", `{"kind":"gbm","trees":[{"feature":"x","threshold":1}]}`)
+
+	if _, err := (models.Provider{Store: st}).Predict(ctx, id, "broken", map[string]any{"x": 2}); err == nil {
+		t.Fatal("expected an error for an invalid GBM spec, not a panic")
+	}
+}
+
 func TestProviderExternalWithoutClientFailsLoudly(t *testing.T) {
 	ctx := context.Background()
 	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "dev"}

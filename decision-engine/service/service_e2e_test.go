@@ -1436,9 +1436,10 @@ func TestDecideEnvironmentScopeEnforced(t *testing.T) {
 	// A sandbox-scoped key may not decide against production.
 	api.Request(t, http.MethodPost, "/v1/flows/x/production/decide",
 		map[string]any{"data": map[string]any{}}, http.StatusForbidden, nil)
-	// Against sandbox the scope gate passes (400 for the unknown flow, not 403).
+	// Against sandbox the scope gate passes — the failure is the unknown flow
+	// (404 by the decide error taxonomy), not a 403 scope rejection.
 	api.Request(t, http.MethodPost, "/v1/flows/x/sandbox/decide",
-		map[string]any{"data": map[string]any{}}, http.StatusBadRequest, nil)
+		map[string]any{"data": map[string]any{}}, http.StatusNotFound, nil)
 }
 
 // TestFlowOpenAPIEndpoint proves the per-flow generated contract carries the flow's
@@ -1477,6 +1478,16 @@ func TestFlowOpenAPIEndpoint(t *testing.T) {
 	if !strings.Contains(string(raw), `"fico"`) {
 		t.Fatalf("input schema not embedded in the per-flow contract:\n%s", raw)
 	}
+}
+
+// TestDecideErrorTaxonomy proves the decide endpoint maps cause to status: an
+// unknown flow is 404, an invalid environment is 400 (not all-400 as before).
+func TestDecideErrorTaxonomy(t *testing.T) {
+	api := startEngine(t)
+	api.Request(t, http.MethodPost, "/v1/flows/nope/sandbox/decide",
+		map[string]any{"data": map[string]any{}}, http.StatusNotFound, nil)
+	api.Request(t, http.MethodPost, "/v1/flows/nope/banana/decide",
+		map[string]any{"data": map[string]any{}}, http.StatusBadRequest, nil)
 }
 
 func startEngine(t *testing.T, opts ...command.DecideOption) *testutil.API {

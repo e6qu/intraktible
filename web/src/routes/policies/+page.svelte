@@ -112,9 +112,18 @@
   }
   async function publish() {
     error = '';
+    if (!selectedId) {
+      error = 'Select a policy to publish.';
+      return;
+    }
+    const spec = draftSpec();
+    if (spec.rules.length === 0) {
+      error = 'Add at least one rule before publishing.';
+      return;
+    }
     publishing = true;
     try {
-      const r = await publishPolicy(key, selectedId, draftSpec());
+      const r = await publishPolicy(key, selectedId, spec);
       toast.success(`Published policy v${r.version}`);
       await load();
     } catch (e) {
@@ -196,7 +205,7 @@
               <td>{p.name}</td>
               <td class="mono">{p.flow_slug}</td>
               <td>{p.latest > 0 ? `v${p.latest}` : '—'}</td>
-              <td>{p.versions?.at(-1)?.spec.rules.length ?? 0}</td>
+              <td>{p.versions?.at(-1)?.spec?.rules?.length ?? 0}</td>
               <td><button class="link" onclick={() => edit(p.policy_id)}>Edit bands</button></td>
             </tr>
           {/each}
