@@ -86,6 +86,34 @@ func (s *Service) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/models", s.defineModel)
 	mux.HandleFunc("GET /v1/models", s.listModels)
 	mux.HandleFunc("GET /v1/models/{name}", s.getModel)
+	mux.HandleFunc("GET /v1/models/{name}/drift", s.modelDrift)
+	mux.HandleFunc("POST /v1/models/{name}/baseline", s.captureModelBaseline)
+}
+
+func (s *Service) modelDrift(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	rep, err := models.Drift(r.Context(), s.store, id, r.PathValue("name"))
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, rep)
+}
+
+func (s *Service) captureModelBaseline(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	e, err := s.cmd.CaptureModelBaseline(r.Context(), id, r.PathValue("name"))
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"status": "captured", "event_id": e.ID, "seq": e.Seq})
 }
 
 type defineModelRequest struct {

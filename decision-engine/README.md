@@ -41,7 +41,9 @@ Done — flow model + versioning (vertical slice, command→event→projection�
     **Predict** node references one by name; the shell evaluates (or, for `external`, calls) it and injects
     `predict.<output>` ({score, probability}) — pre-resolved + recorded like Connect/AI, so it stays
     replayable. The in-process kinds need no external runtime (the §9 ONNX-at-scale non-goal stands);
-    `external` is the bring-your-own-serving escape hatch.
+    `external` is the bring-your-own-serving escape hatch. **Drift:** `GET /v1/models/{name}/drift`
+    reports the model's predicted-probability distribution (deciles) + the PSI vs a captured baseline
+    (`POST …/baseline`) — `<0.1` stable, `0.1–0.25` moderate, `>0.25` significant.
   - `GET /v1/decisions` — history; filter by `flow`/`env`/`status`/`q`, an RFC3339 range
     (`start_time`/`end_time`), and `include_node_results=false` to omit the per-node trace
 - Run it: `intraktible serve --modules=decision-engine`.
