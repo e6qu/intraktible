@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/e6qu/intraktible/decision-engine/analytics"
 	"github.com/e6qu/intraktible/decision-engine/assertions"
@@ -892,18 +893,51 @@ func (s *Service) listDecisions(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	recs, err := history.List(r.Context(), s.store, id)
-	if err == nil {
-		// Fail closed: if the masking config can't be read, surface the error
-		// rather than serving records that should have been masked.
-		var fields map[string]bool
-		if fields, err = privacy.Fields(r.Context(), s.store, id); err == nil {
-			for i := range recs {
-				recs[i] = maskRecord(recs[i], fields)
-			}
-		}
+	page, err := history.ListPage(r.Context(), s.store, id, decisionFilter(r))
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, err)
+		return
 	}
-	httpx.WriteList(w, "decisions", recs, err)
+	// Fail closed: if the masking config can't be read, surface the error rather
+	// than serving records that should have been masked.
+	fields, ferr := privacy.Fields(r.Context(), s.store, id)
+	if ferr != nil {
+		httpx.Error(w, http.StatusInternalServerError, ferr)
+		return
+	}
+	for i := range page.Records {
+		page.Records[i] = maskRecord(page.Records[i], fields)
+	}
+	httpx.JSON(w, http.StatusOK, page)
+}
+
+// decisionFilter parses the Decisions list query string (flow/env/status/variant,
+// a decision-id search q, an RFC3339 since/until range, and limit/offset).
+func decisionFilter(r *http.Request) history.Filter {
+	q := r.URL.Query()
+	f := history.Filter{
+		Slug:        q.Get("flow"),
+		Environment: q.Get("env"),
+		Status:      q.Get("status"),
+		Variant:     q.Get("variant"),
+		Query:       q.Get("q"),
+		Limit:       atoiDefault(q.Get("limit"), 0),
+		Offset:      atoiDefault(q.Get("offset"), 0),
+	}
+	if t, err := time.Parse(time.RFC3339, q.Get("since")); err == nil {
+		f.Since = t
+	}
+	if t, err := time.Parse(time.RFC3339, q.Get("until")); err == nil {
+		f.Until = t
+	}
+	return f
+}
+
+func atoiDefault(s string, def int) int {
+	if n, err := strconv.Atoi(s); err == nil {
+		return n
+	}
+	return def
 }
 
 func (s *Service) getDecision(w http.ResponseWriter, r *http.Request) {
@@ -937,6 +971,15 @@ func (s *Service) maskRecord(ctx context.Context, id identity.Identity, rec hist
 			return history.Record{}, fmt.Errorf("decision-engine: unseal output: %w", err)
 		}
 		rec.Output = o
+		// Node-trace outputs are sealed at write time too — unseal them here (or
+		// surface "[erased]") so the trace stays readable while erasure still shreds.
+		for i := range rec.Nodes {
+			n, err := s.eraser.OpenFields(ctx, id, subject, rec.Nodes[i].Output)
+			if err != nil {
+				return history.Record{}, fmt.Errorf("decision-engine: unseal node %q: %w", rec.Nodes[i].NodeID, err)
+			}
+			rec.Nodes[i].Output = n
+		}
 	}
 	// Fail closed: a masking-config read error must block the record, not serve it raw.
 	fields, err := privacy.Fields(ctx, s.store, id)

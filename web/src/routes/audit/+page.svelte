@@ -8,7 +8,7 @@
   import { onMount } from 'svelte';
   import { toast } from '$lib/toast';
   import {
-    listAudit,
+    listAuditPage,
     auditExportUrl,
     getPrivacy,
     setPrivacy,
@@ -34,16 +34,34 @@
   let fActor = $state('');
   let fType = $state('');
   let fResource = $state('');
+  let fSince = $state('');
+  let fUntil = $state('');
+  let hideNodeSteps = $state(false);
+  let offset = $state(0);
+  let total = $state(0);
+  const PAGE = 100;
+  const NODE_EVAL = 'decision.run.node_evaluated';
 
   function msg(e: unknown): string {
     return e instanceof Error ? e.message : String(e);
+  }
+  // toRFC3339 turns a datetime-local value into an RFC3339 instant (the API wants one).
+  function toRFC3339(local: string): string | undefined {
+    if (!local) return undefined;
+    const d = new Date(local);
+    return isNaN(d.getTime()) ? undefined : d.toISOString();
   }
   function filter(): AuditFilter {
     return {
       stream: fStream.trim() || undefined,
       actor: fActor.trim() || undefined,
       type: fType.trim() || undefined,
-      resource: fResource.trim() || undefined
+      resource: fResource.trim() || undefined,
+      since: toRFC3339(fSince),
+      until: toRFC3339(fUntil),
+      exclude_type: hideNodeSteps ? NODE_EVAL : undefined,
+      limit: PAGE,
+      offset
     };
   }
   // The CSV export must match the rows on screen, which are driven by the applied
@@ -52,22 +70,37 @@
   let csvUrl = $derived(auditExportUrl(applied));
 
   // Apply pushes the current inputs into the URL; the effect below re-fetches.
+  // (Applying a new filter resets to the first page.)
   function applyFilters() {
+    offset = 0;
+    pushURL();
+  }
+  function pushURL() {
     const p = new URLSearchParams();
     const f = filter();
     if (f.stream) p.set('stream', f.stream);
     if (f.actor) p.set('actor', f.actor);
     if (f.type) p.set('type', f.type);
     if (f.resource) p.set('resource', f.resource);
+    if (fSince) p.set('since', fSince);
+    if (fUntil) p.set('until', fUntil);
+    if (hideNodeSteps) p.set('hide_node_steps', '1');
+    if (offset) p.set('offset', String(offset));
     const qs = p.toString();
     goto(qs ? `?${qs}` : $page.url.pathname, { keepFocus: true, noScroll: true });
+  }
+  function pageBy(delta: number) {
+    offset = Math.max(0, offset + delta * PAGE);
+    pushURL();
   }
 
   async function load() {
     error = '';
     forbidden = false;
     try {
-      list = await listAudit(key, filter());
+      const page = await listAuditPage(key, filter());
+      list = page.entries;
+      total = page.total;
     } catch (e) {
       const m = msg(e);
       // The audit trail is admin-only; surface that clearly rather than as a raw 403.
@@ -205,7 +238,12 @@
     fActor = sp.get('actor') ?? '';
     fType = sp.get('type') ?? '';
     fResource = sp.get('resource') ?? '';
-    applied = filter(); // the on-screen rows and the CSV link track the applied filter
+    fSince = sp.get('since') ?? '';
+    fUntil = sp.get('until') ?? '';
+    hideNodeSteps = sp.get('hide_node_steps') === '1';
+    offset = Number(sp.get('offset') ?? '0') || 0;
+    // CSV export tracks the applied filter (rows on screen) but not the page window.
+    applied = { ...filter(), limit: undefined, offset: undefined };
     void load();
   });
 </script>
@@ -343,6 +381,16 @@
       aria-label="resource filter"
       size="16"
     />
+    <label class="from"
+      >from <input type="datetime-local" bind:value={fSince} aria-label="from time" /></label
+    >
+    <label class="to"
+      >to <input type="datetime-local" bind:value={fUntil} aria-label="to time" /></label
+    >
+    <label class="hide-nodes">
+      <input type="checkbox" bind:checked={hideNodeSteps} aria-label="hide node steps" />
+      Hide node steps
+    </label>
     <button type="submit">Apply</button>
   </form>
 
@@ -363,7 +411,9 @@
         <tbody>
           {#each list as e (e.seq)}
             <tr>
-              <td class="muted"><RelativeTime value={e.time} /></td>
+              <td class="muted" title={new Date(e.time).toLocaleString()}
+                ><RelativeTime value={e.time} /></td
+              >
               <td>{e.actor}</td>
               <td><span class="badge">{e.stream}</span></td>
               <td>{e.type}</td>
@@ -382,10 +432,38 @@
         </tbody>
       </table>
     </div>
+    <div class="pager">
+      <span class="muted">{offset + 1}–{offset + list.length} of {total}</span>
+      <span class="spacer"></span>
+      <button onclick={() => pageBy(-1)} disabled={offset === 0}>← Prev</button>
+      <button onclick={() => pageBy(1)} disabled={offset + list.length >= total}>Next →</button>
+    </div>
   {/if}
 </main>
 
 <style>
+  .pager {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 0.75rem;
+  }
+  .pager .spacer {
+    flex: 1;
+  }
+  .pager button {
+    font: inherit;
+    padding: 0.35rem 0.7rem;
+  }
+  .filters .hide-nodes,
+  .filters .from,
+  .filters .to {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    font-size: 0.85rem;
+    color: var(--fg-muted);
+  }
   main {
     max-width: 68rem;
     margin: 2rem auto;

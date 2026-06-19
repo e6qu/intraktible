@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/e6qu/intraktible/decision-engine/events"
@@ -181,6 +182,89 @@ func List(ctx context.Context, s store.Store, id identity.Identity) ([]Record, e
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].StartedAt.After(out[j].StartedAt) })
 	return out, nil
+}
+
+// Filter narrows a decision-history query. Empty string fields and zero times are
+// "any"; Query matches the decision id (substring, case-insensitive).
+type Filter struct {
+	Slug        string
+	Environment string
+	Status      string
+	Variant     string
+	Query       string
+	Since       time.Time
+	Until       time.Time
+	Limit       int // 0 = default page size
+	Offset      int
+}
+
+// MaxPageSize caps a paginated decision-history page.
+const MaxPageSize = 200
+
+// Page is one page of decision records plus the total matching the filter.
+type Page struct {
+	Records []Record `json:"decisions"`
+	Total   int      `json:"total"`
+	Limit   int      `json:"limit"`
+	Offset  int      `json:"offset"`
+}
+
+// ListPage returns the tenant's decisions matching f, newest-first, paginated.
+// (The store has no field index, so it lists the tenant's records and filters in
+// memory — same read cost as List; pagination bounds the response, not the scan.)
+func ListPage(ctx context.Context, s store.Store, id identity.Identity, f Filter) (Page, error) {
+	all, err := List(ctx, s, id)
+	if err != nil {
+		return Page{}, err
+	}
+	q := strings.ToLower(strings.TrimSpace(f.Query))
+	matched := make([]Record, 0, len(all))
+	for _, r := range all {
+		if f.Slug != "" && r.Slug != f.Slug {
+			continue
+		}
+		if f.Environment != "" && r.Environment != f.Environment {
+			continue
+		}
+		if f.Status != "" && r.Status != f.Status {
+			continue
+		}
+		if f.Variant != "" && r.Variant != f.Variant {
+			continue
+		}
+		if q != "" && !strings.Contains(strings.ToLower(r.DecisionID), q) {
+			continue
+		}
+		if !f.Since.IsZero() && r.StartedAt.Before(f.Since) {
+			continue
+		}
+		if !f.Until.IsZero() && r.StartedAt.After(f.Until) {
+			continue
+		}
+		matched = append(matched, r)
+	}
+	total := len(matched)
+	// limit <= 0 means "no pagination" — return all matches (legacy callers and the
+	// dashboard, which aggregate over the full set). A positive limit paginates.
+	if f.Limit <= 0 {
+		return Page{Records: matched, Total: total, Limit: total, Offset: 0}, nil
+	}
+	limit := f.Limit
+	if limit > MaxPageSize {
+		limit = MaxPageSize
+	}
+	lo := f.Offset
+	if lo < 0 {
+		lo = 0
+	}
+	if lo > total {
+		lo = total
+	}
+	hi := lo + limit
+	if hi > total {
+		hi = total
+	}
+	return Page{Records: matched[lo:hi], Total: total, Limit: limit, Offset: lo}, nil
 }
 
 func update(ctx context.Context, s store.Store, e eventlog.Envelope, decisionID string, mutate func(*Record)) error {

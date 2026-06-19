@@ -231,8 +231,16 @@ func (h *DecideHandler) Decide(ctx context.Context, id identity.Identity, slug, 
 
 	run := domain.Execute(version.Graph, data)
 	for _, r := range run.Results {
+		// Seal PII in each node's output too — node outputs echo input-derived PII
+		// (assignment/rule/table targets, code merges, manual_review fields), so an
+		// unsealed trace would survive a crypto-shred erasure that the input/output
+		// sealing makes unrecoverable.
+		nodeOut, err := h.sealPII(ctx, id, ref, r.Output)
+		if err != nil {
+			return DecideResult{}, err
+		}
 		if err := h.emit(ctx, id, events.TypeNodeEvaluated, events.NodeEvaluated{
-			DecisionID: decisionID, NodeID: r.NodeID, NodeType: r.Type, Output: r.Output,
+			DecisionID: decisionID, NodeID: r.NodeID, NodeType: r.Type, Output: nodeOut,
 		}); err != nil {
 			return DecideResult{}, err
 		}
