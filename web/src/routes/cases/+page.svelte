@@ -62,17 +62,32 @@
     }
   }
 
+  // runBulk applies op to every id concurrently and reports partial success — one
+  // failing case must not abort the rest or hide which ones did change.
+  async function runBulk(verb: string, op: (id: string) => Promise<unknown>) {
+    const ids = selectedIds;
+    const results = await Promise.allSettled(ids.map((id) => op(id)));
+    const failed = results.filter((r) => r.status === 'rejected').length;
+    const ok = ids.length - failed;
+    if (failed === 0) {
+      toast.success(`${verb} ${ok} case(s)`);
+    } else {
+      const first = results.find((r) => r.status === 'rejected') as
+        | PromiseRejectedResult
+        | undefined;
+      error = `${verb} ${ok} of ${ids.length} case(s); ${failed} failed${first ? `: ${msg(first.reason)}` : ''}`;
+    }
+    await load();
+  }
+
   async function bulkAssign() {
     if (bulkBusy || !bulkAssignee.trim() || selectedIds.length === 0) return;
     bulkBusy = true;
     error = '';
+    const who = bulkAssignee.trim();
     try {
-      for (const id of selectedIds) await assignCase(key, id, bulkAssignee.trim());
-      toast.success(`Assigned ${selectedIds.length} case(s) to ${bulkAssignee.trim()}`);
+      await runBulk(`Assigned to ${who}:`, (id) => assignCase(key, id, who));
       bulkAssignee = '';
-      await load();
-    } catch (e) {
-      error = msg(e);
     } finally {
       bulkBusy = false;
     }
@@ -83,11 +98,7 @@
     bulkBusy = true;
     error = '';
     try {
-      for (const id of selectedIds) await setCaseStatus(key, id, 'completed');
-      toast.success(`Completed ${selectedIds.length} case(s)`);
-      await load();
-    } catch (e) {
-      error = msg(e);
+      await runBulk('Completed', (id) => setCaseStatus(key, id, 'completed'));
     } finally {
       bulkBusy = false;
     }

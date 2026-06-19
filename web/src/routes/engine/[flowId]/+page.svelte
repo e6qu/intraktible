@@ -336,7 +336,10 @@
     error = '';
     try {
       flow = await getFlow(key, flowId);
-      const version = flow.versions.at(-1);
+      // Seed the editor from the flow's declared latest version, not the last
+      // array element — the API does not guarantee versions are returned ordered.
+      const byVersion = [...flow.versions].sort((a, b) => a.version - b.version);
+      const version = flow.versions.find((v) => v.version === flow?.latest) ?? byVersion.at(-1);
       if (version) {
         editNodes = version.graph.nodes.map((n) => ({
           id: n.id,
@@ -351,11 +354,13 @@
         counter = editNodes.length;
         syncCanvas();
       }
-      // Default the version-diff selectors to the two most recent versions.
-      const vs = flow.versions;
-      if (vs.length > 0) {
-        diffB = String(vs[vs.length - 1].version);
-        diffA = String(vs[vs.length >= 2 ? vs.length - 2 : vs.length - 1].version);
+      // Default the version-diff selectors to the two most recent versions (by
+      // version number, independent of array order).
+      if (byVersion.length > 0) {
+        diffB = String(byVersion[byVersion.length - 1].version);
+        diffA = String(
+          byVersion[byVersion.length >= 2 ? byVersion.length - 2 : byVersion.length - 1].version
+        );
       }
     } catch (e) {
       error = msg(e);
@@ -636,14 +641,26 @@
   // currentGraph maps the editor state to the {nodes, edges} graph shape — shared by
   // publish and the copilot (which explains the live, unpublished graph).
   function currentGraph(): { nodes: GraphNode[]; edges: typeof editEdges } {
-    const nodes: GraphNode[] = editNodes.map((n) => ({
-      id: n.id,
-      type: n.type,
-      name: n.name || undefined,
-      config: n.config.trim() ? JSON.parse(n.config) : undefined,
-      position: n.pos,
-      lane: n.lane || undefined
-    }));
+    const nodes: GraphNode[] = editNodes.map((n) => {
+      let config: unknown;
+      if (n.config.trim()) {
+        try {
+          config = JSON.parse(n.config);
+        } catch {
+          // Name the offending node so the author can fix it, instead of a bare
+          // "Unexpected token" with no clue which card is broken.
+          throw new Error(`Node "${n.name || n.id}" has invalid JSON config`);
+        }
+      }
+      return {
+        id: n.id,
+        type: n.type,
+        name: n.name || undefined,
+        config,
+        position: n.pos,
+        lane: n.lane || undefined
+      };
+    });
     return { nodes, edges: editEdges };
   }
 
