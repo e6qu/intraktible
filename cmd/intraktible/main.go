@@ -936,6 +936,18 @@ func (c aiCompleter) Complete(ctx context.Context, system, prompt string) (strin
 	return resp.Text, nil
 }
 
+func (c aiCompleter) CompleteJSON(ctx context.Context, system, prompt string, schema json.RawMessage) (json.RawMessage, error) {
+	p, err := c.reg.Get("")
+	if err != nil {
+		return nil, err
+	}
+	resp, err := p.Complete(ctx, ai.Request{System: system, Prompt: prompt, Schema: schema})
+	if err != nil {
+		return nil, err
+	}
+	return resp.Structured, nil
+}
+
 func newPIISealer(v *erasure.Vault, fields []string) piiSealer {
 	set := make(map[string]bool, len(fields))
 	for _, f := range fields {

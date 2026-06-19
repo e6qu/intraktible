@@ -360,6 +360,39 @@
         }
       }
     },
+    "/v1/copilot/generate": {
+      "post": {
+        "tags": ["copilot"],
+        "summary": "Generate an applyable flow graph from a requirement",
+        "description": "Asks the AI for a structured flow graph and validates it server-side (ValidateGraph) before returning, so the builder only ever applies a graph the engine accepts. 422 when the model can't produce a valid flow.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["prompt"],
+                "properties": { "prompt": { "type": "string" } }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "A validated flow graph.",
+            "content": {
+              "application/json": {
+                "schema": { "type": "object", "properties": { "graph": { "type": "object" } } }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "422": { "$ref": "#/components/responses/Error" },
+          "503": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/v1/decisions": {
       "get": {
         "tags": [

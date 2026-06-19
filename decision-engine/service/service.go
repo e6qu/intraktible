@@ -34,11 +34,13 @@ import (
 	"github.com/e6qu/intraktible/platform/store"
 )
 
-// AICompleter is the LLM seam the authoring copilot uses: a single text completion
-// from a system + user prompt. The port lives here so the engine never imports the
-// AI provider directly; the composition root supplies an adapter over ai.Registry.
+// AICompleter is the LLM seam the authoring copilot uses. Complete is a plain text
+// completion; CompleteJSON requests a structured response conforming to a JSON Schema
+// (used to generate an applyable flow graph). The port lives here so the engine never
+// imports the AI provider directly; the composition root supplies an adapter.
 type AICompleter interface {
 	Complete(ctx context.Context, system, prompt string) (string, error)
+	CompleteJSON(ctx context.Context, system, prompt string, schema json.RawMessage) (json.RawMessage, error)
 }
 
 // Service wires flow commands, the decide runtime, and the read models to HTTP.
@@ -102,6 +104,64 @@ func (s *Service) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/models/{name}/baseline", s.captureModelBaseline)
 	mux.HandleFunc("POST /v1/copilot/explain", s.copilotExplain)
 	mux.HandleFunc("POST /v1/copilot/suggest", s.copilotSuggest)
+	mux.HandleFunc("POST /v1/copilot/generate", s.copilotGenerate)
+}
+
+// graphSchema is the JSON Schema the copilot asks the model to fill when generating
+// a flow — kept small and concrete so the model returns an applyable graph.
+const graphSchema = `{
+  "type": "object",
+  "required": ["nodes", "edges"],
+  "properties": {
+    "nodes": {"type": "array", "items": {"type": "object", "required": ["id", "type"],
+      "properties": {"id": {"type": "string"}, "type": {"type": "string"},
+        "name": {"type": "string"}, "config": {"type": "object"}}}},
+    "edges": {"type": "array", "items": {"type": "object", "required": ["from", "to"],
+      "properties": {"from": {"type": "string"}, "to": {"type": "string"}, "branch": {"type": "string"}}}}
+  }
+}`
+
+// copilotGenerate turns a natural-language requirement into an APPLYABLE flow graph:
+// the model returns a structured graph, which is validated server-side before being
+// returned (so the builder only ever applies a graph the engine would accept).
+func (s *Service) copilotGenerate(w http.ResponseWriter, r *http.Request) {
+	if _, ok := httpx.Caller(w, r); !ok {
+		return
+	}
+	if s.copilot == nil {
+		httpx.Error(w, http.StatusServiceUnavailable, fmt.Errorf("copilot is not configured"))
+		return
+	}
+	var req struct {
+		Prompt string `json:"prompt"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	if strings.TrimSpace(req.Prompt) == "" {
+		httpx.Error(w, http.StatusBadRequest, fmt.Errorf("a prompt is required"))
+		return
+	}
+	prompt := "Design a complete decision flow for this requirement as a graph. Start with one " +
+		"`input` node and end at one `output` node; use split/rule/scorecard/decision_table nodes for the " +
+		"logic, with expr-lang conditions. Every edge's from/to must reference a node id; a split's outgoing " +
+		"edges use branch \"yes\"/\"no\". Requirement:\n" + req.Prompt
+	raw, err := s.copilot.CompleteJSON(r.Context(), copilotSystem, prompt, json.RawMessage(graphSchema))
+	if err != nil {
+		httpx.Error(w, http.StatusBadGateway, err)
+		return
+	}
+	var graph events.Graph
+	if err := json.Unmarshal(raw, &graph); err != nil {
+		httpx.Error(w, http.StatusUnprocessableEntity, fmt.Errorf("the model did not return a usable graph: %w", err))
+		return
+	}
+	if err := domain.ValidateGraph(graph); err != nil {
+		httpx.Error(w, http.StatusUnprocessableEntity, fmt.Errorf("the generated flow is not valid (try rephrasing): %w", err))
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"graph": graph})
 }
 
 const copilotSystem = "You are a decisioning-platform assistant for the intraktible decision engine. " +
