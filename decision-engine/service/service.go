@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -917,6 +918,20 @@ func allowEnv(w http.ResponseWriter, r *http.Request, env string) bool {
 	return true
 }
 
+// decideStatus maps a decide error to an HTTP status by its cause, so a client
+// mistake (400) and a missing flow (404) are not reported as the same code, and a
+// real infrastructure failure surfaces as 500 (retryable) rather than 400.
+func decideStatus(err error) int {
+	switch {
+	case errors.Is(err, command.ErrBadRequest):
+		return http.StatusBadRequest
+	case errors.Is(err, command.ErrNotFound):
+		return http.StatusNotFound
+	default:
+		return http.StatusInternalServerError
+	}
+}
+
 func (s *Service) runDecide(w http.ResponseWriter, r *http.Request) {
 	id, ok := httpx.Caller(w, r)
 	if !ok {
@@ -934,7 +949,7 @@ func (s *Service) runDecide(w http.ResponseWriter, r *http.Request) {
 	result, err := s.decide.Decide(r.Context(), id, r.PathValue("slug"), env, req.Data,
 		command.EntityRef{Type: req.EntityType, ID: req.EntityID})
 	if err != nil {
-		httpx.Error(w, http.StatusBadRequest, err)
+		httpx.Error(w, decideStatus(err), err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, decideResponse{
