@@ -152,7 +152,9 @@
       <select bind:value={cType} aria-label="connector type">
         <option value="mock_bureau">mock_bureau</option>
         <option value="http">http</option>
+        <option value="graphql">graphql</option>
         <option value="sql">sql</option>
+        <option value="static">static</option>
       </select>
       <input
         bind:value={cConfig}
