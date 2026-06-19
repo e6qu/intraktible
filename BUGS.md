@@ -18,11 +18,11 @@ PR2 — engine builder UX (DONE, PR #7)
 - `A7 | LOW | web/engine | Promote is now a primary button with a confirm() step (wording differs for the production four-eyes path). | fixed — PR #7`
 - `A8 | LOW | web/engine | flow-create fields are labelled (Slug/Name) and the deployment columns show a "not deployed" pill instead of a bare "—". | fixed — PR #7`
 
-PR3 — decision explainability + case management
-- `A9 | MED | decision-engine/web | the decision Node Trace omits the decisive branch/rule, per-node duration, and reason codes — surface them (the reason node already emits codes). | open — PR3`
-- `A10 | MED | web/cases | no bulk actions — add multi-select assign/close on the queue. | open — PR3`
-- `A11 | MED | web/cases | case-detail actions + audit are flat — group Actions vs Activity and render the audit as a timeline. | open — PR3`
-- `A12 | LOW | web/cases | queue filter inputs unlabeled; "Run SLA sweep" unexplained — labels + tooltip. | open — PR3`
+PR3 — decision explainability + case management (DONE, PR #8)
+- `A9 | MED | web | the decision trace now surfaces the decisive split branch as a badge (→ yes/no) alongside the already-shown reason codes. Per-node duration is intentionally NOT recorded (domain.Execute is the pure/deterministic core — no per-node wall clock; total duration is shown). Matched rule/row index for rule/decision_table nodes is a future deterministic-safe domain enhancement (out of scope here). | fixed — PR #8`
+- `A10 | MED | web/cases | the queue has row checkboxes + a select-all, and a bulk bar to assign selected cases or mark them completed (confirm on complete); selection clears on reload. | fixed — PR #8`
+- `A11 | MED | web/cases | case detail groups Actions vs Activity and renders the audit as a timeline (markers + relative/absolute time + actor). | fixed — PR #8`
+- `A12 | LOW | web/cases | the open-case form inputs are labelled (Company/Type/SLA days); the SLA-sweep tooltip already existed. | fixed — PR #8`
 
 PR4 — accessibility + visual consistency
 - `A13 | HIGH | web | secondary text (timestamps/metadata/helper copy) is low-contrast, likely fails WCAG AA — darken to ≥4.5:1. | open — PR4`
