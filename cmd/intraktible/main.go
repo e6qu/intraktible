@@ -626,9 +626,11 @@ func oidcNames(as []*auth.OIDCAuthenticator) []string {
 func connectorSecretBoxFromEnv(ctx context.Context) (*connectors.Keyring, error) {
 	// An external KMS (AWS/GCP), when configured, takes precedence: the key never
 	// leaves the provider and the local env key is not needed.
-	if k, err := kms.FromEnv(ctx); err != nil {
+	managed, err := kms.FromEnv(ctx)
+	if err != nil {
 		return nil, err
-	} else if k != nil {
+	}
+	if k, ok := managed.Get(); ok {
 		slog.Info("connectors: using external KMS", "provider", os.Getenv("INTRAKTIBLE_KMS_PROVIDER"))
 		return connectors.NewKMSKeyring("kms:"+os.Getenv("INTRAKTIBLE_KMS_PROVIDER"), k), nil
 	}
