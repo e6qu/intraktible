@@ -136,6 +136,43 @@
         }
       }
     },
+    "/v1/flows/{slug}/openapi.json": {
+      "get": {
+        "tags": [
+          "flows"
+        ],
+        "summary": "Generated OpenAPI contract for one flow",
+        "description": "Returns a self-contained OpenAPI 3.1 document describing this flow's decide and decide/batch endpoints, with the flow's latest published input schema as the request data schema. Point codegen / Swagger UI at it for a flow-specific contract.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The flow's generated OpenAPI document.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
     "/v1/decisions": {
       "get": {
         "tags": [
@@ -158,6 +195,33 @@
               "type": "integer"
             },
             "description": "Maximum rows to return."
+          },
+          {
+            "name": "start_time",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "description": "Only decisions started at or after this RFC3339 time (alias: since)."
+          },
+          {
+            "name": "end_time",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "description": "Only decisions started at or before this RFC3339 time (alias: until)."
+          },
+          {
+            "name": "include_node_results",
+            "in": "query",
+            "schema": {
+              "type": "boolean",
+              "default": true
+            },
+            "description": "Set false to omit each decision's per-node trace for a lighter response (the trace is always available on the decision-detail endpoint)."
           }
         ],
         "responses": {
@@ -1905,9 +1969,11 @@
           },
           "scope": {
             "type": "string",
+            "description": "Environment the key may call: \"sandbox\", \"production\", or \"*\" (any). A scoped key is rejected (403) on a non-matching environment's decide endpoints.",
             "enum": [
               "sandbox",
-              "production"
+              "production",
+              "*"
             ]
           },
           "role": {

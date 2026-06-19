@@ -139,10 +139,10 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 		keyring.Add(devKey, auth.APIKey{
 			ID:       "dev",
 			Identity: identity.Identity{Org: "demo", Workspace: "main", Actor: "dev"},
-			Scope:    auth.Sandbox,
+			Scope:    auth.ScopeAll, // local dev key decides against any environment
 			Role:     auth.RoleAdmin,
 		})
-		slog.Warn("seeded dev API key — do not use in production", "scope", auth.Sandbox, "role", auth.RoleAdmin)
+		slog.Warn("seeded dev API key — do not use in production", "scope", auth.ScopeAll, "role", auth.RoleAdmin)
 	}
 
 	root := http.NewServeMux()

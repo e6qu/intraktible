@@ -106,7 +106,7 @@ func (s *StoreAPIKeys) Create(ctx context.Context, key ManagedAPIKey) (ManagedAP
 	if key.Scope == "" {
 		key.Scope = Sandbox
 	}
-	if key.Scope != Sandbox && key.Scope != Production {
+	if !ValidScope(key.Scope) {
 		return ManagedAPIKey{}, "", fmt.Errorf("auth: invalid api key scope %q", key.Scope)
 	}
 	if key.Role.Rank() == 0 {

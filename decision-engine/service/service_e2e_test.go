@@ -27,6 +27,7 @@ import (
 	"github.com/e6qu/intraktible/decision-engine/preapproval"
 	"github.com/e6qu/intraktible/decision-engine/service"
 	"github.com/e6qu/intraktible/decision-engine/shadow"
+	"github.com/e6qu/intraktible/platform/auth"
 	"github.com/e6qu/intraktible/platform/erasure"
 	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/privacy"
@@ -1295,6 +1296,61 @@ func TestPolicyBacktestOverHTTP(t *testing.T) {
 	}
 	if rep.Summary.Compare == nil || rep.Summary.Compare.Approve != 1 || rep.Summary.Flipped != 1 {
 		t.Fatalf("unexpected backtest diff: %+v", rep.Summary)
+	}
+}
+
+// TestDecideEnvironmentScopeEnforced proves a managed key scoped to one environment
+// is rejected (403) on another, while it still passes the scope gate for its own.
+func TestDecideEnvironmentScopeEnforced(t *testing.T) {
+	log, st := testutil.NewLogStore(t)
+	svc := service.New(command.NewHandler(log), command.NewDecideHandler(log, st), preapproval.NewHandler(log), st)
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "author"}
+	api := testutil.StartAPIScoped(t, log, st, "sandbox-key", auth.Sandbox, id, svc.Routes,
+		flows.Projector{}, history.Projector{})
+
+	// A sandbox-scoped key may not decide against production.
+	api.Request(t, http.MethodPost, "/v1/flows/x/production/decide",
+		map[string]any{"data": map[string]any{}}, http.StatusForbidden, nil)
+	// Against sandbox the scope gate passes (400 for the unknown flow, not 403).
+	api.Request(t, http.MethodPost, "/v1/flows/x/sandbox/decide",
+		map[string]any{"data": map[string]any{}}, http.StatusBadRequest, nil)
+}
+
+// TestFlowOpenAPIEndpoint proves the per-flow generated contract carries the flow's
+// decide endpoints and embeds its published input schema.
+func TestFlowOpenAPIEndpoint(t *testing.T) {
+	api := startEngine(t)
+	var created struct {
+		FlowID string `json:"flow_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows", map[string]any{"slug": "scoring", "name": "Scoring"}, http.StatusCreated, &created)
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/versions", map[string]any{
+		"graph": map[string]any{
+			"nodes": []map[string]any{
+				{"id": "in", "type": "input"},
+				{"id": "out", "type": "output", "config": map[string]any{"fields": []string{"fico"}}},
+			},
+			"edges": []map[string]any{{"from": "in", "to": "out"}},
+		},
+		"input_schema": map[string]any{
+			"type": "object", "required": []string{"fico"},
+			"properties": map[string]any{"fico": map[string]any{"type": "integer"}},
+		},
+	}, http.StatusCreated, nil)
+
+	var doc map[string]any
+	api.Request(t, http.MethodGet, "/v1/flows/scoring/openapi.json", nil, http.StatusOK, &doc)
+	if doc["openapi"] != "3.1.0" {
+		t.Fatalf("openapi version = %v, want 3.1.0", doc["openapi"])
+	}
+	paths, _ := doc["paths"].(map[string]any)
+	if _, ok := paths["/v1/flows/scoring/{env}/decide"]; !ok {
+		t.Fatalf("generated contract missing the flow's decide path; got %v", paths)
+	}
+	// The published input schema must be embedded as the request data schema.
+	raw, _ := json.Marshal(doc)
+	if !strings.Contains(string(raw), `"fico"`) {
+		t.Fatalf("input schema not embedded in the per-flow contract:\n%s", raw)
 	}
 }
 
