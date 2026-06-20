@@ -62,9 +62,11 @@ describe('persona config', () => {
   });
 
   it('a persona lens re-prioritises a list surface to the role-relevant slice', () => {
-    // Operators land on their open review queue; developers on failed traces.
+    // Operators land on their open review queue; developers on failed traces;
+    // product lands on the challenger (experiment) arm.
     expect(personaLens('operator').cases).toBe('needs_review');
-    expect(personaLens('developer').decisions).toBe('failed');
+    expect(personaLens('developer').decisions?.status).toBe('failed');
+    expect(personaLens('product').decisions?.variant).toBe('challenger');
     // A persona without a lens for a surface gets the full, unfiltered list.
     expect(personaLens('builder').cases).toBeUndefined();
     expect(personaLens('builder').decisions).toBeUndefined();
@@ -73,10 +75,15 @@ describe('persona config', () => {
 
   it('every declared lens value is a real domain enum member', () => {
     const cases = new Set(['needs_review', 'in_progress', 'completed']);
-    const runStatus = new Set(['completed', 'failed']);
+    const decisionStatus = new Set(['started', 'completed', 'failed']);
+    const variant = new Set(['champion', 'challenger']);
+    const env = new Set(['sandbox', 'staging', 'production']);
     for (const p of PERSONAS) {
       if (p.lens?.cases) expect(cases.has(p.lens.cases)).toBe(true);
-      if (p.lens?.decisions) expect(runStatus.has(p.lens.decisions)).toBe(true);
+      const d = p.lens?.decisions;
+      if (d?.status) expect(decisionStatus.has(d.status)).toBe(true);
+      if (d?.variant) expect(variant.has(d.variant)).toBe(true);
+      if (d?.env) expect(env.has(d.env)).toBe(true);
     }
   });
 });

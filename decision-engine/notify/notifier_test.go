@@ -118,3 +118,17 @@ func TestDeliverPermanentFailureDoesNotRetry(t *testing.T) {
 		t.Fatalf("expected one permanent failure, got %+v", results)
 	}
 }
+
+func TestAnyAccepted(t *testing.T) {
+	if notify.AnyAccepted(nil) {
+		t.Fatal("no results must not count as accepted")
+	}
+	permanent := []notify.DeliveryResult{{Outcome: notify.OutcomePermanent}, {Outcome: notify.OutcomeRetryable}}
+	if notify.AnyAccepted(permanent) {
+		t.Fatal("an all-failure set must not count as accepted (no Delivered inflation)")
+	}
+	mixed := []notify.DeliveryResult{{Outcome: notify.OutcomePermanent}, {OK: true, Outcome: notify.OutcomeAccepted}}
+	if !notify.AnyAccepted(mixed) {
+		t.Fatal("a set with one accepted delivery must count as accepted")
+	}
+}

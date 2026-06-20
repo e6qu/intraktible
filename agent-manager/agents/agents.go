@@ -309,8 +309,13 @@ func InvokeWithTools(ctx context.Context, s store.Store, reg *ai.Registry, tb To
 			out.Status, out.Error = domain.RunFailed, "agent-manager: model requested a tool but the agent declares none"
 		default:
 			// The model wants tools: execute them, feed the results back, and loop.
-			history = append(history, ai.Message{Role: "assistant", ToolCalls: resp.ToolCalls})
-			history = appendToolResults(ctx, tb, allowed, id, resp.ToolCalls, history, &out)
+			// Normalize the correlation IDs first — a model returning multiple calls
+			// with empty or duplicate IDs would otherwise break the assistant↔result
+			// pairing (strict providers 400 the next request; lenient ones misattribute
+			// a result to the wrong call).
+			calls := normalizeToolCallIDs(resp.ToolCalls)
+			history = append(history, ai.Message{Role: "assistant", ToolCalls: calls})
+			history = appendToolResults(ctx, tb, allowed, id, calls, history, &out)
 			continue
 		}
 		break
@@ -380,6 +385,29 @@ func resolveTools(names []string, tb Toolbox) ([]ai.Tool, error) {
 		tools = append(tools, spec)
 	}
 	return tools, nil
+}
+
+// normalizeToolCallIDs returns the calls with every ID guaranteed non-empty and
+// unique within the turn — synthesizing call_<i> for an empty ID and disambiguating a
+// duplicate. The ID is the correlation key between the assistant's tool_calls and the
+// tool-result messages fed back to the model; an empty or duplicated one breaks that
+// pairing regardless of provider, so we never trust the model to get it right.
+func normalizeToolCallIDs(calls []ai.ToolCall) []ai.ToolCall {
+	seen := make(map[string]bool, len(calls))
+	out := make([]ai.ToolCall, len(calls))
+	for i, c := range calls {
+		id := c.ID
+		if id == "" || seen[id] {
+			id = fmt.Sprintf("call_%d", i)
+			for n := 0; seen[id]; n++ { // disambiguate against an already-used synthetic/real id
+				id = fmt.Sprintf("call_%d_%d", i, n)
+			}
+		}
+		seen[id] = true
+		c.ID = id
+		out[i] = c
+	}
+	return out
 }
 
 // appendToolResults executes each tool call the agent ALLOWED, records it in the

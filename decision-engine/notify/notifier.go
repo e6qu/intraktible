@@ -82,6 +82,19 @@ type DeliveryResult struct {
 // would suppress the alert into a permanent re-fire loop. Each attempt is recorded
 // for the audit trail regardless. A partial success (≥1 accepted) is success; zero
 // configured webhooks is a vacuous success.
+// AnyAccepted reports whether at least one delivery in the set was accepted (2xx).
+// A scheduler counts an alert as delivered only when an endpoint actually took it: an
+// all-permanent-failure sweep is deduped (Deliver returns nil so the alert edge is
+// recorded) but delivered nothing, so it must not inflate the delivered count.
+func AnyAccepted(results []DeliveryResult) bool {
+	for _, r := range results {
+		if r.OK {
+			return true
+		}
+	}
+	return false
+}
+
 func (n *Notifier) Deliver(ctx context.Context, id identity.Identity, reason string, payload any) ([]DeliveryResult, error) {
 	hooks, err := active(ctx, n.store, id)
 	if err != nil {

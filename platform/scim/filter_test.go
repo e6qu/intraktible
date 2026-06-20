@@ -6,23 +6,24 @@ import "testing"
 
 func TestUserNameFilter(t *testing.T) {
 	cases := []struct {
-		filter string
-		want   string
+		filter      string
+		want        string
+		wantPresent bool
 	}{
-		{`userName eq "bjensen"`, "bjensen"},
-		{`userName eq "ada@acme.com"`, "ada@acme.com"},
-		{`userName eq "B Jensen"`, "B Jensen"},     // value with a space must survive
-		{`  userName   eq   "spaced"  `, "spaced"}, // tolerant of surrounding/inner whitespace
-		{`USERNAME EQ "case"`, "case"},             // attribute/operator are case-insensitive
-		{`userName co "partial"`, ""},              // unsupported operator
-		{`displayName eq "x"`, ""},                 // unsupported attribute
-		{`userName eq bjensen`, ""},                // unquoted value
-		{``, ""},
-		{`userName eq ""`, ""}, // empty quoted value → no filter
+		{`userName eq "bjensen"`, "bjensen", true},
+		{`userName eq "ada@acme.com"`, "ada@acme.com", true},
+		{`userName eq "B Jensen"`, "B Jensen", true},     // value with a space must survive
+		{`  userName   eq   "spaced"  `, "spaced", true}, // tolerant of surrounding/inner whitespace
+		{`USERNAME EQ "case"`, "case", true},             // attribute/operator are case-insensitive
+		{`userName co "partial"`, "", false},             // unsupported operator
+		{`displayName eq "x"`, "", false},                // unsupported attribute
+		{`userName eq bjensen`, "", false},               // unquoted value
+		{``, "", false},                                  // no filter param → list all
+		{`userName eq ""`, "", true},                     // present-but-empty: a precise filter (matches no user), NOT "list all"
 	}
 	for _, c := range cases {
-		if got := userNameFilter(c.filter); got != c.want {
-			t.Errorf("userNameFilter(%q) = %q, want %q", c.filter, got, c.want)
+		if got, present := userNameFilter(c.filter); got != c.want || present != c.wantPresent {
+			t.Errorf("userNameFilter(%q) = (%q,%v), want (%q,%v)", c.filter, got, present, c.want, c.wantPresent)
 		}
 	}
 }

@@ -87,6 +87,17 @@ func TestSCIMProvisionAndDeprovision(t *testing.T) {
 		t.Fatalf("list/filter = %s", list.Body.String())
 	}
 
+	// A present-but-empty filter (`userName eq ""`) is a precise filter that matches
+	// no user — it must NOT degrade into enumerating every user in the tenant.
+	empty := do(http.MethodGet, "/scim/v2/Users?filter="+url.QueryEscape(`userName eq ""`), "")
+	var er struct {
+		TotalResults int `json:"totalResults"`
+	}
+	_ = json.Unmarshal(empty.Body.Bytes(), &er)
+	if er.TotalResults != 0 {
+		t.Fatalf("empty-value filter must match no users, got %d: %s", er.TotalResults, empty.Body.String())
+	}
+
 	ctx := context.Background()
 	if !users.Allowed(ctx, "demo", "main", "ada@acme.com") {
 		t.Fatal("an active user should be allowed to log in")

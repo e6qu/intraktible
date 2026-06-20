@@ -115,7 +115,8 @@ func (svc *Service) create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (svc *Service) list(w http.ResponseWriter, r *http.Request) {
-	users, err := svc.store.List(r.Context(), svc.org, svc.workspace, userNameFilter(r.URL.Query().Get("filter")))
+	name, filtered := userNameFilter(r.URL.Query().Get("filter"))
+	users, err := svc.store.List(r.Context(), svc.org, svc.workspace, name, filtered)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -336,17 +337,21 @@ func memberIDFromPath(path string) string {
 // the quoted string between the first and last double-quote, so a value containing
 // spaces (e.g. `userName eq "B Jensen"`) parses correctly — splitting on spaces
 // would truncate it and let the deprovisioning gate miss the user.
-func userNameFilter(filter string) string {
+// userNameFilter extracts X from a `userName eq "X"` SCIM filter. The second return
+// reports whether a valid clause was PRESENT (distinct from absent): a present clause
+// with an empty value (`userName eq ""`) is a precise filter that matches no user, NOT
+// the absence of a filter — so it must not degrade into "list every user".
+func userNameFilter(filter string) (string, bool) {
 	f := strings.TrimSpace(filter)
 	open := strings.IndexByte(f, '"')
 	if open < 0 || f[len(f)-1] != '"' || len(f) < open+2 {
-		return ""
+		return "", false
 	}
 	head := strings.Fields(f[:open])
 	if len(head) != 2 || !strings.EqualFold(head[0], "userName") || !strings.EqualFold(head[1], "eq") {
-		return ""
+		return "", false
 	}
-	return f[open+1 : len(f)-1]
+	return f[open+1 : len(f)-1], true
 }
 
 func parseBool(raw json.RawMessage) (bool, bool) {

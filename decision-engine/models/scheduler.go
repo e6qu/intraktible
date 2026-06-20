@@ -92,12 +92,17 @@ func (s *Scheduler) Tick(ctx context.Context) (TickSummary, error) {
 					"checked_at": s.now(),
 					"fired":      []firedModel{{Model: st.Name, PSI: psi, Threshold: st.Threshold, Window: s.windowDays}},
 				}
-				if _, err := s.notifier.Deliver(ctx, id, "model drift scheduler", payload); err != nil {
+				results, err := s.notifier.Deliver(ctx, id, "model drift scheduler", payload)
+				if err != nil {
 					slog.Warn("model drift scheduler: delivery failed, will retry next tick", "model", st.Name, "err", err)
 					sum.DeliveryFailures++
 					continue
 				}
-				sum.Delivered++
+				// Count Delivered only when an endpoint accepted (an all-permanent sweep
+				// dedups via a nil return but delivered nothing).
+				if notify.AnyAccepted(results) {
+					sum.Delivered++
+				}
 			}
 			if _, err := s.cmd.MarkModelDriftAlerted(ctx, id, st.Name, psi, st.Threshold); err != nil {
 				return sum, err

@@ -8,7 +8,7 @@
 // Persona is orthogonal to light/dark theme — every persona works in both.
 
 import { writable } from 'svelte/store';
-import type { CaseStatus, RunStatus } from './api';
+import type { CaseStatus, DecisionStatus, Variant } from './api';
 
 export type Persona =
   | 'builder'
@@ -67,7 +67,12 @@ export type HomeKind = 'builder' | 'operator' | 'showcase' | 'evaluator' | 'pers
 // has no lens for show the full, unfiltered list.
 export type PersonaLens = {
   cases?: CaseStatus; // e.g. an operator lands on their open review queue
-  decisions?: RunStatus; // e.g. a developer lands on failed traces to debug
+  // The decisions surface filters on several axes; a persona can focus any subset.
+  decisions?: {
+    status?: DecisionStatus; // e.g. a developer lands on failed traces to debug
+    variant?: Variant; // e.g. product lands on the challenger (experiment) arm
+    env?: string; // e.g. focus on production traffic
+  };
 };
 
 export type PersonaConfig = {
@@ -114,7 +119,7 @@ export const PERSONAS: PersonaConfig[] = [
       { label: 'Manage agents & tools', href: '/agents', icon: 'agents' }
     ],
     terms: { decisions: 'Traces' },
-    lens: { decisions: 'failed' } // land on failing traces — the debugging starting point
+    lens: { decisions: { status: 'failed' } } // land on failing traces — the debugging starting point
   },
   {
     id: 'operator',
@@ -156,7 +161,8 @@ export const PERSONAS: PersonaConfig[] = [
       { label: 'Tune policy impact', href: '/policies', icon: 'rule' },
       { label: 'Manage models', href: '/models', icon: 'scorecard' },
       { label: 'Analyse decisions', href: '/decisions', icon: 'diagram' }
-    ]
+    ],
+    lens: { decisions: { variant: 'challenger' } } // land on the experiment arm, not the champion
   },
   {
     id: 'showcase',

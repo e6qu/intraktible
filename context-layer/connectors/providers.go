@@ -241,6 +241,11 @@ func flattenQuery(params json.RawMessage) (url.Values, error) {
 			q.Set(k, strconv.FormatFloat(t, 'f', -1, 64))
 		case bool:
 			q.Set(k, strconv.FormatBool(t))
+		default:
+			// Fail loudly rather than silently dropping a value we can't encode as a
+			// scalar query param — otherwise the upstream request would differ from what
+			// the flow asked for (e.g. a dropped Stripe `expand` array) with no signal.
+			return nil, fmt.Errorf("context-layer: query param %q has unsupported type %T (only string/number/bool); flatten arrays/objects into scalar params", k, v)
 		}
 	}
 	return q, nil
