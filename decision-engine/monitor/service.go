@@ -161,12 +161,14 @@ func (s *Service) check(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]any{"flow_id": flowID, "checked": len(rules), "fired": fired}
 	if len(fired) > 0 && s.notifier != nil {
 		payload := map[string]any{"flow_id": flowID, "checked_at": time.Now().UTC(), "fired": fired}
+		// Deliver returns the per-webhook outcomes AND an error when all of them
+		// failed. Evaluation succeeded, so report the delivery outcomes (a flag +
+		// the per-webhook results) rather than 500-ing the whole check.
 		deliveries, derr := s.notifier.Deliver(r.Context(), id, "monitor check", payload)
-		if derr != nil {
-			httpx.Error(w, http.StatusInternalServerError, derr)
-			return
-		}
 		resp["deliveries"] = deliveries
+		if derr != nil {
+			resp["delivery_failed"] = true
+		}
 	}
 	httpx.JSON(w, http.StatusOK, resp)
 }

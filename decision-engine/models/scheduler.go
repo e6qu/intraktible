@@ -50,10 +50,11 @@ func NewScheduler(st store.Store, cmd AlertCmd, n Notifier, windowDays int) *Sch
 
 // TickSummary reports what one sweep did (for logging and tests).
 type TickSummary struct {
-	Models    int
-	Alerted   int
-	Resolved  int
-	Delivered int
+	Models           int
+	Alerted          int
+	Resolved         int
+	Delivered        int
+	DeliveryFailures int // models whose webhook delivery failed this sweep (retried next tick)
 }
 
 // firedModel is one model's drift at the moment it crossed into firing.
@@ -83,16 +84,18 @@ func (s *Scheduler) Tick(ctx context.Context) (TickSummary, error) {
 		id := identity.Identity{Org: st.Org, Workspace: st.Workspace, Actor: "drift-scheduler"}
 		switch {
 		case firing && !st.Alerting:
-			// Deliver before recording the alert: if delivery fails we return without
-			// marking alerted, so the next tick re-delivers rather than the model being
-			// deduped into silence with the operator never notified.
+			// Deliver before recording the alert: if delivery fails we skip marking
+			// alerted (so the next tick re-delivers) but do NOT abort the sweep — one
+			// tenant's down webhook must not starve every other model after it.
 			if s.notifier != nil {
 				payload := map[string]any{
 					"checked_at": s.now(),
 					"fired":      []firedModel{{Model: st.Name, PSI: psi, Threshold: st.Threshold, Window: s.windowDays}},
 				}
 				if _, err := s.notifier.Deliver(ctx, id, "model drift scheduler", payload); err != nil {
-					return sum, err
+					slog.Warn("model drift scheduler: delivery failed, will retry next tick", "model", st.Name, "err", err)
+					sum.DeliveryFailures++
+					continue
 				}
 				sum.Delivered++
 			}

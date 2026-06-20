@@ -31,10 +31,11 @@ func NewScheduler(st store.Store, cmd *Handler, n notifier) *Scheduler {
 
 // TickSummary reports what one sweep did (for logging and tests).
 type TickSummary struct {
-	Flows     int
-	Alerted   int
-	Resolved  int
-	Delivered int
+	Flows            int
+	Alerted          int
+	Resolved         int
+	Delivered        int
+	DeliveryFailures int // flows whose webhook delivery failed this sweep (retried next tick)
 }
 
 // transitionAction is the dedup decision for one monitor.
@@ -99,13 +100,17 @@ func (s *Scheduler) Tick(ctx context.Context) (TickSummary, error) {
 			case actionNone:
 			}
 		}
-		// Deliver before recording the alert transition: if delivery fails we return
-		// without marking alerted, so the next tick re-delivers rather than the
-		// monitor being deduped into silence with the operator never notified.
+		// Deliver before recording the alert transition: if delivery fails we skip
+		// marking alerted (so the next tick re-delivers rather than the monitor being
+		// deduped into silence) — but we do NOT abort the sweep, so a single tenant's
+		// down webhook can't starve every other tenant/flow processed after it.
 		if len(fired) > 0 && s.notifier != nil {
 			payload := map[string]any{"flow_id": k.flow, "checked_at": s.now(), "fired": fired}
 			if _, err := s.notifier.Deliver(ctx, id, "monitor scheduler", payload); err != nil {
-				return sum, err
+				slog.Warn("monitor scheduler: delivery failed, will retry next tick", "flow", k.flow, "err", err)
+				sum.DeliveryFailures++
+				sum.Flows++
+				continue
 			}
 			sum.Delivered++
 		}
