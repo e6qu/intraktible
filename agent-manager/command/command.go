@@ -77,7 +77,7 @@ func NewHandler(log eventlog.Log, st store.Store, reg *ai.Registry, opts ...Opti
 // RunResult is the outcome of a run returned to the caller.
 type RunResult struct {
 	RunID      string
-	Status     string
+	Status     domain.RunStatus
 	Text       string
 	Structured json.RawMessage
 	Error      string
@@ -111,7 +111,7 @@ func (h *Handler) RunAgent(ctx context.Context, id identity.Identity, agent, pro
 	runID := h.newID()
 	if _, err := h.append(ctx, id, events.TypeAgentRunRecorded, events.AgentRunRecorded{
 		RunID: runID, Agent: agent, Model: out.Model, Prompt: prompt,
-		Status: out.Status, Text: out.Text, Structured: out.Structured, ToolCalls: out.ToolCalls, Error: out.Error, At: h.now(),
+		Status: string(out.Status), Text: out.Text, Structured: out.Structured, ToolCalls: out.ToolCalls, Error: out.Error, At: h.now(),
 	}); err != nil {
 		return RunResult{}, err
 	}
@@ -132,7 +132,7 @@ func (h *Handler) StreamRun(ctx context.Context, id identity.Identity, agent, pr
 	runID := h.newID()
 	if _, err := h.append(ctx, id, events.TypeAgentRunRecorded, events.AgentRunRecorded{
 		RunID: runID, Agent: agent, Model: out.Model, Prompt: prompt,
-		Status: out.Status, Text: out.Text, Structured: out.Structured, ToolCalls: out.ToolCalls, Error: out.Error, At: h.now(),
+		Status: string(out.Status), Text: out.Text, Structured: out.Structured, ToolCalls: out.ToolCalls, Error: out.Error, At: h.now(),
 	}); err != nil {
 		return RunResult{}, err
 	}
@@ -222,7 +222,7 @@ func (h *Handler) process(ctx context.Context, job asyncJob) {
 	}
 	if _, aerr := h.append(ctx, job.id, events.TypeAgentRunRecorded, events.AgentRunRecorded{
 		RunID: job.runID, Agent: job.agent, Model: out.Model, Prompt: job.prompt,
-		Status: out.Status, Text: out.Text, Structured: out.Structured, ToolCalls: out.ToolCalls, Error: out.Error, At: h.now(),
+		Status: string(out.Status), Text: out.Text, Structured: out.Structured, ToolCalls: out.ToolCalls, Error: out.Error, At: h.now(),
 	}); aerr != nil {
 		slog.Error("agent-manager: failed to record async run", "run_id", job.runID, "err", aerr)
 	}

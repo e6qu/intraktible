@@ -21,9 +21,9 @@ type Distribution struct {
 // Flip is one record whose disposition differs between the evaluated and compare
 // policies (only present in compare mode).
 type Flip struct {
-	Index     int    `json:"index"`
-	Evaluated string `json:"evaluated"`
-	Compare   string `json:"compare"`
+	Index     int         `json:"index"`
+	Evaluated Disposition `json:"evaluated"`
+	Compare   Disposition `json:"compare"`
 }
 
 // BacktestSummary is the headline of a disposition backtest. Evaluated is the
@@ -82,7 +82,7 @@ func Backtest(g events.Graph, dataset []map[string]any, evaluated Spec, compare 
 
 // dispositionOf applies a policy to an output, treating a non-evaluable policy as
 // a referral (consistent with the decide path).
-func dispositionOf(s Spec, output map[string]any) string {
+func dispositionOf(s Spec, output map[string]any) Disposition {
 	out, err := s.Apply(output)
 	if err != nil {
 		return Refer
@@ -90,7 +90,7 @@ func dispositionOf(s Spec, output map[string]any) string {
 	return out.Disposition
 }
 
-func tally(d *Distribution, disp string) {
+func tally(d *Distribution, disp Disposition) {
 	switch disp {
 	case Approve:
 		d.Approve++

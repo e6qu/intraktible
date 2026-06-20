@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/e6qu/intraktible/agent-manager/domain"
 	"github.com/e6qu/intraktible/agent-manager/events"
 	"github.com/e6qu/intraktible/platform/ai"
 	"github.com/e6qu/intraktible/platform/eventlog"
@@ -47,7 +48,7 @@ type RunView struct {
 	Agent      string            `json:"agent"`
 	Model      string            `json:"model,omitempty"`
 	Prompt     string            `json:"prompt"`
-	Status     string            `json:"status"`
+	Status     domain.RunStatus  `json:"status"`
 	Text       string            `json:"text,omitempty"`
 	Structured json.RawMessage   `json:"structured,omitempty"`
 	ToolCalls  []events.ToolCall `json:"tool_calls,omitempty"`
@@ -89,7 +90,7 @@ func applyRunStarted(ctx context.Context, e eventlog.Envelope, s store.Store) er
 	run := RunView{
 		Org: e.Org, Workspace: e.Workspace,
 		RunID: p.RunID, Agent: p.Agent, Prompt: p.Prompt,
-		Status: domainRunRunning, Seq: e.Seq, At: p.At,
+		Status: domain.RunRunning, Seq: e.Seq, At: p.At,
 	}
 	return store.PutDoc(ctx, s, CollectionRuns, store.Key(e.Org, e.Workspace, p.RunID), run)
 }
@@ -120,7 +121,7 @@ func applyRun(ctx context.Context, e eventlog.Envelope, s store.Store) error {
 	run := RunView{
 		Org: e.Org, Workspace: e.Workspace,
 		RunID: p.RunID, Agent: p.Agent, Model: p.Model, Prompt: p.Prompt,
-		Status: p.Status, Text: p.Text, Structured: p.Structured, ToolCalls: p.ToolCalls, Error: p.Error,
+		Status: domain.RunStatus(p.Status), Text: p.Text, Structured: p.Structured, ToolCalls: p.ToolCalls, Error: p.Error,
 		Seq: e.Seq, At: p.At,
 	}
 	if err := store.PutDoc(ctx, s, CollectionRuns, store.Key(e.Org, e.Workspace, p.RunID), run); err != nil {
@@ -174,9 +175,9 @@ func SummarizeRuns(runs []RunView) RunSummary {
 	for _, r := range runs {
 		s.ByAgent[r.Agent]++
 		switch r.Status {
-		case domainRunCompleted:
+		case domain.RunCompleted:
 			s.Completed++
-		case domainRunFailed:
+		case domain.RunFailed:
 			s.Failed++
 		}
 	}
@@ -188,7 +189,7 @@ func SummarizeRuns(runs []RunView) RunSummary {
 // ToolCalls is the tool-calling trace when the agent used tools.
 type Outcome struct {
 	Model      string
-	Status     string
+	Status     domain.RunStatus
 	Text       string
 	Structured json.RawMessage
 	ToolCalls  []events.ToolCall
@@ -244,11 +245,11 @@ func InvokeWithTools(ctx context.Context, s store.Store, reg *ai.Registry, tb To
 	// error then falls through to a single `return out, nil` — a provider failure
 	// is a recorded failed run, not a call error (so the linter's err-then-nil
 	// guard does not apply).
-	out := Outcome{Model: def.Model, Status: domainRunCompleted}
+	out := Outcome{Model: def.Model, Status: domain.RunCompleted}
 	var history []ai.Message
 	for step := 0; ; step++ {
 		if step > maxToolSteps {
-			out.Status, out.Error = domainRunFailed, fmt.Sprintf("agent-manager: tool-calling exceeded %d steps", maxToolSteps)
+			out.Status, out.Error = domain.RunFailed, fmt.Sprintf("agent-manager: tool-calling exceeded %d steps", maxToolSteps)
 			break
 		}
 		resp, perr := p.Complete(ctx, ai.Request{
@@ -259,14 +260,14 @@ func InvokeWithTools(ctx context.Context, s store.Store, reg *ai.Registry, tb To
 		}
 		switch {
 		case perr != nil:
-			out.Status, out.Error = domainRunFailed, perr.Error()
+			out.Status, out.Error = domain.RunFailed, perr.Error()
 		case len(resp.ToolCalls) == 0:
 			out.Text, out.Structured = resp.Text, resp.Structured
 			if verr := validateStructured(def.Schema, resp.Structured); verr != nil {
-				out.Status, out.Error, out.Text, out.Structured = domainRunFailed, verr.Error(), "", nil
+				out.Status, out.Error, out.Text, out.Structured = domain.RunFailed, verr.Error(), "", nil
 			}
 		case len(tools) == 0:
-			out.Status, out.Error = domainRunFailed, "agent-manager: model requested a tool but the agent declares none"
+			out.Status, out.Error = domain.RunFailed, "agent-manager: model requested a tool but the agent declares none"
 		default:
 			// The model wants tools: execute them, feed the results back, and loop.
 			history = append(history, ai.Message{Role: "assistant", ToolCalls: resp.ToolCalls})
@@ -307,18 +308,18 @@ func InvokeStream(ctx context.Context, s store.Store, reg *ai.Registry, tb Toolb
 		return out, nil
 	}
 
-	out := Outcome{Model: def.Model, Status: domainRunCompleted}
+	out := Outcome{Model: def.Model, Status: domain.RunCompleted}
 	resp, perr := sp.Stream(ctx, ai.Request{Model: def.Model, System: def.System, Prompt: prompt, Schema: def.Schema}, onChunk)
 	switch {
 	case perr != nil:
-		out.Status, out.Error = domainRunFailed, perr.Error()
+		out.Status, out.Error = domain.RunFailed, perr.Error()
 	default:
 		if resp.Model != "" {
 			out.Model = resp.Model
 		}
 		out.Text, out.Structured = resp.Text, resp.Structured
 		if verr := validateStructured(def.Schema, resp.Structured); verr != nil {
-			out.Status, out.Error, out.Text, out.Structured = domainRunFailed, verr.Error(), "", nil
+			out.Status, out.Error, out.Text, out.Structured = domain.RunFailed, verr.Error(), "", nil
 		}
 	}
 	return out, nil
@@ -394,7 +395,7 @@ func (p Provider) RunAgent(ctx context.Context, id identity.Identity, agent, pro
 	if err != nil {
 		return nil, err
 	}
-	if out.Status != domainRunCompleted {
+	if out.Status != domain.RunCompleted {
 		return nil, fmt.Errorf("agent-manager: agent %q run failed: %s", agent, out.Error)
 	}
 	if len(out.Structured) > 0 {
@@ -406,14 +407,6 @@ func (p Provider) RunAgent(ctx context.Context, id identity.Identity, agent, pro
 	}
 	return b, nil
 }
-
-// Mirror the domain run-status constants without importing the domain package
-// (this read-model package stays free of the command/domain write side).
-const (
-	domainRunRunning   = "running"
-	domainRunCompleted = "completed"
-	domainRunFailed    = "failed"
-)
 
 func decode[T any](e eventlog.Envelope, v *T) error {
 	if err := json.Unmarshal(e.Payload, v); err != nil {

@@ -17,6 +17,19 @@ type Identity struct {
 	Actor     string `json:"actor"`
 }
 
+// New builds a validated Identity — the smart constructor for the points where an
+// identity is minted from external input (an IdP's claims, an SSO assertion), so a
+// malformed tenancy/actor fails at the boundary (e.g. login) rather than surviving
+// until the first handler's Valid() check. Internal construction from already-
+// trusted data (event envelopes, fixed actors) may still use the literal.
+func New(org, workspace, actor string) (Identity, error) {
+	id := Identity{Org: org, Workspace: workspace, Actor: actor}
+	if err := id.Valid(); err != nil {
+		return Identity{}, err
+	}
+	return id, nil
+}
+
 // Valid reports whether the identity is fully scoped. Tenancy is mandatory
 // (org+workspace scoping from day 1); we fail loudly rather than default.
 func (i Identity) Valid() error {

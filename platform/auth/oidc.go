@@ -119,10 +119,11 @@ func (a *OIDCAuthenticator) Exchange(ctx context.Context, code, nonce string) (O
 	if actor == "" {
 		return OIDCLogin{}, fmt.Errorf("auth: oidc %q token has no verified email or subject", a.cfg.Name)
 	}
-	return OIDCLogin{
-		Identity: identity.Identity{Org: a.cfg.Org, Workspace: a.cfg.Workspace, Actor: actor},
-		Role:     a.roleFor(claims),
-	}, nil
+	id, err := identity.New(a.cfg.Org, a.cfg.Workspace, actor)
+	if err != nil {
+		return OIDCLogin{}, fmt.Errorf("auth: oidc %q: %w", a.cfg.Name, err)
+	}
+	return OIDCLogin{Identity: id, Role: a.roleFor(claims)}, nil
 }
 
 // roleFor maps the user's groups to the highest matching configured role, or the
