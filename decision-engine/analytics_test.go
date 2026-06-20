@@ -75,11 +75,11 @@ func TestAnalyticsMetrics(t *testing.T) {
 
 	// 2 champion decisions on v1 (completed).
 	deployAndWait(domain.DeployVersion{Version: 1})
-	decide(domain.StatusCompleted)
-	decide(domain.StatusCompleted)
+	decide(string(domain.StatusCompleted))
+	decide(string(domain.StatusCompleted))
 	// 1 challenger decision on v2 (fails loudly).
 	deployAndWait(domain.DeployVersion{Version: 1, ChallengerVersion: 2, ChallengerPct: 100})
-	decide(domain.StatusFailed)
+	decide(string(domain.StatusFailed))
 
 	// Rebuild the metrics read model purely from the decision event stream.
 	ms := store.NewMemory()

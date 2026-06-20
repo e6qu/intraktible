@@ -294,3 +294,26 @@ func TestBPMNDropsDanglingEdges(t *testing.T) {
 		t.Fatalf("BPMN is not well-formed XML: %v", err)
 	}
 }
+
+// A predict node is an external ML call (like AI/Connect), so every exporter must
+// render it as a service-task/cylinder, not the generic default task — otherwise the
+// exported diagram silently mislabels it.
+func TestPredictNodeExportsAsServiceCall(t *testing.T) {
+	g := events.Graph{
+		Nodes: []events.Node{
+			{ID: "in", Type: events.NodeInput},
+			{ID: "p", Type: events.NodePredict, Name: "score"},
+			{ID: "out", Type: events.NodeOutput},
+		},
+		Edges: []events.Edge{{From: "in", To: "p"}, {From: "p", To: "out"}},
+	}
+	if bpmn := export.BPMN(g, "f"); !strings.Contains(bpmn, `<bpmn:serviceTask id="p"`) {
+		t.Fatalf("predict node should be a BPMN serviceTask:\n%s", bpmn)
+	}
+	if dot := export.DOT(g); !strings.Contains(dot, "shape=cylinder") {
+		t.Fatalf("predict node should be a DOT cylinder:\n%s", dot)
+	}
+	if mer := export.MermaidFlowchart(g); !strings.Contains(mer, "[(") {
+		t.Fatalf("predict node should be a Mermaid cylinder:\n%s", mer)
+	}
+}

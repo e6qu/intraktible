@@ -68,61 +68,61 @@ type DeliveryResult struct {
 	Error     string  `json:"error,omitempty"`
 }
 
-// Deliver POSTs payload as JSON to every active webhook, recording each outcome.
-// reason labels what prompted the push (e.g. "monitor check"). Each attempt is
-// recorded (with its error) for the audit trail; a failure to record the effect —
-// which would break replay — aborts the call.
-//
-// It returns an error ONLY when delivery is worth retrying: there are active
-// webhooks, none accepted the payload, and at least one failure was Retryable
-// (transport/408/429/5xx). The schedulers rely on this — a retryable total failure
-// keeps the firing-edge alert unrecorded so the next tick re-delivers. When every
-// failure is Permanent (a 4xx the endpoint will never accept), it returns nil so the
-// alert edge IS recorded: retrying a dead endpoint forever would never deliver and
-// would suppress the alert into a permanent re-fire loop. Each attempt is recorded
-// for the audit trail regardless. A partial success (≥1 accepted) is success; zero
-// configured webhooks is a vacuous success.
-// AnyAccepted reports whether at least one delivery in the set was accepted (2xx).
-// A scheduler counts an alert as delivered only when an endpoint actually took it: an
-// all-permanent-failure sweep is deduped (Deliver returns nil so the alert edge is
-// recorded) but delivered nothing, so it must not inflate the delivered count.
-func AnyAccepted(results []DeliveryResult) bool {
-	for _, r := range results {
-		if r.OK {
-			return true
-		}
-	}
-	return false
+// DeliverySummary is the outcome of one Deliver call: the per-webhook results plus
+// the per-Outcome counts the schedulers branch on. It replaces an earlier
+// error-as-control-flow contract (a sentinel error that meant "retry") with explicit
+// typed state, so a real failure (store/marshal) is distinct from "every webhook was
+// a retryable failure", and callers decide retry/dedup/metric from RetryWorthy() and
+// Delivered() rather than re-deriving intent from a nil-vs-error check.
+type DeliverySummary struct {
+	Results   []DeliveryResult `json:"results"`
+	Accepted  int              `json:"accepted"`  // 2xx
+	Retryable int              `json:"retryable"` // transport/408/429/5xx — try again
+	Permanent int              `json:"permanent"` // other 4xx — will never accept
 }
 
-func (n *Notifier) Deliver(ctx context.Context, id identity.Identity, reason string, payload any) ([]DeliveryResult, error) {
+// RetryWorthy reports that nothing was accepted but at least one failure could
+// succeed later, so the caller must NOT record the firing-edge alert (retry next
+// tick). An all-Permanent total failure is deliberately NOT retry-worthy: the alert
+// edge records so a dead endpoint can't trap the monitor in a permanent re-fire loop.
+func (s DeliverySummary) RetryWorthy() bool { return s.Accepted == 0 && s.Retryable > 0 }
+
+// Delivered reports whether at least one endpoint accepted the payload (so a scheduler
+// counts the alert as delivered only when it actually went somewhere).
+func (s DeliverySummary) Delivered() bool { return s.Accepted > 0 }
+
+// Deliver POSTs payload as JSON to every active webhook, recording each attempt (with
+// its error) for the audit trail; a failure to record the effect — which would break
+// replay — aborts the call with an error. The returned error is reserved for such real
+// failures (listing webhooks, marshaling, recording); the retry/dedup decision is read
+// from the DeliverySummary, never from the error. Zero configured webhooks is a vacuous
+// success (empty summary, not retry-worthy).
+func (n *Notifier) Deliver(ctx context.Context, id identity.Identity, reason string, payload any) (DeliverySummary, error) {
 	hooks, err := active(ctx, n.store, id)
 	if err != nil {
-		return nil, err
+		return DeliverySummary{}, err
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return nil, fmt.Errorf("notify: marshal payload: %w", err)
+		return DeliverySummary{}, fmt.Errorf("notify: marshal payload: %w", err)
 	}
-	results := make([]DeliveryResult, 0, len(hooks))
-	accepted, retryable := 0, 0
+	sum := DeliverySummary{Results: make([]DeliveryResult, 0, len(hooks))}
 	for _, h := range hooks {
 		res := n.post(ctx, h, body)
 		if err := n.record(ctx, id, h, res, reason); err != nil {
-			return nil, err
+			return DeliverySummary{}, err
 		}
 		switch res.Outcome {
 		case OutcomeAccepted:
-			accepted++
+			sum.Accepted++
 		case OutcomeRetryable:
-			retryable++
+			sum.Retryable++
+		case OutcomePermanent:
+			sum.Permanent++
 		}
-		results = append(results, res)
+		sum.Results = append(sum.Results, res)
 	}
-	if len(hooks) > 0 && accepted == 0 && retryable > 0 {
-		return results, fmt.Errorf("notify: delivery failed to all %d active webhook(s), retryable", len(hooks))
-	}
-	return results, nil
+	return sum, nil
 }
 
 func (n *Notifier) post(ctx context.Context, h View, body []byte) DeliveryResult {

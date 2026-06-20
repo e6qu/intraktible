@@ -70,7 +70,7 @@ func dotShape(t events.NodeType) string {
 		return "diamond" // decision
 	case events.NodeRule, events.NodeDecisionTable, events.NodeScorecard, events.NodeMatrix2D:
 		return "box3d" // rule-like
-	case events.NodeAI, events.NodeConnect:
+	case events.NodeAI, events.NodeConnect, events.NodePredict:
 		return "cylinder" // external/data
 	case events.NodeManualReview:
 		return "hexagon" // human gate

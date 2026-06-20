@@ -65,8 +65,17 @@ export type HomeKind = 'builder' | 'operator' | 'showcase' | 'evaluator' | 'pers
 // re-prioritisation, not a skin or a fork: the page, its data, and its capabilities
 // are identical across personas; only the initial lens differs. Surfaces a persona
 // has no lens for show the full, unfiltered list.
+// CaseSort orders the case queue: 'urgency' surfaces the soonest-due / overdue cases
+// first (an operator works the queue top-down), 'recent' is the default store order.
+export type CaseSort = 'urgency' | 'recent';
+
 export type PersonaLens = {
-  cases?: CaseStatus; // e.g. an operator lands on their open review queue
+  // The cases queue: WHICH cases (status) and in WHAT ORDER (sort) — an operator lands
+  // on the open review queue, urgency-first.
+  cases?: {
+    status?: CaseStatus;
+    sort?: CaseSort;
+  };
   // The decisions surface filters on several axes; a persona can focus any subset.
   decisions?: {
     status?: DecisionStatus; // e.g. a developer lands on failed traces to debug
@@ -133,7 +142,7 @@ export const PERSONAS: PersonaConfig[] = [
       { label: 'Review pre-approvals', href: '/preapprovals', icon: 'check' },
       { label: 'Scan recent decisions', href: '/decisions', icon: 'diagram' }
     ],
-    lens: { cases: 'needs_review' } // land on the open review queue, not closed cases
+    lens: { cases: { status: 'needs_review', sort: 'urgency' } } // the open queue, most-urgent first
   },
   {
     id: 'manager',

@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/e6qu/intraktible/decision-engine/notify"
 	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/metrics"
 	"github.com/e6qu/intraktible/platform/store"
@@ -107,16 +106,18 @@ func (s *Scheduler) Tick(ctx context.Context) (TickSummary, error) {
 		// down webhook can't starve every other tenant/flow processed after it.
 		if len(fired) > 0 && s.notifier != nil {
 			payload := map[string]any{"flow_id": k.flow, "checked_at": s.now(), "fired": fired}
-			results, err := s.notifier.Deliver(ctx, id, "monitor scheduler", payload)
-			if err != nil {
-				slog.Warn("monitor scheduler: delivery failed, will retry next tick", "flow", k.flow, "err", err)
+			summary, err := s.notifier.Deliver(ctx, id, "monitor scheduler", payload)
+			if err != nil || summary.RetryWorthy() {
+				// A real error or a retryable total failure: leave the firing-edge alert
+				// unrecorded so the next tick re-delivers, and don't starve the sweep.
+				slog.Warn("monitor scheduler: delivery not completed, will retry next tick", "flow", k.flow, "err", err)
 				sum.DeliveryFailures++
 				sum.Flows++
 				continue
 			}
 			// Count Delivered only when an endpoint accepted: an all-permanent-failure
-			// sweep returns nil (so the alert edge records + dedups) but delivered nothing.
-			if notify.AnyAccepted(results) {
+			// summary records+dedups the alert (below) but delivered nothing.
+			if summary.Delivered() {
 				sum.Delivered++
 			}
 		}

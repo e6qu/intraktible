@@ -398,6 +398,28 @@
     clearTelemetry();
     syncCanvas();
   }
+  // Canvas Backspace/Delete removes elements from SvelteFlow's bound nodes/edges only;
+  // without this the deletion is NOT folded back into editNodes/editEdges (the publish
+  // source of truth), so the element reappears on the next syncCanvas() and — worse —
+  // gets re-published. Reconcile the model with what the canvas deleted (the inverse of
+  // onConnect's add-reconciliation).
+  function onCanvasDelete(detail: {
+    nodes: { id: string }[];
+    edges: { source: string; target: string }[];
+  }) {
+    foldPositions();
+    const delIds = new Set(detail.nodes.map((n) => n.id));
+    if (delIds.size > 0) {
+      editNodes = editNodes.filter((n) => !delIds.has(n.id));
+      editEdges = editEdges.filter((e) => !delIds.has(e.from) && !delIds.has(e.to));
+      if (selectedId && delIds.has(selectedId)) selectedId = null;
+    }
+    for (const e of detail.edges) {
+      editEdges = editEdges.filter((ed) => !(ed.from === e.source && ed.to === e.target));
+    }
+    clearTelemetry();
+    syncCanvas();
+  }
   function updateSelected(patch: Partial<EditNode>) {
     editNodes = editNodes.map((n) => (n.id === selectedId ? { ...n, ...patch } : n));
     clearTelemetry();
@@ -1960,6 +1982,7 @@
         bind:edges
         {nodeTypes}
         onconnect={onConnect}
+        ondelete={onCanvasDelete}
         colorMode={$theme}
         proOptions={{ hideAttribution: true }}
         fitView

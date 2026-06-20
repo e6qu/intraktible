@@ -44,15 +44,15 @@ func TestDeliver(t *testing.T) {
 	put("w-bad", bad.URL)
 
 	n := notify.NewNotifier(log, st, http.DefaultClient)
-	results, err := n.Deliver(context.Background(), id, "monitor check", map[string]any{"hello": "world"})
+	summary, err := n.Deliver(context.Background(), id, "monitor check", map[string]any{"hello": "world"})
 	if err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
-	if len(results) != 2 {
-		t.Fatalf("want 2 results, got %d", len(results))
+	if len(summary.Results) != 2 || summary.Accepted != 1 || summary.Retryable != 1 {
+		t.Fatalf("want 2 results (1 accepted, 1 retryable), got %+v", summary)
 	}
 	byID := map[string]notify.DeliveryResult{}
-	for _, r := range results {
+	for _, r := range summary.Results {
 		byID[r.WebhookID] = r
 	}
 	if !byID["w-ok"].OK || byID["w-ok"].Status != 200 || byID["w-ok"].Outcome != notify.OutcomeAccepted {
@@ -67,9 +67,10 @@ func TestDeliver(t *testing.T) {
 	}
 }
 
-// When every active webhook fails, Deliver returns an error — so a scheduler does
-// NOT record the firing-edge alert (which would dedup it into silence) and retries.
-func TestDeliverAllFailErrors(t *testing.T) {
+// When every active webhook fails RETRYABLY (5xx), the summary is RetryWorthy with no
+// error — so a scheduler does NOT record the firing-edge alert (which would dedup it
+// into silence) and retries next tick. The error return is reserved for real failures.
+func TestDeliverAllRetryableIsRetryWorthy(t *testing.T) {
 	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "tester"}
 	log, st := testutil.NewLogStore(t)
 	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -82,14 +83,19 @@ func TestDeliverAllFailErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	n := notify.NewNotifier(log, st, http.DefaultClient)
-	if _, err := n.Deliver(context.Background(), id, "monitor check", map[string]any{"x": 1}); err == nil {
-		t.Fatal("Deliver should error when all active webhooks fail")
+	summary, err := n.Deliver(context.Background(), id, "monitor check", map[string]any{"x": 1})
+	if err != nil {
+		t.Fatalf("a retryable total failure is not a real error: %v", err)
+	}
+	if !summary.RetryWorthy() || summary.Delivered() || summary.Retryable != 1 {
+		t.Fatalf("all-retryable should be RetryWorthy and not Delivered: %+v", summary)
 	}
 
-	// No active webhooks at all is a vacuous success (nothing to deliver).
+	// No active webhooks at all is a vacuous success: nothing to deliver, not retry-worthy.
 	empty := identity.Identity{Org: "demo", Workspace: "empty", Actor: "tester"}
-	if _, err := n.Deliver(context.Background(), empty, "monitor check", map[string]any{"x": 1}); err != nil {
-		t.Fatalf("Deliver with no webhooks should succeed: %v", err)
+	es, err := n.Deliver(context.Background(), empty, "monitor check", map[string]any{"x": 1})
+	if err != nil || es.RetryWorthy() || es.Delivered() {
+		t.Fatalf("no webhooks should be a vacuous success: %+v err=%v", es, err)
 	}
 }
 
@@ -110,25 +116,34 @@ func TestDeliverPermanentFailureDoesNotRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	n := notify.NewNotifier(log, st, http.DefaultClient)
-	results, err := n.Deliver(context.Background(), id, "monitor check", map[string]any{"x": 1})
+	summary, err := n.Deliver(context.Background(), id, "monitor check", map[string]any{"x": 1})
 	if err != nil {
 		t.Fatalf("a permanent 4xx must not signal a retry, got err=%v", err)
 	}
-	if len(results) != 1 || results[0].Outcome != notify.OutcomePermanent || results[0].OK {
-		t.Fatalf("expected one permanent failure, got %+v", results)
+	if summary.RetryWorthy() {
+		t.Fatalf("an all-permanent failure must not be retry-worthy (it dedups), got %+v", summary)
+	}
+	if len(summary.Results) != 1 || summary.Permanent != 1 || summary.Results[0].Outcome != notify.OutcomePermanent {
+		t.Fatalf("expected one permanent failure, got %+v", summary)
 	}
 }
 
-func TestAnyAccepted(t *testing.T) {
-	if notify.AnyAccepted(nil) {
-		t.Fatal("no results must not count as accepted")
+// DeliverySummary's predicates encode the retry/dedup/delivered decisions as typed
+// state (replacing the old error-as-control-flow), so the schedulers can't misread it.
+func TestDeliverySummaryPredicates(t *testing.T) {
+	if (notify.DeliverySummary{}).RetryWorthy() {
+		t.Fatal("an empty summary (no webhooks) is not retry-worthy")
 	}
-	permanent := []notify.DeliveryResult{{Outcome: notify.OutcomePermanent}, {Outcome: notify.OutcomeRetryable}}
-	if notify.AnyAccepted(permanent) {
-		t.Fatal("an all-failure set must not count as accepted (no Delivered inflation)")
+	if !(notify.DeliverySummary{Retryable: 1}).RetryWorthy() {
+		t.Fatal("nothing accepted + a retryable failure is retry-worthy")
 	}
-	mixed := []notify.DeliveryResult{{Outcome: notify.OutcomePermanent}, {OK: true, Outcome: notify.OutcomeAccepted}}
-	if !notify.AnyAccepted(mixed) {
-		t.Fatal("a set with one accepted delivery must count as accepted")
+	if (notify.DeliverySummary{Permanent: 2}).RetryWorthy() {
+		t.Fatal("all-permanent is NOT retry-worthy (it dedups)")
+	}
+	if (notify.DeliverySummary{Accepted: 1, Retryable: 1}).RetryWorthy() {
+		t.Fatal("a partial success is not retry-worthy")
+	}
+	if !(notify.DeliverySummary{Accepted: 1}).Delivered() || (notify.DeliverySummary{Permanent: 1}).Delivered() {
+		t.Fatal("Delivered iff at least one endpoint accepted")
 	}
 }

@@ -170,6 +170,11 @@ func (w *WAL) Read(_ context.Context, fromSeq uint64) ([]Envelope, error) {
 		if err := json.Unmarshal(rec, &e); err != nil {
 			return nil, fmt.Errorf("eventlog: corrupt record at seq %d: %w", seq, err)
 		}
+		// The byte-offset position is the authoritative seq (the offset index is built
+		// on it, and the projection runtime keys contiguity off e.Seq) — make it win
+		// over a possibly-stale stored Seq, matching how SQLite/Postgres derive Seq
+		// from the row id rather than trusting the payload.
+		e.Seq = seq
 		out = append(out, e)
 		seq++
 	}

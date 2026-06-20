@@ -686,6 +686,20 @@ lens (no SSR/localStorage issue), the BF42 COLLATE "C" range, the synctest conve
 decide hot path. Two refactor-of-working-code type-strengthenings (a typed notify `DeliverySummary`,
 a Go `RunStatus` named type) are recorded as deferred follow-ups.
 
+**Type-strengthening + persona depth + sweep round 7 (TS24–TS25 / P3 / BF55–BF61).** The two deferred
+type-strengthenings landed: `notify.Deliver` returns a typed `DeliverySummary` with `RetryWorthy()`/
+`Delivered()` predicates (retiring the error-as-control-flow), and `domain.RunStatus` is now a named
+type with `Valid()` (mirroring `CaseStatus`). Persona depth gained an *order* dimension — the operator's
+case queue is now sorted by SLA urgency (soonest-due first), complementary to the filter lens. The sweep
+(two fan-out audits) fixed a **CRITICAL**: a node/edge deleted on the builder canvas was removed from the
+view but not the publish model, so it reappeared and got **re-published** (now reconciled via an
+`ondelete` handler). Also: the `predict` node rendered as a generic task (not a service call) in all
+exporters; a feature-window field that silently accepted empty→0; a decisions-list load race; a
+backtest-dataset array guard; WAL trusting a stored seq over the authoritative byte-offset; and a
+feature-aggregation precondition. Documented-not-changed (deliberate): the `requiredRole` operator
+default (a policy, all routes classified), verbose 5xx (the self-hosted fail-loudly stance), and the
+CommandPalette focus-trap (UI-polish backlog).
+
 ---
 
 ## 9. MVP non-goals

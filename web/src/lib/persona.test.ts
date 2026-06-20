@@ -64,7 +64,8 @@ describe('persona config', () => {
   it('a persona lens re-prioritises a list surface to the role-relevant slice', () => {
     // Operators land on their open review queue; developers on failed traces;
     // product lands on the challenger (experiment) arm.
-    expect(personaLens('operator').cases).toBe('needs_review');
+    expect(personaLens('operator').cases?.status).toBe('needs_review');
+    expect(personaLens('operator').cases?.sort).toBe('urgency'); // queue ordered by urgency
     expect(personaLens('developer').decisions?.status).toBe('failed');
     expect(personaLens('product').decisions?.variant).toBe('challenger');
     // A persona without a lens for a surface gets the full, unfiltered list.
@@ -78,8 +79,10 @@ describe('persona config', () => {
     const decisionStatus = new Set(['started', 'completed', 'failed']);
     const variant = new Set(['champion', 'challenger']);
     const env = new Set(['sandbox', 'staging', 'production']);
+    const caseSort = new Set(['urgency', 'recent']);
     for (const p of PERSONAS) {
-      if (p.lens?.cases) expect(cases.has(p.lens.cases)).toBe(true);
+      if (p.lens?.cases?.status) expect(cases.has(p.lens.cases.status)).toBe(true);
+      if (p.lens?.cases?.sort) expect(caseSort.has(p.lens.cases.sort)).toBe(true);
       const d = p.lens?.decisions;
       if (d?.status) expect(decisionStatus.has(d.status)).toBe(true);
       if (d?.variant) expect(variant.has(d.variant)).toBe(true);

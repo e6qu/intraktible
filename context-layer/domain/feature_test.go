@@ -81,3 +81,12 @@ func TestComputeSumNonNumericFails(t *testing.T) {
 		t.Fatal("non-numeric field should fail loudly")
 	}
 }
+
+// An invalid aggregation must error even when NO events match (the check is a
+// precondition, not buried in the per-event loop where empty input would skip it).
+func TestComputeRejectsUnknownAggregationOnEmptyInput(t *testing.T) {
+	spec := domain.FeatureSpec{EventName: "transaction", Aggregation: "median", Window: 24 * time.Hour}
+	if _, err := domain.Compute(spec, nil, time.Now()); err == nil {
+		t.Fatal("an unknown aggregation must error even with no matching events")
+	}
+}
