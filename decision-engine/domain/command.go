@@ -16,20 +16,29 @@ import (
 // decide path, so it must be lowercase letters, digits, and hyphens.
 var slugPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
 
+// Environment is a decide environment. It is a named type (not a bare string) so
+// a command carries a validated value rather than an arbitrary string that could
+// miss a deployment-map lookup deep in the decide path.
+type Environment string
+
 // Decide environments, in promotion order (sandbox → staging → production).
 const (
-	EnvSandbox    = "sandbox"
-	EnvStaging    = "staging"
-	EnvProduction = "production"
+	EnvSandbox    Environment = "sandbox"
+	EnvStaging    Environment = "staging"
+	EnvProduction Environment = "production"
 )
 
-var environments = map[string]bool{EnvSandbox: true, EnvStaging: true, EnvProduction: true}
+var environments = map[Environment]bool{EnvSandbox: true, EnvStaging: true, EnvProduction: true}
 
 // PromotionOrder lists environments from least to most production-like.
-var PromotionOrder = []string{EnvSandbox, EnvStaging, EnvProduction}
+var PromotionOrder = []Environment{EnvSandbox, EnvStaging, EnvProduction}
 
-// ValidEnvironment reports whether env is a known decide environment.
-func ValidEnvironment(env string) bool { return environments[env] }
+// Valid reports whether e is a known decide environment.
+func (e Environment) Valid() bool { return environments[e] }
+
+// ValidEnvironment reports whether a raw string names a known environment — the
+// boundary helper for request/path strings before they are typed.
+func ValidEnvironment(env string) bool { return environments[Environment(env)] }
 
 // CreateFlow is the command to register a new flow.
 type CreateFlow struct {
@@ -157,7 +166,7 @@ func (c SetPromotionPolicy) Validate() error {
 		if !ValidEnvironment(env) {
 			return fmt.Errorf("decision-engine: invalid promotion policy environment %q", env)
 		}
-		if env == EnvProduction && !stage.RequireReview {
+		if Environment(env) == EnvProduction && !stage.RequireReview {
 			return errors.New("decision-engine: production promotions require review")
 		}
 	}
