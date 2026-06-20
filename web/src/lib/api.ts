@@ -12,7 +12,11 @@
 // in-app comparison/switch/binding is now checked, and exhaustive switches use
 // assertNever (see persona/ui helpers) to flag a missing case at compile time.
 export type Disposition = 'approve' | 'decline' | 'refer';
-export type RunStatus = 'completed' | 'failed'; // a flow execution outcome
+export type RunStatus = 'completed' | 'failed'; // a terminal flow-execution outcome
+// A recorded decision is 'started' until its terminal event projects (the history
+// read model writes 'started' on DecisionStarted), so it is RunStatus plus 'started'
+// — unlike the synchronous DecideResult, which only ever returns a terminal status.
+export type DecisionStatus = RunStatus | 'started';
 export type BatchStatus = RunStatus | 'rejected'; // batch/preapprove adds client-rejected rows
 export type Variant = 'champion' | 'challenger';
 export type MonitorOp = 'gt' | 'lt';
@@ -303,7 +307,7 @@ export interface Decision {
   version: number;
   environment: string;
   variant?: Variant;
-  status: RunStatus;
+  status: DecisionStatus;
   data?: unknown;
   output?: unknown;
   reason_codes?: ReasonCode[];

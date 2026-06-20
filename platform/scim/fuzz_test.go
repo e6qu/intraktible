@@ -24,7 +24,7 @@ func FuzzUserNameFilter(f *testing.F) {
 		f.Add(s)
 	}
 	f.Fuzz(func(t *testing.T, filter string) {
-		got := userNameFilter(filter) // must not panic
+		got, _ := userNameFilter(filter) // must not panic
 		if got != "" && !containsSub(filter, got) {
 			t.Fatalf("userNameFilter(%q) = %q, which is not a substring of the input", filter, got)
 		}

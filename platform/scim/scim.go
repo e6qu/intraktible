@@ -103,20 +103,26 @@ func (s *Store) Get(ctx context.Context, org, workspace, id string) (User, bool,
 
 // List returns the tenant's users, optionally filtered to a single userName
 // (the only SCIM filter IdPs need to look up an existing user before creating).
-func (s *Store) List(ctx context.Context, org, workspace, userNameFilter string) ([]User, error) {
+// List returns the tenant's users. When filtered is true the result is exactly the
+// users whose userName equals filterUserName (an empty filterUserName matches none —
+// userNames are non-empty, so a `userName eq ""` clause is a precise empty result,
+// NOT "list everyone"). When filtered is false (no filter clause present) it returns
+// all users. Results are sorted by id for deterministic output across backends.
+func (s *Store) List(ctx context.Context, org, workspace, filterUserName string, filtered bool) ([]User, error) {
 	all, err := store.ListDocs[User](ctx, s.store, collection, store.Key(org, workspace, ""))
 	if err != nil {
 		return nil, err
 	}
-	if userNameFilter == "" {
-		return all, nil
-	}
-	out := make([]User, 0, 1)
-	for _, u := range all {
-		if strings.EqualFold(u.UserName, userNameFilter) {
-			out = append(out, u)
+	out := all
+	if filtered {
+		out = make([]User, 0, 1)
+		for _, u := range all {
+			if strings.EqualFold(u.UserName, filterUserName) {
+				out = append(out, u)
+			}
 		}
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out, nil
 }
 
@@ -162,7 +168,7 @@ func (s *Store) Allowed(ctx context.Context, org, workspace, email string) bool 
 }
 
 func (s *Store) byUserName(ctx context.Context, org, workspace, userName string) (User, bool, error) {
-	users, err := s.List(ctx, org, workspace, userName)
+	users, err := s.List(ctx, org, workspace, userName, true) // exact lookup by a concrete name
 	if err != nil {
 		return User{}, false, err
 	}

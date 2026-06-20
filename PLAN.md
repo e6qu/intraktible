@@ -671,6 +671,21 @@ timeouts, no rendezvous race); and (3) **persona depth** (P1) — a typed `Perso
 persona a default focus on the shared list surfaces (operator → open case queue, developer → failed
 traces), data re-prioritisation over the one API rather than a skin.
 
+**Persona lens extension + sweep round 6 (P2 / BF50–BF54).** The persona lens deepened: the
+decisions lens is now multi-axis (status + variant + env), the product persona lands on the
+challenger experiment arm, and the decisions page gained the variant filter control the API already
+supported. Extending into that surface surfaced a **regression from the previous PR** — `TS23` had
+narrowed `Decision.status` to `'completed'|'failed'`, but an in-flight decision is `'started'`, so
+the union denied a real wire value and rendered an unstyled badge; fixed with a `DecisionStatus`
+union (BF50). The sweep also fixed: the agent tool-loop echoing un-normalized tool-call IDs that
+break assistant↔result correlation on strict providers (BF51), `flattenQuery` silently dropping
+array/object query params instead of failing loudly (BF52), a SCIM `userName eq ""` filter
+enumerating the whole tenant instead of matching none (BF53), and SCIM list determinism + an
+all-permanent-delivery sweep inflating the `Delivered` metric (BF54). Verified sound: the persona
+lens (no SSR/localStorage issue), the BF42 COLLATE "C" range, the synctest conversion, and the
+decide hot path. Two refactor-of-working-code type-strengthenings (a typed notify `DeliverySummary`,
+a Go `RunStatus` named type) are recorded as deferred follow-ups.
+
 ---
 
 ## 9. MVP non-goals

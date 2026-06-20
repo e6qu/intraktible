@@ -17,11 +17,14 @@
   let error = $state('');
   let loading = $state(true);
 
-  // filters (applied on Search / Enter, not keystroke). fStatus defaults to the
-  // persona's lens — a developer lands on failed traces — and is freely changeable.
+  // filters (applied on Search / Enter, not keystroke). They default to the persona's
+  // decisions lens — a developer lands on failed traces, product on the challenger arm
+  // — and are freely changeable/clearable.
+  const lens = personaLens(resolvePersona()).decisions ?? {};
   let fFlow = $state('');
-  let fEnv = $state('');
-  let fStatus = $state<string>(personaLens(resolvePersona()).decisions ?? '');
+  let fEnv = $state<string>(lens.env ?? '');
+  let fStatus = $state<string>(lens.status ?? '');
+  let fVariant = $state<string>(lens.variant ?? '');
   let fQuery = $state('');
 
   function msg(e: unknown): string {
@@ -35,6 +38,7 @@
         flow: fFlow.trim() || undefined,
         env: fEnv || undefined,
         status: fStatus || undefined,
+        variant: fVariant || undefined,
         q: fQuery.trim() || undefined,
         limit: PAGE,
         offset
@@ -102,6 +106,14 @@
       </select></label
     >
     <label
+      >Variant
+      <select bind:value={fVariant} aria-label="filter by variant">
+        <option value="">any</option>
+        <option value="champion">champion</option>
+        <option value="challenger">challenger</option>
+      </select></label
+    >
+    <label
       >Decision ID <input
         bind:value={fQuery}
         placeholder="search id"
@@ -118,7 +130,7 @@
   {:else if list.length === 0}
     <EmptyState
       icon="diagram"
-      title={total === 0 && !fFlow && !fEnv && !fStatus && !fQuery
+      title={total === 0 && !fFlow && !fEnv && !fStatus && !fVariant && !fQuery
         ? 'No decisions yet'
         : 'No decisions match these filters'}
       hint="Run a flow from the Decision Engine and every determination shows up here — replayable, node by node."

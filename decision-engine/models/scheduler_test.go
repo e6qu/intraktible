@@ -37,7 +37,9 @@ type fakeNotifier struct{ delivered int }
 
 func (f *fakeNotifier) Deliver(_ context.Context, _ identity.Identity, _ string, _ any) ([]notify.DeliveryResult, error) {
 	f.delivered++
-	return nil, nil
+	// Simulate a webhook that accepted the alert (so the scheduler counts it as
+	// delivered — Delivered is now gated on an accepted result, not a nil error).
+	return []notify.DeliveryResult{{OK: true, Outcome: notify.OutcomeAccepted}}, nil
 }
 
 // failingNotifier simulates every webhook being down (Deliver errors on total failure).
