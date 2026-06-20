@@ -36,7 +36,7 @@ func TestSLAState(t *testing.T) {
 		name    string
 		slaDays int
 		now     time.Time
-		want    string
+		want    domain.SLAStatus
 	}{
 		{"well within window", 5, opened.Add(24 * time.Hour), domain.SLAOnTrack},
 		{"under a day to go", 5, opened.Add(4*24*time.Hour + 6*time.Hour), domain.SLADueSoon},

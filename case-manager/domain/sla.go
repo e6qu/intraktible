@@ -7,11 +7,16 @@ import (
 	"time"
 )
 
+// SLAStatus buckets a case by its deadline relative to "now". A named type (not a
+// bare string) — the same convention as CaseStatus in this package — so the
+// read-model field and the switch arms are a known bucket, not an arbitrary string.
+type SLAStatus string
+
 // SLA buckets, derived from a case's deadline relative to "now".
 const (
-	SLAOnTrack = "on_track"
-	SLADueSoon = "due_soon" // due within one day
-	SLAOverdue = "overdue"
+	SLAOnTrack SLAStatus = "on_track"
+	SLADueSoon SLAStatus = "due_soon" // due within one day
+	SLAOverdue SLAStatus = "overdue"
 )
 
 // Deadline is when a case opened at createdAt with an slaDays window is due.
@@ -28,7 +33,7 @@ func DaysLeft(createdAt time.Time, slaDays int, now time.Time) int {
 }
 
 // SLAState buckets a case by how close it is to (or past) its deadline.
-func SLAState(createdAt time.Time, slaDays int, now time.Time) string {
+func SLAState(createdAt time.Time, slaDays int, now time.Time) SLAStatus {
 	deadline := Deadline(createdAt, slaDays)
 	switch {
 	case !now.Before(deadline):

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/e6qu/intraktible/decision-engine/policy"
 	"github.com/e6qu/intraktible/decision-engine/preapproval"
 	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/projection"
@@ -21,7 +22,7 @@ func TestGrantActiveExpireRevoke(t *testing.T) {
 	ctx := context.Background()
 
 	if _, _, err := h.Grant(ctx, id, preapproval.GrantCmd{
-		EntityType: "applicant", EntityID: "acme", Disposition: preapproval.Approved,
+		EntityType: "applicant", EntityID: "acme", Disposition: string(policy.Approve),
 		Terms: json.RawMessage(`{"limit":15000}`), PolicyID: "p1", PolicyVersion: 2, ValidDays: 1,
 	}); err != nil {
 		t.Fatal(err)
@@ -35,7 +36,7 @@ func TestGrantActiveExpireRevoke(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("expected an active pre-approval: ok=%v err=%v", ok, err)
 	}
-	if v.Disposition != preapproval.Approved || string(v.Terms) != `{"limit":15000}` || v.PolicyVersion != 2 {
+	if v.Disposition != string(policy.Approve) || string(v.Terms) != `{"limit":15000}` || v.PolicyVersion != 2 {
 		t.Fatalf("unexpected pre-approval: %+v", v)
 	}
 

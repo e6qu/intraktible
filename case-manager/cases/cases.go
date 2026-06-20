@@ -52,7 +52,7 @@ type CaseView struct {
 	Assignee    string            `json:"assignee,omitempty"`
 	SLADays     int               `json:"sla_days"`
 	DaysLeft    int               `json:"days_left"`
-	SLAState    string            `json:"sla_state,omitempty"`
+	SLAState    domain.SLAStatus  `json:"sla_state,omitempty"`
 	SLABreached bool              `json:"sla_breached,omitempty"`
 	Context     json.RawMessage   `json:"context,omitempty"`
 	SourceID    string            `json:"source_decision_id,omitempty"`
