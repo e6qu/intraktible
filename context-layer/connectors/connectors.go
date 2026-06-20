@@ -416,7 +416,9 @@ func (h httpConnector) Fetch(ctx context.Context, params json.RawMessage) (json.
 		req.Header.Set("Content-Type", "application/json")
 	}
 	applyHeaders(req, h.headers)
-	h.auth.apply(req)
+	if err := h.auth.authorize(ctx, req, h.client); err != nil {
+		return nil, err
+	}
 	resp, err := h.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("context-layer: http connector fetch: %w", err)
@@ -496,7 +498,9 @@ func (g graphqlConnector) Fetch(ctx context.Context, params json.RawMessage) (js
 	}
 	req.Header.Set("Content-Type", "application/json")
 	applyHeaders(req, g.headers)
-	g.auth.apply(req)
+	if err := g.auth.authorize(ctx, req, g.client); err != nil {
+		return nil, err
+	}
 	resp, err := g.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("context-layer: graphql connector fetch: %w", err)

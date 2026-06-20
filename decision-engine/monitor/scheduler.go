@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/e6qu/intraktible/platform/identity"
+	"github.com/e6qu/intraktible/platform/metrics"
 	"github.com/e6qu/intraktible/platform/store"
 )
 
@@ -132,9 +133,13 @@ func (s *Scheduler) Run(ctx context.Context, interval time.Duration) {
 			return
 		case <-t.C:
 			if sum, err := s.Tick(ctx); err != nil {
+				metrics.RecordSchedulerTick("flow_monitor", "error")
 				slog.Error("monitor scheduler tick failed", "err", err)
-			} else if sum.Alerted > 0 || sum.Resolved > 0 {
-				slog.Info("monitor scheduler tick", "alerted", sum.Alerted, "resolved", sum.Resolved, "delivered", sum.Delivered)
+			} else {
+				metrics.RecordSchedulerTick("flow_monitor", "ok")
+				if sum.Alerted > 0 || sum.Resolved > 0 {
+					slog.Info("monitor scheduler tick", "alerted", sum.Alerted, "resolved", sum.Resolved, "delivered", sum.Delivered)
+				}
 			}
 		}
 	}
