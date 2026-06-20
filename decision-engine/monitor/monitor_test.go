@@ -43,7 +43,7 @@ func TestEvaluate(t *testing.T) {
 func TestEvaluateNoData(t *testing.T) {
 	// An unused flow: rates have no denominator and must read as "no data", never firing.
 	empty := Snapshot{Metrics: analytics.FlowMetrics{ByDisposition: map[string]int{}}}
-	for _, m := range []string{MetricFailureRate, MetricReferRate, MetricAutomationRate, MetricAvgLatencyMS, MetricDistributionDrift} {
+	for _, m := range []Metric{MetricFailureRate, MetricReferRate, MetricAutomationRate, MetricAvgLatencyMS, MetricDistributionDrift} {
 		s := Evaluate(empty, Rule{Metric: m, Op: OpGreaterThan, Threshold: 0})
 		if s.Computable || s.Firing {
 			t.Fatalf("%s on empty snapshot: got %+v, want not computable", m, s)
@@ -96,10 +96,10 @@ func TestTransition(t *testing.T) {
 }
 
 func TestValidation(t *testing.T) {
-	if ValidMetric("nope") || !ValidMetric(MetricFailureRate) {
+	if ValidMetric("nope") || !MetricFailureRate.Valid() {
 		t.Fatal("ValidMetric")
 	}
-	if ValidOp("ge") || !ValidOp(OpLessThan) {
+	if ValidOp("ge") || !OpLessThan.Valid() {
 		t.Fatal("ValidOp")
 	}
 }

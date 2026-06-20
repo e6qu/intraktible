@@ -164,6 +164,13 @@ func (a *SAMLAuthenticator) ParseACS(req *http.Request, possibleRequestIDs []str
 	if login.Identity.Actor == "" {
 		return SAMLLogin{}, fmt.Errorf("auth: saml %q assertion has no email attribute or NameID", a.cfg.Name)
 	}
+	// Mint through the validated constructor — the same external-input boundary as
+	// the OIDC path — so a malformed tenancy/actor can't become a session.
+	id, err := identity.New(login.Identity.Org, login.Identity.Workspace, login.Identity.Actor)
+	if err != nil {
+		return SAMLLogin{}, fmt.Errorf("auth: saml %q: %w", a.cfg.Name, err)
+	}
+	login.Identity = id
 	return login, nil
 }
 

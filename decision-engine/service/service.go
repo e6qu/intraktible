@@ -25,6 +25,7 @@ import (
 	"github.com/e6qu/intraktible/decision-engine/history"
 	"github.com/e6qu/intraktible/decision-engine/models"
 	"github.com/e6qu/intraktible/decision-engine/monitor"
+	"github.com/e6qu/intraktible/decision-engine/policy"
 	"github.com/e6qu/intraktible/decision-engine/preapproval"
 	"github.com/e6qu/intraktible/decision-engine/shadow"
 	"github.com/e6qu/intraktible/platform/erasure"
@@ -1188,9 +1189,9 @@ func (s *Service) preapproveBatch(w http.ResponseWriter, r *http.Request) {
 	}
 	target := req.Disposition
 	if target == "" {
-		target = preapproval.Approved
+		target = string(policy.Approve)
 	}
-	if target != preapproval.Approved && target != preapproval.Declined {
+	if target != string(policy.Approve) && target != string(policy.Decline) {
 		httpx.Error(w, http.StatusBadRequest, fmt.Errorf("preapprove batch: disposition must be approve or decline"))
 		return
 	}

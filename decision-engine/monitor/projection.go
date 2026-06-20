@@ -51,8 +51,11 @@ type BaselineView struct {
 	CapturedAt time.Time `json:"captured_at"`
 }
 
-// Rule projects the stored definition onto the pure evaluator's input.
-func (v View) Rule() Rule { return Rule{Metric: v.Metric, Op: v.Op, Threshold: v.Threshold} }
+// Rule projects the stored definition onto the pure evaluator's input (the
+// wire-string metric/op become the named types at this boundary).
+func (v View) Rule() Rule {
+	return Rule{Metric: Metric(v.Metric), Op: Op(v.Op), Threshold: v.Threshold}
+}
 
 // Projector folds the monitor stream into the read model.
 type Projector struct{}

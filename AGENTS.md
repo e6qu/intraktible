@@ -139,6 +139,10 @@ rollback**. **Modular monolith** that also splits into services. **Org+workspace
 Pluggable storage (SQLite/Postgres) and pluggable AI provider. Details: [PLAN.md §3](PLAN.md#3-architecture).
 
 ## Non-negotiable conventions
+See **[docs/CONVENTIONS.md](docs/CONVENTIONS.md)** for how we express things (named-type
+enums + the wire-string boundary, when to use `platform/mo` vs idiomatic `(T, ok)`,
+`identity.New` at external-input boundaries, publish-time flow validation, the projection
+store contract, and the items deliberately left undone so they aren't "finished" by mistake).
 - **Functional core / imperative shell**: pure logic in `domain/`; I/O only in `service/`.
 - **Deterministic core** (prereq for replay): no wall-clock/random in core except via injected, recorded effects.
 - **Fail loudly** — no silent fallbacks / empty catches / "log & continue" in logic (network retries are fine).
