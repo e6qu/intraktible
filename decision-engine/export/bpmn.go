@@ -21,7 +21,7 @@ func BPMN(g events.Graph, flowName string) string {
 		defsID = "Definitions_1"
 	)
 	pos := bpmnLayout(g)
-	ids := assignBPMNIDs(g.Nodes)
+	ids := assignBPMNIDs(g.Nodes, g.Edges)
 
 	type flow struct{ id, from, to, name string }
 	flows := make([]flow, 0, len(g.Edges))
@@ -206,17 +206,30 @@ func displayName(n events.Node) string {
 // "a_b"), which would emit duplicate element ids and cross-wire the sequence-flow
 // refs. A per-export uniqueness map suffixes collisions (_2, _3, …) so element ids
 // and every ref pointing at them stay distinct and consistent.
-func assignBPMNIDs(nodes []events.Node) map[string]string {
+func assignBPMNIDs(nodes []events.Node, edges []events.Edge) map[string]string {
 	used := map[string]bool{}
 	ids := make(map[string]string, len(nodes))
-	for _, n := range nodes {
-		base := bpmnID(n.ID)
+	assign := func(raw string) {
+		if _, done := ids[raw]; done {
+			return
+		}
+		base := bpmnID(raw)
 		cand := base
 		for i := 2; used[cand]; i++ {
 			cand = fmt.Sprintf("%s_%d", base, i)
 		}
 		used[cand] = true
-		ids[n.ID] = cand
+		ids[raw] = cand
+	}
+	for _, n := range nodes {
+		assign(n.ID)
+	}
+	// Also assign any edge endpoint not present among the nodes, through the SAME
+	// uniqueness set — otherwise a raw coercion of a dangling endpoint could collide
+	// with a suffixed node id and cross-wire the sequence-flow refs.
+	for _, e := range edges {
+		assign(e.From)
+		assign(e.To)
 	}
 	return ids
 }

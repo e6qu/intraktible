@@ -191,7 +191,17 @@ func decodeJSON(doc json.RawMessage) (any, bool) {
 
 func isErasedMap(m map[string]any) bool {
 	ver, ok := m["$intraktible_erased"].(string)
-	return ok && ver == erasedEnvelopeVersion
+	if !ok || ver != erasedEnvelopeVersion {
+		return false
+	}
+	// Require EXACTLY the sealed-envelope shape ({$intraktible_erased, value}) — so a
+	// real PII object that merely happens to carry a field named $intraktible_erased
+	// isn't mistaken for already-sealed and left in the clear (a crypto-shred hole).
+	if len(m) != 2 {
+		return false
+	}
+	_, hasValue := m["value"].(string)
+	return hasValue
 }
 
 func lowerKeys(fields map[string]bool) map[string]bool {

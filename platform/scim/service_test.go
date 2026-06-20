@@ -15,6 +15,22 @@ import (
 	"github.com/e6qu/intraktible/platform/store"
 )
 
+// A SCIM create that omits "active" must provision an ACTIVE user (RFC 7643:
+// omitted active = true), not a locked-out one.
+func TestSCIMCreateDefaultsActiveWhenOmitted(t *testing.T) {
+	mux := http.NewServeMux()
+	scim.NewService(scim.NewStore(store.NewMemory()), "scim-token", "demo", "main").Routes(mux)
+	rec := bearerDo(mux, http.MethodPost, "/scim/v2/Users", `{"userName":"omit@acme.com"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create -> %d", rec.Code)
+	}
+	var u scim.User
+	_ = json.Unmarshal(rec.Body.Bytes(), &u)
+	if !u.Active {
+		t.Fatal("a user created without an explicit active flag must be active (not locked out)")
+	}
+}
+
 func TestSCIMProvisionAndDeprovision(t *testing.T) {
 	st := store.NewMemory()
 	users := scim.NewStore(st)

@@ -25,7 +25,11 @@
     query.trim()
       ? flows.filter((f) => {
           const q = query.trim().toLowerCase();
-          return f.name.toLowerCase().includes(q) || f.slug.toLowerCase().includes(q);
+          return (
+            f.name.toLowerCase().includes(q) ||
+            f.slug.toLowerCase().includes(q) ||
+            f.flow_id.toLowerCase().includes(q)
+          );
         })
       : flows
   );
