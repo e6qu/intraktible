@@ -30,8 +30,10 @@ store always full-rebuilds from the log.
   unredacted. Connector config is validated at **define** time, so a bad endpoint/credential
   fails on save, not on the first decide.
 - **Connector auth** — the `http`/`graphql` connectors take an `auth` block (`bearer` | `header` |
-  `basic` | `query`) plus custom `headers`; `plaid` and `stripe` are first-class provider adapters
-  (preconfigured base URL + auth scheme — supply only credentials + the request).
+  `basic` | `query` | `oauth2`) plus custom `headers`; `oauth2` is the client-credentials grant
+  (token fetched from `token_url`, cached by its expiry, sent as a bearer). `plaid` and `stripe`
+  are first-class provider adapters (preconfigured base URL + auth scheme — supply only credentials
+  + the request).
 - **SQL connector files** — `ITK_SQL_CONNECTOR_DIR` confines sqlite-connector databases to a
   directory (always read-only).
 - **PII erasure** — configure erasure fields so recorded decision PII is crypto-shreddable.
@@ -45,6 +47,9 @@ store always full-rebuilds from the log.
 - `GET /healthz` — liveness + projection health (503 `degraded` if a projection stalled, so an
   orchestrator can depool/restart).
 - `GET /version` — build revision + Go toolchain (confirm what's deployed).
+- `GET /metrics` — Prometheus exposition (unauthenticated, aggregate counters only): HTTP
+  request rate/latency by route, projection freshness (`intraktible_projection_applied_seq`) +
+  errors, scheduler ticks, Go runtime/process. Point a Prometheus scrape at it.
 - `GET /openapi.json` + `GET /docs` — the served API contract; `GET /v1/flows/{slug}/openapi.json`
   is a per-flow contract for integrators.
 
