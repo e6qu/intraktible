@@ -7,9 +7,12 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/e6qu/intraktible/agent-manager/agents"
+	"github.com/e6qu/intraktible/agent-manager/events"
 	"github.com/e6qu/intraktible/platform/ai"
+	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/store"
 )
@@ -52,6 +55,38 @@ func (t *fakeToolbox) Spec(name string) (ai.Tool, bool) {
 func (t *fakeToolbox) Call(_ context.Context, _ identity.Identity, name string, _ json.RawMessage) (json.RawMessage, error) {
 	t.calls++
 	return json.RawMessage(`{"risk":42}`), nil
+}
+
+// TestRunCounterCountsOncePerRun proves the agent run counter is bumped once per
+// RunID even when a run records a second terminal event (the recovery re-run path)
+// — so the count stays correct and replay-stable.
+func TestRunCounterCountsOncePerRun(t *testing.T) {
+	ctx := context.Background()
+	s := store.NewMemory()
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "dev"}
+	defineAgent(t, s, id, agents.AgentView{Name: "echo", Provider: "stub"})
+
+	apply := func(typ string, payload any) {
+		t.Helper()
+		b, _ := json.Marshal(payload)
+		if err := (agents.Projector{}).Apply(ctx, eventlog.Envelope{
+			Org: id.Org, Workspace: id.Workspace, Type: typ, Time: time.Now().UTC(), Payload: b,
+		}, s); err != nil {
+			t.Fatalf("apply %s: %v", typ, err)
+		}
+	}
+	apply(events.TypeAgentRunStarted, events.AgentRunStarted{RunID: "r1", Agent: "echo"})
+	apply(events.TypeAgentRunRecorded, events.AgentRunRecorded{RunID: "r1", Agent: "echo", Status: "completed"})
+	// A recovery re-run records a second terminal event for the same RunID.
+	apply(events.TypeAgentRunRecorded, events.AgentRunRecorded{RunID: "r1", Agent: "echo", Status: "completed"})
+
+	v, _, err := agents.Read(ctx, s, id, "echo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Runs != 1 {
+		t.Fatalf("run count = %d, want 1 (a re-recorded run must not double-count)", v.Runs)
+	}
 }
 
 func defineAgent(t *testing.T, s store.Store, id identity.Identity, v agents.AgentView) {

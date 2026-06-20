@@ -118,14 +118,29 @@ func applyRun(ctx context.Context, e eventlog.Envelope, s store.Store) error {
 	if err := decode(e, &p); err != nil {
 		return err
 	}
+	runKey := store.Key(e.Org, e.Workspace, p.RunID)
+	// Read the prior run state: the counter is bumped only on the FIRST terminal
+	// recording for a RunID. A recovered/re-run run records a second
+	// AgentRunRecorded for the same RunID (RecoverRunning); without this guard the
+	// agent's run count would inflate on every recovery and not be replay-stable.
+	prev, prevExists, err := store.GetDoc[RunView](ctx, s, CollectionRuns, runKey)
+	if err != nil {
+		return err
+	}
 	run := RunView{
 		Org: e.Org, Workspace: e.Workspace,
 		RunID: p.RunID, Agent: p.Agent, Model: p.Model, Prompt: p.Prompt,
 		Status: domain.RunStatus(p.Status), Text: p.Text, Structured: p.Structured, ToolCalls: p.ToolCalls, Error: p.Error,
 		Seq: e.Seq, At: p.At,
 	}
-	if err := store.PutDoc(ctx, s, CollectionRuns, store.Key(e.Org, e.Workspace, p.RunID), run); err != nil {
+	if err := store.PutDoc(ctx, s, CollectionRuns, runKey, run); err != nil {
 		return err
+	}
+	// First terminal recording = the run was absent (a sync run) or still "running"
+	// (the async started→recorded transition); a re-record of an already-terminal
+	// run does not re-count.
+	if prevExists && prev.Status != domain.RunRunning {
+		return nil
 	}
 	// Bump the agent's run counter (the agent may not exist if it was deleted; a
 	// run for an unknown agent still lands in the run log).
@@ -248,7 +263,7 @@ func InvokeWithTools(ctx context.Context, s store.Store, reg *ai.Registry, tb To
 	out := Outcome{Model: def.Model, Status: domain.RunCompleted}
 	var history []ai.Message
 	for step := 0; ; step++ {
-		if step > maxToolSteps {
+		if step >= maxToolSteps {
 			out.Status, out.Error = domain.RunFailed, fmt.Sprintf("agent-manager: tool-calling exceeded %d steps", maxToolSteps)
 			break
 		}

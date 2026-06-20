@@ -65,3 +65,29 @@ func TestDeliver(t *testing.T) {
 		t.Fatalf("payload not delivered as JSON: %+v", got)
 	}
 }
+
+// When every active webhook fails, Deliver returns an error — so a scheduler does
+// NOT record the firing-edge alert (which would dedup it into silence) and retries.
+func TestDeliverAllFailErrors(t *testing.T) {
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "tester"}
+	log, st := testutil.NewLogStore(t)
+	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer bad.Close()
+	if err := store.PutDoc(context.Background(), st, notify.Collection,
+		store.Key(id.Org, id.Workspace, "w-bad"),
+		notify.View{Org: id.Org, Workspace: id.Workspace, WebhookID: "w-bad", URL: bad.URL, Active: true}); err != nil {
+		t.Fatal(err)
+	}
+	n := notify.NewNotifier(log, st, http.DefaultClient)
+	if _, err := n.Deliver(context.Background(), id, "monitor check", map[string]any{"x": 1}); err == nil {
+		t.Fatal("Deliver should error when all active webhooks fail")
+	}
+
+	// No active webhooks at all is a vacuous success (nothing to deliver).
+	empty := identity.Identity{Org: "demo", Workspace: "empty", Actor: "tester"}
+	if _, err := n.Deliver(context.Background(), empty, "monitor check", map[string]any{"x": 1}); err != nil {
+		t.Fatalf("Deliver with no webhooks should succeed: %v", err)
+	}
+}

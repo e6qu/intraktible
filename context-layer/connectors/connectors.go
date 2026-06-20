@@ -117,6 +117,19 @@ func (p EgressPolicy) Client(timeout time.Duration) *http.Client {
 	return &http.Client{
 		Timeout:   timeout,
 		Transport: &http.Transport{DialContext: dialer.DialContext},
+		// Refuse a redirect that changes host. net/http only strips Authorization/
+		// Cookie on a cross-host redirect — a connector's custom credential header
+		// (e.g. X-Api-Key) or an OAuth2 bearer would otherwise be replayed to the
+		// redirect target, leaking the credential to a different host.
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 10 {
+				return fmt.Errorf("context-layer: too many redirects")
+			}
+			if req.URL.Host != via[0].URL.Host {
+				return fmt.Errorf("context-layer: refusing cross-host redirect %s → %s (credential leak guard)", via[0].URL.Host, req.URL.Host)
+			}
+			return nil
+		},
 	}
 }
 
@@ -513,11 +526,18 @@ func (g graphqlConnector) Fetch(ctx context.Context, params json.RawMessage) (js
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("context-layer: graphql connector status %d", resp.StatusCode)
 	}
+	// A GraphQL response must be a JSON object ({data, errors?}); unmarshaling into a
+	// struct also succeeds for a bare array/scalar (it just leaves Errors nil), so
+	// require an object explicitly before trusting the no-errors check.
 	var envelope struct {
+		Data   json.RawMessage   `json:"data"`
 		Errors []json.RawMessage `json:"errors"`
 	}
 	if err := json.Unmarshal(b, &envelope); err != nil {
 		return nil, fmt.Errorf("context-layer: graphql connector returned non-JSON body")
+	}
+	if envelope.Data == nil && envelope.Errors == nil {
+		return nil, fmt.Errorf("context-layer: graphql connector response is not a {data,errors} object")
 	}
 	if len(envelope.Errors) > 0 {
 		return nil, fmt.Errorf("context-layer: graphql connector returned %d error(s)", len(envelope.Errors))
@@ -692,7 +712,13 @@ func bindArgs(names []string, params json.RawMessage) ([]any, error) {
 	}
 	args := make([]any, 0, len(names))
 	for _, name := range names {
-		args = append(args, sql.Named(name, p[name]))
+		v, ok := p[name]
+		if !ok {
+			// A declared arg absent from the fetch params would otherwise bind to NULL
+			// silently and return wrong/empty rows — fail loudly instead.
+			return nil, fmt.Errorf("context-layer: sql connector arg %q not provided in params", name)
+		}
+		args = append(args, sql.Named(name, v))
 	}
 	return args, nil
 }

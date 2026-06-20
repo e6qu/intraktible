@@ -95,6 +95,21 @@ func TestProviderRejectsInvalidGBMSpec(t *testing.T) {
 	}
 }
 
+// An external model returning an out-of-range probability (or non-finite score)
+// must be rejected loudly, not recorded — it would corrupt branching + drift.
+func TestProviderRejectsBadExternalResult(t *testing.T) {
+	ctx := context.Background()
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "dev"}
+	st := store.NewMemory()
+	seedModel(t, st, id, "served", `{"kind":"external","endpoint":"https://x/score"}`)
+	for _, body := range []string{`{"score":1.0,"probability":5}`, `{"score":1e999}`} {
+		doer := &fakeDoer{body: body}
+		if _, err := (models.Provider{Store: st, HTTP: doer}).Predict(ctx, id, "served", nil); err == nil {
+			t.Fatalf("expected rejection for external result %q", body)
+		}
+	}
+}
+
 func TestProviderExternalWithoutClientFailsLoudly(t *testing.T) {
 	ctx := context.Background()
 	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "dev"}
