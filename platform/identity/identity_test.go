@@ -34,6 +34,19 @@ func TestValid(t *testing.T) {
 	}
 }
 
+func TestNew(t *testing.T) {
+	id, err := identity.New("o", "w", "a")
+	if err != nil || id.Org != "o" || id.Workspace != "w" || id.Actor != "a" {
+		t.Fatalf("New valid = (%+v, %v)", id, err)
+	}
+	if _, err := identity.New("", "w", "a"); err == nil {
+		t.Fatal("New with empty org should error")
+	}
+	if _, err := identity.New("o/x", "w", "a"); err == nil {
+		t.Fatal("New with '/' in org should error")
+	}
+}
+
 func TestContextRoundTrip(t *testing.T) {
 	id := identity.Identity{Org: "o", Workspace: "w", Actor: "a"}
 	ctx := identity.With(context.Background(), id)
