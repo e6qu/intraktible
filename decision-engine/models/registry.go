@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"time"
 
@@ -163,6 +164,18 @@ func (p Provider) predictExternal(ctx context.Context, spec Spec, features map[s
 	var pred Prediction
 	if err := json.Unmarshal(raw, &pred); err != nil {
 		return nil, fmt.Errorf("models: external response is not a {score,probability} prediction: %w", err)
+	}
+	// Reject a non-finite or out-of-range result up front (fail loudly) rather than
+	// recording a NaN/Inf score or an out-of-[0,1] probability that would corrupt
+	// downstream branching and the drift histogram.
+	if math.IsNaN(pred.Score) || math.IsInf(pred.Score, 0) {
+		return nil, fmt.Errorf("models: external model returned a non-finite score")
+	}
+	if pred.Probability != nil {
+		p := *pred.Probability
+		if math.IsNaN(p) || p < 0 || p > 1 {
+			return nil, fmt.Errorf("models: external model returned probability %v outside [0,1]", p)
+		}
 	}
 	return json.Marshal(pred)
 }

@@ -5,6 +5,8 @@ package connectors
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -133,9 +135,14 @@ type oauthEntry struct {
 }
 
 func (a *authConfig) oauthToken(ctx context.Context, client *http.Client) (string, error) {
-	key := a.TokenURL + "\x00" + a.ClientID + "\x00" + a.Scope
+	// The key includes a fingerprint of the client_secret so a rotated secret (same
+	// token_url/client_id/scope) does not keep serving the stale token, and two
+	// connectors with the same id but different secrets never share a token.
+	secretFP := sha256.Sum256([]byte(a.ClientSecret))
+	key := a.TokenURL + "\x00" + a.ClientID + "\x00" + a.Scope + "\x00" + hex.EncodeToString(secretFP[:8])
+	now := time.Now()
 	oauthTokens.mu.Lock()
-	if e, ok := oauthTokens.tok[key]; ok && time.Now().Before(e.expiry) {
+	if e, ok := oauthTokens.tok[key]; ok && now.Before(e.expiry) {
 		oauthTokens.mu.Unlock()
 		return e.token, nil
 	}
@@ -146,7 +153,14 @@ func (a *authConfig) oauthToken(ctx context.Context, client *http.Client) (strin
 		return "", err
 	}
 	oauthTokens.mu.Lock()
-	oauthTokens.tok[key] = oauthEntry{token: tok, expiry: time.Now().Add(ttl)}
+	// Evict entries that have expired (a deleted/rotated connector's key is never
+	// looked up again, so it would otherwise linger) before inserting the fresh one.
+	for k, e := range oauthTokens.tok {
+		if !now.Before(e.expiry) {
+			delete(oauthTokens.tok, k)
+		}
+	}
+	oauthTokens.tok[key] = oauthEntry{token: tok, expiry: now.Add(ttl)}
 	oauthTokens.mu.Unlock()
 	return tok, nil
 }
