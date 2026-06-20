@@ -44,3 +44,17 @@ func TestLifecycleCommandValidate(t *testing.T) {
 		t.Fatal("blank note should be rejected")
 	}
 }
+
+func TestParseStatus(t *testing.T) {
+	if s, ok := domain.ParseStatus("in_progress"); !ok || s != domain.StatusInProgress {
+		t.Fatalf("ParseStatus(in_progress) = %q,%v", s, ok)
+	}
+	// An unknown status (a hand-crafted/legacy event) must be rejected at the
+	// boundary so the projector never writes it into the read model.
+	if _, ok := domain.ParseStatus("archived"); ok {
+		t.Fatal("ParseStatus must reject an unknown status")
+	}
+	if _, ok := domain.ParseStatus(""); ok {
+		t.Fatal("ParseStatus must reject an empty status")
+	}
+}

@@ -34,6 +34,9 @@ type View struct {
 	Author         string    `json:"author"`
 	Read           bool      `json:"read"`
 	CreatedAt      time.Time `json:"created_at"`
+	// Seq is the event-log sequence at creation — a strict monotonic tiebreaker so
+	// same-instant notifications sort deterministically rather than arbitrarily.
+	Seq uint64 `json:"seq"`
 }
 
 // notificationID is recipient-scoped so List prefix-scans one inbox and a recipient
@@ -71,7 +74,7 @@ func applyComment(ctx context.Context, e eventlog.Envelope, s store.Store) error
 		v := View{
 			Org: e.Org, Workspace: e.Workspace, NotificationID: nid, Recipient: handle, Kind: "mention",
 			SubjectType: p.SubjectType, SubjectID: p.SubjectID, Snippet: snippet(p.Body),
-			Author: e.Actor, CreatedAt: e.Time,
+			Author: e.Actor, CreatedAt: e.Time, Seq: e.Seq,
 		}
 		if err := store.PutDoc(ctx, s, Collection, store.Key(e.Org, e.Workspace, nid), v); err != nil {
 			return err
@@ -107,6 +110,11 @@ func List(ctx context.Context, s store.Store, id identity.Identity) ([]View, err
 	if err != nil {
 		return nil, err
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].Seq > out[j].Seq // newest-first; tiebreak same-instant deterministically
+		}
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
 	return out, nil
 }

@@ -32,10 +32,15 @@
   }
   async function load() {
     error = '';
+    // Sibling navigation changes id mid-flight; drop a stale response so a slower
+    // load for the previous decision can't clobber the one now shown.
+    const reqId = id;
     try {
-      d = await getDecision(key, id);
+      const got = await getDecision(key, id);
+      if (id !== reqId) return;
+      d = got;
     } catch (e) {
-      error = msg(e);
+      if (id === reqId) error = msg(e);
     }
   }
   const RUN_EXPORTS: { format: RunExportFormat; label: string; ext: string; mime: string }[] = [

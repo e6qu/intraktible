@@ -75,13 +75,30 @@ func (s *SQLite) Get(ctx context.Context, collection, key string) (json.RawMessa
 	return json.RawMessage(doc), true, nil
 }
 
-func (s *SQLite) List(ctx context.Context, collection string) ([]Record, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT key, doc FROM docs WHERE collection = ? ORDER BY key`, collection)
+func (s *SQLite) List(ctx context.Context, collection, keyPrefix string) ([]Record, error) {
+	q, args := listQuerySQLite(collection, keyPrefix)
+	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: sqlite list %s: %w", collection, err)
 	}
 	return scanSQLRecords(rows, collection)
+}
+
+// listQuerySQLite builds the prefix-scoped list query for the ?-placeholder SQLite
+// backend: an indexed `key >= prefix AND key < upper` range, or the whole
+// collection when keyPrefix is empty.
+func listQuerySQLite(collection, keyPrefix string) (string, []any) {
+	q := `SELECT key, doc FROM docs WHERE collection = ?`
+	args := []any{collection}
+	if keyPrefix != "" {
+		q += ` AND key >= ?`
+		args = append(args, keyPrefix)
+		if ub := prefixUpperBound(keyPrefix); ub != "" {
+			q += ` AND key < ?`
+			args = append(args, ub)
+		}
+	}
+	return q + ` ORDER BY key`, args
 }
 
 // scanSQLRecords reads (key, doc) rows into Records and closes the rows. Shared by
@@ -176,8 +193,9 @@ func (t *sqliteTx) Get(ctx context.Context, collection, key string) (json.RawMes
 	return json.RawMessage(doc), true, nil
 }
 
-func (t *sqliteTx) List(ctx context.Context, collection string) ([]Record, error) {
-	rows, err := t.tx.QueryContext(ctx, `SELECT key, doc FROM docs WHERE collection = ? ORDER BY key`, collection)
+func (t *sqliteTx) List(ctx context.Context, collection, keyPrefix string) ([]Record, error) {
+	q, args := listQuerySQLite(collection, keyPrefix)
+	rows, err := t.tx.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: sqlite tx list %s: %w", collection, err)
 	}

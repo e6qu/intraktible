@@ -11,6 +11,27 @@ import (
 	"github.com/e6qu/intraktible/decision-engine/events"
 )
 
+// validateHitAggregate rejects an unknown decision-table hit policy or aggregate at
+// publish time, so a typo (e.g. hit:"anyy") fails when the flow is published rather
+// than surfacing as a runtime "unknown hit policy" error on the first production
+// decision. Mirrors the normalization the executor applies (lower/trim; empty hit
+// defaults to first / the deprecated mode path).
+func validateHitAggregate(n events.Node, cfg decisionTableConfig) error {
+	switch strings.ToLower(strings.TrimSpace(cfg.Hit)) {
+	case "", hitFirst, hitUnique, hitAny, hitRuleOrder, hitCollect:
+	default:
+		return fmt.Errorf("decision-engine: node %q: unknown hit policy %q (first|unique|any|rule_order|collect)", n.ID, cfg.Hit)
+	}
+	if strings.EqualFold(strings.TrimSpace(cfg.Hit), hitCollect) {
+		switch strings.ToLower(strings.TrimSpace(cfg.Aggregate)) {
+		case "", "count", "sum", "min", "max":
+		default:
+			return fmt.Errorf("decision-engine: node %q: unknown aggregate %q (count|sum|min|max)", n.ID, cfg.Aggregate)
+		}
+	}
+	return nil
+}
+
 // ValidateFlow checks that a graph is publishable: structurally valid
 // (ValidateGraph) AND every node's config decodes for its type and its
 // expressions compile. It is a pure, side-effect-free "dry compile" — it never
@@ -93,6 +114,9 @@ func validateNodeConfig(n events.Node) error {
 	case events.NodeDecisionTable:
 		var cfg decisionTableConfig
 		if err := decodeConfig(n, &cfg); err != nil {
+			return err
+		}
+		if err := validateHitAggregate(n, cfg); err != nil {
 			return err
 		}
 		for i, row := range cfg.Rows {

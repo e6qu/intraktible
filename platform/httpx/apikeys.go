@@ -200,6 +200,13 @@ func (h *APIKeysHandler) revoke(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusNotFound, fmt.Errorf("api key not found"))
 		return
 	}
+	// Ceiling (mirrors rotate): a lower-scoped admin must not disable a key broader
+	// than their own scope — revoking a production credential from a sandbox-scoped
+	// admin is a denial-of-service against an environment they can't reach.
+	if callerScope, ok := Scope(r.Context()); !ok || !callerScope.Covers(key.Scope) {
+		Error(w, http.StatusForbidden, fmt.Errorf("cannot revoke a key with scope %q exceeding your own", key.Scope))
+		return
+	}
 	key, err = h.keys.Revoke(r.Context(), keyID)
 	if err != nil {
 		Error(w, http.StatusBadRequest, err)

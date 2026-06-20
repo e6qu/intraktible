@@ -65,6 +65,13 @@ func TestValidateFlow(t *testing.T) {
 		{"malformed config shape", flow(cfgNode("s", events.NodeSplit, `{"condition":123}`)), true},
 		{"unknown config field", flow(cfgNode("s", events.NodeSplit, `{"conditionx":"true"}`)), true},
 		{"bad starlark", flow(cfgNode("c", events.NodeCode, `{"code":"def ("}`)), true},
+		// Hit policy / aggregate are validated at publish, not first decision.
+		{"valid decision table any", flow(cfgNode("d", events.NodeDecisionTable,
+			`{"hit":"any","rows":[{"when":"true","outputs":[{"target":"x","expr":"1"}]}]}`)), false},
+		{"unknown hit policy", flow(cfgNode("d", events.NodeDecisionTable,
+			`{"hit":"anyy","rows":[{"when":"true","outputs":[{"target":"x","expr":"1"}]}]}`)), true},
+		{"unknown collect aggregate", flow(cfgNode("d", events.NodeDecisionTable,
+			`{"hit":"collect","aggregate":"avg","rows":[{"when":"true","outputs":[{"target":"x","expr":"1"}]}]}`)), true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

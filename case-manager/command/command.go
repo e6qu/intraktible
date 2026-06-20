@@ -175,8 +175,10 @@ func (h *Handler) caseStates(ctx context.Context, id identity.Identity) (map[str
 				return nil, fmt.Errorf("case-manager: decode status seq %d: %w", e.Seq, err)
 			}
 			if st, ok := states[p.CaseID]; ok {
-				st.status = domain.CaseStatus(p.Status)
-				states[p.CaseID] = st
+				if status, valid := domain.ParseStatus(p.Status); valid {
+					st.status = status
+					states[p.CaseID] = st
+				}
 			}
 		case events.TypeCaseSLABreached:
 			var p events.CaseSLABreached

@@ -25,15 +25,39 @@ func TestMemoryPutGetListReset(t *testing.T) {
 	if err != nil || !ok || string(doc) != `{"v":1}` {
 		t.Fatalf("Get k1 = %s ok=%v err=%v", doc, ok, err)
 	}
-	list, err := m.List(ctx, "c")
+	list, err := m.List(ctx, "c", "")
 	if err != nil || len(list) != 2 || list[0].Key != "k1" {
 		t.Fatalf("List = %+v err=%v", list, err)
 	}
 	if err := m.Reset(ctx, "c"); err != nil {
 		t.Fatal(err)
 	}
-	if list, _ := m.List(ctx, "c"); len(list) != 0 {
+	if list, _ := m.List(ctx, "c", ""); len(list) != 0 {
 		t.Fatalf("after Reset List = %d, want 0", len(list))
+	}
+}
+
+// List with a key prefix returns only the matching keys (the tenant-scoping path),
+// not the whole collection — and an empty prefix still returns everything.
+func TestMemoryListKeyPrefix(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemory()
+	for _, k := range []string{"orgA/main/x", "orgA/main/y", "orgB/main/z"} {
+		if err := m.Put(ctx, "c", k, json.RawMessage(`{}`)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := m.List(ctx, "c", "orgA/main/")
+	if err != nil || len(got) != 2 {
+		t.Fatalf("prefix list = %d docs err=%v, want 2", len(got), err)
+	}
+	for _, r := range got {
+		if r.Key == "orgB/main/z" {
+			t.Fatal("prefix list leaked a non-matching key")
+		}
+	}
+	if all, _ := m.List(ctx, "c", ""); len(all) != 3 {
+		t.Fatalf("empty prefix should list all 3, got %d", len(all))
 	}
 }
 

@@ -20,12 +20,16 @@
 
   async function load() {
     error = '';
+    // Drop a stale response when sibling navigation changes caseID mid-flight.
+    const reqID = caseID;
     try {
       // Only refresh the displayed case; the action inputs are user-controlled
       // (resetting them on every reload would race with the user's selection).
-      c = await getCase(key, caseID);
+      const got = await getCase(key, caseID);
+      if (caseID !== reqID) return;
+      c = got;
     } catch (e) {
-      error = e instanceof Error ? e.message : String(e);
+      if (caseID === reqID) error = e instanceof Error ? e.message : String(e);
     }
   }
 

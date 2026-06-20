@@ -78,12 +78,14 @@ func PutDoc[T any](ctx context.Context, s Store, collection, key string, v T) er
 // ListDocs returns every document in collection whose key has the given prefix,
 // JSON-decoded, in store order (used to scope a collection to one tenant).
 func ListDocs[T any](ctx context.Context, s Store, collection, prefix string) ([]T, error) {
-	recs, err := s.List(ctx, collection)
+	recs, err := s.List(ctx, collection, prefix)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]T, 0, len(recs))
 	for _, rec := range recs {
+		// Backstop: the store already range-scans by prefix, but re-filter here so
+		// correctness never depends on the backend's range-bound arithmetic.
 		if !strings.HasPrefix(rec.Key, prefix) {
 			continue
 		}

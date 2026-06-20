@@ -301,7 +301,10 @@ func evalDecisionTable(n events.Node, ctx map[string]any, edges []events.Edge) (
 			return nil, "", fmt.Errorf("decision-engine: node %q UNIQUE hit policy: %d rows matched", n.ID, len(matched))
 		}
 		if hit == hitAny {
-			for _, m := range matched[1:] {
+			// Compare every matched row to the first. Ranging the full slice (not
+			// matched[1:]) is safe when no row matched — matched[1:] would panic with
+			// slice bounds [1:0], and the len>0 guard below is too late.
+			for _, m := range matched {
 				if !reflect.DeepEqual(m.outputs, matched[0].outputs) {
 					return nil, "", fmt.Errorf("decision-engine: node %q ANY hit policy: matching rows produce conflicting outputs", n.ID)
 				}

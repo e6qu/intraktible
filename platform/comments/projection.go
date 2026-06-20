@@ -28,6 +28,10 @@ type View struct {
 	ParentID    string    `json:"parent_id,omitempty"`
 	Author      string    `json:"author"`
 	At          time.Time `json:"at"`
+	// Seq is the event-log sequence — a strict monotonic tiebreaker so two comments
+	// at the same wall-clock instant (coarse clocks, batch import) always sort in a
+	// stable, deterministic order rather than however sort.Slice happens to land.
+	Seq uint64 `json:"seq"`
 }
 
 // docID keys a comment under its subject so List can prefix-scan one thread.
@@ -56,7 +60,7 @@ func (Projector) Apply(ctx context.Context, e eventlog.Envelope, s store.Store) 
 	v := View{
 		Org: e.Org, Workspace: e.Workspace, CommentID: p.CommentID,
 		SubjectType: p.SubjectType, SubjectID: p.SubjectID, Body: p.Body, ParentID: p.ParentID,
-		Author: e.Actor, At: e.Time,
+		Author: e.Actor, At: e.Time, Seq: e.Seq,
 	}
 	key := store.Key(e.Org, e.Workspace, docID(p.SubjectType, p.SubjectID, p.CommentID))
 	return store.PutDoc(ctx, s, Collection, key, v)
@@ -69,6 +73,11 @@ func List(ctx context.Context, s store.Store, id identity.Identity, subjectType,
 	if err != nil {
 		return nil, err
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].At.Before(out[j].At) })
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].At.Equal(out[j].At) {
+			return out[i].Seq < out[j].Seq // tiebreak same-instant comments deterministically
+		}
+		return out[i].At.Before(out[j].At)
+	})
 	return out, nil
 }

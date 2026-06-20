@@ -89,6 +89,25 @@ func TestHTTPProviderErrorStatus(t *testing.T) {
 	}
 }
 
+// A non-2xx with a NON-JSON body (a gateway/proxy 502 returning HTML) must report
+// the status, not a misleading JSON decode error — status is checked before decode.
+func TestHTTPProviderNonJSONErrorBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte("<html><body>502 Bad Gateway</body></html>"))
+	}))
+	defer srv.Close()
+
+	p := ai.NewHTTP("openai", srv.URL, "sk-test", "gpt-test")
+	_, err := p.Complete(context.Background(), ai.Request{Prompt: "hi"})
+	if err == nil || !strings.Contains(err.Error(), "status 502") {
+		t.Fatalf("expected a clean 'status 502', got: %v", err)
+	}
+	if strings.Contains(err.Error(), "decode") || strings.Contains(err.Error(), "invalid character") {
+		t.Fatalf("status should be checked before decode; got a decode error: %v", err)
+	}
+}
+
 func TestHTTPProviderToolCall(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)

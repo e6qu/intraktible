@@ -27,10 +27,14 @@
 
   async function load() {
     error = '';
+    // Drop a stale response when sibling navigation changes name mid-flight.
+    const reqName = name;
     try {
-      [agent, runs] = await Promise.all([getAgent(key, name), listAgentRuns(key, name)]);
+      const [a, r] = await Promise.all([getAgent(key, name), listAgentRuns(key, name)]);
+      if (name !== reqName) return;
+      [agent, runs] = [a, r];
     } catch (e) {
-      error = e instanceof Error ? e.message : String(e);
+      if (name === reqName) error = e instanceof Error ? e.message : String(e);
     }
   }
 

@@ -79,7 +79,7 @@ func TestContextEventErasure(t *testing.T) {
 	}
 
 	// At rest the SSN is sealed (the projected event is not plaintext).
-	recs, err := st.List(context.Background(), entities.CollectionEvents)
+	recs, err := st.List(context.Background(), entities.CollectionEvents, "")
 	if err != nil {
 		t.Fatal(err)
 	}
