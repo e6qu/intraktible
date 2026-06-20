@@ -1,6 +1,8 @@
 # Binaries & build output
 /bin/
 /dist/
+# `go build ./cmd/intraktible` from the module root drops the executable here.
+/intraktible
 *.test
 *.out
 *.exe
