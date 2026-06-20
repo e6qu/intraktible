@@ -78,6 +78,11 @@ func (m *Memory) Reset(_ context.Context, collection string) error {
 
 func (m *Memory) Close() error { return nil }
 
+// Ephemeral marks Memory as a non-durable store: it holds no transaction support
+// because a restart loses everything and the projection runtime fully rebuilds
+// from the log. (Marker for store.Ephemeral — see the projection runtime.)
+func (m *Memory) Ephemeral() {}
+
 // Collections returns the names of the non-empty collections, sorted. It backs
 // operator tooling that reports rebuilt projection state.
 func (m *Memory) Collections() []string {
