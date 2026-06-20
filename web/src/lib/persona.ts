@@ -8,6 +8,7 @@
 // Persona is orthogonal to light/dark theme — every persona works in both.
 
 import { writable } from 'svelte/store';
+import type { CaseStatus, RunStatus } from './api';
 
 export type Persona =
   | 'builder'
@@ -58,6 +59,17 @@ export type Action = { label: string; href: string; icon: string };
 // their bespoke decks; the role personas use the config-driven PersonaHome.
 export type HomeKind = 'builder' | 'operator' | 'showcase' | 'evaluator' | 'persona';
 
+// PersonaLens is a persona's DEFAULT FOCUS on a shared list surface — the slice of
+// the same data most relevant to that role, applied as the initial filter when the
+// persona lands on the page (the user can still clear/change it). This is data
+// re-prioritisation, not a skin or a fork: the page, its data, and its capabilities
+// are identical across personas; only the initial lens differs. Surfaces a persona
+// has no lens for show the full, unfiltered list.
+export type PersonaLens = {
+  cases?: CaseStatus; // e.g. an operator lands on their open review queue
+  decisions?: RunStatus; // e.g. a developer lands on failed traces to debug
+};
+
 export type PersonaConfig = {
   id: Persona;
   label: string;
@@ -67,6 +79,7 @@ export type PersonaConfig = {
   nav: NavId[]; // ordered navigation this persona sees
   actions: Action[]; // primary actions surfaced on the persona home
   terms?: Partial<Record<NavId, string>>; // per-persona nav relabels
+  lens?: PersonaLens; // default filter focus on shared list surfaces
 };
 
 const KEY = 'intraktible-persona';
@@ -100,7 +113,8 @@ export const PERSONAS: PersonaConfig[] = [
       { label: 'Browse the API reference', href: '/docs', icon: 'code' },
       { label: 'Manage agents & tools', href: '/agents', icon: 'agents' }
     ],
-    terms: { decisions: 'Traces' }
+    terms: { decisions: 'Traces' },
+    lens: { decisions: 'failed' } // land on failing traces — the debugging starting point
   },
   {
     id: 'operator',
@@ -113,7 +127,8 @@ export const PERSONAS: PersonaConfig[] = [
       { label: 'Work the case queue', href: '/cases', icon: 'cases' },
       { label: 'Review pre-approvals', href: '/preapprovals', icon: 'check' },
       { label: 'Scan recent decisions', href: '/decisions', icon: 'diagram' }
-    ]
+    ],
+    lens: { cases: 'needs_review' } // land on the open review queue, not closed cases
   },
   {
     id: 'manager',
@@ -185,6 +200,13 @@ export function navFor(p: Persona): NavItem[] {
       const label = terms.get(item.id);
       return label ? { ...item, label } : item;
     });
+}
+
+// personaLens returns a persona's default-focus filters for the shared list surfaces
+// (empty for personas with no lens → the full, unfiltered list). A list page reads
+// this for its INITIAL filter only; the user can change or clear it freely.
+export function personaLens(p: Persona): PersonaLens {
+  return personaConfig(p).lens ?? {};
 }
 
 // persona is the reactive current persona (kept in sync by initPersona/setPersona).

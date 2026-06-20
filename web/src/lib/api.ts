@@ -4,6 +4,25 @@
 // so they are unit-testable without a browser, and fail loudly on non-2xx
 // responses rather than returning partial/empty data.
 
+// --- Domain enums (string-literal unions) ---------------------------------------
+// These mirror the Go enums (decision-engine/domain + policy, case-manager/domain,
+// agent-manager/domain, models) so a typo'd or unhandled value fails type-check
+// rather than silently rendering — e.g. a `class="badge {status}"` interpolation or
+// an <option> list. The fetch boundary still `as`-casts the wire shape, but every
+// in-app comparison/switch/binding is now checked, and exhaustive switches use
+// assertNever (see persona/ui helpers) to flag a missing case at compile time.
+export type Disposition = 'approve' | 'decline' | 'refer';
+export type RunStatus = 'completed' | 'failed'; // a flow execution outcome
+export type BatchStatus = RunStatus | 'rejected'; // batch/preapprove adds client-rejected rows
+export type Variant = 'champion' | 'challenger';
+export type MonitorOp = 'gt' | 'lt';
+export type CaseStatus = 'needs_review' | 'in_progress' | 'completed';
+export type SLAState = 'on_track' | 'due_soon' | 'overdue';
+export type AgentRunStatus = 'running' | 'completed' | 'failed';
+export type ModelKind = 'logistic' | 'gbm' | 'expression' | 'external';
+export type PreApprovalStatus = 'active' | 'revoked';
+export type DeploymentRequestStatus = 'pending' | 'approved' | 'rejected';
+
 export interface HelloStats {
   org: string;
   workspace: string;
@@ -88,7 +107,7 @@ export interface DeploymentRequest {
   version: number;
   challenger_version?: number;
   challenger_pct?: number;
-  status: string; // pending | approved | rejected
+  status: DeploymentRequestStatus;
   reason?: string;
   requested_by: string;
   requested_at: string;
@@ -116,9 +135,9 @@ export interface Flow {
 
 export interface DecideResult {
   decision_id: string;
-  status: string;
+  status: RunStatus;
   data?: Record<string, unknown>;
-  disposition?: string; // approve | decline | refer (when a policy is bound)
+  disposition?: Disposition; // when a policy is bound
   error?: string;
 }
 
@@ -283,12 +302,12 @@ export interface Decision {
   slug: string;
   version: number;
   environment: string;
-  variant?: string;
-  status: string;
+  variant?: Variant;
+  status: RunStatus;
   data?: unknown;
   output?: unknown;
   reason_codes?: ReasonCode[];
-  disposition?: string; // approve | decline | refer
+  disposition?: Disposition;
   disposition_reason?: string;
   policy_id?: string;
   policy_version?: number;
@@ -421,7 +440,7 @@ export interface Monitor {
   monitor_id: string;
   flow_id: string;
   metric: string;
-  op: string; // gt | lt
+  op: MonitorOp;
   threshold: number;
   description?: string;
   status: MonitorStatus;
@@ -442,7 +461,7 @@ export async function listMonitors(
 export async function defineMonitor(
   key: string,
   flowId: string,
-  body: { metric: string; op: string; threshold: number; description?: string },
+  body: { metric: string; op: MonitorOp; threshold: number; description?: string },
   fetcher: typeof fetch = fetch
 ): Promise<{ monitor_id: string }> {
   const res = await fetcher(`/v1/flows/${flowId}/monitors`, {
@@ -521,7 +540,7 @@ export interface AssertionCase {
 export interface AssertionResult {
   name: string;
   passed: boolean;
-  status: string;
+  status: RunStatus;
   got?: Record<string, unknown>;
   mismatch?: string[];
   error?: string;
@@ -578,7 +597,7 @@ export async function runAssertions(
 }
 
 export interface DriftBucket {
-  disposition: string;
+  disposition: Disposition;
   baseline: number;
   current: number;
   delta: number;
@@ -675,7 +694,7 @@ export async function deleteWebhook(
 
 export interface PolicyRule {
   when: string;
-  disposition: string; // approve | decline | refer
+  disposition: Disposition;
   code?: string;
   description?: string;
 }
@@ -788,13 +807,13 @@ export interface PreApproval {
   preapproval_id: string;
   entity_type: string;
   entity_id: string;
-  disposition: string; // approve | decline
+  disposition: Disposition; // server narrows to approve|decline for a pre-approval
   terms?: Record<string, unknown>;
   policy_id?: string;
   policy_version?: number;
   flow_slug?: string;
   valid_until: string;
-  status: string; // active | revoked
+  status: PreApprovalStatus;
   revoked_reason?: string;
   honored_count: number;
   note?: string;
@@ -806,7 +825,7 @@ export interface PreApproval {
 export interface GrantPreApproval {
   entity_type: string;
   entity_id: string;
-  disposition: string;
+  disposition: Disposition;
   terms?: Record<string, unknown>;
   flow_slug?: string;
   valid_days: number;
@@ -861,7 +880,7 @@ export async function revokePreApproval(
 }
 
 export interface BacktestOutcome {
-  status: string;
+  status: RunStatus;
   output?: Record<string, unknown>;
   error?: string;
 }
@@ -906,7 +925,7 @@ export async function backtestFlow(
 
 export interface SweepPoint {
   value: unknown;
-  status: string;
+  status: RunStatus;
   output?: Record<string, unknown>;
   error?: string;
   changed: boolean;
@@ -1162,9 +1181,9 @@ export async function decide(
 export interface BatchResult {
   index: number;
   decision_id?: string;
-  status: string; // completed | failed | rejected
+  status: BatchStatus;
   data?: Record<string, unknown>;
-  disposition?: string; // approve | decline | refer
+  disposition?: Disposition;
   error?: string;
 }
 
@@ -1207,8 +1226,8 @@ export interface PreApproveResult {
   index: number;
   entity_id?: string;
   decision_id?: string;
-  status: string; // completed | failed | rejected
-  disposition?: string;
+  status: BatchStatus;
+  disposition?: Disposition;
   granted: boolean;
   preapproval_id?: string;
   reason?: string;
@@ -1235,7 +1254,7 @@ export async function preapproveBatch(
     dataset: Record<string, unknown>[];
     entity_type: string;
     entity_key: string;
-    disposition?: string;
+    disposition?: Disposition;
     valid_days: number;
     note?: string;
   },
@@ -1270,11 +1289,11 @@ export interface Case {
   case_id: string;
   company_name: string;
   case_type: string;
-  status: string;
+  status: CaseStatus;
   assignee?: string;
   sla_days: number;
   days_left: number;
-  sla_state?: string;
+  sla_state?: SLAState;
   source_decision_id?: string;
   context?: unknown;
   notes: CaseNote[];
@@ -1677,7 +1696,7 @@ export async function defineConnector(
 
 export interface Model {
   name: string;
-  kind: string;
+  kind: ModelKind;
   spec: unknown;
   updated_at: string;
 }
@@ -2000,7 +2019,7 @@ export function assignCase(
 export function setCaseStatus(
   key: string,
   caseID: string,
-  status: string,
+  status: CaseStatus,
   fetcher: typeof fetch = fetch
 ): Promise<void> {
   return caseAction(key, caseID, 'status', { status }, fetcher);
@@ -2031,7 +2050,7 @@ export interface AgentRun {
   agent: string;
   model?: string;
   prompt: string;
-  status: string;
+  status: AgentRunStatus;
   text?: string;
   structured?: unknown;
   error?: string;
@@ -2040,7 +2059,7 @@ export interface AgentRun {
 
 export interface RunResult {
   run_id: string;
-  status: string;
+  status: AgentRunStatus;
   text?: string;
   structured?: unknown;
   error?: string;

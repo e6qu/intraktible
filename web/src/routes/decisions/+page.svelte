@@ -6,6 +6,7 @@
   import Skeleton from '$lib/Skeleton.svelte';
   import RelativeTime from '$lib/RelativeTime.svelte';
   import { listDecisionsPage, type Decision } from '$lib/api';
+  import { resolvePersona, personaLens } from '$lib/persona';
 
   // API calls authenticate via the session cookie (empty key → no X-Api-Key).
   const key = '';
@@ -16,10 +17,11 @@
   let error = $state('');
   let loading = $state(true);
 
-  // filters (applied on Search / Enter, not keystroke)
+  // filters (applied on Search / Enter, not keystroke). fStatus defaults to the
+  // persona's lens — a developer lands on failed traces — and is freely changeable.
   let fFlow = $state('');
   let fEnv = $state('');
-  let fStatus = $state('');
+  let fStatus = $state<string>(personaLens(resolvePersona()).decisions ?? '');
   let fQuery = $state('');
 
   function msg(e: unknown): string {

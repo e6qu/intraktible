@@ -62,7 +62,9 @@
     type BatchReport,
     type PreApproveBatchReport,
     type GraphNode,
-    type GraphEdge
+    type GraphEdge,
+    type Disposition,
+    type MonitorOp
   } from '$lib/api';
   import { toast } from '$lib/toast';
   import { diffGraphs, diffIsEmpty } from '$lib/diff';
@@ -967,7 +969,7 @@
   // every row the bound policy approves, keyed by a field in each row. ---
   let paEntityType = $state('applicant');
   let paEntityKey = $state('applicant_id');
-  let paDisposition = $state('approve');
+  let paDisposition = $state<Disposition>('approve');
   let paValidDays = $state(30);
   let paReport = $state<PreApproveBatchReport | null>(null);
   let paRunning = $state(false);
@@ -1177,7 +1179,7 @@
 
   let monitors = $state<Monitor[]>([]);
   let monMetric = $state('failure_rate');
-  let monOp = $state('gt');
+  let monOp = $state<MonitorOp>('gt');
   let monThreshold = $state(0.05);
   let monDesc = $state('');
   let monBusy = $state(false);
