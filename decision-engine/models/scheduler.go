@@ -10,6 +10,7 @@ import (
 	"github.com/e6qu/intraktible/decision-engine/notify"
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/identity"
+	"github.com/e6qu/intraktible/platform/metrics"
 	"github.com/e6qu/intraktible/platform/store"
 )
 
@@ -122,9 +123,13 @@ func (s *Scheduler) Run(ctx context.Context, interval time.Duration) {
 			return
 		case <-t.C:
 			if sum, err := s.Tick(ctx); err != nil {
+				metrics.RecordSchedulerTick("model_drift", "error")
 				slog.Error("model drift scheduler tick failed", "err", err)
-			} else if sum.Alerted > 0 || sum.Resolved > 0 {
-				slog.Info("model drift scheduler tick", "alerted", sum.Alerted, "resolved", sum.Resolved, "delivered", sum.Delivered)
+			} else {
+				metrics.RecordSchedulerTick("model_drift", "ok")
+				if sum.Alerted > 0 || sum.Resolved > 0 {
+					slog.Info("model drift scheduler tick", "alerted", sum.Alerted, "resolved", sum.Resolved, "delivered", sum.Delivered)
+				}
 			}
 		}
 	}

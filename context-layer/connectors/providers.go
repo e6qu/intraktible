@@ -12,6 +12,8 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 )
 
 // maxProviderBody caps a provider response read into memory (same as the HTTP
@@ -29,6 +31,8 @@ const maxProviderBody = 1 << 20
 //	header: <name>: <value>            (e.g. X-Api-Key: …)
 //	basic:  HTTP Basic <username:password>
 //	query:  appends ?<name>=<value> to the URL
+//	oauth2: OAuth2 client_credentials — fetch a token from token_url (cached by
+//	        its expiry) and send it as Authorization: Bearer
 type authConfig struct {
 	Type     string `json:"type"`
 	Token    string `json:"token,omitempty"`
@@ -36,6 +40,11 @@ type authConfig struct {
 	Value    string `json:"value,omitempty"`
 	Username string `json:"username,omitempty"`
 	Password string `json:"password,omitempty"`
+	// oauth2 (client_credentials grant)
+	TokenURL     string `json:"token_url,omitempty"`
+	ClientID     string `json:"client_id,omitempty"`
+	ClientSecret string `json:"client_secret,omitempty"`
+	Scope        string `json:"scope,omitempty"`
 }
 
 // validate checks the auth block is internally consistent at define time, so a
@@ -59,17 +68,43 @@ func (a *authConfig) validate() error {
 		if a.Username == "" {
 			return fmt.Errorf("context-layer: basic auth needs a username")
 		}
+	case "oauth2":
+		u, err := url.Parse(a.TokenURL)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+			return fmt.Errorf("context-layer: oauth2 auth needs an http(s) token_url, got %q", a.TokenURL)
+		}
+		if a.ClientID == "" || a.ClientSecret == "" {
+			return fmt.Errorf("context-layer: oauth2 auth needs client_id and client_secret")
+		}
 	default:
-		return fmt.Errorf("context-layer: unknown auth type %q (bearer|header|basic|query)", a.Type)
+		return fmt.Errorf("context-layer: unknown auth type %q (bearer|header|basic|query|oauth2)", a.Type)
 	}
 	return nil
 }
 
-// apply attaches the configured authentication to req.
-func (a *authConfig) apply(req *http.Request) {
+// authorize attaches authentication to req. For oauth2 it fetches (or reuses a
+// cached) client_credentials token over the egress-guarded client; other schemes
+// are synchronous. The connectors call this from Fetch (which has the context +
+// client); recording the connector's response keeps replay stable regardless of
+// when/whether a token was fetched.
+func (a *authConfig) authorize(ctx context.Context, req *http.Request, client *http.Client) error {
 	if a == nil {
-		return
+		return nil
 	}
+	if a.Type == "oauth2" {
+		tok, err := a.oauthToken(ctx, client)
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Authorization", "Bearer "+tok)
+		return nil
+	}
+	a.apply(req)
+	return nil
+}
+
+// apply attaches a synchronous (non-oauth2) auth scheme to req.
+func (a *authConfig) apply(req *http.Request) {
 	switch a.Type {
 	case "bearer":
 		req.Header.Set("Authorization", "Bearer "+a.Token)
@@ -82,6 +117,87 @@ func (a *authConfig) apply(req *http.Request) {
 		q.Set(a.Name, a.Value)
 		req.URL.RawQuery = q.Encode()
 	}
+}
+
+// oauthTokens caches client_credentials tokens by token_url+client_id+scope until
+// shortly before they expire, so a connector doesn't fetch a token per call. It is
+// process-local shell state; the connector response is what replay reads.
+var oauthTokens = struct {
+	mu  sync.Mutex
+	tok map[string]oauthEntry
+}{tok: map[string]oauthEntry{}}
+
+type oauthEntry struct {
+	token  string
+	expiry time.Time
+}
+
+func (a *authConfig) oauthToken(ctx context.Context, client *http.Client) (string, error) {
+	key := a.TokenURL + "\x00" + a.ClientID + "\x00" + a.Scope
+	oauthTokens.mu.Lock()
+	if e, ok := oauthTokens.tok[key]; ok && time.Now().Before(e.expiry) {
+		oauthTokens.mu.Unlock()
+		return e.token, nil
+	}
+	oauthTokens.mu.Unlock()
+
+	tok, ttl, err := fetchClientCredentialsToken(ctx, client, a)
+	if err != nil {
+		return "", err
+	}
+	oauthTokens.mu.Lock()
+	oauthTokens.tok[key] = oauthEntry{token: tok, expiry: time.Now().Add(ttl)}
+	oauthTokens.mu.Unlock()
+	return tok, nil
+}
+
+// fetchClientCredentialsToken performs the OAuth2 client_credentials grant against
+// token_url and returns the access token + a cache TTL (with a safety margin). The
+// call goes through the egress-guarded client, so the token endpoint is SSRF-safe.
+func fetchClientCredentialsToken(ctx context.Context, client *http.Client, a *authConfig) (string, time.Duration, error) {
+	form := url.Values{
+		"grant_type":    {"client_credentials"},
+		"client_id":     {a.ClientID},
+		"client_secret": {a.ClientSecret},
+	}
+	if a.Scope != "" {
+		form.Set("scope", a.Scope)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.TokenURL, strings.NewReader(form.Encode()))
+	if err != nil {
+		return "", 0, fmt.Errorf("context-layer: oauth2 token request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", 0, fmt.Errorf("context-layer: oauth2 token fetch: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	b, err := io.ReadAll(io.LimitReader(resp.Body, maxProviderBody))
+	if err != nil {
+		return "", 0, fmt.Errorf("context-layer: oauth2 token read: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", 0, fmt.Errorf("context-layer: oauth2 token endpoint status %d", resp.StatusCode)
+	}
+	var tr struct {
+		AccessToken string `json:"access_token"`
+		ExpiresIn   int    `json:"expires_in"`
+	}
+	if err := json.Unmarshal(b, &tr); err != nil || tr.AccessToken == "" {
+		return "", 0, fmt.Errorf("context-layer: oauth2 token response has no access_token")
+	}
+	// Default to 5 minutes when the provider omits expires_in; cache to 30s before
+	// expiry so an in-flight request never uses a just-expired token.
+	ttl := 5 * time.Minute
+	if tr.ExpiresIn > 0 {
+		ttl = time.Duration(tr.ExpiresIn) * time.Second
+	}
+	if ttl > 30*time.Second {
+		ttl -= 30 * time.Second
+	}
+	return tr.AccessToken, ttl, nil
 }
 
 // applyHeaders sets static custom headers. It is applied before auth so an auth

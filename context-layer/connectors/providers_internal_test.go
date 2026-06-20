@@ -112,6 +112,59 @@ func TestProviderConfigValidation(t *testing.T) {
 	}
 }
 
+func TestOAuth2ClientCredentials(t *testing.T) {
+	ctx := context.Background()
+	var tokenHits int
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tokenHits++
+		_ = r.ParseForm()
+		if r.FormValue("grant_type") != "client_credentials" || r.FormValue("client_id") != "cid" || r.FormValue("client_secret") != "sek" {
+			t.Errorf("unexpected token form: %v", r.Form)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"tok-123","expires_in":3600,"token_type":"Bearer"}`))
+	}))
+	defer tokenSrv.Close()
+
+	auth := &authConfig{Type: "oauth2", TokenURL: tokenSrv.URL, ClientID: "cid", ClientSecret: "sek"}
+	if err := auth.validate(); err != nil {
+		t.Fatal(err)
+	}
+
+	authorize := func() string {
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.example.com/x", http.NoBody)
+		if err := auth.authorize(ctx, req, tokenSrv.Client()); err != nil {
+			t.Fatal(err)
+		}
+		return req.Header.Get("Authorization")
+	}
+
+	if got := authorize(); got != "Bearer tok-123" {
+		t.Fatalf("authorization = %q", got)
+	}
+	// Second call reuses the cached token (no second token-endpoint hit).
+	if got := authorize(); got != "Bearer tok-123" {
+		t.Fatalf("authorization (cached) = %q", got)
+	}
+	if tokenHits != 1 {
+		t.Fatalf("token endpoint hit %d times, want 1 (cached)", tokenHits)
+	}
+}
+
+func TestOAuth2Validation(t *testing.T) {
+	bad := []*authConfig{
+		{Type: "oauth2", ClientID: "c", ClientSecret: "s"},                        // no token_url
+		{Type: "oauth2", TokenURL: "not-a-url", ClientID: "c", ClientSecret: "s"}, // bad url
+		{Type: "oauth2", TokenURL: "https://idp/token", ClientSecret: "s"},        // no client_id
+		{Type: "oauth2", TokenURL: "https://idp/token", ClientID: "c"},            // no client_secret
+	}
+	for _, a := range bad {
+		if err := a.validate(); err == nil {
+			t.Fatalf("%+v should be invalid", a)
+		}
+	}
+}
+
 func TestAuthConfigValidate(t *testing.T) {
 	ok := []*authConfig{
 		nil,

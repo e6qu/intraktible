@@ -62,6 +62,7 @@ import (
 	"github.com/e6qu/intraktible/platform/httpx"
 	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/kms"
+	"github.com/e6qu/intraktible/platform/metrics"
 	"github.com/e6qu/intraktible/platform/notifications"
 	"github.com/e6qu/intraktible/platform/openapi"
 	"github.com/e6qu/intraktible/platform/privacy"
@@ -331,6 +332,9 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 	root.HandleFunc("GET /healthz", httpx.Health(rt.Err))
 	// /version reports the build (VCS revision + Go) so ops can confirm what's live.
 	root.HandleFunc("GET /version", httpx.Version())
+	// /metrics is the Prometheus scrape endpoint (unauthenticated like /healthz —
+	// aggregate operational counters only, no tenant data).
+	root.Handle("GET /metrics", metrics.Handler())
 
 	// Public auth endpoints — exchange an API key for a session cookie (and clear
 	// it). Registered on root with exact patterns so they win over the /v1/ chain.
@@ -373,7 +377,7 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 		slog.Info("sso: SAML enabled", "providers", samlNames(samlers))
 	}
 	root.Handle("/v1/", httpx.Chain(api, httpx.Authenticate(keyring, sessions), httpx.Authorize))
-	handler := httpx.Chain(root, httpx.Recover, httpx.RequestID, httpx.Logger)
+	handler := httpx.Chain(root, httpx.Recover, httpx.RequestID, httpx.Logger, httpx.Metrics)
 
 	srv := &http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: 5 * time.Second}
 	errc := make(chan error, 1)

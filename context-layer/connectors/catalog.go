@@ -38,6 +38,11 @@ func Catalog() []Template {
 			Config:      json.RawMessage(`{"url":"https://api.example.com/resource","method":"POST","auth":{"type":"header","name":"X-Api-Key","value":""}}`),
 		},
 		{
+			ID: "rest-oauth2", Name: "HTTP REST (OAuth2 client credentials)", Category: "Generic", Type: "http",
+			Description: "An HTTP endpoint behind OAuth2 client_credentials. A token is fetched from token_url (cached by its expiry) and sent as a bearer; client_secret is sealed at rest.",
+			Config:      json.RawMessage(`{"url":"https://api.example.com/resource","method":"POST","auth":{"type":"oauth2","token_url":"https://idp.example.com/oauth/token","client_id":"","client_secret":"","scope":""}}`),
+		},
+		{
 			ID: "credit-bureau", Name: "Credit bureau", Category: "Credit", Type: "http",
 			Description: "A bureau scoring endpoint (Experian/Equifax/TransUnion-style). POST the applicant, read the score.",
 			Config:      json.RawMessage(`{"url":"https://bureau.example.com/v1/score","method":"POST"}`),
