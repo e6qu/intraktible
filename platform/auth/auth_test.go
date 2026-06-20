@@ -33,6 +33,28 @@ func TestScopeAllows(t *testing.T) {
 	}
 }
 
+func TestScopeCovers(t *testing.T) {
+	cases := []struct {
+		ceiling auth.Scope
+		other   auth.Scope
+		want    bool
+	}{
+		{auth.ScopeAll, auth.Production, true},
+		{auth.ScopeAll, auth.Sandbox, true},
+		{auth.Sandbox, auth.Sandbox, true},
+		{auth.Sandbox, auth.Production, false}, // the escalation we deny
+		{auth.Production, auth.Sandbox, false},
+		{"dev/*", "dev/pr-1", true},
+		{"dev/*", auth.Production, false},
+		{"", auth.Sandbox, false}, // no scope covers nothing
+	}
+	for _, c := range cases {
+		if got := c.ceiling.Covers(c.other); got != c.want {
+			t.Errorf("Scope(%q).Covers(%q) = %v, want %v", c.ceiling, c.other, got, c.want)
+		}
+	}
+}
+
 func TestValidScope(t *testing.T) {
 	for _, s := range []auth.Scope{auth.Sandbox, auth.Production, auth.ScopeAll, "dev/*"} {
 		if !auth.ValidScope(s) {
@@ -73,18 +95,23 @@ func TestKeyringResolve(t *testing.T) {
 func TestSessionsIssueResolve(t *testing.T) {
 	s := auth.NewSessions()
 	id := identity.Identity{Org: "o", Workspace: "w", Actor: "u"}
-	tok, err := s.Issue(id, auth.RoleEditor)
+	tok, err := s.Issue(id, auth.RoleEditor, auth.Sandbox)
 	if err != nil || tok == "" {
 		t.Fatalf("Issue must return a non-empty token: tok=%q err=%v", tok, err)
 	}
-	if tok2, _ := s.Issue(id, auth.RoleEditor); tok2 == tok {
+	if tok2, _ := s.Issue(id, auth.RoleEditor, auth.Sandbox); tok2 == tok {
 		t.Fatal("each Issue must return a distinct token")
 	}
-	got, _, ok := s.Resolve(tok)
+	got, role, scope, ok := s.Resolve(tok)
 	if !ok || got != id {
 		t.Fatalf("Resolve: got %+v ok=%v, want %+v true", got, ok, id)
 	}
-	if _, _, ok := s.Resolve("nope"); ok {
+	// The session must carry the role AND scope it was issued with, so an env gate
+	// downstream cannot widen a scoped credential.
+	if role != auth.RoleEditor || scope != auth.Sandbox {
+		t.Fatalf("Resolve role/scope = %q/%q, want editor/sandbox", role, scope)
+	}
+	if _, _, _, ok := s.Resolve("nope"); ok {
 		t.Fatal("unknown token must not resolve")
 	}
 }

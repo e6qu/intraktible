@@ -244,3 +244,53 @@ func TestBPMNDisambiguatesCollidingIDs(t *testing.T) {
 		}
 	}
 }
+
+// Two distinct node ids that coerce to the same Mermaid identifier must stay
+// distinct in the output — otherwise the renderer merges them into one node and
+// cross-wires every edge that referenced either.
+func TestMermaidIDCollisionsStayDistinct(t *testing.T) {
+	g := events.Graph{
+		Nodes: []events.Node{
+			{ID: "a.b", Type: events.NodeInput},
+			{ID: "a/b", Type: events.NodeOutput},
+		},
+		Edges: []events.Edge{{From: "a.b", To: "a/b"}},
+	}
+	out := export.MermaidFlowchart(g)
+	// Both sanitize to "a_b"; the uniqueness pass must suffix the second.
+	if !strings.Contains(out, "a_b_2") {
+		t.Fatalf("colliding ids were not disambiguated:\n%s", out)
+	}
+	// The single edge must connect the two distinct ids, not a self-loop.
+	if strings.Contains(out, "a_b --> a_b\n") {
+		t.Fatalf("colliding ids merged into a self-loop:\n%s", out)
+	}
+}
+
+// An edge to a node that does not exist must not produce a sequenceFlow/waypoint
+// referencing a missing element (which BPMN tools reject), and the BPMN must stay
+// well-formed XML.
+func TestBPMNDropsDanglingEdges(t *testing.T) {
+	g := events.Graph{
+		Nodes: []events.Node{
+			{ID: "in", Type: events.NodeInput},
+			{ID: "out", Type: events.NodeOutput},
+		},
+		Edges: []events.Edge{
+			{From: "in", To: "out"},
+			{From: "in", To: "ghost"},    // dangling target
+			{From: "phantom", To: "out"}, // dangling source
+		},
+	}
+	out := export.BPMN(g, "dangling")
+	if strings.Contains(out, "ghost") || strings.Contains(out, "phantom") {
+		t.Fatalf("dangling endpoints leaked into BPMN:\n%s", out)
+	}
+	// Exactly one sound sequence flow survives.
+	if n := strings.Count(out, "<bpmn:sequenceFlow "); n != 1 {
+		t.Fatalf("want 1 sequence flow, got %d:\n%s", n, out)
+	}
+	if err := xml.Unmarshal([]byte(out), new(struct{ XMLName xml.Name })); err != nil {
+		t.Fatalf("BPMN is not well-formed XML: %v", err)
+	}
+}

@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/e6qu/intraktible/platform/eventlog"
@@ -54,6 +55,11 @@ func (h *Handler) Define(ctx context.Context, id identity.Identity, cmd DefineCm
 	}
 	if !ValidOp(cmd.Op) {
 		return "", eventlog.Envelope{}, fmt.Errorf("monitor: invalid op %q (gt|lt)", cmd.Op)
+	}
+	// A NaN/Inf threshold compares false against every value, producing a silent
+	// dead monitor that can never fire — reject it at the write boundary.
+	if math.IsNaN(cmd.Threshold) || math.IsInf(cmd.Threshold, 0) {
+		return "", eventlog.Envelope{}, fmt.Errorf("monitor: threshold must be a finite number")
 	}
 	mid := h.newID()
 	e, err := h.append(ctx, id, TypeDefined, Defined{

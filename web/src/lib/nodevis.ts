@@ -4,25 +4,58 @@
 // node's config and an accent colour per type. Pure and config-tolerant (a node
 // being edited may hold partial/invalid JSON), so the card never throws.
 
+// NodeType is the closed set of flow-builder node kinds — the single source of
+// truth. NODE_TYPES (the type picker), the accent map, and the card summary all
+// derive from it, and the exhaustive switch in nodeSummary fails the build if a new
+// kind is added without being handled, so the type system makes "forgot to handle
+// the new node type" unrepresentable rather than a silent neutral fallback.
+export type NodeType =
+  | 'input'
+  | 'assignment'
+  | 'rule'
+  | 'split'
+  | 'scorecard'
+  | 'decision_table'
+  | '2d_matrix'
+  | 'code'
+  | 'connect'
+  | 'ai'
+  | 'predict'
+  | 'reason'
+  | 'manual_review'
+  | 'output';
+
+// NODE_TYPES is the builder palette order. There is a matching `--node-<type>` CSS
+// custom property in app.css for each (the accent rail).
+export const NODE_TYPES: NodeType[] = [
+  'input',
+  'assignment',
+  'rule',
+  'split',
+  'scorecard',
+  'decision_table',
+  '2d_matrix',
+  'code',
+  'connect',
+  'ai',
+  'predict',
+  'reason',
+  'manual_review',
+  'output'
+];
+
+const NODE_TYPE_SET: ReadonlySet<string> = new Set<string>(NODE_TYPES);
+
+// isNodeType narrows an arbitrary string (a node being edited may carry a partial or
+// not-yet-recognized type) to the closed NodeType union.
+export function isNodeType(type: string): type is NodeType {
+  return NODE_TYPE_SET.has(type);
+}
+
 // accent maps a node type to a CSS custom property (defined in app.css) for the
 // card's left rail / icon tint. Unknown types fall back to the neutral accent.
 export function nodeAccent(type: string): string {
-  const known = new Set([
-    'input',
-    'output',
-    'rule',
-    'split',
-    'scorecard',
-    'decision_table',
-    '2d_matrix',
-    'code',
-    'connect',
-    'ai',
-    'manual_review',
-    'assignment',
-    'reason'
-  ]);
-  return known.has(type) ? `var(--node-${type})` : 'var(--accent)';
+  return isNodeType(type) ? `var(--node-${type})` : 'var(--accent)';
 }
 
 function parse(config: string): Record<string, unknown> {
@@ -46,6 +79,7 @@ function plural(n: number, one: string): string {
 // nodeSummary returns a short, human description of what a node does, derived from
 // its config — the second line of the card.
 export function nodeSummary(type: string, config: string): string {
+  if (!isNodeType(type)) return type; // tolerant: a partial/unknown type shows itself
   const c = parse(config);
   switch (type) {
     case 'input':
@@ -73,12 +107,18 @@ export function nodeSummary(type: string, config: string): string {
       return typeof c.connector === 'string' && c.connector ? String(c.connector) : 'connector';
     case 'ai':
       return typeof c.agent === 'string' && c.agent ? String(c.agent) : 'AI';
+    case 'predict':
+      return typeof c.model === 'string' && c.model ? String(c.model) : 'prediction';
     case 'reason':
       return plural(len(c.reasons), 'reason code');
     case 'manual_review':
       return 'human review';
-    default:
-      return type;
+    default: {
+      // Exhaustiveness guard: if a NodeType is added without a case above, `type` is
+      // no longer `never` here and this fails to compile.
+      const _exhaustive: never = type;
+      return _exhaustive;
+    }
   }
 }
 

@@ -129,9 +129,13 @@ func TestOIDCCallbackVerifiesAndIssuesSession(t *testing.T) {
 		t.Fatal("callback did not issue a session cookie")
 	}
 	// The session maps to the OIDC identity, and the "admins" group → admin role.
-	id, role, ok := sessions.Resolve(session)
+	id, role, scope, ok := sessions.Resolve(session)
 	if !ok || id.Actor != "ada@acme.com" || id.Org != "demo" || role != auth.RoleAdmin {
 		t.Fatalf("session resolves to %+v role=%q ok=%v", id, role, ok)
+	}
+	// An SSO session operates the builder across environments.
+	if scope != auth.ScopeAll {
+		t.Fatalf("SSO session scope = %q, want unrestricted", scope)
 	}
 }
 
@@ -191,7 +195,7 @@ func TestOIDCCallbackAugmentsRole(t *testing.T) {
 			session = c.Value
 		}
 	}
-	_, role, ok := sessions.Resolve(session)
+	_, role, _, ok := sessions.Resolve(session)
 	if !ok || role != auth.RoleEditor {
 		t.Fatalf("augmented session role = %q ok=%v, want editor", role, ok)
 	}

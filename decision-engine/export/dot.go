@@ -21,7 +21,9 @@ func DOT(g events.Graph) string {
 	for _, n := range g.Nodes {
 		fmt.Fprintf(&b, "  %s [label=%s, shape=%s];\n", dotQuote(n.ID), dotQuote(nodeLabel(n)), dotShape(n.Type))
 	}
-	for _, e := range g.Edges {
+	// Skip edges to undeclared nodes so DOT doesn't synthesize a phantom, unlabelled
+	// node (consistent with the BPMN/Mermaid exporters).
+	for _, e := range soundEdges(g) {
 		if e.Branch != "" {
 			fmt.Fprintf(&b, "  %s -> %s [label=%s];\n", dotQuote(e.From), dotQuote(e.To), dotQuote(e.Branch))
 		} else {

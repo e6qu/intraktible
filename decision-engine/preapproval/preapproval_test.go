@@ -67,6 +67,7 @@ func TestGrantValidation(t *testing.T) {
 		{EntityType: "t", ValidDays: 1},                                        // missing id
 		{EntityType: "t", EntityID: "x", ValidDays: 0},                         // non-positive window
 		{EntityType: "t", EntityID: "x", ValidDays: 1, Disposition: "perhaps"}, // bad disposition
+		{EntityType: "t", EntityID: "x", ValidDays: 100000000},                 // overflows the ns horizon
 	}
 	for i, c := range bad {
 		if _, _, err := h.Grant(ctx, id, c); err == nil {

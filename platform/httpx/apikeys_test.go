@@ -23,7 +23,7 @@ func TestManagedAPIKeysCreateUseRevoke(t *testing.T) {
 	keyring.UseResolver(keys)
 	sessions := auth.NewSessions()
 	adminID := identity.Identity{Org: "demo", Workspace: "main", Actor: "admin"}
-	keyring.Add("admin-key", auth.APIKey{ID: "admin", Identity: adminID, Scope: auth.Sandbox, Role: auth.RoleAdmin})
+	keyring.Add("admin-key", auth.APIKey{ID: "admin", Identity: adminID, Scope: auth.ScopeAll, Role: auth.RoleAdmin})
 
 	api := http.NewServeMux()
 	httpx.NewAPIKeysHandler(keys, log).Routes(api)
@@ -143,5 +143,63 @@ func TestManagedAPIKeysCreateUseRevoke(t *testing.T) {
 	if !createdEv || !rotatedEv || !revokedEv {
 		t.Fatalf("expected created+rotated+revoked audit events, got created=%v rotated=%v revoked=%v",
 			createdEv, rotatedEv, revokedEv)
+	}
+}
+
+// A caller cannot mint or rotate a key broader than their own scope: a
+// sandbox-scoped admin must be denied when issuing a production key, and denied
+// when rotating an existing production key into a fresh live secret.
+func TestManagedAPIKeysScopeCeiling(t *testing.T) {
+	log, st := testutil.NewLogStore(t)
+	keys := auth.NewStoreAPIKeys(st)
+	keyring := auth.NewKeyring()
+	keyring.UseResolver(keys)
+	sessions := auth.NewSessions()
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "admin"}
+	// A full-scope admin to plant a production key, and a sandbox-scoped admin to
+	// attempt the escalations.
+	keyring.Add("super-key", auth.APIKey{ID: "super", Identity: id, Scope: auth.ScopeAll, Role: auth.RoleAdmin})
+	keyring.Add("sandbox-admin", auth.APIKey{ID: "sbx", Identity: id, Scope: auth.Sandbox, Role: auth.RoleAdmin})
+
+	api := http.NewServeMux()
+	httpx.NewAPIKeysHandler(keys, log).Routes(api)
+	handler := httpx.Chain(api, httpx.Authenticate(keyring, sessions), httpx.Authorize)
+
+	do := func(key, method, path, body string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		req.Header.Set("X-Api-Key", key)
+		handler.ServeHTTP(rec, req)
+		return rec
+	}
+
+	// The sandbox-scoped admin cannot create a production-scoped key.
+	if rec := do("sandbox-admin", http.MethodPost, "/v1/api-keys",
+		`{"name":"prod","actor":"p","role":"operator","scope":"production"}`); rec.Code != http.StatusForbidden {
+		t.Fatalf("sandbox admin creating production key -> %d, want 403 (body=%s)", rec.Code, rec.Body.String())
+	}
+
+	// It CAN create a sandbox key (within its ceiling).
+	if rec := do("sandbox-admin", http.MethodPost, "/v1/api-keys",
+		`{"name":"sbx","actor":"s","role":"operator","scope":"sandbox"}`); rec.Code != http.StatusCreated {
+		t.Fatalf("sandbox admin creating sandbox key -> %d, want 201 (body=%s)", rec.Code, rec.Body.String())
+	}
+
+	// Plant a production key with the full-scope admin, then prove the sandbox admin
+	// cannot rotate it into a fresh live secret.
+	plant := do("super-key", http.MethodPost, "/v1/api-keys",
+		`{"name":"etl","actor":"etl","role":"operator","scope":"production"}`)
+	if plant.Code != http.StatusCreated {
+		t.Fatalf("plant production key -> %d body=%s", plant.Code, plant.Body.String())
+	}
+	var planted struct {
+		APIKey auth.ManagedAPIKey `json:"api_key"`
+	}
+	if err := json.Unmarshal(plant.Body.Bytes(), &planted); err != nil {
+		t.Fatal(err)
+	}
+	if rec := do("sandbox-admin", http.MethodPost, "/v1/api-keys/"+planted.APIKey.ID+"/rotate",
+		`{"grace_seconds":0}`); rec.Code != http.StatusForbidden {
+		t.Fatalf("sandbox admin rotating production key -> %d, want 403 (body=%s)", rec.Code, rec.Body.String())
 	}
 }

@@ -134,7 +134,10 @@ func finishLogin(w http.ResponseWriter, r *http.Request, sessions auth.SessionSt
 	if aug != nil {
 		role = aug(r.Context(), id.Org, id.Workspace, id.Actor, role)
 	}
-	tok, err := sessions.Issue(id, role)
+	// An SSO-authenticated human operates the builder across environments (subject
+	// to their role); scope restriction is an API-key concept, so SSO sessions get
+	// the unrestricted scope rather than no scope (which the env gate denies).
+	tok, err := sessions.Issue(id, role, auth.ScopeAll)
 	if err != nil {
 		Error(w, http.StatusInternalServerError, err)
 		return false

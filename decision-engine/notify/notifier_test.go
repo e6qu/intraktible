@@ -55,11 +55,12 @@ func TestDeliver(t *testing.T) {
 	for _, r := range results {
 		byID[r.WebhookID] = r
 	}
-	if !byID["w-ok"].OK || byID["w-ok"].Status != 200 {
+	if !byID["w-ok"].OK || byID["w-ok"].Status != 200 || byID["w-ok"].Outcome != notify.OutcomeAccepted {
 		t.Fatalf("ok webhook: %+v", byID["w-ok"])
 	}
-	if byID["w-bad"].OK || byID["w-bad"].Status != 500 || byID["w-bad"].Error == "" {
-		t.Fatalf("bad webhook should report a non-2xx failure: %+v", byID["w-bad"])
+	if byID["w-bad"].OK || byID["w-bad"].Status != 500 || byID["w-bad"].Error == "" ||
+		byID["w-bad"].Outcome != notify.OutcomeRetryable {
+		t.Fatalf("bad webhook should report a retryable non-2xx failure: %+v", byID["w-bad"])
 	}
 	if got["hello"] != "world" {
 		t.Fatalf("payload not delivered as JSON: %+v", got)
@@ -89,5 +90,31 @@ func TestDeliverAllFailErrors(t *testing.T) {
 	empty := identity.Identity{Org: "demo", Workspace: "empty", Actor: "tester"}
 	if _, err := n.Deliver(context.Background(), empty, "monitor check", map[string]any{"x": 1}); err != nil {
 		t.Fatalf("Deliver with no webhooks should succeed: %v", err)
+	}
+}
+
+// A webhook that returns a permanent 4xx (e.g. 404/410 — gone for good) must NOT
+// cause Deliver to signal a retry: returning an error there would keep the firing
+// edge unrecorded and re-deliver to the dead endpoint on every single tick forever.
+// The failure is still recorded (audit) but the alert is allowed to dedup.
+func TestDeliverPermanentFailureDoesNotRetry(t *testing.T) {
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "tester"}
+	log, st := testutil.NewLogStore(t)
+	gone := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer gone.Close()
+	if err := store.PutDoc(context.Background(), st, notify.Collection,
+		store.Key(id.Org, id.Workspace, "w-gone"),
+		notify.View{Org: id.Org, Workspace: id.Workspace, WebhookID: "w-gone", URL: gone.URL, Active: true}); err != nil {
+		t.Fatal(err)
+	}
+	n := notify.NewNotifier(log, st, http.DefaultClient)
+	results, err := n.Deliver(context.Background(), id, "monitor check", map[string]any{"x": 1})
+	if err != nil {
+		t.Fatalf("a permanent 4xx must not signal a retry, got err=%v", err)
+	}
+	if len(results) != 1 || results[0].Outcome != notify.OutcomePermanent || results[0].OK {
+		t.Fatalf("expected one permanent failure, got %+v", results)
 	}
 }

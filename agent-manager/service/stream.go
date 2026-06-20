@@ -3,10 +3,12 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
@@ -15,6 +17,11 @@ import (
 	"github.com/e6qu/intraktible/platform/ai"
 	"github.com/e6qu/intraktible/platform/httpx"
 )
+
+// wsPromptTimeout bounds how long a connected WebSocket client may take to send its
+// opening {prompt} message, so a connected-but-silent client cannot pin a goroutine
+// and socket indefinitely.
+const wsPromptTimeout = 30 * time.Second
 
 // runStreamSSE streams an agent run over Server-Sent Events: a `chunk` event per
 // text delta, then a terminal `done` event with the recorded run. The prompt is a
@@ -48,29 +55,39 @@ func (s *Service) runStreamSSE(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
 
+	// Cancel the run if a chunk write fails (the client disconnected): otherwise the
+	// provider stream keeps producing into a dead socket for the rest of the run.
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
 	onChunk := func(c ai.Chunk) {
-		writeSSE(w, "chunk", c)
+		if err := writeSSE(w, "chunk", c); err != nil {
+			cancel()
+			return
+		}
 		flusher.Flush()
 	}
-	res, err := s.cmd.StreamRun(r.Context(), id, name, r.URL.Query().Get("prompt"), onChunk)
+	res, err := s.cmd.StreamRun(ctx, id, name, r.URL.Query().Get("prompt"), onChunk)
 	if err != nil {
-		writeSSE(w, "error", map[string]string{"error": err.Error()})
+		_ = writeSSE(w, "error", map[string]string{"error": err.Error()})
 		flusher.Flush()
 		return
 	}
-	writeSSE(w, "done", map[string]any{
+	_ = writeSSE(w, "done", map[string]any{
 		"run_id": res.RunID, "status": res.Status, "text": res.Text,
 		"structured": res.Structured, "error": res.Error,
 	})
 	flusher.Flush()
 }
 
-func writeSSE(w io.Writer, event string, data any) {
+// writeSSE writes one SSE frame and returns any write error so the caller can stop
+// streaming into a disconnected client.
+func writeSSE(w io.Writer, event string, data any) error {
 	b, err := json.Marshal(data)
 	if err != nil {
-		return
+		return err
 	}
-	_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, b)
+	_, err = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, b)
+	return err
 }
 
 // runStreamWS streams an agent run over a WebSocket: the client sends one
@@ -95,7 +112,12 @@ func (s *Service) runStreamWS(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Prompt string `json:"prompt"`
 	}
-	if err := wsjson.Read(ctx, c, &req); err != nil {
+	// Bound the opening read so a connected-but-silent client can't hold the
+	// goroutine + socket open indefinitely.
+	readCtx, cancelRead := context.WithTimeout(ctx, wsPromptTimeout)
+	err = wsjson.Read(readCtx, c, &req)
+	cancelRead()
+	if err != nil {
 		_ = c.Close(websocket.StatusUnsupportedData, "expected a {prompt} message")
 		return
 	}

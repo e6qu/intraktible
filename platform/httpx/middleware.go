@@ -35,9 +35,18 @@ type ctxKey int
 
 const (
 	reqIDKey ctxKey = iota
-	scopeKey
-	roleKey
+	principalKey
 )
+
+// Principal is the authenticated caller's authorization context: the role and the
+// environment scope resolved by Authenticate. Both auth paths (API-key header and
+// session cookie) set it as a SINGLE context value, so a caller can never carry a
+// role without its scope — the gap that previously let a session minted from a
+// sandbox-scoped key silently widen to every environment.
+type Principal struct {
+	Role  auth.Role
+	Scope auth.Scope
+}
 
 // RequestID assigns a request id and echoes it in the X-Request-Id header.
 func RequestID(next http.Handler) http.Handler {
@@ -98,8 +107,7 @@ func Authenticate(keyring *auth.Keyring, sessions auth.SessionStore) Middleware 
 			if secret := r.Header.Get("X-Api-Key"); secret != "" {
 				if key, ok := keyring.Resolve(secret); ok {
 					ctx := identity.With(r.Context(), key.Identity)
-					ctx = context.WithValue(ctx, scopeKey, key.Scope)
-					ctx = context.WithValue(ctx, roleKey, auth.ParseRole(string(key.Role)))
+					ctx = withPrincipal(ctx, Principal{Role: auth.ParseRole(string(key.Role)), Scope: key.Scope})
 					next.ServeHTTP(w, r.WithContext(ctx))
 					return
 				}
@@ -107,8 +115,9 @@ func Authenticate(keyring *auth.Keyring, sessions auth.SessionStore) Middleware 
 				return
 			}
 			if c, err := r.Cookie("session"); err == nil {
-				if id, role, ok := sessions.Resolve(c.Value); ok {
-					ctx := context.WithValue(identity.With(r.Context(), id), roleKey, auth.ParseRole(string(role)))
+				if id, role, scope, ok := sessions.Resolve(c.Value); ok {
+					ctx := identity.With(r.Context(), id)
+					ctx = withPrincipal(ctx, Principal{Role: auth.ParseRole(string(role)), Scope: scope})
 					next.ServeHTTP(w, r.WithContext(ctx))
 					return
 				}
@@ -118,16 +127,30 @@ func Authenticate(keyring *auth.Keyring, sessions auth.SessionStore) Middleware 
 	}
 }
 
-// Scope returns the API-key scope for the request, if any.
+func withPrincipal(ctx context.Context, p Principal) context.Context {
+	return context.WithValue(ctx, principalKey, p)
+}
+
+// PrincipalOf returns the authenticated caller's authorization context. ok is
+// false only for an unauthenticated request (no middleware ran).
+func PrincipalOf(ctx context.Context) (Principal, bool) {
+	p, ok := ctx.Value(principalKey).(Principal)
+	return p, ok
+}
+
+// Scope returns the caller's environment scope. ok is false for an unauthenticated
+// request; an authenticated caller (key or session) always carries a scope.
 func Scope(ctx context.Context) (auth.Scope, bool) {
-	s, ok := ctx.Value(scopeKey).(auth.Scope)
-	return s, ok
+	if p, ok := PrincipalOf(ctx); ok {
+		return p.Scope, true
+	}
+	return "", false
 }
 
 // RoleOf returns the authenticated principal's role (viewer when unset).
 func RoleOf(ctx context.Context) auth.Role {
-	if r, ok := ctx.Value(roleKey).(auth.Role); ok {
-		return r
+	if p, ok := PrincipalOf(ctx); ok {
+		return p.Role
 	}
 	return auth.RoleViewer
 }

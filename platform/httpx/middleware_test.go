@@ -168,7 +168,7 @@ func TestAuthenticateSession(t *testing.T) {
 	kr := auth.NewKeyring()
 	sessions := auth.NewSessions()
 	id := identity.Identity{Org: "o", Workspace: "w", Actor: "u"}
-	tok, _ := sessions.Issue(id, auth.RoleEditor)
+	tok, _ := sessions.Issue(id, auth.RoleEditor, auth.ScopeAll)
 
 	h := httpx.Authenticate(kr, sessions)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got, ok := identity.From(r.Context()); !ok || got != id {
@@ -182,5 +182,33 @@ func TestAuthenticateSession(t *testing.T) {
 	h.ServeHTTP(w, r)
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("valid session -> %d", w.Code)
+	}
+}
+
+// Regression: a session minted from a SANDBOX-scoped key must expose only the
+// sandbox scope to the request, so the environment gate cannot be escaped by
+// exchanging a scoped key for a session. Previously the session carried no scope
+// and the gate treated that as "any environment".
+func TestSessionCarriesScope(t *testing.T) {
+	kr := auth.NewKeyring()
+	sessions := auth.NewSessions()
+	id := identity.Identity{Org: "o", Workspace: "w", Actor: "u"}
+	tok, _ := sessions.Issue(id, auth.RoleOperator, auth.Sandbox)
+
+	var gotScope auth.Scope
+	var gotOK bool
+	h := httpx.Authenticate(kr, sessions)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotScope, gotOK = httpx.Scope(r.Context())
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	r := httptest.NewRequest(http.MethodGet, "/v1/x", http.NoBody)
+	r.AddCookie(&http.Cookie{Name: "session", Value: tok})
+	h.ServeHTTP(httptest.NewRecorder(), r)
+
+	if !gotOK || gotScope != auth.Sandbox {
+		t.Fatalf("session scope = %q ok=%v, want sandbox/true", gotScope, gotOK)
+	}
+	if gotScope.Allows("production") {
+		t.Fatal("a sandbox-scoped session must not permit the production environment")
 	}
 }

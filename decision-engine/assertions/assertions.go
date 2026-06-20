@@ -64,7 +64,10 @@ func Run(g events.Graph, cases []Case) Report {
 func mismatches(expect, got map[string]any) []string {
 	var miss []string
 	for k, want := range expect {
-		if !reflect.DeepEqual(got[k], want) {
+		// Distinguish an absent key from a present null: got[k] yields nil for both,
+		// so a `null` expectation would spuriously pass against a missing field.
+		v, present := got[k]
+		if !present || !reflect.DeepEqual(v, want) {
 			miss = append(miss, k)
 		}
 	}

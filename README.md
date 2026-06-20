@@ -55,7 +55,7 @@ These serve the embedded SPA on **:8080** — no Node needed at runtime.
 | `--log` | `file` | Event log: `file` (single-process WAL) · `sqlite` (shared across processes — used by the split profile) |
 | `--addr` | `:8080` | Listen address |
 | `--data-dir` | `./data` | Where the event log (and the SQLite store) live |
-| `--dev-api-key` | `dev-sandbox-key` | Seed a sandbox admin key for local dev (set empty to disable) |
+| `--dev-api-key` | `dev-sandbox-key` | Seed a dev admin key — **in-memory store only**; ignored with a durable store, so production never boots with it (set empty to disable) |
 
 ```sh
 intraktible serve                                       # modular monolith, in-memory

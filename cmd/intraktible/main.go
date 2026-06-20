@@ -109,7 +109,7 @@ func serveCmd(args []string) error {
 	addr := fs.String("addr", ":8080", "listen address")
 	dataDir := fs.String("data-dir", "./data", "event-log data directory")
 	modules := fs.String("modules", "all", "comma-separated modules (or 'all')")
-	devKey := fs.String("dev-api-key", "dev-sandbox-key", "seed a sandbox API key for local dev (empty to disable)")
+	devKey := fs.String("dev-api-key", "dev-sandbox-key", "seed a dev admin API key (in-memory store only; ignored with a durable store; empty to disable)")
 	storeKind := fs.String("store", "memory", "projection store: memory | sqlite (<data-dir>/projections.db) | postgres (INTRAKTIBLE_POSTGRES_DSN)")
 	logKind := fs.String("log", "file", "event log: file (single-process WAL) | sqlite (shared across processes, for the split profile) | postgres (networked HA; INTRAKTIBLE_POSTGRES_DSN) | nats (JetStream HA; INTRAKTIBLE_NATS_URL)")
 	_ = fs.Parse(args)
@@ -138,14 +138,10 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 	sessions := auth.NewStoreSessions(st)
 	apiKeys := auth.NewStoreAPIKeys(st)
 	keyring.UseResolver(apiKeys)
-	if devKey != "" {
-		keyring.Add(devKey, auth.APIKey{
-			ID:       "dev",
-			Identity: identity.Identity{Org: "demo", Workspace: "main", Actor: "dev"},
-			Scope:    auth.ScopeAll, // local dev key decides against any environment
-			Role:     auth.RoleAdmin,
-		})
-		slog.Warn("seeded dev API key — do not use in production", "scope", auth.ScopeAll, "role", auth.RoleAdmin)
+	if seedDevKey(keyring, devKey, storeKind) {
+		slog.Warn("seeded dev API key (in-memory store, local dev only)", "scope", auth.ScopeAll, "role", auth.RoleAdmin)
+	} else if devKey != "" {
+		slog.Warn("ignoring --dev-api-key: a durable store does not seed the well-known dev key; issue a managed API key instead", "store", storeKind)
 	}
 
 	root := http.NewServeMux()
@@ -397,6 +393,23 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 	shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	return srv.Shutdown(shutCtx)
+}
+
+// seedDevKey registers the well-known dev admin key on keyring, but ONLY with the
+// non-durable in-memory store. Any durable store (sqlite/postgres) — the only kind a
+// real deployment can use — refuses to seed it regardless of the flag value, so
+// production can never boot with a known admin credential. Returns whether it seeded.
+func seedDevKey(keyring *auth.Keyring, devKey, storeKind string) bool {
+	if devKey == "" || storeKind != "memory" {
+		return false
+	}
+	keyring.Add(devKey, auth.APIKey{
+		ID:       "dev",
+		Identity: identity.Identity{Org: "demo", Workspace: "main", Actor: "dev"},
+		Scope:    auth.ScopeAll, // local dev key decides against any environment
+		Role:     auth.RoleAdmin,
+	})
+	return true
 }
 
 // openStore builds the projection store. memory is ephemeral (rebuilt from the

@@ -3,9 +3,13 @@
 package monitor
 
 import (
+	"context"
+	"math"
 	"testing"
 
 	"github.com/e6qu/intraktible/decision-engine/analytics"
+	"github.com/e6qu/intraktible/platform/identity"
+	"github.com/e6qu/intraktible/platform/testutil"
 )
 
 func TestEvaluate(t *testing.T) {
@@ -101,5 +105,28 @@ func TestValidation(t *testing.T) {
 	}
 	if ValidOp("ge") || !OpLessThan.Valid() {
 		t.Fatal("ValidOp")
+	}
+}
+
+// A NaN/Inf threshold compares false against every value, so a monitor with one
+// would silently never fire. Define must reject it at the write boundary.
+func TestDefineRejectsNonFiniteThreshold(t *testing.T) {
+	log, _ := testutil.NewLogStore(t)
+	h := NewHandler(log)
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "ops"}
+	ctx := context.Background()
+	for _, bad := range []float64{math.NaN(), math.Inf(1), math.Inf(-1)} {
+		_, _, err := h.Define(ctx, id, DefineCmd{
+			FlowID: "f", Metric: string(MetricFailureRate), Op: string(OpGreaterThan), Threshold: bad,
+		})
+		if err == nil {
+			t.Fatalf("Define accepted a non-finite threshold %v", bad)
+		}
+	}
+	// A finite threshold still works.
+	if _, _, err := h.Define(ctx, id, DefineCmd{
+		FlowID: "f", Metric: string(MetricFailureRate), Op: string(OpGreaterThan), Threshold: 0.5,
+	}); err != nil {
+		t.Fatalf("Define rejected a valid finite threshold: %v", err)
 	}
 }

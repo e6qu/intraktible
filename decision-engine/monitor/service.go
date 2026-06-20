@@ -164,10 +164,15 @@ func (s *Service) check(w http.ResponseWriter, r *http.Request) {
 		// Deliver returns the per-webhook outcomes AND an error when all of them
 		// failed. Evaluation succeeded, so report the delivery outcomes (a flag +
 		// the per-webhook results) rather than 500-ing the whole check.
-		deliveries, derr := s.notifier.Deliver(r.Context(), id, "monitor check", payload)
+		deliveries, _ := s.notifier.Deliver(r.Context(), id, "monitor check", payload)
 		resp["deliveries"] = deliveries
-		if derr != nil {
-			resp["delivery_failed"] = true
+		// A non-error return can still include permanent (non-retryable) failures,
+		// so flag from the per-webhook outcomes rather than the retry-signal error.
+		for _, d := range deliveries {
+			if !d.OK {
+				resp["delivery_failed"] = true
+				break
+			}
 		}
 	}
 	httpx.JSON(w, http.StatusOK, resp)

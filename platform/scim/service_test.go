@@ -31,6 +31,23 @@ func TestSCIMCreateDefaultsActiveWhenOmitted(t *testing.T) {
 	}
 }
 
+// SCIM mutation endpoints sit behind only the static bearer token (outside the
+// authenticated chain's body limit), so each must bound its own body. A body past
+// the cap is rejected (400) rather than read whole into memory.
+func TestSCIMRejectsOversizedBody(t *testing.T) {
+	mux := http.NewServeMux()
+	scim.NewService(scim.NewStore(store.NewMemory()), "scim-token", "demo", "main").Routes(mux)
+	// A >1 MiB body: a valid JSON prefix the LimitReader truncates mid-string, so it
+	// fails to parse instead of being fully buffered.
+	huge := `{"userName":"` + strings.Repeat("a", 2<<20) + `"}`
+	for _, path := range []string{"/scim/v2/Users", "/scim/v2/Groups"} {
+		rec := bearerDo(mux, http.MethodPost, path, huge)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("POST %s oversized body -> %d, want 400", path, rec.Code)
+		}
+	}
+}
+
 func TestSCIMProvisionAndDeprovision(t *testing.T) {
 	st := store.NewMemory()
 	users := scim.NewStore(st)

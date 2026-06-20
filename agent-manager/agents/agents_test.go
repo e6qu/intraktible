@@ -172,3 +172,27 @@ func TestInvokeWithToolsStepLimit(t *testing.T) {
 		t.Fatalf("expected a step-limit failure, got %+v", out)
 	}
 }
+
+// A cancelled context must stop the tool-calling loop promptly instead of running
+// up to maxToolSteps more billable provider/tool rounds against a dead request.
+func TestInvokeWithToolsHonorsCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // already cancelled before the first step
+	s := store.NewMemory()
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "dev"}
+	reg := ai.NewRegistry()
+	reg.Register(alwaysToolProvider{})
+	tb := &fakeToolbox{}
+	defineAgent(t, s, id, agents.AgentView{Name: "spin", Provider: "loopy", Tools: []string{"bureau"}})
+
+	out, err := agents.InvokeWithTools(ctx, s, reg, tb, id, "spin", "go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Status != "failed" || !strings.Contains(out.Error, "context canceled") {
+		t.Fatalf("expected a cancellation failure, got %+v", out)
+	}
+	if tb.calls != 0 {
+		t.Fatalf("no tool should run after cancellation, got %d calls", tb.calls)
+	}
+}

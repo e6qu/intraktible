@@ -86,7 +86,7 @@ func (s *Service) backtest(w http.ResponseWriter, r *http.Request) {
 		}
 		evaluated = *req.Spec
 	case len(pv.Versions) > 0:
-		evaluated = pv.Versions[len(pv.Versions)-1].Spec
+		evaluated = latestVersion(pv).Spec
 	default:
 		httpx.Error(w, http.StatusBadRequest, fmt.Errorf("policy backtest: no spec to evaluate (policy has no published version; send a draft spec)"))
 		return

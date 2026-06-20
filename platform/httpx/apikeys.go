@@ -70,6 +70,21 @@ func (h *APIKeysHandler) create(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusBadRequest, err)
 		return
 	}
+	// Ceiling: a caller cannot mint a key broader than their own credential — neither
+	// a wider environment scope nor a higher role. Without this, a sandbox-scoped (or
+	// lower-privileged) admin could escalate by issuing a production/admin key.
+	reqScope := req.Scope
+	if reqScope == "" {
+		reqScope = auth.Sandbox // mirror StoreAPIKeys.Create's default before the ceiling check
+	}
+	if callerScope, ok := Scope(r.Context()); !ok || !callerScope.Covers(reqScope) {
+		Error(w, http.StatusForbidden, fmt.Errorf("cannot create a key with scope %q exceeding your own", reqScope))
+		return
+	}
+	if !RoleOf(r.Context()).AtLeast(req.Role) {
+		Error(w, http.StatusForbidden, fmt.Errorf("cannot create a key with role %q exceeding your own", req.Role))
+		return
+	}
 	key, secret, err := h.keys.Create(r.Context(), auth.ManagedAPIKey{
 		Name: req.Name,
 		Identity: identity.Identity{
@@ -125,6 +140,13 @@ func (h *APIKeysHandler) rotate(w http.ResponseWriter, r *http.Request) {
 	}
 	if !found || key.Identity.Org != id.Org || key.Identity.Workspace != id.Workspace {
 		Error(w, http.StatusNotFound, fmt.Errorf("api key not found"))
+		return
+	}
+	// Ceiling: rotation mints a fresh working secret, so a caller must not rotate a
+	// key broader than their own scope (else a sandbox-scoped admin could obtain a
+	// live production secret for an existing key).
+	if callerScope, ok := Scope(r.Context()); !ok || !callerScope.Covers(key.Scope) {
+		Error(w, http.StatusForbidden, fmt.Errorf("cannot rotate a key with scope %q exceeding your own", key.Scope))
 		return
 	}
 	var req rotateAPIKeyRequest

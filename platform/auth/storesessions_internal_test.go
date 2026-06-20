@@ -24,32 +24,36 @@ func TestStoreSessions(t *testing.T) {
 	s.ttl = time.Hour
 	id := identity.Identity{Org: "o", Workspace: "w", Actor: "a"}
 
-	tok, _ := s.Issue(id, RoleEditor)
-	if got, _, ok := s.Resolve(tok); !ok || got != id {
+	tok, _ := s.Issue(id, RoleEditor, Production)
+	got, _, scope, ok := s.Resolve(tok)
+	if !ok || got != id {
 		t.Fatalf("resolve fresh session: got=%v ok=%v", got, ok)
+	}
+	if scope != Production {
+		t.Fatalf("session must round-trip its scope: got %q, want production", scope)
 	}
 
 	// Durability: a NEW instance over the same store resolves the session — what
 	// makes sessions survive a restart when the store is durable.
 	s2 := NewStoreSessions(st)
 	s2.now = func() time.Time { return clock }
-	if _, _, ok := s2.Resolve(tok); !ok {
+	if _, _, _, ok := s2.Resolve(tok); !ok {
 		t.Fatal("session should be readable from a second store-backed instance")
 	}
 
 	// Expiry.
 	clock = clock.Add(2 * time.Hour)
-	if _, _, ok := s.Resolve(tok); ok {
+	if _, _, _, ok := s.Resolve(tok); ok {
 		t.Fatal("expired session should not resolve")
 	}
 
 	// Revoke.
-	tok2, _ := s.Issue(id, RoleEditor)
-	if _, _, ok := s.Resolve(tok2); !ok {
+	tok2, _ := s.Issue(id, RoleEditor, Sandbox)
+	if _, _, _, ok := s.Resolve(tok2); !ok {
 		t.Fatal("fresh session should resolve")
 	}
 	s.Revoke(tok2)
-	if _, _, ok := s.Resolve(tok2); ok {
+	if _, _, _, ok := s.Resolve(tok2); ok {
 		t.Fatal("revoked session should not resolve")
 	}
 }
