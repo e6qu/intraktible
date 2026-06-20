@@ -129,6 +129,13 @@ func TestDecisionTableHitPolicies(t *testing.T) {
 		t.Fatalf("any agree = %s, want {\"band\":\"ok\"}", got)
 	}
 
+	// ANY with ZERO matching rows must NOT panic (matched[1:] on an empty slice) —
+	// the pure core is contractually panic-free. It completes, applying no outputs.
+	noMatch := domain.Execute(linear(anyTbl, cfgNode("out", events.NodeOutput, `{"fields":["band"]}`)), map[string]any{"score": 10})
+	if noMatch.Status != domain.StatusCompleted {
+		t.Fatalf("ANY zero-match: status=%s err=%q, want completed (no panic)", noMatch.Status, noMatch.Err)
+	}
+
 	// Conflict policies fail loudly when more than one row matches with differing output.
 	bad := []struct {
 		name, cfg, wantErr string

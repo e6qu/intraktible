@@ -37,7 +37,7 @@ func TestSQLitePutGetListResetDelete(t *testing.T) {
 	if err != nil || !ok || string(doc) != `{"v":11}` {
 		t.Fatalf("Get k1 = %s ok=%v err=%v", doc, ok, err)
 	}
-	list, err := s.List(ctx, "c")
+	list, err := s.List(ctx, "c", "")
 	if err != nil || len(list) != 2 || list[0].Key != "k1" || list[1].Key != "k2" {
 		t.Fatalf("List = %+v err=%v", list, err)
 	}
@@ -50,7 +50,7 @@ func TestSQLitePutGetListResetDelete(t *testing.T) {
 	if err := s.Reset(ctx, "c"); err != nil {
 		t.Fatal(err)
 	}
-	if l, _ := s.List(ctx, "c"); len(l) != 0 {
+	if l, _ := s.List(ctx, "c", ""); len(l) != 0 {
 		t.Fatalf("after Reset List = %d, want 0", len(l))
 	}
 }

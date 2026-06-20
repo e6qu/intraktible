@@ -29,17 +29,22 @@
   async function load() {
     error = '';
     loading = true;
+    // Drop a stale response when sibling navigation changes type/id mid-flight.
+    const reqType = type;
+    const reqId = id;
     try {
-      [entity, events, featureValues] = await Promise.all([
+      const [ent, evs, feats] = await Promise.all([
         getEntity(key, type, id),
         listEntityEvents(key, type, id),
         // Computed features are best-effort (none defined for this type is fine).
         getEntityFeatures(key, type, id).catch(() => [])
       ]);
+      if (type !== reqType || id !== reqId) return;
+      [entity, events, featureValues] = [ent, evs, feats];
     } catch (e) {
-      error = msg(e);
+      if (type === reqType && id === reqId) error = msg(e);
     } finally {
-      loading = false;
+      if (type === reqType && id === reqId) loading = false;
     }
   }
   $effect(() => {

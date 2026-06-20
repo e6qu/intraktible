@@ -110,6 +110,18 @@ func (l *PostgresLog) listenLoop(ctx context.Context) {
 // Append assigns the next global Seq (BIGSERIAL) and commits durably. The poller
 // — not Append — publishes to the bus, so local and cross-node events arrive by
 // the same path and are never delivered twice.
+//
+// KNOWN LIMITATION (multi-node HA only): BIGSERIAL is assigned at INSERT but a row
+// is visible only at COMMIT, so under concurrent appends from multiple nodes a
+// higher seq can commit before a lower one. The poller advances its watermark by
+// the max seq it has read, so a lower seq that commits late can be skipped from the
+// LIVE bus (it is still durably stored and is returned by any full Read/rebuild, so
+// this is a live-delivery latency gap, not data loss). A correct fix gates the
+// poller on the transaction-visibility horizon (pg_snapshot_xmin) rather than the
+// raw seq; it is deliberately not shipped untested here, as it needs a live
+// multi-node Postgres to validate and a naive contiguous-watermark would deadlock on
+// sequence numbers burned by rolled-back transactions. Single-node (the default
+// file/sqlite/memory log) is unaffected.
 func (l *PostgresLog) Append(ctx context.Context, e Envelope) (Envelope, error) {
 	if l.d.isClosed() {
 		return Envelope{}, ErrClosed

@@ -80,7 +80,9 @@ func Compute(spec FeatureSpec, events []FeatureInput, now time.Time) (float64, e
 		if ev.EventName != spec.EventName {
 			continue
 		}
-		if ev.OccurredAt.Before(cutoff) || ev.OccurredAt.After(now) {
+		// Window is (cutoff, now]: exclude an event landing exactly on the cutoff
+		// instant (lower bound is exclusive, per the doc) and any after now.
+		if !ev.OccurredAt.After(cutoff) || ev.OccurredAt.After(now) {
 			continue
 		}
 		switch spec.Aggregation {

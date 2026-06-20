@@ -68,13 +68,30 @@ func (s *Postgres) Get(ctx context.Context, collection, key string) (json.RawMes
 	return json.RawMessage(doc), true, nil
 }
 
-func (s *Postgres) List(ctx context.Context, collection string) ([]Record, error) {
-	rows, err := s.pool.Query(ctx,
-		`SELECT key, doc FROM docs WHERE collection = $1 ORDER BY key`, collection)
+func (s *Postgres) List(ctx context.Context, collection, keyPrefix string) ([]Record, error) {
+	q, args := listQueryPostgres(collection, keyPrefix)
+	rows, err := s.pool.Query(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: postgres list %s: %w", collection, err)
 	}
 	return scanPGRecords(rows, collection)
+}
+
+// listQueryPostgres builds the prefix-scoped list query for the $n-placeholder
+// Postgres backend: an indexed `key >= prefix AND key < upper` range, or the whole
+// collection when keyPrefix is empty.
+func listQueryPostgres(collection, keyPrefix string) (string, []any) {
+	q := `SELECT key, doc FROM docs WHERE collection = $1`
+	args := []any{collection}
+	if keyPrefix != "" {
+		q += ` AND key >= $2`
+		args = append(args, keyPrefix)
+		if ub := prefixUpperBound(keyPrefix); ub != "" {
+			q += ` AND key < $3`
+			args = append(args, ub)
+		}
+	}
+	return q + ` ORDER BY key`, args
 }
 
 // scanPGRecords reads (key, doc) rows into Records and closes the rows. Shared by
@@ -156,8 +173,9 @@ func (t *pgTx) Get(ctx context.Context, collection, key string) (json.RawMessage
 	return json.RawMessage(doc), true, nil
 }
 
-func (t *pgTx) List(ctx context.Context, collection string) ([]Record, error) {
-	rows, err := t.tx.Query(ctx, `SELECT key, doc FROM docs WHERE collection = $1 ORDER BY key`, collection)
+func (t *pgTx) List(ctx context.Context, collection, keyPrefix string) ([]Record, error) {
+	q, args := listQueryPostgres(collection, keyPrefix)
+	rows, err := t.tx.Query(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: postgres tx list %s: %w", collection, err)
 	}

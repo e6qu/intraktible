@@ -773,7 +773,7 @@ func replayCmd(args []string) error {
 		fmt.Println("  (none)")
 	}
 	for _, c := range cols {
-		recs, err := st.List(context.Background(), c)
+		recs, err := st.List(context.Background(), c, "") // whole collection: count every tenant's docs
 		if err != nil {
 			return err
 		}

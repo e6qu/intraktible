@@ -495,6 +495,9 @@ func (h *DecideHandler) injectPredictions(ctx context.Context, id identity.Ident
 		}
 		// Tag the prediction with the model name so the read side can attribute it
 		// (drift monitoring); downstream still reads predict.<output>.{score,probability}.
+		// "model" is a RESERVED attribution key: it is set authoritatively from the
+		// node's configured model and intentionally overrides any "model" field a
+		// provider returns — drift attribution must not be spoofable by model output.
 		v := map[string]any{}
 		if err := json.Unmarshal(resp, &v); err != nil {
 			return nil, fmt.Errorf("decision-engine: predict node %q response: %w", sp.NodeID, err)

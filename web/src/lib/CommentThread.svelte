@@ -34,12 +34,19 @@
   }
   async function load() {
     error = '';
+    // Drop a stale response when the subject changes mid-flight (the component is
+    // sometimes reused without a keyed remount), so an older thread can't clobber
+    // the current one.
+    const reqType = subjectType;
+    const reqId = subjectId;
     try {
-      comments = await listComments(key, subjectType, subjectId);
+      const got = await listComments(key, subjectType, subjectId);
+      if (subjectType !== reqType || subjectId !== reqId) return;
+      comments = got;
     } catch (e) {
-      error = msg(e);
+      if (subjectType === reqType && subjectId === reqId) error = msg(e);
     } finally {
-      loading = false;
+      if (subjectType === reqType && subjectId === reqId) loading = false;
     }
   }
   async function post() {

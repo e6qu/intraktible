@@ -624,7 +624,22 @@ decision total). Plus a scope/role **ceiling** on key minting/rotation, SCIM bod
 batch infra-error misclassification, agent tool-loop cancellation, a web sibling-nav load race, an
 exhaustive `NodeType` union, and an array of MED/LOW correctness fixes (policy latest-version
 selection, NaN-threshold rejection, null-vs-absent assertions, average rounding). Two new fuzz
-targets (Mermaid export, SCIM filter/patch) found no crashers.
+targets (Mermaid export, SCIM filter/patch) found no crashers. **Round 4** (BF33–BF41 / TS18–TS20)
+fixed a CRITICAL panic in the pure core (a Decision Table with hit:`any` and zero matching rows
+resliced an empty slice — crashing the decide path and any backtest/shadow batch), propagated the
+round-3 stale-load guard to the remaining detail pages (decisions/cases/entities/agents +
+CommentThread), made comment/notification ordering stable (a monotonic `Seq` tiebreak), and pushed
+the tenant key prefix into `Store.List` as an indexed range scan so a listing no longer loads every
+tenant's rows to filter in Go. Type-strengthening: a `ParseStatus` parse-don't-validate boundary in
+the case projector (an unknown status can't enter the read model), publish-time validation of the
+Decision Table hit-policy/aggregate (a typo fails at publish, not the first decision), and the
+prefix in the `Store.List` signature. Plus the AI provider checking status before decoding (clean
+errors on a 502), a WS-stream cancel-on-disconnect (parity with SSE), an api-key revoke scope
+ceiling, and a feature-window boundary fix. New fuzz target `FuzzPrefixUpperBound` validates the
+store range invariant. The Postgres multi-node delivery seq-gap (BIGSERIAL commit-vs-seq order) was
+verified real and documented with the fix (a visibility-horizon gate), deliberately not shipped
+untested as it needs a live multi-node Postgres and a naive watermark would deadlock on burned
+sequence numbers.
 
 ---
 

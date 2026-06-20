@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sort"
 	"time"
 
@@ -200,8 +201,16 @@ func applyStatus(ctx context.Context, e eventlog.Envelope, s store.Store) error 
 	if err := decode(e, &p); err != nil {
 		return err
 	}
+	status, ok := domain.ParseStatus(p.Status)
+	if !ok {
+		// Commands validate status, so this only guards a hand-crafted/legacy event.
+		// Skip rather than write an invalid status into the read model (or halt the
+		// whole projection on one poison event).
+		slog.Warn("case-manager: ignoring status_changed with unknown status", "status", p.Status, "seq", e.Seq)
+		return nil
+	}
 	return update(ctx, s, e, p.CaseID, func(c *CaseView) {
-		c.Status = domain.CaseStatus(p.Status)
+		c.Status = status
 		c.Audit = append(c.Audit, audit(e, "status_changed", "status → "+p.Status))
 	})
 }

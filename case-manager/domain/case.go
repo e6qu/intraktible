@@ -36,6 +36,15 @@ func (s CaseStatus) Valid() bool { return statuses[s] }
 // string-boundary form for callers that hold a raw string.
 func ValidStatus(s string) bool { return statuses[CaseStatus(s)] }
 
+// ParseStatus converts a raw string (from an event payload) into a CaseStatus,
+// reporting ok=false for an unknown value. Projectors parse at the decode boundary
+// rather than casting, so a hand-crafted/legacy/future event carrying an unknown
+// status cannot land an invalid CaseStatus in the read model.
+func ParseStatus(s string) (CaseStatus, bool) {
+	cs := CaseStatus(s)
+	return cs, statuses[cs]
+}
+
 // RequestReview opens a case for human review.
 type RequestReview struct {
 	CompanyName      string

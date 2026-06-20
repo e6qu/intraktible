@@ -180,15 +180,20 @@ func (h HTTP) Complete(ctx context.Context, req Request) (Response, error) {
 		return Response{}, fmt.Errorf("ai: read response: %w", err)
 	}
 
+	// Check status BEFORE decoding: a 429/5xx/proxy error body is commonly non-JSON
+	// (HTML/plain text), so decoding first would mask the real failure (e.g. a 502)
+	// behind a misleading "invalid character '<'" parse error. Decode the error body
+	// only opportunistically for a structured provider message.
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		var errResp chatResponse
+		if json.Unmarshal(raw, &errResp) == nil && errResp.Error != nil {
+			return Response{}, fmt.Errorf("ai: provider error (status %d): %s", resp.StatusCode, errResp.Error.Message)
+		}
+		return Response{}, fmt.Errorf("ai: provider status %d", resp.StatusCode)
+	}
 	var cresp chatResponse
 	if err := json.Unmarshal(raw, &cresp); err != nil {
 		return Response{}, fmt.Errorf("ai: decode response (status %d): %w", resp.StatusCode, err)
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		if cresp.Error != nil {
-			return Response{}, fmt.Errorf("ai: provider error (status %d): %s", resp.StatusCode, cresp.Error.Message)
-		}
-		return Response{}, fmt.Errorf("ai: provider status %d", resp.StatusCode)
 	}
 	if len(cresp.Choices) == 0 {
 		return Response{}, fmt.Errorf("ai: provider returned no choices")

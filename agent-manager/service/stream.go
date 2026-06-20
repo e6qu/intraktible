@@ -107,7 +107,10 @@ func (s *Service) runStreamWS(w http.ResponseWriter, r *http.Request) {
 		return // Accept has already written the failure response
 	}
 	defer func() { _ = c.CloseNow() }()
-	ctx := r.Context()
+	// Cancellable so a failed chunk write (client gone) stops the run rather than
+	// streaming into a dead socket — mirrors the SSE path.
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
 
 	var req struct {
 		Prompt string `json:"prompt"`
@@ -122,7 +125,9 @@ func (s *Service) runStreamWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	onChunk := func(ch ai.Chunk) {
-		_ = wsjson.Write(ctx, c, map[string]any{"type": "chunk", "text": ch.Text})
+		if err := wsjson.Write(ctx, c, map[string]any{"type": "chunk", "text": ch.Text}); err != nil {
+			cancel() // client disconnected — stop the run instead of producing into a dead socket
+		}
 	}
 	res, err := s.cmd.StreamRun(ctx, id, r.PathValue("name"), req.Prompt, onChunk)
 	if err != nil {

@@ -22,7 +22,11 @@ type Record struct {
 type Store interface {
 	Put(ctx context.Context, collection, key string, doc json.RawMessage) error
 	Get(ctx context.Context, collection, key string) (json.RawMessage, bool, error)
-	List(ctx context.Context, collection string) ([]Record, error)
+	// List returns the records of a collection whose key starts with keyPrefix
+	// (empty = the whole collection), ordered by key. The prefix is pushed down to
+	// the durable backends as a key range so a tenant-scoped listing scans only that
+	// tenant's rows instead of loading every tenant's into memory.
+	List(ctx context.Context, collection, keyPrefix string) ([]Record, error)
 	Delete(ctx context.Context, collection, key string) error
 	// Reset clears a collection (used when a projection rebuilds from offset 0).
 	Reset(ctx context.Context, collection string) error
@@ -62,4 +66,22 @@ type Ephemeral interface {
 // Key namespaces a document by tenant so collections stay per-(org,workspace).
 func Key(org, workspace, id string) string {
 	return org + "/" + workspace + "/" + id
+}
+
+// prefixUpperBound returns the exclusive upper bound of the key range covering
+// every key that starts with prefix: the smallest string strictly greater than all
+// such keys. It returns "" when there is no finite bound (empty prefix, or a prefix
+// of all 0xFF bytes), meaning "no upper bound". Used by the durable backends to turn
+// a prefix scan into an indexed `key >= prefix AND key < upper` range.
+func prefixUpperBound(prefix string) string {
+	b := []byte(prefix)
+	for i := len(b) - 1; i >= 0; i-- {
+		if b[i] != 0xFF {
+			up := make([]byte, i+1)
+			copy(up, b[:i+1])
+			up[i]++
+			return string(up)
+		}
+	}
+	return ""
 }

@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"sort"
+	"strings"
 	"sync"
 )
 
@@ -48,12 +49,15 @@ func (m *Memory) Get(_ context.Context, collection, key string) (json.RawMessage
 	return cp, true, nil
 }
 
-func (m *Memory) List(_ context.Context, collection string) ([]Record, error) {
+func (m *Memory) List(_ context.Context, collection, keyPrefix string) ([]Record, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	c := m.collections[collection]
 	out := make([]Record, 0, len(c))
 	for k, v := range c {
+		if keyPrefix != "" && !strings.HasPrefix(k, keyPrefix) {
+			continue
+		}
 		cp := make(json.RawMessage, len(v))
 		copy(cp, v)
 		out = append(out, Record{Key: k, Doc: cp})
