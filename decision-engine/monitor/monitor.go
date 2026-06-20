@@ -14,28 +14,50 @@ import (
 	"github.com/e6qu/intraktible/decision-engine/analytics"
 )
 
-// Metric identifies the derived quantity a monitor watches.
+// Metric identifies the derived quantity a monitor watches. A named type (not a
+// bare string) so an invalid metric is caught at the boundary — the convention
+// every domain enum follows (see ModelKind/CaseStatus/…); event/wire payloads
+// keep string and convert at the Rule boundary.
+type Metric string
+
+// Known metrics.
 const (
-	MetricFailureRate       = "failure_rate"       // failed / (completed+failed)
-	MetricReferRate         = "refer_rate"         // refer / dispositioned
-	MetricAutomationRate    = "automation_rate"    // (approve+decline) / dispositioned
-	MetricApproveRate       = "approve_rate"       // approve / dispositioned
-	MetricDeclineRate       = "decline_rate"       // decline / dispositioned
-	MetricAvgLatencyMS      = "avg_latency_ms"     // mean completed-decision duration
-	MetricVolume            = "volume"             // total decisions started
-	MetricDistributionDrift = "distribution_drift" // max |current-baseline| disposition share
+	MetricFailureRate       Metric = "failure_rate"       // failed / (completed+failed)
+	MetricReferRate         Metric = "refer_rate"         // refer / dispositioned
+	MetricAutomationRate    Metric = "automation_rate"    // (approve+decline) / dispositioned
+	MetricApproveRate       Metric = "approve_rate"       // approve / dispositioned
+	MetricDeclineRate       Metric = "decline_rate"       // decline / dispositioned
+	MetricAvgLatencyMS      Metric = "avg_latency_ms"     // mean completed-decision duration
+	MetricVolume            Metric = "volume"             // total decisions started
+	MetricDistributionDrift Metric = "distribution_drift" // max |current-baseline| disposition share
 )
 
+// Valid reports whether m is a known metric.
+func (m Metric) Valid() bool {
+	switch m {
+	case MetricFailureRate, MetricReferRate, MetricAutomationRate, MetricApproveRate,
+		MetricDeclineRate, MetricAvgLatencyMS, MetricVolume, MetricDistributionDrift:
+		return true
+	}
+	return false
+}
+
 // Op is the comparison that puts a monitor into the firing state.
+type Op string
+
+// Known comparisons.
 const (
-	OpGreaterThan = "gt" // fire when actual > threshold (e.g. failure_rate gt 0.05)
-	OpLessThan    = "lt" // fire when actual < threshold (e.g. automation_rate lt 0.5)
+	OpGreaterThan Op = "gt" // fire when actual > threshold (e.g. failure_rate gt 0.05)
+	OpLessThan    Op = "lt" // fire when actual < threshold (e.g. automation_rate lt 0.5)
 )
+
+// Valid reports whether o is a known comparison.
+func (o Op) Valid() bool { return o == OpGreaterThan || o == OpLessThan }
 
 // Rule is a threshold over a derived metric.
 type Rule struct {
-	Metric    string  `json:"metric"`
-	Op        string  `json:"op"`
+	Metric    Metric  `json:"metric"`
+	Op        Op      `json:"op"`
 	Threshold float64 `json:"threshold"`
 }
 
@@ -62,18 +84,12 @@ type Snapshot struct {
 	Baseline *Baseline // nil when none captured for the flow
 }
 
-// ValidMetric reports whether m is a known metric.
-func ValidMetric(m string) bool {
-	switch m {
-	case MetricFailureRate, MetricReferRate, MetricAutomationRate, MetricApproveRate,
-		MetricDeclineRate, MetricAvgLatencyMS, MetricVolume, MetricDistributionDrift:
-		return true
-	}
-	return false
-}
+// ValidMetric reports whether a raw string names a known metric — the boundary
+// helper for request strings before they are typed onto a Rule.
+func ValidMetric(m string) bool { return Metric(m).Valid() }
 
-// ValidOp reports whether o is a known comparison.
-func ValidOp(o string) bool { return o == OpGreaterThan || o == OpLessThan }
+// ValidOp reports whether a raw string names a known comparison.
+func ValidOp(o string) bool { return Op(o).Valid() }
 
 // Evaluate computes the rule's metric from the snapshot and reports whether it
 // breaches the threshold.
@@ -85,7 +101,7 @@ func Evaluate(snap Snapshot, r Rule) Status {
 	return Status{Actual: actual, Computable: true, Firing: breached(actual, r.Op, r.Threshold)}
 }
 
-func breached(actual float64, op string, threshold float64) bool {
+func breached(actual float64, op Op, threshold float64) bool {
 	switch op {
 	case OpGreaterThan:
 		return actual > threshold
@@ -97,7 +113,7 @@ func breached(actual float64, op string, threshold float64) bool {
 
 // metricValue derives one metric from the snapshot, returning false when it has
 // no denominator yet (so the caller can show "no data" rather than a false 0).
-func metricValue(snap Snapshot, metric string) (float64, bool) {
+func metricValue(snap Snapshot, metric Metric) (float64, bool) {
 	m := snap.Metrics
 	dispositioned := m.ByDisposition["approve"] + m.ByDisposition["decline"] + m.ByDisposition["refer"]
 	resolved := m.Completed + m.Failed
