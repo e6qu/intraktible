@@ -15,11 +15,9 @@ import (
 // StreamPreApprovals is the event stream for pre-approval lifecycle.
 const StreamPreApprovals = "decision.preapprovals"
 
-// Pre-approval dispositions (what the entity is pre-decided to).
-const (
-	Approved = "approve"
-	Declined = "decline"
-)
+// A pre-approval's disposition uses the shared policy.Disposition vocabulary
+// (approve | decline — never refer); it is validated in the command and stored
+// as a string on the event payload (the wire boundary).
 
 // Lifecycle event types.
 const (

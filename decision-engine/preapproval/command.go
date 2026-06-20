@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/e6qu/intraktible/decision-engine/policy"
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/identity"
 )
@@ -54,11 +55,14 @@ func (h *Handler) Grant(ctx context.Context, id identity.Identity, cmd GrantCmd)
 	if cmd.EntityType == "" || cmd.EntityID == "" {
 		return "", eventlog.Envelope{}, fmt.Errorf("preapproval: entity_type and entity_id are required")
 	}
-	disp := cmd.Disposition
+	// A pre-approval pre-decides a policy disposition (the shared policy.Disposition
+	// vocabulary) — but only the terminal approve/decline, never refer (you cannot
+	// pre-refer to a human). Default to approve.
+	disp := policy.Disposition(cmd.Disposition)
 	if disp == "" {
-		disp = Approved
+		disp = policy.Approve
 	}
-	if disp != Approved && disp != Declined {
+	if disp != policy.Approve && disp != policy.Decline {
 		return "", eventlog.Envelope{}, fmt.Errorf("preapproval: invalid disposition %q (approve|decline)", disp)
 	}
 	if cmd.ValidDays <= 0 {
@@ -67,7 +71,7 @@ func (h *Handler) Grant(ctx context.Context, id identity.Identity, cmd GrantCmd)
 	id2 := h.newID()
 	e, err := h.append(ctx, id, TypeGranted, Granted{
 		PreApprovalID: id2, EntityType: cmd.EntityType, EntityID: cmd.EntityID,
-		Disposition: disp, Terms: cmd.Terms, PolicyID: cmd.PolicyID, PolicyVersion: cmd.PolicyVersion,
+		Disposition: string(disp), Terms: cmd.Terms, PolicyID: cmd.PolicyID, PolicyVersion: cmd.PolicyVersion,
 		FlowSlug: cmd.FlowSlug, ValidUntil: h.now().Add(time.Duration(cmd.ValidDays) * 24 * time.Hour),
 		Note: cmd.Note,
 	})
