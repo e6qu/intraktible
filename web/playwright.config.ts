@@ -14,8 +14,17 @@ export default defineConfig({
   testDir: './e2e',
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
-  retries: process.env.CI ? 2 : 0,
-  reporter: process.env.CI ? 'github' : 'list',
+  // Retry everywhere (not only CI): the pre-push hook is a CI-equivalent gate, and
+  // this is a parallel browser suite sharing one backend + an eventually-consistent
+  // projection, so an occasional timing blip (projection lag, hydration) is inherent
+  // and must not fail a push. A genuinely-broken test still fails all attempts.
+  retries: 2,
+  // `dot` keeps streamed stdout to ~one char per test. The pre-push hook captures
+  // hook output in a NON-BLOCKING pipe, and the verbose `list` reporter (per-test
+  // lines + failure traces) overflowed it — a BlockingIOError aborted the whole run
+  // and cascaded into spurious failures. The full report is written to disk (HTML)
+  // for debugging rather than streamed.
+  reporter: process.env.CI ? 'github' : [['dot'], ['html', { open: 'never' }]],
   use: {
     baseURL: 'http://localhost:5173',
     trace: 'on-first-retry'
@@ -23,10 +32,22 @@ export default defineConfig({
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
   webServer: [
     {
-      command: 'go run ./cmd/intraktible serve --addr=:8080 --data-dir=web/.pw-data --modules=all',
+      // Wipe the event log so every run starts from EMPTY state. The log persists
+      // across runs, and flows etc. accumulate; the engine list caps rendering at 100
+      // rows, so once the backlog exceeds that a freshly-created flow renders past the
+      // cap and "create a flow" assertions fail deterministically. A clean log keeps
+      // each run's read models bounded and deterministic.
+      //
+      // Run a BUILT BINARY, not `go run`: `go run` execs a child that survives the
+      // parent's teardown signal, orphaning a server on :8080 that the next run would
+      // silently reuse (stale/half-dead → mass toBeVisible failures across unrelated
+      // specs). The binary is killed cleanly, so reuseExistingServer:false below
+      // always gets a fresh, empty backend.
+      command:
+        'rm -rf web/.pw-data && go build -o bin/intraktible-e2e ./cmd/intraktible && ./bin/intraktible-e2e serve --addr=:8080 --data-dir=web/.pw-data --modules=all',
       cwd: '..',
       url: 'http://localhost:8080/healthz',
-      reuseExistingServer: !process.env.CI,
+      reuseExistingServer: false,
       // The backend logs a line per request at INFO on stdout. Piping that to the
       // test runner floods pre-commit's captured (non-blocking) stdout and aborts
       // the push with a BlockingIOError, so drop it; stderr still surfaces real errors.
@@ -43,6 +64,10 @@ export default defineConfig({
       command: 'vite build && vite preview --port 5173 --strictPort',
       url: 'http://localhost:5173',
       reuseExistingServer: !process.env.CI,
+      // `vite build` is verbose; like the backend above, keep it off the pre-push
+      // hook's non-blocking pipe (stderr still surfaces a real build failure).
+      stdout: 'ignore',
+      stderr: 'pipe',
       timeout: 180_000
     }
   ]
