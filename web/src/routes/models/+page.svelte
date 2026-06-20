@@ -62,11 +62,18 @@
   async function loadDrift(m: string) {
     drift = null;
     error = '';
+    // Switching the window/model fires concurrent requests; capture what THIS call is
+    // for and drop its result if either changed before it resolved (last-requested
+    // wins, not last-to-arrive).
+    const reqModel = m;
+    const reqWindow = driftWindow;
     try {
-      drift = await modelDrift(key, m, driftWindow);
+      const got = await modelDrift(key, m, driftWindow);
+      if (driftOpen !== reqModel || driftWindow !== reqWindow) return;
+      drift = got;
       thresholdInput = drift.threshold ? String(drift.threshold) : '';
     } catch (e) {
-      error = msg(e);
+      if (driftOpen === reqModel && driftWindow === reqWindow) error = msg(e);
     }
   }
   async function toggleDrift(m: string) {

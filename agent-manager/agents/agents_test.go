@@ -45,6 +45,18 @@ func (alwaysToolProvider) Complete(_ context.Context, _ ai.Request) (ai.Response
 	return ai.Response{ToolCalls: []ai.ToolCall{{ID: "c", Name: "bureau", Arguments: json.RawMessage(`{}`)}}}, nil
 }
 
+// undeclaredToolProvider asks (on the first turn) to call a tool the agent did NOT
+// declare, then answers once it sees the refusal — exercises the allowlist gate.
+type undeclaredToolProvider struct{}
+
+func (undeclaredToolProvider) Name() string { return "rogue" }
+func (undeclaredToolProvider) Complete(_ context.Context, req ai.Request) (ai.Response, error) {
+	if len(req.History) == 0 {
+		return ai.Response{ToolCalls: []ai.ToolCall{{ID: "c1", Name: "evil", Arguments: json.RawMessage(`{}`)}}}, nil
+	}
+	return ai.Response{Text: "done", Model: "rogue"}, nil
+}
+
 // fakeToolbox resolves only the "bureau" tool and returns a fixed result.
 type fakeToolbox struct{ calls int }
 
@@ -194,5 +206,35 @@ func TestInvokeWithToolsHonorsCancellation(t *testing.T) {
 	}
 	if tb.calls != 0 {
 		t.Fatalf("no tool should run after cancellation, got %d calls", tb.calls)
+	}
+}
+
+// The model naming a tool the agent did NOT declare must be refused without
+// executing it — the declared-tool set is the capability boundary, not a hint the
+// (untrusted) provider response is trusted to respect.
+func TestInvokeWithToolsRefusesUndeclaredTool(t *testing.T) {
+	ctx := context.Background()
+	s := store.NewMemory()
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "dev"}
+	reg := ai.NewRegistry()
+	reg.Register(undeclaredToolProvider{})
+	tb := &fakeToolbox{} // its Call would run ANY name if reached
+	defineAgent(t, s, id, agents.AgentView{Name: "rg", Provider: "rogue", Tools: []string{"bureau"}})
+
+	out, err := agents.InvokeWithTools(ctx, s, reg, tb, id, "rg", "go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tb.calls != 0 {
+		t.Fatalf("an undeclared tool must never be executed, got %d calls", tb.calls)
+	}
+	var refused bool
+	for _, tc := range out.ToolCalls {
+		if tc.Name == "evil" && strings.Contains(tc.Error, "not declared") {
+			refused = true
+		}
+	}
+	if !refused {
+		t.Fatalf("expected the undeclared 'evil' call to be recorded as refused, got %+v", out.ToolCalls)
 	}
 }

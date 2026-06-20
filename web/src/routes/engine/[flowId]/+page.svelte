@@ -806,11 +806,17 @@
   // recorded decision's node trace (retries while the history projection catches up).
   async function loadTelemetry(decisionId: string) {
     if (!decisionId) return;
+    // Capture the flow this telemetry belongs to: the retry loop spans ~1s, and
+    // sibling navigation would otherwise paint THIS flow's node outputs onto the new
+    // flow's canvas (stale async closure writing shared $state after navigation).
+    const requested = flowId;
     // The history projection lags the just-appended decision, so retry a few times
     // until its node trace is available (best-effort; the run result still shows).
     for (let attempt = 0; attempt < 5; attempt++) {
+      if (flowId !== requested) return; // navigated away — abandon
       try {
         const d = await getDecision(key, decisionId);
+        if (flowId !== requested) return;
         const nodes = d.nodes ?? [];
         if (nodes.length > 0) {
           const t = new Map<string, string>();

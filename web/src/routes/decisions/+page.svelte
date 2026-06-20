@@ -50,7 +50,10 @@
     void load();
   }
   function go(delta: number) {
-    offset = Math.max(0, offset + delta * PAGE);
+    if (loading) return; // a double-click while a page is in flight would overshoot
+    const next = offset + delta * PAGE;
+    if (next < 0 || next >= total) return; // out of range (no empty page past the end)
+    offset = next;
     void load();
   }
   function absTime(iso: string): string {

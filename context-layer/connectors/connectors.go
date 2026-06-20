@@ -655,10 +655,35 @@ func resolveSQLiteDSN(dsn string) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("context-layer: sql connector dir: %w", err)
 		}
-		rel, err := filepath.Rel(rootAbs, abs)
-		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			return "", fmt.Errorf("context-layer: sql connector database %q is outside the allowed directory %q", abs, rootAbs)
+		// Resolve symlinks before the containment check: the lexical path can sit under
+		// the allowed dir while a symlink (the final component OR a parent) points
+		// outside it, which sql.Open would then follow to an arbitrary file (another
+		// tenant's DB, a secrets file). Resolving first closes that escape. A read-only
+		// connector's file must exist, so a missing path failing here is correct.
+		rootReal, err := filepath.EvalSymlinks(rootAbs)
+		if err != nil {
+			return "", fmt.Errorf("context-layer: sql connector dir: %w", err)
 		}
+		absReal, err := filepath.EvalSymlinks(abs)
+		if err != nil {
+			if !os.IsNotExist(err) {
+				return "", fmt.Errorf("context-layer: sql connector database %q: %w", abs, err)
+			}
+			// The file may not exist yet (DSN resolution is separate from open). A
+			// non-existent final component can't be a symlink, so resolving the parent
+			// dir — which must exist — and rejoining the base closes the parent-symlink
+			// escape without requiring the DB file to pre-exist.
+			dirReal, derr := filepath.EvalSymlinks(filepath.Dir(abs))
+			if derr != nil {
+				return "", fmt.Errorf("context-layer: sql connector dir: %w", derr)
+			}
+			absReal = filepath.Join(dirReal, filepath.Base(abs))
+		}
+		rel, err := filepath.Rel(rootReal, absReal)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return "", fmt.Errorf("context-layer: sql connector database %q is outside the allowed directory %q", absReal, rootReal)
+		}
+		abs = absReal // open the resolved real path
 	}
 	// Force read-only, dropping any caller-supplied (possibly writable) mode.
 	params.Set("mode", "ro")

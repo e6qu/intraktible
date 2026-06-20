@@ -322,7 +322,7 @@ func (h *DecideHandler) Decide(ctx context.Context, id identity.Identity, slug, 
 		return DecideResult{}, err
 	}
 	// A manual_review node that ran escalates to a case (consumed by the Case Manager).
-	if err := h.emitEscalations(ctx, id, decisionID, dataJSON, run); err != nil {
+	if err := h.emitEscalations(ctx, id, decisionID, ref, dataJSON, run); err != nil {
 		return DecideResult{}, err
 	}
 	// A shadow version, if configured for this environment, is evaluated over the
@@ -513,27 +513,53 @@ func (h *DecideHandler) injectPredictions(ctx context.Context, id identity.Ident
 	return out, nil
 }
 
-func (h *DecideHandler) emitEscalations(ctx context.Context, id identity.Identity, decisionID string, dataJSON json.RawMessage, run domain.Run) error {
+func (h *DecideHandler) emitEscalations(ctx context.Context, id identity.Identity, decisionID string, ref EntityRef, dataJSON json.RawMessage, run domain.Run) error {
 	for _, res := range run.Results {
 		if res.Type != events.NodeManualReview {
 			continue
 		}
-		var out struct {
-			CompanyName string `json:"company_name"`
-			CaseType    string `json:"case_type"`
-			SLADays     int    `json:"sla_days"`
+		// Seal the node output before extracting the case labels: company_name /
+		// case_type are input-derived, so if a tenant configures them as PII they must
+		// be crypto-shred-erasable like every other recorded surface. Reading them from
+		// the SEALED output (vs the raw run output) keeps the escalation event
+		// consistent with NodeEvaluated — a sealed field becomes a placeholder, never
+		// surviving in cleartext.
+		sealedOut, err := h.sealPII(ctx, id, ref, res.Output)
+		if err != nil {
+			return err
 		}
-		if err := json.Unmarshal(res.Output, &out); err != nil {
+		var out struct {
+			CompanyName json.RawMessage `json:"company_name"`
+			CaseType    json.RawMessage `json:"case_type"`
+			SLADays     int             `json:"sla_days"`
+		}
+		if err := json.Unmarshal(sealedOut, &out); err != nil {
 			return fmt.Errorf("decision-engine: decode manual_review output: %w", err)
 		}
 		if err := h.emit(ctx, id, events.TypeManualReviewRequested, events.ManualReviewRequested{
 			CaseID: h.newID(), DecisionID: decisionID, NodeID: res.NodeID,
-			CompanyName: out.CompanyName, CaseType: out.CaseType, SLADays: out.SLADays, Context: dataJSON,
+			CompanyName: labelFromSealed(out.CompanyName), CaseType: labelFromSealed(out.CaseType),
+			SLADays: out.SLADays, Context: dataJSON,
 		}); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// labelFromSealed extracts a manual_review case label from the SEALED node output: a
+// plain JSON string passes through, but a value sealed into a PII envelope (an
+// object) becomes a "[sealed]" placeholder, so cleartext PII never lands in the
+// escalation event (and the label stays a display string for the Case Manager).
+func labelFromSealed(raw json.RawMessage) string {
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s
+	}
+	if len(raw) == 0 || string(raw) == "null" {
+		return ""
+	}
+	return "[sealed]"
 }
 
 // honorPreApproval serves a decision instantly from a valid pre-approval for the

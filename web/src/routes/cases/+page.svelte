@@ -75,7 +75,11 @@
       const first = results.find((r) => r.status === 'rejected') as
         | PromiseRejectedResult
         | undefined;
-      error = `${verb} ${ok} of ${ids.length} case(s); ${failed} failed${first ? `: ${msg(first.reason)}` : ''}`;
+      // Toast, not the `error` string: load() below resets `error`, which would
+      // silently swallow the partial-failure report before it ever rendered.
+      toast.error(
+        `${verb} ${ok} of ${ids.length} case(s); ${failed} failed${first ? `: ${msg(first.reason)}` : ''}`
+      );
     }
     await load();
   }
