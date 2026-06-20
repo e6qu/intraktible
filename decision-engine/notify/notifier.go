@@ -31,13 +31,41 @@ func NewNotifier(log eventlog.Log, st store.Store, client *http.Client) *Notifie
 	return &Notifier{log: log, store: st, client: client, now: func() time.Time { return time.Now().UTC() }}
 }
 
-// DeliveryResult is one webhook's delivery outcome.
+// Outcome classifies a single webhook delivery attempt. The distinction drives the
+// schedulers' dedup decision: a Retryable failure must NOT record the firing-edge
+// alert (so the next tick re-tries), whereas a Permanent failure is recorded like a
+// success so a dead endpoint (a 4xx that will never accept) cannot make the monitor
+// re-deliver forever and never dedup.
+type Outcome string
+
+const (
+	OutcomeAccepted  Outcome = "accepted"  // 2xx — delivered
+	OutcomeRetryable Outcome = "retryable" // transport error, 408, 429, or 5xx — try again
+	OutcomePermanent Outcome = "permanent" // other 4xx — the endpoint will never accept this
+)
+
+// classifyStatus maps an HTTP status to a delivery Outcome. Transport-level errors
+// (no status) are classified by the caller as Retryable.
+func classifyStatus(status int) Outcome {
+	switch {
+	case status >= 200 && status < 300:
+		return OutcomeAccepted
+	case status == http.StatusRequestTimeout || status == http.StatusTooManyRequests || status >= 500:
+		return OutcomeRetryable
+	default:
+		return OutcomePermanent // 4xx other than 408/429 — a client error that will recur
+	}
+}
+
+// DeliveryResult is one webhook's delivery outcome. OK is retained (== Accepted) for
+// the existing check-endpoint JSON and is set in lockstep with Outcome.
 type DeliveryResult struct {
-	WebhookID string `json:"webhook_id"`
-	URL       string `json:"url"`
-	OK        bool   `json:"ok"`
-	Status    int    `json:"status,omitempty"`
-	Error     string `json:"error,omitempty"`
+	WebhookID string  `json:"webhook_id"`
+	URL       string  `json:"url"`
+	Outcome   Outcome `json:"outcome"`
+	OK        bool    `json:"ok"`
+	Status    int     `json:"status,omitempty"`
+	Error     string  `json:"error,omitempty"`
 }
 
 // Deliver POSTs payload as JSON to every active webhook, recording each outcome.
@@ -45,11 +73,14 @@ type DeliveryResult struct {
 // recorded (with its error) for the audit trail; a failure to record the effect —
 // which would break replay — aborts the call.
 //
-// It returns an error when there are active webhooks but NONE accepted the payload
-// (every one failed/5xx). The schedulers rely on this: a total delivery failure
-// must not let them record the firing-edge alert (which would dedup the alert into
-// silence) — returning an error keeps the transition unrecorded so the next tick
-// re-delivers. A partial success (≥1 webhook accepted) counts as delivered; zero
+// It returns an error ONLY when delivery is worth retrying: there are active
+// webhooks, none accepted the payload, and at least one failure was Retryable
+// (transport/408/429/5xx). The schedulers rely on this — a retryable total failure
+// keeps the firing-edge alert unrecorded so the next tick re-delivers. When every
+// failure is Permanent (a 4xx the endpoint will never accept), it returns nil so the
+// alert edge IS recorded: retrying a dead endpoint forever would never deliver and
+// would suppress the alert into a permanent re-fire loop. Each attempt is recorded
+// for the audit trail regardless. A partial success (≥1 accepted) is success; zero
 // configured webhooks is a vacuous success.
 func (n *Notifier) Deliver(ctx context.Context, id identity.Identity, reason string, payload any) ([]DeliveryResult, error) {
 	hooks, err := active(ctx, n.store, id)
@@ -61,19 +92,22 @@ func (n *Notifier) Deliver(ctx context.Context, id identity.Identity, reason str
 		return nil, fmt.Errorf("notify: marshal payload: %w", err)
 	}
 	results := make([]DeliveryResult, 0, len(hooks))
-	delivered := 0
+	accepted, retryable := 0, 0
 	for _, h := range hooks {
 		res := n.post(ctx, h, body)
 		if err := n.record(ctx, id, h, res, reason); err != nil {
 			return nil, err
 		}
-		if res.OK {
-			delivered++
+		switch res.Outcome {
+		case OutcomeAccepted:
+			accepted++
+		case OutcomeRetryable:
+			retryable++
 		}
 		results = append(results, res)
 	}
-	if len(hooks) > 0 && delivered == 0 {
-		return results, fmt.Errorf("notify: delivery failed to all %d active webhook(s)", len(hooks))
+	if len(hooks) > 0 && accepted == 0 && retryable > 0 {
+		return results, fmt.Errorf("notify: delivery failed to all %d active webhook(s), retryable", len(hooks))
 	}
 	return results, nil
 }
@@ -82,19 +116,22 @@ func (n *Notifier) post(ctx context.Context, h View, body []byte) DeliveryResult
 	res := DeliveryResult{WebhookID: h.WebhookID, URL: h.URL}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, h.URL, bytes.NewReader(body)) // #nosec G107
 	if err != nil {
-		res.Error = err.Error()
+		// A malformed request URL will recur every attempt — permanent.
+		res.Outcome, res.Error = OutcomePermanent, err.Error()
 		return res
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := n.client.Do(req)
 	if err != nil {
-		res.Error = err.Error()
+		// Transport failures (DNS, connection refused, timeout) are transient.
+		res.Outcome, res.Error = OutcomeRetryable, err.Error()
 		return res
 	}
 	defer func() { _ = resp.Body.Close() }()
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<16))
 	res.Status = resp.StatusCode
-	res.OK = resp.StatusCode >= 200 && resp.StatusCode < 300
+	res.Outcome = classifyStatus(resp.StatusCode)
+	res.OK = res.Outcome == OutcomeAccepted
 	if !res.OK {
 		res.Error = fmt.Sprintf("non-2xx response: %d", resp.StatusCode)
 	}

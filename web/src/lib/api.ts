@@ -979,7 +979,7 @@ export async function deployVersion(
     body: JSON.stringify(body)
   });
   if (!res.ok) {
-    await errorOrStatus(res, 'POST deployment');
+    return errorOrStatus(res, 'POST deployment');
   }
 }
 
@@ -1069,7 +1069,7 @@ export async function setShadow(
     body: JSON.stringify({ environment, version })
   });
   if (!res.ok) {
-    await errorOrStatus(res, 'PUT shadow');
+    return errorOrStatus(res, 'PUT shadow');
   }
 }
 
@@ -1106,7 +1106,7 @@ export async function approveDeployment(
     body: JSON.stringify({ reason })
   });
   if (!res.ok) {
-    await errorOrStatus(res, 'approve deployment');
+    return errorOrStatus(res, 'approve deployment');
   }
 }
 
@@ -1124,7 +1124,7 @@ export async function rejectDeployment(
     body: JSON.stringify({ reason })
   });
   if (!res.ok) {
-    await errorOrStatus(res, 'reject deployment');
+    return errorOrStatus(res, 'reject deployment');
   }
 }
 
@@ -1671,7 +1671,7 @@ export async function defineConnector(
     body: JSON.stringify(body)
   });
   if (!res.ok) {
-    await errorOrStatus(res, 'POST /v1/context/connectors');
+    return errorOrStatus(res, 'POST /v1/context/connectors');
   }
 }
 
@@ -1701,7 +1701,7 @@ export async function defineModel(
     body: JSON.stringify(body)
   });
   if (!res.ok) {
-    await errorOrStatus(res, 'POST /v1/models');
+    return errorOrStatus(res, 'POST /v1/models');
   }
 }
 
@@ -1797,7 +1797,7 @@ export async function setModelMonitor(
     body: JSON.stringify({ threshold })
   });
   if (!res.ok) {
-    await errorOrStatus(res, 'POST model monitor');
+    return errorOrStatus(res, 'POST model monitor');
   }
 }
 
@@ -1811,7 +1811,7 @@ export async function captureModelBaseline(
     headers: jsonHeaders(key)
   });
   if (!res.ok) {
-    await errorOrStatus(res, 'POST model baseline');
+    return errorOrStatus(res, 'POST model baseline');
   }
 }
 
@@ -1841,7 +1841,7 @@ export async function defineFeature(
     body: JSON.stringify(body)
   });
   if (!res.ok) {
-    await errorOrStatus(res, 'POST /v1/context/features');
+    return errorOrStatus(res, 'POST /v1/context/features');
   }
 }
 
@@ -1984,7 +1984,7 @@ async function caseAction(
     body: JSON.stringify(body)
   });
   if (!res.ok) {
-    await errorOrStatus(res, `POST /v1/cases/${caseID}/${action}`);
+    return errorOrStatus(res, `POST /v1/cases/${caseID}/${action}`);
   }
 }
 
@@ -2091,7 +2091,7 @@ export async function defineAgent(
     body: JSON.stringify(body)
   });
   if (!res.ok) {
-    await errorOrStatus(res, 'POST /v1/agents');
+    return errorOrStatus(res, 'POST /v1/agents');
   }
 }
 
@@ -2176,7 +2176,7 @@ export async function login(apiKey: string, fetcher: typeof fetch = fetch): Prom
 export async function logout(fetcher: typeof fetch = fetch): Promise<void> {
   const res = await fetcher('/v1/logout', { method: 'POST' });
   if (!res.ok && res.status !== 204) {
-    await errorOrStatus(res, 'POST /v1/logout');
+    return errorOrStatus(res, 'POST /v1/logout');
   }
 }
 

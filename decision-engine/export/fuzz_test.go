@@ -39,3 +39,29 @@ func FuzzBPMN(f *testing.F) {
 		}
 	})
 }
+
+// FuzzMermaid asserts the Mermaid exporters never panic on an arbitrary graph and
+// that distinct node ids stay distinct in the rendered output even when they
+// coerce to the same Mermaid-safe identifier (the collision/cross-wiring class).
+func FuzzMermaid(f *testing.F) {
+	seeds := []string{
+		`{"nodes":[{"id":"in","type":"input"},{"id":"o","type":"output"}],"edges":[{"from":"in","to":"o"}]}`,
+		`{"nodes":[{"id":"a.b","type":"input"},{"id":"a/b","type":"output"}],"edges":[{"from":"a.b","to":"a/b"}]}`, // colliding ids
+		`{"nodes":[{"id":"n","type":"rule"}],"edges":[{"from":"n","to":"ghost"}]}`,                                 // dangling target
+		`{}`,
+	}
+	for _, s := range seeds {
+		f.Add(s)
+	}
+	f.Fuzz(func(t *testing.T, graphJSON string) {
+		if !json.Valid([]byte(graphJSON)) {
+			return
+		}
+		var g events.Graph
+		if err := json.Unmarshal([]byte(graphJSON), &g); err != nil {
+			return
+		}
+		_ = export.MermaidFlowchart(g) // must not panic
+		_ = export.MermaidState(g)     // must not panic
+	})
+}

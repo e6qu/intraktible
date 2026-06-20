@@ -90,9 +90,9 @@ func applyCompleted(ctx context.Context, e eventlog.Envelope, s store.Store) err
 	return update(ctx, s, e, p.FlowID, func(m *FlowMetrics) {
 		m.Completed++
 		m.TotalDurationMS += p.DurationMS
-		if m.Completed > 0 {
-			m.AvgDurationMS = m.TotalDurationMS / int64(m.Completed)
-		}
+		// Round to nearest ms (Completed is ≥1 here); plain integer division
+		// truncates and biases the reported average systematically low.
+		m.AvgDurationMS = (m.TotalDurationMS + int64(m.Completed)/2) / int64(m.Completed)
 		bump(m, p.Variant, func(v *VariantStats) { v.Completed++ })
 		if p.Disposition != "" {
 			m.ByDisposition[p.Disposition]++

@@ -19,8 +19,10 @@ store always full-rebuilds from the log.
 ## Security toggles (set before exposing the API)
 
 - **API keys** — issue scoped, role-bound keys via `POST /v1/api-keys`. Scope (`sandbox`/
-  `production`/`*`) is **enforced** on the decide endpoints. Do **not** ship the dev seed
-  key (`--dev-api-key`, disable with `--dev-api-key=""`).
+  `production`/`*`) is **enforced** on the decide endpoints, and is preserved across the
+  API-key→session login exchange (a session cannot widen a scoped key). The dev seed key
+  (`--dev-api-key`) is seeded **only with the in-memory store**, so a durable (production)
+  deployment never boots with it regardless of the flag; issue managed keys instead.
 - **Connector egress** — SSRF-guarded at dial time by default; `INTRAKTIBLE_CONNECTOR_ALLOW_PRIVATE`
   opens private/loopback targets (logged loudly) — leave **off** unless connectors must reach
   internal hosts.

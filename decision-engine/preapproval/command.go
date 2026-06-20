@@ -68,6 +68,11 @@ func (h *Handler) Grant(ctx context.Context, id identity.Identity, cmd GrantCmd)
 	if cmd.ValidDays <= 0 {
 		return "", eventlog.Envelope{}, fmt.Errorf("preapproval: valid_days must be positive")
 	}
+	// Cap the horizon so the duration multiply below cannot overflow int64 ns into a
+	// negative/garbage ValidUntil (10 years is well beyond any real pre-approval).
+	if cmd.ValidDays > 3650 {
+		return "", eventlog.Envelope{}, fmt.Errorf("preapproval: valid_days too large (max 3650)")
+	}
 	id2 := h.newID()
 	e, err := h.append(ctx, id, TypeGranted, Granted{
 		PreApprovalID: id2, EntityType: cmd.EntityType, EntityID: cmd.EntityID,

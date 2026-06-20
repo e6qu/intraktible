@@ -263,6 +263,14 @@ func InvokeWithTools(ctx context.Context, s store.Store, reg *ai.Registry, tb To
 	out := Outcome{Model: def.Model, Status: domain.RunCompleted}
 	var history []ai.Message
 	for step := 0; ; step++ {
+		// Honor cancellation between steps: the loop fans out to a provider call and
+		// arbitrary tool/connector calls each round, so a cancelled/expired context
+		// (e.g. the client disconnected) must stop the work rather than run up to
+		// maxToolSteps more billable rounds against a dead request.
+		if err := ctx.Err(); err != nil {
+			out.Status, out.Error = domain.RunFailed, err.Error()
+			break
+		}
 		if step >= maxToolSteps {
 			out.Status, out.Error = domain.RunFailed, fmt.Sprintf("agent-manager: tool-calling exceeded %d steps", maxToolSteps)
 			break
@@ -282,6 +290,14 @@ func InvokeWithTools(ctx context.Context, s store.Store, reg *ai.Registry, tb To
 				out.Status, out.Error, out.Text, out.Structured = domain.RunFailed, verr.Error(), "", nil
 			}
 		case len(tools) == 0:
+			// The model asked to call a tool the agent doesn't have. Record what it
+			// tried before failing, so the run trace is a faithful record of the
+			// provider interaction (not a silent failure).
+			for _, c := range resp.ToolCalls {
+				out.ToolCalls = append(out.ToolCalls, events.ToolCall{
+					Name: c.Name, Arguments: c.Arguments, Error: "agent declares no tools",
+				})
+			}
 			out.Status, out.Error = domain.RunFailed, "agent-manager: model requested a tool but the agent declares none"
 		default:
 			// The model wants tools: execute them, feed the results back, and loop.

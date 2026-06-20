@@ -16,17 +16,18 @@ import (
 // MermaidFlowchart renders the graph as a Mermaid `flowchart TD`, mapping each
 // node type to a distinct shape and labelling conditional (branch) edges.
 func MermaidFlowchart(g events.Graph) string {
+	ids := assignIDs(g.Nodes, g.Edges, mermaidID)
 	var b strings.Builder
 	b.WriteString("flowchart TD\n")
 	for _, n := range g.Nodes {
 		open, closeTok := flowchartShape(n.Type)
-		fmt.Fprintf(&b, "  %s%s%s%s\n", mermaidID(n.ID), open, mermaidLabel(nodeLabel(n)), closeTok)
+		fmt.Fprintf(&b, "  %s%s%s%s\n", ids[n.ID], open, mermaidLabel(nodeLabel(n)), closeTok)
 	}
-	for _, e := range g.Edges {
+	for _, e := range soundEdges(g) {
 		if e.Branch != "" {
-			fmt.Fprintf(&b, "  %s -->|%s| %s\n", mermaidID(e.From), mermaidInline(e.Branch), mermaidID(e.To))
+			fmt.Fprintf(&b, "  %s -->|%s| %s\n", ids[e.From], mermaidInline(e.Branch), ids[e.To])
 		} else {
-			fmt.Fprintf(&b, "  %s --> %s\n", mermaidID(e.From), mermaidID(e.To))
+			fmt.Fprintf(&b, "  %s --> %s\n", ids[e.From], ids[e.To])
 		}
 	}
 	return b.String()
@@ -36,26 +37,27 @@ func MermaidFlowchart(g events.Graph) string {
 // state (input from the start pseudo-state, output to the end pseudo-state) and
 // each edge a transition, with branch labels.
 func MermaidState(g events.Graph) string {
+	ids := assignIDs(g.Nodes, g.Edges, mermaidID)
 	var b strings.Builder
 	b.WriteString("stateDiagram-v2\n")
 	for _, n := range g.Nodes {
-		fmt.Fprintf(&b, "  state %s as %s\n", mermaidLabel(nodeLabel(n)), mermaidID(n.ID))
+		fmt.Fprintf(&b, "  state %s as %s\n", mermaidLabel(nodeLabel(n)), ids[n.ID])
 	}
 	for _, n := range g.Nodes {
 		if n.Type == events.NodeInput {
-			fmt.Fprintf(&b, "  [*] --> %s\n", mermaidID(n.ID))
+			fmt.Fprintf(&b, "  [*] --> %s\n", ids[n.ID])
 		}
 	}
-	for _, e := range g.Edges {
+	for _, e := range soundEdges(g) {
 		if e.Branch != "" {
-			fmt.Fprintf(&b, "  %s --> %s : %s\n", mermaidID(e.From), mermaidID(e.To), mermaidInline(e.Branch))
+			fmt.Fprintf(&b, "  %s --> %s : %s\n", ids[e.From], ids[e.To], mermaidInline(e.Branch))
 		} else {
-			fmt.Fprintf(&b, "  %s --> %s\n", mermaidID(e.From), mermaidID(e.To))
+			fmt.Fprintf(&b, "  %s --> %s\n", ids[e.From], ids[e.To])
 		}
 	}
 	for _, n := range g.Nodes {
 		if n.Type == events.NodeOutput {
-			fmt.Fprintf(&b, "  %s --> [*]\n", mermaidID(n.ID))
+			fmt.Fprintf(&b, "  %s --> [*]\n", ids[n.ID])
 		}
 	}
 	return b.String()

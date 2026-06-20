@@ -55,6 +55,24 @@ func ValidScope(s Scope) bool {
 	return s == Sandbox || s == Production || s == ScopeAll || strings.HasSuffix(string(s), "/*")
 }
 
+// Covers reports whether this scope is a ceiling for other: every environment other
+// permits, s permits too. It gates credential minting/rotation so a caller cannot
+// create or re-secret a key broader than their own scope (a sandbox-scoped admin
+// must not mint a production key). "*" covers everything; a "foo/*" prefix pattern
+// covers concrete envs and sub-patterns beneath it; otherwise the scopes must match.
+func (s Scope) Covers(other Scope) bool {
+	switch {
+	case s == ScopeAll:
+		return true
+	case s == other:
+		return true
+	case strings.HasSuffix(string(s), "/*"):
+		return strings.HasPrefix(string(other), strings.TrimSuffix(string(s), "*"))
+	default:
+		return false
+	}
+}
+
 // Role is the authorization level of an authenticated principal. Roles are
 // ordered — each includes the capabilities of the ones below it:
 // viewer < operator < editor < approver < admin.
@@ -156,6 +174,7 @@ type Sessions struct {
 type session struct {
 	id      identity.Identity
 	role    Role
+	scope   Scope
 	expires time.Time
 }
 
@@ -171,25 +190,28 @@ func NewSessions() *Sessions {
 // TTL returns the session lifetime (used to align the cookie's max-age).
 func (s *Sessions) TTL() time.Duration { return s.ttl }
 
-// Issue creates a session token for id with role, valid for the TTL. The
-// in-memory store never fails; the error is part of the SessionStore contract.
-func (s *Sessions) Issue(id identity.Identity, role Role) (string, error) {
+// Issue creates a session token for id with role and scope, valid for the TTL. The
+// scope is carried so a session minted from a scoped API key cannot silently widen
+// to every environment (see SessionStore). The in-memory store never fails; the
+// error is part of the SessionStore contract.
+func (s *Sessions) Issue(id identity.Identity, role Role, scope Scope) (string, error) {
 	tok := newToken()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.sessions[tok] = session{id: id, role: role, expires: s.now().Add(s.ttl)}
+	s.sessions[tok] = session{id: id, role: role, scope: scope, expires: s.now().Add(s.ttl)}
 	return tok, nil
 }
 
-// Resolve returns the identity + role for a token, treating an expired one as absent.
-func (s *Sessions) Resolve(tok string) (identity.Identity, Role, bool) {
+// Resolve returns the identity + role + scope for a token, treating an expired one
+// as absent.
+func (s *Sessions) Resolve(tok string) (identity.Identity, Role, Scope, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	sess, ok := s.sessions[tok]
 	if !ok || s.now().After(sess.expires) {
-		return identity.Identity{}, "", false
+		return identity.Identity{}, "", "", false
 	}
-	return sess.id, sess.role, true
+	return sess.id, sess.role, sess.scope, true
 }
 
 // Revoke invalidates a session token (logout); unknown tokens are a no-op.

@@ -31,7 +31,9 @@ func LoginHandler(keyring *auth.Keyring, sessions auth.SessionStore) http.Handle
 			Error(w, http.StatusUnauthorized, errors.New("invalid api key"))
 			return
 		}
-		tok, err := sessions.Issue(key.Identity, key.Role)
+		// Carry the key's scope into the session so the exchange cannot widen a
+		// sandbox-scoped key to every environment (the env gate reads this scope).
+		tok, err := sessions.Issue(key.Identity, key.Role, key.Scope)
 		if err != nil {
 			Error(w, http.StatusInternalServerError, err)
 			return

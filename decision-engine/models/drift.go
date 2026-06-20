@@ -187,7 +187,9 @@ func applyPredictNode(ctx context.Context, e eventlog.Envelope, s store.Store) e
 	_ = json.Unmarshal(p.Output, &out)
 	for _, pred := range out {
 		model, _ := pred["model"].(string)
-		prob, hasProb := pred["probability"].(float64)
+		// Read via toFloat (handles json.Number) rather than a bare float64 assertion,
+		// so a probability decoded under UseNumber is not silently dropped.
+		prob, hasProb := toFloat(pred["probability"])
 		// Skip a non-finite probability (a misbehaving external model can return
 		// NaN/±Inf) — it isn't a meaningful decile and must not pollute the histogram.
 		if model == "" || !hasProb || math.IsNaN(prob) || math.IsInf(prob, 0) {

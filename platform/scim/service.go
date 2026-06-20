@@ -53,8 +53,33 @@ func (svc *Service) auth(h http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// maxSCIMBody caps any SCIM request body. IdP payloads are small; these endpoints
+// sit outside the authenticated chain's body limit (behind only the static bearer
+// token), so each handler must bound its own read to stop a hostile/huge body from
+// exhausting memory. Routed through readSCIMBody/decodeSCIM so no handler can forget.
+const maxSCIMBody = 1 << 20
+
+func readSCIMBody(r *http.Request) ([]byte, error) {
+	return io.ReadAll(io.LimitReader(r.Body, maxSCIMBody))
+}
+
+// decodeSCIM bounds and JSON-decodes a SCIM request body into v, writing a 400 and
+// returning false on a read/parse error.
+func decodeSCIM(w http.ResponseWriter, r *http.Request, v any) bool {
+	body, err := readSCIMBody(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "could not read SCIM request body")
+		return false
+	}
+	if err := json.Unmarshal(body, v); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid SCIM request body")
+		return false
+	}
+	return true
+}
+
 func (svc *Service) create(w http.ResponseWriter, r *http.Request) {
-	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	body, err := readSCIMBody(r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "could not read SCIM user body")
 		return
@@ -126,8 +151,7 @@ func (svc *Service) patch(w http.ResponseWriter, r *http.Request) {
 			Value json.RawMessage `json:"value"`
 		} `json:"Operations"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid SCIM patch body")
+	if !decodeSCIM(w, r, &req) {
 		return
 	}
 	active, found := false, false
@@ -170,8 +194,7 @@ func (svc *Service) remove(w http.ResponseWriter, r *http.Request) {
 
 func (svc *Service) createGroup(w http.ResponseWriter, r *http.Request) {
 	var g Group
-	if err := json.NewDecoder(r.Body).Decode(&g); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid SCIM group body")
+	if !decodeSCIM(w, r, &g) {
 		return
 	}
 	g.Org, g.Workspace, g.ID = svc.org, svc.workspace, ""
@@ -213,8 +236,7 @@ func (svc *Service) getGroup(w http.ResponseWriter, r *http.Request) {
 // shape Okta uses to sync a group.
 func (svc *Service) replaceGroup(w http.ResponseWriter, r *http.Request) {
 	var g Group
-	if err := json.NewDecoder(r.Body).Decode(&g); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid SCIM group body")
+	if !decodeSCIM(w, r, &g) {
 		return
 	}
 	out, err := svc.store.SetMembers(r.Context(), svc.org, svc.workspace, r.PathValue("id"), memberIDs(g.Members), MembersReplace)
@@ -234,8 +256,7 @@ func (svc *Service) patchGroup(w http.ResponseWriter, r *http.Request) {
 			Value json.RawMessage `json:"value"`
 		} `json:"Operations"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid SCIM patch body")
+	if !decodeSCIM(w, r, &req) {
 		return
 	}
 	id := r.PathValue("id")

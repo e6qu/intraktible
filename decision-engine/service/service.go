@@ -908,12 +908,15 @@ func (s *Service) flowOpenAPI(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(doc)
 }
 
-// allowEnv enforces the caller's API-key scope against the path environment. It
-// writes a 403 and returns false when a scoped key may not call this environment;
-// session callers (no key scope) and unrestricted keys pass through.
+// allowEnv enforces the caller's scope against the path environment. Every
+// authenticated caller carries a scope — API keys from the key, sessions inherited
+// from the key they were minted from (SSO sessions are unrestricted). It fails
+// closed: a missing or non-permitting scope is a 403, so a session can no longer
+// escape a scoped key's environment restriction.
 func allowEnv(w http.ResponseWriter, r *http.Request, env string) bool {
-	if scope, ok := httpx.Scope(r.Context()); ok && !scope.Allows(env) {
-		httpx.Error(w, http.StatusForbidden, fmt.Errorf("api key scope %q does not permit environment %q", scope, env))
+	scope, ok := httpx.Scope(r.Context())
+	if !ok || !scope.Allows(env) {
+		httpx.Error(w, http.StatusForbidden, fmt.Errorf("scope %q does not permit environment %q", scope, env))
 		return false
 	}
 	return true
@@ -1034,6 +1037,14 @@ func (s *Service) decideBatch(w http.ResponseWriter, r *http.Request) {
 		ref := command.EntityRef{Type: req.EntityType, ID: entityID}
 		res, err := s.decide.Decide(r.Context(), id, slug, env, input, ref)
 		if err != nil {
+			// A client-level error (bad input / missing flow) rejects only this row.
+			// An infrastructure failure (store/replay) is not the row's fault: abort
+			// the batch with 500 (retryable) instead of silently recording it — and
+			// every remaining row — as a permanent rejection under an overall 200.
+			if decideStatus(err) == http.StatusInternalServerError {
+				httpx.Error(w, http.StatusInternalServerError, fmt.Errorf("batch: row %d: %w", i, err))
+				return
+			}
 			resp.Rejected++
 			resp.Results = append(resp.Results, batchResult{Index: i, EntityID: entityID, Status: "rejected", Error: err.Error()})
 			continue
@@ -1113,6 +1124,13 @@ func (s *Service) decideStream(w http.ResponseWriter, r *http.Request) {
 		out.EntityID = entityID
 		res, err := s.decide.Decide(r.Context(), id, slug, env, input, command.EntityRef{Type: entityType, ID: entityID})
 		if err != nil {
+			if decideStatus(err) == http.StatusInternalServerError {
+				// Infra failure: the 200 + body already started, so we cannot change
+				// the status. Emit a terminal error line and stop, rather than
+				// mislabeling it a per-row client rejection the caller treats as final.
+				emit(map[string]string{"error": fmt.Sprintf("infrastructure error at row %d: %s", i, err.Error())})
+				return
+			}
 			out.Status = "rejected"
 			out.Error = err.Error()
 			emit(out)

@@ -608,6 +608,24 @@ can't silently double-count); named enum types (`ModelKind`, `CaseStatus`, `RunS
 deliberately-skipped maximal items (codebase-wide field unexporting, wholesale `Option`/`Result`
 conversion, the replay-breaking typed `PreResolved` seam) are recorded with rationale in TS9.
 
+**Bug + type-strengthening + fuzz sweeps (post-launch, audit-driven, BF1–BF32 / TS13–TS17 in
+BUGS.md).** Three fan-out audit rounds, each landed as one fat PR through the full strict gate. The
+first two (BF1–BF16) fixed a drift-projector poison-event crash, an OAuth2 token-cache key bug, a
+notify total-failure dedup-into-silence (and the scheduler-sweep-starvation regression that fix
+introduced), a SCIM omitted-`active` lockout, BPMN id collisions, and an erasure envelope-shape
+confusion; added native Go fuzz targets across the parse/validate boundaries; and purged a stray
+52 MB binary from all git history. **Round 3** closed three criticals — a **privilege escalation**
+where the API-key→session login dropped the key's scope so a sandbox key could reach production
+(fixed by carrying scope into the session and collapsing role+scope into one `httpx.Principal`, so
+role-without-scope is unrepresentable; the env gate now fails closed); the **dev admin key seeded
+by default** (now in-memory-store only, so a durable/production deploy can never boot with it); and
+**permanent webhook failures retried forever** (a `notify.Outcome` enum makes the retry/dedup
+decision total). Plus a scope/role **ceiling** on key minting/rotation, SCIM body-size limits, a
+batch infra-error misclassification, agent tool-loop cancellation, a web sibling-nav load race, an
+exhaustive `NodeType` union, and an array of MED/LOW correctness fixes (policy latest-version
+selection, NaN-threshold rejection, null-vs-absent assertions, average rounding). Two new fuzz
+targets (Mermaid export, SCIM filter/patch) found no crashers.
+
 ---
 
 ## 9. MVP non-goals

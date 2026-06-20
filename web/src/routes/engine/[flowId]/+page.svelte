@@ -73,7 +73,7 @@
   import FlowNode from '$lib/FlowNode.svelte';
   import BpmnNode from '$lib/BpmnNode.svelte';
   import LaneBand from '$lib/LaneBand.svelte';
-  import { nodeSummary, telemetrySummary } from '$lib/nodevis';
+  import { nodeSummary, telemetrySummary, NODE_TYPES } from '$lib/nodevis';
   import {
     asText,
     asNum,
@@ -85,22 +85,6 @@
     addUniqueEdge
   } from '$lib/nodeconfig';
 
-  const NODE_TYPES = [
-    'input',
-    'assignment',
-    'rule',
-    'split',
-    'scorecard',
-    'decision_table',
-    '2d_matrix',
-    'code',
-    'connect',
-    'ai',
-    'predict',
-    'reason',
-    'manual_review',
-    'output'
-  ];
   const ENVIRONMENTS = ['sandbox', 'staging', 'production'];
 
   interface EditNode {
@@ -120,10 +104,13 @@
 
   // loadMetrics fetches the flow's analytics roll-up (non-fatal if none yet).
   async function loadMetrics() {
+    const requested = flowId;
     try {
-      metrics = await getFlowMetrics(key, flowId);
+      const m = await getFlowMetrics(key, flowId);
+      if (flowId !== requested) return; // dropped: a newer flow loaded mid-request
+      metrics = m;
     } catch {
-      metrics = null;
+      if (flowId === requested) metrics = null;
     }
   }
 
@@ -334,8 +321,14 @@
 
   async function load() {
     error = '';
+    // Capture the flow this load is for; sibling navigation changes flowId while a
+    // request is in flight, and a stale response must not clobber the new flow's
+    // editor/canvas state (last-write-wins race).
+    const requested = flowId;
     try {
-      flow = await getFlow(key, flowId);
+      const loaded = await getFlow(key, flowId);
+      if (flowId !== requested) return;
+      flow = loaded;
       // Seed the editor from the flow's declared latest version, not the last
       // array element — the API does not guarantee versions are returned ordered.
       const byVersion = [...flow.versions].sort((a, b) => a.version - b.version);
@@ -770,7 +763,7 @@
         : [];
       inputSchema = 'input_schema' in raw ? raw.input_schema : undefined;
       counter = editNodes.length;
-      selectedId = '';
+      selectedId = null; // null is the "nothing selected" sentinel; '' would match an empty-id node
       importText = '';
       syncCanvas();
       toast.success(
@@ -1091,8 +1084,11 @@
   let shadow = $state<ShadowState>({ shadows: {}, report: {} });
   let shadowSaving = $state(false);
   async function loadShadow() {
+    const requested = flowId;
     try {
-      shadow = await getShadow(key, flowId);
+      const s = await getShadow(key, flowId);
+      if (flowId !== requested) return; // dropped: a newer flow loaded mid-request
+      shadow = s;
     } catch {
       /* a viewer with no shadow data simply sees none */
     }
@@ -1182,10 +1178,13 @@
   // Rates are fractions (0–1); volume and latency are absolute.
   const monIsRate = $derived(monMetric.endsWith('_rate'));
   async function loadMonitors() {
+    const requested = flowId;
     try {
-      monitors = await listMonitors(key, flowId);
+      const m = await listMonitors(key, flowId);
+      if (flowId !== requested) return; // dropped: a newer flow loaded mid-request
+      monitors = m;
     } catch {
-      monitors = [];
+      if (flowId === requested) monitors = [];
     }
   }
   function fmtActual(m: Monitor): string {
@@ -1286,10 +1285,13 @@
 
   let drift = $state<DriftReport | null>(null);
   async function loadDrift() {
+    const requested = flowId;
     try {
-      drift = await getDrift(key, flowId);
+      const d = await getDrift(key, flowId);
+      if (flowId !== requested) return; // dropped: a newer flow loaded mid-request
+      drift = d;
     } catch {
-      drift = null;
+      if (flowId === requested) drift = null;
     }
   }
   async function captureBaselineNow() {
@@ -1313,8 +1315,10 @@
   let assertReport = $state<AssertionReport | null>(null);
   let assertBusy = $state(false);
   async function loadAssertions() {
+    const requested = flowId;
     try {
       const cases = await getAssertions(key, flowId);
+      if (flowId !== requested) return; // dropped: a newer flow loaded mid-request
       if (cases.length) assertText = JSON.stringify(cases, null, 2);
     } catch {
       /* leave the placeholder */
@@ -1459,7 +1463,7 @@
         <span class="ok" data-testid="automation-rate">{automation.rate}% automated</span>
         <span class="muted">{automation.refer} referred</span>
       {/if}
-      {#each Object.entries(metrics.by_variant) as [variant, v] (variant)}
+      {#each Object.entries(metrics.by_variant ?? {}) as [variant, v] (variant)}
         <span class="muted">{variant}: {v.completed}/{v.started}</span>
       {/each}
       <a href="/decisions">view runs →</a>
@@ -1641,7 +1645,9 @@
         {#each ['sandbox', 'staging', 'production'] as e (e)}
           <span class="env">
             {e}:
-            {#if liveVersion(e)}<b>v{liveVersion(e)}</b>{:else}<span class="muted">—</span>{/if}
+            {#if liveVersion(e) !== undefined}<b>v{liveVersion(e)}</b>{:else}<span class="muted"
+                >—</span
+              >{/if}
           </span>
         {/each}
       </div>

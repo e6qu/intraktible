@@ -13,6 +13,8 @@ describe('nodeSummary', () => {
     expect(nodeSummary('connect', '{"connector":"bureau"}')).toBe('bureau');
     expect(nodeSummary('ai', '{"agent":"screener"}')).toBe('screener'); // reads the configured agent
     expect(nodeSummary('ai', '')).toBe('AI');
+    expect(nodeSummary('predict', '{"model":"risk-v2"}')).toBe('risk-v2');
+    expect(nodeSummary('predict', '')).toBe('prediction');
     expect(nodeSummary('code', 'anything')).toBe('Starlark');
     expect(nodeSummary('manual_review', '')).toBe('human review');
   });

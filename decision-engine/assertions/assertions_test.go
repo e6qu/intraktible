@@ -26,6 +26,19 @@ func TestRun(t *testing.T) {
 	}
 }
 
+// Expecting a field to be null must FAIL when the output omits the field entirely
+// (absent ≠ explicit null) — otherwise a `null` expectation passes vacuously and an
+// assertion suite gives false confidence.
+func TestRunNullExpectationFailsOnAbsentField(t *testing.T) {
+	g := flowtest.ConstGraph("approve") // outputs {"decision":"approve"} — no "missing" key
+	rep := assertions.Run(g, []assertions.Case{
+		{Name: "absent vs null", Input: map[string]any{}, Expect: map[string]any{"missing": nil}},
+	})
+	if rep.Passed != 0 || rep.Results[0].Passed || len(rep.Results[0].Mismatch) != 1 {
+		t.Fatalf("a null expectation must not pass against an absent field: %+v", rep.Results[0])
+	}
+}
+
 func TestRunFailingFlowIsNotPassed(t *testing.T) {
 	rep := assertions.Run(flowtest.FailingGraph(), []assertions.Case{
 		{Name: "x", Input: map[string]any{}, Expect: map[string]any{"y": 1}},

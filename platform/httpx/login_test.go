@@ -66,7 +66,7 @@ func TestLoginLogoutFlow(t *testing.T) {
 	if token == "" {
 		t.Fatal("login did not set an HttpOnly session cookie")
 	}
-	if gotID, _, ok := sessions.Resolve(token); !ok || gotID != id {
+	if gotID, _, _, ok := sessions.Resolve(token); !ok || gotID != id {
 		t.Fatalf("issued session did not resolve to the key's identity: %v %v", gotID, ok)
 	}
 
@@ -78,7 +78,7 @@ func TestLoginLogoutFlow(t *testing.T) {
 	if out.Code != http.StatusNoContent {
 		t.Fatalf("logout -> %d, want 204", out.Code)
 	}
-	if _, _, ok := sessions.Resolve(token); ok {
+	if _, _, _, ok := sessions.Resolve(token); ok {
 		t.Fatal("session should be revoked after logout")
 	}
 }

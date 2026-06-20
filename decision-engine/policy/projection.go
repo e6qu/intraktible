@@ -127,7 +127,7 @@ func ActiveForFlow(ctx context.Context, s store.Store, id identity.Identity, flo
 			}
 		}
 		if found {
-			return best, best.Versions[len(best.Versions)-1], true, nil
+			return best, latestVersion(best), true, nil
 		}
 	}
 	// Fallback: scan. Covers a flow with no index entry yet (e.g. a policy created
@@ -150,7 +150,21 @@ func ActiveForFlow(ctx context.Context, s store.Store, id identity.Identity, flo
 	if !found {
 		return View{}, VersionView{}, false, nil
 	}
-	return best, best.Versions[len(best.Versions)-1], true, nil
+	return best, latestVersion(best), true, nil
+}
+
+// latestVersion returns the policy's latest published version, selected by the
+// tracked Latest field rather than array position: Versions is appended in event
+// order, which is not guaranteed to be version order, so the last element is not
+// reliably the latest. Falls back to the last element only if Latest is absent
+// (it never should be for a policy with versions).
+func latestVersion(pv View) VersionView {
+	for i := range pv.Versions {
+		if pv.Versions[i].Version == pv.Latest {
+			return pv.Versions[i]
+		}
+	}
+	return pv.Versions[len(pv.Versions)-1]
 }
 
 // addToFlowIndex appends policyID to the flow-slug index (idempotently).

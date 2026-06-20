@@ -16,8 +16,8 @@ import (
 // in-memory Sessions and the store-backed StoreSessions satisfy it, so the auth
 // middleware and login handlers depend on the interface.
 type SessionStore interface {
-	Issue(id identity.Identity, role Role) (string, error)
-	Resolve(tok string) (identity.Identity, Role, bool)
+	Issue(id identity.Identity, role Role, scope Scope) (string, error)
+	Resolve(tok string) (identity.Identity, Role, Scope, bool)
 	Revoke(tok string)
 	TTL() time.Duration // session lifetime, used to align the cookie max-age
 }
@@ -28,6 +28,7 @@ const sessionCollection = "auth_sessions"
 type storedSession struct {
 	Identity identity.Identity `json:"identity"`
 	Role     Role              `json:"role,omitempty"`
+	Scope    Scope             `json:"scope,omitempty"`
 	Expires  time.Time         `json:"expires"`
 }
 
@@ -51,27 +52,29 @@ func (s *StoreSessions) TTL() time.Duration { return s.ttl }
 // Issue creates a session token for id, valid for the TTL. A persist failure is
 // returned so the caller can fail the login loudly rather than hand back a token
 // that will never resolve.
-func (s *StoreSessions) Issue(id identity.Identity, role Role) (string, error) {
+func (s *StoreSessions) Issue(id identity.Identity, role Role, scope Scope) (string, error) {
 	tok := newToken()
-	rec := storedSession{Identity: id, Role: role, Expires: s.now().Add(s.ttl)}
+	rec := storedSession{Identity: id, Role: role, Scope: scope, Expires: s.now().Add(s.ttl)}
 	if err := store.PutDoc(context.Background(), s.store, sessionCollection, hash(tok), rec); err != nil {
 		return "", fmt.Errorf("auth: persist session: %w", err)
 	}
 	return tok, nil
 }
 
-// Resolve returns the identity + role for a token, treating an expired/missing one
-// — or a store error — as not authenticated.
-func (s *StoreSessions) Resolve(tok string) (identity.Identity, Role, bool) {
+// Resolve returns the identity + role + scope for a token, treating an
+// expired/missing one — or a store error — as not authenticated. A session
+// persisted before scopes were stored resolves with an empty scope, which the
+// environment gate treats as fail-closed (the holder re-authenticates).
+func (s *StoreSessions) Resolve(tok string) (identity.Identity, Role, Scope, bool) {
 	rec, ok, err := store.GetDoc[storedSession](context.Background(), s.store, sessionCollection, hash(tok))
 	if err != nil {
 		slog.Error("auth: resolve session failed", "err", err)
-		return identity.Identity{}, "", false
+		return identity.Identity{}, "", "", false
 	}
 	if !ok || s.now().After(rec.Expires) {
-		return identity.Identity{}, "", false
+		return identity.Identity{}, "", "", false
 	}
-	return rec.Identity, rec.Role, true
+	return rec.Identity, rec.Role, rec.Scope, true
 }
 
 // Revoke invalidates a session token (logout); unknown tokens are a no-op.
