@@ -17,6 +17,7 @@ import (
 
 	"github.com/e6qu/intraktible/platform/auth"
 	"github.com/e6qu/intraktible/platform/identity"
+	"github.com/e6qu/intraktible/platform/metrics"
 )
 
 // Middleware decorates an http.Handler.
@@ -73,6 +74,19 @@ func Logger(next http.Handler) http.Handler {
 		next.ServeHTTP(sw, r)
 		slog.Info("request", "method", r.Method, "path", r.URL.Path,
 			"status", sw.status, "dur", time.Since(start))
+	})
+}
+
+// Metrics records each request's count + latency in Prometheus, keyed by the
+// matched ServeMux route pattern (set on the request during dispatch — low
+// cardinality, so per-ID paths don't explode the series). Place it in the outer
+// chain so it observes the final status and the pattern resolved by nested muxes.
+func Metrics(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(sw, r)
+		metrics.RecordHTTP(r.Pattern, r.Method, sw.status, time.Since(start))
 	})
 }
 

@@ -12,6 +12,7 @@ import (
 	"sync"
 
 	"github.com/e6qu/intraktible/platform/eventlog"
+	"github.com/e6qu/intraktible/platform/metrics"
 	"github.com/e6qu/intraktible/platform/store"
 )
 
@@ -218,6 +219,7 @@ func (r *Runtime) setApplied(seq uint64) {
 	defer r.mu.Unlock()
 	if seq > r.applied {
 		r.applied = seq
+		metrics.SetProjectionApplied(seq)
 	}
 }
 
@@ -267,6 +269,7 @@ func (r *Runtime) setErr(err error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.err = err
+	metrics.IncProjectionErrors()
 }
 
 // Err returns the first live-apply error, if any.
