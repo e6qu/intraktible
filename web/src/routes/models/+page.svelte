@@ -90,8 +90,20 @@
   }
   async function saveThreshold(m: string) {
     error = '';
+    // An empty field clears the monitor (threshold 0); a non-numeric entry is a
+    // mistake — surface it instead of silently coercing to 0 (which would disable
+    // the monitor the operator was trying to set).
+    const raw = thresholdInput.trim();
+    let threshold = 0;
+    if (raw !== '') {
+      threshold = Number(raw);
+      if (!Number.isFinite(threshold) || threshold < 0) {
+        error = 'Threshold must be a non-negative number (or empty to clear).';
+        return;
+      }
+    }
     try {
-      await setModelMonitor(key, m, parseFloat(thresholdInput) || 0);
+      await setModelMonitor(key, m, threshold);
       await loadDrift(m);
     } catch (e) {
       error = msg(e);

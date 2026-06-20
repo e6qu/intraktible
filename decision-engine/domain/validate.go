@@ -1,0 +1,172 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+package domain
+
+import (
+	"fmt"
+	"strings"
+
+	"github.com/expr-lang/expr"
+
+	"github.com/e6qu/intraktible/decision-engine/events"
+)
+
+// ValidateFlow checks that a graph is publishable: structurally valid
+// (ValidateGraph) AND every node's config decodes for its type and its
+// expressions compile. It is a pure, side-effect-free "dry compile" — it never
+// runs the flow, never resolves a connector/agent/model reference (those may be
+// defined after the flow is published), and touches no I/O. It gates PublishVersion
+// so a semantically-broken flow (a node with malformed config, a rule with an
+// uncompilable condition, a Code node that won't parse) is rejected at the write
+// boundary instead of failing on the first live decision in production.
+func ValidateFlow(g events.Graph) error {
+	if err := ValidateGraph(g); err != nil {
+		return err
+	}
+	for _, n := range g.Nodes {
+		if err := validateNodeConfig(n); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateNodeConfig decodes a node's config (the same strict decode the executor
+// uses, so it rejects exactly what runtime decode would) and compiles every
+// expression it carries. It deliberately does not resolve references or evaluate
+// anything — only shape + syntax.
+func validateNodeConfig(n events.Node) error {
+	switch n.Type {
+	case events.NodeAssignment:
+		var cfg assignmentConfig
+		if err := decodeConfig(n, &cfg); err != nil {
+			return err
+		}
+		for _, a := range cfg.Assignments {
+			if err := checkExpr(n, "assignment "+a.Target, a.Expr); err != nil {
+				return err
+			}
+		}
+	case events.NodeRule:
+		var cfg ruleConfig
+		if err := decodeConfig(n, &cfg); err != nil {
+			return err
+		}
+		for i, r := range cfg.Rules {
+			if err := checkExpr(n, fmt.Sprintf("rule %d condition", i), r.When); err != nil {
+				return err
+			}
+			for _, a := range r.Then {
+				if err := checkExpr(n, fmt.Sprintf("rule %d assignment %q", i, a.Target), a.Expr); err != nil {
+					return err
+				}
+			}
+		}
+	case events.NodeSplit:
+		var cfg splitConfig
+		if err := decodeConfig(n, &cfg); err != nil {
+			return err
+		}
+		if err := checkExpr(n, "split condition", cfg.Condition); err != nil {
+			return err
+		}
+	case events.NodeScorecard:
+		var cfg scorecardConfig
+		if err := decodeConfig(n, &cfg); err != nil {
+			return err
+		}
+		for i, f := range cfg.Factors {
+			if err := checkExpr(n, fmt.Sprintf("factor %d", i), f.When); err != nil {
+				return err
+			}
+		}
+	case events.NodeReason:
+		var cfg reasonConfig
+		if err := decodeConfig(n, &cfg); err != nil {
+			return err
+		}
+		for i, r := range cfg.Reasons {
+			if err := checkExpr(n, fmt.Sprintf("reason %d condition", i), r.When); err != nil {
+				return err
+			}
+		}
+	case events.NodeDecisionTable:
+		var cfg decisionTableConfig
+		if err := decodeConfig(n, &cfg); err != nil {
+			return err
+		}
+		for i, row := range cfg.Rows {
+			if err := checkExpr(n, fmt.Sprintf("row %d condition", i), row.When); err != nil {
+				return err
+			}
+			for _, a := range row.Outputs {
+				if err := checkExpr(n, fmt.Sprintf("row %d output %q", i, a.Target), a.Expr); err != nil {
+					return err
+				}
+			}
+		}
+	case events.NodeMatrix2D:
+		var cfg matrixConfig
+		if err := decodeConfig(n, &cfg); err != nil {
+			return err
+		}
+		for i, r := range cfg.Rows {
+			if err := checkExpr(n, fmt.Sprintf("row axis %d", i), r.When); err != nil {
+				return err
+			}
+		}
+		for i, c := range cfg.Cols {
+			if err := checkExpr(n, fmt.Sprintf("col axis %d", i), c.When); err != nil {
+				return err
+			}
+		}
+	case events.NodeManualReview:
+		var cfg manualReviewConfig
+		if err := decodeConfig(n, &cfg); err != nil {
+			return err
+		}
+		if err := checkExpr(n, "company_name", cfg.CompanyName); err != nil {
+			return err
+		}
+		if err := checkExpr(n, "case_type", cfg.CaseType); err != nil {
+			return err
+		}
+	case events.NodeCode:
+		var cfg codeConfig
+		if err := decodeConfig(n, &cfg); err != nil {
+			return err
+		}
+		if strings.TrimSpace(cfg.Code) != "" {
+			if _, err := codeOpts.Parse(n.ID+".star", []byte(cfg.Code), 0); err != nil {
+				return fmt.Errorf("decision-engine: node %q code: %w", n.ID, err)
+			}
+		}
+	case events.NodeConnect:
+		return decodeConfig(n, &connectConfig{})
+	case events.NodeAI:
+		return decodeConfig(n, &aiConfig{})
+	case events.NodePredict:
+		return decodeConfig(n, &predictConfig{})
+	case events.NodeOutput:
+		return decodeConfig(n, &outputConfig{})
+	case events.NodeInput:
+		// Input carries no executable config (its schema is the version's contract).
+	default:
+		// Unknown types are already rejected by ValidateGraph.
+	}
+	return nil
+}
+
+// checkExpr compiles a single expr-lang expression for syntax, with no
+// environment so unknown identifiers (resolved from the decision context at run
+// time) are permitted — this is a parse/syntax check, never an evaluation. An
+// empty optional expression is left to the executor (skipped here, not rejected).
+func checkExpr(n events.Node, where, code string) error {
+	if strings.TrimSpace(code) == "" {
+		return nil
+	}
+	if _, err := expr.Compile(code); err != nil {
+		return fmt.Errorf("decision-engine: node %q %s: %w", n.ID, where, err)
+	}
+	return nil
+}
