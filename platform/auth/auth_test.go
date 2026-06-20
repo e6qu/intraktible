@@ -21,7 +21,8 @@ func TestScopeAllows(t *testing.T) {
 		{auth.Production, "sandbox", false},
 		{auth.ScopeAll, "sandbox", true},
 		{auth.ScopeAll, "production", true},
-		{"", "production", true}, // empty scope is unrestricted (legacy keys)
+		{"", "production", false}, // empty scope grants nothing (fail closed)
+		{"", "sandbox", false},
 		{"dev/*", "dev/pr-12", true},
 		{"dev/*", "production", false},
 	}
