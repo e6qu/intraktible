@@ -43,23 +43,23 @@ type AuditEntry struct {
 // zero (the stored model stays clock-free + replay-stable) and the read layer fills
 // them via AnnotateSLA against the current time.
 type CaseView struct {
-	Org         string          `json:"org"`
-	Workspace   string          `json:"workspace"`
-	CaseID      string          `json:"case_id"`
-	CompanyName string          `json:"company_name"`
-	CaseType    string          `json:"case_type"`
-	Status      string          `json:"status"`
-	Assignee    string          `json:"assignee,omitempty"`
-	SLADays     int             `json:"sla_days"`
-	DaysLeft    int             `json:"days_left"`
-	SLAState    string          `json:"sla_state,omitempty"`
-	SLABreached bool            `json:"sla_breached,omitempty"`
-	Context     json.RawMessage `json:"context,omitempty"`
-	SourceID    string          `json:"source_decision_id,omitempty"`
-	Notes       []Note          `json:"notes"`
-	Audit       []AuditEntry    `json:"audit"`
-	CreatedAt   time.Time       `json:"created_at"`
-	UpdatedAt   time.Time       `json:"updated_at"`
+	Org         string            `json:"org"`
+	Workspace   string            `json:"workspace"`
+	CaseID      string            `json:"case_id"`
+	CompanyName string            `json:"company_name"`
+	CaseType    string            `json:"case_type"`
+	Status      domain.CaseStatus `json:"status"`
+	Assignee    string            `json:"assignee,omitempty"`
+	SLADays     int               `json:"sla_days"`
+	DaysLeft    int               `json:"days_left"`
+	SLAState    string            `json:"sla_state,omitempty"`
+	SLABreached bool              `json:"sla_breached,omitempty"`
+	Context     json.RawMessage   `json:"context,omitempty"`
+	SourceID    string            `json:"source_decision_id,omitempty"`
+	Notes       []Note            `json:"notes"`
+	Audit       []AuditEntry      `json:"audit"`
+	CreatedAt   time.Time         `json:"created_at"`
+	UpdatedAt   time.Time         `json:"updated_at"`
 }
 
 // AnnotateSLA fills a view's clock-derived SLA fields from now. The read layer
@@ -71,17 +71,17 @@ func AnnotateSLA(c *CaseView, now time.Time) {
 
 // Summary is an at-a-glance roll-up of a tenant's case queue.
 type Summary struct {
-	Total      int            `json:"total"`
-	ByStatus   map[string]int `json:"by_status"`
-	Unassigned int            `json:"unassigned"`
-	DueSoon    int            `json:"due_soon"`
-	Overdue    int            `json:"overdue"`
+	Total      int                       `json:"total"`
+	ByStatus   map[domain.CaseStatus]int `json:"by_status"`
+	Unassigned int                       `json:"unassigned"`
+	DueSoon    int                       `json:"due_soon"`
+	Overdue    int                       `json:"overdue"`
 }
 
 // Summarize rolls up cases for the queue dashboard, bucketing SLA state against
 // now. Completed cases no longer count against the SLA clock.
 func Summarize(views []CaseView, now time.Time) Summary {
-	s := Summary{ByStatus: map[string]int{}, Total: len(views)}
+	s := Summary{ByStatus: map[domain.CaseStatus]int{}, Total: len(views)}
 	for i := range views {
 		c := views[i]
 		s.ByStatus[c.Status]++
@@ -201,7 +201,7 @@ func applyStatus(ctx context.Context, e eventlog.Envelope, s store.Store) error 
 		return err
 	}
 	return update(ctx, s, e, p.CaseID, func(c *CaseView) {
-		c.Status = p.Status
+		c.Status = domain.CaseStatus(p.Status)
 		c.Audit = append(c.Audit, audit(e, "status_changed", "status → "+p.Status))
 	})
 }
@@ -230,7 +230,7 @@ func List(ctx context.Context, s store.Store, id identity.Identity, f Filter) ([
 	}
 	out := make([]CaseView, 0, len(all))
 	for _, c := range all {
-		if f.Status != "" && c.Status != f.Status {
+		if f.Status != "" && c.Status != domain.CaseStatus(f.Status) {
 			continue
 		}
 		if f.CaseType != "" && c.CaseType != f.CaseType {

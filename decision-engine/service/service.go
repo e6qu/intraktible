@@ -608,7 +608,7 @@ func mergePromotionPolicy(req map[string]promotionStageRequest) map[string]event
 		if patch.RequireReview != nil {
 			stage.RequireReview = *patch.RequireReview
 		}
-		if env == domain.EnvProduction {
+		if domain.Environment(env) == domain.EnvProduction {
 			stage.RequireReview = true
 		}
 		policy[env] = stage

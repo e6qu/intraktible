@@ -17,47 +17,53 @@ import (
 	"github.com/expr-lang/expr"
 )
 
-// Disposition values: the automated outcome a policy assigns to a decision.
+// Disposition is the automated outcome a policy assigns to a decision. A named
+// type (not a bare string) so an invalid disposition is caught at validation,
+// not carried as an arbitrary string onto a recorded decision.
+type Disposition string
+
+// Disposition values.
 const (
-	Approve = "approve"
-	Decline = "decline"
-	Refer   = "refer" // the residual that needs a human
+	Approve Disposition = "approve"
+	Decline Disposition = "decline"
+	Refer   Disposition = "refer" // the residual that needs a human
 )
+
+// Valid reports whether d is a known disposition.
+func (d Disposition) Valid() bool {
+	return d == Approve || d == Decline || d == Refer
+}
 
 // Rule maps a condition over the flow's output to a disposition. Rules are
 // evaluated in order; the first whose When holds wins.
 type Rule struct {
-	When        string `json:"when"`        // expr over the flow output (fields top-level, e.g. "score >= 0.85")
-	Disposition string `json:"disposition"` // approve | decline | refer
-	Code        string `json:"code,omitempty"`
-	Description string `json:"description,omitempty"`
+	When        string      `json:"when"`        // expr over the flow output (fields top-level, e.g. "score >= 0.85")
+	Disposition Disposition `json:"disposition"` // approve | decline | refer
+	Code        string      `json:"code,omitempty"`
+	Description string      `json:"description,omitempty"`
 }
 
 // Spec is a policy body: ordered rules + the default disposition for the residual
 // (decisions no rule matched). An empty Default means refer.
 type Spec struct {
-	Rules   []Rule `json:"rules"`
-	Default string `json:"default,omitempty"`
+	Rules   []Rule      `json:"rules"`
+	Default Disposition `json:"default,omitempty"`
 }
 
 // Outcome is the disposition a policy assigned, with the reason that drove it.
 type Outcome struct {
-	Disposition string `json:"disposition"`
-	Code        string `json:"code,omitempty"`
-	Description string `json:"description,omitempty"`
-}
-
-func validDisposition(d string) bool {
-	return d == Approve || d == Decline || d == Refer
+	Disposition Disposition `json:"disposition"`
+	Code        string      `json:"code,omitempty"`
+	Description string      `json:"description,omitempty"`
 }
 
 // Validate checks the dispositions are known and every rule condition compiles.
 func (s Spec) Validate() error {
-	if s.Default != "" && !validDisposition(s.Default) {
+	if s.Default != "" && !s.Default.Valid() {
 		return fmt.Errorf("policy: invalid default disposition %q (approve|decline|refer)", s.Default)
 	}
 	for i, r := range s.Rules {
-		if !validDisposition(r.Disposition) {
+		if !r.Disposition.Valid() {
 			return fmt.Errorf("policy: rule %d has invalid disposition %q (approve|decline|refer)", i, r.Disposition)
 		}
 		if r.When == "" {

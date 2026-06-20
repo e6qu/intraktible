@@ -28,7 +28,7 @@ func TestApplyFirstMatchWins(t *testing.T) {
 	s := spec()
 	cases := []struct {
 		score float64
-		want  string
+		want  policy.Disposition
 		code  string
 	}{
 		{0.9, policy.Approve, "P-AUTO"},

@@ -222,7 +222,7 @@ func (h *Handler) Deploy(ctx context.Context, id identity.Identity, cmd domain.D
 	}
 	// Change control: a production deployment must go through maker-checker
 	// (RequestDeployment + a different user's ApproveDeployment), never a direct deploy.
-	if cmd.Environment == domain.EnvProduction {
+	if domain.Environment(cmd.Environment) == domain.EnvProduction {
 		return eventlog.Envelope{}, fmt.Errorf("decision-engine: production deployments require an approved deployment request")
 	}
 	h.mu.Lock()

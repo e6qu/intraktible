@@ -48,6 +48,17 @@ type TxStore interface {
 	Begin(ctx context.Context) (Tx, error)
 }
 
+// Ephemeral marks a Store that loses all data on restart, so the projection
+// runtime may safely use its non-atomic apply path (a crash simply triggers a
+// full rebuild from the log). A *durable* store must instead implement TxStore,
+// so its checkpoint advances atomically with each event — otherwise non-idempotent
+// projector counters would double-count on crash recovery. The projection runtime
+// rejects a store that is neither at construction, so this load-bearing property
+// is enforced by the type system rather than left to a comment.
+type Ephemeral interface {
+	Ephemeral()
+}
+
 // Key namespaces a document by tenant so collections stay per-(org,workspace).
 func Key(org, workspace, id string) string {
 	return org + "/" + workspace + "/" + id

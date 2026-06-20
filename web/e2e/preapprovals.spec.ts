@@ -24,8 +24,9 @@ test('grants a pre-approval and revokes it', async ({ page }) => {
   await expect(row).toContainText('approve');
   await expect(row).toContainText('active');
 
-  // Revoke it (the reason prompt is auto-accepted) — the row goes to revoked.
-  page.once('dialog', (d) => d.accept('test cleanup'));
+  // Revoke it via the inline reason form (replaces the old native prompt).
   await row.getByRole('button', { name: 'Revoke' }).click();
+  await page.getByLabel('revoke reason').fill('test cleanup');
+  await page.getByRole('button', { name: 'Confirm revoke' }).click();
   await expect(page.locator('tr', { hasText: eid }).first()).toContainText('revoked');
 });

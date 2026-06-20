@@ -15,6 +15,28 @@ import (
 	"github.com/e6qu/intraktible/platform/testutil"
 )
 
+// durableNonTx is a Store that is neither transactional nor ephemeral — the
+// illegal combination the runtime must reject (it would double-count counters on
+// crash recovery). Embedding the interface satisfies Store without Begin/Ephemeral.
+type durableNonTx struct{ store.Store }
+
+func TestNewRejectsDurableNonTxStore(t *testing.T) {
+	log, _ := testutil.NewLogStore(t)
+	defer func() {
+		if recover() == nil {
+			t.Fatal("New must panic on a durable, non-transactional store")
+		}
+	}()
+	_ = projection.New(log, durableNonTx{})
+}
+
+func TestNewAcceptsEphemeralStore(t *testing.T) {
+	log, _ := testutil.NewLogStore(t)
+	if projection.New(log, store.NewMemory()) == nil {
+		t.Fatal("an ephemeral store must be accepted")
+	}
+}
+
 const countCollection = "proj_test_count"
 
 // counter folds every event into a per-tenant integer count.

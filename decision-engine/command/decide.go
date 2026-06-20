@@ -618,9 +618,9 @@ func (h *DecideHandler) applyPolicy(ctx context.Context, id identity.Identity, s
 	// A policy that cannot evaluate (e.g. references a field the output lacks)
 	// refers to a human rather than failing the completed decision.
 	if out, applyErr := ver.Spec.Apply(output); applyErr != nil {
-		res.disposition, res.reason = policy.Refer, "policy: "+applyErr.Error()
+		res.disposition, res.reason = string(policy.Refer), "policy: "+applyErr.Error()
 	} else {
-		res.disposition, res.code, res.reason = out.Disposition, out.Code, out.Description
+		res.disposition, res.code, res.reason = string(out.Disposition), out.Code, out.Description
 	}
 	return res, nil
 }

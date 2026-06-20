@@ -234,7 +234,7 @@ func (s *Service) defineConnector(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return eventlog.Envelope{}, err
 		}
-		return s.cmd.DefineConnector(r.Context(), id, domain.DefineConnector{Name: req.Name, Type: req.Type, Config: cfg})
+		return s.cmd.DefineConnector(r.Context(), id, domain.DefineConnector{Name: req.Name, Type: domain.ConnectorType(req.Type), Config: cfg})
 	})
 }
 
