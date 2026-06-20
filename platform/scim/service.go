@@ -5,6 +5,7 @@ package scim
 import (
 	"crypto/subtle"
 	"encoding/json"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -53,10 +54,26 @@ func (svc *Service) auth(h http.HandlerFunc) http.HandlerFunc {
 }
 
 func (svc *Service) create(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "could not read SCIM user body")
+		return
+	}
 	var u User
-	if err := json.NewDecoder(r.Body).Decode(&u); err != nil {
+	if err := json.Unmarshal(body, &u); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid SCIM user body")
 		return
+	}
+	// SCIM (RFC 7643 §4.1.1) treats an omitted "active" as true. User.Active is a
+	// plain bool, so an omitted field decodes to false and would provision the user
+	// already-deactivated — locking them out of login. Probe for presence and
+	// default to active when the IdP omitted it.
+	var probe struct {
+		Active *bool `json:"active"`
+	}
+	_ = json.Unmarshal(body, &probe)
+	if probe.Active == nil {
+		u.Active = true
 	}
 	u.Org, u.Workspace, u.ID = svc.org, svc.workspace, ""
 	created, err := svc.store.Create(r.Context(), u)

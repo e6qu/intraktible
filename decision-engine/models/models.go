@@ -97,6 +97,9 @@ func ParseSpec(raw json.RawMessage) (Spec, error) {
 
 // Validate checks a spec is well-formed for its kind (cheap, structural).
 func (s Spec) Validate() error {
+	if err := s.noForeignFields(); err != nil {
+		return err
+	}
 	switch s.Kind {
 	case KindLogistic:
 		if len(s.Coefficients) == 0 {
@@ -124,6 +127,29 @@ func (s Spec) Validate() error {
 		}
 	default:
 		return fmt.Errorf("models: unknown model kind %q (logistic|gbm|expression|external)", s.Kind)
+	}
+	return nil
+}
+
+// noForeignFields rejects a spec carrying a field that belongs to a DIFFERENT kind
+// (e.g. a stale "endpoint" left on a logistic model after flipping its kind). The
+// strict decode already rejects unknown fields; this rejects known-but-wrong-kind
+// ones so a misconfiguration fails loudly instead of silently POSTing to a
+// forgotten endpoint / ignoring dead config. (Scalar fields with a zero default —
+// Intercept/Base/Link/TimeoutMs — can't be told apart from unset, so are not
+// checked; the structural fields below are the ones that bite.)
+func (s Spec) noForeignFields() error {
+	if s.Kind != KindLogistic && len(s.Coefficients) > 0 {
+		return fmt.Errorf("models: %q model must not set logistic coefficients", s.Kind)
+	}
+	if s.Kind != KindGBM && len(s.Trees) > 0 {
+		return fmt.Errorf("models: %q model must not set gbm trees", s.Kind)
+	}
+	if s.Kind != KindExpression && s.Expr != "" {
+		return fmt.Errorf("models: %q model must not set an expression expr", s.Kind)
+	}
+	if s.Kind != KindExternal && s.Endpoint != "" {
+		return fmt.Errorf("models: %q model must not set an external endpoint", s.Kind)
 	}
 	return nil
 }

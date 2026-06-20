@@ -32,11 +32,16 @@ const (
 )
 
 // Allows reports whether a key with this scope may call the given environment. An
-// empty scope is treated as unrestricted (legacy keys predate scoping).
+// empty scope grants NOTHING (fail closed): key creation defaults an empty scope to
+// Sandbox (see APIKeys.Define), so a scopeless scope at this point means corruption
+// or a pre-scoping legacy key — denying it is safer than the old fail-open behaviour
+// that would silently grant every environment.
 func (s Scope) Allows(env string) bool {
 	p := string(s)
 	switch {
-	case p == "" || p == string(ScopeAll):
+	case p == "":
+		return false
+	case p == string(ScopeAll):
 		return true
 	case strings.HasSuffix(p, "/*"):
 		return strings.HasPrefix(env, strings.TrimSuffix(p, "*"))

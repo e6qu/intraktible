@@ -40,6 +40,47 @@ func (f *fakeNotifier) Deliver(_ context.Context, _ identity.Identity, _ string,
 	return nil, nil
 }
 
+// failingNotifier simulates every webhook being down (Deliver errors on total failure).
+type failingNotifier struct{ calls int }
+
+func (f *failingNotifier) Deliver(_ context.Context, _ identity.Identity, _ string, _ any) ([]notify.DeliveryResult, error) {
+	f.calls++
+	return nil, errDeliveryDown
+}
+
+var errDeliveryDown = fmtError("delivery down")
+
+type fmtError string
+
+func (e fmtError) Error() string { return string(e) }
+
+// TestDriftSchedulerDeliveryFailureDoesNotStarveSweep proves a failing webhook on
+// one model does not abort the sweep (so later models are still processed) and the
+// failed model is NOT marked alerted (it retries next tick).
+func TestDriftSchedulerDeliveryFailureDoesNotStarveSweep(t *testing.T) {
+	ctx := context.Background()
+	s := store.NewMemory()
+	base := Histogram{10, 10, 10, 10, 10, 10, 10, 10, 10, 10}
+	drifted := Histogram{0, 0, 0, 0, 0, 0, 0, 0, 0, 100}
+	for _, name := range []string{"a-model", "z-model"} { // two firing models
+		seedStats(t, s, ModelStats{Org: "demo", Workspace: "main", Name: name,
+			Hist: drifted, HasBaseline: true, BaselineHist: base, Threshold: 0.25})
+	}
+	cmd := &fakeAlertCmd{store: s}
+	sched := NewScheduler(s, cmd, &failingNotifier{}, 0)
+
+	sum, err := sched.Tick(ctx)
+	if err != nil {
+		t.Fatalf("tick should not error out on a delivery failure: %v", err)
+	}
+	if sum.Models != 2 {
+		t.Fatalf("both models must be visited despite a delivery failure: %+v", sum)
+	}
+	if sum.DeliveryFailures != 2 || sum.Alerted != 0 || cmd.alerted != 0 {
+		t.Fatalf("a failed delivery must not mark alerted (retry next tick): %+v alerted=%d", sum, cmd.alerted)
+	}
+}
+
 func seedStats(t *testing.T, s store.Store, st ModelStats) {
 	t.Helper()
 	if err := store.PutDoc(context.Background(), s, StatsCollection, store.Key(st.Org, st.Workspace, st.Name), st); err != nil {

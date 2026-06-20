@@ -127,3 +127,21 @@ func TestParseSpecAndValidate(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateRejectsForeignFields(t *testing.T) {
+	bad := []string{
+		`{"kind":"logistic","coefficients":{"x":1},"endpoint":"https://x/score"}`, // stale endpoint
+		`{"kind":"external","endpoint":"https://x/score","coefficients":{"x":1}}`, // stale coefficients
+		`{"kind":"expression","expr":"x","trees":[{"leaf":true,"value":1}]}`,      // stale trees
+		`{"kind":"gbm","trees":[{"leaf":true,"value":1}],"expr":"x"}`,             // stale expr
+	}
+	for _, b := range bad {
+		s, err := models.ParseSpec(json.RawMessage(b))
+		if err != nil {
+			t.Fatalf("parse %s: %v", b, err)
+		}
+		if err := s.Validate(); err == nil {
+			t.Fatalf("expected a foreign-field rejection for %s", b)
+		}
+	}
+}
