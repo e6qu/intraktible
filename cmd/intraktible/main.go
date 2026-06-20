@@ -923,7 +923,9 @@ func enabled(modules, m string) bool {
 	if modules == "all" || modules == "" {
 		return true
 	}
-	for _, part := range splitComma(modules) {
+	// splitCSV trims each part + drops empties, so `--modules="a, b"` or a trailing
+	// comma can't silently leave a module's routes/projectors unmounted.
+	for _, part := range splitCSV(modules) {
 		if part == m {
 			return true
 		}
@@ -1015,18 +1017,4 @@ func truthy(v string) bool {
 	default:
 		return false
 	}
-}
-
-func splitComma(s string) []string {
-	var out []string
-	cur := ""
-	for _, r := range s {
-		if r == ',' {
-			out = append(out, cur)
-			cur = ""
-			continue
-		}
-		cur += string(r)
-	}
-	return append(out, cur)
 }

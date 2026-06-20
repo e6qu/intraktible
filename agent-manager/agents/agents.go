@@ -263,7 +263,7 @@ func InvokeWithTools(ctx context.Context, s store.Store, reg *ai.Registry, tb To
 	out := Outcome{Model: def.Model, Status: domain.RunCompleted}
 	var history []ai.Message
 	for step := 0; ; step++ {
-		if step > maxToolSteps {
+		if step >= maxToolSteps {
 			out.Status, out.Error = domain.RunFailed, fmt.Sprintf("agent-manager: tool-calling exceeded %d steps", maxToolSteps)
 			break
 		}

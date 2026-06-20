@@ -420,7 +420,9 @@ func aggregateValues(agg string, vals []any) (any, error) {
 			if agg == "sum" {
 				return float64(0), nil
 			}
-			return nil, nil
+			// min/max of no values is undefined — fail loudly rather than inject a
+			// silent null that a downstream expr-lang node would mis-evaluate.
+			return nil, fmt.Errorf("%s of no values", agg)
 		}
 		acc := nums[0]
 		for _, f := range nums[1:] {
