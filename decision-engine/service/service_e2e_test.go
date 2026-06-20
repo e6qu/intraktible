@@ -881,7 +881,7 @@ func TestDecideAppliesPolicyOverHTTP(t *testing.T) {
 	if !testutil.Eventually(t, func() bool {
 		dec = decideResp{}
 		api.Request(t, http.MethodPost, "/v1/flows/scored/production/decide", map[string]any{"data": map[string]any{"score": 0.9}}, http.StatusOK, &dec)
-		return dec.Status == "completed" && dec.Disposition == policy.Approve
+		return dec.Status == "completed" && dec.Disposition == string(policy.Approve)
 	}) {
 		t.Fatalf("policy never auto-approved: %+v", dec)
 	}
@@ -895,7 +895,7 @@ func TestDecideAppliesPolicyOverHTTP(t *testing.T) {
 		if api.RequestStatus(t, http.MethodGet, "/v1/decisions/"+dec.DecisionID, nil, &rec) != http.StatusOK {
 			return false
 		}
-		return rec.Disposition == policy.Approve && rec.PolicyID == pol.PolicyID && rec.PolicyVersion == 1
+		return rec.Disposition == string(policy.Approve) && rec.PolicyID == pol.PolicyID && rec.PolicyVersion == 1
 	}) {
 		t.Fatalf("decision record missing policy disposition: %+v", rec)
 	}
@@ -903,7 +903,7 @@ func TestDecideAppliesPolicyOverHTTP(t *testing.T) {
 	// A low score refers (the residual that needs a human).
 	var low decideResp
 	api.Request(t, http.MethodPost, "/v1/flows/scored/production/decide", map[string]any{"data": map[string]any{"score": 0.2}}, http.StatusOK, &low)
-	if low.Disposition != policy.Refer {
+	if low.Disposition != string(policy.Refer) {
 		t.Fatalf("low score should refer, got %q", low.Disposition)
 	}
 
