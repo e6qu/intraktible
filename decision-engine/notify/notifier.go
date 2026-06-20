@@ -41,9 +41,16 @@ type DeliveryResult struct {
 }
 
 // Deliver POSTs payload as JSON to every active webhook, recording each outcome.
-// reason labels what prompted the push (e.g. "monitor check"). A delivery that
-// fails to send is still recorded (with the error); only a failure to record the
-// effect — which would break replay — aborts the call.
+// reason labels what prompted the push (e.g. "monitor check"). Each attempt is
+// recorded (with its error) for the audit trail; a failure to record the effect —
+// which would break replay — aborts the call.
+//
+// It returns an error when there are active webhooks but NONE accepted the payload
+// (every one failed/5xx). The schedulers rely on this: a total delivery failure
+// must not let them record the firing-edge alert (which would dedup the alert into
+// silence) — returning an error keeps the transition unrecorded so the next tick
+// re-delivers. A partial success (≥1 webhook accepted) counts as delivered; zero
+// configured webhooks is a vacuous success.
 func (n *Notifier) Deliver(ctx context.Context, id identity.Identity, reason string, payload any) ([]DeliveryResult, error) {
 	hooks, err := active(ctx, n.store, id)
 	if err != nil {
@@ -54,12 +61,19 @@ func (n *Notifier) Deliver(ctx context.Context, id identity.Identity, reason str
 		return nil, fmt.Errorf("notify: marshal payload: %w", err)
 	}
 	results := make([]DeliveryResult, 0, len(hooks))
+	delivered := 0
 	for _, h := range hooks {
 		res := n.post(ctx, h, body)
 		if err := n.record(ctx, id, h, res, reason); err != nil {
 			return nil, err
 		}
+		if res.OK {
+			delivered++
+		}
 		results = append(results, res)
+	}
+	if len(hooks) > 0 && delivered == 0 {
+		return results, fmt.Errorf("notify: delivery failed to all %d active webhook(s)", len(hooks))
 	}
 	return results, nil
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 
+	"github.com/e6qu/intraktible/agent-manager/agents"
 	"github.com/e6qu/intraktible/platform/ai"
 	"github.com/e6qu/intraktible/platform/httpx"
 )
@@ -31,6 +32,17 @@ func (s *Service) runStreamSSE(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusInternalServerError, fmt.Errorf("streaming unsupported"))
 		return
 	}
+	// Resolve the agent before committing the 200 + event-stream headers, so an
+	// unknown agent is a real 404 (not a 200 carrying an SSE `error` frame, which
+	// would also mislead the metrics middleware into counting it as success).
+	name := r.PathValue("name")
+	if _, found, err := agents.Read(r.Context(), s.store, id, name); err != nil {
+		httpx.Error(w, http.StatusInternalServerError, err)
+		return
+	} else if !found {
+		httpx.Error(w, http.StatusNotFound, fmt.Errorf("unknown agent %q", name))
+		return
+	}
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -40,7 +52,7 @@ func (s *Service) runStreamSSE(w http.ResponseWriter, r *http.Request) {
 		writeSSE(w, "chunk", c)
 		flusher.Flush()
 	}
-	res, err := s.cmd.StreamRun(r.Context(), id, r.PathValue("name"), r.URL.Query().Get("prompt"), onChunk)
+	res, err := s.cmd.StreamRun(r.Context(), id, name, r.URL.Query().Get("prompt"), onChunk)
 	if err != nil {
 		writeSSE(w, "error", map[string]string{"error": err.Error()})
 		flusher.Flush()
