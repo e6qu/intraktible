@@ -17,7 +17,8 @@
     revokePreApproval,
     listFlows,
     type PreApproval,
-    type Flow
+    type Flow,
+    type Disposition
   } from '$lib/api';
 
   const key = '';
@@ -31,7 +32,7 @@
   // grant form
   let gType = $state('applicant');
   let gId = $state('');
-  let gDisp = $state('approve');
+  let gDisp = $state<Disposition>('approve');
   let gFlow = $state('');
   let gDays = $state(30);
   let gTerms = $state('{\n  "limit": 5000\n}');

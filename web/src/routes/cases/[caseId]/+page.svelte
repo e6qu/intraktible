@@ -1,7 +1,14 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   import { page } from '$app/stores';
-  import { getCase, assignCase, setCaseStatus, addCaseNote, type Case } from '$lib/api';
+  import {
+    getCase,
+    assignCase,
+    setCaseStatus,
+    addCaseNote,
+    type Case,
+    type CaseStatus
+  } from '$lib/api';
   import { displayEntries } from '$lib/kv';
   import Breadcrumb from '$lib/Breadcrumb.svelte';
   import RelativeTime from '$lib/RelativeTime.svelte';
@@ -12,7 +19,7 @@
   let error = $state('');
 
   let assignee = $state('');
-  let newStatus = $state('in_progress');
+  let newStatus = $state<CaseStatus>('in_progress');
   let noteText = $state('');
 
   // Derive from the route param so navigating between sibling cases reloads.

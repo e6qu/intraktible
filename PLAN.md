@@ -656,6 +656,21 @@ resolves symlinks before the containment check, and `httpx.Download` sanitizes t
 Content-Disposition filename. New fuzz target `FuzzMemoryListPrefix` validates the store prefix
 contract end-to-end.
 
+**Gate stability + type/test/persona follow-ups (post-round-5).** First, the recurring pre-push
+Playwright flakiness (which forced `--no-verify` on three PRs) was root-caused to three compounding
+modes — a `BlockingIOError` from the verbose reporter overflowing pre-commit's non-blocking pipe, a
+`go run` orphan leaving a stale server the next run silently reused, and a persisted event log
+accumulating flows past the engine list's render cap — and fixed (dot reporter + HTML to disk, a
+built-binary backend that wipes its log with `reuseExistingServer:false`, and retries) so the gate
+passes without a bypass (E1). Then three deferred follow-ups landed in one PR: (1) **web
+discriminated unions** (TS23) — the bare-string `status`/`disposition`/`op`/`kind` fields in api.ts
+became string-literal unions mirroring the Go enums, so a typo'd value fails svelte-check rather
+than rendering an unstyled badge; (2) **`testing/synctest`** (E2) — the eventlog delivery
+concurrency tests now run in a fake-time bubble with deterministic quiescence detection (no
+timeouts, no rendezvous race); and (3) **persona depth** (P1) — a typed `PersonaLens` gives each
+persona a default focus on the shared list surfaces (operator → open case queue, developer → failed
+traces), data re-prioritisation over the one API rather than a skin.
+
 ---
 
 ## 9. MVP non-goals

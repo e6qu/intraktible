@@ -18,7 +18,8 @@
     type Policy,
     type PolicyRule,
     type PolicyBacktestReport,
-    type Flow
+    type Flow,
+    type Disposition
   } from '$lib/api';
 
   const key = '';
@@ -233,7 +234,7 @@
           />
           <select
             value={r.disposition}
-            onchange={(e) => setRule(i, { disposition: e.currentTarget.value })}
+            onchange={(e) => setRule(i, { disposition: e.currentTarget.value as Disposition })}
             aria-label={`band ${i} disposition`}
           >
             {#each DISPOSITIONS as d (d)}<option value={d}>{d}</option>{/each}

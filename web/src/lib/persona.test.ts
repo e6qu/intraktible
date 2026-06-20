@@ -1,6 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, it, expect } from 'vitest';
-import { PERSONAS, NAV, navFor, personaConfig, defaultPersona, type NavId } from './persona';
+import {
+  PERSONAS,
+  NAV,
+  navFor,
+  personaConfig,
+  personaLens,
+  defaultPersona,
+  type NavId
+} from './persona';
 
 describe('persona config', () => {
   it('every persona navigates only to catalog entries', () => {
@@ -50,6 +58,25 @@ describe('persona config', () => {
     for (const [id, item] of NAV) {
       expect(item.id).toBe(id as NavId);
       expect(item.href).toMatch(/^\//);
+    }
+  });
+
+  it('a persona lens re-prioritises a list surface to the role-relevant slice', () => {
+    // Operators land on their open review queue; developers on failed traces.
+    expect(personaLens('operator').cases).toBe('needs_review');
+    expect(personaLens('developer').decisions).toBe('failed');
+    // A persona without a lens for a surface gets the full, unfiltered list.
+    expect(personaLens('builder').cases).toBeUndefined();
+    expect(personaLens('builder').decisions).toBeUndefined();
+    expect(personaLens('operator').decisions).toBeUndefined();
+  });
+
+  it('every declared lens value is a real domain enum member', () => {
+    const cases = new Set(['needs_review', 'in_progress', 'completed']);
+    const runStatus = new Set(['completed', 'failed']);
+    for (const p of PERSONAS) {
+      if (p.lens?.cases) expect(cases.has(p.lens.cases)).toBe(true);
+      if (p.lens?.decisions) expect(runStatus.has(p.lens.decisions)).toBe(true);
     }
   });
 });

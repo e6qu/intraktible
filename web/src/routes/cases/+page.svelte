@@ -14,6 +14,7 @@
     type Case,
     type CaseSummary
   } from '$lib/api';
+  import { resolvePersona, personaLens } from '$lib/persona';
 
   function msg(e: unknown): string {
     return e instanceof Error ? e.message : String(e);
@@ -21,7 +22,10 @@
 
   // API calls authenticate via the session cookie (empty key -> no X-Api-Key header).
   const key = '';
-  let statusFilter = $state('');
+  // The initial status filter is the persona's lens (an operator lands on the open
+  // review queue); other personas see the full list. Just the default focus — the
+  // filter control below lets the user widen or change it.
+  let statusFilter = $state<string>(personaLens(resolvePersona()).cases ?? '');
   let list = $state<Case[]>([]);
   let summary = $state<CaseSummary | null>(null);
   let error = $state('');
