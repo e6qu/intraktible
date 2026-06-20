@@ -17,6 +17,20 @@
   let busy = $state(false);
   let loading = $state(true);
 
+  // Search + a render cap so a tenant with hundreds of flows gets a usable page
+  // (a finite, filterable list) instead of one giant unbounded table.
+  let query = $state('');
+  const RENDER_CAP = 100;
+  const filtered = $derived(
+    query.trim()
+      ? flows.filter((f) => {
+          const q = query.trim().toLowerCase();
+          return f.name.toLowerCase().includes(q) || f.slug.toLowerCase().includes(q);
+        })
+      : flows
+  );
+  const visible = $derived(filtered.slice(0, RENDER_CAP));
+
   async function load() {
     loading = true;
     error = '';
@@ -163,32 +177,51 @@
       hint="Create your first decision flow above, then open it to build the graph on the canvas, publish a version, and deploy."
     />
   {:else}
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr><th>Name</th><th>Slug</th><th>Latest</th><th>Sandbox</th><th>Production</th></tr>
-        </thead>
-        <tbody>
-          {#each flows as f (f.flow_id)}
-            <tr>
-              <td><a href={`/engine/${f.flow_id}`}>{f.name}</a></td>
-              <td><code>{f.slug}</code></td>
-              <td>v{f.latest}</td>
-              <td>
-                {#if liveVersion(f, 'sandbox')}<span class="badge live"
-                    >v{liveVersion(f, 'sandbox')}</span
-                  >{:else}<span class="badge none">not deployed</span>{/if}
-              </td>
-              <td>
-                {#if liveVersion(f, 'production')}<span class="badge live"
-                    >v{liveVersion(f, 'production')}</span
-                  >{:else}<span class="badge none">not deployed</span>{/if}
-              </td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
+    <div class="listhead">
+      <input
+        bind:value={query}
+        placeholder="Search flows by name or slug…"
+        aria-label="search flows"
+        class="search"
+      />
+      <span class="muted count">
+        {#if filtered.length > visible.length}
+          showing {visible.length} of {filtered.length} — refine your search
+        {:else}
+          {filtered.length} of {flows.length} flow{flows.length === 1 ? '' : 's'}
+        {/if}
+      </span>
     </div>
+    {#if filtered.length === 0}
+      <p class="muted">No flows match “{query}”.</p>
+    {:else}
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Name</th><th>Slug</th><th>Latest</th><th>Sandbox</th><th>Production</th></tr>
+          </thead>
+          <tbody>
+            {#each visible as f (f.flow_id)}
+              <tr>
+                <td><a href={`/engine/${f.flow_id}`}>{f.name}</a></td>
+                <td><code>{f.slug}</code></td>
+                <td>v{f.latest}</td>
+                <td>
+                  {#if liveVersion(f, 'sandbox')}<span class="badge live"
+                      >v{liveVersion(f, 'sandbox')}</span
+                    >{:else}<span class="badge none">not deployed</span>{/if}
+                </td>
+                <td>
+                  {#if liveVersion(f, 'production')}<span class="badge live"
+                      >v{liveVersion(f, 'production')}</span
+                    >{:else}<span class="badge none">not deployed</span>{/if}
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
+    {/if}
   {/if}
 </main>
 
@@ -299,5 +332,21 @@
   }
   .muted {
     color: var(--fg-subtle);
+  }
+  .listhead {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-top: 0.75rem;
+    flex-wrap: wrap;
+  }
+  .search {
+    flex: 1 1 18rem;
+    min-width: 0;
+  }
+  .count {
+    font-size: 0.82rem;
+    white-space: nowrap;
   }
 </style>

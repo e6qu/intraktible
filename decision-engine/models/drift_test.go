@@ -23,6 +23,18 @@ func TestBucket(t *testing.T) {
 	}
 }
 
+func TestBucketDefensive(t *testing.T) {
+	// A non-finite or out-of-range probability must yield a valid index, never a
+	// negative/overflowing one (int(NaN) is a huge negative on amd64/arm64) — else
+	// Hist[idx]++ would panic the projector on a poison event.
+	for _, p := range []float64{math.NaN(), math.Inf(1), math.Inf(-1), -1e308, 1e308, -0.5, 2.0} {
+		idx := bucket(p)
+		if idx < 0 || idx >= driftBuckets {
+			t.Fatalf("bucket(%v) = %d, out of [0,%d)", p, idx, driftBuckets)
+		}
+	}
+}
+
 func TestPSI(t *testing.T) {
 	base := Histogram{10, 10, 10, 10, 10, 10, 10, 10, 10, 10}
 
