@@ -596,6 +596,18 @@ on save, not on first fetch); and a **launch dry-run against Postgres** (`--stor
 full LAUNCH.md walk + the `INTRAKTIBLE_TEST_POSTGRES` contract tests green). The round-3 ideas are
 now all delivered.
 
+**Type-safety & correctness-by-design sweep (post-launch, PRs #19–#21).** An audit-driven pass
+(tracked as TS1–TS9 in BUGS.md): a `platform/mo` `Option[T]`/`Result[T]` foundation; real bug fixes
+(GBM nil-deref, projector error-swallow, SSE/WS stream hang, bulk-case abort, builder version
+seeding, several web guards); a decide error taxonomy (`ErrBadRequest`/`ErrNotFound` → HTTP
+cause→status); **publish-time flow validation** (`domain.ValidateFlow` dry-compiles every node's
+config + expressions so a broken flow can't deploy to prod) + a canonical etag; a type-enforced
+projection store contract (`store.Ephemeral` vs `TxStore`, so a durable non-transactional store
+can't silently double-count); named enum types (`ModelKind`, `CaseStatus`, `RunStatus`,
+`ConnectorType`, `Environment`, `Disposition`); and `identity.New` at the SSO mint boundary. The
+deliberately-skipped maximal items (codebase-wide field unexporting, wholesale `Option`/`Result`
+conversion, the replay-breaking typed `PreResolved` seam) are recorded with rationale in TS9.
+
 ---
 
 ## 9. MVP non-goals

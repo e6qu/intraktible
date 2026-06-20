@@ -15,7 +15,10 @@ Layer, Agent Manager, and Harden: replay/rollback tooling + split-services profi
 See a full end-to-end walkthrough in [docs/EXAMPLE.md](docs/EXAMPLE.md) (runnable: [examples/demo.sh](examples/demo.sh)).
 Post-MVP backlog is tracked in [BUGS.md](BUGS.md).
 Roadmap & exit criteria: [PLAN.md §8](PLAN.md#8-phased-roadmap); deferrals tracked in [BUGS.md](BUGS.md).
-Working today: `platform/{eventlog,store,projection,identity,auth,httpx,ai,web}` + the `hello`
+Working today: `platform/{eventlog,store,projection,identity,auth,httpx,ai,web,mo}` (`mo` = the
+`Option[T]`/`Result[T]` types used instead of none/null sentinels where they're easy to mishandle;
+domain enums are named types with a `Valid()` method, and flows are dry-compiled at publish so a
+broken graph can't deploy — see BUGS.md TS1–TS9) + the `hello`
 slice; and the **Decision Engine** — flow model + versioning, a deterministic execution runtime
 (Input/Assignment/Rule/Split/Scorecard/Decision Table/2D Matrix/Code/Reason/Output; the Reason node
 emits structured adverse-action reason codes lifted first-class onto the decision; expr-lang for
