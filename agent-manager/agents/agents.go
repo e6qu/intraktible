@@ -255,6 +255,14 @@ func InvokeWithTools(ctx context.Context, s store.Store, reg *ai.Registry, tb To
 		// outcome — fail loudly so it is fixed.
 		return Outcome{}, err
 	}
+	// The declared tools ARE the capability boundary. The provider is sent only these
+	// specs, but its response is untrusted — a buggy or prompt-injected model can name
+	// any tool — so execution is gated on this set too (otherwise the model could drive
+	// the toolbox to invoke any connector in the caller's tenant).
+	allowed := make(map[string]bool, len(tools))
+	for _, tl := range tools {
+		allowed[tl.Name] = true
+	}
 
 	// The run state is mutated in place; every terminal branch sets the status and
 	// error then falls through to a single `return out, nil` — a provider failure
@@ -302,7 +310,7 @@ func InvokeWithTools(ctx context.Context, s store.Store, reg *ai.Registry, tb To
 		default:
 			// The model wants tools: execute them, feed the results back, and loop.
 			history = append(history, ai.Message{Role: "assistant", ToolCalls: resp.ToolCalls})
-			history = appendToolResults(ctx, tb, id, resp.ToolCalls, history, &out)
+			history = appendToolResults(ctx, tb, allowed, id, resp.ToolCalls, history, &out)
 			continue
 		}
 		break
@@ -374,12 +382,21 @@ func resolveTools(names []string, tb Toolbox) ([]ai.Tool, error) {
 	return tools, nil
 }
 
-// appendToolResults executes each tool call, records it in the outcome trace, and
-// appends a tool-result message to the conversation. A tool error is fed back to
-// the model (and recorded) rather than aborting — the model may recover.
-func appendToolResults(ctx context.Context, tb Toolbox, id identity.Identity, calls []ai.ToolCall, history []ai.Message, out *Outcome) []ai.Message {
+// appendToolResults executes each tool call the agent ALLOWED, records it in the
+// outcome trace, and appends a tool-result message to the conversation. A tool error
+// is fed back to the model (and recorded) rather than aborting — the model may
+// recover. A call naming a tool not in `allowed` is refused without executing it (the
+// declared-tool set is the capability boundary; the model's response is untrusted)
+// and the refusal is recorded + fed back so the model can correct course.
+func appendToolResults(ctx context.Context, tb Toolbox, allowed map[string]bool, id identity.Identity, calls []ai.ToolCall, history []ai.Message, out *Outcome) []ai.Message {
 	for _, call := range calls {
 		rec := events.ToolCall{Name: call.Name, Arguments: call.Arguments}
+		if !allowed[call.Name] {
+			rec.Error = "tool not declared by this agent"
+			out.ToolCalls = append(out.ToolCalls, rec)
+			history = append(history, ai.Message{Role: "tool", ToolCallID: call.ID, Content: rec.Error})
+			continue
+		}
 		result, terr := tb.Call(ctx, id, call.Name, call.Arguments)
 		content := ""
 		if terr != nil {

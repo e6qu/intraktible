@@ -639,7 +639,22 @@ ceiling, and a feature-window boundary fix. New fuzz target `FuzzPrefixUpperBoun
 store range invariant. The Postgres multi-node delivery seq-gap (BIGSERIAL commit-vs-seq order) was
 verified real and documented with the fix (a visibility-horizon gate), deliberately not shipped
 untested as it needs a live multi-node Postgres and a naive watermark would deadlock on burned
-sequence numbers.
+sequence numbers. **Round 5** (BF42–BF49 / TS21–TS22) caught a **CRITICAL regression from round 4**:
+the new `Store.List` prefix range scan (`key < prefixUpperBound`, a byte-successor bound) is correct
+only under byte ordering, but the Postgres `docs.key` column inherits the database's default —
+usually *linguistic* — collation, so on a stock Postgres the range silently dropped rows (empty
+notifications inbox / comment threads). Fixed by pinning every key comparison + `ORDER BY` to
+`COLLATE "C"` and adding a C-collation index (and a live-DB prefix test + a full-contract fuzz).
+Also: an agent-tool-loop **capability-confinement bypass** (the loop executed any tool name the
+provider returned, not just the agent's declared set — a prompt-injected model could reach any
+connector in the tenant; now gated on the resolved-tool allowlist), a **crypto-shred hole** where
+the manual-review escalation recorded `company_name`/`case_type` unsealed (now derived from the
+sealed node output), the BF24 stale-load guard propagated to the test-run telemetry painter, and a
+cluster of web interaction races/UX bugs (bulk-failure toast, login double-submit, pager overshoot,
+drift-window request token). Security hardening: the SQLite-connector directory confinement now
+resolves symlinks before the containment check, and `httpx.Download` sanitizes the
+Content-Disposition filename. New fuzz target `FuzzMemoryListPrefix` validates the store prefix
+contract end-to-end.
 
 ---
 

@@ -7,6 +7,7 @@
 
   let apiKey = $state('dev-sandbox-key');
   let error = $state('');
+  let busy = $state(false);
   // Each entry is a provider to render a "Sign in with …" button for, with the
   // login path for its protocol.
   let ssoButtons = $state<{ label: string; href: string }[]>([]);
@@ -30,12 +31,16 @@
   });
 
   async function submit() {
+    if (busy) return; // Enter can fire onsubmit while a login is already in flight
     error = '';
+    busy = true;
     try {
       user.set(await login(apiKey));
       await goto('/');
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
+    } finally {
+      busy = false;
     }
   }
 </script>
@@ -51,7 +56,7 @@
     }}
   >
     <input bind:value={apiKey} type="password" placeholder="API key" aria-label="API key" />
-    <button type="submit">Sign in</button>
+    <button type="submit" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</button>
   </form>
   {#if error}<p class="err" data-testid="login-error">{error}</p>{/if}
 

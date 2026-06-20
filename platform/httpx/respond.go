@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"runtime"
 	"runtime/debug"
+	"strings"
 
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/identity"
@@ -131,9 +132,23 @@ func Emit(w http.ResponseWriter, r *http.Request, req any, run func(identity.Ide
 // filename — the shared writer for the diagram-export and audit-export endpoints.
 func Download(w http.ResponseWriter, contentType, filename, body string) {
 	w.Header().Set("Content-Type", contentType)
-	w.Header().Set("Content-Disposition", "attachment; filename=\""+filename+"\"")
+	w.Header().Set("Content-Disposition", "attachment; filename=\""+sanitizeFilename(filename)+"\"")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(body))
+}
+
+// sanitizeFilename neutralizes characters that could break out of the quoted
+// Content-Disposition filename — CR/LF (header injection / response splitting),
+// double-quote and backslash (quote escape), and other control bytes. Defense in
+// depth so the helper is safe-by-construction even if a caller ever passes
+// user-controlled text (today's callers use fixed/validated names).
+func sanitizeFilename(name string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '"' || r == '\\' || r < 0x20 {
+			return '_'
+		}
+		return r
+	}, name)
 }
 
 // WriteList responds with a read-model listing under the given JSON key, mapping

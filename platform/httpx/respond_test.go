@@ -80,3 +80,21 @@ func TestDecodeJSONRejectsOversizedBody(t *testing.T) {
 		t.Fatalf("small body decode: v=%q err=%v", v2, err)
 	}
 }
+
+func TestDownloadSanitizesFilename(t *testing.T) {
+	rec := httptest.NewRecorder()
+	// A hostile filename with CRLF + a quote that would otherwise break out of the
+	// quoted Content-Disposition and inject a header / split the response.
+	httpx.Download(rec, "text/csv", "a\"\r\nSet-Cookie: x=1.csv", "body")
+	cd := rec.Header().Get("Content-Disposition")
+	if strings.ContainsAny(cd, "\r\n\"") && !strings.HasPrefix(cd, `attachment; filename="`) {
+		t.Fatalf("unexpected header shape: %q", cd)
+	}
+	if strings.Contains(cd, "\r") || strings.Contains(cd, "\n") {
+		t.Fatalf("Content-Disposition must not contain CR/LF: %q", cd)
+	}
+	// The injected quote must be neutralized (no second quoted segment / header).
+	if strings.Contains(cd, "Set-Cookie") && strings.Contains(cd, "\n") {
+		t.Fatalf("header injection not prevented: %q", cd)
+	}
+}

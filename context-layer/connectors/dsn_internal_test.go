@@ -3,6 +3,7 @@
 package connectors
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -43,5 +44,26 @@ func TestResolveSQLiteDSNAllowlist(t *testing.T) {
 		if _, err := resolveSQLiteDSN(dsn); err == nil {
 			t.Errorf("expected %q (outside %q) to be rejected", dsn, root)
 		}
+	}
+}
+
+// A symlink placed INSIDE the allowed dir but pointing OUTSIDE it must be rejected:
+// the lexical path sits under the root, but sql.Open would follow the link to an
+// arbitrary file. Containment resolves symlinks before checking.
+func TestResolveSQLiteDSNRejectsSymlinkEscape(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	t.Setenv(sqliteConnectorDirEnv, root)
+
+	target := filepath.Join(outside, "secret.db")
+	if err := os.WriteFile(target, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "innocent.db")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlinks unsupported on this platform: %v", err)
+	}
+	if _, err := resolveSQLiteDSN("file:" + link); err == nil {
+		t.Fatal("a symlink inside the allowed dir pointing outside it must be rejected")
 	}
 }

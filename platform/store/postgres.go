@@ -41,6 +41,15 @@ func NewPostgres(ctx context.Context, dsn string) (*Postgres, error) {
 		pool.Close()
 		return nil, fmt.Errorf("store: postgres schema: %w", err)
 	}
+	// A C-collation (byte-ordered) index on (collection, key) so the prefix range
+	// scan in listQueryPostgres — which compares COLLATE "C" to match prefixUpperBound's
+	// byte-successor bound — is index-backed regardless of the database's default
+	// (possibly linguistic) collation.
+	if _, err := pool.Exec(ctx,
+		`CREATE INDEX IF NOT EXISTS docs_collection_key_c ON docs (collection, key COLLATE "C")`); err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("store: postgres index: %w", err)
+	}
 	return &Postgres{pool: pool}, nil
 }
 
@@ -80,18 +89,27 @@ func (s *Postgres) List(ctx context.Context, collection, keyPrefix string) ([]Re
 // listQueryPostgres builds the prefix-scoped list query for the $n-placeholder
 // Postgres backend: an indexed `key >= prefix AND key < upper` range, or the whole
 // collection when keyPrefix is empty.
+//
+// Every key comparison and the ORDER BY use COLLATE "C" (byte ordering). This is
+// load-bearing: prefixUpperBound computes the upper bound by incrementing the last
+// byte, which is the correct successor ONLY under byte ordering. Under a linguistic
+// default collation (e.g. en_US.UTF-8, common on stock Postgres) the same range
+// would order keys differently and `key < upper` could EXCLUDE valid rows — a silent
+// read-model data loss the Go-side HasPrefix backstop cannot recover (it can only
+// drop over-matches, never re-add an excluded row). COLLATE "C" also aligns Postgres
+// key ordering with the byte-ordered SQLite/memory backends.
 func listQueryPostgres(collection, keyPrefix string) (string, []any) {
 	q := `SELECT key, doc FROM docs WHERE collection = $1`
 	args := []any{collection}
 	if keyPrefix != "" {
-		q += ` AND key >= $2`
+		q += ` AND key COLLATE "C" >= $2`
 		args = append(args, keyPrefix)
 		if ub := prefixUpperBound(keyPrefix); ub != "" {
-			q += ` AND key < $3`
+			q += ` AND key COLLATE "C" < $3`
 			args = append(args, ub)
 		}
 	}
-	return q + ` ORDER BY key`, args
+	return q + ` ORDER BY key COLLATE "C"`, args
 }
 
 // scanPGRecords reads (key, doc) rows into Records and closes the rows. Shared by
