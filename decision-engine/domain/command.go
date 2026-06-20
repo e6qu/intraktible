@@ -86,7 +86,7 @@ func (c ImportFlow) Validate() error {
 	if !slugPattern.MatchString(c.Slug) {
 		return fmt.Errorf("decision-engine: invalid slug %q (lowercase letters, digits, hyphens)", c.Slug)
 	}
-	return ValidateGraph(c.Graph)
+	return ValidateFlow(c.Graph)
 }
 
 // PublishVersion is the command to publish a new immutable version of a flow.
@@ -101,7 +101,7 @@ func (c PublishVersion) Validate() error {
 	if strings.TrimSpace(c.FlowID) == "" {
 		return errors.New("decision-engine: flow_id is required")
 	}
-	return ValidateGraph(c.Graph)
+	return ValidateFlow(c.Graph)
 }
 
 // DeployVersion is the command to make a flow version live in an environment,

@@ -322,7 +322,7 @@ test('switches the flow canvas between card and BPMN views', async ({ page, requ
             id: 'gate',
             type: 'split',
             name: 'Route',
-            config: { branches: [{ name: 'yes', when: 'true' }] }
+            config: { condition: 'true' }
           },
           { id: 'out', type: 'output', name: 'Finish' }
         ],
