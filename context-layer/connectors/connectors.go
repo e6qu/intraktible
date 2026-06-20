@@ -47,12 +47,12 @@ const fetchTimeout = 10 * time.Second
 
 // ConnectorView is the materialized read model for one connector definition.
 type ConnectorView struct {
-	Org       string          `json:"org"`
-	Workspace string          `json:"workspace"`
-	Name      string          `json:"name"`
-	Type      string          `json:"type"`
-	Config    json.RawMessage `json:"config,omitempty"`
-	UpdatedAt time.Time       `json:"updated_at"`
+	Org       string               `json:"org"`
+	Workspace string               `json:"workspace"`
+	Name      string               `json:"name"`
+	Type      domain.ConnectorType `json:"type"`
+	Config    json.RawMessage      `json:"config,omitempty"`
+	UpdatedAt time.Time            `json:"updated_at"`
 }
 
 // FetchView is one recorded connector invocation.
@@ -175,7 +175,7 @@ func applyDefined(ctx context.Context, e eventlog.Envelope, s store.Store) error
 	}
 	v := ConnectorView{
 		Org: e.Org, Workspace: e.Workspace,
-		Name: p.Name, Type: p.Type, Config: p.Config, UpdatedAt: e.Time,
+		Name: p.Name, Type: domain.ConnectorType(p.Type), Config: p.Config, UpdatedAt: e.Time,
 	}
 	return store.PutDoc(ctx, s, CollectionConnectors, store.Key(e.Org, e.Workspace, p.Name), v)
 }
@@ -203,7 +203,7 @@ func Read(ctx context.Context, s store.Store, id identity.Identity, name string)
 // List returns the tenant's connector definitions, optionally filtered by type.
 func List(ctx context.Context, s store.Store, id identity.Identity, connType string) ([]ConnectorView, error) {
 	return store.QueryDocs(ctx, s, CollectionConnectors, store.Key(id.Org, id.Workspace, ""),
-		func(c ConnectorView) bool { return connType == "" || c.Type == connType },
+		func(c ConnectorView) bool { return connType == "" || c.Type == domain.ConnectorType(connType) },
 		func(a, b ConnectorView) bool { return a.Name < b.Name })
 }
 
@@ -330,7 +330,7 @@ func (p Provider) Fetch(ctx context.Context, id identity.Identity, connector str
 // first fetch. It must be called on the plaintext config, before secrets are
 // sealed (the constructors read credential values).
 func ValidateConfig(connectorType string, config json.RawMessage) error {
-	_, err := build(ConnectorView{Type: connectorType, Config: config}, EgressPolicy{})
+	_, err := build(ConnectorView{Type: domain.ConnectorType(connectorType), Config: config}, EgressPolicy{})
 	return err
 }
 

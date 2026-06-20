@@ -85,7 +85,7 @@ func (h *Handler) DefineFeature(ctx context.Context, id identity.Identity, cmd d
 // DefineConnector registers (or redefines) a named external connector.
 func (h *Handler) DefineConnector(ctx context.Context, id identity.Identity, cmd domain.DefineConnector) (eventlog.Envelope, error) {
 	return h.emit(ctx, id, cmd, events.TypeConnectorDefined, events.ConnectorDefined{
-		Name: cmd.Name, Type: cmd.Type, Config: cmd.Config,
+		Name: cmd.Name, Type: string(cmd.Type), Config: cmd.Config,
 	})
 }
 

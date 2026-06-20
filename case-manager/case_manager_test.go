@@ -97,7 +97,7 @@ func TestCaseQueueFilterAndTenantIsolation(t *testing.T) {
 	if got, _ := cases.List(ctx, st, a, cases.Filter{CaseType: "aml"}); len(got) != 1 {
 		t.Fatalf("filter type=aml: %d, want 1", len(got))
 	}
-	if got, _ := cases.List(ctx, st, a, cases.Filter{Status: domain.StatusNeedsReview}); len(got) != 1 {
+	if got, _ := cases.List(ctx, st, a, cases.Filter{Status: string(domain.StatusNeedsReview)}); len(got) != 1 {
 		t.Fatalf("filter status=needs_review: %d, want 1", len(got))
 	}
 }
