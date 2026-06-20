@@ -97,18 +97,32 @@
     }
   }
 
-  async function revoke(p: PreApproval) {
-    const reason = prompt(
-      `Revoke the pre-approval for ${p.entity_type}:${p.entity_id}?`,
-      'no longer valid'
-    );
-    if (reason === null) return;
+  // Inline revoke: a styled, keyboard-accessible reason field replaces the native
+  // window.prompt (which isn't styleable, traps focus, and is blocked by some
+  // browsers).
+  let revokingId = $state('');
+  let revokeReason = $state('');
+  let revokeBusy = $state(false);
+  function startRevoke(p: PreApproval) {
+    revokingId = p.preapproval_id;
+    revokeReason = 'no longer valid';
+  }
+  function cancelRevoke() {
+    revokingId = '';
+    revokeReason = '';
+  }
+  async function confirmRevoke(p: PreApproval) {
+    if (revokeBusy) return;
+    revokeBusy = true;
     try {
-      await revokePreApproval(key, p.entity_type, p.entity_id, reason);
+      await revokePreApproval(key, p.entity_type, p.entity_id, revokeReason.trim());
       toast.success('Pre-approval revoked');
+      cancelRevoke();
       await load();
     } catch (e) {
       toast.error(msg(e));
+    } finally {
+      revokeBusy = false;
     }
   }
 
@@ -214,11 +228,37 @@
               <td><RelativeTime value={p.valid_until} /></td>
               <td><span class="status {st}">{st}</span></td>
               <td class="right">
-                {#if st === 'active'}
-                  <button class="link danger" onclick={() => revoke(p)}>Revoke</button>
+                {#if st === 'active' && revokingId !== p.preapproval_id}
+                  <button class="link danger" onclick={() => startRevoke(p)}>Revoke</button>
                 {/if}
               </td>
             </tr>
+            {#if revokingId === p.preapproval_id}
+              <tr class="revokerow">
+                <td colspan="8">
+                  <form
+                    class="revoke"
+                    onsubmit={(e) => {
+                      e.preventDefault();
+                      confirmRevoke(p);
+                    }}
+                  >
+                    <label
+                      >Revoke reason
+                      <input
+                        bind:value={revokeReason}
+                        aria-label="revoke reason"
+                        placeholder="no longer valid"
+                      /></label
+                    >
+                    <button type="submit" class="danger" disabled={revokeBusy}>
+                      {revokeBusy ? 'Revoking…' : 'Confirm revoke'}
+                    </button>
+                    <button type="button" class="link" onclick={cancelRevoke}>Cancel</button>
+                  </form>
+                </td>
+              </tr>
+            {/if}
             {#if p.note || p.revoked_reason}
               <tr class="noterow" class:dim={st !== 'active'}>
                 <td colspan="8">
@@ -406,6 +446,31 @@
   }
   button.link.danger {
     color: var(--danger);
+  }
+  .revoke {
+    display: flex;
+    align-items: end;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+  }
+  .revoke label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    font-size: 0.85rem;
+    color: var(--fg-subtle);
+  }
+  button.danger {
+    background: var(--danger);
+    color: white;
+    border: none;
+    border-radius: 0.35rem;
+    padding: 0.4rem 0.75rem;
+    cursor: pointer;
+  }
+  button.danger:disabled {
+    opacity: 0.6;
+    cursor: default;
   }
   .err {
     color: var(--danger);

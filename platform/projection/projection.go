@@ -50,11 +50,21 @@ type Runtime struct {
 	applied uint64 // highest seq applied this run (guards against re-apply)
 }
 
-// New builds a Runtime.
+// New builds a Runtime. The store must be crash-safe by construction: either a
+// store.TxStore (checkpoint advances atomically with each event) or one that
+// declares store.Ephemeral (a restart loses everything, so a full rebuild is
+// always safe). A durable store that is neither would silently double-count
+// non-idempotent projector counters on crash recovery — so it is rejected here,
+// loudly, rather than deferring the corruption to a production crash.
 func New(log eventlog.Log, st store.Store, projectors ...Projector) *Runtime {
 	r := &Runtime{log: log, store: st, projectors: projectors}
-	if txs, ok := st.(store.TxStore); ok {
-		r.tx = txs
+	switch s := st.(type) {
+	case store.TxStore:
+		r.tx = s
+	case store.Ephemeral:
+		// non-atomic apply path is safe; a crash triggers a full rebuild
+	default:
+		panic("projection: store must implement store.TxStore (durable) or store.Ephemeral (rebuilt on restart) — a durable non-transactional store would double-count projector counters on crash recovery")
 	}
 	return r
 }
