@@ -151,6 +151,34 @@ func TestOAuth2ClientCredentials(t *testing.T) {
 	}
 }
 
+// A rotated client_secret (same token_url/client_id/scope) must trigger a fresh
+// token fetch, not serve the token cached under the old secret.
+func TestOAuth2RotatedSecretRefetches(t *testing.T) {
+	ctx := context.Background()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		w.Header().Set("Content-Type", "application/json")
+		// Echo the secret into the token so the test can tell them apart.
+		_, _ = w.Write([]byte(`{"access_token":"tok-` + r.FormValue("client_secret") + `","expires_in":3600}`))
+	}))
+	defer srv.Close()
+
+	get := func(secret string) string {
+		a := &authConfig{Type: "oauth2", TokenURL: srv.URL, ClientID: "cid", ClientSecret: secret}
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.example.com/x", http.NoBody)
+		if err := a.authorize(ctx, req, srv.Client()); err != nil {
+			t.Fatal(err)
+		}
+		return req.Header.Get("Authorization")
+	}
+	if got := get("s1"); got != "Bearer tok-s1" {
+		t.Fatalf("first secret: %q", got)
+	}
+	if got := get("s2"); got != "Bearer tok-s2" {
+		t.Fatalf("rotated secret served a stale token: %q (want Bearer tok-s2)", got)
+	}
+}
+
 func TestOAuth2Validation(t *testing.T) {
 	bad := []*authConfig{
 		{Type: "oauth2", ClientID: "c", ClientSecret: "s"},                        // no token_url

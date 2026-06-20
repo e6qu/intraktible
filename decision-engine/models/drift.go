@@ -25,13 +25,20 @@ const StatsCollection = "decision_model_stats"
 type Histogram [driftBuckets]int
 
 // bucket maps a probability to its decile index, clamped to [0, driftBuckets-1].
+// It is defensive against a NaN/±Inf or out-of-range value (int(NaN) is a large
+// negative on amd64/arm64): the result is always a valid index, so a malformed
+// probability from an external model can never panic the projector with an
+// out-of-range Hist[idx] write.
 func bucket(p float64) int {
-	if p < 0 {
-		p = 0
+	if math.IsNaN(p) || p <= 0 {
+		return 0
 	}
 	idx := int(p * driftBuckets)
 	if idx >= driftBuckets {
-		idx = driftBuckets - 1
+		return driftBuckets - 1
+	}
+	if idx < 0 {
+		return 0
 	}
 	return idx
 }
@@ -181,7 +188,9 @@ func applyPredictNode(ctx context.Context, e eventlog.Envelope, s store.Store) e
 	for _, pred := range out {
 		model, _ := pred["model"].(string)
 		prob, hasProb := pred["probability"].(float64)
-		if model == "" || !hasProb {
+		// Skip a non-finite probability (a misbehaving external model can return
+		// NaN/±Inf) — it isn't a meaningful decile and must not pollute the histogram.
+		if model == "" || !hasProb || math.IsNaN(prob) || math.IsInf(prob, 0) {
 			continue
 		}
 		if err := bumpModel(ctx, e, s, model, bucket(prob)); err != nil {
