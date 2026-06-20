@@ -84,7 +84,7 @@ func (h *Handler) AssignCase(ctx context.Context, id identity.Identity, cmd doma
 // SetStatus transitions an existing case to a new status.
 func (h *Handler) SetStatus(ctx context.Context, id identity.Identity, cmd domain.SetStatus) (eventlog.Envelope, error) {
 	return h.onExisting(ctx, id, cmd.CaseID, cmd.Validate, events.TypeCaseStatusChanged,
-		events.CaseStatusChanged{CaseID: cmd.CaseID, Status: cmd.Status})
+		events.CaseStatusChanged{CaseID: cmd.CaseID, Status: string(cmd.Status)})
 }
 
 // AddNote appends a note to an existing case.
@@ -97,7 +97,7 @@ func (h *Handler) AddNote(ctx context.Context, id identity.Identity, cmd domain.
 type slaCaseState struct {
 	createdAt time.Time
 	slaDays   int
-	status    string
+	status    domain.CaseStatus
 	breached  bool
 }
 
@@ -175,7 +175,7 @@ func (h *Handler) caseStates(ctx context.Context, id identity.Identity) (map[str
 				return nil, fmt.Errorf("case-manager: decode status seq %d: %w", e.Seq, err)
 			}
 			if st, ok := states[p.CaseID]; ok {
-				st.status = p.Status
+				st.status = domain.CaseStatus(p.Status)
 				states[p.CaseID] = st
 			}
 		case events.TypeCaseSLABreached:

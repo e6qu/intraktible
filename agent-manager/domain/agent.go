@@ -11,12 +11,28 @@ import (
 	"strings"
 )
 
+// RunStatus is the terminal/in-flight status of an agent run. It is a named type
+// (not a bare string) so an invalid status is caught at the boundary rather than
+// flowing untyped through the read model. Its JSON is wire-identical to a string,
+// so the API/event wire is unchanged.
+type RunStatus string
+
 // Agent run statuses.
 const (
-	RunRunning   = "running" // an async run that has started but not yet finished
-	RunCompleted = "completed"
-	RunFailed    = "failed"
+	RunRunning   RunStatus = "running" // an async run that has started but not yet finished
+	RunCompleted RunStatus = "completed"
+	RunFailed    RunStatus = "failed"
 )
+
+// Valid reports whether s is a known run status.
+func (s RunStatus) Valid() bool {
+	switch s {
+	case RunRunning, RunCompleted, RunFailed:
+		return true
+	default:
+		return false
+	}
+}
 
 // DefineAgent registers (or redefines) an agent: a configuration over the
 // pluggable AI provider — a system prompt, an optional model + provider

@@ -9,21 +9,27 @@ import (
 	"strings"
 )
 
+// ConnectorType names the kind of external system a connector talks to. It is a
+// named type (not a bare string) so an invalid type is caught at the boundary, not
+// deep in the build() switch. JSON of a named string type is wire-identical, so
+// stored projections and the API stay compatible.
+type ConnectorType string
+
 // Connector types. HTTP calls an arbitrary configured REST endpoint (the "Custom
 // Connect" case); SQL runs a parameterized query against a configured database;
 // MockBureau is a deterministic in-process reference connector. Plaid and Stripe
 // are first-class provider adapters (preconfigured base URL + auth scheme).
 const (
-	ConnectorHTTP       = "http"
-	ConnectorSQL        = "sql"
-	ConnectorGraphQL    = "graphql"
-	ConnectorStatic     = "static"
-	ConnectorMockBureau = "mock_bureau"
-	ConnectorPlaid      = "plaid"
-	ConnectorStripe     = "stripe"
+	ConnectorHTTP       ConnectorType = "http"
+	ConnectorSQL        ConnectorType = "sql"
+	ConnectorGraphQL    ConnectorType = "graphql"
+	ConnectorStatic     ConnectorType = "static"
+	ConnectorMockBureau ConnectorType = "mock_bureau"
+	ConnectorPlaid      ConnectorType = "plaid"
+	ConnectorStripe     ConnectorType = "stripe"
 )
 
-var connectorTypes = map[string]bool{
+var connectorTypes = map[ConnectorType]bool{
 	ConnectorHTTP:       true,
 	ConnectorSQL:        true,
 	ConnectorGraphQL:    true,
@@ -33,8 +39,13 @@ var connectorTypes = map[string]bool{
 	ConnectorStripe:     true,
 }
 
-// ValidConnectorType reports whether t is a known connector type.
-func ValidConnectorType(t string) bool { return connectorTypes[t] }
+// Valid reports whether t is a known connector type.
+func (t ConnectorType) Valid() bool { return connectorTypes[t] }
+
+// ValidConnectorType reports whether t is a known connector type. It is the
+// string-boundary helper for callers that hold a raw request string (the service
+// validates the decoded JSON before it has a typed value).
+func ValidConnectorType(t string) bool { return ConnectorType(t).Valid() }
 
 // DefineConnector registers (or redefines) a named connector. Config is
 // type-specific JSON (http: {"url","method","headers","auth"}; sql:
@@ -42,7 +53,7 @@ func ValidConnectorType(t string) bool { return connectorTypes[t] }
 // {"secret_key","path"}; mock_bureau: optional {"dataset"}).
 type DefineConnector struct {
 	Name   string
-	Type   string
+	Type   ConnectorType
 	Config json.RawMessage
 }
 
@@ -51,7 +62,7 @@ func (c DefineConnector) Validate() error {
 	if strings.TrimSpace(c.Name) == "" {
 		return errors.New("context-layer: connector name is required")
 	}
-	if !ValidConnectorType(c.Type) {
+	if !c.Type.Valid() {
 		return fmt.Errorf("context-layer: unknown connector type %q (http|graphql|sql|static|plaid|stripe|mock_bureau)", c.Type)
 	}
 	return validJSONObject("config", c.Config)

@@ -151,7 +151,7 @@ func (s *Service) status(w http.ResponseWriter, r *http.Request) {
 		Status string `json:"status"`
 	}
 	httpx.Emit(w, r, &req, func(id identity.Identity) (eventlog.Envelope, error) {
-		return s.cmd.SetStatus(r.Context(), id, domain.SetStatus{CaseID: r.PathValue("case_id"), Status: req.Status})
+		return s.cmd.SetStatus(r.Context(), id, domain.SetStatus{CaseID: r.PathValue("case_id"), Status: domain.CaseStatus(req.Status)})
 	})
 }
 
