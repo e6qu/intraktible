@@ -62,7 +62,19 @@ func TestDispatchBoundsBatchAndReArms(t *testing.T) {
 // TestStopCancelsInFlightRead proves Close unblocks a poll read that is parked
 // (here, on the delivery context) rather than waiting it out.
 func TestStopCancelsInFlightRead(t *testing.T) {
-	entered := make(chan struct{})
+	// No per-operation time.After guards: the channel receives below ARE the
+	// synchronization — they block exactly until the event and return instantly when
+	// healthy. If the behaviour under test breaks (stopAndClose waits out a parked
+	// read instead of cancelling it), the test simply hangs and `go test -timeout`
+	// fails it with a full goroutine dump pinpointing where it parked — better
+	// diagnostics than a hand-picked timeout, and no magic constant to tune for a
+	// loaded -race runner.
+	//
+	// `entered` is buffered so the "read started" signal can't be lost: the read runs
+	// on the poll goroutine and may reach the send before the test reaches the
+	// receive; an unbuffered non-blocking send would hit default and drop the signal
+	// (the rendezvous race that flaked this test under -race on CI).
+	entered := make(chan struct{}, 1)
 	d := newDelivery(func(ctx context.Context, _ uint64, _ int) ([]Envelope, error) {
 		select {
 		case entered <- struct{}{}:
@@ -74,20 +86,11 @@ func TestStopCancelsInFlightRead(t *testing.T) {
 
 	d.start()
 	d.poke()
-	select {
-	case <-entered:
-	case <-time.After(2 * time.Second):
-		t.Fatal("poll read never started")
-	}
+	<-entered // a poll read has started and is parked on the delivery context
 
-	closed := make(chan error, 1)
-	go func() { closed <- d.stopAndClose(func() error { return nil }) }()
-	select {
-	case err := <-closed:
-		if err != nil {
-			t.Fatalf("stopAndClose: %v", err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("stopAndClose blocked on an in-flight read instead of cancelling it")
+	// stopAndClose must cancel that parked read, not wait it out. A regression hangs
+	// here (caught by the test binary's -timeout).
+	if err := d.stopAndClose(func() error { return nil }); err != nil {
+		t.Fatalf("stopAndClose: %v", err)
 	}
 }
