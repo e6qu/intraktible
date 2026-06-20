@@ -38,6 +38,17 @@ test('searches tenant entities and jumps to a flow by name', async ({ page, requ
   });
   const { flow_id } = await created.json();
 
+  // The palette searches the read model, which lags the create above (eventual
+  // consistency). Wait for the flow to be listable before searching, so the result
+  // is deterministic rather than a race against projection lag under parallel load.
+  await expect
+    .poll(async () => {
+      const res = await request.get('/v1/flows', { headers: { 'X-Api-Key': KEY } });
+      const body = await res.json();
+      return (body.flows ?? []).some((f: { slug: string }) => f.slug === slug);
+    })
+    .toBeTruthy();
+
   await page.goto('/');
   await expect(page.getByTestId('cmdk-trigger')).toBeVisible();
   await page.keyboard.press('ControlOrMeta+k');
