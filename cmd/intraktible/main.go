@@ -26,6 +26,7 @@ import (
 
 	"github.com/e6qu/intraktible/agent-manager/agents"
 	agentcmd "github.com/e6qu/intraktible/agent-manager/command"
+	"github.com/e6qu/intraktible/agent-manager/eval"
 	agentservice "github.com/e6qu/intraktible/agent-manager/service"
 	"github.com/e6qu/intraktible/agent-manager/tools"
 	"github.com/e6qu/intraktible/case-manager/cases"
@@ -789,7 +790,7 @@ func moduleProjectors(modules string) []projection.Projector {
 		ps = append(ps, entities.Projector{}, features.Projector{}, connectors.Projector{})
 	}
 	if enabled(modules, "agent-manager") {
-		ps = append(ps, agents.Projector{})
+		ps = append(ps, agents.Projector{}, eval.Projector{})
 	}
 	return ps
 }

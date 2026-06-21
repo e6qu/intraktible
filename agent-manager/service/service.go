@@ -6,11 +6,13 @@ package service
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"github.com/e6qu/intraktible/agent-manager/agents"
 	"github.com/e6qu/intraktible/agent-manager/command"
 	"github.com/e6qu/intraktible/agent-manager/domain"
+	"github.com/e6qu/intraktible/agent-manager/eval"
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/httpx"
 	"github.com/e6qu/intraktible/platform/identity"
@@ -46,7 +48,11 @@ func (s *Service) Routes(mux *http.ServeMux) {
 		{Method: "POST", Pattern: "/v1/agents", Handler: s.defineAgent},
 		{Method: "GET", Pattern: "/v1/agents", Handler: s.listAgents},
 		{Method: "GET", Pattern: "/v1/agents/{name}", Handler: s.getAgent},
+		{Method: "GET", Pattern: "/v1/agents/{name}/versions", Handler: s.listVersions},
 		{Method: "POST", Pattern: "/v1/agents/{name}/run", Handler: s.runAgent},
+		{Method: "GET", Pattern: "/v1/agents/{name}/evals", Handler: s.getEvals},
+		{Method: "PUT", Pattern: "/v1/agents/{name}/evals", Handler: s.setEvals},
+		{Method: "POST", Pattern: "/v1/agents/{name}/evals/run", Handler: s.runEvals},
 		{Method: "GET", Pattern: "/v1/agents/{name}/run/stream", Handler: s.runStreamSSE},
 		{Method: "GET", Pattern: "/v1/agents/{name}/run/ws", Handler: s.runStreamWS},
 		{Method: "GET", Pattern: "/v1/agents/{name}/runs", Handler: s.listAgentRuns},
@@ -80,8 +86,9 @@ func (s *Service) runAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Prompt string `json:"prompt"`
-		Async  bool   `json:"async,omitempty"`
+		Prompt  string `json:"prompt"`
+		Async   bool   `json:"async,omitempty"`
+		Version int    `json:"version,omitempty"` // 0 = latest; pin a published version
 	}
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.Error(w, http.StatusBadRequest, err)
@@ -98,7 +105,7 @@ func (s *Service) runAgent(w http.ResponseWriter, r *http.Request) {
 		httpx.JSON(w, http.StatusAccepted, map[string]any{"run_id": runID, "status": "running"})
 		return
 	}
-	res, err := s.cmd.RunAgent(r.Context(), id, name, req.Prompt)
+	res, err := s.cmd.RunAgent(r.Context(), id, name, req.Prompt, req.Version)
 	if err != nil {
 		httpx.Error(w, http.StatusBadRequest, err)
 		return
@@ -125,6 +132,88 @@ func (s *Service) getAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	a, found, err := agents.Read(r.Context(), s.store, id, r.PathValue("name"))
 	httpx.WriteOne(w, a, found, err, "agent not found")
+}
+
+// listVersions returns an agent's immutable version history (newest first).
+func (s *Service) listVersions(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	a, found, err := agents.Read(r.Context(), s.store, id, r.PathValue("name"))
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	if !found {
+		httpx.Error(w, http.StatusNotFound, fmt.Errorf("agent not found"))
+		return
+	}
+	vs := make([]agents.AgentVersionView, len(a.Versions))
+	for i, v := range a.Versions { // newest first
+		vs[len(a.Versions)-1-i] = v
+	}
+	httpx.WriteList(w, "versions", vs, nil)
+}
+
+// getEvals returns an agent's stored eval cases.
+func (s *Service) getEvals(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	v, found, err := eval.Read(r.Context(), s.store, id, r.PathValue("name"))
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	cases := []eval.Case{}
+	if found {
+		cases = v.Cases
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"cases": cases})
+}
+
+// setEvals replaces an agent's eval case set.
+func (s *Service) setEvals(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		Cases []eval.Case `json:"cases"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	e, err := s.cmd.SetEvalCases(r.Context(), id, r.PathValue("name"), req.Cases)
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"event_id": e.ID, "seq": e.Seq})
+}
+
+// runEvals runs the agent's stored eval cases against a version (record-nothing).
+func (s *Service) runEvals(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		Version int `json:"version,omitempty"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	rep, err := s.cmd.RunEvals(r.Context(), id, r.PathValue("name"), req.Version)
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, rep)
 }
 
 func (s *Service) listAgentRuns(w http.ResponseWriter, r *http.Request) {

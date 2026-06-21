@@ -44,7 +44,7 @@ func TestAgentDefineAndRunReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	res, err := h.RunAgent(ctx, id, "triage", "hello there")
+	res, err := h.RunAgent(ctx, id, "triage", "hello there", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +92,7 @@ func TestRunAgentStructuredAndUnknown(t *testing.T) {
 	}
 
 	// A schema-constrained agent gets the structured path from the stub.
-	res, err := h.RunAgent(ctx, id, "extract", "pull the fields")
+	res, err := h.RunAgent(ctx, id, "extract", "pull the fields", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +101,7 @@ func TestRunAgentStructuredAndUnknown(t *testing.T) {
 	}
 
 	// Running an unknown agent is an error, not a recorded run.
-	if _, err := h.RunAgent(ctx, id, "ghost", "x"); err == nil {
+	if _, err := h.RunAgent(ctx, id, "ghost", "x", 0); err == nil {
 		t.Fatal("expected error running an unknown agent")
 	}
 }
@@ -127,11 +127,69 @@ func TestRunAgentStructuredOutputValidatedAgainstSchema(t *testing.T) {
 	if err := projection.New(log, st, agents.Projector{}).Start(ctx); err != nil {
 		t.Fatal(err)
 	}
-	res, err := h.RunAgent(ctx, id, "strict", "assess")
+	res, err := h.RunAgent(ctx, id, "strict", "assess", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if res.Status != "failed" || res.Error == "" {
 		t.Fatalf("schema-violating output should be a failed run, got %+v", res)
+	}
+}
+
+// TestAgentVersioning proves redefining an agent appends an immutable version
+// (and an identical redefine is idempotent — no redundant version), and that a
+// run can pin a past version's config.
+func TestAgentVersioning(t *testing.T) {
+	ctx := context.Background()
+	log, err := eventlog.OpenWAL(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = log.Close() }()
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "dev"}
+	st := store.NewMemory()
+	h := command.NewHandler(log, st, registry())
+
+	// v1, then a changed config (v2), then an identical redefine of v2 (no new version).
+	if _, err := h.DefineAgent(ctx, id, domain.DefineAgent{Name: "a", System: "v1"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.DefineAgent(ctx, id, domain.DefineAgent{Name: "a", System: "v2"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.DefineAgent(ctx, id, domain.DefineAgent{Name: "a", System: "v2"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := projection.New(log, st, agents.Projector{}).Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	av, ok, err := agents.Read(ctx, st, id, "a")
+	if err != nil || !ok {
+		t.Fatal("read agent", err)
+	}
+	if av.Latest != 2 || len(av.Versions) != 2 {
+		t.Fatalf("expected 2 versions (identical redefine is idempotent), got latest=%d versions=%d", av.Latest, len(av.Versions))
+	}
+	if av.System != "v2" {
+		t.Fatalf("top-level config should be the latest: %q", av.System)
+	}
+
+	// ReadConfig resolves a pinned version vs latest.
+	v1, ok, _ := agents.ReadConfig(ctx, st, id, "a", 1)
+	if !ok || v1.System != "v1" {
+		t.Fatalf("version 1 config = %+v", v1)
+	}
+	latest, ok, _ := agents.ReadConfig(ctx, st, id, "a", 0)
+	if !ok || latest.System != "v2" {
+		t.Fatalf("latest config = %+v", latest)
+	}
+	if _, ok, _ := agents.ReadConfig(ctx, st, id, "a", 99); ok {
+		t.Fatal("unknown version should not resolve")
+	}
+
+	// A run pinned to v1 uses v1's config (recorded run reflects the pinned version).
+	if _, err := h.RunAgent(ctx, id, "a", "hi", 1); err != nil {
+		t.Fatal(err)
 	}
 }

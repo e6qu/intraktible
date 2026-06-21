@@ -18,6 +18,7 @@ import (
 
 	"github.com/e6qu/intraktible/agent-manager/agents"
 	"github.com/e6qu/intraktible/agent-manager/domain"
+	"github.com/e6qu/intraktible/agent-manager/eval"
 	"github.com/e6qu/intraktible/agent-manager/events"
 	caseevents "github.com/e6qu/intraktible/case-manager/events"
 	"github.com/e6qu/intraktible/platform/ai"
@@ -97,14 +98,50 @@ func (h *Handler) DefineAgent(ctx context.Context, id identity.Identity, cmd dom
 	})
 }
 
-// RunAgent invokes the named agent against prompt and records the run. A provider
-// failure is a recorded "failed" run (returned with Status failed), not an API
-// error; only an unknown agent / misconfigured provider returns an error.
-func (h *Handler) RunAgent(ctx context.Context, id identity.Identity, agent, prompt string) (RunResult, error) {
+// SetEvalCases replaces an agent's offline-eval case set.
+func (h *Handler) SetEvalCases(ctx context.Context, id identity.Identity, agent string, cases []eval.Case) (eventlog.Envelope, error) {
+	return eval.NewHandler(h.log).SetCases(ctx, id, agent, cases)
+}
+
+// RunEvals runs an agent's stored eval cases against a version (0 = latest) through
+// the provider and returns a scored report — recording nothing.
+func (h *Handler) RunEvals(ctx context.Context, id identity.Identity, agent string, version int) (eval.Report, error) {
+	if err := id.Valid(); err != nil {
+		return eval.Report{}, err
+	}
+	v, ok, err := eval.Read(ctx, h.store, id, agent)
+	if err != nil {
+		return eval.Report{}, err
+	}
+	if !ok || len(v.Cases) == 0 {
+		return eval.Report{}, fmt.Errorf("agent-manager: no eval cases for agent %q", agent)
+	}
+	return eval.Run(ctx, h.store, h.reg, h.tools, id, agent, version, v.Cases)
+}
+
+// RunAgent invokes the named agent against prompt and records the run. version 0
+// runs the latest config; a positive version pins a specific published version
+// (the registry's history). A provider failure is a recorded "failed" run (returned
+// with Status failed), not an API error; only an unknown agent / version /
+// misconfigured provider returns an error.
+func (h *Handler) RunAgent(ctx context.Context, id identity.Identity, agent, prompt string, version int) (RunResult, error) {
 	if err := id.Valid(); err != nil {
 		return RunResult{}, err
 	}
-	out, err := agents.InvokeWithTools(ctx, h.store, h.reg, h.tools, id, agent, prompt)
+	var out agents.Outcome
+	var err error
+	if version <= 0 {
+		out, err = agents.InvokeWithTools(ctx, h.store, h.reg, h.tools, id, agent, prompt)
+	} else {
+		cfg, ok, cerr := agents.ReadConfig(ctx, h.store, id, agent, version)
+		if cerr != nil {
+			return RunResult{}, cerr
+		}
+		if !ok {
+			return RunResult{}, fmt.Errorf("agent-manager: unknown agent %q version %d", agent, version)
+		}
+		out, err = agents.InvokeConfig(ctx, h.reg, h.tools, id, cfg, prompt)
+	}
 	if err != nil {
 		return RunResult{}, err
 	}

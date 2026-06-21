@@ -665,7 +665,7 @@ describe('agents', () => {
 
   it('runAgent posts the prompt to the run endpoint', async () => {
     const fetcher = fetcherReturning(200, { run_id: 'r1', status: 'completed', text: 'stub: hi' });
-    const res = await runAgent('k', 'triage', 'hi', fetcher);
+    const res = await runAgent('k', 'triage', 'hi', 0, fetcher);
     expect(res.run_id).toBe('r1');
     const [url, init] = fetcher.mock.calls[0];
     expect(url).toBe('/v1/agents/triage/run');
