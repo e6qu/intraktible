@@ -686,6 +686,8 @@ export interface DriftReport {
   has_baseline: boolean;
   has_current: boolean;
   max_drift: number;
+  psi: number; // population stability index over the disposition buckets
+  kl: number; // Kullback–Leibler divergence over the disposition buckets
   baseline_total?: number;
   current_total: number;
   buckets?: DriftBucket[];
@@ -723,6 +725,8 @@ export interface Webhook {
   webhook_id: string;
   url: string;
   note?: string;
+  template?: string; // Go text/template rendered against the alert payload (empty = raw JSON)
+  events?: string[]; // routing filter on the delivery reason (empty = all)
   active: boolean;
   delivery_count: number;
   last_status?: number;
@@ -744,12 +748,18 @@ export async function subscribeWebhook(
   key: string,
   url: string,
   note: string,
+  opts: { template?: string; events?: string[] } = {},
   fetcher: typeof fetch = fetch
 ): Promise<{ webhook_id: string }> {
   const res = await fetcher('/v1/webhooks', {
     method: 'POST',
     headers: jsonHeaders(key),
-    body: JSON.stringify({ url, note: note || undefined })
+    body: JSON.stringify({
+      url,
+      note: note || undefined,
+      template: opts.template || undefined,
+      events: opts.events && opts.events.length > 0 ? opts.events : undefined
+    })
   });
   if (!res.ok) {
     return errorOrStatus(res, 'POST /v1/webhooks');
@@ -1078,6 +1088,138 @@ export async function deployVersion(
   });
   if (!res.ok) {
     return errorOrStatus(res, 'POST deployment');
+  }
+}
+
+// rollbackDeploy reverts an environment to its previous live version (instant
+// rollback — allowed for any environment, audited).
+export async function rollbackDeploy(
+  key: string,
+  flowId: string,
+  environment: string,
+  fetcher: typeof fetch = fetch
+): Promise<void> {
+  const res = await fetcher(`/v1/flows/${flowId}/deployments/rollback`, {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify({ environment })
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'POST rollback');
+  }
+}
+
+export interface ScheduledDeploy {
+  schedule_id: string;
+  flow_id: string;
+  environment: string;
+  version: number;
+  at: string;
+  until?: string;
+  status: 'pending' | 'active' | 'reverted' | 'canceled';
+  prior_version?: number;
+  created_at: string;
+}
+
+// scheduleDeploy queues a deploy for `at` (RFC3339); `until` makes it time-boxed
+// (auto-revert after the window).
+export async function scheduleDeploy(
+  key: string,
+  flowId: string,
+  body: { environment: string; version: number; at: string; until?: string },
+  fetcher: typeof fetch = fetch
+): Promise<{ schedule_id: string }> {
+  const res = await fetcher(`/v1/flows/${flowId}/deployments/schedule`, {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'POST schedule');
+  }
+  return (await res.json()) as { schedule_id: string };
+}
+
+export async function listSchedules(
+  key: string,
+  flowId: string,
+  fetcher: typeof fetch = fetch
+): Promise<ScheduledDeploy[]> {
+  const res = await fetcher(`/v1/flows/${flowId}/deployments/schedules`, {
+    headers: authHeaders(key)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'GET schedules');
+  }
+  return ((await res.json()) as { schedules: ScheduledDeploy[] }).schedules ?? [];
+}
+
+export async function cancelSchedule(
+  key: string,
+  flowId: string,
+  scheduleId: string,
+  fetcher: typeof fetch = fetch
+): Promise<void> {
+  const res = await fetcher(`/v1/flows/${flowId}/deployments/schedules/${scheduleId}`, {
+    method: 'DELETE',
+    headers: authHeaders(key)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'DELETE schedule');
+  }
+}
+
+export interface FlowGrant {
+  grant_id: string;
+  flow_id: string;
+  actor: string;
+  environment: string;
+  created_by: string;
+  created_at: string;
+}
+
+export async function listGrants(
+  key: string,
+  flowId: string,
+  fetcher: typeof fetch = fetch
+): Promise<FlowGrant[]> {
+  const res = await fetcher(`/v1/flows/${flowId}/grants`, { headers: authHeaders(key) });
+  if (!res.ok) {
+    return errorOrStatus(res, 'GET grants');
+  }
+  return ((await res.json()) as { grants: FlowGrant[] }).grants ?? [];
+}
+
+export async function addGrant(
+  key: string,
+  flowId: string,
+  actor: string,
+  environment: string,
+  fetcher: typeof fetch = fetch
+): Promise<{ grant_id: string }> {
+  const res = await fetcher(`/v1/flows/${flowId}/grants`, {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify({ actor, environment })
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'POST grant');
+  }
+  return (await res.json()) as { grant_id: string };
+}
+
+export async function revokeGrant(
+  key: string,
+  flowId: string,
+  grantId: string,
+  fetcher: typeof fetch = fetch
+): Promise<void> {
+  const res = await fetcher(`/v1/flows/${flowId}/grants/${grantId}`, {
+    method: 'DELETE',
+    headers: authHeaders(key)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'DELETE grant');
   }
 }
 

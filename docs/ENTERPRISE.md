@@ -75,7 +75,13 @@ enterprise buyers; **P2** = differentiators / scale.
   create/rotate/revoke append `auth.managed_key.*` events to the log, so each token's
   lifecycle shows in the immutable audit trail (per-token deep link from the panel),
   attributed to the admin who acted.
-- **P2 — Fine-grained, per-flow/per-environment permissions.**
+- **P2 — Fine-grained, per-flow/per-environment permissions — ✅ done.** Opt-in,
+  event-sourced grants (`decision-engine/grants`, admin-managed via
+  `GET/POST/DELETE /v1/flows/{id}/grants`) layer over the global RBAC: a flow with no
+  grants behaves exactly as before, but once any grant exists, the change-control
+  actions on it (deploy / rollback / schedule / promote) additionally require the
+  caller to hold a grant for that environment (`*` = all). Admins always pass, so a
+  flow can't be locked out. Surfaced as an **Access grants** panel in the builder.
 
 ### Governance & change control  (status: deploy + maker-checker shipped, UI included)
 - **P0 — Maker-checker (four-eyes) approvals — ✅ done (backend + UI).** A production
@@ -108,7 +114,16 @@ enterprise buyers; **P2** = differentiators / scale.
 - **P1 — Change history / diff** between versions — *the builder now has a client-side
   version-diff panel (added/removed/changed nodes + edges between any two published
   versions); a richer who/why audit of changes is still open.*
-- **P2 — Scheduled / time-boxed deployments**, instant rollback button.
+- **P2 — Scheduled / time-boxed deployments + instant rollback — ✅ done.** An
+  **instant rollback** (`POST /v1/flows/{id}/deployments/rollback`) reverts an
+  environment to its previous live version — computed from the deploy event stream,
+  audited as a distinct `version_rolled_back` event, allowed for any environment
+  (it returns to an already-approved version, so no fresh maker-checker). **Scheduled
+  deploys** (`POST …/deployments/schedule {environment, version, at, until?}`) queue
+  a deploy for a future time; with `until` set the deploy is **time-boxed** and a
+  deploy scheduler (sharing the monitor cadence) auto-reverts it to the prior version
+  after the window. Both surfaced in the builder's Deployment panel (a rollback
+  button per env, a schedule form + list).
 
 ### Auditability & compliance  (status: audit surface shipped; reason codes next)
 - **P0 — Immutable audit surface — ✅ done.** `GET /v1/audit` (`platform/audit`) is a
@@ -187,8 +202,13 @@ enterprise buyers; **P2** = differentiators / scale.
   pushes the firing set out; and a **scheduler** (`monitor.Scheduler`,
   `INTRAKTIBLE_MONITOR_INTERVAL`) sweeps on a timer, notifying only on the
   ok→firing edge (and resetting on resolve). The on-demand `…/monitors/check`
-  endpoint remains for cron/manual triggers. *Remaining polish: alert routing/
-  templating per channel and richer drift (PSI/KL vs simple share-delta).*
+  endpoint remains for cron/manual triggers. **Alert routing + templating** now ship:
+  a webhook carries an optional event filter (route only matching delivery reasons to
+  it) and a Go message **template** (format the body per channel, e.g. a Slack
+  payload), rendered per webhook at delivery. **Richer drift** ships too: alongside
+  the max-share-delta, the monitor now offers **PSI** (population stability index) and
+  **KL** divergence over the disposition distribution as first-class metrics
+  (`distribution_drift_psi` / `_kl`), and the drift report surfaces both.
 - **P1 — Dashboards & SLOs — ✅ done.** Per-flow **service-level objectives**
   (`GET/PUT /v1/flows/{id}/slo`): an availability target (min success fraction) and
   an average-latency target, recorded as a flow event (`decision.flow.slo_set`) and
@@ -251,9 +271,17 @@ enterprise buyers; **P2** = differentiators / scale.
   summary + per-row results and a builder panel. *A feature store remains.*
 - **P2 — Streaming ingestion** for real-time features.
 
-### AI / ML governance  (status: provider + tool-calling + structured output)
-- **P1 — Model/prompt registry & versioning**, offline eval harness, guardrails
-  (PII, jailbreak), cost/rate limits. Critical now that AI nodes can drive outcomes.
+### AI / ML governance  (status: provider + tool-calling + structured output + cost + guardrails)
+- **P1 — Model/prompt registry & versioning**, offline eval harness. *Still open.*
+- **P1 — Guardrails + rate limits — ✅ done.** A guarding provider decorator
+  (`ai.Guard`, wrapping every registered provider so the Agent Manager AND the
+  Copilot are covered) adds a per-provider **rate limit**
+  (`INTRAKTIBLE_AI_RATE_LIMIT_RPS`/`_BURST`, token bucket), **PII redaction** of the
+  prompt and free-text output (`INTRAKTIBLE_AI_GUARDRAIL_PII` — emails/SSNs/cards/
+  phones) plus structured-output field redaction
+  (`INTRAKTIBLE_AI_GUARDRAIL_REDACT_FIELDS`), and **jailbreak / prompt-injection
+  blocking** of the input (`INTRAKTIBLE_AI_GUARDRAIL_BLOCK_INJECTION`). Off by
+  default. (Cost tracking shipped with the observability slice.)
 
 ### Reliability & scale  (status: monolith + sqlite-shared-log split profile)
 - **P1 — A networked log backend — ✅ Postgres done.** `eventlog.OpenPostgresLog`

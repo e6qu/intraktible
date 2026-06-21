@@ -378,6 +378,180 @@ func (h *Handler) RejectDeployment(ctx context.Context, id identity.Identity, fl
 	return h.appendFlowEvent(ctx, id, events.TypeDeploymentRejected, payload)
 }
 
+// deployHistory returns the ordered list of versions that have been live in an
+// environment (oldest first), folding the deploy/approve/rollback events from the
+// log. It is the source of truth for "the previous live version" since the read
+// model only keeps the current one.
+func (h *Handler) deployHistory(ctx context.Context, id identity.Identity, flowID, env string) ([]int, error) {
+	evs, err := h.log.Read(ctx, 0)
+	if err != nil {
+		return nil, fmt.Errorf("decision-engine: read log: %w", err)
+	}
+	var versions []int
+	for _, e := range evs {
+		if e.Stream != events.StreamFlows || e.Org != id.Org || e.Workspace != id.Workspace {
+			continue
+		}
+		switch e.Type {
+		case events.TypeFlowVersionDeployed:
+			var p events.FlowVersionDeployed
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				return nil, fmt.Errorf("decision-engine: decode deployed seq %d: %w", e.Seq, err)
+			}
+			if p.FlowID == flowID && p.Environment == env {
+				versions = append(versions, p.Version)
+			}
+		case events.TypeDeploymentApproved:
+			var p events.DeploymentApproved
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				return nil, fmt.Errorf("decision-engine: decode approved seq %d: %w", e.Seq, err)
+			}
+			if p.FlowID == flowID && p.Environment == env {
+				versions = append(versions, p.Version)
+			}
+		case events.TypeFlowVersionRolledBack:
+			var p events.FlowVersionRolledBack
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				return nil, fmt.Errorf("decision-engine: decode rolled_back seq %d: %w", e.Seq, err)
+			}
+			if p.FlowID == flowID && p.Environment == env {
+				versions = append(versions, p.Version)
+			}
+		}
+	}
+	return versions, nil
+}
+
+// Rollback reverts an environment to its previous live version. It is allowed for
+// any environment (including production) because it returns to a version that was
+// already live — a deliberate, audited emergency action, not a new deploy — so it
+// does not require a fresh maker-checker approval.
+func (h *Handler) Rollback(ctx context.Context, id identity.Identity, flowID, env string) (eventlog.Envelope, error) {
+	if err := id.Valid(); err != nil {
+		return eventlog.Envelope{}, err
+	}
+	if !domain.ValidEnvironment(env) {
+		return eventlog.Envelope{}, fmt.Errorf("decision-engine: invalid environment %q", env)
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	history, err := h.deployHistory(ctx, id, flowID, env)
+	if err != nil {
+		return eventlog.Envelope{}, err
+	}
+	if len(history) < 2 {
+		return eventlog.Envelope{}, fmt.Errorf("%w: no prior version to roll back to in %s", ErrBadRequest, env)
+	}
+	current, prior := history[len(history)-1], history[len(history)-2]
+	payload, err := json.Marshal(events.FlowVersionRolledBack{
+		FlowID: flowID, Environment: env, Version: prior, FromVersion: current,
+	})
+	if err != nil {
+		return eventlog.Envelope{}, fmt.Errorf("decision-engine: marshal rolled_back: %w", err)
+	}
+	return h.appendFlowEvent(ctx, id, events.TypeFlowVersionRolledBack, payload)
+}
+
+// ScheduleDeploy queues a deployment for a future time. When until is set the
+// deploy is time-boxed and auto-reverts after it. Returns the new schedule id.
+func (h *Handler) ScheduleDeploy(ctx context.Context, id identity.Identity, flowID, env string, version int, at time.Time, until *time.Time) (string, eventlog.Envelope, error) {
+	if err := id.Valid(); err != nil {
+		return "", eventlog.Envelope{}, err
+	}
+	if !domain.ValidEnvironment(env) {
+		return "", eventlog.Envelope{}, fmt.Errorf("%w: invalid environment %q", ErrBadRequest, env)
+	}
+	if version < 1 {
+		return "", eventlog.Envelope{}, fmt.Errorf("%w: version must be >= 1", ErrBadRequest)
+	}
+	if until != nil && !until.After(at) {
+		return "", eventlog.Envelope{}, fmt.Errorf("%w: until must be after at", ErrBadRequest)
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	byID, _, err := h.foldTenant(ctx, id)
+	if err != nil {
+		return "", eventlog.Envelope{}, err
+	}
+	agg, ok := byID[flowID]
+	if !ok {
+		return "", eventlog.Envelope{}, fmt.Errorf("%w: unknown flow %q", ErrNotFound, flowID)
+	}
+	if version > agg.latest {
+		return "", eventlog.Envelope{}, fmt.Errorf("%w: version %d not published (latest is %d)", ErrBadRequest, version, agg.latest)
+	}
+	scheduleID := h.newID()
+	payload, err := json.Marshal(events.DeployScheduled{
+		ScheduleID: scheduleID, FlowID: flowID, Environment: env, Version: version, At: at.UTC(), Until: until,
+	})
+	if err != nil {
+		return "", eventlog.Envelope{}, fmt.Errorf("decision-engine: marshal deploy_scheduled: %w", err)
+	}
+	e, err := h.appendFlowEvent(ctx, id, events.TypeDeployScheduled, payload)
+	if err != nil {
+		return "", eventlog.Envelope{}, err
+	}
+	return scheduleID, e, nil
+}
+
+// CancelSchedule cancels a pending or active scheduled deploy.
+func (h *Handler) CancelSchedule(ctx context.Context, id identity.Identity, flowID, scheduleID, reason string) (eventlog.Envelope, error) {
+	if err := id.Valid(); err != nil {
+		return eventlog.Envelope{}, err
+	}
+	if scheduleID == "" {
+		return eventlog.Envelope{}, fmt.Errorf("%w: schedule_id is required", ErrBadRequest)
+	}
+	payload, err := json.Marshal(events.DeployScheduleCanceled{ScheduleID: scheduleID, FlowID: flowID, Reason: reason})
+	if err != nil {
+		return eventlog.Envelope{}, fmt.Errorf("decision-engine: marshal deploy_schedule_canceled: %w", err)
+	}
+	return h.appendFlowEvent(ctx, id, events.TypeDeployScheduleCanceled, payload)
+}
+
+// ActivateSchedule is called by the deploy scheduler when a schedule's time has
+// arrived: it marks the schedule active (recording the prior live version for a
+// later revert) and deploys the scheduled version. The marker is recorded first so
+// a crash mid-activation cannot leave the schedule pending and re-deploy forever.
+func (h *Handler) ActivateSchedule(ctx context.Context, id identity.Identity, scheduleID, flowID, env string, version, priorVersion int) error {
+	marker, err := json.Marshal(events.DeployScheduleActivated{ScheduleID: scheduleID, FlowID: flowID, PriorVersion: priorVersion})
+	if err != nil {
+		return fmt.Errorf("decision-engine: marshal deploy_schedule_activated: %w", err)
+	}
+	if _, err := h.appendFlowEvent(ctx, id, events.TypeDeployScheduleActivated, marker); err != nil {
+		return err
+	}
+	deployed, err := json.Marshal(events.FlowVersionDeployed{FlowID: flowID, Environment: env, Version: version})
+	if err != nil {
+		return fmt.Errorf("decision-engine: marshal deployed: %w", err)
+	}
+	_, err = h.appendFlowEvent(ctx, id, events.TypeFlowVersionDeployed, deployed)
+	return err
+}
+
+// RevertSchedule is called by the scheduler when a time-boxed schedule's window
+// elapses: it marks the schedule reverted and (when a prior version existed)
+// re-deploys it. With no prior version the deployment is left in place (there is no
+// un-deploy), recorded only as reverted.
+func (h *Handler) RevertSchedule(ctx context.Context, id identity.Identity, scheduleID, flowID, env string, priorVersion int) error {
+	marker, err := json.Marshal(events.DeployScheduleReverted{ScheduleID: scheduleID, FlowID: flowID})
+	if err != nil {
+		return fmt.Errorf("decision-engine: marshal deploy_schedule_reverted: %w", err)
+	}
+	if _, err := h.appendFlowEvent(ctx, id, events.TypeDeployScheduleReverted, marker); err != nil {
+		return err
+	}
+	if priorVersion < 1 {
+		return nil
+	}
+	reverted, err := json.Marshal(events.FlowVersionRolledBack{FlowID: flowID, Environment: env, Version: priorVersion})
+	if err != nil {
+		return fmt.Errorf("decision-engine: marshal rolled_back: %w", err)
+	}
+	_, err = h.appendFlowEvent(ctx, id, events.TypeFlowVersionRolledBack, reverted)
+	return err
+}
+
 // SetSLO records a flow's service-level objectives (success-rate + latency
 // targets). A zeroed SLO clears them.
 func (h *Handler) SetSLO(ctx context.Context, id identity.Identity, cmd domain.SetSLO) (eventlog.Envelope, error) {

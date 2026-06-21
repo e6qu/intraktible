@@ -28,8 +28,10 @@ func (s *Service) Routes(mux *http.ServeMux) {
 }
 
 type subscribeRequest struct {
-	URL  string `json:"url"`
-	Note string `json:"note,omitempty"`
+	URL      string   `json:"url"`
+	Note     string   `json:"note,omitempty"`
+	Template string   `json:"template,omitempty"`
+	Events   []string `json:"events,omitempty"`
 }
 
 func (s *Service) subscribe(w http.ResponseWriter, r *http.Request) {
@@ -42,7 +44,7 @@ func (s *Service) subscribe(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, err)
 		return
 	}
-	wid, e, err := s.cmd.Subscribe(r.Context(), id, req.URL, req.Note)
+	wid, e, err := s.cmd.Subscribe(r.Context(), id, req.URL, req.Note, req.Template, req.Events)
 	if err != nil {
 		httpx.Error(w, http.StatusBadRequest, err)
 		return

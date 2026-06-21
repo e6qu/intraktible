@@ -41,12 +41,14 @@ import (
 	enginecmd "github.com/e6qu/intraktible/decision-engine/command"
 	"github.com/e6qu/intraktible/decision-engine/export"
 	"github.com/e6qu/intraktible/decision-engine/flows"
+	"github.com/e6qu/intraktible/decision-engine/grants"
 	"github.com/e6qu/intraktible/decision-engine/history"
 	enginemodels "github.com/e6qu/intraktible/decision-engine/models"
 	"github.com/e6qu/intraktible/decision-engine/monitor"
 	"github.com/e6qu/intraktible/decision-engine/notify"
 	"github.com/e6qu/intraktible/decision-engine/policy"
 	"github.com/e6qu/intraktible/decision-engine/preapproval"
+	"github.com/e6qu/intraktible/decision-engine/schedule"
 	engineservice "github.com/e6qu/intraktible/decision-engine/service"
 	"github.com/e6qu/intraktible/decision-engine/shadow"
 	hellocmd "github.com/e6qu/intraktible/hello/command"
@@ -183,16 +185,27 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 	// engine's AI node. When INTRAKTIBLE_AI_BASE_URL is set, a real OpenAI-compatible
 	// HTTP provider is registered (and becomes the default); the Stub is always
 	// available as a fallback for dev/tests.
+	// Guardrails wrap every registered provider (rate limit + PII redaction +
+	// jailbreak/injection block), so both the Agent Manager and the Copilot are
+	// covered uniformly. Inert unless configured.
+	guardrails, err := aiGuardrailsFromEnv()
+	if err != nil {
+		return err
+	}
+	if guardrails.Enabled() {
+		slog.Info("ai: guardrails enabled", "rate_per_sec", guardrails.RatePerSec,
+			"redact_pii", guardrails.RedactPII, "block_injection", guardrails.BlockInjection)
+	}
 	aiRegistry := ai.NewRegistry()
 	if base := os.Getenv("INTRAKTIBLE_AI_BASE_URL"); base != "" {
 		name := os.Getenv("INTRAKTIBLE_AI_PROVIDER")
 		if name == "" {
 			name = "openai"
 		}
-		aiRegistry.Register(ai.NewHTTP(name, base, os.Getenv("INTRAKTIBLE_AI_API_KEY"), os.Getenv("INTRAKTIBLE_AI_MODEL")))
+		aiRegistry.Register(ai.Guard(ai.NewHTTP(name, base, os.Getenv("INTRAKTIBLE_AI_API_KEY"), os.Getenv("INTRAKTIBLE_AI_MODEL")), guardrails))
 		slog.Info("ai: registered HTTP provider", "name", name, "model", os.Getenv("INTRAKTIBLE_AI_MODEL"))
 	}
-	aiRegistry.Register(ai.Stub{})
+	aiRegistry.Register(ai.Guard(ai.Stub{}, guardrails))
 
 	// HTTP connectors dial operator-configured URLs; the default egress policy
 	// blocks loopback/private targets (SSRF guard). Operators whose connectors
@@ -224,6 +237,7 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 	}
 	var monitorScheduler *monitor.Scheduler
 	var driftScheduler *enginemodels.Scheduler
+	var deployScheduler *schedule.Scheduler
 	if enabled(modules, "decision-engine") {
 		// A decision can fold in a Context Layer entity's features, call Context
 		// Layer connectors from Connect nodes, and run Agent Manager agents from AI
@@ -271,9 +285,15 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 		// cumulative by default; INTRAKTIBLE_MODEL_DRIFT_WINDOW (days) narrows it to a
 		// recent slice so a fresh shift isn't diluted by all-time history.
 		driftScheduler = enginemodels.NewScheduler(st, engineCmd, notifier, driftWindowDays())
+		// Deploy scheduler: activates due scheduled deploys and reverts expired
+		// time-boxed ones on the same cadence as the monitor sweep.
+		deployScheduler = schedule.NewScheduler(st, engineCmd)
 		// Flow assertions: input→expected test cases, run through the pure core and
 		// used as a pre-promote gate.
 		assertions.New(assertions.NewHandler(log), st).Routes(api)
+		// Per-flow access grants: fine-grained, opt-in restriction of change-control
+		// on a specific flow/environment, layered over the global RBAC roles.
+		grants.New(grants.NewHandler(log), st).Routes(api)
 	}
 	if enabled(modules, "case-manager") {
 		caseservice.New(casecmd.NewHandler(log), st).Routes(api)
@@ -347,9 +367,13 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 				return fmt.Errorf("INTRAKTIBLE_MONITOR_INTERVAL %q: must be a positive duration", iv)
 			}
 			go monitorScheduler.Run(ctx, d)
-			// Model-drift push shares the cadence: one interval drives both sweeps.
+			// Model-drift push and the deploy scheduler share the cadence: one
+			// interval drives all the timed sweeps.
 			if driftScheduler != nil {
 				go driftScheduler.Run(ctx, d)
+			}
+			if deployScheduler != nil {
+				go deployScheduler.Run(ctx, d)
 			}
 		}
 	}
@@ -433,6 +457,34 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 	shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	return srv.Shutdown(shutCtx)
+}
+
+// aiGuardrailsFromEnv reads the AI guardrail config: per-provider rate limit
+// (INTRAKTIBLE_AI_RATE_LIMIT_RPS / _BURST), free-text PII redaction
+// (INTRAKTIBLE_AI_GUARDRAIL_PII), structured-output field redaction
+// (INTRAKTIBLE_AI_GUARDRAIL_REDACT_FIELDS, CSV), and jailbreak/injection blocking
+// (INTRAKTIBLE_AI_GUARDRAIL_BLOCK_INJECTION). All off by default.
+func aiGuardrailsFromEnv() (ai.Guardrails, error) {
+	g := ai.Guardrails{
+		RedactPII:      truthy(os.Getenv("INTRAKTIBLE_AI_GUARDRAIL_PII")),
+		RedactFields:   splitCSV(os.Getenv("INTRAKTIBLE_AI_GUARDRAIL_REDACT_FIELDS")),
+		BlockInjection: truthy(os.Getenv("INTRAKTIBLE_AI_GUARDRAIL_BLOCK_INJECTION")),
+	}
+	if v := strings.TrimSpace(os.Getenv("INTRAKTIBLE_AI_RATE_LIMIT_RPS")); v != "" {
+		rps, err := strconv.ParseFloat(v, 64)
+		if err != nil || rps < 0 {
+			return ai.Guardrails{}, fmt.Errorf("INTRAKTIBLE_AI_RATE_LIMIT_RPS %q: want a non-negative number", v)
+		}
+		g.RatePerSec = rps
+	}
+	if v := strings.TrimSpace(os.Getenv("INTRAKTIBLE_AI_RATE_LIMIT_BURST")); v != "" {
+		b, err := strconv.Atoi(v)
+		if err != nil || b < 0 {
+			return ai.Guardrails{}, fmt.Errorf("INTRAKTIBLE_AI_RATE_LIMIT_BURST %q: want a non-negative integer", v)
+		}
+		g.Burst = b
+	}
+	return g, nil
 }
 
 // buildRevision returns the VCS revision embedded at build time (matching what
@@ -728,7 +780,7 @@ func moduleProjectors(modules string) []projection.Projector {
 		ps = append(ps, stats.Projector{})
 	}
 	if enabled(modules, "decision-engine") {
-		ps = append(ps, flows.Projector{}, history.Projector{}, analytics.Projector{}, policy.Projector{}, preapproval.Projector{}, monitor.Projector{}, notify.Projector{}, assertions.Projector{}, shadow.Projector{}, enginemodels.Projector{}, enginemodels.DriftProjector{})
+		ps = append(ps, flows.Projector{}, history.Projector{}, analytics.Projector{}, policy.Projector{}, preapproval.Projector{}, monitor.Projector{}, notify.Projector{}, assertions.Projector{}, shadow.Projector{}, schedule.Projector{}, grants.Projector{}, enginemodels.Projector{}, enginemodels.DriftProjector{})
 	}
 	if enabled(modules, "case-manager") {
 		ps = append(ps, cases.Projector{})

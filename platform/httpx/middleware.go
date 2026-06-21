@@ -271,7 +271,10 @@ func requiredRole(method, path string) auth.Role {
 	// read-only but sensitive, so it is gated to admins regardless of method —
 	// checked before the general read rule below.
 	if path == "/v1/audit" || strings.HasPrefix(path, "/v1/audit/") ||
-		strings.HasPrefix(path, "/v1/api-keys") || strings.HasPrefix(path, "/v1/erasure") {
+		strings.HasPrefix(path, "/v1/api-keys") || strings.HasPrefix(path, "/v1/erasure") ||
+		strings.Contains(path, "/grants") {
+		// Managing per-flow access grants (and listing who holds them) is an admin
+		// action regardless of method — checked before the general read rule.
 		return auth.RoleAdmin
 	}
 	// The streaming run endpoints are GET (EventSource/WebSocket are GET-only) but

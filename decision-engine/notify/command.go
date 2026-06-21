@@ -33,8 +33,10 @@ func newID() string {
 	return hex.EncodeToString(b[:])
 }
 
-// Subscribe registers an http(s) webhook endpoint after validating the URL.
-func (h *Handler) Subscribe(ctx context.Context, id identity.Identity, rawURL, note string) (string, eventlog.Envelope, error) {
+// Subscribe registers an http(s) webhook endpoint after validating the URL and any
+// message template. template (optional) formats the body per channel; events
+// (optional) route only matching delivery reasons to this webhook.
+func (h *Handler) Subscribe(ctx context.Context, id identity.Identity, rawURL, note, template string, events []string) (string, eventlog.Envelope, error) {
 	if err := id.Valid(); err != nil {
 		return "", eventlog.Envelope{}, err
 	}
@@ -42,8 +44,13 @@ func (h *Handler) Subscribe(ctx context.Context, id identity.Identity, rawURL, n
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return "", eventlog.Envelope{}, fmt.Errorf("notify: webhook url must be http(s), got %q", rawURL)
 	}
+	// Validate the template up front so a malformed one is rejected at subscribe time,
+	// not silently at every delivery.
+	if err := validateTemplate(template); err != nil {
+		return "", eventlog.Envelope{}, err
+	}
 	wid := h.newID()
-	e, err := h.append(ctx, id, TypeSubscribed, Subscribed{WebhookID: wid, URL: rawURL, Note: note})
+	e, err := h.append(ctx, id, TypeSubscribed, Subscribed{WebhookID: wid, URL: rawURL, Note: note, Template: template, Events: events})
 	if err != nil {
 		return "", eventlog.Envelope{}, err
 	}

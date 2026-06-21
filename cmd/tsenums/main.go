@@ -64,6 +64,7 @@ var enums = []tsEnum{
 		monitor.MetricFailureRate, monitor.MetricReferRate, monitor.MetricAutomationRate,
 		monitor.MetricApproveRate, monitor.MetricDeclineRate, monitor.MetricAvgLatencyMS,
 		monitor.MetricVolume, monitor.MetricDistributionDrift,
+		monitor.MetricDistributionDriftPSI, monitor.MetricDistributionDriftKL,
 	)},
 }
 

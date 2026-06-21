@@ -25,6 +25,7 @@ import (
 	"github.com/e6qu/intraktible/decision-engine/notify"
 	"github.com/e6qu/intraktible/decision-engine/policy"
 	"github.com/e6qu/intraktible/decision-engine/preapproval"
+	"github.com/e6qu/intraktible/decision-engine/schedule"
 	"github.com/e6qu/intraktible/decision-engine/service"
 	"github.com/e6qu/intraktible/decision-engine/shadow"
 	"github.com/e6qu/intraktible/platform/auth"
@@ -1559,6 +1560,109 @@ func TestFlowSLOOverHTTP(t *testing.T) {
 		map[string]any{"success_target": 1.5}, http.StatusBadRequest, nil)
 }
 
+// liveVersionOf reads the version currently live in an environment.
+func liveVersionOf(t *testing.T, api *testutil.API, flowID, env string) int {
+	t.Helper()
+	var fv struct {
+		Deployments map[string]struct {
+			Version int `json:"version"`
+		} `json:"deployments"`
+	}
+	api.Request(t, http.MethodGet, "/v1/flows/"+flowID, nil, http.StatusOK, &fv)
+	return fv.Deployments[env].Version
+}
+
+// TestRollbackOverHTTP deploys two versions then rolls back to the prior one.
+func TestRollbackOverHTTP(t *testing.T) {
+	api := startEngine(t)
+	var created struct {
+		FlowID string `json:"flow_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows", map[string]any{"slug": "rb", "name": "Rollback"}, http.StatusCreated, &created)
+	publish := func(field string) {
+		api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/versions", map[string]any{
+			"graph": map[string]any{
+				"nodes": []map[string]any{
+					{"id": "in", "type": "input"},
+					{"id": "a", "type": "assignment", "config": map[string]any{
+						"assignments": []map[string]any{{"target": field, "expr": "1"}},
+					}},
+					{"id": "out", "type": "output", "config": map[string]any{"fields": []string{field}}},
+				},
+				"edges": []map[string]any{{"from": "in", "to": "a"}, {"from": "a", "to": "out"}},
+			},
+		}, http.StatusCreated, nil)
+	}
+	publish("v1") // version 1
+	publish("v2") // version 2 (distinct content → distinct etag)
+
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/deployments", map[string]any{"environment": "sandbox", "version": 1}, http.StatusCreated, nil)
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/deployments", map[string]any{"environment": "sandbox", "version": 2}, http.StatusCreated, nil)
+	if !testutil.Eventually(t, func() bool { return liveVersionOf(t, api, created.FlowID, "sandbox") == 2 }) {
+		t.Fatal("v2 never went live")
+	}
+
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/deployments/rollback", map[string]any{"environment": "sandbox"}, http.StatusOK, nil)
+	if !testutil.Eventually(t, func() bool { return liveVersionOf(t, api, created.FlowID, "sandbox") == 1 }) {
+		t.Fatalf("rollback did not revert to v1 (got %d)", liveVersionOf(t, api, created.FlowID, "sandbox"))
+	}
+
+	// A fresh flow with no deploy history can't roll back.
+	var none struct {
+		FlowID string `json:"flow_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows", map[string]any{"slug": "nohist", "name": "No History"}, http.StatusCreated, &none)
+	api.Request(t, http.MethodPost, "/v1/flows/"+none.FlowID+"/deployments/rollback", map[string]any{"environment": "sandbox"}, http.StatusBadRequest, nil)
+}
+
+// TestScheduleDeployOverHTTP drives the scheduled-deploy API surface (schedule,
+// list, cancel); activation/revert timing is covered by the scheduler unit test.
+func TestScheduleDeployOverHTTP(t *testing.T) {
+	api := startEngine(t)
+	var created struct {
+		FlowID string `json:"flow_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows", map[string]any{"slug": "sched", "name": "Scheduled"}, http.StatusCreated, &created)
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/versions", map[string]any{"graph": flowtest.LinearGraph()}, http.StatusCreated, nil)
+
+	var sched struct {
+		ScheduleID string `json:"schedule_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/deployments/schedule", map[string]any{
+		"environment": "sandbox", "version": 1,
+		"at":    "2030-01-01T00:00:00Z",
+		"until": "2030-01-02T00:00:00Z",
+	}, http.StatusCreated, &sched)
+	if sched.ScheduleID == "" {
+		t.Fatal("no schedule id returned")
+	}
+	// Scheduling an unpublished version is a bad request.
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/deployments/schedule", map[string]any{
+		"environment": "sandbox", "version": 99, "at": "2030-01-01T00:00:00Z",
+	}, http.StatusBadRequest, nil)
+
+	var list struct {
+		Schedules []struct {
+			ScheduleID string `json:"schedule_id"`
+			Status     string `json:"status"`
+		} `json:"schedules"`
+	}
+	if !testutil.Eventually(t, func() bool {
+		api.Request(t, http.MethodGet, "/v1/flows/"+created.FlowID+"/deployments/schedules", nil, http.StatusOK, &list)
+		return len(list.Schedules) == 1 && list.Schedules[0].Status == "pending"
+	}) {
+		t.Fatalf("schedule never listed as pending: %+v", list.Schedules)
+	}
+
+	api.Request(t, http.MethodDelete, "/v1/flows/"+created.FlowID+"/deployments/schedules/"+sched.ScheduleID, nil, http.StatusOK, nil)
+	if !testutil.Eventually(t, func() bool {
+		api.Request(t, http.MethodGet, "/v1/flows/"+created.FlowID+"/deployments/schedules", nil, http.StatusOK, &list)
+		return len(list.Schedules) == 1 && list.Schedules[0].Status == "canceled"
+	}) {
+		t.Fatalf("schedule not canceled: %+v", list.Schedules)
+	}
+}
+
 // TestDecideErrorTaxonomy proves the decide endpoint maps cause to status: an
 // unknown flow is 404, an invalid environment is 400 (not all-400 as before).
 func TestDecideErrorTaxonomy(t *testing.T) {
@@ -1592,7 +1696,7 @@ func startEngine(t *testing.T, opts ...command.DecideOption) *testutil.API {
 		asserts.Routes(mux)
 	}
 	return testutil.StartAPI(t, log, st, "test-key", id, routes,
-		flows.Projector{}, history.Projector{}, analytics.Projector{}, policy.Projector{}, preapproval.Projector{}, monitor.Projector{}, notify.Projector{}, privacy.Projector{}, assertions.Projector{}, shadow.Projector{})
+		flows.Projector{}, history.Projector{}, analytics.Projector{}, policy.Projector{}, preapproval.Projector{}, monitor.Projector{}, notify.Projector{}, privacy.Projector{}, assertions.Projector{}, shadow.Projector{}, schedule.Projector{})
 }
 
 // stubFeatures is a fixed feature source for the decide HTTP test.
