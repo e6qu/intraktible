@@ -159,9 +159,19 @@ enterprise buyers; **P2** = differentiators / scale.
   masking, `[erased]` once shredded). Erasing an entity now shreds its PII across both its
   Context Layer events and its decision records (verified end-to-end). Right-to-erasure +
   retention are complete.*
-- **P1 — Model risk management (SR 11-7 / SS1/23)**: documented model inventory,
-  validation evidence, monitoring — supported by metrics + versioning but not
-  packaged.
+- **P1 — Model risk management (SR 11-7 / SS1/23) — ✅ done.** A read-only
+  **model-risk report** (`mrm`, `GET /v1/mrm/report`, admin-gated) packages the
+  inventory + validation evidence + monitoring that already exists across the
+  platform into one regulated artifact. It inventories every "model" — a decision
+  **flow**, a **predictive model**, and an **AI agent** — with its version, owner
+  (last publisher), and deployments; the **validation evidence** for each (a flow's
+  assertion suite run live + shadow divergence, an agent's eval cases, a predictive
+  model's captured drift baseline) classified as tested / failing / none; and the
+  **ongoing monitoring** (decision volume, success rate, firing monitors, PSI drift,
+  SLO attainment). Crucially it flags the **governance gaps** — an unvalidated model,
+  a failing assertion suite, a firing monitor, a breaching SLO, a drifting model — so
+  a model-risk team sees what needs review. Exportable as **JSON / CSV / Markdown**
+  (the filed document), surfaced as a **Model risk** UI page.
 - **P2 — Data residency / region pinning.**
 
 ### Testing, validation & safety  (status: backtesting + a test-run in the builder)

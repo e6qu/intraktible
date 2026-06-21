@@ -55,6 +55,7 @@ import (
 	hellocmd "github.com/e6qu/intraktible/hello/command"
 	helloservice "github.com/e6qu/intraktible/hello/service"
 	"github.com/e6qu/intraktible/hello/stats"
+	"github.com/e6qu/intraktible/mrm"
 	"github.com/e6qu/intraktible/platform/ai"
 	"github.com/e6qu/intraktible/platform/audit"
 	"github.com/e6qu/intraktible/platform/auth"
@@ -326,6 +327,11 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 	// Audit surface (platform capability, independent of the enabled modules): a
 	// tenant-scoped, filterable, exportable read over the event log.
 	audit.New(log).Routes(api)
+
+	// Model-risk report (SR 11-7 / SS1/23): a read-only aggregation of the model
+	// inventory + validation evidence + monitoring across flows, predictive models,
+	// and agents, exportable as JSON / CSV / Markdown.
+	mrm.New(st).Routes(api)
 
 	// Privacy: per-workspace sensitive-field masking, applied at read boundaries
 	// (decision history/exports). A platform capability, independent of modules.

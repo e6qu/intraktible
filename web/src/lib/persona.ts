@@ -30,6 +30,7 @@ export type NavId =
   | 'agents'
   | 'models'
   | 'observability'
+  | 'mrm'
   | 'keys'
   | 'audit';
 
@@ -54,6 +55,7 @@ export const NAV = new Map<NavId, NavItem>([
     'observability',
     { id: 'observability', href: '/observability', label: 'Observability', icon: 'gauge' }
   ],
+  ['mrm', { id: 'mrm', href: '/mrm', label: 'Model risk', icon: 'shield' }],
   ['keys', { id: 'keys', href: '/keys', label: 'API keys', icon: 'connect' }],
   ['audit', { id: 'audit', href: '/audit', label: 'Audit', icon: 'shield' }]
 ]);
@@ -216,7 +218,7 @@ export const PERSONAS: PersonaConfig[] = [
     blurb: 'Approvals, reviewer workload, and SLA health',
     icon: 'check',
     home: 'persona',
-    nav: ['preapprovals', 'cases', 'decisions', 'observability', 'audit'],
+    nav: ['preapprovals', 'cases', 'decisions', 'observability', 'mrm', 'audit'],
     actions: [
       { label: 'Clear pending approvals', href: '/preapprovals', icon: 'check' },
       { label: 'Check case load', href: '/cases', icon: 'cases' },
@@ -253,7 +255,7 @@ export const PERSONAS: PersonaConfig[] = [
     blurb: 'KPIs, trends, and governance posture',
     icon: 'showcase',
     home: 'showcase',
-    nav: ['decisions', 'cases', 'observability', 'audit'],
+    nav: ['decisions', 'cases', 'observability', 'mrm', 'audit'],
     actions: [{ label: 'View decision volume', href: '/decisions', icon: 'diagram' }]
   },
   {
