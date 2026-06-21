@@ -43,6 +43,21 @@ func (k ModelKind) Valid() bool {
 	}
 }
 
+// GBMLink is a GBM model's output link. A named type (not a bare string) so the
+// evaluator's `== LinkLogit` branch and Validate range over typed constants: a
+// mistyped link such as "Logit" can no longer slip past Validate and silently apply
+// the identity link (no sigmoid) at scoring time. Wire-identical to a string, so
+// stored ModelDefined events still decode.
+type GBMLink string
+
+const (
+	LinkNone  GBMLink = ""      // no transform — the raw tree sum is the score
+	LinkLogit GBMLink = "logit" // apply a sigmoid to the raw sum (classifier probability)
+)
+
+// Valid reports whether l is a supported GBM link.
+func (l GBMLink) Valid() bool { return l == LinkNone || l == LinkLogit }
+
 // Spec is a model definition: a kind plus the kind-specific parameters. Unknown
 // fields are rejected at decode so a misconfigured model fails loudly.
 type Spec struct {
@@ -55,7 +70,7 @@ type Spec struct {
 	// gbm
 	Base  float64 `json:"base,omitempty"`
 	Trees []Tree  `json:"trees,omitempty"`
-	Link  string  `json:"link,omitempty"` // "logit" applies a sigmoid to the raw sum
+	Link  GBMLink `json:"link,omitempty"` // "logit" applies a sigmoid to the raw sum
 
 	// expression
 	Expr string `json:"expr,omitempty"`
@@ -114,8 +129,8 @@ func (s Spec) Validate() error {
 				return fmt.Errorf("models: gbm tree %d: %w", i, err)
 			}
 		}
-		if s.Link != "" && s.Link != "logit" {
-			return fmt.Errorf("models: gbm link %q is not supported (logit only)", s.Link)
+		if !s.Link.Valid() {
+			return fmt.Errorf("models: gbm link %q is not supported (logit only)", string(s.Link))
 		}
 	case KindExpression:
 		if s.Expr == "" {
@@ -213,7 +228,7 @@ func evalGBM(s Spec, features map[string]any) (Prediction, error) {
 		}
 		raw += v
 	}
-	if s.Link == "logit" {
+	if s.Link == LinkLogit {
 		p := sigmoid(raw)
 		return Prediction{Score: raw, Probability: &p}, nil
 	}

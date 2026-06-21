@@ -159,7 +159,13 @@
   // node id → last test-run output summary, shown on the card; cleared on edits
   // (a structure/config change makes the prior run's per-node output stale).
   let nodeTelemetry = $state(new Map<string, string>());
+  // Bumped on every edit (clearTelemetry runs on edit): the loadTelemetry retry loop
+  // spans ~1s, and an edit during that window changes the graph, so a late retry
+  // would repaint the previous run's outputs onto the now-changed canvas.
+  // loadTelemetry captures this and abandons if it changed — the flowId guard, for edits.
+  let telemetryGen = 0;
   function clearTelemetry() {
+    telemetryGen++;
     if (nodeTelemetry.size > 0) nodeTelemetry = new Map();
   }
 
@@ -836,13 +842,14 @@
     // sibling navigation would otherwise paint THIS flow's node outputs onto the new
     // flow's canvas (stale async closure writing shared $state after navigation).
     const requested = flowId;
+    const gen = telemetryGen;
     // The history projection lags the just-appended decision, so retry a few times
     // until its node trace is available (best-effort; the run result still shows).
     for (let attempt = 0; attempt < 5; attempt++) {
-      if (flowId !== requested) return; // navigated away — abandon
+      if (flowId !== requested || telemetryGen !== gen) return; // navigated away or edited — abandon
       try {
         const d = await getDecision(key, decisionId);
-        if (flowId !== requested) return;
+        if (flowId !== requested || telemetryGen !== gen) return;
         const nodes = d.nodes ?? [];
         if (nodes.length > 0) {
           const t = new Map<string, string>();
@@ -865,7 +872,9 @@
       a.href = url;
       a.download = `${lastDecisionId}-trace.mmd`;
       a.click();
-      URL.revokeObjectURL(url);
+      // Revoke on a later tick — a synchronous revoke can race the browser's blob
+      // fetch and abort the download.
+      setTimeout(() => URL.revokeObjectURL(url), 0);
       toast.success('Downloaded run trace');
     } catch (e) {
       error = msg(e);
@@ -1055,7 +1064,13 @@
     const pct = parseInt(depChallengerPct, 10);
     if (!Number.isNaN(cv) && cv > 0) {
       body.challenger_version = cv;
-      if (!Number.isNaN(pct) && pct > 0) body.challenger_pct = pct;
+      if (!Number.isNaN(pct) && pct > 0) {
+        if (pct > 100) {
+          error = 'Challenger traffic % must be between 1 and 100.';
+          return;
+        }
+        body.challenger_pct = pct;
+      }
     }
     deploying = true;
     try {

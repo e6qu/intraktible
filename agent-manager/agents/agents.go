@@ -210,6 +210,11 @@ func SummarizeRuns(runs []RunView) RunSummary {
 // Outcome is the result of invoking an agent: the resolved model, the run status,
 // and the provider's text or structured output (or an error message on failure).
 // ToolCalls is the tool-calling trace when the agent used tools.
+//
+// Invariant (enforced by normalize before the value leaves this package): the
+// payload agrees with the status — a RunFailed outcome carries only its Error (no
+// Text/Structured), a RunCompleted outcome carries no Error. "completed with an
+// error" / "failed with output" are therefore not observable states.
 type Outcome struct {
 	Model      string
 	Status     domain.RunStatus
@@ -217,6 +222,20 @@ type Outcome struct {
 	Structured json.RawMessage
 	ToolCalls  []events.ToolCall
 	Error      string
+}
+
+// normalize enforces the Status⇄payload invariant. The tool-calling loop builds an
+// Outcome up incrementally across steps, so rather than rely on every terminal
+// branch to zero the inconsistent fields, this is applied once at each return so
+// every recorded run is internally consistent.
+func (o Outcome) normalize() Outcome {
+	switch o.Status {
+	case domain.RunFailed:
+		o.Text, o.Structured = "", nil
+	case domain.RunCompleted:
+		o.Error = ""
+	}
+	return o
 }
 
 // Toolbox resolves an agent's declared tool names to provider tool specs and
@@ -328,7 +347,7 @@ func InvokeWithTools(ctx context.Context, s store.Store, reg *ai.Registry, tb To
 		}
 		break
 	}
-	return out, nil
+	return out.normalize(), nil
 }
 
 // InvokeStream runs the named agent, streaming text deltas to onChunk when the
@@ -374,7 +393,7 @@ func InvokeStream(ctx context.Context, s store.Store, reg *ai.Registry, tb Toolb
 			out.Status, out.Error, out.Text, out.Structured = domain.RunFailed, verr.Error(), "", nil
 		}
 	}
-	return out, nil
+	return out.normalize(), nil
 }
 
 // resolveTools maps an agent's declared tool names to provider tool specs via the

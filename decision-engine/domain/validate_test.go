@@ -72,6 +72,11 @@ func TestValidateFlow(t *testing.T) {
 			`{"hit":"anyy","rows":[{"when":"true","outputs":[{"target":"x","expr":"1"}]}]}`)), true},
 		{"unknown collect aggregate", flow(cfgNode("d", events.NodeDecisionTable,
 			`{"hit":"collect","aggregate":"avg","rows":[{"when":"true","outputs":[{"target":"x","expr":"1"}]}]}`)), true},
+		// manual_review SLA must be non-negative.
+		{"valid manual review", flow(cfgNode("m", events.NodeManualReview,
+			`{"company_name":"'Acme'","case_type":"'aml'","sla_days":5}`)), false},
+		{"negative sla_days", flow(cfgNode("m", events.NodeManualReview,
+			`{"company_name":"'Acme'","case_type":"'aml'","sla_days":-5}`)), true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -83,5 +88,36 @@ func TestValidateFlow(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 		})
+	}
+}
+
+// TestValidateRejectsDuplicateOutputs guards against two same-namespace nodes
+// writing the same output, which would silently discard one result (the connector/
+// model is still called) while the other wins by declaration order.
+func TestValidateRejectsDuplicateOutputs(t *testing.T) {
+	dup := events.Graph{
+		Nodes: []events.Node{
+			node("in", events.NodeInput),
+			cfgNode("c1", events.NodeConnect, `{"connector":"bureau","output":"score"}`),
+			cfgNode("c2", events.NodeConnect, `{"connector":"fraud","output":"score"}`),
+			node("out", events.NodeOutput),
+		},
+		Edges: []events.Edge{{From: "in", To: "c1"}, {From: "c1", To: "c2"}, {From: "c2", To: "out"}},
+	}
+	if err := domain.ValidateFlow(dup); err == nil {
+		t.Fatal("expected a duplicate-output rejection for two connect nodes writing \"score\"")
+	}
+	// Distinct outputs are fine.
+	ok := events.Graph{
+		Nodes: []events.Node{
+			node("in", events.NodeInput),
+			cfgNode("c1", events.NodeConnect, `{"connector":"bureau","output":"bureau_score"}`),
+			cfgNode("c2", events.NodeConnect, `{"connector":"fraud","output":"fraud_score"}`),
+			node("out", events.NodeOutput),
+		},
+		Edges: []events.Edge{{From: "in", To: "c1"}, {From: "c1", To: "c2"}, {From: "c2", To: "out"}},
+	}
+	if err := domain.ValidateFlow(ok); err != nil {
+		t.Fatalf("distinct connect outputs should validate: %v", err)
 	}
 }

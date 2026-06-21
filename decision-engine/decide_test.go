@@ -79,6 +79,55 @@ func TestDecideAndHistoryReplay(t *testing.T) {
 	}
 }
 
+// TestDecideStripsReservedNamespaces guards H1: a caller must not be able to
+// pre-populate an engine-owned namespace (features/connect/ai/predict). With no
+// provider wired, a forged "features"/"predict" key would otherwise pass straight
+// into the executed + recorded input and be read as if engine-resolved.
+func TestDecideStripsReservedNamespaces(t *testing.T) {
+	ctx := context.Background()
+	log, err := eventlog.OpenWAL(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = log.Close() }()
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "caller"}
+
+	st := store.NewMemory()
+	publishDecisionFlow(t, ctx, log, st, id)
+
+	dh := command.NewDecideHandler(log, st)
+	res, err := dh.Decide(ctx, id, "scoring", "production", map[string]any{
+		"fico": 680, "bonus": 40,
+		"features": map[string]any{"x": 999}, // forged engine namespaces
+		"predict":  map[string]any{"y": map[string]any{"score": 1}},
+	}, command.EntityRef{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	hist := store.NewMemory()
+	if err := projection.New(log, hist, history.Projector{}).Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	rec, ok, err := history.Read(ctx, hist, id, res.DecisionID)
+	if err != nil || !ok {
+		t.Fatalf("history read: ok=%v err=%v", ok, err)
+	}
+	var data map[string]any
+	if err := json.Unmarshal(rec.Data, &data); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{"features", "predict", "connect", "ai"} {
+		if _, present := data[k]; present {
+			t.Fatalf("recorded input retained caller-supplied reserved key %q: %v", k, data)
+		}
+	}
+	// The genuine caller fields survive.
+	if data["fico"] == nil || data["bonus"] == nil {
+		t.Fatalf("genuine input fields were dropped: %v", data)
+	}
+}
+
 func TestDecideFailureIsRecorded(t *testing.T) {
 	ctx := context.Background()
 	log, err := eventlog.OpenWAL(t.TempDir())

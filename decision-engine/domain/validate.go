@@ -49,7 +49,57 @@ func ValidateFlow(g events.Graph) error {
 			return err
 		}
 	}
-	return nil
+	return validateUniqueOutputs(g)
+}
+
+// validateUniqueOutputs rejects two Connect (or two AI, or two Predict) nodes that
+// write the same output name. Resolved results are collected into a map keyed by
+// output within each namespace (connect/ai/predict), so a duplicate silently
+// discards one node's result while the connector/model is still called — an
+// order-dependent, invisible data loss. Catching it at publish makes the collision
+// impossible to ship.
+func validateUniqueOutputs(g events.Graph) error {
+	connects, err := ConnectSpecs(g)
+	if err != nil {
+		return err
+	}
+	ais, err := AISpecs(g)
+	if err != nil {
+		return err
+	}
+	predicts, err := PredictSpecs(g)
+	if err != nil {
+		return err
+	}
+	checkDup := func(kind string, outputs []string) error {
+		seen := make(map[string]bool, len(outputs))
+		for _, o := range outputs {
+			if seen[o] {
+				return fmt.Errorf("decision-engine: duplicate %s output %q — each %s node must write a distinct output", kind, o, kind)
+			}
+			seen[o] = true
+		}
+		return nil
+	}
+	connectOut := make([]string, len(connects))
+	for i, s := range connects {
+		connectOut[i] = s.Output
+	}
+	aiOut := make([]string, len(ais))
+	for i, s := range ais {
+		aiOut[i] = s.Output
+	}
+	predictOut := make([]string, len(predicts))
+	for i, s := range predicts {
+		predictOut[i] = s.Output
+	}
+	if err := checkDup("connect", connectOut); err != nil {
+		return err
+	}
+	if err := checkDup("ai", aiOut); err != nil {
+		return err
+	}
+	return checkDup("predict", predictOut)
 }
 
 // validateNodeConfig decodes a node's config (the same strict decode the executor
@@ -154,6 +204,11 @@ func validateNodeConfig(n events.Node) error {
 		}
 		if err := checkExpr(n, "case_type", cfg.CaseType); err != nil {
 			return err
+		}
+		// A negative SLA would emit a ManualReviewRequested with a negative deadline
+		// into the case manager (already due/breached on arrival). Reject at publish.
+		if cfg.SLADays < 0 {
+			return fmt.Errorf("decision-engine: node %q manual_review sla_days must be >= 0, got %d", n.ID, cfg.SLADays)
 		}
 	case events.NodeCode:
 		var cfg codeConfig

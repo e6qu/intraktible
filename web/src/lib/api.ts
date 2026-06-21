@@ -5,31 +5,50 @@
 // responses rather than returning partial/empty data.
 
 // --- Domain enums (string-literal unions) ---------------------------------------
-// These mirror the Go enums (decision-engine/domain + policy, case-manager/domain,
-// agent-manager/domain, models) so a typo'd or unhandled value fails type-check
-// rather than silently rendering — e.g. a `class="badge {status}"` interpolation or
-// an <option> list. The fetch boundary still `as`-casts the wire shape, but every
-// in-app comparison/switch/binding is now checked, and exhaustive switches use
-// assertNever (see persona/ui helpers) to flag a missing case at compile time.
-export type Disposition = 'approve' | 'decline' | 'refer';
-export type RunStatus = 'completed' | 'failed'; // a terminal flow-execution outcome
-// A recorded decision is 'started' until its terminal event projects (the history
-// read model writes 'started' on DecisionStarted), so it is RunStatus plus 'started'
-// — unlike the synchronous DecideResult, which only ever returns a terminal status.
+// The closed enums that mirror Go one-to-one are GENERATED from the Go consts
+// (enums.generated.ts, via `make tsenums`) — the Go enum is the single source of
+// truth, so the TS values cannot drift (a drift-check test fails CI otherwise). We
+// re-export them here so callers keep importing from `$lib/api`. A typo'd or
+// unhandled value fails type-check rather than silently rendering, and exhaustive
+// switches use assertNever to flag a missing case at compile time.
+import type {
+  Disposition,
+  RunStatus,
+  Environment,
+  CaseStatus,
+  SLAState,
+  AgentRunStatus,
+  ModelKind,
+  PreApprovalStatus,
+  MonitorOp,
+  MonitorMetric
+} from './enums.generated';
+export type {
+  Disposition,
+  RunStatus,
+  Environment,
+  CaseStatus,
+  SLAState,
+  AgentRunStatus,
+  ModelKind,
+  PreApprovalStatus,
+  MonitorOp,
+  MonitorMetric
+} from './enums.generated';
+export { ENVIRONMENTS, MONITOR_METRICS } from './enums.generated';
+
+// Composite / UI-only unions that build on the generated ones (not a 1:1 Go enum):
+// a recorded decision is 'started' until its terminal event projects (the history
+// read model writes 'started' on DecisionStarted), unlike the synchronous
+// DecideResult which only ever returns a terminal status; batch/preapprove adds a
+// client-rejected row state.
 export type DecisionStatus = RunStatus | 'started';
-export type BatchStatus = RunStatus | 'rejected'; // batch/preapprove adds client-rejected rows
+export type BatchStatus = RunStatus | 'rejected';
+// Variant and DeploymentRequestStatus are still carried as scattered string literals
+// on the Go side (no exported const set), so they are hand-defined here until those
+// gain a named type to generate from.
 export type Variant = 'champion' | 'challenger';
-export type MonitorOp = 'gt' | 'lt';
-export type CaseStatus = 'needs_review' | 'in_progress' | 'completed';
-export type SLAState = 'on_track' | 'due_soon' | 'overdue';
-export type AgentRunStatus = 'running' | 'completed' | 'failed';
-export type ModelKind = 'logistic' | 'gbm' | 'expression' | 'external';
-export type PreApprovalStatus = 'active' | 'revoked';
 export type DeploymentRequestStatus = 'pending' | 'approved' | 'rejected';
-// Environment is the deploy/decision target. A union (not bare string) so a typo'd
-// environment fails type-check — notably the `=== 'production'` four-eyes gate, where
-// a mistyped literal would silently disable the maker-checker requirement.
-export type Environment = 'sandbox' | 'staging' | 'production';
 
 // assertNever flags a missing case in an exhaustive switch at compile time: passing
 // a value whose type isn't `never` (i.e. a case the switch failed to narrow away) is
@@ -432,18 +451,6 @@ export async function getFlowMetrics(
   }
   return (await res.json()) as FlowMetrics;
 }
-
-export const MONITOR_METRICS = [
-  'failure_rate',
-  'refer_rate',
-  'automation_rate',
-  'approve_rate',
-  'decline_rate',
-  'avg_latency_ms',
-  'volume',
-  'distribution_drift'
-] as const;
-export type MonitorMetric = (typeof MONITOR_METRICS)[number];
 
 export interface MonitorStatus {
   actual: number;

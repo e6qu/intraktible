@@ -12,7 +12,7 @@ PostgreSQL,LGPL-2.1,LGPL-3.0,GPL-2.0,GPL-3.0,AGPL-3.0
 GO_PKGS := $(shell $(GO) list ./... | grep -v /node_modules)
 GO_DIRS := $(shell $(GO) list -f '{{.Dir}}' ./... | grep -v /node_modules)
 
-.PHONY: all build run dev test test-short fmt fmtcheck vet typecheck lint sast deadcode dupl vuln licenses check ci precommit web dist e2e-embedded clean
+.PHONY: all build run dev test test-short fmt fmtcheck vet typecheck tsenums lint sast deadcode dupl vuln licenses check ci precommit web dist e2e-embedded clean
 
 all: build
 
@@ -59,6 +59,12 @@ vet:
 ## typecheck: compile-only check (the Go compiler is the type checker)
 typecheck:
 	$(GO) build ./...
+
+## tsenums: regenerate web/src/lib/enums.generated.ts from the Go enum constants
+## (single source of truth). The drift-check test in cmd/tsenums fails the gate if
+## the committed file is stale.
+tsenums:
+	$(GO) run ./cmd/tsenums
 
 ## lint: golangci-lint (strict)
 lint:

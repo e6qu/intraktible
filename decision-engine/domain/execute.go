@@ -5,6 +5,7 @@ package domain
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"reflect"
 	"strings"
 
@@ -431,6 +432,12 @@ func aggregateValues(agg string, vals []any) (any, error) {
 			if !ok {
 				return nil, fmt.Errorf("non-numeric value %v", v)
 			}
+			// Reject NaN/±Inf inputs: a NaN makes min/max order-dependent (every
+			// comparison with NaN is false) and poisons sum, which would otherwise
+			// silently yield a non-finite, order-sensitive aggregate.
+			if math.IsNaN(f) || math.IsInf(f, 0) {
+				return nil, fmt.Errorf("non-finite value %v", v)
+			}
 			nums[i] = f
 		}
 		if len(nums) == 0 {
@@ -455,6 +462,11 @@ func aggregateValues(agg string, vals []any) (any, error) {
 					acc = f
 				}
 			}
+		}
+		// A sum of finite values can still overflow to ±Inf; fail loudly rather than
+		// emit a non-finite aggregate into downstream expr/rule evaluation.
+		if math.IsInf(acc, 0) || math.IsNaN(acc) {
+			return nil, fmt.Errorf("%s overflowed to a non-finite value", agg)
 		}
 		return acc, nil
 	default:
