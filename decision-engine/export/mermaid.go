@@ -98,7 +98,7 @@ func flowchartShape(t events.NodeType) (open, closeTok string) {
 		return "{", "}" // decision diamond
 	case events.NodeRule, events.NodeDecisionTable, events.NodeScorecard, events.NodeMatrix2D:
 		return "[[", "]]" // subroutine (rule-like)
-	case events.NodeAI, events.NodeConnect:
+	case events.NodeAI, events.NodeConnect, events.NodePredict:
 		return "[(", ")]" // cylinder (external/data)
 	case events.NodeManualReview:
 		return "{{", "}}" // hexagon (human gate)

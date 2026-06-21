@@ -140,7 +140,11 @@
     btReport = null;
     btRunning = true;
     try {
-      const dataset = JSON.parse(btDataset) as Record<string, unknown>[];
+      const parsed = JSON.parse(btDataset);
+      if (!Array.isArray(parsed)) {
+        throw new Error('Backtest dataset must be a JSON array of input objects.');
+      }
+      const dataset = parsed as Record<string, unknown>[];
       const compare = selected && selected.latest > 0 ? selected.latest : undefined;
       btReport = await policyBacktest(key, selectedId, {
         spec: draftSpec(),

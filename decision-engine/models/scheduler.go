@@ -26,7 +26,7 @@ type AlertCmd interface {
 // notify.Notifier; nil disables delivery (the scheduler then only maintains the
 // alert/resolve dedup state).
 type Notifier interface {
-	Deliver(ctx context.Context, id identity.Identity, reason string, payload any) ([]notify.DeliveryResult, error)
+	Deliver(ctx context.Context, id identity.Identity, reason string, payload any) (notify.DeliverySummary, error)
 }
 
 // Scheduler periodically evaluates every model's drift (PSI vs its configured
@@ -92,15 +92,15 @@ func (s *Scheduler) Tick(ctx context.Context) (TickSummary, error) {
 					"checked_at": s.now(),
 					"fired":      []firedModel{{Model: st.Name, PSI: psi, Threshold: st.Threshold, Window: s.windowDays}},
 				}
-				results, err := s.notifier.Deliver(ctx, id, "model drift scheduler", payload)
-				if err != nil {
-					slog.Warn("model drift scheduler: delivery failed, will retry next tick", "model", st.Name, "err", err)
+				summary, err := s.notifier.Deliver(ctx, id, "model drift scheduler", payload)
+				if err != nil || summary.RetryWorthy() {
+					slog.Warn("model drift scheduler: delivery not completed, will retry next tick", "model", st.Name, "err", err)
 					sum.DeliveryFailures++
 					continue
 				}
 				// Count Delivered only when an endpoint accepted (an all-permanent sweep
-				// dedups via a nil return but delivered nothing).
-				if notify.AnyAccepted(results) {
+				// records+dedups below but delivered nothing).
+				if summary.Delivered() {
 					sum.Delivered++
 				}
 			}

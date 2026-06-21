@@ -289,7 +289,7 @@ func (h *DecideHandler) Decide(ctx context.Context, id identity.Identity, slug, 
 			DecisionID: decisionID, FlowID: fv.FlowID, Version: version.Version, Variant: variant,
 			NodeID: run.FailedNode, Error: run.Err, DurationMS: dur,
 		}
-		result = DecideResult{DecisionID: decisionID, Status: domain.StatusFailed, Error: run.Err}
+		result = DecideResult{DecisionID: decisionID, Status: string(domain.StatusFailed), Error: run.Err}
 	} else {
 		outJSON, err := json.Marshal(run.Output)
 		if err != nil {
@@ -314,7 +314,7 @@ func (h *DecideHandler) Decide(ctx context.Context, id identity.Identity, slug, 
 			PolicyID: disp.policyID, PolicyVersion: disp.policyVersion,
 		}
 		result = DecideResult{
-			DecisionID: decisionID, Status: domain.StatusCompleted, Output: run.Output,
+			DecisionID: decisionID, Status: string(domain.StatusCompleted), Output: run.Output,
 			Disposition: disp.disposition, DispositionReason: disp.reason,
 		}
 	}
@@ -346,14 +346,14 @@ func (h *DecideHandler) runShadow(ctx context.Context, id identity.Identity, fv 
 	}
 	ev := events.ShadowEvaluated{
 		DecisionID: decisionID, FlowID: fv.FlowID, Environment: env,
-		LiveVersion: liveVersion, ShadowVersion: shadowVer, LiveStatus: live.Status,
+		LiveVersion: liveVersion, ShadowVersion: shadowVer, LiveStatus: string(live.Status),
 	}
 	sv, ok := versionByNumber(fv, shadowVer)
 	if !ok {
 		ev.ShadowError = fmt.Sprintf("shadow version %d not found", shadowVer)
 	} else {
 		srun := domain.Execute(sv.Graph, data)
-		ev.ShadowStatus = srun.Status
+		ev.ShadowStatus = string(srun.Status)
 		if srun.Status == domain.StatusFailed {
 			ev.ShadowError = srun.Err
 		}
@@ -616,7 +616,7 @@ func (h *DecideHandler) honorPreApproval(ctx context.Context, id identity.Identi
 		return DecideResult{}, false, err
 	}
 	return DecideResult{
-		DecisionID: decisionID, Status: domain.StatusCompleted, Output: terms,
+		DecisionID: decisionID, Status: string(domain.StatusCompleted), Output: terms,
 		Disposition: pa.Disposition, DispositionReason: "pre-approval honored",
 	}, true, nil
 }

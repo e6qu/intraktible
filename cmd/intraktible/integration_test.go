@@ -78,7 +78,7 @@ func TestFeaturesDriveDecision(t *testing.T) {
 		t.Fatal(err)
 	}
 	// 3 transactions >= 3 -> high tier, driven entirely by the computed feature.
-	if res.Status != enginedomain.StatusCompleted || res.Output["tier"] != "high" {
+	if res.Status != string(enginedomain.StatusCompleted) || res.Output["tier"] != "high" {
 		out, _ := json.Marshal(res)
 		t.Fatalf("feature did not drive the decision: %s", out)
 	}
@@ -119,7 +119,7 @@ func TestConnectorDrivesDecision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Status != enginedomain.StatusCompleted {
+	if res.Status != string(enginedomain.StatusCompleted) {
 		t.Fatalf("status=%s err=%s", res.Status, res.Error)
 	}
 	conn, ok := res.Output["connect"].(map[string]any)
@@ -182,7 +182,7 @@ func TestAgentDrivesDecision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Status != enginedomain.StatusCompleted {
+	if res.Status != string(enginedomain.StatusCompleted) {
 		t.Fatalf("status=%s err=%s", res.Status, res.Error)
 	}
 	aiOut, ok := res.Output["ai"].(map[string]any)

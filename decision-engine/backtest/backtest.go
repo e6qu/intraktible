@@ -116,11 +116,11 @@ func Sweep(graph events.Graph, base map[string]any, field string, values []any) 
 // execute runs one graph against a fresh copy of input and flattens the Run.
 func execute(g events.Graph, input map[string]any) Outcome {
 	run := domain.Execute(g, cloneInput(input))
-	return Outcome{Status: run.Status, Output: run.Output, Error: run.Err}
+	return Outcome{Status: string(run.Status), Output: run.Output, Error: run.Err}
 }
 
 func countOutcome(o Outcome, completed, failed *int) {
-	if o.Status == domain.StatusCompleted {
+	if o.Status == string(domain.StatusCompleted) {
 		*completed++
 	} else {
 		*failed++

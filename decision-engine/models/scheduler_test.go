@@ -35,26 +35,26 @@ func (f *fakeAlertCmd) MarkModelDriftResolved(ctx context.Context, id identity.I
 
 type fakeNotifier struct{ delivered int }
 
-func (f *fakeNotifier) Deliver(_ context.Context, _ identity.Identity, _ string, _ any) ([]notify.DeliveryResult, error) {
+func (f *fakeNotifier) Deliver(_ context.Context, _ identity.Identity, _ string, _ any) (notify.DeliverySummary, error) {
 	f.delivered++
-	// Simulate a webhook that accepted the alert (so the scheduler counts it as
-	// delivered — Delivered is now gated on an accepted result, not a nil error).
-	return []notify.DeliveryResult{{OK: true, Outcome: notify.OutcomeAccepted}}, nil
+	// A webhook that accepted the alert (so the scheduler counts it delivered).
+	return notify.DeliverySummary{
+		Results:  []notify.DeliveryResult{{OK: true, Outcome: notify.OutcomeAccepted}},
+		Accepted: 1,
+	}, nil
 }
 
-// failingNotifier simulates every webhook being down (Deliver errors on total failure).
+// failingNotifier simulates every webhook being down — a retryable total failure
+// (RetryWorthy), which is NOT a real error: delivery just didn't complete this tick.
 type failingNotifier struct{ calls int }
 
-func (f *failingNotifier) Deliver(_ context.Context, _ identity.Identity, _ string, _ any) ([]notify.DeliveryResult, error) {
+func (f *failingNotifier) Deliver(_ context.Context, _ identity.Identity, _ string, _ any) (notify.DeliverySummary, error) {
 	f.calls++
-	return nil, errDeliveryDown
+	return notify.DeliverySummary{
+		Results:   []notify.DeliveryResult{{Outcome: notify.OutcomeRetryable, Error: "delivery down"}},
+		Retryable: 1,
+	}, nil
 }
-
-var errDeliveryDown = fmtError("delivery down")
-
-type fmtError string
-
-func (e fmtError) Error() string { return string(e) }
 
 // TestDriftSchedulerDeliveryFailureDoesNotStarveSweep proves a failing webhook on
 // one model does not abort the sweep (so later models are still processed) and the

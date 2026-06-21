@@ -1237,7 +1237,7 @@ func (s *Service) preapproveBatch(w http.ResponseWriter, r *http.Request) {
 		}
 		row.DecisionID, row.Status, row.Disposition = res.DecisionID, res.Status, res.Disposition
 		switch {
-		case res.Status != domain.StatusCompleted:
+		case res.Status != string(domain.StatusCompleted):
 			row.Reason = "decision " + res.Status
 			resp.Failed++
 		case res.Disposition != target:

@@ -25,8 +25,15 @@
   // The initial status filter is the persona's lens (an operator lands on the open
   // review queue); other personas see the full list. Just the default focus — the
   // filter control below lets the user widen or change it.
-  let statusFilter = $state<string>(personaLens(resolvePersona()).cases ?? '');
+  const casesLens = personaLens(resolvePersona()).cases ?? {};
+  let statusFilter = $state<string>(casesLens.status ?? '');
   let list = $state<Case[]>([]);
+  // The persona may also order the queue: 'urgency' surfaces the soonest-due / overdue
+  // cases first (days_left ascending — overdue cases are <= 0). Same data, re-ordered
+  // for the viewer; non-urgency personas keep store order.
+  const sorted = $derived(
+    casesLens.sort === 'urgency' ? [...list].sort((a, b) => a.days_left - b.days_left) : list
+  );
   let summary = $state<CaseSummary | null>(null);
   let error = $state('');
   let loading = $state(true);
@@ -241,7 +248,7 @@
           >
         </thead>
         <tbody>
-          {#each list as c (c.case_id)}
+          {#each sorted as c (c.case_id)}
             <tr class:sel={selectedIds.includes(c.case_id)}>
               <td
                 ><input

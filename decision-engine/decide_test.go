@@ -41,7 +41,7 @@ func TestDecideAndHistoryReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Status != domain.StatusCompleted {
+	if res.Status != string(domain.StatusCompleted) {
 		t.Fatalf("status=%s err=%s", res.Status, res.Error)
 	}
 	if res.Output["decision"] != "APPROVE" {
@@ -96,7 +96,7 @@ func TestDecideFailureIsRecorded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Status != domain.StatusFailed || res.Error == "" {
+	if res.Status != string(domain.StatusFailed) || res.Error == "" {
 		t.Fatalf("expected a recorded failure, got %+v", res)
 	}
 

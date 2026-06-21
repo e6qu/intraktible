@@ -174,7 +174,7 @@ func bpmnElement(t events.NodeType) string {
 		return "exclusiveGateway"
 	case events.NodeRule, events.NodeDecisionTable, events.NodeScorecard, events.NodeMatrix2D:
 		return "businessRuleTask"
-	case events.NodeAI, events.NodeConnect:
+	case events.NodeAI, events.NodeConnect, events.NodePredict:
 		return "serviceTask"
 	case events.NodeCode:
 		return "scriptTask"

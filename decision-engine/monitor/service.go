@@ -18,7 +18,7 @@ import (
 // notifier is the subset of *notify.Notifier the check endpoint needs (so the
 // monitor service depends on a small contract, and tests can omit delivery).
 type notifier interface {
-	Deliver(ctx context.Context, id identity.Identity, reason string, payload any) ([]notify.DeliveryResult, error)
+	Deliver(ctx context.Context, id identity.Identity, reason string, payload any) (notify.DeliverySummary, error)
 }
 
 // Service is the monitor HTTP surface (imperative shell): define/list/delete
@@ -161,18 +161,13 @@ func (s *Service) check(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]any{"flow_id": flowID, "checked": len(rules), "fired": fired}
 	if len(fired) > 0 && s.notifier != nil {
 		payload := map[string]any{"flow_id": flowID, "checked_at": time.Now().UTC(), "fired": fired}
-		// Deliver returns the per-webhook outcomes AND an error when all of them
-		// failed. Evaluation succeeded, so report the delivery outcomes (a flag +
-		// the per-webhook results) rather than 500-ing the whole check.
-		deliveries, _ := s.notifier.Deliver(r.Context(), id, "monitor check", payload)
-		resp["deliveries"] = deliveries
-		// A non-error return can still include permanent (non-retryable) failures,
-		// so flag from the per-webhook outcomes rather than the retry-signal error.
-		for _, d := range deliveries {
-			if !d.OK {
-				resp["delivery_failed"] = true
-				break
-			}
+		// Evaluation succeeded, so report the delivery outcomes rather than 500-ing the
+		// check: surface the per-webhook results and flag delivery_failed when not every
+		// webhook accepted (any retryable/permanent failure, or a real Deliver error).
+		summary, derr := s.notifier.Deliver(r.Context(), id, "monitor check", payload)
+		resp["deliveries"] = summary.Results
+		if derr != nil || summary.Accepted < len(summary.Results) {
+			resp["delivery_failed"] = true
 		}
 	}
 	httpx.JSON(w, http.StatusOK, resp)

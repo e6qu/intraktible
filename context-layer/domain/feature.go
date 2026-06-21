@@ -74,6 +74,13 @@ type FeatureInput struct {
 // or sums spec.Field. A matching event missing the field contributes nothing; a
 // present-but-non-numeric field fails loudly.
 func Compute(spec FeatureSpec, events []FeatureInput, now time.Time) (float64, error) {
+	// Validate the aggregation as a PRECONDITION, not inside the per-event loop: with
+	// zero matching events the loop body never runs, so an invalid aggregation would
+	// otherwise silently return 0 instead of erroring (define-time validation already
+	// guards this for stored specs; this hardens a hand-constructed one).
+	if spec.Aggregation != AggCount && spec.Aggregation != AggSum {
+		return 0, fmt.Errorf("context-layer: unknown aggregation %q", spec.Aggregation)
+	}
 	cutoff := now.Add(-spec.Window)
 	var total float64
 	for _, ev := range events {

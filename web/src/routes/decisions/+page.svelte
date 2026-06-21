@@ -30,7 +30,11 @@
   function msg(e: unknown): string {
     return e instanceof Error ? e.message : String(e);
   }
+  // A generation token so overlapping loads (rapid Apply / pager) don't clobber: only
+  // the latest request's response is allowed to write the list.
+  let loadSeq = 0;
   async function load() {
+    const seq = ++loadSeq;
     loading = true;
     error = '';
     try {
@@ -43,12 +47,13 @@
         limit: PAGE,
         offset
       });
+      if (seq !== loadSeq) return; // a newer load superseded this one
       list = page.decisions;
       total = page.total;
     } catch (e) {
-      error = msg(e);
+      if (seq === loadSeq) error = msg(e);
     } finally {
-      loading = false;
+      if (seq === loadSeq) loading = false;
     }
   }
   function applyFilters() {
@@ -120,7 +125,7 @@
         aria-label="search by decision id"
       /></label
     >
-    <button type="submit"><Icon name="search" size={14} /> Apply</button>
+    <button type="submit" disabled={loading}><Icon name="search" size={14} /> Apply</button>
   </form>
 
   {#if error}<p class="err">{error}</p>{/if}

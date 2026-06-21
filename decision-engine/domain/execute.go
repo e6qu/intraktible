@@ -14,11 +14,19 @@ import (
 	"github.com/e6qu/intraktible/decision-engine/events"
 )
 
+// RunStatus is the terminal outcome of executing a flow. A named type (mirroring
+// case-manager's CaseStatus) so a status can't be a typo'd bare string in the
+// decision core or its result family; it is JSON wire-compatible with a plain string.
+type RunStatus string
+
 // Decision run status values.
 const (
-	StatusCompleted = "completed"
-	StatusFailed    = "failed"
+	StatusCompleted RunStatus = "completed"
+	StatusFailed    RunStatus = "failed"
 )
+
+// Valid reports whether s is a known run status.
+func (s RunStatus) Valid() bool { return s == StatusCompleted || s == StatusFailed }
 
 // NodeResult is one node's evaluation output, captured in execution order.
 type NodeResult struct {
@@ -31,7 +39,7 @@ type NodeResult struct {
 // per-node trace; on failure Status is StatusFailed and Err/FailedNode are set
 // (the failure is reported, never swallowed).
 type Run struct {
-	Status     string         `json:"status"`
+	Status     RunStatus      `json:"status"`
 	Output     map[string]any `json:"output,omitempty"`
 	Results    []NodeResult   `json:"results"`
 	FailedNode string         `json:"failed_node,omitempty"`

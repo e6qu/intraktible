@@ -46,7 +46,7 @@ func TestDecidePreResolvesConnectNode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Status != domain.StatusCompleted || res.Output["tier"] != "high" {
+	if res.Status != string(domain.StatusCompleted) || res.Output["tier"] != "high" {
 		t.Fatalf("want high, got %+v (%s)", res.Output, res.Error)
 	}
 
@@ -102,7 +102,7 @@ func decideFailsWithoutProvider(t *testing.T, slug string, graph events.Graph) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Status != domain.StatusFailed {
+	if res.Status != string(domain.StatusFailed) {
 		t.Fatalf("expected a failed decision without a provider, got %+v", res)
 	}
 }

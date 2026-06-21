@@ -90,10 +90,11 @@
     if (fBusy) return; // Enter fires onsubmit directly, bypassing the disabled button
     error = '';
     // A non-numeric window is a mistake — surface it rather than silently defining
-    // a 0-hour feature that will never aggregate anything.
+    // a 0-hour feature that will never aggregate anything. Number('') is 0 (not NaN),
+    // so an empty field must be rejected explicitly; the minimum window is 1 hour.
     const windowHours = Number(fWindow.trim());
-    if (!Number.isInteger(windowHours) || windowHours < 0) {
-      error = 'Window (hours) must be a non-negative whole number.';
+    if (fWindow.trim() === '' || !Number.isInteger(windowHours) || windowHours < 1) {
+      error = 'Window (hours) must be a whole number of at least 1.';
       return;
     }
     fBusy = true;
