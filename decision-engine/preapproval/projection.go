@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/e6qu/intraktible/platform/entity"
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/store"
@@ -104,8 +105,8 @@ func (Projector) Apply(ctx context.Context, e eventlog.Envelope, s store.Store) 
 
 // ActiveFor returns the entity's pre-approval when it is active and unexpired at
 // `now` — the decide path's honor lookup.
-func ActiveFor(ctx context.Context, s store.Store, id identity.Identity, entityType, eid string, now time.Time) (View, bool, error) {
-	v, ok, err := store.GetDoc[View](ctx, s, Collection, store.Key(id.Org, id.Workspace, entityID(entityType, eid)))
+func ActiveFor(ctx context.Context, s store.Store, id identity.Identity, ref entity.Ref, now time.Time) (View, bool, error) {
+	v, ok, err := store.GetDoc[View](ctx, s, Collection, store.Key(id.Org, id.Workspace, entityID(string(ref.Type), string(ref.ID))))
 	if err != nil || !ok {
 		return View{}, false, err
 	}
@@ -121,6 +122,6 @@ func List(ctx context.Context, s store.Store, id identity.Identity) ([]View, err
 }
 
 // Read returns the pre-approval for a specific entity (any status).
-func Read(ctx context.Context, s store.Store, id identity.Identity, entityType, eid string) (View, bool, error) {
-	return store.GetDoc[View](ctx, s, Collection, store.Key(id.Org, id.Workspace, entityID(entityType, eid)))
+func Read(ctx context.Context, s store.Store, id identity.Identity, ref entity.Ref) (View, bool, error) {
+	return store.GetDoc[View](ctx, s, Collection, store.Key(id.Org, id.Workspace, entityID(string(ref.Type), string(ref.ID))))
 }

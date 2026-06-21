@@ -178,6 +178,39 @@ func Authorize(next http.Handler) http.Handler {
 	})
 }
 
+// AuthorizeRoutes is Authorize that classifies a request by its MATCHED ROUTE
+// TEMPLATE (via mux.Handler) rather than the raw URL path. requiredRole then matches
+// against the fixed route pattern (e.g. "/v1/flows/{id}/monitors"), so no user-
+// controlled path segment (a flow id/slug) can influence the role decision. This is
+// the form wired in production, where the v1 mux is available to introspect.
+func AuthorizeRoutes(mux *http.ServeMux) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			route := r.URL.Path
+			if mux != nil {
+				if _, pattern := mux.Handler(r); pattern != "" {
+					route = patternPath(pattern)
+				}
+			}
+			need := requiredRole(r.Method, route)
+			if !RoleOf(r.Context()).AtLeast(need) {
+				Error(w, http.StatusForbidden, fmt.Errorf("requires at least the %q role", need))
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// patternPath strips the optional "METHOD " (and host) prefix from a ServeMux
+// pattern, leaving the path template — e.g. "POST /v1/x/{id}" -> "/v1/x/{id}".
+func patternPath(pattern string) string {
+	if i := strings.IndexByte(pattern, '/'); i >= 0 {
+		return pattern[i:]
+	}
+	return pattern
+}
+
 // requiredRole maps a request to the minimum role it needs. Reads are open to any
 // authenticated viewer; deploying/approving a version is the highest bar; authoring
 // (defining flows/agents/connectors/features) needs editor; all other mutations are

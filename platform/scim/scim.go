@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/store"
 )
 
@@ -71,7 +72,9 @@ func NewStore(s store.Store) *Store {
 	return &Store{store: s, now: time.Now}
 }
 
-func key(org, workspace, id string) string { return store.Key(org, workspace, id) }
+func key(tn identity.Identity, resourceID string) string {
+	return store.Key(tn.Org, tn.Workspace, resourceID)
+}
 
 // Create provisions a new user. userName is required and unique per tenant.
 func (s *Store) Create(ctx context.Context, u User) (User, error) {
@@ -85,7 +88,7 @@ func (s *Store) Create(ctx context.Context, u User) (User, error) {
 	// userName) UPDATES the existing record in place rather than duplicating it —
 	// otherwise a rename would leave a stale, un-deprovisionable second user.
 	if u.ExternalID != "" {
-		if existing, ok, err := s.byExternalID(ctx, u.Org, u.Workspace, u.ExternalID); err != nil {
+		if existing, ok, err := s.byExternalID(ctx, identity.Identity{Org: u.Org, Workspace: u.Workspace}, u.ExternalID); err != nil {
 			return User{}, err
 		} else if ok {
 			u.ID = existing.ID
@@ -95,13 +98,13 @@ func (s *Store) Create(ctx context.Context, u User) (User, error) {
 				created = existing.Meta.Created
 			}
 			u.Meta = &Meta{ResourceType: "User", Created: created, LastModified: now}
-			if err := store.PutDoc(ctx, s.store, collection, key(u.Org, u.Workspace, u.ID), u); err != nil {
+			if err := store.PutDoc(ctx, s.store, collection, key(identity.Identity{Org: u.Org, Workspace: u.Workspace}, u.ID), u); err != nil {
 				return User{}, err
 			}
 			return u, nil
 		}
 	}
-	if existing, ok, err := s.byUserName(ctx, u.Org, u.Workspace, u.UserName); err != nil {
+	if existing, ok, err := s.byUserName(ctx, identity.Identity{Org: u.Org, Workspace: u.Workspace}, u.UserName); err != nil {
 		return User{}, err
 	} else if ok {
 		return User{}, fmt.Errorf("scim: user %q already exists (id %s)", u.UserName, existing.ID)
@@ -111,7 +114,7 @@ func (s *Store) Create(ctx context.Context, u User) (User, error) {
 	}
 	u.Schemas = []string{UserSchema}
 	u.Meta = &Meta{ResourceType: "User", Created: now, LastModified: now}
-	if err := store.PutDoc(ctx, s.store, collection, key(u.Org, u.Workspace, u.ID), u); err != nil {
+	if err := store.PutDoc(ctx, s.store, collection, key(identity.Identity{Org: u.Org, Workspace: u.Workspace}, u.ID), u); err != nil {
 		return User{}, err
 	}
 	return u, nil
@@ -119,8 +122,8 @@ func (s *Store) Create(ctx context.Context, u User) (User, error) {
 
 // byExternalID finds a tenant user by the IdP's immutable externalId (a scan; the
 // directory is small and SCIM provisioning is not a hot path).
-func (s *Store) byExternalID(ctx context.Context, org, workspace, externalID string) (User, bool, error) {
-	all, err := s.List(ctx, org, workspace, "", false)
+func (s *Store) byExternalID(ctx context.Context, tn identity.Identity, externalID string) (User, bool, error) {
+	all, err := s.List(ctx, tn, "", false)
 	if err != nil {
 		return User{}, false, err
 	}
@@ -133,8 +136,8 @@ func (s *Store) byExternalID(ctx context.Context, org, workspace, externalID str
 }
 
 // Get loads one user by id.
-func (s *Store) Get(ctx context.Context, org, workspace, id string) (User, bool, error) {
-	return store.GetDoc[User](ctx, s.store, collection, key(org, workspace, id))
+func (s *Store) Get(ctx context.Context, tn identity.Identity, id string) (User, bool, error) {
+	return store.GetDoc[User](ctx, s.store, collection, key(tn, id))
 }
 
 // List returns the tenant's users, optionally filtered to a single userName
@@ -144,8 +147,8 @@ func (s *Store) Get(ctx context.Context, org, workspace, id string) (User, bool,
 // userNames are non-empty, so a `userName eq ""` clause is a precise empty result,
 // NOT "list everyone"). When filtered is false (no filter clause present) it returns
 // all users. Results are sorted by id for deterministic output across backends.
-func (s *Store) List(ctx context.Context, org, workspace, filterUserName string, filtered bool) ([]User, error) {
-	all, err := store.ListDocs[User](ctx, s.store, collection, store.Key(org, workspace, ""))
+func (s *Store) List(ctx context.Context, tn identity.Identity, filterUserName string, filtered bool) ([]User, error) {
+	all, err := store.ListDocs[User](ctx, s.store, collection, store.Key(tn.Org, tn.Workspace, ""))
 	if err != nil {
 		return nil, err
 	}
@@ -163,8 +166,8 @@ func (s *Store) List(ctx context.Context, org, workspace, filterUserName string,
 }
 
 // SetActive flips a user's active flag — the deprovision/reactivate operation.
-func (s *Store) SetActive(ctx context.Context, org, workspace, id string, active bool) (User, error) {
-	u, ok, err := s.Get(ctx, org, workspace, id)
+func (s *Store) SetActive(ctx context.Context, tn identity.Identity, id string, active bool) (User, error) {
+	u, ok, err := s.Get(ctx, tn, id)
 	if err != nil {
 		return User{}, err
 	}
@@ -175,15 +178,15 @@ func (s *Store) SetActive(ctx context.Context, org, workspace, id string, active
 	if u.Meta != nil {
 		u.Meta.LastModified = s.now().UTC()
 	}
-	if err := store.PutDoc(ctx, s.store, collection, key(org, workspace, id), u); err != nil {
+	if err := store.PutDoc(ctx, s.store, collection, key(tn, id), u); err != nil {
 		return User{}, err
 	}
 	return u, nil
 }
 
 // Delete removes a user.
-func (s *Store) Delete(ctx context.Context, org, workspace, id string) error {
-	return s.store.Delete(ctx, collection, key(org, workspace, id))
+func (s *Store) Delete(ctx context.Context, tn identity.Identity, id string) error {
+	return s.store.Delete(ctx, collection, key(tn, id))
 }
 
 // Allowed reports whether a login for email may proceed: an unprovisioned user
@@ -191,8 +194,8 @@ func (s *Store) Delete(ctx context.Context, org, workspace, id string) error {
 // locks out new users), an active provisioned user is allowed, and a deactivated
 // one is blocked. A lookup error fails CLOSED (deny + log) — a transient store
 // fault must never let a deprovisioned user back in.
-func (s *Store) Allowed(ctx context.Context, org, workspace, email string) bool {
-	u, ok, err := s.byUserName(ctx, org, workspace, email)
+func (s *Store) Allowed(ctx context.Context, tn identity.Identity, email string) bool {
+	u, ok, err := s.byUserName(ctx, tn, email)
 	if err != nil {
 		slog.Error("scim: deprovisioning gate lookup failed; denying login", "email", email, "err", err)
 		return false
@@ -203,8 +206,8 @@ func (s *Store) Allowed(ctx context.Context, org, workspace, email string) bool 
 	return u.Active
 }
 
-func (s *Store) byUserName(ctx context.Context, org, workspace, userName string) (User, bool, error) {
-	users, err := s.List(ctx, org, workspace, userName, true) // exact lookup by a concrete name
+func (s *Store) byUserName(ctx context.Context, tn identity.Identity, userName string) (User, bool, error) {
+	users, err := s.List(ctx, tn, userName, true) // exact lookup by a concrete name
 	if err != nil {
 		return User{}, false, err
 	}
@@ -242,26 +245,26 @@ func (s *Store) CreateGroup(ctx context.Context, g Group) (Group, error) {
 	now := s.now().UTC()
 	g.Schemas = []string{GroupSchema}
 	g.Meta = &Meta{ResourceType: "Group", Created: now, LastModified: now}
-	if err := store.PutDoc(ctx, s.store, groupCollection, key(g.Org, g.Workspace, g.ID), g); err != nil {
+	if err := store.PutDoc(ctx, s.store, groupCollection, key(identity.Identity{Org: g.Org, Workspace: g.Workspace}, g.ID), g); err != nil {
 		return Group{}, err
 	}
 	return g, nil
 }
 
 // GetGroup loads one group by id.
-func (s *Store) GetGroup(ctx context.Context, org, workspace, id string) (Group, bool, error) {
-	return store.GetDoc[Group](ctx, s.store, groupCollection, key(org, workspace, id))
+func (s *Store) GetGroup(ctx context.Context, tn identity.Identity, id string) (Group, bool, error) {
+	return store.GetDoc[Group](ctx, s.store, groupCollection, key(tn, id))
 }
 
 // ListGroups returns the tenant's groups.
-func (s *Store) ListGroups(ctx context.Context, org, workspace string) ([]Group, error) {
-	return store.ListDocs[Group](ctx, s.store, groupCollection, store.Key(org, workspace, ""))
+func (s *Store) ListGroups(ctx context.Context, tn identity.Identity) ([]Group, error) {
+	return store.ListDocs[Group](ctx, s.store, groupCollection, store.Key(tn.Org, tn.Workspace, ""))
 }
 
 // SetMembers replaces a group's members (PUT) or adds/removes the given member
 // ids. It is one membership op; PatchMembers applies several atomically.
-func (s *Store) SetMembers(ctx context.Context, org, workspace, id string, memberIDs []string, mode MemberMode) (Group, error) {
-	return s.PatchMembers(ctx, org, workspace, id, []MemberOp{{Mode: mode, IDs: memberIDs}})
+func (s *Store) SetMembers(ctx context.Context, tn identity.Identity, id string, memberIDs []string, mode MemberMode) (Group, error) {
+	return s.PatchMembers(ctx, tn, id, []MemberOp{{Mode: mode, IDs: memberIDs}})
 }
 
 // MemberOp is one membership change (used by PatchMembers).
@@ -274,10 +277,10 @@ type MemberOp struct {
 // (one GetGroup, one PutDoc) under a lock, so a SCIM PATCH with several ops is all
 // -or-nothing rather than partially applied (an IdP retry would otherwise
 // double-apply), and concurrent membership writes cannot lose updates.
-func (s *Store) PatchMembers(ctx context.Context, org, workspace, id string, ops []MemberOp) (Group, error) {
+func (s *Store) PatchMembers(ctx context.Context, tn identity.Identity, id string, ops []MemberOp) (Group, error) {
 	s.memberMu.Lock()
 	defer s.memberMu.Unlock()
-	g, ok, err := s.GetGroup(ctx, org, workspace, id)
+	g, ok, err := s.GetGroup(ctx, tn, id)
 	if err != nil {
 		return Group{}, err
 	}
@@ -317,7 +320,7 @@ func (s *Store) PatchMembers(ctx context.Context, org, workspace, id string, ops
 	if g.Meta != nil {
 		g.Meta.LastModified = s.now().UTC()
 	}
-	if err := store.PutDoc(ctx, s.store, groupCollection, key(org, workspace, id), g); err != nil {
+	if err := store.PutDoc(ctx, s.store, groupCollection, key(tn, id), g); err != nil {
 		return Group{}, err
 	}
 	return g, nil
@@ -333,18 +336,18 @@ const (
 )
 
 // DeleteGroup removes a group.
-func (s *Store) DeleteGroup(ctx context.Context, org, workspace, id string) error {
-	return s.store.Delete(ctx, groupCollection, key(org, workspace, id))
+func (s *Store) DeleteGroup(ctx context.Context, tn identity.Identity, id string) error {
+	return s.store.Delete(ctx, groupCollection, key(tn, id))
 }
 
 // GroupsForUser returns the display names of the groups the user (by email)
 // belongs to — the input to mapping SCIM group membership onto a role.
-func (s *Store) GroupsForUser(ctx context.Context, org, workspace, email string) ([]string, error) {
-	u, ok, err := s.byUserName(ctx, org, workspace, email)
+func (s *Store) GroupsForUser(ctx context.Context, tn identity.Identity, email string) ([]string, error) {
+	u, ok, err := s.byUserName(ctx, tn, email)
 	if err != nil || !ok {
 		return nil, err
 	}
-	groups, err := s.ListGroups(ctx, org, workspace)
+	groups, err := s.ListGroups(ctx, tn)
 	if err != nil {
 		return nil, err
 	}

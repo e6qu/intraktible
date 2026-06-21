@@ -16,6 +16,7 @@ import (
 	"github.com/e6qu/intraktible/decision-engine/flows"
 	"github.com/e6qu/intraktible/decision-engine/policy"
 	"github.com/e6qu/intraktible/decision-engine/preapproval"
+	"github.com/e6qu/intraktible/platform/entity"
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/store"
@@ -38,16 +39,14 @@ var (
 // for a tenant. The Context Layer supplies the implementation; defining the port
 // here keeps the decision engine (built earlier) from importing it.
 type FeatureProvider interface {
-	Features(ctx context.Context, id identity.Identity, entityType, entityID string) (map[string]float64, error)
+	Features(ctx context.Context, id identity.Identity, ref entity.Ref) (map[string]float64, error)
 }
 
 // EntityRef optionally points a decision at a Context Layer entity so its computed
 // features are injected into the input under "features" (e.g. a Rule can test
 // `features.txn_count_24h > 5`). An empty Type or ID means no features are added.
-type EntityRef struct {
-	Type string
-	ID   string
-}
+// It is the shared, branded entity.Ref so its (type, id) can't be transposed.
+type EntityRef = entity.Ref
 
 // ConnectorProvider invokes a named Context Layer connector with params and returns
 // its JSON response. As with FeatureProvider, the port lives here so the engine
@@ -205,7 +204,7 @@ func (h *DecideHandler) Decide(ctx context.Context, id identity.Identity, slug, 
 
 	// Pre-approval fast path: a valid pre-approval for the entity is honored
 	// instantly — approve/decline with the stored terms, skipping the flow run.
-	if ref.Type != "" && ref.ID != "" {
+	if !ref.Empty() {
 		res, honored, err := h.honorPreApproval(ctx, id, fv, version.Version, env, variant, slug, ref, data)
 		if err != nil {
 			return DecideResult{}, err
@@ -268,7 +267,7 @@ func (h *DecideHandler) Decide(ctx context.Context, id identity.Identity, slug, 
 	if err := h.emit(ctx, id, events.TypeDecisionStarted, events.DecisionStarted{
 		DecisionID: decisionID, FlowID: fv.FlowID, Slug: slug,
 		Version: version.Version, Environment: env, Variant: variant,
-		EntityType: ref.Type, EntityID: ref.ID, Data: dataJSON,
+		EntityType: string(ref.Type), EntityID: string(ref.ID), Data: dataJSON,
 	}); err != nil {
 		return DecideResult{}, err
 	}
@@ -378,10 +377,10 @@ func (h *DecideHandler) runShadow(ctx context.Context, id identity.Identity, fv 
 // sealPII crypto-shreds the configured PII fields of a recorded document under
 // the referenced entity subject. A no-op without a sealer or an entity reference.
 func (h *DecideHandler) sealPII(ctx context.Context, id identity.Identity, ref EntityRef, doc json.RawMessage) (json.RawMessage, error) {
-	if h.sealer == nil || ref.Type == "" || ref.ID == "" {
+	if h.sealer == nil || ref.Empty() {
 		return doc, nil
 	}
-	return h.sealer.SealPII(ctx, id, ref.Type+"/"+ref.ID, doc)
+	return h.sealer.SealPII(ctx, id, ref.Key(), doc)
 }
 
 // reservedInputNamespaces are the top-level keys the engine populates from resolved
@@ -403,12 +402,12 @@ func stripReservedNamespaces(data map[string]any) {
 // entity's computed feature values. It is a no-op when no provider is configured
 // or the reference is empty; a provider error fails the decision loudly.
 func (h *DecideHandler) injectFeatures(ctx context.Context, id identity.Identity, ref EntityRef, data map[string]any) (map[string]any, error) {
-	if h.features == nil || ref.Type == "" || ref.ID == "" {
+	if h.features == nil || ref.Empty() {
 		return data, nil
 	}
-	feats, err := h.features.Features(ctx, id, ref.Type, ref.ID)
+	feats, err := h.features.Features(ctx, id, ref)
 	if err != nil {
-		return nil, fmt.Errorf("decision-engine: features for %s/%s: %w", ref.Type, ref.ID, err)
+		return nil, fmt.Errorf("decision-engine: features for %s: %w", ref.Key(), err)
 	}
 	out := make(map[string]any, len(data)+1)
 	for k, v := range data {
@@ -593,7 +592,7 @@ func labelFromSealed(raw json.RawMessage) string {
 // whose disposition is the pre-approval's (skipping the flow), plus a
 // PreApprovalHonored effect. It returns honored=false when there is none.
 func (h *DecideHandler) honorPreApproval(ctx context.Context, id identity.Identity, fv flows.FlowView, version int, env, variant, slug string, ref EntityRef, data map[string]any) (DecideResult, bool, error) {
-	pa, ok, err := preapproval.ActiveFor(ctx, h.store, id, ref.Type, ref.ID, h.now())
+	pa, ok, err := preapproval.ActiveFor(ctx, h.store, id, ref, h.now())
 	if err != nil || !ok {
 		return DecideResult{}, false, err
 	}
@@ -625,7 +624,7 @@ func (h *DecideHandler) honorPreApproval(ctx context.Context, id identity.Identi
 	decisionID := h.newID()
 	if err := h.emit(ctx, id, events.TypeDecisionStarted, events.DecisionStarted{
 		DecisionID: decisionID, FlowID: fv.FlowID, Slug: slug, Version: version, Environment: env,
-		Variant: variant, EntityType: ref.Type, EntityID: ref.ID, Data: dataJSON,
+		Variant: variant, EntityType: string(ref.Type), EntityID: string(ref.ID), Data: dataJSON,
 	}); err != nil {
 		return DecideResult{}, false, err
 	}
@@ -637,7 +636,7 @@ func (h *DecideHandler) honorPreApproval(ctx context.Context, id identity.Identi
 		return DecideResult{}, false, err
 	}
 	if err := h.appendStream(ctx, id, preapproval.StreamPreApprovals, preapproval.TypeHonored, preapproval.Honored{
-		PreApprovalID: pa.PreApprovalID, EntityType: ref.Type, EntityID: ref.ID, DecisionID: decisionID,
+		PreApprovalID: pa.PreApprovalID, EntityType: string(ref.Type), EntityID: string(ref.ID), DecisionID: decisionID,
 	}); err != nil {
 		return DecideResult{}, false, err
 	}

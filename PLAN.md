@@ -751,6 +751,14 @@ new SSE-parser fuzz harness. Two pure cross-package signature refactors (EntityR
 follow-ups — they prevent only theoretical transpositions with trusted callers and carry large churn /
 auth-regression surface for no behavioral change (detail in BUGS.md).
 
+**Transposition-prevention refactors (TS40–TS42).** The three follow-ups left from round 10 landed as
+one PR: the decision-subject (entity type, id) is now the shared branded `platform/entity.Ref` threaded
+through the feature/pre-approval ports (a swapped pair fails to compile rather than silently keying the
+wrong entity); the SCIM Store's ~14 methods take `identity.Identity` instead of a transposable
+`(org, workspace)` string pair (cross-tenant safety); and `Authorize` classifies by the matched route
+template (`AuthorizeRoutes` via `mux.Handler`) rather than raw-path substrings, so no user-controlled
+path segment can influence the role decision. All wire-identical, behavior-preserving; tests added.
+
 **Variant + DeploymentRequestStatus named types (TS37).** The two enums still carried as scattered
 string literals — the A/B `Variant` (champion|challenger) and the maker-checker
 `DeploymentRequestStatus` (pending|approved|rejected) — became named types (`domain.Variant`,

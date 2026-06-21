@@ -28,6 +28,7 @@ import (
 	"github.com/e6qu/intraktible/decision-engine/policy"
 	"github.com/e6qu/intraktible/decision-engine/preapproval"
 	"github.com/e6qu/intraktible/decision-engine/shadow"
+	"github.com/e6qu/intraktible/platform/entity"
 	"github.com/e6qu/intraktible/platform/erasure"
 	"github.com/e6qu/intraktible/platform/httpx"
 	"github.com/e6qu/intraktible/platform/identity"
@@ -951,7 +952,7 @@ func (s *Service) runDecide(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := s.decide.Decide(r.Context(), id, r.PathValue("slug"), env, req.Data,
-		command.EntityRef{Type: req.EntityType, ID: req.EntityID})
+		command.EntityRef{Type: entity.Type(req.EntityType), ID: entity.ID(req.EntityID)})
 	if err != nil {
 		httpx.Error(w, decideStatus(err), err)
 		return
@@ -1034,7 +1035,7 @@ func (s *Service) decideBatch(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 		}
-		ref := command.EntityRef{Type: req.EntityType, ID: entityID}
+		ref := command.EntityRef{Type: entity.Type(req.EntityType), ID: entity.ID(entityID)}
 		res, err := s.decide.Decide(r.Context(), id, slug, env, input, ref)
 		if err != nil {
 			// A client-level error (bad input / missing flow) rejects only this row.
@@ -1122,7 +1123,7 @@ func (s *Service) decideStream(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		out.EntityID = entityID
-		res, err := s.decide.Decide(r.Context(), id, slug, env, input, command.EntityRef{Type: entityType, ID: entityID})
+		res, err := s.decide.Decide(r.Context(), id, slug, env, input, command.EntityRef{Type: entity.Type(entityType), ID: entity.ID(entityID)})
 		if err != nil {
 			if decideStatus(err) == http.StatusInternalServerError {
 				// Infra failure: the 200 + body already started, so we cannot change
@@ -1228,7 +1229,7 @@ func (s *Service) preapproveBatch(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		res, err := s.decide.Decide(r.Context(), id, slug, env, input,
-			command.EntityRef{Type: req.EntityType, ID: row.EntityID})
+			command.EntityRef{Type: entity.Type(req.EntityType), ID: entity.ID(row.EntityID)})
 		if err != nil {
 			row.Status, row.Error = "rejected", err.Error()
 			resp.Rejected++

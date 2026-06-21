@@ -15,6 +15,7 @@ import (
 	"github.com/e6qu/intraktible/context-layer/domain"
 	"github.com/e6qu/intraktible/context-layer/entities"
 	"github.com/e6qu/intraktible/context-layer/events"
+	"github.com/e6qu/intraktible/platform/entity"
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/store"
@@ -119,12 +120,12 @@ type Provider struct {
 }
 
 // Features computes the entity's feature values as a name->value map.
-func (p Provider) Features(ctx context.Context, id identity.Identity, entityType, entityID string) (map[string]float64, error) {
+func (p Provider) Features(ctx context.Context, id identity.Identity, ref entity.Ref) (map[string]float64, error) {
 	now := time.Now().UTC()
 	if p.Now != nil {
 		now = p.Now()
 	}
-	vals, err := Compute(ctx, p.Store, id, entityType, entityID, now)
+	vals, err := Compute(ctx, p.Store, id, string(ref.Type), string(ref.ID), now)
 	if err != nil {
 		return nil, err
 	}
