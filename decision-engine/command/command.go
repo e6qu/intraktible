@@ -17,6 +17,7 @@ import (
 
 	"github.com/e6qu/intraktible/decision-engine/domain"
 	"github.com/e6qu/intraktible/decision-engine/events"
+	"github.com/e6qu/intraktible/decision-engine/flows"
 	"github.com/e6qu/intraktible/decision-engine/layout"
 	"github.com/e6qu/intraktible/decision-engine/models"
 	"github.com/e6qu/intraktible/platform/eventlog"
@@ -306,7 +307,7 @@ func (h *Handler) ApproveDeployment(ctx context.Context, id identity.Identity, f
 	if !ok {
 		return eventlog.Envelope{}, fmt.Errorf("decision-engine: unknown deployment request %q", reqID)
 	}
-	if req.status != "pending" {
+	if req.status != flows.RequestPending {
 		return eventlog.Envelope{}, fmt.Errorf("decision-engine: deployment request %q is already %s", reqID, req.status)
 	}
 	if req.requestedBy == id.Actor {
@@ -337,7 +338,7 @@ func (h *Handler) RejectDeployment(ctx context.Context, id identity.Identity, fl
 	if !ok {
 		return eventlog.Envelope{}, fmt.Errorf("decision-engine: unknown deployment request %q", reqID)
 	}
-	if req.status != "pending" {
+	if req.status != flows.RequestPending {
 		return eventlog.Envelope{}, fmt.Errorf("decision-engine: deployment request %q is already %s", reqID, req.status)
 	}
 	payload, err := json.Marshal(events.DeploymentRejected{RequestID: reqID, FlowID: flowID, Reason: reason})
@@ -404,7 +405,8 @@ func (h *Handler) SetShadow(ctx context.Context, id identity.Identity, cmd domai
 type deployReq struct {
 	env                                       string
 	version, challengerVersion, challengerPct int
-	requestedBy, status                       string
+	requestedBy                               string
+	status                                    flows.RequestStatus
 }
 
 // foldRequest reconstructs one deployment request from the flow stream.
@@ -427,7 +429,7 @@ func (h *Handler) foldRequest(ctx context.Context, id identity.Identity, flowID,
 			}
 			if p.FlowID == flowID && p.RequestID == reqID {
 				req = deployReq{env: p.Environment, version: p.Version, challengerVersion: p.ChallengerVersion,
-					challengerPct: p.ChallengerPct, requestedBy: e.Actor, status: "pending"}
+					challengerPct: p.ChallengerPct, requestedBy: e.Actor, status: flows.RequestPending}
 				found = true
 			}
 		case events.TypeDeploymentApproved:
@@ -436,7 +438,7 @@ func (h *Handler) foldRequest(ctx context.Context, id identity.Identity, flowID,
 				return deployReq{}, false, fmt.Errorf("decision-engine: decode approved seq %d: %w", e.Seq, err)
 			}
 			if p.RequestID == reqID {
-				req.status = "approved"
+				req.status = flows.RequestApproved
 			}
 		case events.TypeDeploymentRejected:
 			var p events.DeploymentRejected
@@ -444,7 +446,7 @@ func (h *Handler) foldRequest(ctx context.Context, id identity.Identity, flowID,
 				return deployReq{}, false, fmt.Errorf("decision-engine: decode rejected seq %d: %w", e.Seq, err)
 			}
 			if p.RequestID == reqID {
-				req.status = "rejected"
+				req.status = flows.RequestRejected
 			}
 		}
 	}

@@ -14,24 +14,28 @@
 import type {
   Disposition,
   RunStatus,
+  Variant,
   Environment,
   CaseStatus,
   SLAState,
   AgentRunStatus,
   ModelKind,
   PreApprovalStatus,
+  DeploymentRequestStatus,
   MonitorOp,
   MonitorMetric
 } from './enums.generated';
 export type {
   Disposition,
   RunStatus,
+  Variant,
   Environment,
   CaseStatus,
   SLAState,
   AgentRunStatus,
   ModelKind,
   PreApprovalStatus,
+  DeploymentRequestStatus,
   MonitorOp,
   MonitorMetric
 } from './enums.generated';
@@ -44,11 +48,6 @@ export { ENVIRONMENTS, MONITOR_METRICS } from './enums.generated';
 // client-rejected row state.
 export type DecisionStatus = RunStatus | 'started';
 export type BatchStatus = RunStatus | 'rejected';
-// Variant and DeploymentRequestStatus are still carried as scattered string literals
-// on the Go side (no exported const set), so they are hand-defined here until those
-// gain a named type to generate from.
-export type Variant = 'champion' | 'challenger';
-export type DeploymentRequestStatus = 'pending' | 'approved' | 'rejected';
 
 // assertNever flags a missing case in an exhaustive switch at compile time: passing
 // a value whose type isn't `never` (i.e. a case the switch failed to narrow away) is

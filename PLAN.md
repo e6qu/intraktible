@@ -737,6 +737,14 @@ decision-table aggregate that could go non-finite/order-dependent, and a handful
 fuzz harnesses landed, including one over the security-critical SQLite DSN path parser (asserting
 read-only + directory containment) and one that surfaced the aggregate-overflow fix.
 
+**Variant + DeploymentRequestStatus named types (TS37).** The two enums still carried as scattered
+string literals — the A/B `Variant` (champion|challenger) and the maker-checker
+`DeploymentRequestStatus` (pending|approved|rejected) — became named types (`domain.Variant`,
+`flows.RequestStatus`) wired through the decide path, analytics, the deployment-request projection,
+the command-side fold, and the service responses, with `Valid()` methods. `cmd/tsenums` now generates
+both, so all 12 Go↔TS enums flow from the single Go source through the codegen + drift check (api.ts
+no longer hand-defines any 1:1 enum).
+
 ---
 
 ## 9. MVP non-goals

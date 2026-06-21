@@ -39,6 +39,19 @@ var PromotionOrder = []Environment{EnvSandbox, EnvStaging, EnvProduction}
 // in use.)
 func ValidEnvironment(env string) bool { return environments[Environment(env)] }
 
+// Variant names which deployed version served a decision: the steady-state champion
+// or the A/B challenger. A named type (not bare "champion"/"challenger" literals
+// scattered across the decide path and analytics) so the values have one source.
+type Variant string
+
+const (
+	VariantChampion   Variant = "champion"
+	VariantChallenger Variant = "challenger"
+)
+
+// Valid reports whether v is a known variant.
+func (v Variant) Valid() bool { return v == VariantChampion || v == VariantChallenger }
+
 // CreateFlow is the command to register a new flow.
 type CreateFlow struct {
 	Slug string
