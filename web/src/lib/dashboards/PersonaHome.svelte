@@ -6,13 +6,16 @@
 <script lang="ts">
   import Icon from '$lib/Icon.svelte';
   import { persona, personaConfig, navFor } from '$lib/persona';
-  import { decisionStats, type DashboardData } from '$lib/dashboard';
+  import { personaHomeStats, DEFAULT_HOME_STATS, type DashboardData } from '$lib/dashboard';
 
   let { data }: { data: DashboardData } = $props();
 
   const cfg = $derived(personaConfig($persona));
   const nav = $derived(navFor($persona));
-  const stats = $derived(decisionStats(data.decisions));
+  // The at-a-glance tiles are the persona's chosen questions over the shared data —
+  // a manager sees pending/overdue, a developer failed/latency — falling back to the
+  // generic deck when a persona declares none.
+  const tiles = $derived(personaHomeStats(cfg.homeStats ?? DEFAULT_HOME_STATS, data));
 </script>
 
 <main data-testid="persona-home">
@@ -23,15 +26,11 @@
   </header>
 
   <section class="at-a-glance" aria-label="At a glance">
-    <div class="tile">
-      <span class="n">{stats.total}</span><span class="k">decisions</span>
-    </div>
-    <div class="tile">
-      <span class="n">{stats.completed}</span><span class="k">completed</span>
-    </div>
-    <div class="tile">
-      <span class="n">{data.flows.length}</span><span class="k">flows</span>
-    </div>
+    {#each tiles as t (t.id)}
+      <div class="tile">
+        <span class="n">{t.value}</span><span class="k">{t.label}</span>
+      </div>
+    {/each}
   </section>
 
   <h2>Start here</h2>

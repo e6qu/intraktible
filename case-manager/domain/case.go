@@ -32,10 +32,6 @@ var statuses = map[CaseStatus]bool{
 // Valid reports whether s is a known case status.
 func (s CaseStatus) Valid() bool { return statuses[s] }
 
-// ValidStatus reports whether the string s names a known case status — the
-// string-boundary form for callers that hold a raw string.
-func ValidStatus(s string) bool { return statuses[CaseStatus(s)] }
-
 // ParseStatus converts a raw string (from an event payload) into a CaseStatus,
 // reporting ok=false for an unknown value. Projectors parse at the decode boundary
 // rather than casting, so a hand-crafted/legacy/future event carrying an unknown
@@ -43,6 +39,27 @@ func ValidStatus(s string) bool { return statuses[CaseStatus(s)] }
 func ParseStatus(s string) (CaseStatus, bool) {
 	cs := CaseStatus(s)
 	return cs, statuses[cs]
+}
+
+// Terminal reports whether s is an end state no transition may leave. A completed
+// case is closed; reopening it would silently re-arm the SLA sweep (SweepSLA and
+// Summarize both stop the SLA clock at completed), so the command layer treats
+// completed as a one-way door.
+func (s CaseStatus) Terminal() bool { return s == StatusCompleted }
+
+// CanTransitionTo reports whether a case currently in status s may move to next.
+// next must be a known status, and a terminal status may only stay itself (an
+// idempotent no-op) — it can never reopen. Modeling the lifecycle as a method on
+// the type, rather than re-checking ad hoc per call site, makes "mutate a closed
+// case" non-representable wherever a transition is applied.
+func (s CaseStatus) CanTransitionTo(next CaseStatus) bool {
+	if !next.Valid() {
+		return false
+	}
+	if s.Terminal() {
+		return next == s
+	}
+	return true
 }
 
 // RequestReview opens a case for human review.

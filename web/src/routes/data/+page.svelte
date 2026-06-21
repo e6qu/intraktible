@@ -28,16 +28,28 @@
   function msg(e: unknown): string {
     return e instanceof Error ? e.message : String(e);
   }
+  let loadingData = $state(false);
+  // A generation token so overlapping loads (repeated Reload, or Reload during a
+  // define follow-up load) can't resolve out of order and clobber the tables.
+  let loadSeq = 0;
   async function load() {
+    const seq = ++loadSeq;
+    loadingData = true;
     error = '';
     try {
-      [connectors, features, entities] = await Promise.all([
+      const [c, f, e] = await Promise.all([
         listConnectors(key),
         listFeatures(key),
         listEntities(key)
       ]);
+      if (seq !== loadSeq) return; // a newer load superseded this one
+      connectors = c;
+      features = f;
+      entities = e;
     } catch (e) {
-      error = msg(e);
+      if (seq === loadSeq) error = msg(e);
+    } finally {
+      if (seq === loadSeq) loadingData = false;
     }
   }
 
@@ -130,7 +142,9 @@
 <main>
   <div class="head">
     <h1><Icon name="database" size={20} /> Context data</h1>
-    <button onclick={load}><Icon name="reload" size={15} /> Reload</button>
+    <button onclick={load} disabled={loadingData}
+      ><Icon name="reload" size={15} /> {loadingData ? 'Loading…' : 'Reload'}</button
+    >
   </div>
   <p class="muted">
     Connectors and features are the data a flow leans on — a Connect node calls a connector by name,

@@ -58,3 +58,30 @@ func TestParseStatus(t *testing.T) {
 		t.Fatal("ParseStatus must reject an empty status")
 	}
 }
+
+func TestCaseStatusTransitions(t *testing.T) {
+	if !domain.StatusCompleted.Terminal() {
+		t.Fatal("completed must be terminal")
+	}
+	if domain.StatusNeedsReview.Terminal() || domain.StatusInProgress.Terminal() {
+		t.Fatal("open statuses must not be terminal")
+	}
+	// Open → anything valid is allowed.
+	if !domain.StatusNeedsReview.CanTransitionTo(domain.StatusInProgress) {
+		t.Fatal("needs_review → in_progress should be allowed")
+	}
+	if !domain.StatusInProgress.CanTransitionTo(domain.StatusCompleted) {
+		t.Fatal("in_progress → completed should be allowed")
+	}
+	// Terminal → anything but itself is rejected; itself (idempotent) is allowed.
+	if domain.StatusCompleted.CanTransitionTo(domain.StatusInProgress) {
+		t.Fatal("completed → in_progress must be rejected (no reopen)")
+	}
+	if !domain.StatusCompleted.CanTransitionTo(domain.StatusCompleted) {
+		t.Fatal("completed → completed (no-op) should be allowed")
+	}
+	// An unknown target is always rejected.
+	if domain.StatusInProgress.CanTransitionTo(domain.CaseStatus("archived")) {
+		t.Fatal("transition to an unknown status must be rejected")
+	}
+}

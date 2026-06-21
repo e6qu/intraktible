@@ -6,15 +6,28 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 )
 
+// Aggregation names how a feature folds its matched events into a value. It is a
+// named type (not a bare string) so an unknown aggregation is caught at the
+// boundary — Valid() is the single source of truth, replacing the hand-rolled
+// switch defaults that previously let a bad value silently compute 0. JSON
+// marshaling is identical to a plain string.
+type Aggregation string
+
 // Feature aggregations.
 const (
-	AggCount = "count"
-	AggSum   = "sum"
+	AggCount Aggregation = "count"
+	AggSum   Aggregation = "sum"
 )
+
+var aggregations = map[Aggregation]bool{AggCount: true, AggSum: true}
+
+// Valid reports whether a is a known aggregation.
+func (a Aggregation) Valid() bool { return aggregations[a] }
 
 // DefineFeature defines a windowed signal computed from an entity's event stream
 // (e.g. "count of transaction events in the last 24h"). Re-defining the same
@@ -23,7 +36,7 @@ type DefineFeature struct {
 	Name        string
 	EntityType  string
 	EventName   string
-	Aggregation string
+	Aggregation Aggregation
 	Field       string // required for sum: the numeric top-level data key to add up
 	WindowHours int
 }
@@ -46,7 +59,7 @@ func (c DefineFeature) Validate() error {
 			return errors.New("context-layer: sum features require a field")
 		}
 	default:
-		return fmt.Errorf("context-layer: unknown aggregation %q (count|sum)", c.Aggregation)
+		return fmt.Errorf("context-layer: unknown aggregation %q (count|sum)", string(c.Aggregation))
 	}
 	if c.WindowHours <= 0 {
 		return fmt.Errorf("context-layer: window_hours must be > 0, got %d", c.WindowHours)
@@ -57,7 +70,7 @@ func (c DefineFeature) Validate() error {
 // FeatureSpec is the pure, resolved shape the engine folds events against.
 type FeatureSpec struct {
 	EventName   string
-	Aggregation string
+	Aggregation Aggregation
 	Field       string
 	Window      time.Duration
 }
@@ -78,8 +91,8 @@ func Compute(spec FeatureSpec, events []FeatureInput, now time.Time) (float64, e
 	// zero matching events the loop body never runs, so an invalid aggregation would
 	// otherwise silently return 0 instead of erroring (define-time validation already
 	// guards this for stored specs; this hardens a hand-constructed one).
-	if spec.Aggregation != AggCount && spec.Aggregation != AggSum {
-		return 0, fmt.Errorf("context-layer: unknown aggregation %q", spec.Aggregation)
+	if !spec.Aggregation.Valid() {
+		return 0, fmt.Errorf("context-layer: unknown aggregation %q", string(spec.Aggregation))
 	}
 	cutoff := now.Add(-spec.Window)
 	var total float64
@@ -104,8 +117,14 @@ func Compute(spec FeatureSpec, events []FeatureInput, now time.Time) (float64, e
 				total += v
 			}
 		default:
-			return 0, fmt.Errorf("context-layer: unknown aggregation %q", spec.Aggregation)
+			return 0, fmt.Errorf("context-layer: unknown aggregation %q", string(spec.Aggregation))
 		}
+	}
+	// A summed feature can overflow to ±Inf (or produce NaN) from extreme values;
+	// fail loudly rather than letting a non-finite value flow into rule/expression
+	// evaluation downstream, where it would silently corrupt comparisons.
+	if math.IsInf(total, 0) || math.IsNaN(total) {
+		return 0, fmt.Errorf("context-layer: feature %q aggregation overflowed to a non-finite value", string(spec.Aggregation))
 	}
 	return total, nil
 }

@@ -113,3 +113,32 @@ func TestSweepSLASkipsCompleted(t *testing.T) {
 		t.Fatalf("a completed case should not breach: %v", breached)
 	}
 }
+
+// TestSetStatusRejectsReopeningCompleted guards the terminal-state transition
+// rule: once a case is completed it cannot be moved back to an open status, which
+// would silently re-arm the SLA sweep against a legitimately-closed case.
+func TestSetStatusRejectsReopeningCompleted(t *testing.T) {
+	ctx := context.Background()
+	log, _ := testutil.NewLogStore(t)
+	h := command.NewHandler(log)
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "adam"}
+
+	caseID, _, err := h.RequestReview(ctx, id, domain.RequestReview{CompanyName: "Acme", CaseType: "aml", SLADays: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.SetStatus(ctx, id, domain.SetStatus{CaseID: caseID, Status: domain.StatusCompleted}); err != nil {
+		t.Fatal(err)
+	}
+	// Reopening a completed case must be rejected.
+	if _, err := h.SetStatus(ctx, id, domain.SetStatus{CaseID: caseID, Status: domain.StatusInProgress}); err == nil {
+		t.Fatal("reopening a completed case should be rejected")
+	}
+	if _, err := h.SetStatus(ctx, id, domain.SetStatus{CaseID: caseID, Status: domain.StatusNeedsReview}); err == nil {
+		t.Fatal("moving a completed case back to needs_review should be rejected")
+	}
+	// Re-asserting completed (idempotent no-op) is allowed.
+	if _, err := h.SetStatus(ctx, id, domain.SetStatus{CaseID: caseID, Status: domain.StatusCompleted}); err != nil {
+		t.Fatalf("re-asserting completed should be allowed: %v", err)
+	}
+}

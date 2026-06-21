@@ -265,13 +265,22 @@ func applyBaseline(ctx context.Context, e eventlog.Envelope, s store.Store) erro
 	if err := json.Unmarshal(e.Payload, &p); err != nil {
 		return fmt.Errorf("models: decode baseline seq %d: %w", e.Seq, err)
 	}
-	_, err := store.UpdateDoc(ctx, s, StatsCollection, store.Key(e.Org, e.Workspace, p.Name), func(st *ModelStats) {
-		st.BaselineHist = st.Hist
-		st.BaselineCount = st.Count
-		st.HasBaseline = true
-		st.UpdatedAt = e.Time.UTC().Format("2006-01-02T15:04:05Z07:00")
-	})
-	return err
+	// Seed the doc if absent, mirroring applyMonitorSet: a baseline captured before
+	// the model's first prediction must still record the operator's intent (and
+	// HasBaseline) rather than being silently dropped by UpdateDoc's no-op-on-missing.
+	key := store.Key(e.Org, e.Workspace, p.Name)
+	st, ok, err := store.GetDoc[ModelStats](ctx, s, StatsCollection, key)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		st = ModelStats{Org: e.Org, Workspace: e.Workspace, Name: p.Name}
+	}
+	st.BaselineHist = st.Hist
+	st.BaselineCount = st.Count
+	st.HasBaseline = true
+	st.UpdatedAt = e.Time.UTC().Format("2006-01-02T15:04:05Z07:00")
+	return store.PutDoc(ctx, s, StatsCollection, key, st)
 }
 
 // Drift returns the drift report for a model. windowDays > 0 measures only the most

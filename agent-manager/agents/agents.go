@@ -127,10 +127,18 @@ func applyRun(ctx context.Context, e eventlog.Envelope, s store.Store) error {
 	if err != nil {
 		return err
 	}
+	// Parse-guard the status at the decode boundary (like case-manager's projector):
+	// an unknown value from a legacy/hand-crafted event must not land in the read
+	// model where SummarizeRuns would miscount it. An unrecognized status records as
+	// RunFailed — the safe terminal interpretation for an unparseable outcome.
+	status, ok := domain.ParseRunStatus(p.Status)
+	if !ok {
+		status = domain.RunFailed
+	}
 	run := RunView{
 		Org: e.Org, Workspace: e.Workspace,
 		RunID: p.RunID, Agent: p.Agent, Model: p.Model, Prompt: p.Prompt,
-		Status: domain.RunStatus(p.Status), Text: p.Text, Structured: p.Structured, ToolCalls: p.ToolCalls, Error: p.Error,
+		Status: status, Text: p.Text, Structured: p.Structured, ToolCalls: p.ToolCalls, Error: p.Error,
 		Seq: e.Seq, At: p.At,
 	}
 	if err := store.PutDoc(ctx, s, CollectionRuns, runKey, run); err != nil {

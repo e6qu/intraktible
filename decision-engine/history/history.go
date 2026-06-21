@@ -180,7 +180,17 @@ func List(ctx context.Context, s store.Store, id identity.Identity) ([]Record, e
 	if err != nil {
 		return nil, err
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].StartedAt.After(out[j].StartedAt) })
+	// Newest-first, with DecisionID as a deterministic tiebreaker: two decisions
+	// recorded in the same instant (plausible under concurrent /decide) must order
+	// identically across calls, or ListPage's pagination could skip or duplicate a
+	// record at a page boundary. A single-key unstable sort left that order
+	// arbitrary; the id tiebreaker makes it total and stable.
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].StartedAt.Equal(out[j].StartedAt) {
+			return out[i].StartedAt.After(out[j].StartedAt)
+		}
+		return out[i].DecisionID > out[j].DecisionID
+	})
 	return out, nil
 }
 

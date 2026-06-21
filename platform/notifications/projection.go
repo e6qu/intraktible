@@ -21,13 +21,20 @@ const Collection = "notifications"
 // snippetMax caps the stored comment excerpt.
 const snippetMax = 140
 
+// Kind names what produced a notification. A named type keeps the (currently
+// single) kind from drifting into a typo'd bare string as more sources are added.
+type Kind string
+
+// KindMention is a notification raised by an @-mention in a comment.
+const KindMention Kind = "mention"
+
 // View is one inbox notification.
 type View struct {
 	Org            string    `json:"org"`
 	Workspace      string    `json:"workspace"`
 	NotificationID string    `json:"notification_id"`
 	Recipient      string    `json:"recipient"`
-	Kind           string    `json:"kind"` // "mention"
+	Kind           Kind      `json:"kind"`
 	SubjectType    string    `json:"subject_type"`
 	SubjectID      string    `json:"subject_id"`
 	Snippet        string    `json:"snippet"`
@@ -72,7 +79,7 @@ func applyComment(ctx context.Context, e eventlog.Envelope, s store.Store) error
 		}
 		nid := notificationID(handle, p.CommentID)
 		v := View{
-			Org: e.Org, Workspace: e.Workspace, NotificationID: nid, Recipient: handle, Kind: "mention",
+			Org: e.Org, Workspace: e.Workspace, NotificationID: nid, Recipient: handle, Kind: KindMention,
 			SubjectType: p.SubjectType, SubjectID: p.SubjectID, Snippet: snippet(p.Body),
 			Author: e.Actor, CreatedAt: e.Time, Seq: e.Seq,
 		}

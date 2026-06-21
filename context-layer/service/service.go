@@ -190,7 +190,7 @@ func (s *Service) defineFeature(w http.ResponseWriter, r *http.Request) {
 	httpx.Emit(w, r, &req, func(id identity.Identity) (eventlog.Envelope, error) {
 		return s.cmd.DefineFeature(r.Context(), id, domain.DefineFeature{
 			Name: req.Name, EntityType: req.EntityType, EventName: req.EventName,
-			Aggregation: req.Aggregation, Field: req.Field, WindowHours: req.WindowHours,
+			Aggregation: domain.Aggregation(req.Aggregation), Field: req.Field, WindowHours: req.WindowHours,
 		})
 	})
 }

@@ -5,6 +5,7 @@
 package httpx
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -44,7 +45,23 @@ const MaxJSONBody = 8 << 20
 func DecodeJSON(r *http.Request, v any) error {
 	dec := json.NewDecoder(http.MaxBytesReader(nil, r.Body, MaxJSONBody))
 	dec.DisallowUnknownFields()
-	return dec.Decode(v)
+	if err := dec.Decode(v); err != nil {
+		return err
+	}
+	// Reject trailing data after the first JSON value. Without this, a body like
+	// `{"role":"viewer"}{"role":"admin"}` decodes using only the first object and
+	// silently ignores the rest, weakening the strict-decode guarantee.
+	if dec.More() {
+		return errors.New("request body must contain a single JSON value")
+	}
+	return nil
+}
+
+// secureEqual reports whether a and b are equal, in constant time. Used to compare
+// short-lived single-use CSRF tokens (OIDC state, SAML RelayState) so the byte
+// comparison can't be turned into a timing oracle.
+func secureEqual(a, b string) bool {
+	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }
 
 // Caller resolves the authenticated identity, writing a 401 and returning

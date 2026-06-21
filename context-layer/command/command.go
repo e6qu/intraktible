@@ -76,7 +76,7 @@ func (h *Handler) DefineFeature(ctx context.Context, id identity.Identity, cmd d
 		Name:        cmd.Name,
 		EntityType:  cmd.EntityType,
 		EventName:   cmd.EventName,
-		Aggregation: cmd.Aggregation,
+		Aggregation: string(cmd.Aggregation),
 		Field:       cmd.Field,
 		WindowHours: cmd.WindowHours,
 	})

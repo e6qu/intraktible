@@ -16,11 +16,21 @@ import (
 // Collection is the pre-approvals read-model collection.
 const Collection = "decision_preapprovals"
 
+// Status names a pre-approval's lifecycle state. It is a named type (not a bare
+// string) so a typo'd status can't silently make a valid pre-approval un-honorable
+// at the ActiveFor check. JSON marshaling is identical to a plain string.
+type Status string
+
 // Status values for a pre-approval.
 const (
-	StatusActive  = "active"
-	StatusRevoked = "revoked"
+	StatusActive  Status = "active"
+	StatusRevoked Status = "revoked"
 )
+
+var statuses = map[Status]bool{StatusActive: true, StatusRevoked: true}
+
+// Valid reports whether s is a known pre-approval status.
+func (s Status) Valid() bool { return statuses[s] }
 
 // View is the current pre-approval for an entity. A new grant supersedes the
 // prior one for the same entity; expiry is evaluated at read time (against now),
@@ -37,7 +47,7 @@ type View struct {
 	PolicyVersion int             `json:"policy_version,omitempty"`
 	FlowSlug      string          `json:"flow_slug,omitempty"`
 	ValidUntil    time.Time       `json:"valid_until"`
-	Status        string          `json:"status"` // active | revoked
+	Status        Status          `json:"status"` // active | revoked
 	RevokedReason string          `json:"revoked_reason,omitempty"`
 	HonoredCount  int             `json:"honored_count"`
 	Note          string          `json:"note,omitempty"`

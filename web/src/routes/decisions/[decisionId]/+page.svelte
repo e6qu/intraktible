@@ -56,7 +56,9 @@
       a.href = url;
       a.download = e.format === 'json' ? `${id}.json` : `${id}-trace.${e.ext}`;
       a.click();
-      URL.revokeObjectURL(url);
+      // Revoke on a later tick: revoking synchronously after click() can race the
+      // browser's blob fetch and abort the download (notably for larger traces).
+      setTimeout(() => URL.revokeObjectURL(url), 0);
       toast.success(`Downloaded ${e.label}`);
     } catch (err) {
       error = msg(err);

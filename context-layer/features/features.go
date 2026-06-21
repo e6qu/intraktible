@@ -97,7 +97,7 @@ func Compute(ctx context.Context, s store.Store, id identity.Identity, entityTyp
 	for _, def := range defs {
 		val, err := domain.Compute(domain.FeatureSpec{
 			EventName:   def.EventName,
-			Aggregation: def.Aggregation,
+			Aggregation: domain.Aggregation(def.Aggregation),
 			Field:       def.Field,
 			Window:      time.Duration(def.WindowHours) * time.Hour,
 		}, inputs, now)

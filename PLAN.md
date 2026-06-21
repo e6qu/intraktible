@@ -700,6 +700,26 @@ feature-aggregation precondition. Documented-not-changed (deliberate): the `requ
 default (a policy, all routes classified), verbose 5xx (the self-hosted fail-loudly stance), and the
 CommandPalette focus-trap (UI-polish backlog).
 
+**Type-strengthening + persona depth + sweep + fuzzing round 8 (TS26–TS32 / BF62–BF74 / P4–P6 /
+FUZZ).** Type-strengthening continued making bad states unrepresentable: feature `Aggregation`,
+pre-approval `Status`, notification `Kind`, the decision-table `hitPolicy`, and a CaseStatus
+`Terminal()/CanTransitionTo()` state machine became named types; the agent-run projector now
+parse-guards its status at the decode boundary; and on the web the production four-eyes gate is now
+type-checked via a real `Environment` union (plus a real `assertNever`, `EditNode.type → NodeType`,
+monitor metric/op unions, and lens-typed filter state). The sweep fixed a **HIGH**: a completed case
+could be reopened, silently re-arming the SLA sweep — now blocked by the CaseStatus transition guard.
+Also: non-deterministic decision-history pagination (unstable sort, no tiebreaker), a feature-sum
+overflow to a non-finite value, `DecodeJSON` accepting trailing data, non-constant-time CSRF-token
+compares, a dropped model baseline, and a batch of web async/interaction bugs (cases/data/audit load
+races, an API-key rotate double-submit that lost a minted secret, a blob-URL download race, cleared
+number inputs posting null, a NaN drift histogram). Persona depth went beyond the lens: the
+PersonaHome tiles are now persona-chosen stats over the shared data (a manager's pending/overdue vs a
+developer's failed/latency), the decisions table leads with the columns each role debugs by, and the
+empty states speak the role's own vocabulary. Five native fuzz harnesses were added at the
+highest-value un-fuzzed boundaries (the runtime `Execute` path, the WAL on-disk decoder, AES-GCM
+secret round-trip, feature aggregation — which surfaced the overflow bug — and the DOT exporter).
+Two pre-existing dead functions were removed to keep the deadcode gate green (dupl 9→8, none added).
+
 ---
 
 ## 9. MVP non-goals

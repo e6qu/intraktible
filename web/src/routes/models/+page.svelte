@@ -54,6 +54,14 @@
   function msg(e: unknown): string {
     return e instanceof Error ? e.message : String(e);
   }
+  // histBarHeight normalizes a decile bucket to a 0–100% bar height. Guards against
+  // a non-finite bucket/peak (a null from the wire would otherwise make Math.max
+  // return NaN and collapse every bar to NaN%).
+  function histBarHeight(c: number, hist: number[]): number {
+    const finite = hist.filter((n) => Number.isFinite(n));
+    const peak = Math.max(1, ...finite);
+    return Number.isFinite(c) ? Math.round((c / peak) * 100) : 0;
+  }
   function psiLabel(psi: number): string {
     if (psi < 0.1) return 'stable';
     if (psi < 0.25) return 'moderate shift';
@@ -279,7 +287,7 @@
                         <div class="hist-col" title={`${i * 10}–${i * 10 + 10}%: ${c}`}>
                           <div
                             class="hist-bar"
-                            style="height:{Math.round((c / Math.max(1, ...drift.hist)) * 100)}%"
+                            style="height:{histBarHeight(c, drift.hist)}%"
                           ></div>
                         </div>
                       {/each}

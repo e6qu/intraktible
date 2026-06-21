@@ -8,7 +8,7 @@
 // Persona is orthogonal to light/dark theme — every persona works in both.
 
 import { writable } from 'svelte/store';
-import type { CaseStatus, DecisionStatus, Variant } from './api';
+import type { CaseStatus, DecisionStatus, Environment, Variant } from './api';
 
 export type Persona =
   | 'builder'
@@ -69,20 +69,57 @@ export type HomeKind = 'builder' | 'operator' | 'showcase' | 'evaluator' | 'pers
 // first (an operator works the queue top-down), 'recent' is the default store order.
 export type CaseSort = 'urgency' | 'recent';
 
+// DecisionColumn names a column of the decisions table. A persona's lens may pick an
+// ordered subset (and order) so the same rows lead with what that role debugs by —
+// a developer leads with status/duration, product with the experiment variant.
+export type DecisionColumn =
+  | 'status'
+  | 'flow'
+  | 'env'
+  | 'version'
+  | 'variant'
+  | 'duration'
+  | 'when';
+
+// EmptyCopy overrides a list surface's empty state for a persona, so the message
+// speaks the role's vocabulary and job (a developer's empty "Traces" reads very
+// differently from an operator's empty queue).
+export type EmptyCopy = { title: string; hint: string };
+
 export type PersonaLens = {
   // The cases queue: WHICH cases (status) and in WHAT ORDER (sort) — an operator lands
   // on the open review queue, urgency-first.
   cases?: {
     status?: CaseStatus;
     sort?: CaseSort;
+    empty?: EmptyCopy; // role-specific empty-queue message
   };
   // The decisions surface filters on several axes; a persona can focus any subset.
   decisions?: {
     status?: DecisionStatus; // e.g. a developer lands on failed traces to debug
     variant?: Variant; // e.g. product lands on the challenger (experiment) arm
-    env?: string; // e.g. focus on production traffic
+    env?: Environment; // e.g. focus on production traffic
+    columns?: DecisionColumn[]; // ordered visible columns (unset → the full default set)
+    empty?: EmptyCopy; // role-specific empty-list message
   };
 };
+
+// HomeStatId names a tile the config-driven PersonaHome can surface, computed from the
+// shared dashboard data (see dashboard.ts personaHomeStats). A persona picks the three
+// (or so) that match its first question — a manager's "what's pending / who's overloaded"
+// vs a developer's "what's failing and how slow" — over the SAME underlying data.
+export type HomeStatId =
+  | 'decisions'
+  | 'completed'
+  | 'failed'
+  | 'flows'
+  | 'p95'
+  | 'completion_rate'
+  | 'pending_approvals'
+  | 'needs_review'
+  | 'overdue'
+  | 'unassigned'
+  | 'challenger';
 
 export type PersonaConfig = {
   id: Persona;
@@ -94,6 +131,7 @@ export type PersonaConfig = {
   actions: Action[]; // primary actions surfaced on the persona home
   terms?: Partial<Record<NavId, string>>; // per-persona nav relabels
   lens?: PersonaLens; // default filter focus on shared list surfaces
+  homeStats?: HomeStatId[]; // PersonaHome tiles (unset → the default decisions/completed/flows)
 };
 
 const KEY = 'intraktible-persona';
@@ -128,7 +166,19 @@ export const PERSONAS: PersonaConfig[] = [
       { label: 'Manage agents & tools', href: '/agents', icon: 'agents' }
     ],
     terms: { decisions: 'Traces' },
-    lens: { decisions: { status: 'failed' } } // land on failing traces — the debugging starting point
+    // Land on failing traces, leading with the columns a debugger reads first
+    // (status → duration → env), dropping the experiment variant.
+    lens: {
+      decisions: {
+        status: 'failed',
+        columns: ['status', 'flow', 'duration', 'env', 'version', 'when'],
+        empty: {
+          title: 'No failing traces',
+          hint: 'Your integration is clean — nothing failed. Clear the status filter to see all traces.'
+        }
+      }
+    },
+    homeStats: ['failed', 'p95', 'completion_rate']
   },
   {
     id: 'operator',
@@ -142,7 +192,18 @@ export const PERSONAS: PersonaConfig[] = [
       { label: 'Review pre-approvals', href: '/preapprovals', icon: 'check' },
       { label: 'Scan recent decisions', href: '/decisions', icon: 'diagram' }
     ],
-    lens: { cases: { status: 'needs_review', sort: 'urgency' } } // the open queue, most-urgent first
+    lens: {
+      // The open queue, most-urgent first, with a queue-cleared message in the
+      // operator's own terms.
+      cases: {
+        status: 'needs_review',
+        sort: 'urgency',
+        empty: {
+          title: 'The review queue is clear',
+          hint: 'No cases need review — every open case is within SLA. Widen the status filter to see the rest.'
+        }
+      }
+    }
   },
   {
     id: 'manager',
@@ -156,7 +217,8 @@ export const PERSONAS: PersonaConfig[] = [
       { label: 'Check case load', href: '/cases', icon: 'cases' },
       { label: 'Review the audit trail', href: '/audit', icon: 'shield' }
     ],
-    terms: { preapprovals: 'Approvals' }
+    terms: { preapprovals: 'Approvals' },
+    homeStats: ['pending_approvals', 'needs_review', 'overdue']
   },
   {
     id: 'product',
@@ -171,7 +233,14 @@ export const PERSONAS: PersonaConfig[] = [
       { label: 'Manage models', href: '/models', icon: 'scorecard' },
       { label: 'Analyse decisions', href: '/decisions', icon: 'diagram' }
     ],
-    lens: { decisions: { variant: 'challenger' } } // land on the experiment arm, not the champion
+    // Land on the experiment arm, leading with the variant column.
+    lens: {
+      decisions: {
+        variant: 'challenger',
+        columns: ['variant', 'status', 'flow', 'env', 'duration', 'when']
+      }
+    },
+    homeStats: ['challenger', 'decisions', 'completion_rate']
   },
   {
     id: 'showcase',

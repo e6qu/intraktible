@@ -5,8 +5,14 @@
   import EmptyState from '$lib/EmptyState.svelte';
   import Skeleton from '$lib/Skeleton.svelte';
   import RelativeTime from '$lib/RelativeTime.svelte';
-  import { listDecisionsPage, type Decision } from '$lib/api';
-  import { resolvePersona, personaLens } from '$lib/persona';
+  import {
+    listDecisionsPage,
+    type Decision,
+    type DecisionStatus,
+    type Environment,
+    type Variant
+  } from '$lib/api';
+  import { resolvePersona, personaLens, type DecisionColumn } from '$lib/persona';
 
   // API calls authenticate via the session cookie (empty key → no X-Api-Key).
   const key = '';
@@ -21,10 +27,34 @@
   // decisions lens — a developer lands on failed traces, product on the challenger arm
   // — and are freely changeable/clearable.
   const lens = personaLens(resolvePersona()).decisions ?? {};
+  // The visible columns and their order come from the persona lens (a developer leads
+  // with status/duration, product with the experiment variant); unset → the full set.
+  const DEFAULT_COLUMNS: DecisionColumn[] = [
+    'status',
+    'flow',
+    'env',
+    'version',
+    'variant',
+    'duration',
+    'when'
+  ];
+  const columns: DecisionColumn[] = lens.columns ?? DEFAULT_COLUMNS;
+  const COLUMN_LABELS = new Map<DecisionColumn, string>([
+    ['status', 'Status'],
+    ['flow', 'Flow'],
+    ['env', 'Env'],
+    ['version', 'Ver'],
+    ['variant', 'Variant'],
+    ['duration', 'Duration'],
+    ['when', 'When']
+  ]);
+  const columnLabel = (c: DecisionColumn): string => COLUMN_LABELS.get(c) ?? c;
+  const DEFAULT_EMPTY_HINT =
+    'Run a flow from the Decision Engine and every determination shows up here — replayable, node by node.';
   let fFlow = $state('');
-  let fEnv = $state<string>(lens.env ?? '');
-  let fStatus = $state<string>(lens.status ?? '');
-  let fVariant = $state<string>(lens.variant ?? '');
+  let fEnv = $state<Environment | ''>(lens.env ?? '');
+  let fStatus = $state<DecisionStatus | ''>(lens.status ?? '');
+  let fVariant = $state<Variant | ''>(lens.variant ?? '');
   let fQuery = $state('');
 
   function msg(e: unknown): string {
@@ -73,6 +103,18 @@
   }
   const from = $derived(total === 0 ? 0 : offset + 1);
   const to = $derived(Math.min(offset + list.length, total));
+  // Empty-state copy: a true "no decisions at all" keeps the onboarding message; an
+  // empty result under the persona's lens (e.g. a developer's failed-only view with no
+  // failures) shows the persona's own message when it provides one.
+  const noFilters = $derived(!fFlow && !fEnv && !fStatus && !fVariant && !fQuery);
+  const emptyTitle = $derived(
+    total === 0 && noFilters
+      ? 'No decisions yet'
+      : (lens.empty?.title ?? 'No decisions match these filters')
+  );
+  const emptyHint = $derived(
+    total === 0 && noFilters ? DEFAULT_EMPTY_HINT : (lens.empty?.hint ?? DEFAULT_EMPTY_HINT)
+  );
   onMount(load);
 </script>
 
@@ -133,13 +175,7 @@
   {#if loading}
     <Skeleton rows={6} />
   {:else if list.length === 0}
-    <EmptyState
-      icon="diagram"
-      title={total === 0 && !fFlow && !fEnv && !fStatus && !fVariant && !fQuery
-        ? 'No decisions yet'
-        : 'No decisions match these filters'}
-      hint="Run a flow from the Decision Engine and every determination shows up here — replayable, node by node."
-    >
+    <EmptyState icon="diagram" title={emptyTitle} hint={emptyHint}>
       {#snippet action()}
         <a href="/engine">Open the Decision Engine →</a>
       {/snippet}
@@ -148,23 +184,32 @@
     <div class="table-wrap">
       <table>
         <thead>
-          <tr
-            ><th>Status</th><th>Flow</th><th>Env</th><th>Ver</th><th>Variant</th><th>Duration</th
-            ><th>When</th></tr
-          >
+          <tr>
+            {#each columns as col (col)}<th>{columnLabel(col)}</th>{/each}
+          </tr>
         </thead>
         <tbody>
           {#each list as d (d.decision_id)}
             <tr>
-              <td><span class="badge {d.status}">{d.status}</span></td>
-              <td><a href={`/decisions/${d.decision_id}`}>{d.slug}</a></td>
-              <td>{d.environment}</td>
-              <td>v{d.version}</td>
-              <td class="muted">{d.variant ?? '—'}</td>
-              <td>{d.duration_ms ?? 0} ms</td>
-              <td class="muted" title={absTime(d.started_at)}
-                ><RelativeTime value={d.started_at} /></td
-              >
+              {#each columns as col (col)}
+                {#if col === 'status'}
+                  <td><span class="badge {d.status}">{d.status}</span></td>
+                {:else if col === 'flow'}
+                  <td><a href={`/decisions/${d.decision_id}`}>{d.slug}</a></td>
+                {:else if col === 'env'}
+                  <td>{d.environment}</td>
+                {:else if col === 'version'}
+                  <td>v{d.version}</td>
+                {:else if col === 'variant'}
+                  <td class="muted">{d.variant ?? '—'}</td>
+                {:else if col === 'duration'}
+                  <td>{d.duration_ms ?? 0} ms</td>
+                {:else if col === 'when'}
+                  <td class="muted" title={absTime(d.started_at)}
+                    ><RelativeTime value={d.started_at} /></td
+                  >
+                {/if}
+              {/each}
             </tr>
           {/each}
         </tbody>

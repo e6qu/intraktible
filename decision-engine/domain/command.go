@@ -33,11 +33,10 @@ var environments = map[Environment]bool{EnvSandbox: true, EnvStaging: true, EnvP
 // PromotionOrder lists environments from least to most production-like.
 var PromotionOrder = []Environment{EnvSandbox, EnvStaging, EnvProduction}
 
-// Valid reports whether e is a known decide environment.
-func (e Environment) Valid() bool { return environments[e] }
-
 // ValidEnvironment reports whether a raw string names a known environment — the
-// boundary helper for request/path strings before they are typed.
+// boundary helper for request/path strings before they are typed. (Callers hold raw
+// strings at the wire boundary, so this free function — not a method — is the form
+// in use.)
 func ValidEnvironment(env string) bool { return environments[Environment(env)] }
 
 // CreateFlow is the command to register a new flow.

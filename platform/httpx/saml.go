@@ -91,7 +91,7 @@ func (h *SAMLHandler) acs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	relay, err := r.Cookie(samlRelayCookie)
-	if err != nil || relay.Value == "" || relay.Value != r.PostFormValue("RelayState") {
+	if err != nil || relay.Value == "" || !secureEqual(relay.Value, r.PostFormValue("RelayState")) {
 		Error(w, http.StatusBadRequest, errors.New("sso: invalid or missing relay state"))
 		return
 	}

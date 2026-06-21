@@ -99,7 +99,7 @@ func (h *OIDCHandler) callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	state, err := r.Cookie(oidcStateCookie)
-	if err != nil || state.Value == "" || state.Value != r.URL.Query().Get("state") {
+	if err != nil || state.Value == "" || !secureEqual(state.Value, r.URL.Query().Get("state")) {
 		Error(w, http.StatusBadRequest, errors.New("sso: invalid or missing state"))
 		return
 	}
