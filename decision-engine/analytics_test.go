@@ -63,7 +63,7 @@ func TestAnalyticsMetrics(t *testing.T) {
 			t.Fatal("deployment did not reach the read model")
 		}
 	}
-	decide := func(wantStatus string) {
+	decide := func(wantStatus domain.RunStatus) {
 		res, err := dh.Decide(ctx, id, "metrics", "production", nil, command.EntityRef{})
 		if err != nil {
 			t.Fatal(err)
@@ -75,11 +75,11 @@ func TestAnalyticsMetrics(t *testing.T) {
 
 	// 2 champion decisions on v1 (completed).
 	deployAndWait(domain.DeployVersion{Version: 1})
-	decide(string(domain.StatusCompleted))
-	decide(string(domain.StatusCompleted))
+	decide(domain.StatusCompleted)
+	decide(domain.StatusCompleted)
 	// 1 challenger decision on v2 (fails loudly).
 	deployAndWait(domain.DeployVersion{Version: 1, ChallengerVersion: 2, ChallengerPct: 100})
-	decide(string(domain.StatusFailed))
+	decide(domain.StatusFailed)
 
 	// Rebuild the metrics read model purely from the decision event stream.
 	ms := store.NewMemory()

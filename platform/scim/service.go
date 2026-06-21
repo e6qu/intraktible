@@ -7,9 +7,30 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 )
+
+// scimPage applies SCIM 1-based startIndex/count paging to a result set and returns
+// the page plus the response metadata (startIndex, itemsPerPage, totalResults). A
+// missing/invalid param defaults to "from the start, all rows", so an IdP that does
+// not page still gets the full directory; one that does (Okta/Azure beyond a page
+// size) now gets bounded pages instead of silently re-fetching everything.
+func scimPage[T any](all []T, q url.Values) (page []T, startIndex, itemsPerPage, total int) {
+	total = len(all)
+	startIndex = 1
+	if v, err := strconv.Atoi(q.Get("startIndex")); err == nil && v >= 1 {
+		startIndex = v
+	}
+	count := total
+	if v, err := strconv.Atoi(q.Get("count")); err == nil && v >= 0 {
+		count = v
+	}
+	lo := min(startIndex-1, total)
+	hi := min(lo+count, total)
+	return all[lo:hi], startIndex, hi - lo, total
+}
 
 // Service is the SCIM 2.0 Users HTTP surface. It authenticates the IdP with a
 // static bearer token and provisions into one configured tenant (org,
@@ -121,10 +142,13 @@ func (svc *Service) list(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	page, startIndex, itemsPerPage, total := scimPage(users, r.URL.Query())
 	write(w, http.StatusOK, map[string]any{
 		"schemas":      []string{"urn:ietf:params:scim:api:messages:2.0:ListResponse"},
-		"totalResults": len(users),
-		"Resources":    users,
+		"totalResults": total,
+		"startIndex":   startIndex,
+		"itemsPerPage": itemsPerPage,
+		"Resources":    page,
 	})
 }
 
@@ -213,10 +237,13 @@ func (svc *Service) listGroups(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	page, startIndex, itemsPerPage, total := scimPage(groups, r.URL.Query())
 	write(w, http.StatusOK, map[string]any{
 		"schemas":      []string{"urn:ietf:params:scim:api:messages:2.0:ListResponse"},
-		"totalResults": len(groups),
-		"Resources":    groups,
+		"totalResults": total,
+		"startIndex":   startIndex,
+		"itemsPerPage": itemsPerPage,
+		"Resources":    page,
 	})
 }
 
@@ -266,11 +293,23 @@ func (svc *Service) patchGroup(w http.ResponseWriter, r *http.Request) {
 	// double-apply adds/removes).
 	var ops []MemberOp
 	for _, op := range req.Operations {
-		if !strings.Contains(strings.ToLower(op.Path), "members") {
-			continue
+		var ids []string
+		switch {
+		case strings.Contains(strings.ToLower(op.Path), "members"):
+			// Path targets members directly: value is the member array.
+			ids = memberValuesFromPatch(op.Value)
+		case strings.TrimSpace(op.Path) == "":
+			// Path-less op (Okta's full-membership replace): pull members from the
+			// value object; skip if it carries no members field.
+			m, ok := membersFromPathlessValue(op.Value)
+			if !ok {
+				continue
+			}
+			ids = m
+		default:
+			continue // a non-members attribute path — not our concern
 		}
 		mode := MembersAdd
-		ids := memberValuesFromPatch(op.Value)
 		switch {
 		case strings.EqualFold(op.Op, "remove"):
 			mode = MembersRemove
@@ -320,6 +359,20 @@ func memberValuesFromPatch(raw json.RawMessage) []string {
 		return memberIDs(ms)
 	}
 	return nil
+}
+
+// membersFromPathlessValue extracts member ids from a path-less PATCH value object
+// ({"members":[{value:id}...]}) — the shape Okta sends for a full-membership
+// replace (op:"replace" with no path). ok=false when the value carries no members
+// field (a non-membership attribute op we don't apply).
+func membersFromPathlessValue(raw json.RawMessage) (ids []string, ok bool) {
+	var v struct {
+		Members *[]Member `json:"members"`
+	}
+	if json.Unmarshal(raw, &v) != nil || v.Members == nil {
+		return nil, false
+	}
+	return memberIDs(*v.Members), true
 }
 
 // memberIDFromPath extracts ID from a `members[value eq "ID"]` remove path (the

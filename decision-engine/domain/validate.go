@@ -205,10 +205,11 @@ func validateNodeConfig(n events.Node) error {
 		if err := checkExpr(n, "case_type", cfg.CaseType); err != nil {
 			return err
 		}
-		// A negative SLA would emit a ManualReviewRequested with a negative deadline
-		// into the case manager (already due/breached on arrival). Reject at publish.
-		if cfg.SLADays < 0 {
-			return fmt.Errorf("decision-engine: node %q manual_review sla_days must be >= 0, got %d", n.ID, cfg.SLADays)
+		// A negative SLA would emit a ManualReviewRequested already-overdue on
+		// arrival; an absurd one overflows the case manager's date arithmetic. Bound
+		// it at publish (10000 days ≈ 27 years, matching case-manager's MaxSLADays).
+		if cfg.SLADays < 0 || cfg.SLADays > 10000 {
+			return fmt.Errorf("decision-engine: node %q manual_review sla_days must be between 0 and 10000, got %d", n.ID, cfg.SLADays)
 		}
 	case events.NodeCode:
 		var cfg codeConfig

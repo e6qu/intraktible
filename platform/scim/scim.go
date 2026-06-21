@@ -79,6 +79,28 @@ func (s *Store) Create(ctx context.Context, u User) (User, error) {
 	if u.UserName == "" {
 		return User{}, fmt.Errorf("scim: userName is required")
 	}
+	now := s.now().UTC()
+	// Idempotent on the IdP's immutable externalId: a re-create carrying an
+	// externalId we've seen (the IdP lost its SCIM-id mapping, or renamed the
+	// userName) UPDATES the existing record in place rather than duplicating it —
+	// otherwise a rename would leave a stale, un-deprovisionable second user.
+	if u.ExternalID != "" {
+		if existing, ok, err := s.byExternalID(ctx, u.Org, u.Workspace, u.ExternalID); err != nil {
+			return User{}, err
+		} else if ok {
+			u.ID = existing.ID
+			u.Schemas = []string{UserSchema}
+			created := now
+			if existing.Meta != nil {
+				created = existing.Meta.Created
+			}
+			u.Meta = &Meta{ResourceType: "User", Created: created, LastModified: now}
+			if err := store.PutDoc(ctx, s.store, collection, key(u.Org, u.Workspace, u.ID), u); err != nil {
+				return User{}, err
+			}
+			return u, nil
+		}
+	}
 	if existing, ok, err := s.byUserName(ctx, u.Org, u.Workspace, u.UserName); err != nil {
 		return User{}, err
 	} else if ok {
@@ -87,13 +109,27 @@ func (s *Store) Create(ctx context.Context, u User) (User, error) {
 	if u.ID == "" {
 		u.ID = newID()
 	}
-	now := s.now().UTC()
 	u.Schemas = []string{UserSchema}
 	u.Meta = &Meta{ResourceType: "User", Created: now, LastModified: now}
 	if err := store.PutDoc(ctx, s.store, collection, key(u.Org, u.Workspace, u.ID), u); err != nil {
 		return User{}, err
 	}
 	return u, nil
+}
+
+// byExternalID finds a tenant user by the IdP's immutable externalId (a scan; the
+// directory is small and SCIM provisioning is not a hot path).
+func (s *Store) byExternalID(ctx context.Context, org, workspace, externalID string) (User, bool, error) {
+	all, err := s.List(ctx, org, workspace, "", false)
+	if err != nil {
+		return User{}, false, err
+	}
+	for _, u := range all {
+		if u.ExternalID == externalID {
+			return u, true, nil
+		}
+	}
+	return User{}, false, nil
 }
 
 // Get loads one user by id.

@@ -203,3 +203,34 @@ func TestSCIMRequiresBearerToken(t *testing.T) {
 		t.Fatalf("bad token -> %d, want 401", rec.Code)
 	}
 }
+
+// TestSCIMExternalIDIdempotentCreate guards the rename/re-create class: a second
+// Create carrying the same immutable externalId updates the existing record in
+// place (same id, new userName) rather than leaving a stale duplicate.
+func TestSCIMExternalIDIdempotentCreate(t *testing.T) {
+	ctx := context.Background()
+	users := scim.NewStore(store.NewMemory())
+
+	first, err := users.Create(ctx, scim.User{Org: "demo", Workspace: "main", UserName: "ada@acme.com", ExternalID: "ext-1", Active: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Re-create with the SAME externalId but a renamed userName.
+	second, err := users.Create(ctx, scim.User{Org: "demo", Workspace: "main", UserName: "ada.lovelace@acme.com", ExternalID: "ext-1", Active: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.ID != first.ID {
+		t.Fatalf("re-create with the same externalId must reuse the id: %s != %s", second.ID, first.ID)
+	}
+	if second.UserName != "ada.lovelace@acme.com" {
+		t.Fatalf("re-create must update the userName, got %q", second.UserName)
+	}
+	all, err := users.List(ctx, "demo", "main", "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 1 {
+		t.Fatalf("expected exactly one user after rename re-create, got %d", len(all))
+	}
+}

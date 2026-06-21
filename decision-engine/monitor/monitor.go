@@ -12,6 +12,7 @@ import (
 	"math"
 
 	"github.com/e6qu/intraktible/decision-engine/analytics"
+	"github.com/e6qu/intraktible/decision-engine/policy"
 )
 
 // Metric identifies the derived quantity a monitor watches. A named type (not a
@@ -115,19 +116,19 @@ func breached(actual float64, op Op, threshold float64) bool {
 // no denominator yet (so the caller can show "no data" rather than a false 0).
 func metricValue(snap Snapshot, metric Metric) (float64, bool) {
 	m := snap.Metrics
-	dispositioned := m.ByDisposition["approve"] + m.ByDisposition["decline"] + m.ByDisposition["refer"]
+	dispositioned := m.ByDisposition[string(policy.Approve)] + m.ByDisposition[string(policy.Decline)] + m.ByDisposition[string(policy.Refer)]
 	resolved := m.Completed + m.Failed
 	switch metric {
 	case MetricFailureRate:
 		return ratio(m.Failed, resolved)
 	case MetricReferRate:
-		return ratio(m.ByDisposition["refer"], dispositioned)
+		return ratio(m.ByDisposition[string(policy.Refer)], dispositioned)
 	case MetricAutomationRate:
-		return ratio(m.ByDisposition["approve"]+m.ByDisposition["decline"], dispositioned)
+		return ratio(m.ByDisposition[string(policy.Approve)]+m.ByDisposition[string(policy.Decline)], dispositioned)
 	case MetricApproveRate:
-		return ratio(m.ByDisposition["approve"], dispositioned)
+		return ratio(m.ByDisposition[string(policy.Approve)], dispositioned)
 	case MetricDeclineRate:
-		return ratio(m.ByDisposition["decline"], dispositioned)
+		return ratio(m.ByDisposition[string(policy.Decline)], dispositioned)
 	case MetricAvgLatencyMS:
 		if m.Completed == 0 {
 			return 0, false
@@ -183,7 +184,7 @@ func DistributionOf(m analytics.FlowMetrics) (Baseline, bool) {
 	if !ok {
 		return Baseline{}, false
 	}
-	total := m.ByDisposition["approve"] + m.ByDisposition["decline"] + m.ByDisposition["refer"]
+	total := m.ByDisposition[string(policy.Approve)] + m.ByDisposition[string(policy.Decline)] + m.ByDisposition[string(policy.Refer)]
 	return Baseline{Approve: a, Decline: dc, Refer: r, Total: total}, true
 }
 
@@ -210,7 +211,7 @@ func ComputeDrift(snap Snapshot) DriftReport {
 	rep := DriftReport{HasBaseline: snap.Baseline != nil}
 	a, dc, r, ok := distribution(snap.Metrics)
 	rep.HasCurrent = ok
-	rep.CurrentTotal = snap.Metrics.ByDisposition["approve"] + snap.Metrics.ByDisposition["decline"] + snap.Metrics.ByDisposition["refer"]
+	rep.CurrentTotal = snap.Metrics.ByDisposition[string(policy.Approve)] + snap.Metrics.ByDisposition[string(policy.Decline)] + snap.Metrics.ByDisposition[string(policy.Refer)]
 	if !rep.HasBaseline {
 		return rep
 	}

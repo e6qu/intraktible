@@ -180,8 +180,24 @@ func (t *pgTx) Put(ctx context.Context, collection, key string, doc json.RawMess
 }
 
 func (t *pgTx) Get(ctx context.Context, collection, key string) (json.RawMessage, bool, error) {
+	return t.get(ctx, collection, key, false)
+}
+
+// GetForUpdate reads with a row lock (SELECT ... FOR UPDATE) so a read-modify-write
+// inside this tx is serialized against concurrent writers — Postgres's READ
+// COMMITTED would otherwise allow a lost update between the read and the write.
+// It implements the store rowLocker capability used by UpdateDoc.
+func (t *pgTx) GetForUpdate(ctx context.Context, collection, key string) (json.RawMessage, bool, error) {
+	return t.get(ctx, collection, key, true)
+}
+
+func (t *pgTx) get(ctx context.Context, collection, key string, forUpdate bool) (json.RawMessage, bool, error) {
+	q := `SELECT doc FROM docs WHERE collection = $1 AND key = $2`
+	if forUpdate {
+		q += ` FOR UPDATE`
+	}
 	var doc []byte
-	err := t.tx.QueryRow(ctx, `SELECT doc FROM docs WHERE collection = $1 AND key = $2`, collection, key).Scan(&doc)
+	err := t.tx.QueryRow(ctx, q, collection, key).Scan(&doc)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, false, nil
 	}

@@ -737,6 +737,20 @@ decision-table aggregate that could go non-finite/order-dependent, and a handful
 fuzz harnesses landed, including one over the security-critical SQLite DSN path parser (asserting
 read-only + directory containment) and one that surfaced the aggregate-overflow fix.
 
+**Round-10 deep follow-ups, folded into the same PR (H1/H2/M5 + low bugs + transposition types).** The
+three items previously documented-not-fixed were implemented: the cross-process version/slug **TOCTOU**
+is closed by a storage-layer optimistic-concurrency claim (`Envelope.Unique` enforced as a uniqueness
+constraint across WAL/SQLite/Postgres/NATS, with the decision-engine retrying on `ErrConflict`); the
+**NATS** consumer now re-subscribes from the last delivered seq on reconnect; and **SCIM** gained
+list pagination, externalId-idempotent create, and Okta path-less group membership. Plus a batch of
+latent fixes (a Postgres `FOR UPDATE` row lock in `UpdateDoc`, a Recover double-write guard for
+streaming, comment parent validation, an SLA-days bound, a SQLite seq guard) and transposition-proofing
+(`DecideResult`/disposition strong types, a comments `Subject` struct, monitor disposition consts), and a
+new SSE-parser fuzz harness. Two pure cross-package signature refactors (EntityRef branding, the SCIM
+`identity.Identity` threading) and the authz `r.Pattern` restructure were consciously left as fast
+follow-ups — they prevent only theoretical transpositions with trusted callers and carry large churn /
+auth-regression surface for no behavioral change (detail in BUGS.md).
+
 **Variant + DeploymentRequestStatus named types (TS37).** The two enums still carried as scattered
 string literals — the A/B `Variant` (champion|challenger) and the maker-checker
 `DeploymentRequestStatus` (pending|approved|rejected) — became named types (`domain.Variant`,

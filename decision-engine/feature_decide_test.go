@@ -67,7 +67,7 @@ func TestDecideInjectsFeatures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Status != string(domain.StatusCompleted) || res.Output["tier"] != "high" {
+	if res.Status != domain.StatusCompleted || res.Output["tier"] != "high" {
 		t.Fatalf("want high, got %+v (%s)", res.Output, res.Error)
 	}
 
@@ -132,7 +132,7 @@ func TestDecideWithoutEntityRefSkipsFeatures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Status != string(domain.StatusFailed) {
+	if res.Status != domain.StatusFailed {
 		t.Fatalf("expected failure without features, got %+v", res)
 	}
 }

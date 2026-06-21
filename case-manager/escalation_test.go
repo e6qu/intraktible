@@ -57,7 +57,7 @@ func TestEscalationFromFlowOpensCase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Status != string(decisiondomain.StatusCompleted) {
+	if res.Status != decisiondomain.StatusCompleted {
 		t.Fatalf("decide status=%s err=%s", res.Status, res.Error)
 	}
 

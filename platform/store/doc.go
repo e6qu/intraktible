@@ -57,10 +57,33 @@ func UpdateDoc[T any](ctx context.Context, s Store, collection, key string, muta
 	return true, nil
 }
 
+// rowLocker is an optional Store/Tx capability: a read that takes a row lock so a
+// read-modify-write is serialized against concurrent writers (Postgres SELECT ...
+// FOR UPDATE). Backends without it — the in-memory store and SQLite, neither of
+// which has Postgres's snapshot-isolation lost-update window — fall back to a plain
+// Get and are unaffected.
+type rowLocker interface {
+	GetForUpdate(ctx context.Context, collection, key string) (json.RawMessage, bool, error)
+}
+
+// lockingGet reads with a row lock when the store offers one, else a plain Get.
+func lockingGet(ctx context.Context, s Store, collection, key string) (json.RawMessage, bool, error) {
+	if rl, ok := s.(rowLocker); ok {
+		return rl.GetForUpdate(ctx, collection, key)
+	}
+	return s.Get(ctx, collection, key)
+}
+
 func updateDocDirect[T any](ctx context.Context, s Store, collection, key string, mutate func(*T)) (bool, error) {
-	v, ok, err := GetDoc[T](ctx, s, collection, key)
+	// Lock the row for the read-modify-write when the backend supports it, so a
+	// concurrent UpdateDoc on the same key can't lose this update.
+	raw, ok, err := lockingGet(ctx, s, collection, key)
 	if err != nil || !ok {
 		return ok, err
+	}
+	var v T
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return false, fmt.Errorf("store: decode %s/%s: %w", collection, key, err)
 	}
 	mutate(&v)
 	return true, PutDoc(ctx, s, collection, key, v)

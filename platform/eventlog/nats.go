@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/nats-io/nats.go"
 )
@@ -16,6 +17,10 @@ import (
 const (
 	natsStream  = "INTRAKTIBLE_EVENTS"
 	natsSubject = "intraktible.events"
+	// claimDedupWindow is the JetStream Msg-Id dedup window backing Envelope.Unique
+	// optimistic-concurrency claims. It only needs to span the race between two
+	// nodes computing the same claim (seconds); 5 minutes is generous headroom.
+	claimDedupWindow = 5 * time.Minute
 )
 
 // NATSLog is a durable, append-only event log backed by a NATS JetStream stream
@@ -30,14 +35,23 @@ type NATSLog struct {
 	bus *bus
 	sub *nats.Subscription
 
-	mu     sync.Mutex
-	closed bool
+	mu      sync.Mutex
+	closed  bool
+	lastSeq uint64 // highest stream seq delivered to the bus (reconnect resume point)
 }
 
 // OpenNATSLog connects to a NATS server (JetStream enabled), ensures the event
 // stream exists, and starts the live push subscription.
 func OpenNATSLog(url string) (*NATSLog, error) {
-	nc, err := nats.Connect(url)
+	l := &NATSLog{bus: newBus()}
+	// Reconnect with no cap (the log is the system of record) and, on reconnect,
+	// re-subscribe from the last delivered seq so events appended while the
+	// connection was down are still delivered — the ephemeral DeliverNew consumer
+	// would otherwise restart at "new" and silently skip the gap.
+	nc, err := nats.Connect(url,
+		nats.MaxReconnects(-1),
+		nats.ReconnectHandler(func(*nats.Conn) { l.onReconnect() }),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("eventlog: nats connect: %w", err)
 	}
@@ -46,7 +60,9 @@ func OpenNATSLog(url string) (*NATSLog, error) {
 		nc.Close()
 		return nil, fmt.Errorf("eventlog: nats jetstream: %w", err)
 	}
-	if _, err := js.StreamInfo(natsStream); errors.Is(err, nats.ErrStreamNotFound) {
+	si, err := js.StreamInfo(natsStream)
+	switch {
+	case errors.Is(err, nats.ErrStreamNotFound):
 		if _, err := js.AddStream(&nats.StreamConfig{
 			Name:     natsStream,
 			Subjects: []string{natsSubject},
@@ -58,25 +74,76 @@ func OpenNATSLog(url string) (*NATSLog, error) {
 			MaxMsgs:   -1,
 			MaxBytes:  -1,
 			Discard:   nats.DiscardNew, // refuse new writes at a limit rather than drop old ones
+			// Duplicates enables Msg-Id dedup, which backs Envelope.Unique optimistic-
+			// concurrency claims (a second append with the same claim id inside the
+			// window is rejected as a duplicate → ErrConflict). The window only has to
+			// cover the brief race between two nodes computing the same claim.
+			Duplicates: claimDedupWindow,
 		}); err != nil {
 			nc.Close()
 			return nil, fmt.Errorf("eventlog: nats add stream: %w", err)
 		}
-	} else if err != nil {
+	case err != nil:
 		nc.Close()
 		return nil, fmt.Errorf("eventlog: nats stream info: %w", err)
+	case si.Config.Duplicates < claimDedupWindow:
+		// Ensure a pre-existing stream has a dedup window wide enough for claims.
+		cfg := si.Config
+		cfg.Duplicates = claimDedupWindow
+		if _, err := js.UpdateStream(&cfg); err != nil {
+			slog.Warn("eventlog: nats could not widen dedup window; Unique-key claims may not be enforced", "err", err)
+		}
 	}
 
-	l := &NATSLog{nc: nc, js: js, bus: newBus()}
+	l.nc = nc
+	l.js = js
 	// Deliver only messages appended from now on (history is replayed via Read);
-	// the push consumer is the live bus feed for every node's events.
-	sub, err := js.Subscribe(natsSubject, l.onMessage, nats.DeliverNew(), nats.AckNone())
-	if err != nil {
+	// the push consumer is the live bus feed for every node's events. resubscribe(0)
+	// starts at "new"; a reconnect later resumes from the last delivered seq.
+	if err := l.resubscribe(0); err != nil {
 		nc.Close()
 		return nil, fmt.Errorf("eventlog: nats subscribe: %w", err)
 	}
-	l.sub = sub
 	return l, nil
+}
+
+// resubscribe (re)creates the push subscription. afterSeq 0 means "from new"; a
+// positive afterSeq resumes from afterSeq+1, the gap-fill used on reconnect.
+func (l *NATSLog) resubscribe(afterSeq uint64) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.closed {
+		return nil
+	}
+	if l.sub != nil {
+		_ = l.sub.Unsubscribe()
+		l.sub = nil
+	}
+	deliver := nats.DeliverNew()
+	if afterSeq > 0 {
+		deliver = nats.StartSequence(afterSeq + 1)
+	}
+	sub, err := l.js.Subscribe(natsSubject, l.onMessage, deliver, nats.AckNone())
+	if err != nil {
+		return err
+	}
+	l.sub = sub
+	return nil
+}
+
+// onReconnect re-subscribes from the last delivered seq so events appended during
+// the disconnect window are delivered (the SQLite/Postgres pollers self-heal the
+// same way; the ephemeral DeliverNew consumer would skip the gap).
+func (l *NATSLog) onReconnect() {
+	l.mu.Lock()
+	last, closed := l.lastSeq, l.closed
+	l.mu.Unlock()
+	if closed {
+		return
+	}
+	if err := l.resubscribe(last); err != nil {
+		slog.Error("eventlog: nats resubscribe after reconnect", "err", err)
+	}
 }
 
 func (l *NATSLog) onMessage(m *nats.Msg) {
@@ -91,6 +158,11 @@ func (l *NATSLog) onMessage(m *nats.Msg) {
 		return
 	}
 	e.Seq = meta.Sequence.Stream
+	l.mu.Lock()
+	if e.Seq > l.lastSeq {
+		l.lastSeq = e.Seq
+	}
+	l.mu.Unlock()
 	l.bus.publish(e)
 }
 
@@ -114,9 +186,17 @@ func (l *NATSLog) Append(ctx context.Context, e Envelope) (Envelope, error) {
 	if err != nil {
 		return Envelope{}, fmt.Errorf("eventlog: nats marshal: %w", err)
 	}
-	ack, err := l.js.Publish(natsSubject, b, nats.Context(ctx))
+	opts := []nats.PubOpt{nats.Context(ctx)}
+	if e.Unique != "" {
+		opts = append(opts, nats.MsgId(e.Unique)) // JetStream dedups by Msg-Id within the window
+	}
+	ack, err := l.js.Publish(natsSubject, b, opts...)
 	if err != nil {
 		return Envelope{}, fmt.Errorf("eventlog: nats publish: %w", err)
+	}
+	if e.Unique != "" && ack.Duplicate {
+		// A duplicate Msg-Id means another node already claimed this key.
+		return Envelope{}, ErrConflict
 	}
 	e.Seq = ack.Sequence
 	return e, nil

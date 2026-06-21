@@ -36,13 +36,43 @@ func newID() string {
 	return hex.EncodeToString(b[:])
 }
 
-// Post appends a comment to the (subjectType, subjectID) thread. parentID, when
-// set, marks the comment as a reply to another comment.
-func (h *Handler) Post(ctx context.Context, id identity.Identity, subjectType, subjectID, body, parentID string) (string, eventlog.Envelope, error) {
+// Subject identifies what a comment thread is attached to (a decision, case,
+// deployment request, …). Grouping the type and id into one value means the pair
+// can't be transposed at a call site — a (type, id) string pair silently could.
+type Subject struct {
+	Type string
+	ID   string
+}
+
+// parentIsTopLevel folds the comment stream to verify parentID names an existing
+// top-level comment (no ParentID of its own) on the same subject.
+func (h *Handler) parentIsTopLevel(ctx context.Context, id identity.Identity, subject Subject, parentID string) (bool, error) {
+	evs, err := h.log.Read(ctx, 0)
+	if err != nil {
+		return false, fmt.Errorf("comments: read log: %w", err)
+	}
+	for _, e := range evs {
+		if e.Stream != StreamComments || e.Type != TypeCommentPosted || e.Org != id.Org || e.Workspace != id.Workspace {
+			continue
+		}
+		var p CommentPosted
+		if err := json.Unmarshal(e.Payload, &p); err != nil {
+			continue
+		}
+		if p.CommentID == parentID {
+			return p.SubjectType == subject.Type && p.SubjectID == subject.ID && p.ParentID == "", nil
+		}
+	}
+	return false, nil // unknown parent
+}
+
+// Post appends a comment to the subject's thread. parentID, when set, marks the
+// comment as a reply to another comment.
+func (h *Handler) Post(ctx context.Context, id identity.Identity, subject Subject, body, parentID string) (string, eventlog.Envelope, error) {
 	if err := id.Valid(); err != nil {
 		return "", eventlog.Envelope{}, err
 	}
-	if subjectType == "" || subjectID == "" {
+	if subject.Type == "" || subject.ID == "" {
 		return "", eventlog.Envelope{}, fmt.Errorf("comments: subject_type and subject_id are required")
 	}
 	body = strings.TrimSpace(body)
@@ -52,8 +82,20 @@ func (h *Handler) Post(ctx context.Context, id identity.Identity, subjectType, s
 	if len(body) > maxBody {
 		return "", eventlog.Envelope{}, fmt.Errorf("comments: comment too long (%d > %d)", len(body), maxBody)
 	}
+	// A reply's parent must be a real, top-level comment on the SAME subject —
+	// otherwise an arbitrary parent_id records an orphan or cross-thread reply, and
+	// replies-to-replies break the one-level threading the UI assumes.
+	if parentID != "" {
+		ok, err := h.parentIsTopLevel(ctx, id, subject, parentID)
+		if err != nil {
+			return "", eventlog.Envelope{}, err
+		}
+		if !ok {
+			return "", eventlog.Envelope{}, fmt.Errorf("comments: parent %q is not a top-level comment on this subject", parentID)
+		}
+	}
 	cid := h.newID()
-	b, err := json.Marshal(CommentPosted{CommentID: cid, SubjectType: subjectType, SubjectID: subjectID, Body: body, ParentID: parentID})
+	b, err := json.Marshal(CommentPosted{CommentID: cid, SubjectType: subject.Type, SubjectID: subject.ID, Body: body, ParentID: parentID})
 	if err != nil {
 		return "", eventlog.Envelope{}, fmt.Errorf("comments: marshal comment: %w", err)
 	}

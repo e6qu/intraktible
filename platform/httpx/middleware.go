@@ -62,16 +62,25 @@ func RequestID(next http.Handler) http.Handler {
 	})
 }
 
-// Recover turns panics into 500s instead of crashing the server.
+// Recover turns panics into 500s instead of crashing the server. It wraps the
+// writer to know whether the response was already committed: a panic mid-stream
+// (an SSE/WebSocket handler that already wrote headers + chunks) must NOT then emit
+// a second WriteHeader + JSON body — that superfluous write corrupts the response
+// and logs a spurious error. statusWriter forwards Flush/Hijack, so streaming is
+// unaffected.
 func Recover(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sw := &statusWriter{ResponseWriter: w}
 		defer func() {
 			if v := recover(); v != nil {
 				slog.Error("httpx: panic", "value", v, "path", r.URL.Path)
-				Error(w, http.StatusInternalServerError, errors.New("internal error"))
+				if sw.wrote {
+					return // response already started — can't cleanly send a 500
+				}
+				Error(sw, http.StatusInternalServerError, errors.New("internal error"))
 			}
 		}()
-		next.ServeHTTP(w, r)
+		next.ServeHTTP(sw, r)
 	})
 }
 
@@ -235,11 +244,21 @@ func isAuthoringPath(path string) bool {
 type statusWriter struct {
 	http.ResponseWriter
 	status int
+	wrote  bool // whether headers or body have been committed (for Recover's guard)
 }
 
 func (s *statusWriter) WriteHeader(code int) {
 	s.status = code
+	s.wrote = true
 	s.ResponseWriter.WriteHeader(code)
+}
+
+func (s *statusWriter) Write(b []byte) (int, error) {
+	if s.status == 0 {
+		s.status = http.StatusOK // an implicit 200 from a bodyless WriteHeader
+	}
+	s.wrote = true
+	return s.ResponseWriter.Write(b)
 }
 
 // Flush and Hijack make the logging wrapper transparent to the optional

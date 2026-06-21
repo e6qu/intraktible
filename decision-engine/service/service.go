@@ -957,8 +957,8 @@ func (s *Service) runDecide(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, decideResponse{
-		DecisionID: result.DecisionID, Status: result.Status, Data: result.Output,
-		Disposition: result.Disposition, Error: result.Error,
+		DecisionID: result.DecisionID, Status: string(result.Status), Data: result.Output,
+		Disposition: string(result.Disposition), Error: result.Error,
 	})
 }
 
@@ -1050,14 +1050,14 @@ func (s *Service) decideBatch(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		switch res.Status {
-		case "completed":
+		case domain.StatusCompleted:
 			resp.Completed++
-		case "failed":
+		case domain.StatusFailed:
 			resp.Failed++
 		}
 		resp.Results = append(resp.Results, batchResult{
-			Index: i, EntityID: entityID, DecisionID: res.DecisionID, Status: res.Status, Data: res.Output,
-			Disposition: res.Disposition, Error: res.Error,
+			Index: i, EntityID: entityID, DecisionID: res.DecisionID, Status: string(res.Status), Data: res.Output,
+			Disposition: string(res.Disposition), Error: res.Error,
 		})
 	}
 	httpx.JSON(w, http.StatusOK, resp)
@@ -1136,8 +1136,8 @@ func (s *Service) decideStream(w http.ResponseWriter, r *http.Request) {
 			emit(out)
 			continue
 		}
-		out.DecisionID, out.Status, out.Data = res.DecisionID, res.Status, res.Output
-		out.Disposition, out.Error = res.Disposition, res.Error
+		out.DecisionID, out.Status, out.Data = res.DecisionID, string(res.Status), res.Output
+		out.Disposition, out.Error = string(res.Disposition), res.Error
 		emit(out)
 	}
 	if err := sc.Err(); err != nil {
@@ -1235,13 +1235,13 @@ func (s *Service) preapproveBatch(w http.ResponseWriter, r *http.Request) {
 			resp.Results = append(resp.Results, row)
 			continue
 		}
-		row.DecisionID, row.Status, row.Disposition = res.DecisionID, res.Status, res.Disposition
+		row.DecisionID, row.Status, row.Disposition = res.DecisionID, string(res.Status), string(res.Disposition)
 		switch {
-		case res.Status != string(domain.StatusCompleted):
-			row.Reason = "decision " + res.Status
+		case res.Status != domain.StatusCompleted:
+			row.Reason = "decision " + string(res.Status)
 			resp.Failed++
-		case res.Disposition != target:
-			row.Reason = "disposition " + dispositionOrNone(res.Disposition)
+		case string(res.Disposition) != target:
+			row.Reason = "disposition " + dispositionOrNone(string(res.Disposition))
 			resp.Skipped++
 		default:
 			terms, mErr := json.Marshal(res.Output)

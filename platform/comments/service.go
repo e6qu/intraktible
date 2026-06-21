@@ -52,7 +52,7 @@ func (s *Service) post(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, err)
 		return
 	}
-	cid, e, err := s.cmd.Post(r.Context(), id, r.PathValue("subject_type"), r.PathValue("subject_id"), req.Body, req.ParentID)
+	cid, e, err := s.cmd.Post(r.Context(), id, Subject{Type: r.PathValue("subject_type"), ID: r.PathValue("subject_id")}, req.Body, req.ParentID)
 	if err != nil {
 		httpx.Error(w, http.StatusBadRequest, err)
 		return

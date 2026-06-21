@@ -7,7 +7,9 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"math"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite" // pure-Go SQLite driver (CGO-free); registers "sqlite"
@@ -53,18 +55,30 @@ func OpenSQLiteLog(dir string, poll time.Duration) (*SQLiteLog, error) {
 		}
 	}
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS events (
-		seq       INTEGER PRIMARY KEY AUTOINCREMENT,
-		id        TEXT NOT NULL,
-		org       TEXT NOT NULL,
-		workspace TEXT NOT NULL,
-		stream    TEXT NOT NULL,
-		type      TEXT NOT NULL,
-		time      TEXT NOT NULL,
-		actor     TEXT NOT NULL,
-		payload   TEXT NOT NULL
+		seq        INTEGER PRIMARY KEY AUTOINCREMENT,
+		id         TEXT NOT NULL,
+		org        TEXT NOT NULL,
+		workspace  TEXT NOT NULL,
+		stream     TEXT NOT NULL,
+		type       TEXT NOT NULL,
+		time       TEXT NOT NULL,
+		actor      TEXT NOT NULL,
+		payload    TEXT NOT NULL,
+		unique_key TEXT
 	)`); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("eventlog: sqlite schema: %w", err)
+	}
+	// Backfill unique_key on a DB created before it existed (ignore the duplicate-
+	// column error a fresh schema produces), then the partial unique index that
+	// enforces optimistic-concurrency claims (Envelope.Unique) across processes.
+	if _, err := db.Exec(`ALTER TABLE events ADD COLUMN unique_key TEXT`); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+		_ = db.Close()
+		return nil, fmt.Errorf("eventlog: sqlite add unique_key: %w", err)
+	}
+	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS events_unique_key ON events(unique_key) WHERE unique_key IS NOT NULL`); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("eventlog: sqlite unique_key index: %w", err)
 	}
 	l := &SQLiteLog{db: db}
 	head, err := l.headCtx(context.Background())
@@ -93,10 +107,14 @@ func (l *SQLiteLog) Append(ctx context.Context, e Envelope) (Envelope, error) {
 		e.ID = newID()
 	}
 	res, err := l.db.ExecContext(ctx,
-		`INSERT INTO events (id, org, workspace, stream, type, time, actor, payload)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		e.ID, e.Org, e.Workspace, e.Stream, e.Type, e.Time.Format(time.RFC3339Nano), e.Actor, string(e.Payload))
+		`INSERT INTO events (id, org, workspace, stream, type, time, actor, payload, unique_key)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		e.ID, e.Org, e.Workspace, e.Stream, e.Type, e.Time.Format(time.RFC3339Nano), e.Actor, string(e.Payload), nullableKey(e.Unique))
 	if err != nil {
+		// A unique_key collision means the caller lost an optimistic-concurrency race.
+		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+			return Envelope{}, ErrConflict
+		}
 		return Envelope{}, fmt.Errorf("eventlog: sqlite append: %w", err)
 	}
 	seq, err := res.LastInsertId()
@@ -124,6 +142,11 @@ func (l *SQLiteLog) readFrom(ctx context.Context, fromSeq uint64, limit int) ([]
 	}
 	if fromSeq == 0 {
 		fromSeq = 1
+	}
+	// seq is a signed INTEGER in SQLite; a fromSeq past MaxInt64 can't match any row
+	// (and would bind as a negative), so short-circuit (mirrors the Postgres guard).
+	if fromSeq > math.MaxInt64 {
+		return nil, nil
 	}
 	query := `SELECT seq, id, org, workspace, stream, type, time, actor, payload
 		 FROM events WHERE seq >= ? ORDER BY seq`

@@ -164,13 +164,14 @@ func rollPercent() int {
 // the flow's output (on success), and the failure reason (on failure).
 type DecideResult struct {
 	DecisionID string
-	Status     string
+	Status     domain.RunStatus
 	Output     map[string]any
 	Error      string
 	// Disposition is the operational policy's automated outcome (approve|decline|
 	// refer), empty when no policy is bound to the flow. DispositionReason is the
-	// matched rule's description (or why it referred).
-	Disposition       string
+	// matched rule's description (or why it referred). Typed (not bare string) so the
+	// three string-ish result fields can't be transposed at a construction site.
+	Disposition       policy.Disposition
 	DispositionReason string
 }
 
@@ -299,7 +300,7 @@ func (h *DecideHandler) Decide(ctx context.Context, id identity.Identity, slug, 
 			DecisionID: decisionID, FlowID: fv.FlowID, Version: version.Version, Variant: variant,
 			NodeID: run.FailedNode, Error: run.Err, DurationMS: dur,
 		}
-		result = DecideResult{DecisionID: decisionID, Status: string(domain.StatusFailed), Error: run.Err}
+		result = DecideResult{DecisionID: decisionID, Status: domain.StatusFailed, Error: run.Err}
 	} else {
 		outJSON, err := json.Marshal(run.Output)
 		if err != nil {
@@ -320,11 +321,11 @@ func (h *DecideHandler) Decide(ctx context.Context, id identity.Identity, slug, 
 		terminalPayload = events.DecisionCompleted{
 			DecisionID: decisionID, FlowID: fv.FlowID, Version: version.Version, Variant: variant,
 			Output: outJSON, DurationMS: dur,
-			Disposition: disp.disposition, DispositionCode: disp.code, DispositionReason: disp.reason,
+			Disposition: string(disp.disposition), DispositionCode: disp.code, DispositionReason: disp.reason,
 			PolicyID: disp.policyID, PolicyVersion: disp.policyVersion,
 		}
 		result = DecideResult{
-			DecisionID: decisionID, Status: string(domain.StatusCompleted), Output: run.Output,
+			DecisionID: decisionID, Status: domain.StatusCompleted, Output: run.Output,
 			Disposition: disp.disposition, DispositionReason: disp.reason,
 		}
 	}
@@ -641,15 +642,15 @@ func (h *DecideHandler) honorPreApproval(ctx context.Context, id identity.Identi
 		return DecideResult{}, false, err
 	}
 	return DecideResult{
-		DecisionID: decisionID, Status: string(domain.StatusCompleted), Output: terms,
-		Disposition: pa.Disposition, DispositionReason: "pre-approval honored",
+		DecisionID: decisionID, Status: domain.StatusCompleted, Output: terms,
+		Disposition: policy.Disposition(pa.Disposition), DispositionReason: "pre-approval honored",
 	}, true, nil
 }
 
 // dispositionResult is the policy outcome the decide path records on a completed
 // decision (internal; flattened onto DecisionCompleted + DecideResult).
 type dispositionResult struct {
-	disposition   string
+	disposition   policy.Disposition
 	code          string
 	reason        string
 	policyID      string
@@ -672,9 +673,9 @@ func (h *DecideHandler) applyPolicy(ctx context.Context, id identity.Identity, s
 	// A policy that cannot evaluate (e.g. references a field the output lacks)
 	// refers to a human rather than failing the completed decision.
 	if out, applyErr := ver.Spec.Apply(output); applyErr != nil {
-		res.disposition, res.reason = string(policy.Refer), "policy: "+applyErr.Error()
+		res.disposition, res.reason = policy.Refer, "policy: "+applyErr.Error()
 	} else {
-		res.disposition, res.code, res.reason = string(out.Disposition), out.Code, out.Description
+		res.disposition, res.code, res.reason = out.Disposition, out.Code, out.Description
 	}
 	return res, nil
 }
