@@ -16,6 +16,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/e6qu/intraktible/platform/identity"
 )
 
 // maxProviderBody caps a provider response read into memory (same as the HTTP
@@ -65,6 +67,12 @@ func (a *authConfig) validate() error {
 	case "header", "query":
 		if a.Name == "" {
 			return fmt.Errorf("context-layer: %s auth needs a name", a.Type)
+		}
+		// An empty value sends Name with no credential — a request that LOOKS
+		// authenticated but isn't. Require it explicitly rather than silently
+		// emitting Header.Set(name, "") / q.Set(name, "").
+		if a.Value == "" {
+			return fmt.Errorf("context-layer: %s auth needs a value", a.Type)
 		}
 	case "basic":
 		if a.Username == "" {
@@ -135,11 +143,14 @@ type oauthEntry struct {
 }
 
 func (a *authConfig) oauthToken(ctx context.Context, client *http.Client) (string, error) {
-	// The key includes a fingerprint of the client_secret so a rotated secret (same
-	// token_url/client_id/scope) does not keep serving the stale token, and two
-	// connectors with the same id but different secrets never share a token.
+	// The key is tenant-scoped (org\x00workspace) AND includes a fingerprint of the
+	// client_secret: tenant-scoping keeps this process-global cache from ever serving
+	// one tenant's token to another that happens to share token_url/client_id/scope,
+	// and the secret fingerprint means a rotated secret doesn't keep serving a stale
+	// token (and two connectors with the same id but different secrets never collide).
+	id, _ := identity.From(ctx)
 	secretFP := sha256.Sum256([]byte(a.ClientSecret))
-	key := a.TokenURL + "\x00" + a.ClientID + "\x00" + a.Scope + "\x00" + hex.EncodeToString(secretFP[:8])
+	key := id.Org + "\x00" + id.Workspace + "\x00" + a.TokenURL + "\x00" + a.ClientID + "\x00" + a.Scope + "\x00" + hex.EncodeToString(secretFP[:8])
 	now := time.Now()
 	oauthTokens.mu.Lock()
 	if e, ok := oauthTokens.tok[key]; ok && now.Before(e.expiry) {

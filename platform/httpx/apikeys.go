@@ -143,10 +143,15 @@ func (h *APIKeysHandler) rotate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Ceiling: rotation mints a fresh working secret, so a caller must not rotate a
-	// key broader than their own scope (else a sandbox-scoped admin could obtain a
-	// live production secret for an existing key).
+	// key broader than their own scope OR role (else a sandbox-scoped or lower-role
+	// admin could obtain a live production/admin secret for an existing key). This
+	// mirrors create's two-axis ceiling — rotation is just as much a mint.
 	if callerScope, ok := Scope(r.Context()); !ok || !callerScope.Covers(key.Scope) {
 		Error(w, http.StatusForbidden, fmt.Errorf("cannot rotate a key with scope %q exceeding your own", key.Scope))
+		return
+	}
+	if !RoleOf(r.Context()).AtLeast(key.Role) {
+		Error(w, http.StatusForbidden, fmt.Errorf("cannot rotate a key with role %q exceeding your own", key.Role))
 		return
 	}
 	var req rotateAPIKeyRequest

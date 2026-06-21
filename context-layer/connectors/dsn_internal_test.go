@@ -3,6 +3,7 @@
 package connectors
 
 import (
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -66,4 +67,53 @@ func TestResolveSQLiteDSNRejectsSymlinkEscape(t *testing.T) {
 	if _, err := resolveSQLiteDSN("file:" + link); err == nil {
 		t.Fatal("a symlink inside the allowed dir pointing outside it must be rejected")
 	}
+}
+
+// FuzzResolveSQLiteDSN asserts the DSN parser is robust against crafted input and
+// upholds its two security invariants for every successful resolution: the result
+// is always read-only (mode=ro) and always contained within the allowed directory
+// (no `..` escape). Anything outside must error, never resolve. The parser must
+// never panic on adversarial bytes (embedded NUL, repeated `file:`, percent-encoded
+// traversal, a bare `?`, Windows separators).
+func FuzzResolveSQLiteDSN(f *testing.F) {
+	root := f.TempDir()
+	f.Setenv(sqliteConnectorDirEnv, root)
+	rootReal, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		f.Fatal(err)
+	}
+
+	f.Add("file:" + filepath.Join(root, "db.sqlite") + "?mode=ro")
+	f.Add("file:" + filepath.Join(root, "db.sqlite") + "?mode=rwc")
+	f.Add(":memory:")
+	f.Add("file:../../../etc/passwd")
+	f.Add("file:" + root + "/../escape.db")
+	f.Add("db?x=1&y=2")
+	f.Add("file:%2e%2e/x")
+
+	f.Fuzz(func(t *testing.T, dsn string) {
+		out, err := resolveSQLiteDSN(dsn)
+		if err != nil {
+			return // rejected — loud, not a crash
+		}
+		if !strings.HasPrefix(out, "file:") {
+			t.Fatalf("resolved DSN is not file-backed: %q", out)
+		}
+		body := strings.TrimPrefix(out, "file:")
+		path, query := body, ""
+		if i := strings.IndexByte(body, '?'); i >= 0 {
+			path, query = body[:i], body[i+1:]
+		}
+		q, perr := url.ParseQuery(query)
+		if perr != nil {
+			t.Fatalf("resolved DSN query does not parse: %q", out)
+		}
+		if q.Get("mode") != "ro" {
+			t.Fatalf("resolved DSN is not read-only: %q (mode=%q)", out, q.Get("mode"))
+		}
+		rel, rerr := filepath.Rel(rootReal, path)
+		if rerr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			t.Fatalf("resolved path %q escaped the allowed root %q (rel=%q)", path, rootReal, rel)
+		}
+	})
 }

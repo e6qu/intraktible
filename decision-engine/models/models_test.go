@@ -145,3 +145,21 @@ func TestValidateRejectsForeignFields(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateRejectsBadGBMLink(t *testing.T) {
+	// A mistyped link ("Logit") must be rejected, not silently treated as no-link
+	// and scored without the sigmoid.
+	s, err := models.ParseSpec(json.RawMessage(`{"kind":"gbm","trees":[{"leaf":true,"value":1}],"link":"Logit"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Validate(); err == nil {
+		t.Fatal("expected an unsupported-link rejection for \"Logit\"")
+	}
+	// The empty link (no transform) and the canonical logit are both valid.
+	for _, link := range []models.GBMLink{models.LinkNone, models.LinkLogit} {
+		if !link.Valid() {
+			t.Fatalf("link %q should be valid", link)
+		}
+	}
+}

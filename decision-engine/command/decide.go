@@ -220,6 +220,15 @@ func (h *DecideHandler) Decide(ctx context.Context, id identity.Identity, slug, 
 		return DecideResult{}, fmt.Errorf("%w: %w", ErrBadRequest, err)
 	}
 
+	// The features/connect/ai/predict top-level keys are engine-owned namespaces,
+	// populated authoritatively by the injectors below. Strip any a caller supplied
+	// before injection: otherwise, when a flow has no corresponding node (or no
+	// provider is wired, so the injector is a no-op), the caller's value would pass
+	// straight through and be read by Rule/Split/Scorecard expressions as if it were
+	// engine-resolved — letting a request forge feature values or model scores the
+	// flow author believes are trusted.
+	stripReservedNamespaces(data)
+
 	// Features and connector calls are resolved at decide time and merged into the
 	// input (under "features" and "connect"); the augmented input is what gets
 	// recorded and executed, so the run stays replay-stable from the recorded data
@@ -371,6 +380,21 @@ func (h *DecideHandler) sealPII(ctx context.Context, id identity.Identity, ref E
 		return doc, nil
 	}
 	return h.sealer.SealPII(ctx, id, ref.Type+"/"+ref.ID, doc)
+}
+
+// reservedInputNamespaces are the top-level keys the engine populates from resolved
+// features / connector responses / agent outputs / model predictions. They are
+// engine-owned: a caller must not supply them (see stripReservedNamespaces).
+var reservedInputNamespaces = [...]string{"features", "connect", "ai", "predict"}
+
+// stripReservedNamespaces removes the engine-owned namespaces from caller input so
+// only the injectors can populate them — making "caller forges a feature/score"
+// non-representable rather than depending on a node being present or a provider
+// being wired.
+func stripReservedNamespaces(data map[string]any) {
+	for _, k := range reservedInputNamespaces {
+		delete(data, k)
+	}
 }
 
 // injectFeatures returns data augmented with a "features" map of the referenced

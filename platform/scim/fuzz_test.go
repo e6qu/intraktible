@@ -4,6 +4,7 @@ package scim
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -55,5 +56,22 @@ func FuzzParseBool(f *testing.F) {
 			return
 		}
 		_, _ = parseBool(json.RawMessage(raw)) // must not panic
+	})
+}
+
+// FuzzMemberIDFromPath asserts the SCIM PATCH-path member-id parser never panics on
+// an arbitrary IdP-supplied path (it does index math on quote positions) and that
+// any value it returns is genuinely a substring of the input.
+func FuzzMemberIDFromPath(f *testing.F) {
+	f.Add(`members[value eq "abc"]`)
+	f.Add(`"`)
+	f.Add(`members[value eq ""]`)
+	f.Add(`value eq "a"b"c"`)
+	f.Add(``)
+	f.Fuzz(func(t *testing.T, path string) {
+		got := memberIDFromPath(path) // must not panic
+		if got != "" && !strings.Contains(path, got) {
+			t.Fatalf("memberIDFromPath returned %q which is not a substring of %q", got, path)
+		}
 	})
 }

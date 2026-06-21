@@ -68,6 +68,38 @@ type ManagedAPIKey struct {
 	PrevHashExpiresAt *time.Time `json:"prev_hash_expires_at,omitempty"`
 }
 
+// KeyStatus is a managed token's lifecycle state, derived from its timestamps as
+// of a given instant. It exists so "is this key usable" is computed in ONE place:
+// the usability check was previously open-coded differently in validate (revoked
+// OR expired), Rotate (revoked only), and the UI — a divergence where a future
+// caller could forget the expiry check and reopen an auth-bypass. Status/Usable
+// make that a single typed predicate.
+type KeyStatus string
+
+const (
+	KeyActive  KeyStatus = "active"
+	KeyExpired KeyStatus = "expired"
+	KeyRevoked KeyStatus = "revoked"
+)
+
+// Status reports the token's lifecycle state as of now. Revocation wins over
+// expiry (a revoked key is revoked regardless of its expiry).
+func (k ManagedAPIKey) Status(now time.Time) KeyStatus {
+	switch {
+	case k.RevokedAt != nil:
+		return KeyRevoked
+	case k.ExpiresAt != nil && now.After(*k.ExpiresAt):
+		return KeyExpired
+	default:
+		return KeyActive
+	}
+}
+
+// Usable reports whether the token may authenticate a request as of now — the
+// single authority for "this key is live" (a non-active key, for any reason,
+// authenticates nothing).
+func (k ManagedAPIKey) Usable(now time.Time) bool { return k.Status(now) == KeyActive }
+
 // StoreAPIKeys persists managed API tokens in store.Store. It is operational
 // state, like sessions, not a rebuildable projection.
 type StoreAPIKeys struct {
@@ -182,7 +214,7 @@ func (s *StoreAPIKeys) Rotate(ctx context.Context, id string, grace time.Duratio
 	if !ok {
 		return ManagedAPIKey{}, "", fmt.Errorf("auth: api key %q not found", id)
 	}
-	if key.RevokedAt != nil {
+	if key.Status(s.now().UTC()) == KeyRevoked {
 		return ManagedAPIKey{}, "", fmt.Errorf("auth: api key %q is revoked", id)
 	}
 	now := s.now().UTC()
@@ -259,7 +291,7 @@ func (s *StoreAPIKeys) resolveViaScan(ctx context.Context, want string) (APIKey,
 
 func (s *StoreAPIKeys) validate(rec ManagedAPIKey, want string) (bool, APIKey) {
 	now := s.now()
-	if rec.RevokedAt != nil || (rec.ExpiresAt != nil && now.After(*rec.ExpiresAt)) {
+	if !rec.Usable(now) {
 		return false, APIKey{}
 	}
 	if !secretMatches(rec, want, now) {

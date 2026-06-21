@@ -89,6 +89,10 @@
     const spec = p?.versions?.at(-1)?.spec;
     rules = spec ? spec.rules.map((r) => ({ ...r })) : [];
     dflt = spec?.default || 'refer';
+    // Drop the previous policy's preview-impact table and error — they belong to a
+    // different policy and would otherwise render under this one's editor.
+    btReport = null;
+    error = '';
   }
   function addRule() {
     rules = [...rules, { when: '', disposition: 'approve', code: '', description: '' }];

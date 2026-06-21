@@ -720,6 +720,23 @@ highest-value un-fuzzed boundaries (the runtime `Execute` path, the WAL on-disk 
 secret round-trip, feature aggregation — which surfaced the overflow bug — and the DOT exporter).
 Two pre-existing dead functions were removed to keep the deadcode gate green (dupl 9→8, none added).
 
+**Structural type-strengthening + Go↔TS enum codegen + sweep + fuzzing round 9 (TS33–TS36 /
+BF75–BF86 / FUZZ).** This round targeted the structural ("two fields must agree") and drift classes.
+Auth-key usability became a single `KeyStatus`/`Usable(now)` predicate (was open-coded three ways);
+the GBM `Link` became a typed `GBMLink` (a mistyped link no longer silently drops the sigmoid); the
+agent `Outcome` now enforces its Status⇄payload invariant at the package boundary. The biggest piece:
+the TS string-literal unions that mirror Go enums are now **generated from the Go consts**
+(`cmd/tsenums` → `enums.generated.ts`, `make tsenums`) with a Go drift-check test failing the gate if
+they fall out of sync — Go↔TS enum drift is now unrepresentable. The sweep fixed a **HIGH security**
+bug — a caller could forge the engine-reserved `features`/`predict`/… input namespaces when a flow had
+no such node, reading as trusted engine-resolved data (now stripped before injection) — plus a
+telemetry-repaint-on-edit race, duplicate-output collisions caught at publish, a non-tenant-scoped
+OAuth token cache, an empty-value connector-auth footgun, the rotate API-key role ceiling, a
+decision-table aggregate that could go non-finite/order-dependent, and a handful of web bugs
+(challenger-% clamp, stale backtest report, duplicate each-keys, blob-URL download race). Four more
+fuzz harnesses landed, including one over the security-critical SQLite DSN path parser (asserting
+read-only + directory containment) and one that surfaced the aggregate-overflow fix.
+
 ---
 
 ## 9. MVP non-goals

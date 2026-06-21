@@ -136,14 +136,14 @@
     <h2>Notes</h2>
     {#if c.notes.length === 0}<p class="muted">No notes.</p>{/if}
     <ul>
-      {#each c.notes as n (n.at)}<li>
+      {#each c.notes as n, i (i)}<li>
           <b>{n.author}</b>: {n.text} <span class="muted"><RelativeTime value={n.at} /></span>
         </li>{/each}
     </ul>
 
     <h2>Activity</h2>
     <ol class="timeline" data-testid="audit">
-      {#each c.audit as a (a.at + a.type)}
+      {#each c.audit as a, i (i)}
         <li>
           <span class="when muted" title={new Date(a.at).toLocaleString()}>
             <RelativeTime value={a.at} />
