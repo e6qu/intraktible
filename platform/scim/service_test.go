@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/scim"
 	"github.com/e6qu/intraktible/platform/store"
 )
@@ -99,7 +100,7 @@ func TestSCIMProvisionAndDeprovision(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	if !users.Allowed(ctx, "demo", "main", "ada@acme.com") {
+	if !users.Allowed(ctx, identity.Identity{Org: "demo", Workspace: "main"}, "ada@acme.com") {
 		t.Fatal("an active user should be allowed to log in")
 	}
 
@@ -109,11 +110,11 @@ func TestSCIMProvisionAndDeprovision(t *testing.T) {
 	if patch.Code != http.StatusOK {
 		t.Fatalf("patch -> %d body=%s", patch.Code, patch.Body.String())
 	}
-	if users.Allowed(ctx, "demo", "main", "ada@acme.com") {
+	if users.Allowed(ctx, identity.Identity{Org: "demo", Workspace: "main"}, "ada@acme.com") {
 		t.Fatal("a deactivated user must not be allowed to log in")
 	}
 	// An unprovisioned user is allowed (SCIM gates deprovisioning, not first login).
-	if !users.Allowed(ctx, "demo", "main", "newcomer@acme.com") {
+	if !users.Allowed(ctx, identity.Identity{Org: "demo", Workspace: "main"}, "newcomer@acme.com") {
 		t.Fatal("an unprovisioned user should be allowed")
 	}
 
@@ -122,7 +123,7 @@ func TestSCIMProvisionAndDeprovision(t *testing.T) {
 		`{"Operations":[{"op":"replace","value":{"active":true}}]}`); r.Code != http.StatusOK {
 		t.Fatalf("reactivate -> %d", r.Code)
 	}
-	if !users.Allowed(ctx, "demo", "main", "ada@acme.com") {
+	if !users.Allowed(ctx, identity.Identity{Org: "demo", Workspace: "main"}, "ada@acme.com") {
 		t.Fatal("reactivated user should be allowed")
 	}
 	if d := do(http.MethodDelete, "/scim/v2/Users/"+created.ID, ""); d.Code != http.StatusNoContent {
@@ -156,7 +157,7 @@ func TestSCIMGroupsDriveMembership(t *testing.T) {
 	var group scim.Group
 	_ = json.Unmarshal(g.Body.Bytes(), &group)
 
-	names, err := users.GroupsForUser(ctx, "demo", "main", "ada@acme.com")
+	names, err := users.GroupsForUser(ctx, identity.Identity{Org: "demo", Workspace: "main"}, "ada@acme.com")
 	if err != nil || len(names) != 1 || names[0] != "engineers" {
 		t.Fatalf("GroupsForUser = %v err=%v", names, err)
 	}
@@ -167,7 +168,7 @@ func TestSCIMGroupsDriveMembership(t *testing.T) {
 	if rm.Code != http.StatusOK {
 		t.Fatalf("patch remove -> %d body=%s", rm.Code, rm.Body.String())
 	}
-	if names, _ := users.GroupsForUser(ctx, "demo", "main", "ada@acme.com"); len(names) != 0 {
+	if names, _ := users.GroupsForUser(ctx, identity.Identity{Org: "demo", Workspace: "main"}, "ada@acme.com"); len(names) != 0 {
 		t.Fatalf("member should have been removed, groups=%v", names)
 	}
 
@@ -177,7 +178,7 @@ func TestSCIMGroupsDriveMembership(t *testing.T) {
 	if add.Code != http.StatusOK {
 		t.Fatalf("patch add -> %d body=%s", add.Code, add.Body.String())
 	}
-	if names, _ := users.GroupsForUser(ctx, "demo", "main", "ada@acme.com"); len(names) != 1 {
+	if names, _ := users.GroupsForUser(ctx, identity.Identity{Org: "demo", Workspace: "main"}, "ada@acme.com"); len(names) != 1 {
 		t.Fatalf("member should be back, groups=%v", names)
 	}
 
@@ -186,7 +187,7 @@ func TestSCIMGroupsDriveMembership(t *testing.T) {
 		`{"displayName":"engineers","members":[]}`); r.Code != http.StatusOK {
 		t.Fatalf("put replace -> %d", r.Code)
 	}
-	if names, _ := users.GroupsForUser(ctx, "demo", "main", "ada@acme.com"); len(names) != 0 {
+	if names, _ := users.GroupsForUser(ctx, identity.Identity{Org: "demo", Workspace: "main"}, "ada@acme.com"); len(names) != 0 {
 		t.Fatalf("PUT should have cleared membership, groups=%v", names)
 	}
 }
@@ -226,7 +227,7 @@ func TestSCIMExternalIDIdempotentCreate(t *testing.T) {
 	if second.UserName != "ada.lovelace@acme.com" {
 		t.Fatalf("re-create must update the userName, got %q", second.UserName)
 	}
-	all, err := users.List(ctx, "demo", "main", "", false)
+	all, err := users.List(ctx, identity.Identity{Org: "demo", Workspace: "main"}, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}

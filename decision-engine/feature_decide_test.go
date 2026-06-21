@@ -12,6 +12,7 @@ import (
 	"github.com/e6qu/intraktible/decision-engine/events"
 	"github.com/e6qu/intraktible/decision-engine/flows"
 	"github.com/e6qu/intraktible/decision-engine/internal/flowtest"
+	"github.com/e6qu/intraktible/platform/entity"
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/projection"
@@ -22,7 +23,7 @@ import (
 // without any dependency on the Context Layer.
 type stubFeatures map[string]float64
 
-func (s stubFeatures) Features(_ context.Context, _ identity.Identity, _, _ string) (map[string]float64, error) {
+func (s stubFeatures) Features(_ context.Context, _ identity.Identity, _ entity.Ref) (map[string]float64, error) {
 	return s, nil
 }
 

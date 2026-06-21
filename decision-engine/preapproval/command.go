@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/e6qu/intraktible/decision-engine/policy"
+	"github.com/e6qu/intraktible/platform/entity"
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/identity"
 )
@@ -87,14 +88,14 @@ func (h *Handler) Grant(ctx context.Context, id identity.Identity, cmd GrantCmd)
 }
 
 // Revoke invalidates an entity's current pre-approval.
-func (h *Handler) Revoke(ctx context.Context, id identity.Identity, entityType, entityID, reason string) (eventlog.Envelope, error) {
+func (h *Handler) Revoke(ctx context.Context, id identity.Identity, ref entity.Ref, reason string) (eventlog.Envelope, error) {
 	if err := id.Valid(); err != nil {
 		return eventlog.Envelope{}, err
 	}
-	if entityType == "" || entityID == "" {
+	if ref.Empty() {
 		return eventlog.Envelope{}, fmt.Errorf("preapproval: entity_type and entity_id are required")
 	}
-	return h.append(ctx, id, TypeRevoked, Revoked{EntityType: entityType, EntityID: entityID, Reason: reason})
+	return h.append(ctx, id, TypeRevoked, Revoked{EntityType: string(ref.Type), EntityID: string(ref.ID), Reason: reason})
 }
 
 func (h *Handler) append(ctx context.Context, id identity.Identity, typ string, payload any) (eventlog.Envelope, error) {

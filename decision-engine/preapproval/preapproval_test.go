@@ -10,6 +10,7 @@ import (
 
 	"github.com/e6qu/intraktible/decision-engine/policy"
 	"github.com/e6qu/intraktible/decision-engine/preapproval"
+	"github.com/e6qu/intraktible/platform/entity"
 	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/projection"
 	"github.com/e6qu/intraktible/platform/testutil"
@@ -32,7 +33,7 @@ func TestGrantActiveExpireRevoke(t *testing.T) {
 	}
 
 	now := time.Now().UTC()
-	v, ok, err := preapproval.ActiveFor(ctx, st, id, "applicant", "acme", now)
+	v, ok, err := preapproval.ActiveFor(ctx, st, id, entity.Ref{Type: "applicant", ID: "acme"}, now)
 	if err != nil || !ok {
 		t.Fatalf("expected an active pre-approval: ok=%v err=%v", ok, err)
 	}
@@ -41,18 +42,18 @@ func TestGrantActiveExpireRevoke(t *testing.T) {
 	}
 
 	// Expired beyond the 1-day window → not active.
-	if _, ok, _ := preapproval.ActiveFor(ctx, st, id, "applicant", "acme", now.Add(48*time.Hour)); ok {
+	if _, ok, _ := preapproval.ActiveFor(ctx, st, id, entity.Ref{Type: "applicant", ID: "acme"}, now.Add(48*time.Hour)); ok {
 		t.Fatal("expired pre-approval should not be active")
 	}
 
 	// Revoking invalidates it before expiry.
-	if _, err := h.Revoke(ctx, id, "applicant", "acme", "fraud flag"); err != nil {
+	if _, err := h.Revoke(ctx, id, entity.Ref{Type: "applicant", ID: "acme"}, "fraud flag"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := projection.New(log, st, preapproval.Projector{}).RebuildTo(ctx, 0); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok, _ := preapproval.ActiveFor(ctx, st, id, "applicant", "acme", now); ok {
+	if _, ok, _ := preapproval.ActiveFor(ctx, st, id, entity.Ref{Type: "applicant", ID: "acme"}, now); ok {
 		t.Fatal("revoked pre-approval should not be active")
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/e6qu/intraktible/platform/entity"
 	"github.com/e6qu/intraktible/platform/httpx"
 	"github.com/e6qu/intraktible/platform/store"
 )
@@ -73,7 +74,7 @@ func (s *Service) revoke(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, err)
 		return
 	}
-	e, err := s.cmd.Revoke(r.Context(), id, r.PathValue("type"), r.PathValue("id"), req.Reason)
+	e, err := s.cmd.Revoke(r.Context(), id, entity.Ref{Type: entity.Type(r.PathValue("type")), ID: entity.ID(r.PathValue("id"))}, req.Reason)
 	if err != nil {
 		httpx.Error(w, http.StatusBadRequest, err)
 		return
@@ -95,6 +96,6 @@ func (s *Service) get(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	v, found, err := Read(r.Context(), s.store, id, r.PathValue("type"), r.PathValue("id"))
+	v, found, err := Read(r.Context(), s.store, id, entity.Ref{Type: entity.Type(r.PathValue("type")), ID: entity.ID(r.PathValue("id"))})
 	httpx.WriteOne(w, v, found, err, "pre-approval not found")
 }

@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+
+	"github.com/e6qu/intraktible/platform/identity"
 )
 
 // scimPage applies SCIM 1-based startIndex/count paging to a result set and returns
@@ -46,6 +48,13 @@ type Service struct {
 // presents; org/workspace is the tenant users are provisioned into.
 func NewService(s *Store, token, org, workspace string) *Service {
 	return &Service{store: s, token: token, org: org, workspace: workspace}
+}
+
+// tenant is the fixed (org, workspace) this SCIM surface provisions into, as the
+// identity.Identity the Store now takes — so the tenancy is one value, not a
+// transposable (org, workspace) pair, at every Store call.
+func (svc *Service) tenant() identity.Identity {
+	return identity.Identity{Org: svc.org, Workspace: svc.workspace}
 }
 
 // Routes registers the SCIM Users endpoints (mounted public; bearer-authed here).
@@ -137,7 +146,7 @@ func (svc *Service) create(w http.ResponseWriter, r *http.Request) {
 
 func (svc *Service) list(w http.ResponseWriter, r *http.Request) {
 	name, filtered := userNameFilter(r.URL.Query().Get("filter"))
-	users, err := svc.store.List(r.Context(), svc.org, svc.workspace, name, filtered)
+	users, err := svc.store.List(r.Context(), svc.tenant(), name, filtered)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -153,7 +162,7 @@ func (svc *Service) list(w http.ResponseWriter, r *http.Request) {
 }
 
 func (svc *Service) get(w http.ResponseWriter, r *http.Request) {
-	u, ok, err := svc.store.Get(r.Context(), svc.org, svc.workspace, r.PathValue("id"))
+	u, ok, err := svc.store.Get(r.Context(), svc.tenant(), r.PathValue("id"))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -201,7 +210,7 @@ func (svc *Service) patch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "patch must set active")
 		return
 	}
-	u, err := svc.store.SetActive(r.Context(), svc.org, svc.workspace, r.PathValue("id"), active)
+	u, err := svc.store.SetActive(r.Context(), svc.tenant(), r.PathValue("id"), active)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
@@ -210,7 +219,7 @@ func (svc *Service) patch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (svc *Service) remove(w http.ResponseWriter, r *http.Request) {
-	if err := svc.store.Delete(r.Context(), svc.org, svc.workspace, r.PathValue("id")); err != nil {
+	if err := svc.store.Delete(r.Context(), svc.tenant(), r.PathValue("id")); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -232,7 +241,7 @@ func (svc *Service) createGroup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (svc *Service) listGroups(w http.ResponseWriter, r *http.Request) {
-	groups, err := svc.store.ListGroups(r.Context(), svc.org, svc.workspace)
+	groups, err := svc.store.ListGroups(r.Context(), svc.tenant())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -248,7 +257,7 @@ func (svc *Service) listGroups(w http.ResponseWriter, r *http.Request) {
 }
 
 func (svc *Service) getGroup(w http.ResponseWriter, r *http.Request) {
-	g, ok, err := svc.store.GetGroup(r.Context(), svc.org, svc.workspace, r.PathValue("id"))
+	g, ok, err := svc.store.GetGroup(r.Context(), svc.tenant(), r.PathValue("id"))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -267,7 +276,7 @@ func (svc *Service) replaceGroup(w http.ResponseWriter, r *http.Request) {
 	if !decodeSCIM(w, r, &g) {
 		return
 	}
-	out, err := svc.store.SetMembers(r.Context(), svc.org, svc.workspace, r.PathValue("id"), memberIDs(g.Members), MembersReplace)
+	out, err := svc.store.SetMembers(r.Context(), svc.tenant(), r.PathValue("id"), memberIDs(g.Members), MembersReplace)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
@@ -322,12 +331,12 @@ func (svc *Service) patchGroup(w http.ResponseWriter, r *http.Request) {
 		ops = append(ops, MemberOp{Mode: mode, IDs: ids})
 	}
 	if len(ops) > 0 {
-		if _, err := svc.store.PatchMembers(r.Context(), svc.org, svc.workspace, id, ops); err != nil {
+		if _, err := svc.store.PatchMembers(r.Context(), svc.tenant(), id, ops); err != nil {
 			writeError(w, http.StatusNotFound, err.Error())
 			return
 		}
 	}
-	g, ok, err := svc.store.GetGroup(r.Context(), svc.org, svc.workspace, id)
+	g, ok, err := svc.store.GetGroup(r.Context(), svc.tenant(), id)
 	if err != nil || !ok {
 		writeError(w, http.StatusNotFound, "group not found")
 		return
@@ -336,7 +345,7 @@ func (svc *Service) patchGroup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (svc *Service) removeGroup(w http.ResponseWriter, r *http.Request) {
-	if err := svc.store.DeleteGroup(r.Context(), svc.org, svc.workspace, r.PathValue("id")); err != nil {
+	if err := svc.store.DeleteGroup(r.Context(), svc.tenant(), r.PathValue("id")); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

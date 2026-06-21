@@ -164,6 +164,49 @@ func TestAuthorizeRBAC(t *testing.T) {
 	}
 }
 
+// TestAuthorizeRoutesByPattern checks AuthorizeRoutes classifies by the MATCHED
+// route template, not the raw path: a flow id segment that resembles a sensitive
+// route ("audit", "monitors") is still classified by the {id} template it matched,
+// so a user-controlled segment can never elevate or downgrade the required role.
+func TestAuthorizeRoutesByPattern(t *testing.T) {
+	kr := auth.NewKeyring()
+	id := identity.Identity{Org: "o", Workspace: "w", Actor: "u"}
+	kr.Add("viewer-k", auth.APIKey{ID: "v", Identity: id, Role: auth.RoleViewer})
+	kr.Add("editor-k", auth.APIKey{ID: "e", Identity: id, Role: auth.RoleEditor})
+	kr.Add("admin-k", auth.APIKey{ID: "a", Identity: id, Role: auth.RoleAdmin})
+
+	ok := func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/flows/{id}", ok)
+	mux.HandleFunc("POST /v1/flows/{id}/monitors", ok)
+	mux.HandleFunc("GET /v1/audit", ok)
+	h := httpx.Chain(mux, httpx.Authenticate(kr, auth.NewSessions()), httpx.AuthorizeRoutes(mux))
+
+	do := func(secret, method, path string) int {
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(method, path, http.NoBody)
+		r.Header.Set("X-Api-Key", secret)
+		h.ServeHTTP(w, r)
+		return w.Code
+	}
+	cases := []struct {
+		secret, method, path string
+		want                 int
+	}{
+		{"editor-k", "POST", "/v1/flows/f1/monitors", 200}, // monitors template → editor
+		{"viewer-k", "POST", "/v1/flows/f1/monitors", 403}, // ...not viewer
+		{"viewer-k", "GET", "/v1/flows/monitors", 200},     // id="monitors" matches {id} → viewer read, NOT editor
+		{"viewer-k", "GET", "/v1/flows/audit", 200},        // id="audit" matches {id} → viewer, NOT admin
+		{"admin-k", "GET", "/v1/audit", 200},               // the real audit route → admin
+		{"viewer-k", "GET", "/v1/audit", 403},              // ...denied to viewer
+	}
+	for _, c := range cases {
+		if got := do(c.secret, c.method, c.path); got != c.want {
+			t.Errorf("%s %s as %s -> %d, want %d", c.method, c.path, c.secret, got, c.want)
+		}
+	}
+}
+
 func TestAuthenticateSession(t *testing.T) {
 	kr := auth.NewKeyring()
 	sessions := auth.NewSessions()

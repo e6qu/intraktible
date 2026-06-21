@@ -353,7 +353,11 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 	var ssoGate httpx.LoginGate
 	var ssoAugment httpx.RoleAugmenter
 	if scimStore != nil {
-		ssoGate = scimStore.Allowed
+		// Adapt the SCIM Store's identity-typed deprovisioning gate to the login
+		// hook's (org, workspace, email) shape at the composition root.
+		ssoGate = func(ctx context.Context, org, workspace, email string) bool {
+			return scimStore.Allowed(ctx, identity.Identity{Org: org, Workspace: workspace}, email)
+		}
 		if groupRoles := parseGroupRoles(os.Getenv("INTRAKTIBLE_SCIM_GROUP_ROLES")); len(groupRoles) > 0 {
 			ssoAugment = scimRoleAugmenter(scimStore, groupRoles)
 		}
@@ -372,7 +376,7 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 		sh.Routes(root)
 		slog.Info("sso: SAML enabled", "providers", samlNames(samlers))
 	}
-	root.Handle("/v1/", httpx.Chain(api, httpx.Authenticate(keyring, sessions), httpx.Authorize))
+	root.Handle("/v1/", httpx.Chain(api, httpx.Authenticate(keyring, sessions), httpx.AuthorizeRoutes(api)))
 	handler := httpx.Chain(root, httpx.Recover, httpx.RequestID, httpx.Logger, httpx.Metrics)
 
 	srv := &http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: 5 * time.Second}
@@ -614,7 +618,7 @@ func samlNames(as []*auth.SAMLAuthenticator) []string {
 // from their SCIM group memberships (never below the token-derived base).
 func scimRoleAugmenter(users *scim.Store, groupRoles map[string]auth.Role) httpx.RoleAugmenter {
 	return func(ctx context.Context, org, workspace, email string, base auth.Role) auth.Role {
-		names, err := users.GroupsForUser(ctx, org, workspace, email)
+		names, err := users.GroupsForUser(ctx, identity.Identity{Org: org, Workspace: workspace}, email)
 		if err != nil {
 			return base
 		}
