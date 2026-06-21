@@ -72,7 +72,25 @@ const (
 	// TypeShadowSet assigns (or clears) a per-environment shadow version: a
 	// candidate evaluated alongside live decisions for divergence analysis.
 	TypeShadowSet = "decision.flow.shadow_set"
+	// TypeSLOSet records a flow's service-level objectives (success-rate + latency
+	// targets) used to report attainment and error-budget burn.
+	TypeSLOSet = "decision.flow.slo_set"
 )
+
+// SLOConfig is a flow's service-level objectives. SuccessTarget is the minimum
+// acceptable fraction of decisions that complete (vs fail), in [0,1] — e.g. 0.99.
+// LatencyTargetMS is the maximum acceptable average decision latency in ms (0 =
+// no latency objective). A zero SuccessTarget means no availability objective.
+type SLOConfig struct {
+	SuccessTarget   float64 `json:"success_target"`
+	LatencyTargetMS int64   `json:"latency_target_ms"`
+}
+
+// SLOSet records a flow's service-level objectives.
+type SLOSet struct {
+	FlowID string    `json:"flow_id"`
+	SLO    SLOConfig `json:"slo"`
+}
 
 // ShadowSet assigns the shadow version for one environment (Version 0 clears it).
 type ShadowSet struct {

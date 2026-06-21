@@ -159,6 +159,28 @@ func (c DeployVersion) Validate() error {
 	return nil
 }
 
+// SetSLO configures a flow's service-level objectives. A zeroed SLO (both targets
+// 0) clears any existing objectives.
+type SetSLO struct {
+	FlowID string
+	SLO    events.SLOConfig
+}
+
+// Validate checks the flow id and that the success target is a fraction in [0,1]
+// and the latency target is non-negative.
+func (c SetSLO) Validate() error {
+	if strings.TrimSpace(c.FlowID) == "" {
+		return errors.New("decision-engine: flow_id is required")
+	}
+	if c.SLO.SuccessTarget < 0 || c.SLO.SuccessTarget > 1 {
+		return fmt.Errorf("decision-engine: slo success_target %v: want a fraction in [0,1]", c.SLO.SuccessTarget)
+	}
+	if c.SLO.LatencyTargetMS < 0 {
+		return errors.New("decision-engine: slo latency_target_ms must be non-negative")
+	}
+	return nil
+}
+
 // SetPromotionPolicy configures promotion gates per target environment.
 type SetPromotionPolicy struct {
 	FlowID string

@@ -90,8 +90,10 @@ docker compose --profile pg up        # add a Postgres projection store
 | Variable | Purpose |
 | --- | --- |
 | `INTRAKTIBLE_AI_BASE_URL` · `_API_KEY` · `_MODEL` · `_PROVIDER` | Use a real OpenAI-compatible AI provider (otherwise a deterministic Stub) |
+| `INTRAKTIBLE_AI_PRICES` | Per-model token prices (e.g. `gpt-4o=2.5/10`, USD per million input/output tokens) to derive AI run cost on the Observability page |
 | `INTRAKTIBLE_POSTGRES_DSN` | Postgres DSN for `--store=postgres` |
 | `INTRAKTIBLE_CONNECTOR_ALLOW_PRIVATE` | Let HTTP connectors reach private/loopback hosts (off by default — SSRF guard) |
+| `INTRAKTIBLE_OTEL_EXPORTER` · `_SAMPLE_RATIO` | OpenTelemetry tracing: `stdout` or `otlp` (off by default; OTLP endpoint via the standard `OTEL_EXPORTER_OTLP_*` vars) |
 
 ### See it end-to-end
 

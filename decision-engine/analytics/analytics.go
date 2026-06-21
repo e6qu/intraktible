@@ -127,6 +127,53 @@ func Read(ctx context.Context, s store.Store, id identity.Identity, flowID strin
 	return store.GetDoc[FlowMetrics](ctx, s, Collection, store.Key(id.Org, id.Workspace, flowID))
 }
 
+// SLOAttainment reports a flow's measured performance against its objectives.
+// Measured over the flow's CUMULATIVE counts (the metrics read model is all-time,
+// not windowed), so it answers "since inception" — a rolling-window SLO would need
+// time-bucketed metrics, noted as a follow-up.
+type SLOAttainment struct {
+	Decisions int `json:"decisions"` // dispositioned volume: completed + failed
+	// Availability (success rate = completed / (completed + failed)).
+	SuccessRate     float64 `json:"success_rate"`
+	SuccessTarget   float64 `json:"success_target"`
+	SuccessMet      bool    `json:"success_met"`
+	ErrorBudget     float64 `json:"error_budget"`     // allowed failure fraction = 1 - target
+	BudgetRemaining float64 `json:"budget_remaining"` // 1 = full budget, <0 = over budget
+	// Latency (average decision duration vs the target; LatencyTargetMS 0 = no objective).
+	AvgLatencyMS    int64 `json:"avg_latency_ms"`
+	LatencyTargetMS int64 `json:"latency_target_ms"`
+	LatencyMet      bool  `json:"latency_met"`
+}
+
+// Attainment computes a flow's SLO attainment from its metrics against the given
+// targets. successTarget is the minimum success fraction in [0,1]; latencyTargetMS
+// is the max average latency (0 = no latency objective). With no decisions yet,
+// objectives are reported met (nothing has breached them).
+func Attainment(m FlowMetrics, successTarget float64, latencyTargetMS int64) SLOAttainment {
+	a := SLOAttainment{
+		Decisions: m.Completed + m.Failed, SuccessTarget: successTarget,
+		AvgLatencyMS: m.AvgDurationMS, LatencyTargetMS: latencyTargetMS,
+		SuccessMet: true, LatencyMet: true, BudgetRemaining: 1,
+	}
+	a.ErrorBudget = 1 - successTarget
+	if a.Decisions > 0 {
+		a.SuccessRate = float64(m.Completed) / float64(a.Decisions)
+		a.SuccessMet = a.SuccessRate >= successTarget
+		failureRate := float64(m.Failed) / float64(a.Decisions)
+		if a.ErrorBudget > 0 {
+			// Fraction of the failure budget still unspent (negative once exhausted).
+			a.BudgetRemaining = (a.ErrorBudget - failureRate) / a.ErrorBudget
+		} else if failureRate > 0 {
+			// A 100%-success target leaves no budget; any failure is over budget.
+			a.BudgetRemaining = 0
+		}
+	}
+	if latencyTargetMS > 0 {
+		a.LatencyMet = m.AvgDurationMS <= latencyTargetMS
+	}
+	return a
+}
+
 func update(ctx context.Context, s store.Store, e eventlog.Envelope, flowID string, mutate func(*FlowMetrics)) error {
 	if flowID == "" {
 		return fmt.Errorf("decision_metrics: event seq %d has no flow id", e.Seq)

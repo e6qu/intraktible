@@ -18,6 +18,13 @@ import (
 	"github.com/e6qu/intraktible/platform/auth"
 	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/metrics"
+	"github.com/e6qu/intraktible/platform/telemetry"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/propagation"
+	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // Middleware decorates an http.Handler.
@@ -60,6 +67,12 @@ func RequestID(next http.Handler) http.Handler {
 		w.Header().Set("X-Request-Id", id)
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), reqIDKey, id)))
 	})
+}
+
+// RequestIDOf returns the request id assigned by RequestID (empty if unset).
+func RequestIDOf(ctx context.Context) string {
+	id, _ := ctx.Value(reqIDKey).(string)
+	return id
 }
 
 // Recover turns panics into 500s instead of crashing the server. It wraps the
@@ -105,6 +118,44 @@ func Metrics(next http.Handler) http.Handler {
 		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(sw, r)
 		metrics.RecordHTTP(r.Pattern, r.Method, sw.status, time.Since(start))
+	})
+}
+
+// Tracing opens an OpenTelemetry server span per request, continuing any W3C
+// trace-context propagated by an upstream caller so the trace stitches across
+// services. The span is named by the MATCHED route pattern (low cardinality, set
+// during dispatch — read after the handler runs, like Metrics), not the raw path,
+// so per-ID URLs don't fan out into distinct span names. It records the method,
+// route, status, and the request id (for log↔trace correlation). When tracing is
+// disabled (the default) the tracer is a no-op and this costs effectively nothing.
+// Place it inside RequestID so the id is in context, and outside Logger/Metrics so
+// the whole handler is timed under the span.
+func Tracing(next http.Handler) http.Handler {
+	tracer := telemetry.Tracer()
+	prop := otel.GetTextMapPropagator()
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := prop.Extract(r.Context(), propagation.HeaderCarrier(r.Header))
+		ctx, span := tracer.Start(ctx, r.Method, trace.WithSpanKind(trace.SpanKindServer),
+			trace.WithAttributes(
+				semconv.HTTPRequestMethodKey.String(r.Method),
+				attribute.String("http.request_id", RequestIDOf(ctx)),
+			))
+		defer span.End()
+		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
+		// Pass the span-carrying request to the mux and read Pattern back from THAT
+		// request: the mux records the matched template on the request it dispatches,
+		// which is this clone, not the original r.
+		rr := r.WithContext(ctx)
+		next.ServeHTTP(sw, rr)
+		if rr.Pattern != "" {
+			route := patternPath(rr.Pattern)
+			span.SetName(rr.Method + " " + route)
+			span.SetAttributes(semconv.HTTPRoute(route))
+		}
+		span.SetAttributes(semconv.HTTPResponseStatusCode(sw.status))
+		if sw.status >= 500 {
+			span.SetStatus(codes.Error, http.StatusText(sw.status))
+		}
 	})
 }
 
@@ -267,6 +318,7 @@ func isAuthoringPath(path string) bool {
 		strings.Contains(path, "/monitors") || // define/delete a monitor; check pushes alerts
 		strings.HasSuffix(path, "/assertions") || // define a flow's test cases (run is separate)
 		strings.HasSuffix(path, "/shadow") || // assign a shadow version (PUT; GET is a viewer read)
+		strings.HasSuffix(path, "/slo") || // configure a flow's SLO targets (PUT; GET is a viewer read)
 		strings.HasPrefix(path, "/v1/webhooks") || // register/remove a notification endpoint
 		strings.HasSuffix(path, "/versions") || // publish a flow or policy version
 		path == "/v1/agents" || // define an agent

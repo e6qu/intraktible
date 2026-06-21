@@ -93,9 +93,12 @@ type FlowView struct {
 	PromotionPolicy    map[string]events.PromotionStagePolicy `json:"promotion_policy,omitempty"`
 	// Shadows maps an environment to a shadow version evaluated alongside live
 	// decisions for divergence analysis (absent = none).
-	Shadows   map[string]int `json:"shadows,omitempty"`
-	CreatedAt time.Time      `json:"created_at"`
-	UpdatedAt time.Time      `json:"updated_at"`
+	Shadows map[string]int `json:"shadows,omitempty"`
+	// SLO is the flow's service-level objectives (absent = none configured), against
+	// which attainment and error-budget burn are reported.
+	SLO       *events.SLOConfig `json:"slo,omitempty"`
+	CreatedAt time.Time         `json:"created_at"`
+	UpdatedAt time.Time         `json:"updated_at"`
 }
 
 // Projector folds flow lifecycle events into FlowView documents.
@@ -118,6 +121,7 @@ var flowAppliers = map[string]func(context.Context, eventlog.Envelope, store.Sto
 	events.TypeDeploymentRejected:   applyDeploymentRejected,
 	events.TypePromotionPolicySet:   applyPromotionPolicySet,
 	events.TypeShadowSet:            applyShadowSet,
+	events.TypeSLOSet:               applySLOSet,
 }
 
 // Apply maintains the flow document. Events of other types are not this
@@ -193,6 +197,22 @@ func applyPromotionPolicySet(ctx context.Context, e eventlog.Envelope, s store.S
 	}
 	return mutateFlow(ctx, s, e, p.FlowID, func(fv *FlowView) {
 		fv.PromotionPolicy = EffectivePromotionPolicy(p.Policy)
+	})
+}
+
+func applySLOSet(ctx context.Context, e eventlog.Envelope, s store.Store) error {
+	var p events.SLOSet
+	if err := json.Unmarshal(e.Payload, &p); err != nil {
+		return fmt.Errorf("decision_flows: decode slo_set seq %d: %w", e.Seq, err)
+	}
+	return mutateFlow(ctx, s, e, p.FlowID, func(fv *FlowView) {
+		// A zeroed objective clears the SLO (no targets) rather than storing an empty one.
+		if p.SLO.SuccessTarget == 0 && p.SLO.LatencyTargetMS == 0 {
+			fv.SLO = nil
+			return
+		}
+		slo := p.SLO
+		fv.SLO = &slo
 	})
 }
 

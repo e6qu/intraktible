@@ -80,6 +80,8 @@ func (s *Service) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/flows/{flow_id}", s.get)
 	mux.HandleFunc("GET /v1/flows/{slug}/openapi.json", s.flowOpenAPI)
 	mux.HandleFunc("GET /v1/flows/{flow_id}/metrics", s.metrics)
+	mux.HandleFunc("GET /v1/flows/{flow_id}/slo", s.getSLO)
+	mux.HandleFunc("PUT /v1/flows/{flow_id}/slo", s.setSLO)
 	mux.HandleFunc("POST /v1/flows/{flow_id}/versions", s.publish)
 	mux.HandleFunc("POST /v1/flows/{flow_id}/deployments", s.deploy)
 	mux.HandleFunc("POST /v1/flows/{flow_id}/promote", s.promote)
@@ -1452,4 +1454,58 @@ func (s *Service) metrics(w http.ResponseWriter, r *http.Request) {
 		m = analytics.FlowMetrics{FlowID: flowID, ByEnvironment: map[string]int{}, ByVersion: map[int]int{}, ByVariant: map[string]analytics.VariantStats{}}
 	}
 	httpx.JSON(w, http.StatusOK, m)
+}
+
+type sloRequest struct {
+	SuccessTarget   float64 `json:"success_target"`
+	LatencyTargetMS int64   `json:"latency_target_ms"`
+}
+
+// getSLO returns a flow's configured objectives (null when none) and its current
+// attainment computed from the live metrics.
+func (s *Service) getSLO(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	flowID := r.PathValue("flow_id")
+	fv, found, err := flows.Read(r.Context(), s.store, id, flowID)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	if !found {
+		httpx.Error(w, http.StatusNotFound, fmt.Errorf("flow not found"))
+		return
+	}
+	m, _, err := analytics.Read(r.Context(), s.store, id, flowID)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	resp := map[string]any{"slo": fv.SLO}
+	if fv.SLO != nil {
+		resp["attainment"] = analytics.Attainment(m, fv.SLO.SuccessTarget, fv.SLO.LatencyTargetMS)
+	}
+	httpx.JSON(w, http.StatusOK, resp)
+}
+
+// setSLO records a flow's objectives (a zeroed body clears them).
+func (s *Service) setSLO(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	var req sloRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	slo := events.SLOConfig{SuccessTarget: req.SuccessTarget, LatencyTargetMS: req.LatencyTargetMS}
+	e, err := s.cmd.SetSLO(r.Context(), id, domain.SetSLO{FlowID: r.PathValue("flow_id"), SLO: slo})
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"slo": slo, "event_id": e.ID, "seq": e.Seq})
 }

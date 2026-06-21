@@ -378,6 +378,31 @@ func (h *Handler) RejectDeployment(ctx context.Context, id identity.Identity, fl
 	return h.appendFlowEvent(ctx, id, events.TypeDeploymentRejected, payload)
 }
 
+// SetSLO records a flow's service-level objectives (success-rate + latency
+// targets). A zeroed SLO clears them.
+func (h *Handler) SetSLO(ctx context.Context, id identity.Identity, cmd domain.SetSLO) (eventlog.Envelope, error) {
+	if err := id.Valid(); err != nil {
+		return eventlog.Envelope{}, err
+	}
+	if err := cmd.Validate(); err != nil {
+		return eventlog.Envelope{}, err
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	byID, _, err := h.foldTenant(ctx, id)
+	if err != nil {
+		return eventlog.Envelope{}, err
+	}
+	if _, ok := byID[cmd.FlowID]; !ok {
+		return eventlog.Envelope{}, fmt.Errorf("decision-engine: unknown flow %q", cmd.FlowID)
+	}
+	payload, err := json.Marshal(events.SLOSet{FlowID: cmd.FlowID, SLO: cmd.SLO})
+	if err != nil {
+		return eventlog.Envelope{}, fmt.Errorf("decision-engine: marshal slo: %w", err)
+	}
+	return h.appendFlowEvent(ctx, id, events.TypeSLOSet, payload)
+}
+
 // SetPromotionPolicy records a flow's per-stage promotion gate policy.
 func (h *Handler) SetPromotionPolicy(ctx context.Context, id identity.Identity, cmd domain.SetPromotionPolicy) (eventlog.Envelope, error) {
 	if err := id.Valid(); err != nil {

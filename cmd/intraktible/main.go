@@ -19,6 +19,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -69,6 +70,7 @@ import (
 	"github.com/e6qu/intraktible/platform/projection"
 	"github.com/e6qu/intraktible/platform/scim"
 	"github.com/e6qu/intraktible/platform/store"
+	"github.com/e6qu/intraktible/platform/telemetry"
 	"github.com/e6qu/intraktible/platform/web"
 )
 
@@ -119,6 +121,18 @@ func serveCmd(args []string) error {
 func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	// Distributed tracing. Off unless INTRAKTIBLE_OTEL_EXPORTER is set; the shutdown
+	// flushes buffered spans on a bounded context so a clean exit doesn't drop them.
+	shutdownTracing, err := telemetry.Init(ctx, buildRevision())
+	if err != nil {
+		return err
+	}
+	defer func() {
+		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = shutdownTracing(sctx)
+	}()
 
 	log, err := openLog(logKind, dataDir)
 	if err != nil {
@@ -263,7 +277,13 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 		// on shutdown before the log closes.
 		agentHandler.StartWorkers(ctx, asyncRunWorkers)
 		defer agentHandler.DrainWorkers()
-		agentservice.New(agentHandler, st).Routes(api)
+		// Per-model prices (USD per million tokens) derive run cost in the run
+		// summary / observability surface; absent, only token counts are reported.
+		pricing, err := agents.ParsePricing(os.Getenv("INTRAKTIBLE_AI_PRICES"))
+		if err != nil {
+			return err
+		}
+		agentservice.New(agentHandler, st, agentservice.WithPricing(pricing)).Routes(api)
 	}
 
 	// Audit surface (platform capability, independent of the enabled modules): a
@@ -377,7 +397,7 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 		slog.Info("sso: SAML enabled", "providers", samlNames(samlers))
 	}
 	root.Handle("/v1/", httpx.Chain(api, httpx.Authenticate(keyring, sessions), httpx.AuthorizeRoutes(api)))
-	handler := httpx.Chain(root, httpx.Recover, httpx.RequestID, httpx.Logger, httpx.Metrics)
+	handler := httpx.Chain(root, httpx.Recover, httpx.RequestID, httpx.Tracing, httpx.Logger, httpx.Metrics)
 
 	srv := &http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: 5 * time.Second}
 	errc := make(chan error, 1)
@@ -397,6 +417,19 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 	shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	return srv.Shutdown(shutCtx)
+}
+
+// buildRevision returns the VCS revision embedded at build time (matching what
+// /version reports), used as the tracing resource's service.version.
+func buildRevision() string {
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		for _, s := range bi.Settings {
+			if s.Key == "vcs.revision" {
+				return s.Value
+			}
+		}
+	}
+	return "unknown"
 }
 
 // seedDevKey registers the well-known dev admin key on keyring, but ONLY with the
