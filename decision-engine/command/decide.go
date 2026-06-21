@@ -195,7 +195,8 @@ func (h *DecideHandler) Decide(ctx context.Context, id identity.Identity, slug, 
 	if len(fv.Versions) == 0 {
 		return DecideResult{}, fmt.Errorf("%w: flow %q has no published version", ErrNotFound, slug)
 	}
-	versionNo, variant := h.resolveVersion(fv, env)
+	versionNo, variantKind := h.resolveVersion(fv, env)
+	variant := string(variantKind) // recorded on the wire as a plain string
 	version, ok := versionByNumber(fv, versionNo)
 	if !ok {
 		return DecideResult{}, fmt.Errorf("%w: flow %q has no version %d", ErrNotFound, slug, versionNo)
@@ -682,15 +683,15 @@ func (h *DecideHandler) applyPolicy(ctx context.Context, id identity.Identity, s
 // champion (or the A/B challenger for ChallengerPct percent of traffic), falling
 // back to the latest published version when nothing is deployed. It returns the
 // version number and the variant; the choice is recorded so replay is stable.
-func (h *DecideHandler) resolveVersion(fv flows.FlowView, env string) (int, string) {
+func (h *DecideHandler) resolveVersion(fv flows.FlowView, env string) (int, domain.Variant) {
 	dep, ok := fv.Deployments[env]
 	if !ok || dep.Version == 0 {
-		return fv.Latest, "champion"
+		return fv.Latest, domain.VariantChampion
 	}
 	if dep.ChallengerVersion > 0 && h.roll() < dep.ChallengerPct {
-		return dep.ChallengerVersion, "challenger"
+		return dep.ChallengerVersion, domain.VariantChallenger
 	}
-	return dep.Version, "champion"
+	return dep.Version, domain.VariantChampion
 }
 
 func versionByNumber(fv flows.FlowView, n int) (flows.VersionView, bool) {

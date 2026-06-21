@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/e6qu/intraktible/decision-engine/domain"
 	"github.com/e6qu/intraktible/decision-engine/events"
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/identity"
@@ -114,7 +115,7 @@ func applyFailed(ctx context.Context, e eventlog.Envelope, s store.Store) error 
 // bump mutates the stats for a variant, defaulting an unset variant to champion.
 func bump(m *FlowMetrics, variant string, mutate func(*VariantStats)) {
 	if variant == "" {
-		variant = "champion"
+		variant = string(domain.VariantChampion)
 	}
 	v := m.ByVariant[variant]
 	mutate(&v)

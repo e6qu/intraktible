@@ -17,6 +17,7 @@ import (
 	agentdomain "github.com/e6qu/intraktible/agent-manager/domain"
 	casedomain "github.com/e6qu/intraktible/case-manager/domain"
 	dedomain "github.com/e6qu/intraktible/decision-engine/domain"
+	"github.com/e6qu/intraktible/decision-engine/flows"
 	"github.com/e6qu/intraktible/decision-engine/models"
 	"github.com/e6qu/intraktible/decision-engine/monitor"
 	"github.com/e6qu/intraktible/decision-engine/policy"
@@ -33,18 +34,19 @@ type tsEnum struct {
 
 // enums is the registry. Each value list references the REAL Go const, so the
 // generated TS is correct by construction. Only enums with a clean, exported Go
-// const set are here; composite/UI-only unions (DecisionStatus, BatchStatus) and
-// the few enums still carried as scattered string literals (Variant,
-// DeploymentRequestStatus) stay hand-defined in api.ts.
+// const set are here; composite/UI-only unions (DecisionStatus, BatchStatus) stay
+// hand-defined in api.ts.
 var enums = []tsEnum{
 	{"Disposition", "", strs(policy.Approve, policy.Decline, policy.Refer)},
 	{"RunStatus", "", strs(dedomain.StatusCompleted, dedomain.StatusFailed)},
+	{"Variant", "", strs(dedomain.VariantChampion, dedomain.VariantChallenger)},
 	{"Environment", "ENVIRONMENTS", strs(dedomain.EnvSandbox, dedomain.EnvStaging, dedomain.EnvProduction)},
 	{"CaseStatus", "", strs(casedomain.StatusNeedsReview, casedomain.StatusInProgress, casedomain.StatusCompleted)},
 	{"SLAState", "", strs(casedomain.SLAOnTrack, casedomain.SLADueSoon, casedomain.SLAOverdue)},
 	{"AgentRunStatus", "", strs(agentdomain.RunRunning, agentdomain.RunCompleted, agentdomain.RunFailed)},
 	{"ModelKind", "", strs(models.KindLogistic, models.KindGBM, models.KindExpression, models.KindExternal)},
 	{"PreApprovalStatus", "", strs(preapproval.StatusActive, preapproval.StatusRevoked)},
+	{"DeploymentRequestStatus", "", strs(flows.RequestPending, flows.RequestApproved, flows.RequestRejected)},
 	{"MonitorOp", "", strs(monitor.OpGreaterThan, monitor.OpLessThan)},
 	{"MonitorMetric", "MONITOR_METRICS", strs(
 		monitor.MetricFailureRate, monitor.MetricReferRate, monitor.MetricAutomationRate,

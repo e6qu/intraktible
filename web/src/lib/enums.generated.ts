@@ -8,6 +8,8 @@ export type Disposition = 'approve' | 'decline' | 'refer';
 
 export type RunStatus = 'completed' | 'failed';
 
+export type Variant = 'champion' | 'challenger';
+
 export type Environment = 'sandbox' | 'staging' | 'production';
 export const ENVIRONMENTS: readonly Environment[] = ['sandbox', 'staging', 'production'] as const;
 
@@ -20,6 +22,8 @@ export type AgentRunStatus = 'running' | 'completed' | 'failed';
 export type ModelKind = 'logistic' | 'gbm' | 'expression' | 'external';
 
 export type PreApprovalStatus = 'active' | 'revoked';
+
+export type DeploymentRequestStatus = 'pending' | 'approved' | 'rejected';
 
 export type MonitorOp = 'gt' | 'lt';
 

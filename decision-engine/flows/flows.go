@@ -47,19 +47,36 @@ type DeploymentView struct {
 	ChallengerPct     int `json:"challenger_pct,omitempty"`
 }
 
+// RequestStatus is the lifecycle state of a maker-checker deployment request. A
+// named type (not bare "pending"/"approved"/"rejected" literals scattered across the
+// projection and the command fold) so the values have one source. JSON-identical to
+// a plain string, so stored read models still decode.
+type RequestStatus string
+
+const (
+	RequestPending  RequestStatus = "pending"
+	RequestApproved RequestStatus = "approved"
+	RequestRejected RequestStatus = "rejected"
+)
+
+// Valid reports whether s is a known request status.
+func (s RequestStatus) Valid() bool {
+	return s == RequestPending || s == RequestApproved || s == RequestRejected
+}
+
 // DeploymentRequest is one maker-checker change request and its decision status.
 type DeploymentRequest struct {
-	RequestID         string    `json:"request_id"`
-	Environment       string    `json:"environment"`
-	Version           int       `json:"version"`
-	ChallengerVersion int       `json:"challenger_version,omitempty"`
-	ChallengerPct     int       `json:"challenger_pct,omitempty"`
-	Status            string    `json:"status"` // pending | approved | rejected
-	Reason            string    `json:"reason,omitempty"`
-	RequestedBy       string    `json:"requested_by"`
-	RequestedAt       time.Time `json:"requested_at"`
-	DecidedBy         string    `json:"decided_by,omitempty"`
-	DecidedAt         time.Time `json:"decided_at,omitempty"`
+	RequestID         string        `json:"request_id"`
+	Environment       string        `json:"environment"`
+	Version           int           `json:"version"`
+	ChallengerVersion int           `json:"challenger_version,omitempty"`
+	ChallengerPct     int           `json:"challenger_pct,omitempty"`
+	Status            RequestStatus `json:"status"` // pending | approved | rejected
+	Reason            string        `json:"reason,omitempty"`
+	RequestedBy       string        `json:"requested_by"`
+	RequestedAt       time.Time     `json:"requested_at"`
+	DecidedBy         string        `json:"decided_by,omitempty"`
+	DecidedAt         time.Time     `json:"decided_at,omitempty"`
 }
 
 // FlowView is the materialized read model for one flow.
@@ -137,7 +154,7 @@ func applyDeploymentRequested(ctx context.Context, e eventlog.Envelope, s store.
 		fv.DeploymentRequests = append(fv.DeploymentRequests, DeploymentRequest{
 			RequestID: p.RequestID, Environment: p.Environment, Version: p.Version,
 			ChallengerVersion: p.ChallengerVersion, ChallengerPct: p.ChallengerPct,
-			Status: "pending", RequestedBy: e.Actor, RequestedAt: e.Time,
+			Status: RequestPending, RequestedBy: e.Actor, RequestedAt: e.Time,
 		})
 	})
 }
@@ -155,7 +172,7 @@ func applyDeploymentApproved(ctx context.Context, e eventlog.Envelope, s store.S
 		fv.Deployments[p.Environment] = DeploymentView{
 			Version: p.Version, ChallengerVersion: p.ChallengerVersion, ChallengerPct: p.ChallengerPct,
 		}
-		decideRequest(fv, p.RequestID, "approved", p.Reason, e)
+		decideRequest(fv, p.RequestID, RequestApproved, p.Reason, e)
 	})
 }
 
@@ -165,7 +182,7 @@ func applyDeploymentRejected(ctx context.Context, e eventlog.Envelope, s store.S
 		return fmt.Errorf("decision_flows: decode deployment_rejected seq %d: %w", e.Seq, err)
 	}
 	return mutateFlow(ctx, s, e, p.FlowID, func(fv *FlowView) {
-		decideRequest(fv, p.RequestID, "rejected", p.Reason, e)
+		decideRequest(fv, p.RequestID, RequestRejected, p.Reason, e)
 	})
 }
 
@@ -197,7 +214,7 @@ func applyShadowSet(ctx context.Context, e eventlog.Envelope, s store.Store) err
 }
 
 // decideRequest stamps a request's terminal status, decider, and time.
-func decideRequest(fv *FlowView, reqID, status, reason string, e eventlog.Envelope) {
+func decideRequest(fv *FlowView, reqID string, status RequestStatus, reason string, e eventlog.Envelope) {
 	for i := range fv.DeploymentRequests {
 		if fv.DeploymentRequests[i].RequestID != reqID {
 			continue
