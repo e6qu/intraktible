@@ -81,10 +81,37 @@ func (h *Handler) AssignCase(ctx context.Context, id identity.Identity, cmd doma
 		events.CaseAssigned{CaseID: cmd.CaseID, Assignee: cmd.Assignee})
 }
 
-// SetStatus transitions an existing case to a new status.
+// SetStatus transitions an existing case to a new status. Unlike the other
+// mutations it folds the case's current status under the lock and enforces the
+// CaseStatus lifecycle: a completed (terminal) case cannot be reopened, which
+// would otherwise silently re-arm the SLA sweep against a legitimately-closed
+// case. Existence and transition checks are serialized with the append so the
+// decision is linearizable.
 func (h *Handler) SetStatus(ctx context.Context, id identity.Identity, cmd domain.SetStatus) (eventlog.Envelope, error) {
-	return h.onExisting(ctx, id, cmd.CaseID, cmd.Validate, events.TypeCaseStatusChanged,
-		events.CaseStatusChanged{CaseID: cmd.CaseID, Status: string(cmd.Status)})
+	if err := id.Valid(); err != nil {
+		return eventlog.Envelope{}, err
+	}
+	if err := cmd.Validate(); err != nil {
+		return eventlog.Envelope{}, err
+	}
+	b, err := json.Marshal(events.CaseStatusChanged{CaseID: cmd.CaseID, Status: string(cmd.Status)})
+	if err != nil {
+		return eventlog.Envelope{}, fmt.Errorf("case-manager: marshal %s: %w", events.TypeCaseStatusChanged, err)
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	states, err := h.caseStates(ctx, id)
+	if err != nil {
+		return eventlog.Envelope{}, err
+	}
+	st, ok := states[cmd.CaseID]
+	if !ok {
+		return eventlog.Envelope{}, fmt.Errorf("case-manager: unknown case %q", cmd.CaseID)
+	}
+	if !st.status.CanTransitionTo(cmd.Status) {
+		return eventlog.Envelope{}, fmt.Errorf("case-manager: cannot transition case %q from %s to %s", cmd.CaseID, st.status, cmd.Status)
+	}
+	return h.append(ctx, id, events.TypeCaseStatusChanged, b)
 }
 
 // AddNote appends a note to an existing case.

@@ -26,6 +26,17 @@ export type AgentRunStatus = 'running' | 'completed' | 'failed';
 export type ModelKind = 'logistic' | 'gbm' | 'expression' | 'external';
 export type PreApprovalStatus = 'active' | 'revoked';
 export type DeploymentRequestStatus = 'pending' | 'approved' | 'rejected';
+// Environment is the deploy/decision target. A union (not bare string) so a typo'd
+// environment fails type-check — notably the `=== 'production'` four-eyes gate, where
+// a mistyped literal would silently disable the maker-checker requirement.
+export type Environment = 'sandbox' | 'staging' | 'production';
+
+// assertNever flags a missing case in an exhaustive switch at compile time: passing
+// a value whose type isn't `never` (i.e. a case the switch failed to narrow away) is
+// a type error. At runtime it throws, so an unexpected wire value still fails loudly.
+export function assertNever(x: never, context = 'value'): never {
+  throw new Error(`unexpected ${context}: ${JSON.stringify(x)}`);
+}
 
 export interface HelloStats {
   org: string;
@@ -107,7 +118,7 @@ export interface DeploymentView {
 
 export interface DeploymentRequest {
   request_id: string;
-  environment: string;
+  environment: Environment;
   version: number;
   challenger_version?: number;
   challenger_pct?: number;
@@ -305,7 +316,7 @@ export interface Decision {
   flow_id: string;
   slug: string;
   version: number;
-  environment: string;
+  environment: Environment;
   variant?: Variant;
   status: DecisionStatus;
   data?: unknown;
@@ -443,7 +454,7 @@ export interface MonitorStatus {
 export interface Monitor {
   monitor_id: string;
   flow_id: string;
-  metric: string;
+  metric: MonitorMetric;
   op: MonitorOp;
   threshold: number;
   description?: string;
@@ -465,7 +476,7 @@ export async function listMonitors(
 export async function defineMonitor(
   key: string,
   flowId: string,
-  body: { metric: string; op: MonitorOp; threshold: number; description?: string },
+  body: { metric: MonitorMetric; op: MonitorOp; threshold: number; description?: string },
   fetcher: typeof fetch = fetch
 ): Promise<{ monitor_id: string }> {
   const res = await fetcher(`/v1/flows/${flowId}/monitors`, {
@@ -496,8 +507,8 @@ export async function deleteMonitor(
 
 export interface FiredMonitor {
   monitor_id: string;
-  metric: string;
-  op: string;
+  metric: MonitorMetric;
+  op: MonitorOp;
   threshold: number;
   actual: number;
   description?: string;
@@ -982,7 +993,7 @@ export async function publishVersion(
 }
 
 export interface DeployInput {
-  environment: string;
+  environment: Environment;
   version: number;
   challenger_version?: number;
   challenger_pct?: number;

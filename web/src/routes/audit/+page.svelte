@@ -96,15 +96,21 @@
     pushURL();
   }
 
+  // A generation token so overlapping loads (afterNavigate + Apply + paging) can't
+  // resolve out of order and show stale rows/total.
+  let loadSeq = 0;
   async function load() {
+    const seq = ++loadSeq;
     error = '';
     forbidden = false;
     loading = true;
     try {
       const page = await listAuditPage(key, filter());
+      if (seq !== loadSeq) return; // a newer load superseded this one
       list = page.entries;
       total = page.total;
     } catch (e) {
+      if (seq !== loadSeq) return;
       const m = msg(e);
       // The audit trail is admin-only; surface that clearly rather than as a raw 403.
       if (m.includes('admin') || m.includes('403')) {
@@ -113,7 +119,7 @@
         error = m;
       }
     } finally {
-      loading = false;
+      if (seq === loadSeq) loading = false;
     }
   }
 

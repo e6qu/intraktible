@@ -4,6 +4,8 @@
 // node's config and an accent colour per type. Pure and config-tolerant (a node
 // being edited may hold partial/invalid JSON), so the card never throws.
 
+import { assertNever } from '$lib/api';
+
 // NodeType is the closed set of flow-builder node kinds — the single source of
 // truth. NODE_TYPES (the type picker), the accent map, and the card summary all
 // derive from it, and the exhaustive switch in nodeSummary fails the build if a new
@@ -113,12 +115,10 @@ export function nodeSummary(type: string, config: string): string {
       return plural(len(c.reasons), 'reason code');
     case 'manual_review':
       return 'human review';
-    default: {
+    default:
       // Exhaustiveness guard: if a NodeType is added without a case above, `type` is
       // no longer `never` here and this fails to compile.
-      const _exhaustive: never = type;
-      return _exhaustive;
-    }
+      return assertNever(type, 'node type');
   }
 }
 

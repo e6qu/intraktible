@@ -254,13 +254,19 @@ func existingReasonCodes(ctx map[string]any) []any {
 	return []any{}
 }
 
+// hitPolicy is a DMN-style decision-table hit policy. It is a named type so the
+// resolution switch below ranges over typed constants rather than bare string
+// literals — a mistyped policy name fails to compile instead of silently falling
+// through to the runtime "unknown hit policy" error.
+type hitPolicy string
+
 // DMN-style hit policies for the decision table.
 const (
-	hitFirst     = "first"
-	hitUnique    = "unique"
-	hitAny       = "any"
-	hitRuleOrder = "rule_order"
-	hitCollect   = "collect"
+	hitFirst     hitPolicy = "first"
+	hitUnique    hitPolicy = "unique"
+	hitAny       hitPolicy = "any"
+	hitRuleOrder hitPolicy = "rule_order"
+	hitCollect   hitPolicy = "collect"
 )
 
 func evalDecisionTable(n events.Node, ctx map[string]any, edges []events.Edge) (any, string, error) {
@@ -268,7 +274,7 @@ func evalDecisionTable(n events.Node, ctx map[string]any, edges []events.Edge) (
 	if err := decodeConfig(n, &cfg); err != nil {
 		return nil, "", err
 	}
-	hit := strings.ToLower(strings.TrimSpace(cfg.Hit))
+	hit := hitPolicy(strings.ToLower(strings.TrimSpace(cfg.Hit)))
 	if hit == "" {
 		// Back-compat with the predecessor "mode" field: "all" applied every
 		// matching row in order (last write wins per target); anything else was FIRST.

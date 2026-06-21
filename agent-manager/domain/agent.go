@@ -34,6 +34,16 @@ func (s RunStatus) Valid() bool {
 	}
 }
 
+// ParseRunStatus converts a raw string (from an event payload) into a RunStatus,
+// reporting ok=false for an unknown value. The projector parses at the decode
+// boundary rather than casting, so a hand-crafted/legacy/future event carrying an
+// unknown status can't land an invalid RunStatus in the read model — where
+// SummarizeRuns's status switch would otherwise silently miscount it.
+func ParseRunStatus(s string) (RunStatus, bool) {
+	rs := RunStatus(s)
+	return rs, rs.Valid()
+}
+
 // DefineAgent registers (or redefines) an agent: a configuration over the
 // pluggable AI provider — a system prompt, an optional model + provider
 // selection, an optional structured-output JSON Schema, and a declared tool set.

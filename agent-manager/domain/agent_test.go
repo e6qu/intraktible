@@ -48,3 +48,19 @@ func TestEscalateRunValidate(t *testing.T) {
 		}
 	}
 }
+
+func TestParseRunStatus(t *testing.T) {
+	for _, s := range []string{"running", "completed", "failed"} {
+		if rs, ok := domain.ParseRunStatus(s); !ok || string(rs) != s {
+			t.Fatalf("ParseRunStatus(%q) = %q,%v", s, rs, ok)
+		}
+	}
+	// Unknown / empty values are rejected at the boundary so the projector can fall
+	// back to a safe terminal status rather than writing an invalid one.
+	if _, ok := domain.ParseRunStatus("escalated"); ok {
+		t.Fatal("ParseRunStatus must reject an unknown status")
+	}
+	if _, ok := domain.ParseRunStatus(""); ok {
+		t.Fatal("ParseRunStatus must reject an empty status")
+	}
+}

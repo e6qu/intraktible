@@ -66,6 +66,12 @@
   async function grant() {
     if (granting) return; // Enter submits the form directly, bypassing the disabled button
     error = '';
+    // A number input cleared to empty binds as null in Svelte 5; reject it rather
+    // than posting valid_days:null (or a non-positive window) to the API.
+    if (!Number.isInteger(gDays) || gDays < 1) {
+      error = 'Valid days must be a whole number of at least 1.';
+      return;
+    }
     let terms: Record<string, unknown> | undefined;
     const raw = gTerms.trim();
     if (raw) {

@@ -64,7 +64,9 @@
     type GraphNode,
     type GraphEdge,
     type Disposition,
-    type MonitorOp
+    type MonitorOp,
+    type MonitorMetric,
+    type Environment
   } from '$lib/api';
   import { toast } from '$lib/toast';
   import { diffGraphs, diffIsEmpty } from '$lib/diff';
@@ -75,7 +77,7 @@
   import FlowNode from '$lib/FlowNode.svelte';
   import BpmnNode from '$lib/BpmnNode.svelte';
   import LaneBand from '$lib/LaneBand.svelte';
-  import { nodeSummary, telemetrySummary, NODE_TYPES } from '$lib/nodevis';
+  import { nodeSummary, telemetrySummary, NODE_TYPES, type NodeType } from '$lib/nodevis';
   import {
     asText,
     asNum,
@@ -91,7 +93,7 @@
 
   interface EditNode {
     id: string;
-    type: string;
+    type: NodeType;
     name: string;
     config: string;
     pos?: XY; // saved canvas position; absent → auto-laid-out until placed/dragged
@@ -161,12 +163,12 @@
     if (nodeTelemetry.size > 0) nodeTelemetry = new Map();
   }
 
-  let newType = $state('input');
+  let newType = $state<NodeType>('input');
   let edgeFrom = $state('');
   let edgeTo = $state('');
   let edgeBranch = $state('');
 
-  let env = $state('production');
+  let env = $state<Environment>('production');
   let dataText = $state('{}');
   // Live JSON validity for the test-run input, and a one-click skeleton built from
   // the flow's input schema so you don't have to hand-write the shape.
@@ -338,7 +340,7 @@
       if (version) {
         editNodes = version.graph.nodes.map((n) => ({
           id: n.id,
-          type: n.type,
+          type: n.type as NodeType, // wire boundary: server graph carries the type as string
           name: n.name ?? '',
           config: n.config ? JSON.stringify(n.config) : '',
           pos: n.position,
@@ -772,7 +774,7 @@
       type E = { from?: string; to?: string; branch?: string };
       editNodes = (g.nodes as N[]).map((n) => ({
         id: String(n.id ?? ''),
-        type: String(n.type ?? ''),
+        type: String(n.type ?? '') as NodeType, // wire boundary: imported graph type is free-form
         name: n.name ?? '',
         config: n.config !== undefined ? JSON.stringify(n.config) : '',
         pos: n.position,
@@ -999,6 +1001,12 @@
     error = '';
     paReport = null;
     if (!flow) return;
+    // A cleared number input binds as null in Svelte 5; reject it rather than
+    // posting valid_days:null (or a non-positive window) to the API.
+    if (!Number.isInteger(paValidDays) || paValidDays < 1) {
+      error = 'Valid days must be a whole number of at least 1.';
+      return;
+    }
     paRunning = true;
     try {
       const dataset = JSON.parse(batchDataset) as Record<string, unknown>[];
@@ -1021,7 +1029,7 @@
   }
 
   let depVersion = $state('');
-  let depEnv = $state('sandbox');
+  let depEnv = $state<Environment>('sandbox');
   let depChallenger = $state('');
   let depChallengerPct = $state('');
   let deploying = $state(false);
@@ -1038,7 +1046,7 @@
     if (!flow) return;
     const version = parseInt(depVersion, 10) || flow.latest;
     const body: {
-      environment: string;
+      environment: Environment;
       version: number;
       challenger_version?: number;
       challenger_pct?: number;
@@ -1200,7 +1208,7 @@
   }
 
   let monitors = $state<Monitor[]>([]);
-  let monMetric = $state('failure_rate');
+  let monMetric = $state<MonitorMetric>('failure_rate');
   let monOp = $state<MonitorOp>('gt');
   let monThreshold = $state(0.05);
   let monDesc = $state('');
@@ -1231,6 +1239,12 @@
   }
   async function addMonitor() {
     error = '';
+    // A cleared number input binds as null in Svelte 5; reject a missing/non-finite
+    // threshold rather than posting null.
+    if (typeof monThreshold !== 'number' || !Number.isFinite(monThreshold)) {
+      error = 'Monitor threshold must be a number.';
+      return;
+    }
     monBusy = true;
     try {
       await defineMonitor(key, flowId, {
@@ -2030,7 +2044,7 @@
           >type
           <select
             value={selected.type}
-            onchange={(e) => updateSelected({ type: e.currentTarget.value })}
+            onchange={(e) => updateSelected({ type: e.currentTarget.value as NodeType })}
             aria-label="selected node type"
           >
             {#each NODE_TYPES as t (t)}<option value={t}>{t}</option>{/each}

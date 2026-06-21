@@ -65,3 +65,66 @@ func FuzzMermaid(f *testing.F) {
 		_ = export.MermaidState(g)     // must not panic
 	})
 }
+
+// FuzzDOT asserts the Graphviz exporters never panic on an arbitrary graph and that
+// the hand-rolled dotQuote escaper keeps output well-formed — crafted node ids/labels
+// (embedded quotes, backslashes, newlines, control bytes) must stay inside their
+// quoted DOT token rather than breaking out. The sibling BPMN/Mermaid exporters are
+// already fuzzed; DOT was the un-fuzzed one with its own escaper.
+func FuzzDOT(f *testing.F) {
+	seeds := []string{
+		`{"nodes":[{"id":"in","type":"input"},{"id":"o","type":"output"}],"edges":[{"from":"in","to":"o"}]}`,
+		`{"nodes":[{"id":"a\"b","type":"rule"},{"id":"c\\d","type":"split"}],"edges":[{"from":"a\"b","to":"c\\d"}]}`, // quote + backslash in ids
+		`{"nodes":[{"id":"line1\nline2","type":"code"}],"edges":[{"from":"line1\nline2","to":"ghost"}]}`,             // newline in id
+		`{}`,
+	}
+	for _, s := range seeds {
+		f.Add(s)
+	}
+	f.Fuzz(func(t *testing.T, graphJSON string) {
+		if !json.Valid([]byte(graphJSON)) {
+			return
+		}
+		var g events.Graph
+		if err := json.Unmarshal([]byte(graphJSON), &g); err != nil {
+			return
+		}
+		out := export.DOT(g) // must not panic
+		if out != "" && !strings.Contains(out, "digraph") {
+			t.Fatalf("non-empty DOT output is not a digraph: %q", out)
+		}
+		// Every line is a balanced sequence of unescaped quotes (each DOT token opens
+		// and closes its quote): a crafted id that broke out would leave an odd count.
+		for _, line := range strings.Split(out, "\n") {
+			if unescapedQuoteCount(line)%2 != 0 {
+				t.Fatalf("unbalanced quotes in DOT line: %q", line)
+			}
+		}
+		// RunDOT walks a parallel path with attacker-shaped step ids/types.
+		steps := make([]export.RunStep, 0, len(g.Nodes))
+		for _, n := range g.Nodes {
+			steps = append(steps, export.RunStep{NodeID: n.ID, Type: string(n.Type)})
+		}
+		_ = export.RunDOT("flow", steps, "done") // must not panic
+	})
+}
+
+// unescapedQuoteCount counts double quotes not preceded by an (odd run of) backslash
+// escape — the quotes that actually open/close a DOT token.
+func unescapedQuoteCount(s string) int {
+	n, backslashes := 0, 0
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '\\':
+			backslashes++
+		case '"':
+			if backslashes%2 == 0 {
+				n++
+			}
+			backslashes = 0
+		default:
+			backslashes = 0
+		}
+	}
+	return n
+}

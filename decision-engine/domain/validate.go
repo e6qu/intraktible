@@ -17,12 +17,12 @@ import (
 // decision. Mirrors the normalization the executor applies (lower/trim; empty hit
 // defaults to first / the deprecated mode path).
 func validateHitAggregate(n events.Node, cfg decisionTableConfig) error {
-	switch strings.ToLower(strings.TrimSpace(cfg.Hit)) {
+	switch hitPolicy(strings.ToLower(strings.TrimSpace(cfg.Hit))) {
 	case "", hitFirst, hitUnique, hitAny, hitRuleOrder, hitCollect:
 	default:
 		return fmt.Errorf("decision-engine: node %q: unknown hit policy %q (first|unique|any|rule_order|collect)", n.ID, cfg.Hit)
 	}
-	if strings.EqualFold(strings.TrimSpace(cfg.Hit), hitCollect) {
+	if strings.EqualFold(strings.TrimSpace(cfg.Hit), string(hitCollect)) {
 		switch strings.ToLower(strings.TrimSpace(cfg.Aggregate)) {
 		case "", "count", "sum", "min", "max":
 		default:

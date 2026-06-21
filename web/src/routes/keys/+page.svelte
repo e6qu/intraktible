@@ -82,25 +82,38 @@
     }
   }
 
+  // The key currently being rotated/revoked. A double-click on Rotate would
+  // otherwise mint TWO real secrets — the second overwrites `revealed`, so the
+  // first (valid, server-side) secret is shown to no one and is unrecoverable.
+  let mutating = $state<string | null>(null);
+
   async function rotate(id: string) {
+    if (mutating) return;
     error = '';
+    mutating = id;
     try {
       const { secret } = await rotateApiKey(key, id);
       revealed = { id, secret };
       await load();
     } catch (e) {
       error = msg(e);
+    } finally {
+      mutating = null;
     }
   }
 
   async function revoke(id: string) {
+    if (mutating) return;
     error = '';
+    mutating = id;
     try {
       await revokeApiKey(key, id);
       if (revealed?.id === id) revealed = null;
       await load();
     } catch (e) {
       error = msg(e);
+    } finally {
+      mutating = null;
     }
   }
 
@@ -209,8 +222,14 @@
               <td><span class="badge {status(k)}">{status(k)}</span></td>
               <td class="actions">
                 {#if status(k) === 'active'}
-                  <button class="link" onclick={() => rotate(k.id)}>Rotate</button>
-                  <button class="link danger" onclick={() => revoke(k.id)}>Revoke</button>
+                  <button class="link" onclick={() => rotate(k.id)} disabled={mutating !== null}
+                    >Rotate</button
+                  >
+                  <button
+                    class="link danger"
+                    onclick={() => revoke(k.id)}
+                    disabled={mutating !== null}>Revoke</button
+                  >
                 {:else}
                   <span class="muted">—</span>
                 {/if}

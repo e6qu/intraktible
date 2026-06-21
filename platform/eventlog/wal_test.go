@@ -173,3 +173,38 @@ func TestSubscribeReceivesAppends(t *testing.T) {
 		t.Fatal("expected event on subscription channel")
 	}
 }
+
+// FuzzWAL feeds arbitrary bytes as an on-disk log and asserts the decoder is
+// robust: OpenWAL + Read must never panic, and a successful Read must return a
+// contiguous run of seqs (1..Head) — i.e. the load() offset index and the Read()
+// record split never desync into a silent mis-read. Corruption is allowed to error
+// loudly; it is not allowed to crash or to return wrong/garbled envelopes.
+func FuzzWAL(f *testing.F) {
+	f.Add([]byte(`{"org":"o","workspace":"w","type":"t"}` + "\n"))
+	f.Add([]byte("\n\n{\"org\":\"o\",\"workspace\":\"w\",\"type\":\"t\"}\n{garbage"))
+	f.Add([]byte(`{"org":"o","workspace":"w","type":"a"}` + "\n" + `{"org":"o","workspace":"w","type":"b"}` + "\n"))
+	f.Add([]byte("   \n\x00\n"))
+	f.Fuzz(func(t *testing.T, raw []byte) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "events.log"), raw, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		w, err := OpenWAL(dir)
+		if err != nil {
+			return // an unreadable/corrupt log may fail to open — loud, not a crash
+		}
+		defer func() { _ = w.Close() }()
+		evs, err := w.Read(context.Background(), 1)
+		if err != nil {
+			return // a corrupt record fails loudly at Read — acceptable
+		}
+		if uint64(len(evs)) != w.Head() {
+			t.Fatalf("Read returned %d events but Head()=%d", len(evs), w.Head())
+		}
+		for i, e := range evs {
+			if e.Seq != uint64(i+1) {
+				t.Fatalf("non-contiguous seq at index %d: got %d, want %d", i, e.Seq, i+1)
+			}
+		}
+	})
+}

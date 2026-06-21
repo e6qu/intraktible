@@ -51,6 +51,17 @@ func TestDecodeJSON(t *testing.T) {
 	if err := httpx.DecodeJSON(r, &v); err == nil {
 		t.Fatal("expected unknown-field rejection")
 	}
+	// Trailing data after the first JSON value is rejected — a second object can't
+	// be smuggled past the strict decode.
+	r = httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"name":"ada"}{"name":"eve"}`))
+	if err := httpx.DecodeJSON(r, &v); err == nil {
+		t.Fatal("expected trailing-data rejection")
+	}
+	// Trailing whitespace is fine (a normal newline-terminated body).
+	r = httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{\"name\":\"ada\"}\n"))
+	if err := httpx.DecodeJSON(r, &v); err != nil {
+		t.Fatalf("trailing whitespace should decode: %v", err)
+	}
 }
 
 func TestVersionHandler(t *testing.T) {

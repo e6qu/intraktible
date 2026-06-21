@@ -13,6 +13,7 @@ import {
   type CaseSummary,
   type RunSummary
 } from '$lib/api';
+import type { HomeStatId } from '$lib/persona';
 
 export interface DashboardData {
   flows: Flow[];
@@ -107,6 +108,54 @@ export function decisionsByDay(
 
 export function pct(n: number): string {
   return `${Math.round(n * 100)}%`;
+}
+
+// HomeStat is one rendered PersonaHome tile: a value plus its short label.
+export interface HomeStat {
+  id: HomeStatId;
+  value: string | number;
+  label: string;
+}
+
+// DEFAULT_HOME_STATS is the generic deck for personas that declare no homeStats.
+export const DEFAULT_HOME_STATS: HomeStatId[] = ['decisions', 'completed', 'flows'];
+
+// personaHomeStats resolves a persona's chosen stat ids into rendered tiles, computed
+// from the SAME dashboard data every persona loads — the role chooses which questions
+// to foreground (a manager's pending/overdue vs a developer's failed/latency), not a
+// different dataset. A switch (not an index) keeps the mapping exhaustive and clear of
+// the object-injection lint.
+export function personaHomeStats(ids: HomeStatId[], data: DashboardData): HomeStat[] {
+  const stats = decisionStats(data.decisions);
+  const deploy = deployStats(data.flows);
+  const challenger = data.decisions.filter((d) => d.variant === 'challenger').length;
+  const stat = (id: HomeStatId): HomeStat => {
+    switch (id) {
+      case 'decisions':
+        return { id, value: stats.total, label: 'decisions' };
+      case 'completed':
+        return { id, value: stats.completed, label: 'completed' };
+      case 'failed':
+        return { id, value: stats.failed, label: 'failed' };
+      case 'flows':
+        return { id, value: data.flows.length, label: 'flows' };
+      case 'p95':
+        return { id, value: `${stats.p95Ms} ms`, label: 'p95 latency' };
+      case 'completion_rate':
+        return { id, value: pct(stats.completionRate), label: 'completion' };
+      case 'pending_approvals':
+        return { id, value: deploy.pending, label: 'pending approvals' };
+      case 'needs_review':
+        return { id, value: data.cases.by_status?.needs_review ?? 0, label: 'needs review' };
+      case 'overdue':
+        return { id, value: data.cases.overdue, label: 'overdue' };
+      case 'unassigned':
+        return { id, value: data.cases.unassigned, label: 'unassigned' };
+      case 'challenger':
+        return { id, value: challenger, label: 'challenger arm' };
+    }
+  };
+  return ids.map(stat);
 }
 
 // compact formats a count with a k suffix past 1000 (e.g. 12_400 → "12.4k").

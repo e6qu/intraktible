@@ -12,7 +12,8 @@
     assignCase,
     setCaseStatus,
     type Case,
-    type CaseSummary
+    type CaseSummary,
+    type CaseStatus
   } from '$lib/api';
   import { resolvePersona, personaLens } from '$lib/persona';
 
@@ -26,13 +27,24 @@
   // review queue); other personas see the full list. Just the default focus — the
   // filter control below lets the user widen or change it.
   const casesLens = personaLens(resolvePersona()).cases ?? {};
-  let statusFilter = $state<string>(casesLens.status ?? '');
+  let statusFilter = $state<CaseStatus | ''>(casesLens.status ?? '');
   let list = $state<Case[]>([]);
   // The persona may also order the queue: 'urgency' surfaces the soonest-due / overdue
   // cases first (days_left ascending — overdue cases are <= 0). Same data, re-ordered
   // for the viewer; non-urgency personas keep store order.
   const sorted = $derived(
     casesLens.sort === 'urgency' ? [...list].sort((a, b) => a.days_left - b.days_left) : list
+  );
+  // Empty-state copy: when the persona's lens is the active filter and it supplies a
+  // role-specific message (e.g. an operator's "queue is clear"), use it; otherwise the
+  // generic per-filter message.
+  const emptyCopy = $derived(
+    casesLens.empty && statusFilter === (casesLens.status ?? '')
+      ? casesLens.empty
+      : {
+          title: statusFilter ? `No ${statusFilter} cases` : 'The review queue is clear',
+          hint: "Cases open here when a flow's manual-review node escalates, an agent run is escalated, or you open one above."
+        }
   );
   let summary = $state<CaseSummary | null>(null);
   let error = $state('');
@@ -57,19 +69,28 @@
     selectedIds = allSelected ? [] : list.map((c) => c.case_id);
   }
 
+  // A generation token so overlapping loads (rapid status-filter changes / Reload)
+  // don't clobber: only the latest request's response is allowed to write the list,
+  // matching the decisions page. Without it a slower earlier response could resolve
+  // last and leave rows that no longer match the selected status.
+  let loadSeq = 0;
   async function load() {
+    const seq = ++loadSeq;
     loading = true;
     error = '';
     selectedIds = []; // the list is changing; drop a stale selection
     try {
-      [list, summary] = await Promise.all([
+      const [nextList, nextSummary] = await Promise.all([
         listCases(key, { status: statusFilter }),
         getCaseSummary(key)
       ]);
+      if (seq !== loadSeq) return; // a newer load superseded this one
+      list = nextList;
+      summary = nextSummary;
     } catch (e) {
-      error = msg(e);
+      if (seq === loadSeq) error = msg(e);
     } finally {
-      loading = false;
+      if (seq === loadSeq) loading = false;
     }
   }
 
@@ -225,11 +246,7 @@
   {#if loading}
     <Skeleton rows={5} />
   {:else if list.length === 0}
-    <EmptyState
-      icon="cases"
-      title={statusFilter ? `No ${statusFilter} cases` : 'The review queue is clear'}
-      hint="Cases open here when a flow's manual-review node escalates, an agent run is escalated, or you open one above."
-    />
+    <EmptyState icon="cases" title={emptyCopy.title} hint={emptyCopy.hint} />
   {:else}
     <div class="table-wrap">
       <table>
