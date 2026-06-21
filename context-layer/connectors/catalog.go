@@ -2,19 +2,23 @@
 
 package connectors
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"github.com/e6qu/intraktible/context-layer/domain"
+)
 
 // Template is a starting point for a connector: a category, the connector type,
 // and a config scaffold the operator edits (replacing the placeholder URL/DSN and
 // filling in credentials). Credential fields (token/secret/api_key/…) are sealed
 // at rest by the connector secret keyring and never served back unredacted.
 type Template struct {
-	ID          string          `json:"id"`
-	Name        string          `json:"name"`
-	Category    string          `json:"category"`
-	Type        string          `json:"type"` // http | graphql | sql | static | plaid | stripe
-	Description string          `json:"description"`
-	Config      json.RawMessage `json:"config"`
+	ID          string               `json:"id"`
+	Name        string               `json:"name"`
+	Category    string               `json:"category"`
+	Type        domain.ConnectorType `json:"type"` // a typed connector kind, not a free string
+	Description string               `json:"description"`
+	Config      json.RawMessage      `json:"config"`
 }
 
 // Catalog is the curated set of connector templates for common decisioning

@@ -326,6 +326,26 @@ func TestEncryptDecryptSecrets(t *testing.T) {
 	}
 }
 
+// TestEncryptSecretsSealsEnvelopeLookalike guards the strict isSecretEnvelope shape:
+// a credential value that is an OBJECT merely carrying the $intraktible_sealed marker
+// (plus other fields) is NOT a real sealed envelope and must still be sealed — not
+// passed through in the clear.
+func TestEncryptSecretsSealsEnvelopeLookalike(t *testing.T) {
+	kr, err := connectors.NewKeyring([]byte("0123456789abcdef0123456789abcdef"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A "password" whose value carries the marker AND an extra "evil" plaintext field.
+	cfg := json.RawMessage(`{"password":{"$intraktible_sealed":"intraktible.sealed.v1","value":"x","evil":"leak-me"}}`)
+	enc, err := connectors.EncryptSecrets(cfg, kr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(enc), "leak-me") {
+		t.Fatalf("envelope-lookalike credential was passed through in the clear: %s", enc)
+	}
+}
+
 func TestKMSKeyringRoundTrip(t *testing.T) {
 	kr := connectors.NewKMSKeyring("kms:test", kms.Fake{})
 	cfg := json.RawMessage(`{"dsn":"file:secret.db","token":"sk-123","keep":"ok"}`)

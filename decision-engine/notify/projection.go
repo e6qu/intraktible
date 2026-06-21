@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sort"
 	"time"
 
 	"github.com/e6qu/intraktible/platform/eventlog"
@@ -32,6 +31,10 @@ type View struct {
 	LastDeliveryAt time.Time `json:"last_delivery_at,omitempty"`
 	CreatedAt      time.Time `json:"created_at"`
 	CreatedBy      string    `json:"created_by"`
+	// Seq is the creation event's log sequence — a strict monotonic tiebreaker so two
+	// webhooks created in the same clock tick sort deterministically across reads and
+	// across incremental-vs-rebuilt projections (the comments/notifications fix, here).
+	Seq uint64 `json:"seq"`
 }
 
 // Projector folds the webhook stream into the read model.
@@ -49,7 +52,7 @@ func (Projector) Apply(ctx context.Context, e eventlog.Envelope, s store.Store) 
 		}
 		v := View{
 			Org: e.Org, Workspace: e.Workspace, WebhookID: p.WebhookID, URL: p.URL,
-			Note: p.Note, Active: true, CreatedAt: e.Time, CreatedBy: e.Actor,
+			Note: p.Note, Active: true, CreatedAt: e.Time, CreatedBy: e.Actor, Seq: e.Seq,
 		}
 		return store.PutDoc(ctx, s, Collection, store.Key(e.Org, e.Workspace, p.WebhookID), v)
 	case TypeUnsubscribed:
@@ -72,14 +75,10 @@ func (Projector) Apply(ctx context.Context, e eventlog.Envelope, s store.Store) 
 	return nil
 }
 
-// List returns the tenant's webhooks, newest first.
+// List returns the tenant's webhooks, newest first (Seq breaks same-tick ties).
 func List(ctx context.Context, s store.Store, id identity.Identity) ([]View, error) {
-	out, err := store.ListDocs[View](ctx, s, Collection, store.Key(id.Org, id.Workspace, ""))
-	if err != nil {
-		return nil, err
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
-	return out, nil
+	return store.ListByTime(ctx, s, Collection, store.Key(id.Org, id.Workspace, ""),
+		func(v View) time.Time { return v.CreatedAt }, func(v View) uint64 { return v.Seq }, true)
 }
 
 // active returns the tenant's active webhooks (delivery targets).

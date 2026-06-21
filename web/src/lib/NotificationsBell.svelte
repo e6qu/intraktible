@@ -49,7 +49,7 @@
           <li>
             <button class="item" class:unread={!n.read} onclick={() => markRead(n)}>
               <span class="meta"
-                ><b>{n.author}</b> mentioned you on a {n.subject_type.replace('_', ' ')} ·
+                ><b>{n.author}</b> mentioned you on a {n.subject_type.replace(/_/g, ' ')} ·
                 <RelativeTime value={n.created_at} /></span
               >
               <span class="snip">{n.snippet}</span>

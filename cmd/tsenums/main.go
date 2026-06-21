@@ -16,12 +16,15 @@ import (
 
 	agentdomain "github.com/e6qu/intraktible/agent-manager/domain"
 	casedomain "github.com/e6qu/intraktible/case-manager/domain"
+	ctxdomain "github.com/e6qu/intraktible/context-layer/domain"
 	dedomain "github.com/e6qu/intraktible/decision-engine/domain"
+	"github.com/e6qu/intraktible/decision-engine/events"
 	"github.com/e6qu/intraktible/decision-engine/flows"
 	"github.com/e6qu/intraktible/decision-engine/models"
 	"github.com/e6qu/intraktible/decision-engine/monitor"
 	"github.com/e6qu/intraktible/decision-engine/policy"
 	"github.com/e6qu/intraktible/decision-engine/preapproval"
+	"github.com/e6qu/intraktible/platform/auth"
 )
 
 // tsEnum is one generated union: its TS type name, an optional runtime array name
@@ -40,6 +43,15 @@ var enums = []tsEnum{
 	{"Disposition", "", strs(policy.Approve, policy.Decline, policy.Refer)},
 	{"RunStatus", "", strs(dedomain.StatusCompleted, dedomain.StatusFailed)},
 	{"Variant", "", strs(dedomain.VariantChampion, dedomain.VariantChallenger)},
+	{"NodeType", "", strs(
+		events.NodeInput, events.NodeRule, events.NodeSplit, events.NodeAssignment,
+		events.NodeScorecard, events.NodeDecisionTable, events.NodeMatrix2D, events.NodeCode,
+		events.NodeAI, events.NodeConnect, events.NodePredict, events.NodeManualReview,
+		events.NodeReason, events.NodeOutput,
+	)},
+	{"Aggregation", "AGGREGATIONS", strs(ctxdomain.AggCount, ctxdomain.AggSum)},
+	{"Role", "ROLES", strs(auth.RoleViewer, auth.RoleOperator, auth.RoleEditor, auth.RoleApprover, auth.RoleAdmin)},
+	{"Scope", "SCOPES", strs(auth.Sandbox, auth.Production, auth.ScopeAll)},
 	{"Environment", "ENVIRONMENTS", strs(dedomain.EnvSandbox, dedomain.EnvStaging, dedomain.EnvProduction)},
 	{"CaseStatus", "", strs(casedomain.StatusNeedsReview, casedomain.StatusInProgress, casedomain.StatusCompleted)},
 	{"SLAState", "", strs(casedomain.SLAOnTrack, casedomain.SLADueSoon, casedomain.SLAOverdue)},

@@ -157,8 +157,12 @@ func (w *WAL) Read(_ context.Context, fromSeq uint64) ([]Envelope, error) {
 	}
 	start := w.offsets[fromSeq-1]
 	buf := make([]byte, w.size-start)
-	if _, err := w.f.ReadAt(buf, start); err != nil && err != io.EOF {
-		return nil, fmt.Errorf("eventlog: read from seq %d: %w", fromSeq, err)
+	// ReadAt fills exactly len(buf) on success; a short read (io.EOF with n<len)
+	// means the file was truncated under us since the offset index was built — fail
+	// loudly rather than json.Unmarshal a partly-zero buffer or silently return fewer
+	// events than Head() reports.
+	if nRead, err := w.f.ReadAt(buf, start); err != nil && (err != io.EOF || nRead != len(buf)) {
+		return nil, fmt.Errorf("eventlog: read from seq %d (%d/%d bytes): %w", fromSeq, nRead, len(buf), err)
 	}
 	out := make([]Envelope, 0, n-fromSeq+1)
 	seq := fromSeq

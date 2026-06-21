@@ -177,7 +177,8 @@ func requiredRole(method, path string) auth.Role {
 	// The audit surface exposes every actor's activity across the tenant. It is
 	// read-only but sensitive, so it is gated to admins regardless of method —
 	// checked before the general read rule below.
-	if path == "/v1/audit" || strings.HasPrefix(path, "/v1/api-keys") || strings.HasPrefix(path, "/v1/erasure") {
+	if path == "/v1/audit" || strings.HasPrefix(path, "/v1/audit/") ||
+		strings.HasPrefix(path, "/v1/api-keys") || strings.HasPrefix(path, "/v1/erasure") {
 		return auth.RoleAdmin
 	}
 	// The streaming run endpoints are GET (EventSource/WebSocket are GET-only) but

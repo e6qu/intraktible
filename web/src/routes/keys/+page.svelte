@@ -12,13 +12,17 @@
     createApiKey,
     rotateApiKey,
     revokeApiKey,
-    type ManagedApiKey
+    ROLES,
+    SCOPES,
+    type ManagedApiKey,
+    type Role,
+    type Scope,
+    type CreateApiKeyRequest
   } from '$lib/api';
 
   // Authenticates via the session cookie (empty key → no X-Api-Key header).
+  // ROLES/SCOPES are the generated (Go-sourced) option lists — no hand-duplication.
   const key = '';
-  const ROLES = ['viewer', 'operator', 'editor', 'approver', 'admin'];
-  const SCOPES = ['sandbox', 'production', '*'];
 
   let keys = $state<ManagedApiKey[]>([]);
   let error = $state('');
@@ -27,8 +31,8 @@
   // new-key form
   let name = $state('');
   let actor = $state('');
-  let role = $state('operator');
-  let scope = $state('sandbox');
+  let role = $state<Role>('operator');
+  let scope = $state<Scope>('sandbox');
   let expires = $state('');
   let busy = $state(false);
 
@@ -61,13 +65,7 @@
     error = '';
     busy = true;
     try {
-      const req: {
-        name: string;
-        actor: string;
-        role: string;
-        scope?: string;
-        expires_at?: string;
-      } = { name: name.trim(), actor: actor.trim(), role, scope };
+      const req: CreateApiKeyRequest = { name: name.trim(), actor: actor.trim(), role, scope };
       if (expires) req.expires_at = new Date(expires).toISOString();
       const { api_key, secret } = await createApiKey(key, req);
       revealed = { id: api_key.id, secret };

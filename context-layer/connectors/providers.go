@@ -163,6 +163,10 @@ func (a *authConfig) oauthToken(ctx context.Context, client *http.Client) (strin
 	if err != nil {
 		return "", err
 	}
+	// Re-read the clock AFTER the (up to several-second) token round-trip: using the
+	// pre-fetch `now` would truncate the new entry's effective TTL by the fetch
+	// latency and sweep with a stale clock.
+	now = time.Now()
 	oauthTokens.mu.Lock()
 	// Evict entries that have expired (a deleted/rotated connector's key is never
 	// looked up again, so it would otherwise linger) before inserting the fresh one.

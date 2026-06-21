@@ -24,7 +24,7 @@ func TestCatalogIsWellFormed(t *testing.T) {
 			t.Fatalf("duplicate template id %q", tpl.ID)
 		}
 		seen[tpl.ID] = true
-		if !domain.ValidConnectorType(tpl.Type) {
+		if !domain.ValidConnectorType(string(tpl.Type)) {
 			t.Fatalf("template %q has unsupported type %q", tpl.ID, tpl.Type)
 		}
 		var cfg map[string]any

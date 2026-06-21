@@ -745,6 +745,21 @@ the command-side fold, and the service responses, with `Valid()` methods. `cmd/t
 both, so all 12 Go↔TS enums flow from the single Go source through the codegen + drift check (api.ts
 no longer hand-defines any 1:1 enum).
 
+**Bug sweep + type-strengthening + fuzzing round 10 (BF87–BF95 / TS38–TS39 / FUZZ).** Four parallel
+sweep agents over the less-trodden code. Security fixes: a too-loose sealed-envelope check that could
+write a credential-shaped object to the log in the clear (now requires the exact envelope shape), and
+a defense-in-depth tightening of the audit authz gate. Correctness: a determinism tiebreaker for the
+webhook/monitor list ordering (folded into a shared generic `store.SortByTime`/`ListByTime` now used
+by history, notify, and monitor), a WAL short-read guard, an OAuth token-cache clock fix, and four web
+fixes (a blob-URL download race, an SSO-discovery rejection, a silent agent-stream error, a
+notification label). Type-strengthening extended the Go→TS codegen to NodeType/Aggregation/Role/Scope
+(16 generated unions; the keys page's hand-duplicated ROLES/SCOPES are gone), typed the monitor
+command + connector-catalog type, and four more `api.ts` fields. Four fuzz harnesses landed at
+security/recursion boundaries — PII-redaction completeness, crypto-shred round-trip, the Starlark
+conversion fixpoint, and CSV-injection neutralization. Documented-not-fixed (deliberate, scoped as
+follow-ups): the cross-process version/slug TOCTOU (needs a storage-layer compare-and-set; the
+monolith is correct), NATS live-delivery catch-up across reconnect, and SCIM list pagination.
+
 ---
 
 ## 9. MVP non-goals

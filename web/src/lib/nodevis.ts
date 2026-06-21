@@ -5,27 +5,14 @@
 // being edited may hold partial/invalid JSON), so the card never throws.
 
 import { assertNever } from '$lib/api';
+import type { NodeType } from './enums.generated';
 
-// NodeType is the closed set of flow-builder node kinds — the single source of
-// truth. NODE_TYPES (the type picker), the accent map, and the card summary all
-// derive from it, and the exhaustive switch in nodeSummary fails the build if a new
-// kind is added without being handled, so the type system makes "forgot to handle
-// the new node type" unrepresentable rather than a silent neutral fallback.
-export type NodeType =
-  | 'input'
-  | 'assignment'
-  | 'rule'
-  | 'split'
-  | 'scorecard'
-  | 'decision_table'
-  | '2d_matrix'
-  | 'code'
-  | 'connect'
-  | 'ai'
-  | 'predict'
-  | 'reason'
-  | 'manual_review'
-  | 'output';
+// NodeType is the closed set of flow-builder node kinds, GENERATED from the Go
+// events.NodeType consts (single source of truth). NODE_TYPES (the palette order),
+// the accent map, and the card summary all derive from it, and the exhaustive switch
+// in nodeSummary fails the build if a new kind is added without being handled — so
+// "forgot to handle the new node type" is unrepresentable, not a silent fallback.
+export type { NodeType };
 
 // NODE_TYPES is the builder palette order. There is a matching `--node-<type>` CSS
 // custom property in app.css for each (the accent rail).
