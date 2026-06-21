@@ -36,8 +36,8 @@ func newID() string {
 // DefineCmd defines a monitor on a flow.
 type DefineCmd struct {
 	FlowID      string
-	Metric      string
-	Op          string
+	Metric      Metric
+	Op          Op
 	Threshold   float64
 	Description string
 }
@@ -50,10 +50,10 @@ func (h *Handler) Define(ctx context.Context, id identity.Identity, cmd DefineCm
 	if cmd.FlowID == "" {
 		return "", eventlog.Envelope{}, fmt.Errorf("monitor: flow_id is required")
 	}
-	if !ValidMetric(cmd.Metric) {
+	if !cmd.Metric.Valid() {
 		return "", eventlog.Envelope{}, fmt.Errorf("monitor: invalid metric %q", cmd.Metric)
 	}
-	if !ValidOp(cmd.Op) {
+	if !cmd.Op.Valid() {
 		return "", eventlog.Envelope{}, fmt.Errorf("monitor: invalid op %q (gt|lt)", cmd.Op)
 	}
 	// A NaN/Inf threshold compares false against every value, producing a silent
@@ -63,8 +63,8 @@ func (h *Handler) Define(ctx context.Context, id identity.Identity, cmd DefineCm
 	}
 	mid := h.newID()
 	e, err := h.append(ctx, id, TypeDefined, Defined{
-		MonitorID: mid, FlowID: cmd.FlowID, Metric: cmd.Metric,
-		Op: cmd.Op, Threshold: cmd.Threshold, Description: cmd.Description,
+		MonitorID: mid, FlowID: cmd.FlowID, Metric: string(cmd.Metric),
+		Op: string(cmd.Op), Threshold: cmd.Threshold, Description: cmd.Description,
 	})
 	if err != nil {
 		return "", eventlog.Envelope{}, err

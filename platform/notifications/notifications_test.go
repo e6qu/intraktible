@@ -40,7 +40,7 @@ func TestInboxFromMentions(t *testing.T) {
 
 	ch := comments.NewHandler(log)
 	// Author mentions the reviewer and themselves; the self-mention is not notified.
-	cid, _, err := ch.Post(ctx, author, "policy", "p1", "please review @reviewer — cc @author", "")
+	cid, _, err := ch.Post(ctx, author, comments.Subject{Type: "policy", ID: "p1"}, "please review @reviewer — cc @author", "")
 	if err != nil {
 		t.Fatal(err)
 	}

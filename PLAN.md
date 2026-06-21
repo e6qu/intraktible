@@ -737,6 +737,20 @@ decision-table aggregate that could go non-finite/order-dependent, and a handful
 fuzz harnesses landed, including one over the security-critical SQLite DSN path parser (asserting
 read-only + directory containment) and one that surfaced the aggregate-overflow fix.
 
+**Round-10 deep follow-ups, folded into the same PR (H1/H2/M5 + low bugs + transposition types).** The
+three items previously documented-not-fixed were implemented: the cross-process version/slug **TOCTOU**
+is closed by a storage-layer optimistic-concurrency claim (`Envelope.Unique` enforced as a uniqueness
+constraint across WAL/SQLite/Postgres/NATS, with the decision-engine retrying on `ErrConflict`); the
+**NATS** consumer now re-subscribes from the last delivered seq on reconnect; and **SCIM** gained
+list pagination, externalId-idempotent create, and Okta path-less group membership. Plus a batch of
+latent fixes (a Postgres `FOR UPDATE` row lock in `UpdateDoc`, a Recover double-write guard for
+streaming, comment parent validation, an SLA-days bound, a SQLite seq guard) and transposition-proofing
+(`DecideResult`/disposition strong types, a comments `Subject` struct, monitor disposition consts), and a
+new SSE-parser fuzz harness. Two pure cross-package signature refactors (EntityRef branding, the SCIM
+`identity.Identity` threading) and the authz `r.Pattern` restructure were consciously left as fast
+follow-ups — they prevent only theoretical transpositions with trusted callers and carry large churn /
+auth-regression surface for no behavioral change (detail in BUGS.md).
+
 **Variant + DeploymentRequestStatus named types (TS37).** The two enums still carried as scattered
 string literals — the A/B `Variant` (champion|challenger) and the maker-checker
 `DeploymentRequestStatus` (pending|approved|rejected) — became named types (`domain.Variant`,
@@ -744,6 +758,21 @@ string literals — the A/B `Variant` (champion|challenger) and the maker-checke
 the command-side fold, and the service responses, with `Valid()` methods. `cmd/tsenums` now generates
 both, so all 12 Go↔TS enums flow from the single Go source through the codegen + drift check (api.ts
 no longer hand-defines any 1:1 enum).
+
+**Bug sweep + type-strengthening + fuzzing round 10 (BF87–BF95 / TS38–TS39 / FUZZ).** Four parallel
+sweep agents over the less-trodden code. Security fixes: a too-loose sealed-envelope check that could
+write a credential-shaped object to the log in the clear (now requires the exact envelope shape), and
+a defense-in-depth tightening of the audit authz gate. Correctness: a determinism tiebreaker for the
+webhook/monitor list ordering (folded into a shared generic `store.SortByTime`/`ListByTime` now used
+by history, notify, and monitor), a WAL short-read guard, an OAuth token-cache clock fix, and four web
+fixes (a blob-URL download race, an SSO-discovery rejection, a silent agent-stream error, a
+notification label). Type-strengthening extended the Go→TS codegen to NodeType/Aggregation/Role/Scope
+(16 generated unions; the keys page's hand-duplicated ROLES/SCOPES are gone), typed the monitor
+command + connector-catalog type, and four more `api.ts` fields. Four fuzz harnesses landed at
+security/recursion boundaries — PII-redaction completeness, crypto-shred round-trip, the Starlark
+conversion fixpoint, and CSV-injection neutralization. Documented-not-fixed (deliberate, scoped as
+follow-ups): the cross-process version/slug TOCTOU (needs a storage-layer compare-and-set; the
+monolith is correct), NATS live-delivery catch-up across reconnect, and SCIM list pagination.
 
 ---
 

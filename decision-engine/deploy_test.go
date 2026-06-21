@@ -52,7 +52,7 @@ func TestVersionPinningAndABRouting(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if res.Status != string(domain.StatusCompleted) {
+		if res.Status != domain.StatusCompleted {
 			t.Fatalf("status=%s err=%s", res.Status, res.Error)
 		}
 		return res.Output["decision"].(string)

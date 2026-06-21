@@ -10,7 +10,9 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -76,7 +78,13 @@ func (h *Handler) CreateFlow(ctx context.Context, id identity.Identity, cmd doma
 	if err != nil {
 		return "", eventlog.Envelope{}, fmt.Errorf("decision-engine: marshal created: %w", err)
 	}
-	e, err := h.appendFlowEvent(ctx, id, events.TypeFlowCreated, payload)
+	// The slug claim makes uniqueness hold across processes too: the in-memory
+	// bySlug check above catches the common case, and a concurrent creator that
+	// raced past it loses here with ErrConflict.
+	e, err := h.appendFlowEventUnique(ctx, id, events.TypeFlowCreated, payload, slugClaim(id, cmd.Slug))
+	if errors.Is(err, eventlog.ErrConflict) {
+		return "", eventlog.Envelope{}, fmt.Errorf("decision-engine: flow slug %q already exists", cmd.Slug)
+	}
 	if err != nil {
 		return "", eventlog.Envelope{}, err
 	}
@@ -104,30 +112,41 @@ func (h *Handler) PublishVersion(ctx context.Context, id identity.Identity, cmd 
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	byID, _, err := h.foldTenant(ctx, id)
-	if err != nil {
-		return 0, "", eventlog.Envelope{}, err
+	// Re-fold and recompute the version each attempt: if another process published
+	// the same version first, its append wins the versionClaim and ours returns
+	// ErrConflict — we re-read the (now-advanced) latest and try again.
+	for attempt := 0; ; attempt++ {
+		byID, _, err := h.foldTenant(ctx, id)
+		if err != nil {
+			return 0, "", eventlog.Envelope{}, err
+		}
+		agg, ok := byID[cmd.FlowID]
+		if !ok {
+			return 0, "", eventlog.Envelope{}, fmt.Errorf("decision-engine: unknown flow %q", cmd.FlowID)
+		}
+		version := agg.latest + 1
+		payload, err := json.Marshal(events.FlowVersionPublished{
+			FlowID:      cmd.FlowID,
+			Version:     version,
+			Etag:        etag,
+			Graph:       cmd.Graph,
+			InputSchema: cmd.InputSchema,
+		})
+		if err != nil {
+			return 0, "", eventlog.Envelope{}, fmt.Errorf("decision-engine: marshal published: %w", err)
+		}
+		e, err := h.appendFlowEventUnique(ctx, id, events.TypeFlowVersionPublished, payload, versionClaim(cmd.FlowID, version))
+		if errors.Is(err, eventlog.ErrConflict) {
+			if attempt >= maxClaimRetries {
+				return 0, "", eventlog.Envelope{}, fmt.Errorf("decision-engine: publish version conflict on flow %q after %d retries", cmd.FlowID, attempt)
+			}
+			continue
+		}
+		if err != nil {
+			return 0, "", eventlog.Envelope{}, err
+		}
+		return version, etag, e, nil
 	}
-	agg, ok := byID[cmd.FlowID]
-	if !ok {
-		return 0, "", eventlog.Envelope{}, fmt.Errorf("decision-engine: unknown flow %q", cmd.FlowID)
-	}
-	version := agg.latest + 1
-	payload, err := json.Marshal(events.FlowVersionPublished{
-		FlowID:      cmd.FlowID,
-		Version:     version,
-		Etag:        etag,
-		Graph:       cmd.Graph,
-		InputSchema: cmd.InputSchema,
-	})
-	if err != nil {
-		return 0, "", eventlog.Envelope{}, fmt.Errorf("decision-engine: marshal published: %w", err)
-	}
-	e, err := h.appendFlowEvent(ctx, id, events.TypeFlowVersionPublished, payload)
-	if err != nil {
-		return 0, "", eventlog.Envelope{}, err
-	}
-	return version, etag, e, nil
 }
 
 // ImportResult reports what an ImportFlow did: the (possibly new) flow id, the
@@ -164,52 +183,63 @@ func (h *Handler) ImportFlow(ctx context.Context, id identity.Identity, cmd doma
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	byID, bySlug, err := h.foldTenant(ctx, id)
-	if err != nil {
-		return ImportResult{}, err
-	}
-
-	created := false
-	flowID, exists := bySlug[cmd.Slug]
-	if exists {
-		if agg := byID[flowID]; agg != nil && agg.latest > 0 && agg.latestEtag == etag {
-			return ImportResult{FlowID: flowID, Version: agg.latest, Etag: etag}, nil
-		}
-	} else {
-		flowID = h.newID()
-		name := cmd.Name
-		if name == "" {
-			name = cmd.Slug
-		}
-		payload, err := json.Marshal(events.FlowCreated{FlowID: flowID, Slug: cmd.Slug, Name: name})
+	// Re-fold each attempt so create + publish stay correct across processes: a
+	// raced slug-create or version-publish loses its claim with ErrConflict, and the
+	// loop re-reads the now-advanced state (the flow now exists / latest advanced).
+	for attempt := 0; ; attempt++ {
+		byID, bySlug, err := h.foldTenant(ctx, id)
 		if err != nil {
-			return ImportResult{}, fmt.Errorf("decision-engine: marshal created: %w", err)
-		}
-		if _, err := h.appendFlowEvent(ctx, id, events.TypeFlowCreated, payload); err != nil {
 			return ImportResult{}, err
 		}
-		created = true
-	}
 
-	version := 1
-	if agg := byID[flowID]; agg != nil {
-		version = agg.latest + 1
+		created := false
+		flowID, exists := bySlug[cmd.Slug]
+		if exists {
+			if agg := byID[flowID]; agg != nil && agg.latest > 0 && agg.latestEtag == etag {
+				return ImportResult{FlowID: flowID, Version: agg.latest, Etag: etag}, nil
+			}
+		} else {
+			flowID = h.newID()
+			name := cmd.Name
+			if name == "" {
+				name = cmd.Slug
+			}
+			payload, err := json.Marshal(events.FlowCreated{FlowID: flowID, Slug: cmd.Slug, Name: name})
+			if err != nil {
+				return ImportResult{}, fmt.Errorf("decision-engine: marshal created: %w", err)
+			}
+			if _, err := h.appendFlowEventUnique(ctx, id, events.TypeFlowCreated, payload, slugClaim(id, cmd.Slug)); err != nil {
+				if errors.Is(err, eventlog.ErrConflict) && attempt < maxClaimRetries {
+					continue // another process created this slug; re-fold and publish onto it
+				}
+				return ImportResult{}, err
+			}
+			created = true
+		}
+
+		version := 1
+		if agg := byID[flowID]; agg != nil {
+			version = agg.latest + 1
+		}
+		payload, err := json.Marshal(events.FlowVersionPublished{
+			FlowID:      flowID,
+			Version:     version,
+			Etag:        etag,
+			Graph:       cmd.Graph,
+			InputSchema: cmd.InputSchema,
+		})
+		if err != nil {
+			return ImportResult{}, fmt.Errorf("decision-engine: marshal published: %w", err)
+		}
+		e, err := h.appendFlowEventUnique(ctx, id, events.TypeFlowVersionPublished, payload, versionClaim(flowID, version))
+		if err != nil {
+			if errors.Is(err, eventlog.ErrConflict) && attempt < maxClaimRetries {
+				continue // a concurrent publish took this version; re-fold and retry
+			}
+			return ImportResult{}, err
+		}
+		return ImportResult{FlowID: flowID, Version: version, Etag: etag, Created: created, Published: true, Event: e}, nil
 	}
-	payload, err := json.Marshal(events.FlowVersionPublished{
-		FlowID:      flowID,
-		Version:     version,
-		Etag:        etag,
-		Graph:       cmd.Graph,
-		InputSchema: cmd.InputSchema,
-	})
-	if err != nil {
-		return ImportResult{}, fmt.Errorf("decision-engine: marshal published: %w", err)
-	}
-	e, err := h.appendFlowEvent(ctx, id, events.TypeFlowVersionPublished, payload)
-	if err != nil {
-		return ImportResult{}, err
-	}
-	return ImportResult{FlowID: flowID, Version: version, Etag: etag, Created: created, Published: true, Event: e}, nil
 }
 
 // Deploy makes a version (and optional challenger) live in an environment. It
@@ -567,6 +597,14 @@ func (h *Handler) appendModelEvent(ctx context.Context, id identity.Identity, ty
 }
 
 func (h *Handler) appendFlowEvent(ctx context.Context, id identity.Identity, typ string, payload json.RawMessage) (eventlog.Envelope, error) {
+	return h.appendFlowEventUnique(ctx, id, typ, payload, "")
+}
+
+// appendFlowEventUnique appends with an optimistic-concurrency claim key (see
+// eventlog.Envelope.Unique): the log rejects a second append with the same key as
+// ErrConflict, so a fold-then-append stays correct across processes, not just
+// within this Handler's mutex.
+func (h *Handler) appendFlowEventUnique(ctx context.Context, id identity.Identity, typ string, payload json.RawMessage, unique string) (eventlog.Envelope, error) {
 	return h.log.Append(ctx, eventlog.Envelope{
 		Org:       id.Org,
 		Workspace: id.Workspace,
@@ -575,7 +613,21 @@ func (h *Handler) appendFlowEvent(ctx context.Context, id identity.Identity, typ
 		Type:      typ,
 		Time:      h.now(),
 		Payload:   payload,
+		Unique:    unique,
 	})
+}
+
+// maxClaimRetries bounds the optimistic-concurrency retry loop: a cross-process
+// race re-folds and recomputes, but a pathological hot loop must terminate loudly.
+const maxClaimRetries = 8
+
+// slugClaim is the global claim key reserving a flow slug for a tenant; versionClaim
+// reserves a (flow, version) so two processes can't both publish the same version.
+func slugClaim(id identity.Identity, slug string) string {
+	return "flow.slug\x00" + id.Org + "\x00" + id.Workspace + "\x00" + slug
+}
+func versionClaim(flowID string, version int) string {
+	return "flow.version\x00" + flowID + "\x00" + strconv.Itoa(version)
 }
 
 // foldTenant replays the flow stream for id's tenant into per-flow aggregates,

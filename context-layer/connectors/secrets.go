@@ -292,5 +292,20 @@ func stringValue(v any) string {
 
 func isSecretEnvelope(v any) bool {
 	m, ok := v.(map[string]any)
-	return ok && m["$intraktible_sealed"] == sealedEnvelopeVersion
+	if !ok || m["$intraktible_sealed"] != sealedEnvelopeVersion {
+		return false
+	}
+	// Require EXACTLY the sealed-envelope shape ({$intraktible_sealed, value, [key]})
+	// — so a real credential object that merely carries a field named
+	// $intraktible_sealed isn't mistaken for already-sealed and written through in the
+	// clear (the seal step would be skipped). Mirrors erasure.isErasedMap's strictness.
+	if _, hasValue := m["value"].(string); !hasValue {
+		return false
+	}
+	for k := range m {
+		if k != "$intraktible_sealed" && k != "value" && k != "key" {
+			return false
+		}
+	}
+	return true
 }

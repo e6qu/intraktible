@@ -19,7 +19,9 @@
     revokeApiKey,
     type AuditEntry,
     type AuditFilter,
-    type ManagedApiKey
+    type ManagedApiKey,
+    type Role,
+    type Scope
   } from '$lib/api';
 
   // API calls authenticate via the session cookie (empty key → no X-Api-Key).
@@ -167,8 +169,8 @@
   let keys = $state<ManagedApiKey[]>([]);
   let kName = $state('');
   let kActor = $state('');
-  let kRole = $state('viewer');
-  let kScope = $state('sandbox');
+  let kRole = $state<Role>('viewer');
+  let kScope = $state<Scope>('sandbox');
   let kExpires = $state('');
   let kCreating = $state(false);
   // The generated secret is shown once, right after creation/rotation, and never

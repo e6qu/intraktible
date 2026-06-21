@@ -19,6 +19,10 @@ const (
 	SLAOverdue SLAStatus = "overdue"
 )
 
+// MaxSLADays caps an SLA window (~27 years) so an absurd value can't overflow the
+// AddDate/Duration arithmetic in Deadline/DaysLeft into a wrong (wrapped) bucket.
+const MaxSLADays = 10000
+
 // Deadline is when a case opened at createdAt with an slaDays window is due.
 // An slaDays of 0 means the case is due at the moment it opened.
 func Deadline(createdAt time.Time, slaDays int) time.Time {

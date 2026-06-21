@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sort"
 	"time"
 
 	"github.com/e6qu/intraktible/decision-engine/analytics"
@@ -37,6 +36,10 @@ type View struct {
 	Alerting    bool      `json:"alerting"`
 	CreatedAt   time.Time `json:"created_at"`
 	CreatedBy   string    `json:"created_by"`
+	// Seq is the defining event's log sequence — a monotonic tiebreaker so two
+	// monitors created in the same clock tick sort deterministically (matches the
+	// comments/notifications/notify projections).
+	Seq uint64 `json:"seq"`
 }
 
 // BaselineView is a flow's captured disposition distribution.
@@ -73,7 +76,7 @@ func (Projector) Apply(ctx context.Context, e eventlog.Envelope, s store.Store) 
 		v := View{
 			Org: e.Org, Workspace: e.Workspace, MonitorID: p.MonitorID, FlowID: p.FlowID,
 			Metric: p.Metric, Op: p.Op, Threshold: p.Threshold, Description: p.Description,
-			CreatedAt: e.Time, CreatedBy: e.Actor,
+			CreatedAt: e.Time, CreatedBy: e.Actor, Seq: e.Seq,
 		}
 		return store.PutDoc(ctx, s, Collection, store.Key(e.Org, e.Workspace, p.MonitorID), v)
 	case TypeDeleted:
@@ -154,6 +157,6 @@ func ListByFlow(ctx context.Context, s store.Store, id identity.Identity, flowID
 			out = append(out, v)
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.Before(out[j].CreatedAt) })
+	store.SortByTime(out, func(v View) time.Time { return v.CreatedAt }, func(v View) uint64 { return v.Seq }, false)
 	return out, nil
 }

@@ -15,6 +15,10 @@ import type {
   Disposition,
   RunStatus,
   Variant,
+  NodeType,
+  Aggregation,
+  Role,
+  Scope,
   Environment,
   CaseStatus,
   SLAState,
@@ -29,6 +33,10 @@ export type {
   Disposition,
   RunStatus,
   Variant,
+  NodeType,
+  Aggregation,
+  Role,
+  Scope,
   Environment,
   CaseStatus,
   SLAState,
@@ -39,7 +47,7 @@ export type {
   MonitorOp,
   MonitorMetric
 } from './enums.generated';
-export { ENVIRONMENTS, MONITOR_METRICS } from './enums.generated';
+export { ENVIRONMENTS, MONITOR_METRICS, AGGREGATIONS, ROLES, SCOPES } from './enums.generated';
 
 // Composite / UI-only unions that build on the generated ones (not a 1:1 Go enum):
 // a recorded decision is 'started' until its terminal event projects (the history
@@ -101,7 +109,7 @@ export async function sayHello(
 
 export interface GraphNode {
   id: string;
-  type: string;
+  type: NodeType;
   name?: string;
   config?: unknown;
   position?: { x: number; y: number }; // builder canvas coordinate (presentation only)
@@ -320,7 +328,7 @@ export async function exportDecision(
 
 export interface NodeRecord {
   node_id: string;
-  type: string;
+  type: NodeType;
   output?: unknown;
 }
 
@@ -367,9 +375,9 @@ export async function listDecisions(
 // limit paginates (offset into the matched set); omit it for the full list.
 export interface DecisionFilter {
   flow?: string;
-  env?: string;
-  status?: string;
-  variant?: string;
+  env?: Environment;
+  status?: DecisionStatus;
+  variant?: Variant;
   q?: string; // decision-id search (substring)
   since?: string; // RFC3339
   until?: string; // RFC3339
@@ -1547,8 +1555,8 @@ export interface ManagedApiKey {
   id: string;
   name: string;
   identity: { org: string; workspace: string; actor: string };
-  scope: string;
-  role: string;
+  scope: Scope;
+  role: Role;
   created_at: string;
   expires_at?: string;
   revoked_at?: string;
@@ -1559,8 +1567,8 @@ export interface ManagedApiKey {
 export interface CreateApiKeyRequest {
   name: string;
   actor: string;
-  role: string;
-  scope?: string;
+  role: Role;
+  scope?: Scope;
   expires_at?: string;
 }
 
@@ -1659,7 +1667,7 @@ export interface Feature {
   name: string;
   entity_type: string;
   event_name: string;
-  aggregation: string;
+  aggregation: Aggregation;
   field?: string;
   window_hours: number;
   updated_at: string;

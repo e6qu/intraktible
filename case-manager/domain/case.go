@@ -79,8 +79,8 @@ func (c RequestReview) Validate() error {
 	if strings.TrimSpace(c.CaseType) == "" {
 		return errors.New("case-manager: case_type is required")
 	}
-	if c.SLADays < 0 {
-		return fmt.Errorf("case-manager: sla_days must be >= 0, got %d", c.SLADays)
+	if c.SLADays < 0 || c.SLADays > MaxSLADays {
+		return fmt.Errorf("case-manager: sla_days must be between 0 and %d, got %d", MaxSLADays, c.SLADays)
 	}
 	return nil
 }

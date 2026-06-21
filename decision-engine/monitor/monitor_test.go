@@ -117,7 +117,7 @@ func TestDefineRejectsNonFiniteThreshold(t *testing.T) {
 	ctx := context.Background()
 	for _, bad := range []float64{math.NaN(), math.Inf(1), math.Inf(-1)} {
 		_, _, err := h.Define(ctx, id, DefineCmd{
-			FlowID: "f", Metric: string(MetricFailureRate), Op: string(OpGreaterThan), Threshold: bad,
+			FlowID: "f", Metric: MetricFailureRate, Op: OpGreaterThan, Threshold: bad,
 		})
 		if err == nil {
 			t.Fatalf("Define accepted a non-finite threshold %v", bad)
@@ -125,7 +125,7 @@ func TestDefineRejectsNonFiniteThreshold(t *testing.T) {
 	}
 	// A finite threshold still works.
 	if _, _, err := h.Define(ctx, id, DefineCmd{
-		FlowID: "f", Metric: string(MetricFailureRate), Op: string(OpGreaterThan), Threshold: 0.5,
+		FlowID: "f", Metric: MetricFailureRate, Op: OpGreaterThan, Threshold: 0.5,
 	}); err != nil {
 		t.Fatalf("Define rejected a valid finite threshold: %v", err)
 	}

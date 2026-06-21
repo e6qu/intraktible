@@ -10,7 +10,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -174,24 +173,13 @@ func Read(ctx context.Context, s store.Store, id identity.Identity, decisionID s
 	return store.GetDoc[Record](ctx, s, Collection, store.Key(id.Org, id.Workspace, decisionID))
 }
 
-// List returns decisions for id's tenant, most recent first.
+// List returns decisions for id's tenant, most recent first. DecisionID is the
+// tiebreaker so two decisions recorded in the same instant (plausible under
+// concurrent /decide) order identically across calls — otherwise ListPage's
+// pagination could skip or duplicate a record at a page boundary.
 func List(ctx context.Context, s store.Store, id identity.Identity) ([]Record, error) {
-	out, err := store.ListDocs[Record](ctx, s, Collection, store.Key(id.Org, id.Workspace, ""))
-	if err != nil {
-		return nil, err
-	}
-	// Newest-first, with DecisionID as a deterministic tiebreaker: two decisions
-	// recorded in the same instant (plausible under concurrent /decide) must order
-	// identically across calls, or ListPage's pagination could skip or duplicate a
-	// record at a page boundary. A single-key unstable sort left that order
-	// arbitrary; the id tiebreaker makes it total and stable.
-	sort.Slice(out, func(i, j int) bool {
-		if !out[i].StartedAt.Equal(out[j].StartedAt) {
-			return out[i].StartedAt.After(out[j].StartedAt)
-		}
-		return out[i].DecisionID > out[j].DecisionID
-	})
-	return out, nil
+	return store.ListByTime(ctx, s, Collection, store.Key(id.Org, id.Workspace, ""),
+		func(r Record) time.Time { return r.StartedAt }, func(r Record) string { return r.DecisionID }, true)
 }
 
 // Filter narrows a decision-history query. Empty string fields and zero times are

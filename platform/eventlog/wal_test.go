@@ -5,6 +5,7 @@ package eventlog
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -207,4 +208,35 @@ func FuzzWAL(f *testing.F) {
 			}
 		}
 	})
+}
+
+// TestWALUniqueKeyConflict asserts the optimistic-concurrency claim: a second
+// append carrying a Unique key already used returns ErrConflict, while a distinct
+// key (or an empty one) is unconstrained.
+func TestWALUniqueKeyConflict(t *testing.T) {
+	ctx := context.Background()
+	w, err := OpenWAL(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = w.Close() }()
+	base := Envelope{Org: "o", Workspace: "w", Type: "t"}
+
+	claim := base
+	claim.Unique = "flow.version\x00F\x001"
+	if _, err := w.Append(ctx, claim); err != nil {
+		t.Fatalf("first claim should succeed: %v", err)
+	}
+	if _, err := w.Append(ctx, claim); !errors.Is(err, ErrConflict) {
+		t.Fatalf("second claim of the same key should be ErrConflict, got %v", err)
+	}
+	// A different claim and an unconstrained append both succeed.
+	other := base
+	other.Unique = "flow.version\x00F\x002"
+	if _, err := w.Append(ctx, other); err != nil {
+		t.Fatalf("distinct claim should succeed: %v", err)
+	}
+	if _, err := w.Append(ctx, base); err != nil {
+		t.Fatalf("unconstrained append should succeed: %v", err)
+	}
 }

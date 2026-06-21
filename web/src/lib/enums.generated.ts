@@ -10,6 +10,17 @@ export type RunStatus = 'completed' | 'failed';
 
 export type Variant = 'champion' | 'challenger';
 
+export type NodeType = 'input' | 'rule' | 'split' | 'assignment' | 'scorecard' | 'decision_table' | '2d_matrix' | 'code' | 'ai' | 'connect' | 'predict' | 'manual_review' | 'reason' | 'output';
+
+export type Aggregation = 'count' | 'sum';
+export const AGGREGATIONS: readonly Aggregation[] = ['count', 'sum'] as const;
+
+export type Role = 'viewer' | 'operator' | 'editor' | 'approver' | 'admin';
+export const ROLES: readonly Role[] = ['viewer', 'operator', 'editor', 'approver', 'admin'] as const;
+
+export type Scope = 'sandbox' | 'production' | '*';
+export const SCOPES: readonly Scope[] = ['sandbox', 'production', '*'] as const;
+
 export type Environment = 'sandbox' | 'staging' | 'production';
 export const ENVIRONMENTS: readonly Environment[] = ['sandbox', 'staging', 'production'] as const;
 

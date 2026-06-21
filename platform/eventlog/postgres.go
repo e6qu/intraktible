@@ -4,6 +4,7 @@ package eventlog
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -48,18 +50,29 @@ func OpenPostgresLog(ctx context.Context, dsn string, poll time.Duration) (*Post
 		return nil, fmt.Errorf("eventlog: open postgres: %w", err)
 	}
 	if _, err := pool.Exec(ctx, `CREATE TABLE IF NOT EXISTS events (
-		seq       BIGSERIAL PRIMARY KEY,
-		id        TEXT NOT NULL,
-		org       TEXT NOT NULL,
-		workspace TEXT NOT NULL,
-		stream    TEXT NOT NULL,
-		type      TEXT NOT NULL,
-		time      TEXT NOT NULL,
-		actor     TEXT NOT NULL,
-		payload   TEXT NOT NULL
+		seq        BIGSERIAL PRIMARY KEY,
+		id         TEXT NOT NULL,
+		org        TEXT NOT NULL,
+		workspace  TEXT NOT NULL,
+		stream     TEXT NOT NULL,
+		type       TEXT NOT NULL,
+		time       TEXT NOT NULL,
+		actor      TEXT NOT NULL,
+		payload    TEXT NOT NULL,
+		unique_key TEXT
 	)`); err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("eventlog: postgres schema: %w", err)
+	}
+	// Backfill unique_key on a pre-existing table, then the partial unique index that
+	// enforces optimistic-concurrency claims (Envelope.Unique) across nodes.
+	if _, err := pool.Exec(ctx, `ALTER TABLE events ADD COLUMN IF NOT EXISTS unique_key TEXT`); err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("eventlog: postgres add unique_key: %w", err)
+	}
+	if _, err := pool.Exec(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS events_unique_key ON events(unique_key) WHERE unique_key IS NOT NULL`); err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("eventlog: postgres unique_key index: %w", err)
 	}
 	l := &PostgresLog{pool: pool}
 	head, err := l.headCtx(ctx)
@@ -134,11 +147,16 @@ func (l *PostgresLog) Append(ctx context.Context, e Envelope) (Envelope, error) 
 	}
 	var seq int64
 	err := l.pool.QueryRow(ctx,
-		`INSERT INTO events (id, org, workspace, stream, type, time, actor, payload)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING seq`,
-		e.ID, e.Org, e.Workspace, e.Stream, e.Type, e.Time.Format(time.RFC3339Nano), e.Actor, string(e.Payload),
+		`INSERT INTO events (id, org, workspace, stream, type, time, actor, payload, unique_key)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING seq`,
+		e.ID, e.Org, e.Workspace, e.Stream, e.Type, e.Time.Format(time.RFC3339Nano), e.Actor, string(e.Payload), nullableKey(e.Unique),
 	).Scan(&seq)
 	if err != nil {
+		// 23505 = unique_violation: the caller lost an optimistic-concurrency race.
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return Envelope{}, ErrConflict
+		}
 		return Envelope{}, fmt.Errorf("eventlog: postgres append: %w", err)
 	}
 	if seq <= 0 {

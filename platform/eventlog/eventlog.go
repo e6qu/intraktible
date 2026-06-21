@@ -25,10 +25,32 @@ type Envelope struct {
 	Actor     string          `json:"actor"`
 	Seq       uint64          `json:"seq"`
 	Payload   json.RawMessage `json:"payload"`
+	// Unique, when non-empty, is a tenant-global claim key the Append enforces as
+	// unique across the whole log: a second Append carrying the same Unique fails
+	// with ErrConflict. It is the optimistic-concurrency primitive that makes a
+	// fold-then-append (e.g. "the next flow version is N", "this slug is free")
+	// safe across PROCESSES, not just within one Handler's mutex — the loser of a
+	// race is rejected and retries. Empty = no constraint (the common case).
+	Unique string `json:"unique,omitempty"`
 }
 
 // ErrClosed is returned by a closed log.
 var ErrClosed = errors.New("eventlog: closed")
+
+// ErrConflict is returned by Append when the envelope's Unique key is already
+// claimed — the caller lost an optimistic-concurrency race and should re-fold and
+// retry (or report the duplicate, e.g. a taken slug).
+var ErrConflict = errors.New("eventlog: unique key conflict")
+
+// nullableKey maps an empty claim key to SQL NULL so it is excluded from the
+// partial unique index (an empty string would otherwise collide with every other
+// unconstrained append). A non-empty key is stored verbatim.
+func nullableKey(k string) any {
+	if k == "" {
+		return nil
+	}
+	return k
+}
 
 // Log is the append-only, ordered, replayable event store + in-process bus.
 // Implementations must be safe for concurrent use.

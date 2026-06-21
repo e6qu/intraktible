@@ -5,6 +5,7 @@ package eventlog_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -89,5 +90,32 @@ func TestSQLiteLogSharedAcrossHandles(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("subscriber never received the cross-handle event")
+	}
+}
+
+// TestSQLiteUniqueKeyConflict proves the cross-process claim is enforced by the DB
+// (the partial unique index), and that empty/NULL keys never collide.
+func TestSQLiteUniqueKeyConflict(t *testing.T) {
+	ctx := context.Background()
+	l, err := eventlog.OpenSQLiteLog(t.TempDir(), 10*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = l.Close() }()
+
+	claim := event("flows", "flow.version.published")
+	claim.Unique = "flow.version\x00F\x001"
+	if _, err := l.Append(ctx, claim); err != nil {
+		t.Fatalf("first claim: %v", err)
+	}
+	if _, err := l.Append(ctx, claim); !errors.Is(err, eventlog.ErrConflict) {
+		t.Fatalf("duplicate claim should be ErrConflict, got %v", err)
+	}
+	// Two unconstrained (empty-key → NULL) appends must both succeed — NULL is
+	// excluded from the partial unique index.
+	for range 2 {
+		if _, err := l.Append(ctx, event("flows", "flow.created")); err != nil {
+			t.Fatalf("unconstrained append should succeed: %v", err)
+		}
 	}
 }

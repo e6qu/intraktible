@@ -48,7 +48,7 @@ func TestDecidePreResolvesPredictNode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Status != string(domain.StatusCompleted) || res.Output["tier"] != "high" {
+	if res.Status != domain.StatusCompleted || res.Output["tier"] != "high" {
 		t.Fatalf("want high, got %+v (%s)", res.Output, res.Error)
 	}
 
@@ -57,7 +57,7 @@ func TestDecidePreResolvesPredictNode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if low.Status != string(domain.StatusCompleted) || low.Output["tier"] != "low" {
+	if low.Status != domain.StatusCompleted || low.Output["tier"] != "low" {
 		t.Fatalf("want low, got %+v (%s)", low.Output, low.Error)
 	}
 

@@ -38,6 +38,12 @@ type WAL struct {
 	size    int64   // total bytes of complete records (= the append position)
 	bus     *bus
 	closed  bool
+	// claimed holds the Unique keys appended in THIS process, for ErrConflict
+	// detection. The WAL is single-process (the embedded binary), and the writer
+	// folds the log before computing a claim, so a cross-restart duplicate can't
+	// arise; this only needs to catch a within-process double-claim, honoring the
+	// Append contract uniformly with the shared SQL backends.
+	claimed map[string]bool
 }
 
 // OpenWAL opens (or creates) the log file at dir/events.log and indexes it.
@@ -52,7 +58,7 @@ func OpenWAL(dir string) (*WAL, error) {
 	if err != nil {
 		return nil, fmt.Errorf("eventlog: open %q: %w", path, err)
 	}
-	w := &WAL{f: f, w: bufio.NewWriter(f), bus: newBus()}
+	w := &WAL{f: f, w: bufio.NewWriter(f), bus: newBus(), claimed: map[string]bool{}}
 	if err := w.load(); err != nil {
 		_ = f.Close()
 		return nil, err
@@ -113,6 +119,9 @@ func (w *WAL) Append(_ context.Context, e Envelope) (Envelope, error) {
 	if e.Org == "" || e.Workspace == "" {
 		return Envelope{}, fmt.Errorf("eventlog: event %q missing org/workspace", e.Type)
 	}
+	if e.Unique != "" && w.claimed[e.Unique] {
+		return Envelope{}, ErrConflict
+	}
 	if e.ID == "" {
 		e.ID = newID()
 	}
@@ -136,6 +145,9 @@ func (w *WAL) Append(_ context.Context, e Envelope) (Envelope, error) {
 	}
 	w.offsets = append(w.offsets, w.size)
 	w.size += int64(len(b)) + 1
+	if e.Unique != "" {
+		w.claimed[e.Unique] = true
+	}
 	w.bus.publish(e)
 	return e, nil
 }
@@ -157,8 +169,12 @@ func (w *WAL) Read(_ context.Context, fromSeq uint64) ([]Envelope, error) {
 	}
 	start := w.offsets[fromSeq-1]
 	buf := make([]byte, w.size-start)
-	if _, err := w.f.ReadAt(buf, start); err != nil && err != io.EOF {
-		return nil, fmt.Errorf("eventlog: read from seq %d: %w", fromSeq, err)
+	// ReadAt fills exactly len(buf) on success; a short read (io.EOF with n<len)
+	// means the file was truncated under us since the offset index was built — fail
+	// loudly rather than json.Unmarshal a partly-zero buffer or silently return fewer
+	// events than Head() reports.
+	if nRead, err := w.f.ReadAt(buf, start); err != nil && (err != io.EOF || nRead != len(buf)) {
+		return nil, fmt.Errorf("eventlog: read from seq %d (%d/%d bytes): %w", fromSeq, nRead, len(buf), err)
 	}
 	out := make([]Envelope, 0, n-fromSeq+1)
 	seq := fromSeq

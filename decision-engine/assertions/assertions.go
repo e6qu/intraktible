@@ -10,6 +10,7 @@ import (
 	"reflect"
 
 	"github.com/e6qu/intraktible/decision-engine/backtest"
+	"github.com/e6qu/intraktible/decision-engine/domain"
 	"github.com/e6qu/intraktible/decision-engine/events"
 )
 
@@ -46,7 +47,7 @@ func Run(g events.Graph, cases []Case) Report {
 	for _, c := range cases {
 		out := backtest.Run(g, nil, []map[string]any{c.Input}).Records[0].Baseline
 		res := Result{Name: c.Name, Status: out.Status, Got: out.Output, Error: out.Error}
-		if out.Status == "completed" {
+		if out.Status == string(domain.StatusCompleted) {
 			res.Mismatch = mismatches(c.Expect, out.Output)
 			res.Passed = len(res.Mismatch) == 0
 		}

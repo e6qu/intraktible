@@ -149,7 +149,15 @@
         return;
       }
       if (m.type === 'chunk') streamText += typeof m.text === 'string' ? m.text : '';
-      if (m.type === 'done' || m.type === 'error') {
+      if (m.type === 'error') {
+        // Surface the server's error text rather than stopping silently with partial
+        // chunks (failStream sets `error` + tears the socket down); still reload the
+        // recorded run so its failed status shows.
+        failStream(typeof m.text === 'string' && m.text ? m.text : 'agent run failed');
+        void load();
+        return;
+      }
+      if (m.type === 'done') {
         streaming = false;
         closeStream();
         void load();

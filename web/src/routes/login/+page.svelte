@@ -20,14 +20,19 @@
     PROVIDER_LABELS.get(p) ?? p.charAt(0).toUpperCase() + p.slice(1);
 
   onMount(async () => {
-    const [oidc, saml] = await Promise.all([listSsoProviders(), listSamlProviders()]);
-    ssoButtons = [
-      ...oidc.map((p) => ({ label: providerLabel(p), href: `/v1/auth/oidc/${p}/login` })),
-      ...saml.map((p) => ({
-        label: `${providerLabel(p)} (SAML)`,
-        href: `/v1/auth/saml/${p}/login`
-      }))
-    ];
+    try {
+      const [oidc, saml] = await Promise.all([listSsoProviders(), listSamlProviders()]);
+      ssoButtons = [
+        ...oidc.map((p) => ({ label: providerLabel(p), href: `/v1/auth/oidc/${p}/login` })),
+        ...saml.map((p) => ({
+          label: `${providerLabel(p)} (SAML)`,
+          href: `/v1/auth/saml/${p}/login`
+        }))
+      ];
+    } catch {
+      // SSO is optional; a discovery failure must not break the password form.
+      ssoButtons = [];
+    }
   });
 
   async function submit() {

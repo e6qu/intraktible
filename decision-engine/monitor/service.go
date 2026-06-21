@@ -64,7 +64,7 @@ func (s *Service) define(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	mid, e, err := s.cmd.Define(r.Context(), id, DefineCmd{
-		FlowID: r.PathValue("flow_id"), Metric: req.Metric, Op: req.Op,
+		FlowID: r.PathValue("flow_id"), Metric: Metric(req.Metric), Op: Op(req.Op),
 		Threshold: req.Threshold, Description: req.Description,
 	})
 	if err != nil {

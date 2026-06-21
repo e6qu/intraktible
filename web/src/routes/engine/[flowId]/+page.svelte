@@ -904,7 +904,9 @@
       a.href = url;
       a.download = exportFilename(format);
       a.click();
-      URL.revokeObjectURL(url);
+      // Revoke on a later tick — a synchronous revoke can race the browser's blob
+      // fetch and abort the download (esp. a larger BPMN/JSON export).
+      setTimeout(() => URL.revokeObjectURL(url), 0);
       toast.success(`Downloaded ${exportFilename(format)}`);
     } catch (e) {
       error = msg(e);
