@@ -94,6 +94,8 @@ docker compose --profile pg up        # add a Postgres projection store
 | `INTRAKTIBLE_POSTGRES_DSN` | Postgres DSN for `--store=postgres` |
 | `INTRAKTIBLE_CONNECTOR_ALLOW_PRIVATE` | Let HTTP connectors reach private/loopback hosts (off by default — SSRF guard) |
 | `INTRAKTIBLE_OTEL_EXPORTER` · `_SAMPLE_RATIO` | OpenTelemetry tracing: `stdout` or `otlp` (off by default; OTLP endpoint via the standard `OTEL_EXPORTER_OTLP_*` vars) |
+| `INTRAKTIBLE_ENCRYPTION_KEY` · `_KEYS_PREVIOUS` | Encryption at rest for event payloads + projection store (base64/hex 32-byte key; previous keys retained for zero-downtime rotation; off by default) |
+| `INTRAKTIBLE_KMS_PROVIDER` · `_KEY` | Seal connector credentials via an external KMS (`aws`\|`gcp`) so the key never leaves the provider |
 
 ### See it end-to-end
 

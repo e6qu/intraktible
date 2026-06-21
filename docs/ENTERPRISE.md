@@ -301,8 +301,27 @@ enterprise buyers; **P2** = differentiators / scale.
   per-flow result (a bad flow is reported, not fatal); the same panel accepts a
   bundle. *Remaining: a CLI/GitOps action wrapping the endpoints.*
 
-### Security  (status: API key + SameSite session, gosec-clean, SSRF guard)
-- **P0 — Encryption at rest** for the durable stores + **secrets management**.
+### Security  (status: API key + SameSite session, gosec-clean, SSRF guard, encryption at rest)
+- **P0 — Encryption at rest + secrets management — ✅ done.** A shared
+  `platform/secretbox` primitive (AES-256-GCM + a rotating key ring + a versioned,
+  self-describing JSON envelope) is now the single place the seal/open construction
+  lives — connector-credential sealing, crypto-shred erasure, and encryption-at-rest
+  all ride on it (the AES-GCM code was previously duplicated across packages). With
+  `INTRAKTIBLE_ENCRYPTION_KEY` set (a base64/hex 32-byte key; `_KEYS_PREVIOUS` retains
+  prior keys for **zero-downtime rotation**), **event-log payloads and projection-store
+  documents are sealed at rest** via transparent decorators (`eventlog.Encrypted`,
+  `store.Encrypted`) — this also covers the session and managed-API-key stores, which
+  ride on the same store. Only the values are sealed: event metadata
+  (org/workspace/stream/type/time) and the optimistic-concurrency claim, plus store
+  collection names and keys, stay plaintext, so total ordering, the uniqueness
+  constraint, every audit metadata filter, and all key-range scans/indexes keep
+  working. Because the sealed form is a recognizable envelope, reads open sealed
+  values and pass plaintext through — **enabling encryption needs no migration pass**
+  (old data reads, new writes seal). Connector credentials additionally support an
+  **external KMS** (AWS/GCP) so that key never leaves the provider. *Scope note: the
+  at-rest key is operator-supplied (from the orchestrator's secret store); a
+  KMS-wrapped data-encryption-key for the hot path is a follow-up (KMS-per-op would
+  add a round-trip to every store read/write).*
 - **P1 — Pen testing, dependency/CVE scanning** (govulncheck is wired), **SOC 2 /
   ISO 27001** evidence.
 
