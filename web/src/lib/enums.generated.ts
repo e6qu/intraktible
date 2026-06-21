@@ -38,6 +38,6 @@ export type DeploymentRequestStatus = 'pending' | 'approved' | 'rejected';
 
 export type MonitorOp = 'gt' | 'lt';
 
-export type MonitorMetric = 'failure_rate' | 'refer_rate' | 'automation_rate' | 'approve_rate' | 'decline_rate' | 'avg_latency_ms' | 'volume' | 'distribution_drift';
-export const MONITOR_METRICS: readonly MonitorMetric[] = ['failure_rate', 'refer_rate', 'automation_rate', 'approve_rate', 'decline_rate', 'avg_latency_ms', 'volume', 'distribution_drift'] as const;
+export type MonitorMetric = 'failure_rate' | 'refer_rate' | 'automation_rate' | 'approve_rate' | 'decline_rate' | 'avg_latency_ms' | 'volume' | 'distribution_drift' | 'distribution_drift_psi' | 'distribution_drift_kl';
+export const MONITOR_METRICS: readonly MonitorMetric[] = ['failure_rate', 'refer_rate', 'automation_rate', 'approve_rate', 'decline_rate', 'avg_latency_ms', 'volume', 'distribution_drift', 'distribution_drift_psi', 'distribution_drift_kl'] as const;
 

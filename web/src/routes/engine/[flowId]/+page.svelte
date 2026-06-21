@@ -45,6 +45,15 @@
     whatif,
     type SweepReport,
     deployVersion,
+    rollbackDeploy,
+    scheduleDeploy,
+    listSchedules,
+    cancelSchedule,
+    listGrants,
+    addGrant,
+    revokeGrant,
+    type ScheduledDeploy,
+    type FlowGrant,
     promoteFlow,
     setPromotionPolicy,
     getShadow,
@@ -1092,6 +1101,99 @@
     }
   }
 
+  // rollback reverts an environment to its previous live version (instant rollback).
+  async function rollback(environment: string) {
+    error = '';
+    deploying = true;
+    try {
+      await rollbackDeploy(key, flowId, environment);
+      toast.success(`Rolled back ${environment} to the previous version`);
+      await load();
+    } catch (e) {
+      error = msg(e);
+    } finally {
+      deploying = false;
+    }
+  }
+
+  // Scheduled / time-boxed deploys.
+  let schedules = $state<ScheduledDeploy[]>([]);
+  let schEnv = $state('sandbox');
+  let schVersion = $state('');
+  let schAt = $state('');
+  let schUntil = $state('');
+  let schBusy = $state(false);
+  async function loadSchedules() {
+    try {
+      schedules = await listSchedules(key, flowId);
+    } catch {
+      schedules = [];
+    }
+  }
+  async function addSchedule() {
+    error = '';
+    schBusy = true;
+    try {
+      await scheduleDeploy(key, flowId, {
+        environment: schEnv,
+        version: parseInt(schVersion, 10) || flow?.latest || 1,
+        at: new Date(schAt).toISOString(),
+        until: schUntil ? new Date(schUntil).toISOString() : undefined
+      });
+      schAt = '';
+      schUntil = '';
+      toast.success('Deploy scheduled');
+      await loadSchedules();
+    } catch (e) {
+      error = msg(e);
+    } finally {
+      schBusy = false;
+    }
+  }
+  async function dropSchedule(scheduleId: string) {
+    try {
+      await cancelSchedule(key, flowId, scheduleId);
+      await loadSchedules();
+    } catch (e) {
+      error = msg(e);
+    }
+  }
+
+  // Per-flow access grants (admin).
+  let grants = $state<FlowGrant[]>([]);
+  let grantActor = $state('');
+  let grantEnv = $state('*');
+  let grantBusy = $state(false);
+  async function loadGrants() {
+    try {
+      grants = await listGrants(key, flowId);
+    } catch {
+      grants = []; // non-admins can't list — leave empty
+    }
+  }
+  async function grant() {
+    error = '';
+    grantBusy = true;
+    try {
+      await addGrant(key, flowId, grantActor.trim(), grantEnv);
+      grantActor = '';
+      toast.success('Grant added');
+      await loadGrants();
+    } catch (e) {
+      error = msg(e);
+    } finally {
+      grantBusy = false;
+    }
+  }
+  async function ungrant(grantId: string) {
+    try {
+      await revokeGrant(key, flowId, grantId);
+      await loadGrants();
+    } catch (e) {
+      error = msg(e);
+    }
+  }
+
   let promoteFrom = $state('sandbox');
   let promoteTo = $state('staging');
   let promoteForce = $state(false);
@@ -1311,6 +1413,8 @@
   let webhooks = $state<Webhook[]>([]);
   let hookURL = $state('');
   let hookNote = $state('');
+  let hookTemplate = $state('');
+  let hookEvents = $state('');
   let hookBusy = $state(false);
   async function loadWebhooks() {
     try {
@@ -1323,9 +1427,17 @@
     error = '';
     hookBusy = true;
     try {
-      await subscribeWebhook(key, hookURL.trim(), hookNote.trim());
+      await subscribeWebhook(key, hookURL.trim(), hookNote.trim(), {
+        template: hookTemplate.trim(),
+        events: hookEvents
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean)
+      });
       hookURL = '';
       hookNote = '';
+      hookTemplate = '';
+      hookEvents = '';
       toast.success('Webhook added');
       await loadWebhooks();
     } catch (e) {
@@ -1421,6 +1533,8 @@
     void loadDrift();
     void loadAssertions();
     void loadShadow();
+    void loadSchedules();
+    void loadGrants();
   });
 </script>
 
@@ -1624,6 +1738,12 @@
             <span class:err={drift.max_drift > 0.2} class:ok={drift.max_drift <= 0.2}
               >max drift {pct(drift.max_drift)}</span
             >
+            <span
+              class:err={drift.psi > 0.25}
+              class:ok={drift.psi <= 0.1}
+              title="population stability index">PSI {drift.psi.toFixed(3)}</span
+            >
+            <span class="muted" title="Kullback–Leibler divergence">KL {drift.kl.toFixed(3)}</span>
             {#each drift.buckets ?? [] as b (b.disposition)}
               <span class="muted"
                 >{b.disposition}: {pct(b.baseline)}→{pct(b.current)} ({b.delta >= 0 ? '+' : ''}{pct(
@@ -1664,12 +1784,28 @@
             Note
             <input bind:value={hookNote} aria-label="webhook note" placeholder="optional" />
           </label>
+          <label>
+            Events
+            <input
+              bind:value={hookEvents}
+              aria-label="webhook events"
+              placeholder="monitor, drift (blank = all)"
+            />
+          </label>
           <button
             onclick={addWebhook}
             disabled={hookBusy || !hookURL.trim()}
             data-testid="add-webhook">Add webhook</button
           >
         </div>
+        <label class="grow">
+          Message template <span class="muted">(optional Go template, e.g. {`{{.flow_id}}`})</span>
+          <input
+            bind:value={hookTemplate}
+            aria-label="webhook template"
+            placeholder="leave blank to send the raw JSON payload"
+          />
+        </label>
         {#if webhooks.length > 0}
           <ul class="mon-list">
             {#each webhooks as h (h.webhook_id)}
@@ -1706,9 +1842,13 @@
         {#each ['sandbox', 'staging', 'production'] as e (e)}
           <span class="env">
             {e}:
-            {#if liveVersion(e) !== undefined}<b>v{liveVersion(e)}</b>{:else}<span class="muted"
-                >—</span
-              >{/if}
+            {#if liveVersion(e) !== undefined}<b>v{liveVersion(e)}</b>
+              <button
+                class="linkbtn"
+                onclick={() => rollback(e)}
+                disabled={deploying}
+                title="Revert to the previous live version">rollback</button
+              >{:else}<span class="muted">—</span>{/if}
           </span>
         {/each}
       </div>
@@ -1909,6 +2049,80 @@
           </table>
         </div>
       {/if}
+
+      <details class="schedules" data-testid="schedules-panel">
+        <summary>Scheduled deploys <span class="muted">({schedules.length})</span></summary>
+        <div class="row mon-form">
+          <label
+            >Env
+            <select bind:value={schEnv}>
+              <option value="sandbox">sandbox</option>
+              <option value="staging">staging</option>
+              <option value="production">production</option>
+            </select></label
+          >
+          <label>Version <input bind:value={schVersion} placeholder="latest" /></label>
+          <label>At <input type="datetime-local" bind:value={schAt} /></label>
+          <label
+            >Until <input
+              type="datetime-local"
+              bind:value={schUntil}
+              aria-label="until (optional, time-boxed)"
+            /></label
+          >
+          <button onclick={addSchedule} disabled={schBusy || !schAt}>Schedule</button>
+        </div>
+        {#if schedules.length > 0}
+          <ul class="mon-list">
+            {#each schedules as sc (sc.schedule_id)}
+              <li>
+                <span>{sc.environment} v{sc.version} @ {new Date(sc.at).toLocaleString()}</span>
+                {#if sc.until}<span class="muted">→ {new Date(sc.until).toLocaleString()}</span
+                  >{/if}
+                <span class="reqstatus {sc.status}">{sc.status}</span>
+                {#if sc.status === 'pending' || sc.status === 'active'}
+                  <button class="linkbtn" onclick={() => dropSchedule(sc.schedule_id)}
+                    >cancel</button
+                  >
+                {/if}
+              </li>
+            {/each}
+          </ul>
+        {/if}
+      </details>
+
+      <details class="grants" data-testid="grants-panel">
+        <summary>Access grants <span class="muted">(admin · {grants.length})</span></summary>
+        <p class="hint">
+          With no grants, change-control follows the global roles. Add a grant to restrict who may
+          deploy / roll back / schedule / promote this flow (per environment, or <code>*</code> for all).
+        </p>
+        <div class="row mon-form">
+          <label class="grow"
+            >Actor <input bind:value={grantActor} placeholder="user id / email" /></label
+          >
+          <label
+            >Env
+            <select bind:value={grantEnv}>
+              <option value="*">all (*)</option>
+              <option value="sandbox">sandbox</option>
+              <option value="staging">staging</option>
+              <option value="production">production</option>
+            </select></label
+          >
+          <button onclick={grant} disabled={grantBusy || !grantActor.trim()}>Grant</button>
+        </div>
+        {#if grants.length > 0}
+          <ul class="mon-list">
+            {#each grants as g (g.grant_id)}
+              <li>
+                <span><b>{g.actor}</b> — {g.environment}</span>
+                <button class="linkbtn" onclick={() => ungrant(g.grant_id)}>revoke</button>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+      </details>
     </section>
 
     {#if flow && flow.versions.length > 0}
@@ -3279,6 +3493,19 @@
     gap: 1rem;
     margin-bottom: 0.6rem;
     font-size: 0.9rem;
+  }
+  .linkbtn {
+    background: none;
+    border: none;
+    color: var(--fg-subtle);
+    cursor: pointer;
+    padding: 0 0 0 0.3rem;
+    font-size: 0.78rem;
+    text-decoration: underline;
+  }
+  .linkbtn:disabled {
+    opacity: 0.5;
+    cursor: default;
   }
   .deploy .hint {
     font-size: 0.8rem;

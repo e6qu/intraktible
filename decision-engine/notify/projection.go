@@ -23,6 +23,8 @@ type View struct {
 	WebhookID      string    `json:"webhook_id"`
 	URL            string    `json:"url"`
 	Note           string    `json:"note,omitempty"`
+	Template       string    `json:"template,omitempty"`
+	Events         []string  `json:"events,omitempty"`
 	Active         bool      `json:"active"`
 	DeliveryCount  int       `json:"delivery_count"`
 	LastStatus     int       `json:"last_status,omitempty"`
@@ -52,7 +54,8 @@ func (Projector) Apply(ctx context.Context, e eventlog.Envelope, s store.Store) 
 		}
 		v := View{
 			Org: e.Org, Workspace: e.Workspace, WebhookID: p.WebhookID, URL: p.URL,
-			Note: p.Note, Active: true, CreatedAt: e.Time, CreatedBy: e.Actor, Seq: e.Seq,
+			Note: p.Note, Template: p.Template, Events: p.Events,
+			Active: true, CreatedAt: e.Time, CreatedBy: e.Actor, Seq: e.Seq,
 		}
 		return store.PutDoc(ctx, s, Collection, store.Key(e.Org, e.Workspace, p.WebhookID), v)
 	case TypeUnsubscribed:

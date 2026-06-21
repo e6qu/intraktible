@@ -31,13 +31,21 @@ const (
 	MetricAvgLatencyMS      Metric = "avg_latency_ms"     // mean completed-decision duration
 	MetricVolume            Metric = "volume"             // total decisions started
 	MetricDistributionDrift Metric = "distribution_drift" // max |current-baseline| disposition share
+	// Richer drift over the same disposition distribution. PSI (population stability
+	// index) sums (c-b)·ln(c/b) per bucket — the lending-industry standard, with the
+	// rule of thumb <0.1 stable / 0.1–0.25 moderate / >0.25 significant. KL is the
+	// Kullback–Leibler divergence sum c·ln(c/b). Both weight proportional shifts in
+	// small buckets more than the raw max-delta does, catching subtler drift.
+	MetricDistributionDriftPSI Metric = "distribution_drift_psi"
+	MetricDistributionDriftKL  Metric = "distribution_drift_kl"
 )
 
 // Valid reports whether m is a known metric.
 func (m Metric) Valid() bool {
 	switch m {
 	case MetricFailureRate, MetricReferRate, MetricAutomationRate, MetricApproveRate,
-		MetricDeclineRate, MetricAvgLatencyMS, MetricVolume, MetricDistributionDrift:
+		MetricDeclineRate, MetricAvgLatencyMS, MetricVolume, MetricDistributionDrift,
+		MetricDistributionDriftPSI, MetricDistributionDriftKL:
 		return true
 	}
 	return false
@@ -138,6 +146,10 @@ func metricValue(snap Snapshot, metric Metric) (float64, bool) {
 		return float64(m.Total), true
 	case MetricDistributionDrift:
 		return driftValue(snap)
+	case MetricDistributionDriftPSI:
+		return divergenceValue(snap, psiTerm)
+	case MetricDistributionDriftKL:
+		return divergenceValue(snap, klTerm)
 	}
 	return 0, false
 }
@@ -177,6 +189,33 @@ func driftValue(snap Snapshot) (float64, bool) {
 	return drift, true
 }
 
+// driftEps floors a share so a zeroed bucket doesn't blow up the log term.
+const driftEps = 1e-4
+
+// psiTerm / klTerm are the per-bucket contributions to PSI and KL respectively.
+func psiTerm(cur, base float64) float64 { return (cur - base) * math.Log(cur/base) }
+func klTerm(cur, base float64) float64  { return cur * math.Log(cur/base) }
+
+// divergenceValue sums a per-bucket divergence term over the disposition shares
+// (current vs baseline). Undefined without a baseline or current data; shares are
+// floored by driftEps so an empty bucket contributes a bounded term.
+func divergenceValue(snap Snapshot, term func(cur, base float64) float64) (float64, bool) {
+	if snap.Baseline == nil {
+		return 0, false
+	}
+	a, dc, r, ok := distribution(snap.Metrics)
+	if !ok {
+		return 0, false
+	}
+	cur := []float64{a, dc, r}
+	base := []float64{snap.Baseline.Approve, snap.Baseline.Decline, snap.Baseline.Refer}
+	sum := 0.0
+	for i := range cur {
+		sum += term(math.Max(cur[i], driftEps), math.Max(base[i], driftEps))
+	}
+	return sum, true
+}
+
 // DistributionOf captures the current disposition shares as a Baseline (the shell
 // records this as a baseline snapshot). ok is false when nothing is dispositioned.
 func DistributionOf(m analytics.FlowMetrics) (Baseline, bool) {
@@ -201,6 +240,8 @@ type DriftReport struct {
 	HasBaseline   bool          `json:"has_baseline"`
 	HasCurrent    bool          `json:"has_current"`
 	MaxDrift      float64       `json:"max_drift"`
+	PSI           float64       `json:"psi"` // population stability index over the buckets
+	KL            float64       `json:"kl"`  // Kullback–Leibler divergence over the buckets
 	BaselineTotal int           `json:"baseline_total,omitempty"`
 	CurrentTotal  int           `json:"current_total"`
 	Buckets       []DriftBucket `json:"buckets,omitempty"`
@@ -224,6 +265,12 @@ func ComputeDrift(snap Snapshot) DriftReport {
 		if ok && math.Abs(delta) > rep.MaxDrift {
 			rep.MaxDrift = math.Abs(delta)
 		}
+	}
+	if psi, ok := divergenceValue(snap, psiTerm); ok {
+		rep.PSI = psi
+	}
+	if kl, ok := divergenceValue(snap, klTerm); ok {
+		rep.KL = kl
 	}
 	return rep
 }

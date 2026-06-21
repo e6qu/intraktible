@@ -80,6 +80,38 @@ func TestDistributionDrift(t *testing.T) {
 	if !rep.HasBaseline || !rep.HasCurrent || rep.MaxDrift < 0.199 || len(rep.Buckets) != 3 {
 		t.Fatalf("unexpected drift report: %+v", rep)
 	}
+	if rep.PSI <= 0 || rep.KL <= 0 {
+		t.Fatalf("report should carry PSI/KL: %+v", rep)
+	}
+}
+
+func TestDistributionDriftPSIandKL(t *testing.T) {
+	base := &Baseline{Approve: 0.7, Decline: 0.1, Refer: 0.2, Total: 100}
+	snap := Snapshot{
+		Metrics:  analytics.FlowMetrics{ByDisposition: map[string]int{"approve": 50, "decline": 10, "refer": 40}},
+		Baseline: base,
+	}
+	// PSI = sum (c-b)·ln(c/b) over {0.5/0.7, 0.1/0.1, 0.4/0.2}.
+	wantPSI := (0.5-0.7)*math.Log(0.5/0.7) + 0 + (0.4-0.2)*math.Log(0.4/0.2)
+	psi := Evaluate(snap, Rule{Metric: MetricDistributionDriftPSI, Op: OpGreaterThan, Threshold: 0})
+	if !psi.Computable || math.Abs(psi.Actual-wantPSI) > 1e-9 {
+		t.Fatalf("PSI = %+v, want ~%v", psi, wantPSI)
+	}
+	// KL = sum c·ln(c/b); the decline bucket (0.1→0.1) contributes ln(1)=0.
+	wantKL := 0.5*math.Log(0.5/0.7) + 0.4*math.Log(0.4/0.2)
+	kl := Evaluate(snap, Rule{Metric: MetricDistributionDriftKL, Op: OpGreaterThan, Threshold: 0})
+	if !kl.Computable || math.Abs(kl.Actual-wantKL) > 1e-9 {
+		t.Fatalf("KL = %+v, want ~%v", kl, wantKL)
+	}
+	// Both are not computable without a baseline.
+	for _, m := range []Metric{MetricDistributionDriftPSI, MetricDistributionDriftKL} {
+		if s := Evaluate(Snapshot{Metrics: snap.Metrics}, Rule{Metric: m, Op: OpGreaterThan, Threshold: 0}); s.Computable {
+			t.Fatalf("%s without a baseline must be not computable", m)
+		}
+	}
+	if !MetricDistributionDriftPSI.Valid() || !MetricDistributionDriftKL.Valid() {
+		t.Fatal("PSI/KL metrics should be Valid")
+	}
 }
 
 func TestTransition(t *testing.T) {

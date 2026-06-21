@@ -72,7 +72,7 @@ func TestDriftSchedulerPushesToWebhook(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer sink.Close()
-	if _, _, err := notify.NewHandler(log).Subscribe(ctx, id, sink.URL, "drift alerts"); err != nil {
+	if _, _, err := notify.NewHandler(log).Subscribe(ctx, id, sink.URL, "drift alerts", "", nil); err != nil {
 		t.Fatal(err)
 	}
 

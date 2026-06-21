@@ -751,6 +751,22 @@ new SSE-parser fuzz harness. Two pure cross-package signature refactors (EntityR
 follow-ups — they prevent only theoretical transpositions with trusted callers and carry large churn /
 auth-regression surface for no behavioral change (detail in BUGS.md).
 
+**Polish bundle: AI guardrails + alerting + rollback/scheduled deploys + per-flow permissions.** Four
+P1/P2 polish items in one PR. (1) **AI guardrails** (`ai.Guard` decorator over every registered provider,
+covering the Agent Manager and the Copilot): per-provider token-bucket rate limit, free-text PII
+redaction (prompt + output) + structured-field redaction, and jailbreak/prompt-injection blocking — all
+env-configured (`INTRAKTIBLE_AI_RATE_LIMIT_RPS`/`_BURST`, `INTRAKTIBLE_AI_GUARDRAIL_*`), off by default.
+(2) **Alerting polish**: PSI + KL distribution-drift as first-class monitor metrics (enum-driven, so they
+flow through codegen + the UI dropdown), and per-webhook message **templates** + event **routing** filters
+(the notifier renders/filters per webhook). (3) **Instant rollback** (revert an env to its prior live
+version, folded from the deploy event stream, audited as `version_rolled_back`) + **scheduled / time-boxed
+deploys** (`decision-engine/schedule`: an event-sourced schedule projection + a deploy scheduler that
+activates due deploys and auto-reverts expired time-boxed ones, sharing the monitor cadence). (4)
+**Fine-grained per-flow/per-environment permissions** (`decision-engine/grants`): opt-in, event-sourced
+grants that, when present on a flow, additionally gate deploy/rollback/schedule/promote on a per-env grant
+(admins always pass; a flow with no grants is unchanged). UI: drift PSI/KL, webhook template/events,
+a rollback button, and scheduled-deploy + access-grant panels in the builder. Tests across every layer.
+
 **Encryption at rest + secrets management.** The last open P0 landed as one PR. The AES-256-GCM
 seal/open construction — previously duplicated in the connector-credential sealer and the crypto-shred
 erasure vault — is extracted into a shared `platform/secretbox` primitive: `AESGCMSecretBox`, a rotating

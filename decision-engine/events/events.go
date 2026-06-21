@@ -5,7 +5,10 @@
 // version appends an immutable event, so the full edit history is replayable.
 package events
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"time"
+)
 
 // StreamFlows is the event stream for flow lifecycle (creation, version publish).
 const StreamFlows = "decision.flows"
@@ -68,7 +71,13 @@ const (
 	TypeDeploymentRequested = "decision.flow.deployment_requested"
 	TypeDeploymentApproved  = "decision.flow.deployment_approved"
 	TypeDeploymentRejected  = "decision.flow.deployment_rejected"
-	TypePromotionPolicySet  = "decision.flow.promotion_policy_set"
+	// Instant rollback + scheduled/time-boxed deploys.
+	TypeFlowVersionRolledBack   = "decision.flow.version_rolled_back"
+	TypeDeployScheduled         = "decision.flow.deploy_scheduled"
+	TypeDeployScheduleActivated = "decision.flow.deploy_schedule_activated"
+	TypeDeployScheduleReverted  = "decision.flow.deploy_schedule_reverted"
+	TypeDeployScheduleCanceled  = "decision.flow.deploy_schedule_canceled"
+	TypePromotionPolicySet      = "decision.flow.promotion_policy_set"
 	// TypeShadowSet assigns (or clears) a per-environment shadow version: a
 	// candidate evaluated alongside live decisions for divergence analysis.
 	TypeShadowSet = "decision.flow.shadow_set"
@@ -217,6 +226,50 @@ type DeploymentRejected struct {
 	RequestID string `json:"request_id"`
 	FlowID    string `json:"flow_id"`
 	Reason    string `json:"reason,omitempty"`
+}
+
+// FlowVersionRolledBack records an instant rollback: the environment is reverted to
+// FromVersion's predecessor (Version), a previously-live version. Distinct from a
+// deploy so the audit trail shows the revert explicitly. It deploys Version with no
+// challenger (a rollback returns to a single known-good version).
+type FlowVersionRolledBack struct {
+	FlowID      string `json:"flow_id"`
+	Environment string `json:"environment"`
+	Version     int    `json:"version"`      // the version made live again
+	FromVersion int    `json:"from_version"` // the version it replaced (for the trail)
+}
+
+// DeployScheduled records a future deployment: at At the Version goes live in
+// Environment; if Until is set, the deploy is time-boxed and auto-reverts after it.
+type DeployScheduled struct {
+	ScheduleID  string     `json:"schedule_id"`
+	FlowID      string     `json:"flow_id"`
+	Environment string     `json:"environment"`
+	Version     int        `json:"version"`
+	At          time.Time  `json:"at"`
+	Until       *time.Time `json:"until,omitempty"`
+}
+
+// DeployScheduleActivated marks a scheduled deploy as activated (so it is not
+// re-activated), recording PriorVersion — the version that was live before — so a
+// time-boxed schedule can revert to it.
+type DeployScheduleActivated struct {
+	ScheduleID   string `json:"schedule_id"`
+	FlowID       string `json:"flow_id"`
+	PriorVersion int    `json:"prior_version"`
+}
+
+// DeployScheduleReverted marks a time-boxed schedule as reverted after its window.
+type DeployScheduleReverted struct {
+	ScheduleID string `json:"schedule_id"`
+	FlowID     string `json:"flow_id"`
+}
+
+// DeployScheduleCanceled cancels a pending (or active) schedule.
+type DeployScheduleCanceled struct {
+	ScheduleID string `json:"schedule_id"`
+	FlowID     string `json:"flow_id"`
+	Reason     string `json:"reason,omitempty"`
 }
 
 // PromotionStagePolicy is the gate applied when promoting into one target

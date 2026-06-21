@@ -102,12 +102,37 @@ func (n *Notifier) Deliver(ctx context.Context, id identity.Identity, reason str
 	if err != nil {
 		return DeliverySummary{}, err
 	}
-	body, err := json.Marshal(payload)
+	defaultBody, err := json.Marshal(payload)
 	if err != nil {
 		return DeliverySummary{}, fmt.Errorf("notify: marshal payload: %w", err)
 	}
+	// Decode once for any per-channel template to render against.
+	var data any
+	_ = json.Unmarshal(defaultBody, &data)
+
 	sum := DeliverySummary{Results: make([]DeliveryResult, 0, len(hooks))}
 	for _, h := range hooks {
+		// Routing: skip a webhook whose event filter doesn't match this reason.
+		if !wantsReason(h.Events, reason) {
+			continue
+		}
+		body := defaultBody
+		if h.Template != "" {
+			rendered, terr := renderTemplate(h.Template, data)
+			if terr != nil {
+				// A template that won't render is a permanent, recorded failure (the
+				// subscribe-time check should have caught a parse error; this catches
+				// an execution error against this payload) — never silently dropped.
+				res := DeliveryResult{WebhookID: h.WebhookID, URL: h.URL, Outcome: OutcomePermanent, Error: "template: " + terr.Error()}
+				if rerr := n.record(ctx, id, h, res, reason); rerr != nil {
+					return DeliverySummary{}, rerr
+				}
+				sum.Permanent++
+				sum.Results = append(sum.Results, res)
+				continue
+			}
+			body = rendered
+		}
 		res := n.post(ctx, h, body)
 		if err := n.record(ctx, id, h, res, reason); err != nil {
 			return DeliverySummary{}, err

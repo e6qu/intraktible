@@ -147,3 +147,50 @@ func TestDeliverySummaryPredicates(t *testing.T) {
 		t.Fatal("Delivered iff at least one endpoint accepted")
 	}
 }
+
+// A per-webhook template formats the body, and an event filter routes deliveries.
+func TestDeliverTemplateAndRouting(t *testing.T) {
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "tester"}
+	log, st := testutil.NewLogStore(t)
+
+	var templated, plain string
+	tmplSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		templated = string(b)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer tmplSrv.Close()
+	driftSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		plain = string(b)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer driftSrv.Close()
+
+	put := func(v notify.View) {
+		v.Org, v.Workspace, v.Active = id.Org, id.Workspace, true
+		if err := store.PutDoc(context.Background(), st, notify.Collection, store.Key(id.Org, id.Workspace, v.WebhookID), v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A templated webhook that only wants "monitor" events.
+	put(notify.View{WebhookID: "slack", URL: tmplSrv.URL, Template: `alert for {{.flow_id}}`, Events: []string{"monitor"}})
+	// A webhook that only wants "drift" events — must NOT receive the monitor alert.
+	put(notify.View{WebhookID: "drift", URL: driftSrv.URL, Events: []string{"drift"}})
+
+	n := notify.NewNotifier(log, st, http.DefaultClient)
+	summary, err := n.Deliver(context.Background(), id, "monitor check", map[string]any{"flow_id": "kyc"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Only the matching (slack) webhook was delivered to.
+	if len(summary.Results) != 1 || summary.Results[0].WebhookID != "slack" {
+		t.Fatalf("routing should deliver only to the monitor webhook: %+v", summary.Results)
+	}
+	if templated != "alert for kyc" {
+		t.Fatalf("template not rendered: %q", templated)
+	}
+	if plain != "" {
+		t.Fatalf("the drift-only webhook should not have received the monitor alert: %q", plain)
+	}
+}

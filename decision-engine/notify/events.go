@@ -19,11 +19,16 @@ const (
 	TypeDelivered    = "decision.webhook_delivered"
 )
 
-// Subscribed registers a webhook endpoint.
+// Subscribed registers a webhook endpoint. Template, when set, is a Go text/template
+// rendered against the alert payload to format the request body per channel (empty =
+// the raw JSON payload). Events, when non-empty, routes deliveries to this webhook
+// only when the delivery reason matches one of the listed tokens (empty = all).
 type Subscribed struct {
-	WebhookID string `json:"webhook_id"`
-	URL       string `json:"url"`
-	Note      string `json:"note,omitempty"`
+	WebhookID string   `json:"webhook_id"`
+	URL       string   `json:"url"`
+	Note      string   `json:"note,omitempty"`
+	Template  string   `json:"template,omitempty"`
+	Events    []string `json:"events,omitempty"`
 }
 
 // Unsubscribed removes a webhook endpoint.

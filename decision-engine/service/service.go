@@ -22,12 +22,15 @@ import (
 	"github.com/e6qu/intraktible/decision-engine/domain"
 	"github.com/e6qu/intraktible/decision-engine/events"
 	"github.com/e6qu/intraktible/decision-engine/flows"
+	"github.com/e6qu/intraktible/decision-engine/grants"
 	"github.com/e6qu/intraktible/decision-engine/history"
 	"github.com/e6qu/intraktible/decision-engine/models"
 	"github.com/e6qu/intraktible/decision-engine/monitor"
 	"github.com/e6qu/intraktible/decision-engine/policy"
 	"github.com/e6qu/intraktible/decision-engine/preapproval"
+	"github.com/e6qu/intraktible/decision-engine/schedule"
 	"github.com/e6qu/intraktible/decision-engine/shadow"
+	"github.com/e6qu/intraktible/platform/auth"
 	"github.com/e6qu/intraktible/platform/entity"
 	"github.com/e6qu/intraktible/platform/erasure"
 	"github.com/e6qu/intraktible/platform/httpx"
@@ -84,6 +87,10 @@ func (s *Service) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /v1/flows/{flow_id}/slo", s.setSLO)
 	mux.HandleFunc("POST /v1/flows/{flow_id}/versions", s.publish)
 	mux.HandleFunc("POST /v1/flows/{flow_id}/deployments", s.deploy)
+	mux.HandleFunc("POST /v1/flows/{flow_id}/deployments/rollback", s.rollback)
+	mux.HandleFunc("POST /v1/flows/{flow_id}/deployments/schedule", s.scheduleDeploy)
+	mux.HandleFunc("GET /v1/flows/{flow_id}/deployments/schedules", s.listSchedules)
+	mux.HandleFunc("DELETE /v1/flows/{flow_id}/deployments/schedules/{schedule_id}", s.cancelSchedule)
 	mux.HandleFunc("POST /v1/flows/{flow_id}/promote", s.promote)
 	mux.HandleFunc("GET /v1/flows/{flow_id}/promotion-policy", s.getPromotionPolicy)
 	mux.HandleFunc("PUT /v1/flows/{flow_id}/promotion-policy", s.setPromotionPolicy)
@@ -524,6 +531,9 @@ func (s *Service) deploy(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, err)
 		return
 	}
+	if !s.allowFlow(w, r, id, r.PathValue("flow_id"), req.Environment) {
+		return
+	}
 	e, err := s.cmd.Deploy(r.Context(), id, domain.DeployVersion{
 		FlowID:            r.PathValue("flow_id"),
 		Environment:       req.Environment,
@@ -538,6 +548,99 @@ func (s *Service) deploy(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusCreated, map[string]any{
 		"environment": req.Environment, "version": req.Version, "event_id": e.ID, "seq": e.Seq,
 	})
+}
+
+type rollbackRequest struct {
+	Environment string `json:"environment"`
+}
+
+// rollback reverts an environment to its previous live version (instant rollback).
+func (s *Service) rollback(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	var req rollbackRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	if !s.allowFlow(w, r, id, r.PathValue("flow_id"), req.Environment) {
+		return
+	}
+	e, err := s.cmd.Rollback(r.Context(), id, r.PathValue("flow_id"), req.Environment)
+	if err != nil {
+		httpx.Error(w, decideStatus(err), err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"environment": req.Environment, "event_id": e.ID, "seq": e.Seq})
+}
+
+type scheduleRequest struct {
+	Environment string `json:"environment"`
+	Version     int    `json:"version"`
+	At          string `json:"at"`              // RFC3339
+	Until       string `json:"until,omitempty"` // RFC3339; set = time-boxed (auto-revert)
+}
+
+// scheduleDeploy queues a deployment for a future time (optionally time-boxed).
+func (s *Service) scheduleDeploy(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	var req scheduleRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	at, err := time.Parse(time.RFC3339, req.At)
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, fmt.Errorf("at must be an RFC3339 timestamp: %w", err))
+		return
+	}
+	var until *time.Time
+	if req.Until != "" {
+		u, err := time.Parse(time.RFC3339, req.Until)
+		if err != nil {
+			httpx.Error(w, http.StatusBadRequest, fmt.Errorf("until must be an RFC3339 timestamp: %w", err))
+			return
+		}
+		until = &u
+	}
+	if !s.allowFlow(w, r, id, r.PathValue("flow_id"), req.Environment) {
+		return
+	}
+	scheduleID, e, err := s.cmd.ScheduleDeploy(r.Context(), id, r.PathValue("flow_id"), req.Environment, req.Version, at, until)
+	if err != nil {
+		httpx.Error(w, decideStatus(err), err)
+		return
+	}
+	httpx.JSON(w, http.StatusCreated, map[string]any{"schedule_id": scheduleID, "event_id": e.ID, "seq": e.Seq})
+}
+
+// listSchedules returns the flow's scheduled deploys (newest first).
+func (s *Service) listSchedules(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	vs, err := schedule.List(r.Context(), s.store, id, r.PathValue("flow_id"))
+	httpx.WriteList(w, "schedules", vs, err)
+}
+
+// cancelSchedule cancels a pending or active scheduled deploy.
+func (s *Service) cancelSchedule(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	e, err := s.cmd.CancelSchedule(r.Context(), id, r.PathValue("flow_id"), r.PathValue("schedule_id"), "")
+	if err != nil {
+		httpx.Error(w, decideStatus(err), err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"event_id": e.ID, "seq": e.Seq})
 }
 
 type promoteRequest struct {
@@ -695,6 +798,9 @@ func (s *Service) promote(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.From == req.To {
 		httpx.Error(w, http.StatusBadRequest, fmt.Errorf("promote: from and to must differ"))
+		return
+	}
+	if !s.allowFlow(w, r, id, r.PathValue("flow_id"), req.To) {
 		return
 	}
 	flowID := r.PathValue("flow_id")
@@ -920,6 +1026,27 @@ func allowEnv(w http.ResponseWriter, r *http.Request, env string) bool {
 	scope, ok := httpx.Scope(r.Context())
 	if !ok || !scope.Allows(env) {
 		httpx.Error(w, http.StatusForbidden, fmt.Errorf("scope %q does not permit environment %q", scope, env))
+		return false
+	}
+	return true
+}
+
+// allowFlow enforces fine-grained per-flow grants on a change-control action, on top
+// of the global RBAC the middleware already checked. Admins always pass; otherwise,
+// when the flow has any grants, the caller must hold one for this environment.
+// Backward-compatible: a flow with no grants is allowed. Writes a 403 and returns
+// false when denied (or 500 on a store error).
+func (s *Service) allowFlow(w http.ResponseWriter, r *http.Request, id identity.Identity, flowID, env string) bool {
+	if httpx.RoleOf(r.Context()) == auth.RoleAdmin {
+		return true
+	}
+	ok, err := grants.Allowed(r.Context(), s.store, id, flowID, env, id.Actor)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, err)
+		return false
+	}
+	if !ok {
+		httpx.Error(w, http.StatusForbidden, fmt.Errorf("requires a per-flow grant for %q in %q", flowID, env))
 		return false
 	}
 	return true

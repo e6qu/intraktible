@@ -113,15 +113,16 @@ func (Projector) Collections() []string { return []string{Collection, slugIndexC
 // flowAppliers dispatches each flow event type to its handler (a map keeps the
 // dispatch flat — events of other types are simply absent and skipped).
 var flowAppliers = map[string]func(context.Context, eventlog.Envelope, store.Store) error{
-	events.TypeFlowCreated:          applyCreated,
-	events.TypeFlowVersionPublished: applyPublished,
-	events.TypeFlowVersionDeployed:  applyDeployed,
-	events.TypeDeploymentRequested:  applyDeploymentRequested,
-	events.TypeDeploymentApproved:   applyDeploymentApproved,
-	events.TypeDeploymentRejected:   applyDeploymentRejected,
-	events.TypePromotionPolicySet:   applyPromotionPolicySet,
-	events.TypeShadowSet:            applyShadowSet,
-	events.TypeSLOSet:               applySLOSet,
+	events.TypeFlowCreated:           applyCreated,
+	events.TypeFlowVersionPublished:  applyPublished,
+	events.TypeFlowVersionDeployed:   applyDeployed,
+	events.TypeDeploymentRequested:   applyDeploymentRequested,
+	events.TypeDeploymentApproved:    applyDeploymentApproved,
+	events.TypeDeploymentRejected:    applyDeploymentRejected,
+	events.TypePromotionPolicySet:    applyPromotionPolicySet,
+	events.TypeShadowSet:             applyShadowSet,
+	events.TypeSLOSet:                applySLOSet,
+	events.TypeFlowVersionRolledBack: applyRolledBack,
 }
 
 // Apply maintains the flow document. Events of other types are not this
@@ -316,6 +317,21 @@ func applyDeployed(ctx context.Context, e eventlog.Envelope, s store.Store) erro
 	}
 	fv.UpdatedAt = e.Time
 	return store.PutDoc(ctx, s, Collection, key, fv)
+}
+
+// applyRolledBack makes a previously-live version live again in an environment,
+// clearing any challenger (a rollback returns to a single known-good version).
+func applyRolledBack(ctx context.Context, e eventlog.Envelope, s store.Store) error {
+	var p events.FlowVersionRolledBack
+	if err := json.Unmarshal(e.Payload, &p); err != nil {
+		return fmt.Errorf("decision_flows: decode rolled_back seq %d: %w", e.Seq, err)
+	}
+	return mutateFlow(ctx, s, e, p.FlowID, func(fv *FlowView) {
+		if fv.Deployments == nil {
+			fv.Deployments = make(map[string]DeploymentView)
+		}
+		fv.Deployments[p.Environment] = DeploymentView{Version: p.Version}
+	})
 }
 
 // Read returns the flow with the given id for id's tenant.
