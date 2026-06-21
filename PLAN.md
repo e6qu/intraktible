@@ -751,6 +751,25 @@ new SSE-parser fuzz harness. Two pure cross-package signature refactors (EntityR
 follow-ups — they prevent only theoretical transpositions with trusted callers and carry large churn /
 auth-regression surface for no behavioral change (detail in BUGS.md).
 
+**Encryption at rest + secrets management.** The last open P0 landed as one PR. The AES-256-GCM
+seal/open construction — previously duplicated in the connector-credential sealer and the crypto-shred
+erasure vault — is extracted into a shared `platform/secretbox` primitive: `AESGCMSecretBox`, a rotating
+`Keyring` (fingerprint-derived key ids, primary seals / any retained key opens), the versioned JSON
+`Envelope`, byte-level `Seal`/`Open`/`IsSealed`, and `DecodeKey`/`KeyringFromKeys` env helpers. Connectors
+now alias secretbox (wire-identical envelope, so already-sealed connector events still replay) and erasure
+delegates its crypto to it (byte-identical, so already-shredded data still opens). On top of that,
+**encryption at rest**: with `INTRAKTIBLE_ENCRYPTION_KEY` set (`_KEYS_PREVIOUS` for zero-downtime rotation),
+transparent decorators `eventlog.Encrypted` and `store.Encrypted` seal event-log **payloads** and
+projection-store **documents** (covering the session + managed-API-key stores, which share the store).
+Only values are sealed — event metadata + the optimistic-concurrency claim, and store collection names +
+keys, stay plaintext, so ordering, the uniqueness constraint, audit metadata filters, and key-range
+scans/indexes are untouched. The sealed form is a recognizable JSON envelope, so reads open sealed values
+and pass plaintext through: enabling encryption needs **no migration pass**. Connector credentials keep the
+external-KMS (AWS/GCP) option. Off by default; the at-rest key is operator-supplied. Scope note: a
+KMS-wrapped DEK for the hot path is a follow-up (KMS-per-op would add a round-trip to every store op). Tests
+cover the primitive (crypto, rotation, envelope, key decode), both decorators (seal-at-rest, metadata
+plaintext, transparent migration, the Tx read-modify-write path), and no-regression on connectors/erasure.
+
 **Observability: tracing + SLOs + AI cost.** A full observability slice landed as one PR. (1)
 **Distributed tracing** via OpenTelemetry: a new `platform/telemetry` package owns the TracerProvider,
 off by default and configured by env (`INTRAKTIBLE_OTEL_EXPORTER=stdout|otlp`, `OTEL_EXPORTER_OTLP_*`,

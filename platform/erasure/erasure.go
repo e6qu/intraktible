@@ -10,8 +10,6 @@ package erasure
 
 import (
 	"context"
-	"crypto/aes"
-	"crypto/cipher"
 	"crypto/rand"
 	"errors"
 	"fmt"
@@ -19,6 +17,7 @@ import (
 	"time"
 
 	"github.com/e6qu/intraktible/platform/identity"
+	"github.com/e6qu/intraktible/platform/secretbox"
 	"github.com/e6qu/intraktible/platform/store"
 )
 
@@ -155,38 +154,21 @@ func (v *Vault) put(ctx context.Context, id identity.Identity, rec subject) erro
 	return store.PutDoc(ctx, v.store, collection, store.Key(id.Org, id.Workspace, rec.Subject), rec)
 }
 
+// seal/open delegate to the shared AES-256-GCM primitive (the same nonce-prefixed
+// construction this package used inline, so already-sealed subject data still
+// opens). The per-subject key management stays here; only the crypto is shared.
 func seal(key, plain []byte) ([]byte, error) {
-	aead, err := newAEAD(key)
+	box, err := secretbox.NewAESGCMSecretBox(key)
 	if err != nil {
 		return nil, err
 	}
-	nonce := make([]byte, aead.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return nil, fmt.Errorf("erasure: nonce: %w", err)
-	}
-	return aead.Seal(nonce, nonce, plain, nil), nil
+	return box.Encrypt(plain)
 }
 
 func open(key, sealed []byte) ([]byte, error) {
-	aead, err := newAEAD(key)
+	box, err := secretbox.NewAESGCMSecretBox(key)
 	if err != nil {
 		return nil, err
 	}
-	if len(sealed) < aead.NonceSize() {
-		return nil, fmt.Errorf("erasure: ciphertext too short")
-	}
-	nonce, ct := sealed[:aead.NonceSize()], sealed[aead.NonceSize():]
-	plain, err := aead.Open(nil, nonce, ct, nil)
-	if err != nil {
-		return nil, fmt.Errorf("erasure: decrypt: %w", err)
-	}
-	return plain, nil
-}
-
-func newAEAD(key []byte) (cipher.AEAD, error) {
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, fmt.Errorf("erasure: cipher: %w", err)
-	}
-	return cipher.NewGCM(block)
+	return box.Decrypt(sealed)
 }

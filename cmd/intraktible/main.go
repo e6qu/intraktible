@@ -8,8 +8,6 @@ package main
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -69,6 +67,7 @@ import (
 	"github.com/e6qu/intraktible/platform/privacy"
 	"github.com/e6qu/intraktible/platform/projection"
 	"github.com/e6qu/intraktible/platform/scim"
+	"github.com/e6qu/intraktible/platform/secretbox"
 	"github.com/e6qu/intraktible/platform/store"
 	"github.com/e6qu/intraktible/platform/telemetry"
 	"github.com/e6qu/intraktible/platform/web"
@@ -134,17 +133,34 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 		_ = shutdownTracing(sctx)
 	}()
 
+	// Encryption at rest: when INTRAKTIBLE_ENCRYPTION_KEY is set, event payloads and
+	// projection-store documents are sealed under the keyring (AES-256-GCM). Off by
+	// default; the keyring is built once and shared by the log and store wrappers.
+	// Keys must be retained — losing one makes everything sealed under it unreadable.
+	atRest, err := secretbox.KeyringFromKeys(
+		os.Getenv("INTRAKTIBLE_ENCRYPTION_KEY"),
+		splitCSV(os.Getenv("INTRAKTIBLE_ENCRYPTION_KEYS_PREVIOUS"))...,
+	)
+	if err != nil {
+		return fmt.Errorf("encryption-at-rest: %w", err)
+	}
+	if atRest != nil {
+		slog.Info("encryption at rest enabled (event payloads + projection store)")
+	}
+
 	log, err := openLog(logKind, dataDir)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = log.Close() }()
+	log = eventlog.Encrypted(log, atRest)
 
 	st, err := openStore(ctx, storeKind, dataDir)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = st.Close() }()
+	st = store.Encrypted(st, atRest)
 	keyring := auth.NewKeyring()
 	// Sessions live in the projection store, so they persist across restarts when
 	// --store=sqlite (and stay in-memory with --store=memory). It is not a
@@ -688,43 +704,17 @@ func connectorSecretBoxFromEnv(ctx context.Context) (*connectors.Keyring, error)
 		slog.Info("connectors: using external KMS", "provider", os.Getenv("INTRAKTIBLE_KMS_PROVIDER"))
 		return connectors.NewKMSKeyring("kms:"+os.Getenv("INTRAKTIBLE_KMS_PROVIDER"), k), nil
 	}
-	raw := strings.TrimSpace(os.Getenv("INTRAKTIBLE_CONNECTOR_SECRET_KEY"))
-	if raw == "" {
-		return nil, nil
-	}
-	primary, err := decodeConnectorSecretKey(raw)
+	// Otherwise a local key (base64/hex 32 bytes) seals connector credentials, with
+	// any previous keys retained for decrypt during rotation. Shares the key-decoding
+	// + keyring construction with encryption-at-rest (platform/secretbox).
+	kr, err := secretbox.KeyringFromKeys(
+		os.Getenv("INTRAKTIBLE_CONNECTOR_SECRET_KEY"),
+		splitCSV(os.Getenv("INTRAKTIBLE_CONNECTOR_SECRET_KEYS_PREVIOUS"))...,
+	)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("connectors: %w", err)
 	}
-	keys := [][]byte{primary}
-	for _, p := range strings.Split(os.Getenv("INTRAKTIBLE_CONNECTOR_SECRET_KEYS_PREVIOUS"), ",") {
-		p = strings.TrimSpace(p)
-		if p == "" {
-			continue
-		}
-		prev, err := decodeConnectorSecretKey(p)
-		if err != nil {
-			return nil, fmt.Errorf("INTRAKTIBLE_CONNECTOR_SECRET_KEYS_PREVIOUS: %w", err)
-		}
-		keys = append(keys, prev)
-	}
-	return connectors.NewKeyring(keys...)
-}
-
-func decodeConnectorSecretKey(raw string) ([]byte, error) {
-	decoders := []func(string) ([]byte, error){
-		base64.StdEncoding.DecodeString,
-		base64.RawStdEncoding.DecodeString,
-		base64.RawURLEncoding.DecodeString,
-		hex.DecodeString,
-	}
-	for _, decode := range decoders {
-		key, err := decode(raw)
-		if err == nil && len(key) == 32 {
-			return key, nil
-		}
-	}
-	return nil, fmt.Errorf("INTRAKTIBLE_CONNECTOR_SECRET_KEY must be a 32-byte key encoded as base64 or hex")
+	return kr, nil
 }
 
 // moduleProjectors returns the read-model projectors for the enabled modules —
