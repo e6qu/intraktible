@@ -8,18 +8,31 @@
     runAgent,
     listAgentRuns,
     escalateRun,
+    listAgentVersions,
+    getAgentEvals,
+    setAgentEvals,
+    runAgentEval,
     type Agent,
-    type AgentRun
+    type AgentRun,
+    type AgentVersion,
+    type EvalCase,
+    type EvalReport
   } from '$lib/api';
 
   // API calls authenticate via the session cookie (empty key -> no X-Api-Key header).
   const key = '';
   let agent = $state<Agent | null>(null);
   let runs = $state<AgentRun[]>([]);
+  let versions = $state<AgentVersion[]>([]);
   let error = $state('');
 
   let prompt = $state('');
   let lastRunID = $state('');
+
+  // Offline eval: cases edited as JSON, run on demand (record-nothing), scored.
+  let evalText = $state('');
+  let evalReport = $state<EvalReport | null>(null);
+  let evalBusy = $state(false);
 
   // Derive from the route param so navigating between sibling agents reloads
   // rather than showing the first agent's data.
@@ -30,11 +43,42 @@
     // Drop a stale response when sibling navigation changes name mid-flight.
     const reqName = name;
     try {
-      const [a, r] = await Promise.all([getAgent(key, name), listAgentRuns(key, name)]);
+      const [a, r, v, ec] = await Promise.all([
+        getAgent(key, name),
+        listAgentRuns(key, name),
+        listAgentVersions(key, name),
+        getAgentEvals(key, name)
+      ]);
       if (name !== reqName) return;
-      [agent, runs] = [a, r];
+      [agent, runs, versions] = [a, r, v];
+      evalText = ec.length > 0 ? JSON.stringify(ec, null, 2) : '';
     } catch (e) {
       if (name === reqName) error = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  async function saveEvals() {
+    error = '';
+    evalBusy = true;
+    try {
+      const cases = (evalText.trim() ? JSON.parse(evalText) : []) as EvalCase[];
+      await setAgentEvals(key, name, cases);
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    } finally {
+      evalBusy = false;
+    }
+  }
+
+  async function runEval() {
+    error = '';
+    evalBusy = true;
+    try {
+      evalReport = await runAgentEval(key, name);
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    } finally {
+      evalBusy = false;
     }
   }
 
@@ -233,6 +277,62 @@
     {#if streamText || streaming}<pre data-testid="stream-output">{streamText}</pre>{/if}
   </section>
 
+  {#if agent && versions.length > 0}
+    <section class="actions" data-testid="versions">
+      <h2>Versions <span class="muted">(registry · latest v{agent.latest})</span></h2>
+      <ul>
+        {#each versions as v (v.version)}
+          <li>
+            <b>v{v.version}</b>
+            <code>{v.model || '—'}</code>
+            <span class="muted">{v.system ? v.system.slice(0, 60) : ''}</span>
+            <span class="muted"
+              >· {new Date(v.published_at).toLocaleString()} · {v.etag.slice(0, 8)}</span
+            >
+          </li>
+        {/each}
+      </ul>
+    </section>
+  {/if}
+
+  {#if agent}
+    <section class="actions" data-testid="evals">
+      <h2>Offline eval <span class="muted">(golden cases · record-nothing)</span></h2>
+      <p class="muted">
+        JSON array of cases: <code
+          >{`{name, prompt, mode: contains|equals|json_subset, expect, expect_json}`}</code
+        >
+      </p>
+      <textarea
+        bind:value={evalText}
+        rows="6"
+        aria-label="eval cases"
+        placeholder={'[{"name":"approves","prompt":"score 800","mode":"contains","expect":"approve"}]'}
+      ></textarea>
+      <div class="row">
+        <button onclick={saveEvals} disabled={evalBusy} data-testid="save-evals">Save cases</button>
+        <button class="primary" onclick={runEval} disabled={evalBusy} data-testid="run-evals"
+          >{evalBusy ? 'Running…' : 'Run eval'}</button
+        >
+      </div>
+      {#if evalReport}
+        <p data-testid="eval-summary">
+          <b>{evalReport.passed}/{evalReport.total}</b> passed
+          {#if evalReport.failed > 0}<span class="err">({evalReport.failed} failed)</span>{/if}
+        </p>
+        <ul>
+          {#each evalReport.results as r (r.name)}
+            <li>
+              <span class={r.passed ? 'ok' : 'err'}>{r.passed ? '✓' : '✗'}</span>
+              {r.name}
+              {#if !r.passed && r.detail}<span class="muted">— {r.detail}</span>{/if}
+            </li>
+          {/each}
+        </ul>
+      {/if}
+    </section>
+  {/if}
+
   {#if agent}
     <h2>Runs</h2>
     {#if runs.length === 0}<p class="muted">No runs.</p>{/if}
@@ -301,7 +401,17 @@
   .err {
     color: var(--danger);
   }
+  .ok {
+    color: var(--ok, green);
+  }
   .muted {
     color: var(--fg-subtle);
+  }
+  textarea {
+    width: 100%;
+    box-sizing: border-box;
+    font: inherit;
+    font-family: var(--font-mono, monospace);
+    padding: 0.4rem 0.6rem;
   }
 </style>

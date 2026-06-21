@@ -751,6 +751,20 @@ new SSE-parser fuzz harness. Two pure cross-package signature refactors (EntityR
 follow-ups — they prevent only theoretical transpositions with trusted callers and carry large churn /
 auth-regression surface for no behavioral change (detail in BUGS.md).
 
+**AI/ML governance: agent registry/versioning + offline eval.** An agent's definition (model + system
+prompt + schema + tools) is now an immutably **versioned** registry entry: each define appends a
+content-etag'd version to the agent's history (idempotent on an unchanged redefine), mirroring the
+flow-version registry — `applyDefined` appends instead of overwriting, `AgentView` gains `Latest` +
+`Versions[]`, and `agents.ReadConfig(version)` resolves any past version. Runs can **pin a version**
+(`POST /v1/agents/{name}/run {version}`); `GET …/versions` lists history. An **offline eval harness**
+(new `agent-manager/eval`) stores golden cases per agent (event-sourced: prompt + a `contains`/`equals`/
+`json_subset` expectation) and runs them on demand through the provider against a chosen version, scored
+pass/fail — **recording nothing** (the assertions/backtest model), so evaluating a non-deterministic,
+billable model never pollutes the run log. Refactored `InvokeWithTools` to expose an `InvokeConfig` seam
+(run an explicit config, no registry lookup) that both version-pinned runs and the eval harness use. UI:
+version-history + an eval panel on the agent page; full typed SDK in api.ts. Tests across scoring modes,
+the run harness (deterministic via the Stub), and versioning/idempotence.
+
 **Polish bundle: AI guardrails + alerting + rollback/scheduled deploys + per-flow permissions.** Four
 P1/P2 polish items in one PR. (1) **AI guardrails** (`ai.Guard` decorator over every registered provider,
 covering the Agent Manager and the Copilot): per-provider token-bucket rate limit, free-text PII

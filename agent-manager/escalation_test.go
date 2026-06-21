@@ -37,7 +37,7 @@ func TestEscalateRunOpensCase(t *testing.T) {
 	if err := projection.New(log, st, agents.Projector{}).Start(ctx); err != nil {
 		t.Fatal(err)
 	}
-	run, err := h.RunAgent(ctx, id, "triage", "look at this")
+	run, err := h.RunAgent(ctx, id, "triage", "look at this", 0)
 	if err != nil {
 		t.Fatal(err)
 	}

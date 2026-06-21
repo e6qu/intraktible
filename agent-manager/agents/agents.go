@@ -7,6 +7,8 @@ package agents
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -26,7 +28,30 @@ const (
 	CollectionRuns   = "agent_runs"
 )
 
-// AgentView is the materialized read model for one agent definition.
+// AgentConfig is the versioned definition of an agent: the model + system prompt +
+// structured-output schema + declared tools that one invocation runs against. It is
+// the unit the registry versions immutably.
+type AgentConfig struct {
+	Provider string          `json:"provider,omitempty"`
+	Model    string          `json:"model,omitempty"`
+	System   string          `json:"system,omitempty"`
+	Schema   json.RawMessage `json:"schema,omitempty"`
+	Tools    []string        `json:"tools,omitempty"`
+}
+
+// AgentVersionView is one immutable published version of an agent's config (the
+// model/prompt registry's history entry), with a content etag and provenance.
+type AgentVersionView struct {
+	Version     int       `json:"version"`
+	Etag        string    `json:"etag"`
+	AgentConfig           // the config at this version (provider/model/system/schema/tools)
+	PublishedAt time.Time `json:"published_at"`
+	PublishedBy string    `json:"published_by"`
+}
+
+// AgentView is the materialized read model for one agent. The top-level config
+// fields mirror the LATEST version (so list/get/run are unchanged); Versions is the
+// immutable history and Latest is its highest version number.
 type AgentView struct {
 	Org       string          `json:"org"`
 	Workspace string          `json:"workspace"`
@@ -36,8 +61,16 @@ type AgentView struct {
 	System    string          `json:"system,omitempty"`
 	Schema    json.RawMessage `json:"schema,omitempty"`
 	Tools     []string        `json:"tools,omitempty"`
-	Runs      int             `json:"runs"`
-	UpdatedAt time.Time       `json:"updated_at"`
+	// Latest is the current version number; Versions is the append-only history.
+	Latest    int                `json:"latest"`
+	Versions  []AgentVersionView `json:"versions,omitempty"`
+	Runs      int                `json:"runs"`
+	UpdatedAt time.Time          `json:"updated_at"`
+}
+
+// config returns the latest config carried at the top level.
+func (a AgentView) config() AgentConfig {
+	return AgentConfig{Provider: a.Provider, Model: a.Model, System: a.System, Schema: a.Schema, Tools: a.Tools}
 }
 
 // RunView is one recorded agent invocation.
@@ -103,16 +136,37 @@ func applyDefined(ctx context.Context, e eventlog.Envelope, s store.Store) error
 		return err
 	}
 	key := store.Key(e.Org, e.Workspace, p.Name)
-	cur, _, err := store.GetDoc[AgentView](ctx, s, CollectionAgents, key)
+	out, _, err := store.GetDoc[AgentView](ctx, s, CollectionAgents, key)
 	if err != nil {
 		return err
 	}
-	v := AgentView{
-		Org: e.Org, Workspace: e.Workspace, Name: p.Name,
-		Provider: p.Provider, Model: p.Model, System: p.System, Schema: p.Schema, Tools: p.Tools,
-		Runs: cur.Runs, UpdatedAt: e.Time,
+	cfg := AgentConfig{Provider: p.Provider, Model: p.Model, System: p.System, Schema: p.Schema, Tools: p.Tools}
+	out.Org, out.Workspace, out.Name = e.Org, e.Workspace, p.Name
+	// The top-level fields always reflect the just-defined (latest) config.
+	out.Provider, out.Model, out.System, out.Schema, out.Tools = cfg.Provider, cfg.Model, cfg.System, cfg.Schema, cfg.Tools
+	out.UpdatedAt = e.Time
+	// Append an immutable version unless this exact config already is the latest —
+	// an idempotent redefine (same etag) does not create a new version.
+	etag := agentEtag(cfg)
+	if n := len(out.Versions); n == 0 || out.Versions[n-1].Etag != etag {
+		next := out.Latest + 1
+		out.Versions = append(out.Versions, AgentVersionView{
+			Version: next, Etag: etag, AgentConfig: cfg, PublishedAt: e.Time, PublishedBy: e.Actor,
+		})
+		out.Latest = next
 	}
-	return store.PutDoc(ctx, s, CollectionAgents, key, v)
+	return store.PutDoc(ctx, s, CollectionAgents, key, out)
+}
+
+// agentEtag is the content hash of a config (sorted-key canonical JSON), so an
+// identical redefine is detectable and won't create a redundant version.
+func agentEtag(cfg AgentConfig) string {
+	b, err := json.Marshal(cfg)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
 }
 
 func applyRun(ctx context.Context, e eventlog.Envelope, s store.Store) error {
@@ -167,6 +221,24 @@ func applyRun(ctx context.Context, e eventlog.Envelope, s store.Store) error {
 // Read returns one agent definition for id's tenant.
 func Read(ctx context.Context, s store.Store, id identity.Identity, name string) (AgentView, bool, error) {
 	return store.GetDoc[AgentView](ctx, s, CollectionAgents, store.Key(id.Org, id.Workspace, name))
+}
+
+// ReadConfig resolves an agent's config at a version (0 = latest). ok is false for
+// an unknown agent or an unknown version.
+func ReadConfig(ctx context.Context, s store.Store, id identity.Identity, name string, version int) (AgentConfig, bool, error) {
+	av, ok, err := Read(ctx, s, id, name)
+	if err != nil || !ok {
+		return AgentConfig{}, ok, err
+	}
+	if version == 0 || version == av.Latest {
+		return av.config(), true, nil
+	}
+	for _, v := range av.Versions {
+		if v.Version == version {
+			return v.AgentConfig, true, nil
+		}
+	}
+	return AgentConfig{}, false, nil
 }
 
 // List returns the tenant's agent definitions, ordered by name.
@@ -303,6 +375,14 @@ func InvokeWithTools(ctx context.Context, s store.Store, reg *ai.Registry, tb To
 	if !ok {
 		return Outcome{}, fmt.Errorf("agent-manager: unknown agent %q", agent)
 	}
+	return InvokeConfig(ctx, reg, tb, id, def.config(), prompt)
+}
+
+// InvokeConfig runs an explicit config (not a registry lookup) against a prompt — the
+// seam the eval harness and version-pinned runs use to invoke a specific
+// (provider, model, system, schema, tools) without mutating or depending on the
+// stored "latest". InvokeWithTools is this plus a Read of the agent's latest config.
+func InvokeConfig(ctx context.Context, reg *ai.Registry, tb Toolbox, id identity.Identity, def AgentConfig, prompt string) (Outcome, error) {
 	p, err := reg.Get(def.Provider)
 	if err != nil {
 		return Outcome{}, err

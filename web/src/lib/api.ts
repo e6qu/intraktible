@@ -2262,6 +2262,7 @@ export interface Agent {
   system?: string;
   schema?: unknown;
   tools?: string[];
+  latest?: number; // current version number (registry)
   runs: number;
   updated_at: string;
 }
@@ -2352,17 +2353,114 @@ export async function runAgent(
   key: string,
   name: string,
   prompt: string,
+  version = 0, // 0 = latest; pin a published version
   fetcher: typeof fetch = fetch
 ): Promise<RunResult> {
   const res = await fetcher(`/v1/agents/${name}/run`, {
     method: 'POST',
     headers: jsonHeaders(key),
-    body: JSON.stringify({ prompt })
+    body: JSON.stringify({ prompt, version: version || undefined })
   });
   if (!res.ok) {
     return errorOrStatus(res, `POST /v1/agents/${name}/run`);
   }
   return (await res.json()) as RunResult;
+}
+
+export interface AgentVersion {
+  version: number;
+  etag: string;
+  provider?: string;
+  model?: string;
+  system?: string;
+  schema?: unknown;
+  tools?: string[];
+  published_at: string;
+  published_by: string;
+}
+
+// listAgentVersions returns an agent's immutable config history (newest first).
+export async function listAgentVersions(
+  key: string,
+  name: string,
+  fetcher: typeof fetch = fetch
+): Promise<AgentVersion[]> {
+  const res = await fetcher(`/v1/agents/${name}/versions`, { headers: authHeaders(key) });
+  if (!res.ok) {
+    return errorOrStatus(res, `GET /v1/agents/${name}/versions`);
+  }
+  return ((await res.json()) as { versions: AgentVersion[] }).versions ?? [];
+}
+
+export type EvalMode = 'contains' | 'equals' | 'json_subset';
+
+export interface EvalCase {
+  name: string;
+  prompt: string;
+  mode?: EvalMode;
+  expect?: string;
+  expect_json?: unknown;
+}
+
+export interface EvalResult {
+  name: string;
+  passed: boolean;
+  status: string;
+  output?: string;
+  detail?: string;
+}
+
+export interface EvalReport {
+  total: number;
+  passed: number;
+  failed: number;
+  version: number;
+  results: EvalResult[];
+}
+
+export async function getAgentEvals(
+  key: string,
+  name: string,
+  fetcher: typeof fetch = fetch
+): Promise<EvalCase[]> {
+  const res = await fetcher(`/v1/agents/${name}/evals`, { headers: authHeaders(key) });
+  if (!res.ok) {
+    return errorOrStatus(res, `GET /v1/agents/${name}/evals`);
+  }
+  return ((await res.json()) as { cases: EvalCase[] }).cases ?? [];
+}
+
+export async function setAgentEvals(
+  key: string,
+  name: string,
+  cases: EvalCase[],
+  fetcher: typeof fetch = fetch
+): Promise<void> {
+  const res = await fetcher(`/v1/agents/${name}/evals`, {
+    method: 'PUT',
+    headers: jsonHeaders(key),
+    body: JSON.stringify({ cases })
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, `PUT /v1/agents/${name}/evals`);
+  }
+}
+
+export async function runAgentEval(
+  key: string,
+  name: string,
+  version = 0,
+  fetcher: typeof fetch = fetch
+): Promise<EvalReport> {
+  const res = await fetcher(`/v1/agents/${name}/evals/run`, {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify({ version: version || undefined })
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, `POST /v1/agents/${name}/evals/run`);
+  }
+  return (await res.json()) as EvalReport;
 }
 
 export async function listAgentRuns(

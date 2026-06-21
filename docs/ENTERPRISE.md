@@ -271,8 +271,20 @@ enterprise buyers; **P2** = differentiators / scale.
   summary + per-row results and a builder panel. *A feature store remains.*
 - **P2 — Streaming ingestion** for real-time features.
 
-### AI / ML governance  (status: provider + tool-calling + structured output + cost + guardrails)
-- **P1 — Model/prompt registry & versioning**, offline eval harness. *Still open.*
+### AI / ML governance  (status: provider + tool-calling + structured output + cost + guardrails + registry/versioning + eval)
+- **P1 — Model/prompt registry & versioning + offline eval — ✅ done.** An agent's
+  definition (model + system prompt + structured-output schema + declared tools) is
+  now **versioned immutably**: each define appends a content-etag'd version to the
+  agent's history (an identical redefine is idempotent — no redundant version),
+  mirroring the flow-version registry. `GET /v1/agents/{name}/versions` lists the
+  history, and a run can **pin a version** (`POST …/run {version}`) instead of always
+  using latest. An **offline eval harness** (`agent-manager/eval`) stores golden
+  cases per agent (`PUT /v1/agents/{name}/evals` — a prompt + an expectation with a
+  `contains` / `equals` / `json_subset` scorer) and runs them on demand against a
+  chosen version (`POST …/evals/run {version}`), scored pass/fail — **recording
+  nothing** (like backtest/assertions), so evaluating a non-deterministic, billable
+  model never pollutes the run log. The agent page surfaces version history and an
+  eval panel. *Remaining: a standalone prompt-template library shared across agents.*
 - **P1 — Guardrails + rate limits — ✅ done.** A guarding provider decorator
   (`ai.Guard`, wrapping every registered provider so the Agent Manager AND the
   Copilot are covered) adds a per-provider **rate limit**
