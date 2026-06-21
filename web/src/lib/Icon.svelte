@@ -41,6 +41,10 @@
       '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><path d="M10 6h4a2 2 0 0 1 2 2v6"/>'
     ],
     [
+      'gauge',
+      '<path d="M4 19a8 8 0 1 1 16 0"/><path d="M12 19l4-5"/><circle cx="12" cy="19" r="1.4"/>'
+    ],
+    [
       'signout',
       '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5M21 12H9"/>'
     ],

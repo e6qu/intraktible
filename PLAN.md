@@ -751,6 +751,25 @@ new SSE-parser fuzz harness. Two pure cross-package signature refactors (EntityR
 follow-ups — they prevent only theoretical transpositions with trusted callers and carry large churn /
 auth-regression surface for no behavioral change (detail in BUGS.md).
 
+**Observability: tracing + SLOs + AI cost.** A full observability slice landed as one PR. (1)
+**Distributed tracing** via OpenTelemetry: a new `platform/telemetry` package owns the TracerProvider,
+off by default and configured by env (`INTRAKTIBLE_OTEL_EXPORTER=stdout|otlp`, `OTEL_EXPORTER_OTLP_*`,
+`INTRAKTIBLE_OTEL_SAMPLE_RATIO`); an `httpx.Tracing` middleware spans every request named by the matched
+route template (continuing propagated W3C trace-context, tagging the request id); and the decide path is
+spanned end to end — the decision, each external hop (features/connector/AI/model), and every node. The
+per-node spans flow through a *pure* `domain.NodeObserver` interface (`ExecuteObserved`) the shell
+implements, so the deterministic core imports no telemetry. (2) **Per-flow SLOs**: `GET/PUT
+/v1/flows/{id}/slo` records an availability + latency objective as a `decision.flow.slo_set` event folded
+onto the flow read model; attainment (success rate vs target, error-budget burn, avg-latency vs target)
+is computed on read from the live decision metrics (`analytics.Attainment`). (3) **AI cost**: the AI
+provider captures token usage (`usage` object + `stream_options.include_usage` for streaming) on
+`ai.Response`, accumulated across the tool-calling loop and recorded on `AgentRunRecorded`
+(`prompt_tokens`/`completion_tokens`, omitempty → replay-stable); an operator price table
+(`INTRAKTIBLE_AI_PRICES`) derives per-model/total cost in the run summary. A new **Observability** UI page
+(nav-integrated per persona) shows the AI usage/cost roll-up and per-flow SLO attainment, with an inline
+set/clear-objective editor (`SloCard.svelte`). Honest scope: SLO attainment is over the cumulative
+metrics (all-time), not a rolling window (windowed SLOs need time-bucketed metrics — follow-up).
+
 **Transposition-prevention refactors (TS40–TS42).** The three follow-ups left from round 10 landed as
 one PR: the decision-subject (entity type, id) is now the shared branded `platform/entity.Ref` threaded
 through the feature/pre-approval ports (a swapped pair fails to compile rather than silently keying the

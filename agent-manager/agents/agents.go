@@ -42,19 +42,21 @@ type AgentView struct {
 
 // RunView is one recorded agent invocation.
 type RunView struct {
-	Org        string            `json:"org"`
-	Workspace  string            `json:"workspace"`
-	RunID      string            `json:"run_id"`
-	Agent      string            `json:"agent"`
-	Model      string            `json:"model,omitempty"`
-	Prompt     string            `json:"prompt"`
-	Status     domain.RunStatus  `json:"status"`
-	Text       string            `json:"text,omitempty"`
-	Structured json.RawMessage   `json:"structured,omitempty"`
-	ToolCalls  []events.ToolCall `json:"tool_calls,omitempty"`
-	Error      string            `json:"error,omitempty"`
-	Seq        uint64            `json:"seq"`
-	At         time.Time         `json:"at"`
+	Org              string            `json:"org"`
+	Workspace        string            `json:"workspace"`
+	RunID            string            `json:"run_id"`
+	Agent            string            `json:"agent"`
+	Model            string            `json:"model,omitempty"`
+	Prompt           string            `json:"prompt"`
+	Status           domain.RunStatus  `json:"status"`
+	Text             string            `json:"text,omitempty"`
+	Structured       json.RawMessage   `json:"structured,omitempty"`
+	ToolCalls        []events.ToolCall `json:"tool_calls,omitempty"`
+	Error            string            `json:"error,omitempty"`
+	PromptTokens     int               `json:"prompt_tokens,omitempty"`
+	CompletionTokens int               `json:"completion_tokens,omitempty"`
+	Seq              uint64            `json:"seq"`
+	At               time.Time         `json:"at"`
 }
 
 // Projector folds agent events into the registry + run-log read models.
@@ -139,6 +141,7 @@ func applyRun(ctx context.Context, e eventlog.Envelope, s store.Store) error {
 		Org: e.Org, Workspace: e.Workspace,
 		RunID: p.RunID, Agent: p.Agent, Model: p.Model, Prompt: p.Prompt,
 		Status: status, Text: p.Text, Structured: p.Structured, ToolCalls: p.ToolCalls, Error: p.Error,
+		PromptTokens: p.PromptTokens, CompletionTokens: p.CompletionTokens,
 		Seq: e.Seq, At: p.At,
 	}
 	if err := store.PutDoc(ctx, s, CollectionRuns, runKey, run); err != nil {
@@ -184,17 +187,31 @@ func ListRuns(ctx context.Context, s store.Store, id identity.Identity, agent st
 		func(a, b RunView) bool { return a.Seq > b.Seq })
 }
 
-// RunSummary is an at-a-glance roll-up of the run log for monitoring.
-type RunSummary struct {
-	Total     int            `json:"total"`
-	Completed int            `json:"completed"`
-	Failed    int            `json:"failed"`
-	ByAgent   map[string]int `json:"by_agent"`
+// ModelUsage is the token consumption attributed to one model across the run log.
+type ModelUsage struct {
+	Runs             int `json:"runs"`
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
 }
 
-// SummarizeRuns rolls up a set of runs (counts by status and by agent).
+// RunSummary is an at-a-glance roll-up of the run log for monitoring. It includes
+// token consumption (total and per model) so the observability surface can show
+// AI usage and, with a price table, derive cost.
+type RunSummary struct {
+	Total            int                   `json:"total"`
+	Completed        int                   `json:"completed"`
+	Failed           int                   `json:"failed"`
+	ByAgent          map[string]int        `json:"by_agent"`
+	PromptTokens     int                   `json:"prompt_tokens"`
+	CompletionTokens int                   `json:"completion_tokens"`
+	ByModel          map[string]ModelUsage `json:"by_model"`
+}
+
+// SummarizeRuns rolls up a set of runs (counts by status and by agent, and token
+// consumption total and per model). A run with no reported model is attributed to
+// the "unknown" model bucket so its tokens are not silently dropped.
 func SummarizeRuns(runs []RunView) RunSummary {
-	s := RunSummary{Total: len(runs), ByAgent: map[string]int{}}
+	s := RunSummary{Total: len(runs), ByAgent: map[string]int{}, ByModel: map[string]ModelUsage{}}
 	for _, r := range runs {
 		s.ByAgent[r.Agent]++
 		switch r.Status {
@@ -203,6 +220,17 @@ func SummarizeRuns(runs []RunView) RunSummary {
 		case domain.RunFailed:
 			s.Failed++
 		}
+		s.PromptTokens += r.PromptTokens
+		s.CompletionTokens += r.CompletionTokens
+		model := r.Model
+		if model == "" {
+			model = "unknown"
+		}
+		mu := s.ByModel[model]
+		mu.Runs++
+		mu.PromptTokens += r.PromptTokens
+		mu.CompletionTokens += r.CompletionTokens
+		s.ByModel[model] = mu
 	}
 	return s
 }
@@ -222,6 +250,9 @@ type Outcome struct {
 	Structured json.RawMessage
 	ToolCalls  []events.ToolCall
 	Error      string
+	// Usage is the token consumption of the run, summed across every provider call
+	// (a tool-calling loop bills each round separately), for cost attribution.
+	Usage ai.Usage
 }
 
 // normalize enforces the Status⇄payload invariant. The tool-calling loop builds an
@@ -316,6 +347,7 @@ func InvokeWithTools(ctx context.Context, s store.Store, reg *ai.Registry, tb To
 		if resp.Model != "" {
 			out.Model = resp.Model
 		}
+		out.Usage = out.Usage.Add(resp.Usage) // each round bills separately; accumulate
 		switch {
 		case perr != nil:
 			out.Status, out.Error = domain.RunFailed, perr.Error()
@@ -381,6 +413,7 @@ func InvokeStream(ctx context.Context, s store.Store, reg *ai.Registry, tb Toolb
 
 	out := Outcome{Model: def.Model, Status: domain.RunCompleted}
 	resp, perr := sp.Stream(ctx, ai.Request{Model: def.Model, System: def.System, Prompt: prompt, Schema: def.Schema}, onChunk)
+	out.Usage = resp.Usage
 	switch {
 	case perr != nil:
 		out.Status, out.Error = domain.RunFailed, perr.Error()

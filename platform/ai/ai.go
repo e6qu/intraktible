@@ -35,6 +35,24 @@ type Response struct {
 	Structured json.RawMessage `json:"structured,omitempty"`
 	ToolCalls  []ToolCall      `json:"tool_calls,omitempty"`
 	Model      string          `json:"model,omitempty"`
+	// Usage is the provider-reported token consumption for this call (zero when the
+	// provider does not report it). It is the basis for per-run cost attribution.
+	Usage Usage `json:"usage,omitempty"`
+}
+
+// Usage is the token consumption of one completion, as reported by the provider.
+type Usage struct {
+	PromptTokens     int `json:"prompt_tokens,omitempty"`
+	CompletionTokens int `json:"completion_tokens,omitempty"`
+}
+
+// Total is the sum of prompt and completion tokens.
+func (u Usage) Total() int { return u.PromptTokens + u.CompletionTokens }
+
+// Add returns the element-wise sum, used to accumulate usage across the rounds of
+// a tool-calling loop (each provider call bills separately).
+func (u Usage) Add(o Usage) Usage {
+	return Usage{PromptTokens: u.PromptTokens + o.PromptTokens, CompletionTokens: u.CompletionTokens + o.CompletionTokens}
 }
 
 // Tool is a function the model may call during a completion. Parameters is a JSON

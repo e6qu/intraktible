@@ -20,6 +20,10 @@ import (
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/store"
+	"github.com/e6qu/intraktible/platform/telemetry"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // Decide-path error taxonomy. A caller (the HTTP layer) distinguishes a client
@@ -93,6 +97,7 @@ type DecideHandler struct {
 	agentsP    AgentProvider
 	models     ModelProvider
 	sealer     PIISealer
+	tracer     trace.Tracer
 }
 
 // DecideOption customizes a DecideHandler (used by tests to make A/B routing
@@ -138,11 +143,12 @@ func WithPIISealer(s PIISealer) DecideOption {
 // DecisionStarted event, so replay is deterministic).
 func NewDecideHandler(log eventlog.Log, st store.Store, opts ...DecideOption) *DecideHandler {
 	h := &DecideHandler{
-		log:   log,
-		store: st,
-		now:   func() time.Time { return time.Now().UTC() },
-		newID: newID,
-		roll:  rollPercent,
+		log:    log,
+		store:  st,
+		now:    func() time.Time { return time.Now().UTC() },
+		newID:  newID,
+		roll:   rollPercent,
+		tracer: telemetry.Tracer(),
 	}
 	for _, opt := range opts {
 		opt(h)
@@ -178,13 +184,34 @@ type DecideResult struct {
 // the given environment against data. A run that errors during evaluation is a
 // recorded "failed" decision (returned with Status failed), not an API error;
 // only infrastructure/lookup problems return an error.
-func (h *DecideHandler) Decide(ctx context.Context, id identity.Identity, slug, env string, data map[string]any, ref EntityRef) (DecideResult, error) {
+func (h *DecideHandler) Decide(ctx context.Context, id identity.Identity, slug, env string, data map[string]any, ref EntityRef) (res DecideResult, err error) {
 	if err := id.Valid(); err != nil {
 		return DecideResult{}, err
 	}
 	if !domain.ValidEnvironment(env) {
 		return DecideResult{}, fmt.Errorf("%w: invalid environment %q (sandbox|staging|production)", ErrBadRequest, env)
 	}
+
+	// One span per decision, the parent of the injector (I/O) and per-node spans
+	// below. A no-op when tracing is disabled. The deferred end records the failure
+	// reason — an infrastructure error, or a recorded "failed" decision outcome.
+	ctx, span := h.tracer.Start(ctx, "engine.decide", trace.WithAttributes(
+		attribute.String("flow.slug", slug),
+		attribute.String("decision.environment", env),
+	))
+	defer func() {
+		switch {
+		case err != nil:
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		case res.Status == domain.StatusFailed:
+			span.SetStatus(codes.Error, "decision failed: "+res.Error)
+		}
+		if res.DecisionID != "" {
+			span.SetAttributes(attribute.String("decision.id", res.DecisionID))
+		}
+		span.End()
+	}()
 	fv, ok, err := flows.BySlug(ctx, h.store, id, slug)
 	if err != nil {
 		return DecideResult{}, err
@@ -272,7 +299,7 @@ func (h *DecideHandler) Decide(ctx context.Context, id identity.Identity, slug, 
 		return DecideResult{}, err
 	}
 
-	run := domain.Execute(version.Graph, data)
+	run := domain.ExecuteObserved(version.Graph, data, spanObserver{ctx: ctx, tracer: h.tracer})
 	for _, r := range run.Results {
 		// Seal PII in each node's output too — node outputs echo input-derived PII
 		// (assignment/rule/table targets, code merges, manual_review fields), so an
@@ -398,6 +425,29 @@ func stripReservedNamespaces(data map[string]any) {
 	}
 }
 
+// spanObserver implements domain.NodeObserver, opening one tracing span per node
+// as the pure core walks the graph. It is the adapter that keeps domain.Execute
+// free of any telemetry import: the core calls the interface; the spans live here
+// in the shell. Each node span is a child of the enclosing decide span (ctx).
+type spanObserver struct {
+	ctx    context.Context
+	tracer trace.Tracer
+}
+
+func (o spanObserver) NodeStart(nodeID string, nodeType events.NodeType) func(error) {
+	_, span := o.tracer.Start(o.ctx, "engine.node."+string(nodeType), trace.WithAttributes(
+		attribute.String("node.id", nodeID),
+		attribute.String("node.type", string(nodeType)),
+	))
+	return func(err error) {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
+	}
+}
+
 // injectFeatures returns data augmented with a "features" map of the referenced
 // entity's computed feature values. It is a no-op when no provider is configured
 // or the reference is empty; a provider error fails the decision loudly.
@@ -405,7 +455,11 @@ func (h *DecideHandler) injectFeatures(ctx context.Context, id identity.Identity
 	if h.features == nil || ref.Empty() {
 		return data, nil
 	}
+	ctx, span := h.tracer.Start(ctx, "engine.features", trace.WithAttributes(
+		attribute.String("entity.type", string(ref.Type)),
+	))
 	feats, err := h.features.Features(ctx, id, ref)
+	span.End()
 	if err != nil {
 		return nil, fmt.Errorf("decision-engine: features for %s: %w", ref.Key(), err)
 	}
@@ -440,7 +494,12 @@ func (h *DecideHandler) injectConnectors(ctx context.Context, id identity.Identi
 	}
 	resolved := make(map[string]any, len(specs))
 	for _, sp := range specs {
-		resp, err := h.connectors.Fetch(ctx, id, sp.Connector, params)
+		callCtx, span := h.tracer.Start(ctx, "engine.connector", trace.WithAttributes(
+			attribute.String("connector.name", sp.Connector),
+			attribute.String("node.id", sp.NodeID),
+		))
+		resp, err := h.connectors.Fetch(callCtx, id, sp.Connector, params)
+		span.End()
 		if err != nil {
 			return nil, fmt.Errorf("decision-engine: connect node %q (connector %q): %w", sp.NodeID, sp.Connector, err)
 		}
@@ -481,7 +540,12 @@ func (h *DecideHandler) injectAI(ctx context.Context, id identity.Identity, grap
 			}
 			prompt = string(b)
 		}
-		resp, err := h.agentsP.RunAgent(ctx, id, sp.Agent, prompt)
+		callCtx, span := h.tracer.Start(ctx, "engine.ai", trace.WithAttributes(
+			attribute.String("agent.name", sp.Agent),
+			attribute.String("node.id", sp.NodeID),
+		))
+		resp, err := h.agentsP.RunAgent(callCtx, id, sp.Agent, prompt)
+		span.End()
 		if err != nil {
 			return nil, fmt.Errorf("decision-engine: ai node %q (agent %q): %w", sp.NodeID, sp.Agent, err)
 		}
@@ -514,7 +578,12 @@ func (h *DecideHandler) injectPredictions(ctx context.Context, id identity.Ident
 	}
 	resolved := make(map[string]any, len(specs))
 	for _, sp := range specs {
-		resp, err := h.models.Predict(ctx, id, sp.Model, data)
+		callCtx, span := h.tracer.Start(ctx, "engine.predict", trace.WithAttributes(
+			attribute.String("model.name", sp.Model),
+			attribute.String("node.id", sp.NodeID),
+		))
+		resp, err := h.models.Predict(callCtx, id, sp.Model, data)
+		span.End()
 		if err != nil {
 			return nil, fmt.Errorf("decision-engine: predict node %q (model %q): %w", sp.NodeID, sp.Model, err)
 		}

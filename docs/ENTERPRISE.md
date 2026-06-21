@@ -178,7 +178,7 @@ enterprise buyers; **P2** = differentiators / scale.
   **transition** where the decision changes (e.g. the score at which an approve flips
   to a decline). Surfaced as a **What-if** panel in the builder.
 
-### Observability & operations  (status: metrics + monitors + drift + scheduled webhook alerts + /healthz)
+### Observability & operations  (status: metrics + monitors + drift + scheduled webhook alerts + /healthz + OTel tracing + SLOs + AI cost)
 - **P1 — Alerting — ✅ done (failure-rate, latency, volume, distribution drift).**
   Threshold **monitors** (`decision-engine/monitor`) over failure/refer/automation/
   approve/decline rate, avg latency, volume, and **distribution drift** (max shift
@@ -189,8 +189,38 @@ enterprise buyers; **P2** = differentiators / scale.
   ok→firing edge (and resetting on resolve). The on-demand `…/monitors/check`
   endpoint remains for cron/manual triggers. *Remaining polish: alert routing/
   templating per channel and richer drift (PSI/KL vs simple share-delta).*
-- **P1 — Dashboards & SLOs**; structured request tracing (OpenTelemetry).
-- **P2 — Cost tracking** for AI nodes.
+- **P1 — Dashboards & SLOs — ✅ done.** Per-flow **service-level objectives**
+  (`GET/PUT /v1/flows/{id}/slo`): an availability target (min success fraction) and
+  an average-latency target, recorded as a flow event (`decision.flow.slo_set`) and
+  folded onto the flow read model. A read computes **attainment** — success rate vs
+  target, **error-budget burn** (fraction of the allowed failure budget still
+  unspent, negative once exhausted), and avg-latency vs target — from the live
+  decision metrics. Surfaced on a new **Observability** page (nav-integrated per
+  persona) alongside the AI usage/cost roll-up; the page sets/clears objectives
+  inline and shows meeting/breaching per flow. *Honest scope: attainment is over the
+  cumulative metrics (all-time), not a rolling window — a windowed SLO would need
+  time-bucketed metrics (follow-up).*
+- **P1 — Structured request tracing (OpenTelemetry) — ✅ done.** A `platform/telemetry`
+  package owns the OTel TracerProvider, configured by env
+  (`INTRAKTIBLE_OTEL_EXPORTER=stdout|otlp`, off by default — a no-op tracer, so it
+  costs nothing unless enabled; OTLP endpoint/headers via the standard
+  `OTEL_EXPORTER_OTLP_*` vars; `INTRAKTIBLE_OTEL_SAMPLE_RATIO` for head sampling). An
+  `httpx.Tracing` middleware opens a **server span per request named by the matched
+  route template** (low cardinality), continues a propagated W3C trace-context, and
+  tags the request id (log↔trace correlation). The **decide path is fully spanned**:
+  the decision, each external hop (features / connector / AI / model), and **every
+  node** — the per-node spans come from a *pure* `domain.NodeObserver` interface the
+  shell implements, so the deterministic core stays free of any telemetry import.
+- **P2 — Cost tracking for AI nodes — ✅ done.** The AI provider now captures
+  **token usage** (the OpenAI-compatible `usage` object, plus
+  `stream_options.include_usage` for streaming) on `ai.Response`; it accumulates
+  across a tool-calling loop into the agent `Outcome`, is recorded on the
+  `AgentRunRecorded` event (`prompt_tokens`/`completion_tokens`, both omitempty so
+  prior runs decode unchanged — replay-stable), and rolls up in the run summary by
+  model. An operator-supplied price table (`INTRAKTIBLE_AI_PRICES`, USD per million
+  input/output tokens) derives per-model and total **cost** — reported only for
+  priced models (no misleading zeros for unpriced ones), surfaced on the
+  Observability page.
 
 ### Data & integrations  (status: http / sql / mock connectors, now with a management UI)
 - *A **Context data** UI (`/data`) now lists/defines connectors and features and browses

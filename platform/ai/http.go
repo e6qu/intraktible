@@ -67,21 +67,45 @@ type chatTool struct {
 }
 
 type chatRequest struct {
-	Model          string        `json:"model"`
-	Messages       []chatMessage `json:"messages"`
-	Tools          []chatTool    `json:"tools,omitempty"`
-	ResponseFormat *responseFmt  `json:"response_format,omitempty"`
-	Stream         bool          `json:"stream,omitempty"`
+	Model          string         `json:"model"`
+	Messages       []chatMessage  `json:"messages"`
+	Tools          []chatTool     `json:"tools,omitempty"`
+	ResponseFormat *responseFmt   `json:"response_format,omitempty"`
+	Stream         bool           `json:"stream,omitempty"`
+	StreamOptions  *streamOptions `json:"stream_options,omitempty"`
+}
+
+// streamOptions opts a streaming request into a final usage frame; without it the
+// OpenAI-compatible API omits token counts from the stream entirely.
+type streamOptions struct {
+	IncludeUsage bool `json:"include_usage"`
+}
+
+// chatUsage is the OpenAI-compatible token accounting object.
+type chatUsage struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+}
+
+// usage maps the wire accounting to the provider-neutral Usage.
+func (u *chatUsage) usage() Usage {
+	if u == nil {
+		return Usage{}
+	}
+	return Usage{PromptTokens: u.PromptTokens, CompletionTokens: u.CompletionTokens}
 }
 
 // chatStreamChunk is one SSE delta frame from the streaming Chat Completions API.
+// The final frame (when stream_options.include_usage is set) carries Usage with an
+// empty Choices list.
 type chatStreamChunk struct {
 	Choices []struct {
 		Delta struct {
 			Content string `json:"content"`
 		} `json:"delta"`
 	} `json:"choices"`
-	Model string `json:"model"`
+	Model string     `json:"model"`
+	Usage *chatUsage `json:"usage,omitempty"`
 }
 
 type responseFmt struct {
@@ -92,7 +116,8 @@ type chatResponse struct {
 	Choices []struct {
 		Message chatMessage `json:"message"`
 	} `json:"choices"`
-	Model string `json:"model"`
+	Model string     `json:"model"`
+	Usage *chatUsage `json:"usage,omitempty"`
 	Error *struct {
 		Message string `json:"message"`
 	} `json:"error,omitempty"`
@@ -199,7 +224,7 @@ func (h HTTP) Complete(ctx context.Context, req Request) (Response, error) {
 		return Response{}, fmt.Errorf("ai: provider returned no choices")
 	}
 	msg := cresp.Choices[0].Message
-	out := Response{Model: model}
+	out := Response{Model: model, Usage: cresp.Usage.usage()}
 	if cresp.Model != "" {
 		out.Model = cresp.Model
 	}
@@ -235,7 +260,10 @@ func (h HTTP) Stream(ctx context.Context, req Request, onChunk StreamHandler) (R
 	if model == "" {
 		model = h.model
 	}
-	cr := chatRequest{Model: model, Messages: buildMessages(req), Tools: buildTools(req.Tools), Stream: true}
+	cr := chatRequest{
+		Model: model, Messages: buildMessages(req), Tools: buildTools(req.Tools),
+		Stream: true, StreamOptions: &streamOptions{IncludeUsage: true},
+	}
 	if len(req.Schema) > 0 {
 		cr.ResponseFormat = &responseFmt{Type: "json_object"}
 	}
@@ -262,6 +290,7 @@ func (h HTTP) Stream(ctx context.Context, req Request, onChunk StreamHandler) (R
 	}
 
 	var b strings.Builder
+	var usage Usage
 	sc := bufio.NewScanner(resp.Body)
 	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
 	for sc.Scan() {
@@ -281,6 +310,9 @@ func (h HTTP) Stream(ctx context.Context, req Request, onChunk StreamHandler) (R
 		if chunk.Model != "" {
 			model = chunk.Model
 		}
+		if chunk.Usage != nil {
+			usage = chunk.Usage.usage() // final frame's token accounting
+		}
 		for _, ch := range chunk.Choices {
 			if ch.Delta.Content != "" {
 				onChunk(Chunk{Text: ch.Delta.Content})
@@ -291,7 +323,7 @@ func (h HTTP) Stream(ctx context.Context, req Request, onChunk StreamHandler) (R
 	if err := sc.Err(); err != nil {
 		return Response{}, fmt.Errorf("ai: read stream: %w", err)
 	}
-	out := Response{Model: model}
+	out := Response{Model: model, Usage: usage}
 	if len(req.Schema) > 0 {
 		if !json.Valid([]byte(b.String())) {
 			return Response{}, fmt.Errorf("ai: structured stream but reply was not JSON")

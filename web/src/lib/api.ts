@@ -459,6 +459,56 @@ export async function getFlowMetrics(
   return (await res.json()) as FlowMetrics;
 }
 
+export interface SLOConfig {
+  success_target: number; // fraction in [0,1]
+  latency_target_ms: number; // 0 = no latency objective
+}
+
+export interface SLOAttainment {
+  decisions: number;
+  success_rate: number;
+  success_target: number;
+  success_met: boolean;
+  error_budget: number;
+  budget_remaining: number; // 1 = full budget, <0 = over budget
+  avg_latency_ms: number;
+  latency_target_ms: number;
+  latency_met: boolean;
+}
+
+export interface SLOResponse {
+  slo: SLOConfig | null;
+  attainment?: SLOAttainment;
+}
+
+export async function getFlowSLO(
+  key: string,
+  flowId: string,
+  fetcher: typeof fetch = fetch
+): Promise<SLOResponse> {
+  const res = await fetcher(`/v1/flows/${flowId}/slo`, { headers: authHeaders(key) });
+  if (!res.ok) {
+    throw new Error(`GET /v1/flows/${flowId}/slo failed: ${res.status}`);
+  }
+  return (await res.json()) as SLOResponse;
+}
+
+export async function putFlowSLO(
+  key: string,
+  flowId: string,
+  slo: SLOConfig,
+  fetcher: typeof fetch = fetch
+): Promise<void> {
+  const res = await fetcher(`/v1/flows/${flowId}/slo`, {
+    method: 'PUT',
+    headers: jsonHeaders(key),
+    body: JSON.stringify(slo)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, `PUT /v1/flows/${flowId}/slo`);
+  }
+}
+
 export interface MonitorStatus {
   actual: number;
   computable: boolean;
@@ -2094,11 +2144,24 @@ export interface RunResult {
   error?: string;
 }
 
+export interface ModelUsage {
+  runs: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+}
+
 export interface RunSummary {
   total: number;
   completed: number;
   failed: number;
   by_agent: Record<string, number>;
+  prompt_tokens: number;
+  completion_tokens: number;
+  by_model: Record<string, ModelUsage>;
+  // Cost is present only when a price table is configured (INTRAKTIBLE_AI_PRICES).
+  priced: boolean;
+  total_cost_usd: number;
+  cost_by_model?: Record<string, number>;
 }
 
 export async function listAgents(key: string, fetcher: typeof fetch = fetch): Promise<Agent[]> {

@@ -29,6 +29,7 @@ export type NavId =
   | 'cases'
   | 'agents'
   | 'models'
+  | 'observability'
   | 'keys'
   | 'audit';
 
@@ -49,6 +50,10 @@ export const NAV = new Map<NavId, NavItem>([
   ['cases', { id: 'cases', href: '/cases', label: 'Cases', icon: 'cases' }],
   ['agents', { id: 'agents', href: '/agents', label: 'Agents', icon: 'agents' }],
   ['models', { id: 'models', href: '/models', label: 'Models', icon: 'scorecard' }],
+  [
+    'observability',
+    { id: 'observability', href: '/observability', label: 'Observability', icon: 'gauge' }
+  ],
   ['keys', { id: 'keys', href: '/keys', label: 'API keys', icon: 'connect' }],
   ['audit', { id: 'audit', href: '/audit', label: 'Audit', icon: 'shield' }]
 ]);
@@ -158,7 +163,7 @@ export const PERSONAS: PersonaConfig[] = [
     blurb: 'Integrate the decision API and debug traces',
     icon: 'agents',
     home: 'persona',
-    nav: ['decisions', 'engine', 'keys', 'agents', 'data', 'audit'],
+    nav: ['decisions', 'engine', 'keys', 'agents', 'data', 'observability', 'audit'],
     actions: [
       { label: 'Inspect decision traces', href: '/decisions', icon: 'diagram' },
       { label: 'Manage API keys', href: '/keys', icon: 'connect' },
@@ -186,7 +191,7 @@ export const PERSONAS: PersonaConfig[] = [
     blurb: 'Work the queues, SLAs, and monitors',
     icon: 'operator',
     home: 'operator',
-    nav: ['cases', 'decisions', 'preapprovals', 'policies', 'audit'],
+    nav: ['cases', 'decisions', 'preapprovals', 'policies', 'observability', 'audit'],
     actions: [
       { label: 'Work the case queue', href: '/cases', icon: 'cases' },
       { label: 'Review pre-approvals', href: '/preapprovals', icon: 'check' },
@@ -211,7 +216,7 @@ export const PERSONAS: PersonaConfig[] = [
     blurb: 'Approvals, reviewer workload, and SLA health',
     icon: 'check',
     home: 'persona',
-    nav: ['preapprovals', 'cases', 'decisions', 'audit'],
+    nav: ['preapprovals', 'cases', 'decisions', 'observability', 'audit'],
     actions: [
       { label: 'Clear pending approvals', href: '/preapprovals', icon: 'check' },
       { label: 'Check case load', href: '/cases', icon: 'cases' },
@@ -226,7 +231,7 @@ export const PERSONAS: PersonaConfig[] = [
     blurb: 'A/B, shadow, backtests, and policy impact',
     icon: 'diagram',
     home: 'persona',
-    nav: ['engine', 'policies', 'models', 'decisions', 'data'],
+    nav: ['engine', 'policies', 'models', 'decisions', 'data', 'observability'],
     actions: [
       { label: 'Backtest a flow', href: '/engine', icon: 'engine' },
       { label: 'Tune policy impact', href: '/policies', icon: 'rule' },
@@ -248,7 +253,7 @@ export const PERSONAS: PersonaConfig[] = [
     blurb: 'KPIs, trends, and governance posture',
     icon: 'showcase',
     home: 'showcase',
-    nav: ['decisions', 'cases', 'audit'],
+    nav: ['decisions', 'cases', 'observability', 'audit'],
     actions: [{ label: 'View decision volume', href: '/decisions', icon: 'diagram' }]
   },
   {

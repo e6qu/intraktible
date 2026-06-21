@@ -56,7 +56,13 @@ type AgentRunRecorded struct {
 	Structured json.RawMessage `json:"structured,omitempty"`
 	ToolCalls  []ToolCall      `json:"tool_calls,omitempty"`
 	Error      string          `json:"error,omitempty"`
-	At         time.Time       `json:"at"`
+	// PromptTokens/CompletionTokens are the provider-reported token consumption for
+	// the run (0 when the provider does not report it), the durable basis for cost
+	// attribution. Added later; both omitempty so already-recorded runs decode
+	// unchanged (they report 0) — the event shape stays replay-stable.
+	PromptTokens     int       `json:"prompt_tokens,omitempty"`
+	CompletionTokens int       `json:"completion_tokens,omitempty"`
+	At               time.Time `json:"at"`
 }
 
 // ToolCall is one recorded tool invocation made during a run.

@@ -222,6 +222,58 @@ func TestHTTPProviderStream(t *testing.T) {
 	}
 }
 
+// Token usage from the completion response is surfaced on Response.Usage for
+// cost attribution.
+func TestHTTPProviderUsage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"model":"gpt-test","choices":[{"message":{"role":"assistant","content":"ok"}}],` +
+			`"usage":{"prompt_tokens":120,"completion_tokens":34}}`))
+	}))
+	defer srv.Close()
+
+	p := ai.NewHTTP("openai", srv.URL, "sk-test", "gpt-test")
+	resp, err := p.Complete(context.Background(), ai.Request{Prompt: "hi"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Usage.PromptTokens != 120 || resp.Usage.CompletionTokens != 34 || resp.Usage.Total() != 154 {
+		t.Fatalf("usage = %+v", resp.Usage)
+	}
+}
+
+// A streaming request opts into the final usage frame (stream_options.include_usage)
+// and surfaces the token counts it carries.
+func TestHTTPProviderStreamUsage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var req map[string]any
+		_ = json.Unmarshal(body, &req)
+		opts, ok := req["stream_options"].(map[string]any)
+		if !ok || opts["include_usage"] != true {
+			t.Errorf("stream_options.include_usage not requested: %v", req["stream_options"])
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		for _, frame := range []string{
+			`{"choices":[{"delta":{"content":"hi"}}],"model":"gpt-test"}`,
+			`{"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":5}}`,
+			"[DONE]",
+		} {
+			_, _ = w.Write([]byte("data: " + frame + "\n\n"))
+		}
+	}))
+	defer srv.Close()
+
+	p := ai.NewHTTP("openai", srv.URL, "sk-test", "gpt-test")
+	resp, err := p.Stream(context.Background(), ai.Request{Prompt: "hi"}, func(ai.Chunk) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Usage.PromptTokens != 10 || resp.Usage.CompletionTokens != 5 {
+		t.Fatalf("stream usage = %+v", resp.Usage)
+	}
+}
+
 // The provider plugs into the registry like any other.
 func TestHTTPProviderInRegistry(t *testing.T) {
 	r := ai.NewRegistry()

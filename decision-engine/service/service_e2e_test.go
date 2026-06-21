@@ -1481,6 +1481,84 @@ func TestFlowOpenAPIEndpoint(t *testing.T) {
 	}
 }
 
+// TestFlowSLOOverHTTP drives the SLO surface end to end: with no objectives
+// configured GET returns a null SLO and no attainment; once set, GET reports the
+// objectives and live attainment computed from the flow's decisions.
+func TestFlowSLOOverHTTP(t *testing.T) {
+	api := startEngine(t)
+
+	var created struct {
+		FlowID string `json:"flow_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows", map[string]any{"slug": "sloflow", "name": "SLO"}, http.StatusCreated, &created)
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/versions", map[string]any{
+		"graph": map[string]any{
+			"nodes": []map[string]any{
+				{"id": "in", "type": "input"},
+				{"id": "a", "type": "assignment", "config": map[string]any{
+					"assignments": []map[string]any{{"target": "ok", "expr": "true"}},
+				}},
+				{"id": "out", "type": "output", "config": map[string]any{"fields": []string{"ok"}}},
+			},
+			"edges": []map[string]any{{"from": "in", "to": "a"}, {"from": "a", "to": "out"}},
+		},
+	}, http.StatusCreated, nil)
+
+	// No SLO configured yet: null objectives, no attainment block.
+	var none struct {
+		SLO        *map[string]any `json:"slo"`
+		Attainment *map[string]any `json:"attainment"`
+	}
+	if !testutil.Eventually(t, func() bool {
+		var res struct {
+			Status string `json:"status"`
+		}
+		api.Request(t, http.MethodPost, "/v1/flows/sloflow/production/decide",
+			map[string]any{"data": map[string]any{}}, http.StatusOK, &res)
+		return res.Status == "completed"
+	}) {
+		t.Fatal("flow never decided")
+	}
+	api.Request(t, http.MethodGet, "/v1/flows/"+created.FlowID+"/slo", nil, http.StatusOK, &none)
+	if none.SLO != nil || none.Attainment != nil {
+		t.Fatalf("expected no SLO/attainment, got %+v / %+v", none.SLO, none.Attainment)
+	}
+
+	// Set objectives and read them back with live attainment.
+	api.Request(t, http.MethodPut, "/v1/flows/"+created.FlowID+"/slo",
+		map[string]any{"success_target": 0.95, "latency_target_ms": 5000}, http.StatusOK, nil)
+
+	var got struct {
+		SLO struct {
+			SuccessTarget   float64 `json:"success_target"`
+			LatencyTargetMS int64   `json:"latency_target_ms"`
+		} `json:"slo"`
+		Attainment struct {
+			Decisions   int     `json:"decisions"`
+			SuccessRate float64 `json:"success_rate"`
+			SuccessMet  bool    `json:"success_met"`
+			LatencyMet  bool    `json:"latency_met"`
+		} `json:"attainment"`
+	}
+	// The metrics projection is async; poll until the completed decision is counted.
+	if !testutil.Eventually(t, func() bool {
+		api.Request(t, http.MethodGet, "/v1/flows/"+created.FlowID+"/slo", nil, http.StatusOK, &got)
+		return got.Attainment.Decisions >= 1
+	}) {
+		t.Fatalf("attainment never reflected the decision: %+v", got)
+	}
+	if got.SLO.SuccessTarget != 0.95 || got.SLO.LatencyTargetMS != 5000 {
+		t.Fatalf("slo round-trip = %+v", got.SLO)
+	}
+	if got.Attainment.SuccessRate != 1 || !got.Attainment.SuccessMet || !got.Attainment.LatencyMet {
+		t.Fatalf("a single clean decision should meet both objectives: %+v", got.Attainment)
+	}
+
+	// An out-of-range success target is rejected.
+	api.Request(t, http.MethodPut, "/v1/flows/"+created.FlowID+"/slo",
+		map[string]any{"success_target": 1.5}, http.StatusBadRequest, nil)
+}
+
 // TestDecideErrorTaxonomy proves the decide endpoint maps cause to status: an
 // unknown flow is 404, an invalid environment is 400 (not all-400 as before).
 func TestDecideErrorTaxonomy(t *testing.T) {

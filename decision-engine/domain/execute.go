@@ -47,6 +47,16 @@ type Run struct {
 	Err        string         `json:"error,omitempty"`
 }
 
+// NodeObserver is notified around each node's evaluation during ExecuteObserved.
+// NodeStart is called just before a node runs and returns a finish callback
+// invoked with the node's error (nil on success). It lets the imperative shell
+// time or trace node execution WITHOUT the pure core importing any effect package
+// — the core knows only this tiny interface, and the observer (with its spans)
+// lives in the shell. A nil observer disables it, which is exactly plain Execute.
+type NodeObserver interface {
+	NodeStart(nodeID string, nodeType events.NodeType) func(err error)
+}
+
 // Execute runs a (validated, acyclic) flow graph against input and returns the
 // ordered node trace plus the final output. It is pure and deterministic: the
 // same graph and input always yield the same Run, which is the prerequisite for
@@ -55,6 +65,14 @@ type Run struct {
 // The MVP executes Input, Assignment, Rule, Split, and Output nodes; any other
 // node type fails loudly until its engine lands.
 func Execute(g events.Graph, input map[string]any) Run {
+	return ExecuteObserved(g, input, nil)
+}
+
+// ExecuteObserved is Execute with an optional per-node observer (used by the
+// decide shell to open a tracing span per node). The observer never affects the
+// result — it is called purely for its side effect in the shell — so the function
+// stays deterministic and replay-stable for any given graph+input.
+func ExecuteObserved(g events.Graph, input map[string]any, obs NodeObserver) Run {
 	nodes := make(map[string]events.Node, len(g.Nodes))
 	for _, n := range g.Nodes {
 		nodes[n.ID] = n
@@ -78,7 +96,18 @@ func Execute(g events.Graph, input map[string]any) Run {
 		if !ok {
 			return fail(run, cur, fmt.Sprintf("decision-engine: edge to unknown node %q", cur))
 		}
-		output, next, err := evalNode(n, ctx, outgoing[n.ID])
+		var (
+			output any
+			next   string
+			err    error
+		)
+		if obs != nil {
+			done := obs.NodeStart(n.ID, n.Type)
+			output, next, err = evalNode(n, ctx, outgoing[n.ID])
+			done(err)
+		} else {
+			output, next, err = evalNode(n, ctx, outgoing[n.ID])
+		}
 		run.Results = append(run.Results, NodeResult{NodeID: n.ID, Type: n.Type, Output: toJSON(output)})
 		if err != nil {
 			return fail(run, n.ID, err.Error())

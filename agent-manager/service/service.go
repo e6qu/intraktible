@@ -19,13 +19,25 @@ import (
 
 // Service wires the agent commands and read model to HTTP.
 type Service struct {
-	cmd   *command.Handler
-	store store.Store
+	cmd     *command.Handler
+	store   store.Store
+	pricing agents.Pricing
 }
 
+// Option configures a Service.
+type Option func(*Service)
+
+// WithPricing supplies the per-model price table used to derive run cost in the
+// run summary. Without it, the summary reports token usage but no cost.
+func WithPricing(p agents.Pricing) Option { return func(s *Service) { s.pricing = p } }
+
 // New builds the service.
-func New(cmd *command.Handler, st store.Store) *Service {
-	return &Service{cmd: cmd, store: st}
+func New(cmd *command.Handler, st store.Store, opts ...Option) *Service {
+	s := &Service{cmd: cmd, store: st}
+	for _, o := range opts {
+		o(s)
+	}
+	return s
 }
 
 // Routes registers the agent-management endpoints.
@@ -176,5 +188,5 @@ func (s *Service) runSummary(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusInternalServerError, err)
 		return
 	}
-	httpx.JSON(w, http.StatusOK, agents.SummarizeRuns(recs))
+	httpx.JSON(w, http.StatusOK, s.pricing.Cost(agents.SummarizeRuns(recs)))
 }
