@@ -3,6 +3,7 @@
      entry point: what the platform is, the four surfaces, and a sign-in CTA. -->
 <script lang="ts">
   import Icon from '$lib/Icon.svelte';
+  import { appHref } from '$lib/paths';
 
   const surfaces = [
     {
@@ -40,12 +41,12 @@
       intraktible is an event-sourced decision platform — every automated determination is a
       versioned, replayable record. Self-hosted, deterministic, auditable end to end.
     </p>
-    <p class="cta"><a class="signin" href="/login">Sign in to continue →</a></p>
+    <p class="cta"><a class="signin" href={appHref('/login')}>Sign in to continue →</a></p>
   </section>
 
   <section class="cards">
     {#each surfaces as c, i (c.href)}
-      <a class="card" href={c.href} style="--i:{i}">
+      <a class="card" href={appHref(c.href)} style="--i:{i}">
         <span class="cardicon"><Icon name={c.icon} size={22} /></span>
         <span class="cardtitle">{c.title}</span>
         <span class="carddesc">{c.desc}</span>

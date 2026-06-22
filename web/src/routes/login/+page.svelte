@@ -4,6 +4,7 @@
   import { goto } from '$app/navigation';
   import { login, listSsoProviders, listSamlProviders } from '$lib/api';
   import { user } from '$lib/session';
+  import { appHref } from '$lib/paths';
 
   let apiKey = $state('dev-sandbox-key');
   let error = $state('');
@@ -41,7 +42,7 @@
     busy = true;
     try {
       user.set(await login(apiKey));
-      await goto('/');
+      await goto(appHref('/'));
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     } finally {
@@ -69,7 +70,7 @@
     <div class="sso" data-testid="sso-providers">
       <div class="divider"><span>or</span></div>
       {#each ssoButtons as b (b.href)}
-        <a class="sso-btn" href={b.href}>Sign in with {b.label}</a>
+        <a class="sso-btn" href={appHref(b.href)}>Sign in with {b.label}</a>
       {/each}
     </div>
   {/if}

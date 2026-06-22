@@ -4,60 +4,61 @@
      - data-persona (builder|developer|operator|manager|product|showcase|evaluator) → accent, type, density
    Keeping accent in the persona axis (not the theme axis) lets every persona
    render correctly in both themes without a specificity war. Set by lib/theme.ts
-   and lib/persona.ts respectively. Fonts are self-hosted (see static/fonts). */
+   and lib/persona.ts respectively. Fonts are self-hosted + bundled (see lib/fonts;
+   referenced relatively so Vite fingerprints them and rewrites URLs base-aware). */
 
 /* ---- self-hosted typefaces (OFL-1.1, vendored — no runtime CDN) ---- */
 @font-face {
   font-family: 'Plex Sans';
-  src: url('/fonts/plex-sans-400.woff2') format('woff2');
+  src: url('./lib/fonts/plex-sans-400.woff2') format('woff2');
   font-weight: 400;
   font-display: swap;
 }
 @font-face {
   font-family: 'Plex Sans';
-  src: url('/fonts/plex-sans-500.woff2') format('woff2');
+  src: url('./lib/fonts/plex-sans-500.woff2') format('woff2');
   font-weight: 500;
   font-display: swap;
 }
 @font-face {
   font-family: 'Plex Sans';
-  src: url('/fonts/plex-sans-600.woff2') format('woff2');
+  src: url('./lib/fonts/plex-sans-600.woff2') format('woff2');
   font-weight: 600;
   font-display: swap;
 }
 @font-face {
   font-family: 'Plex Sans';
-  src: url('/fonts/plex-sans-700.woff2') format('woff2');
+  src: url('./lib/fonts/plex-sans-700.woff2') format('woff2');
   font-weight: 700;
   font-display: swap;
 }
 @font-face {
   font-family: 'Plex Mono';
-  src: url('/fonts/plex-mono-400.woff2') format('woff2');
+  src: url('./lib/fonts/plex-mono-400.woff2') format('woff2');
   font-weight: 400;
   font-display: swap;
 }
 @font-face {
   font-family: 'Plex Mono';
-  src: url('/fonts/plex-mono-600.woff2') format('woff2');
+  src: url('./lib/fonts/plex-mono-600.woff2') format('woff2');
   font-weight: 600;
   font-display: swap;
 }
 @font-face {
   font-family: 'Fraunces';
-  src: url('/fonts/fraunces-400.woff2') format('woff2');
+  src: url('./lib/fonts/fraunces-400.woff2') format('woff2');
   font-weight: 400;
   font-display: swap;
 }
 @font-face {
   font-family: 'Fraunces';
-  src: url('/fonts/fraunces-600.woff2') format('woff2');
+  src: url('./lib/fonts/fraunces-600.woff2') format('woff2');
   font-weight: 600;
   font-display: swap;
 }
 @font-face {
   font-family: 'Fraunces';
-  src: url('/fonts/fraunces-900.woff2') format('woff2');
+  src: url('./lib/fonts/fraunces-900.woff2') format('woff2');
   font-weight: 900;
   font-display: swap;
 }

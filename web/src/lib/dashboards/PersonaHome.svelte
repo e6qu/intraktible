@@ -7,6 +7,7 @@
   import Icon from '$lib/Icon.svelte';
   import { persona, personaConfig, navFor } from '$lib/persona';
   import { personaHomeStats, DEFAULT_HOME_STATS, type DashboardData } from '$lib/dashboard';
+  import { appHref } from '$lib/paths';
 
   let { data }: { data: DashboardData } = $props();
 
@@ -36,7 +37,7 @@
   <h2>Start here</h2>
   <div class="actions">
     {#each cfg.actions as a (a.href)}
-      <a class="action" href={a.href}>
+      <a class="action" href={appHref(a.href)}>
         <span class="ico"><Icon name={a.icon} size={20} /></span>
         <span class="lbl">{a.label}</span>
         <span class="go"><Icon name="chevron-down" size={16} /></span>
@@ -47,7 +48,7 @@
   <h2>Your workspaces</h2>
   <nav class="jump" aria-label="Persona sections">
     {#each nav as item (item.href)}
-      <a class="chip" href={item.href}><Icon name={item.icon} size={14} /> {item.label}</a>
+      <a class="chip" href={appHref(item.href)}><Icon name={item.icon} size={14} /> {item.label}</a>
     {/each}
   </nav>
 </main>

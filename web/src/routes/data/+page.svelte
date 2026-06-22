@@ -17,6 +17,7 @@
     type Feature,
     type Entity
   } from '$lib/api';
+  import { appHref } from '$lib/paths';
 
   // API calls authenticate via the session cookie (empty key → no X-Api-Key).
   const key = '';
@@ -318,8 +319,9 @@
                 <td>{e.entity_type}</td>
                 <td
                   ><a
-                    href={`/data/${encodeURIComponent(e.entity_type)}/${encodeURIComponent(e.entity_id)}`}
-                    >{e.entity_id}</a
+                    href={appHref(
+                      `/data/${encodeURIComponent(e.entity_type)}/${encodeURIComponent(e.entity_id)}`
+                    )}>{e.entity_id}</a
                   ></td
                 >
                 <td>{e.event_count}</td>

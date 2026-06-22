@@ -16,6 +16,10 @@ components plus the shared core are built (Phases 0–5: PLAN §8), with replay/
 and a split-services profile. Start at **[AGENTS.md](AGENTS.md)**; a runnable end-to-end walkthrough is
 in **[docs/EXAMPLE.md](docs/EXAMPLE.md)**. Post-MVP backlog: **[BUGS.md](BUGS.md)**.
 
+**Live demo:** a fully interactive build runs entirely in the browser (no backend, in-memory data) at
+**[e6qu.github.io/intraktible/demo/](https://e6qu.github.io/intraktible/demo/)** — explore every persona
+without signing up. Built and deployed from `web/` by the `pages` workflow.
+
 **Quick start:** `make dev`, then open **http://localhost:5173** and sign in with the dev key
 `dev-sandbox-key`. Everything else is below.
 

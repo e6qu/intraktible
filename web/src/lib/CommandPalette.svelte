@@ -11,6 +11,7 @@
   import { paletteOpen, closePalette, togglePalette } from '$lib/palette';
   import { openShortcuts } from '$lib/shortcuts';
   import { listFlows, listAgents, listCases } from '$lib/api';
+  import { appHref } from '$lib/paths';
 
   type Cmd = {
     id: string;
@@ -36,7 +37,7 @@
       label,
       icon,
       keywords: `${label} ${href} open page navigate`,
-      run: () => goto(href)
+      run: () => goto(appHref(href))
     };
   }
 
@@ -95,7 +96,7 @@
           label: 'Sign in',
           icon: 'user',
           keywords: 'sign in log in account',
-          run: () => goto('/login')
+          run: () => goto(appHref('/login'))
         }
   ]);
 
@@ -142,7 +143,7 @@
           hint: f.slug,
           icon: 'engine',
           keywords: `flow ${f.name} ${f.slug}`,
-          run: () => goto(`/engine/${f.flow_id}`)
+          run: () => goto(appHref(`/engine/${f.flow_id}`))
         })
       ),
       ...agents.map(
@@ -152,7 +153,7 @@
           label: a.name,
           icon: 'agents',
           keywords: `agent ${a.name}`,
-          run: () => goto(`/agents/${encodeURIComponent(a.name)}`)
+          run: () => goto(appHref(`/agents/${encodeURIComponent(a.name)}`))
         })
       ),
       ...cases.map(
@@ -163,7 +164,7 @@
           hint: c.status,
           icon: 'cases',
           keywords: `case ${c.company_name} ${c.status}`,
-          run: () => goto(`/cases/${c.case_id}`)
+          run: () => goto(appHref(`/cases/${c.case_id}`))
         })
       )
     ];

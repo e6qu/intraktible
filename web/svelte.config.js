@@ -12,6 +12,10 @@ export default {
       assets: 'build',
       fallback: 'index.html',
       precompress: false
-    })
+    }),
+    // Served at the origin root when embedded in the binary (BASE_PATH unset), and
+    // under a sub-path for the public GitHub Pages demo (build:demo sets /demo).
+    // Internal links read this via $app/paths `base`, so the same source is portable.
+    paths: { base: process.env.BASE_PATH || '' }
   }
 };

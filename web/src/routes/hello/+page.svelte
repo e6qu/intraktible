@@ -5,6 +5,7 @@
 <script lang="ts">
   import Icon from '$lib/Icon.svelte';
   import { getStats, sayHello } from '$lib/api';
+  import { appHref } from '$lib/paths';
 
   // API calls authenticate via the session cookie (empty key → no X-Api-Key).
   const key = '';
@@ -30,7 +31,7 @@
 </script>
 
 <main>
-  <p class="back"><a href="/">← dashboard</a></p>
+  <p class="back"><a href={appHref('/')}>← dashboard</a></p>
   <h1>Phase 0 vertical slice</h1>
   <p class="muted">command → event log → projection → API → this UI.</p>
   <div class="row">

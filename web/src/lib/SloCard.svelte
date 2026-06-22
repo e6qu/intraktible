@@ -10,6 +10,7 @@
   import { pct } from '$lib/dashboard';
   import { toast } from '$lib/toast';
   import { getFlowSLO, putFlowSLO, type SLOResponse } from '$lib/api';
+  import { appHref } from '$lib/paths';
 
   let { flowId, name, initial }: { flowId: string; name: string; initial: SLOResponse } = $props();
 
@@ -79,7 +80,7 @@
 
 <div class="slo-card">
   <div class="slo-head">
-    <a href={`/engine/${flowId}`}>{name}</a>
+    <a href={appHref(`/engine/${flowId}`)}>{name}</a>
     {#if r.attainment}
       <span class="badge {r.attainment.success_met ? 'ok' : 'bad'}">
         {r.attainment.success_met ? 'meeting' : 'breaching'}

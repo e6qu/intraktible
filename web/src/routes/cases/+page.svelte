@@ -16,6 +16,7 @@
     type CaseStatus
   } from '$lib/api';
   import { resolvePersona, personaLens } from '$lib/persona';
+  import { appHref } from '$lib/paths';
 
   function msg(e: unknown): string {
     return e instanceof Error ? e.message : String(e);
@@ -275,7 +276,7 @@
                   aria-label={`select ${c.company_name}`}
                 /></td
               >
-              <td><a href={`/cases/${c.case_id}`}>{c.company_name}</a></td>
+              <td><a href={appHref(`/cases/${c.case_id}`)}>{c.company_name}</a></td>
               <td>{c.case_type}</td>
               <td>{c.status}</td>
               <td>{c.assignee || '—'}</td>

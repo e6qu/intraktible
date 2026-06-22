@@ -8,6 +8,7 @@
   import Skeleton from '$lib/Skeleton.svelte';
   import { onMount } from 'svelte';
   import { toast } from '$lib/toast';
+  import { appHref } from '$lib/paths';
   import {
     listAuditPage,
     auditExportUrl,
@@ -365,7 +366,9 @@
               <td><span class="badge">{k.scope}</span></td>
               <td><span class="status {keyStatus(k)}">{keyStatus(k)}</span></td>
               <td class="row-actions">
-                <a class="audit-link" href={`/audit?resource=${encodeURIComponent(k.id)}`}>Audit</a>
+                <a class="audit-link" href={appHref(`/audit?resource=${encodeURIComponent(k.id)}`)}
+                  >Audit</a
+                >
                 {#if keyStatus(k) === 'active'}
                   <button class="rotate" onclick={() => rotateKey(k.id)}>Rotate</button>
                   <button class="revoke" onclick={() => revokeKey(k.id)}>Revoke</button>

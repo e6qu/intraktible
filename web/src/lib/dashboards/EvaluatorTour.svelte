@@ -6,6 +6,7 @@
 <script lang="ts">
   import Icon from '$lib/Icon.svelte';
   import { decisionStats, type DashboardData } from '$lib/dashboard';
+  import { appHref } from '$lib/paths';
 
   let { data }: { data: DashboardData } = $props();
   const ds = $derived(decisionStats(data.decisions));
@@ -62,7 +63,7 @@
         <div class="body">
           <h2>{s.title}</h2>
           <p>{s.desc}</p>
-          <a class="cta" href={s.href}>{s.cta} <Icon name="chevron-down" size={14} /></a>
+          <a class="cta" href={appHref(s.href)}>{s.cta} <Icon name="chevron-down" size={14} /></a>
         </div>
       </li>
     {/each}

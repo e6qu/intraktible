@@ -19,6 +19,7 @@
     type EvalCase,
     type EvalReport
   } from '$lib/api';
+  import { appHref } from '$lib/paths';
 
   // API calls authenticate via the session cookie (empty key -> no X-Api-Key header).
   const key = '';
@@ -239,7 +240,7 @@
 </script>
 
 <main>
-  <p><a href="/agents">← agents</a></p>
+  <p><a href={appHref('/agents')}>← agents</a></p>
   {#if agent}
     <h1>{agent.name}</h1>
     <dl>

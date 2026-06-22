@@ -7,6 +7,7 @@
   import CommentThread from '$lib/CommentThread.svelte';
   import { getDecision, exportDecision, type Decision, type RunExportFormat } from '$lib/api';
   import { toast } from '$lib/toast';
+  import { appHref } from '$lib/paths';
 
   // API calls authenticate via the session cookie (empty key → no X-Api-Key).
   const key = '';
@@ -88,7 +89,7 @@
 
     <dl class="fields">
       <dt>flow</dt>
-      <dd><a href={`/engine/${d.flow_id}`}>{d.slug}</a></dd>
+      <dd><a href={appHref(`/engine/${d.flow_id}`)}>{d.slug}</a></dd>
       <dt>version</dt>
       <dd>v{d.version}</dd>
       <dt>environment</dt>
