@@ -18,6 +18,8 @@ test('shows AI usage and the SLO surface', async ({ page }) => {
 });
 
 test('sets and clears a per-flow SLO objective', async ({ page, request }) => {
+  // Clearing an objective asks for confirmation — accept it.
+  page.on('dialog', (d) => d.accept());
   const slug = uniqueSlug();
   const created = await request.post('/v1/flows', {
     headers: { 'X-Api-Key': KEY },

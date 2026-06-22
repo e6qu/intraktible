@@ -51,6 +51,20 @@ describe('persona config', () => {
     expect(ids).not.toContain('cases');
   });
 
+  it('drops admin-only nav items for a non-admin role', () => {
+    // Manager nav includes the admin-gated mrm + audit.
+    const asAdmin = navFor('manager', 'admin').map((n) => n.id);
+    expect(asAdmin).toContain('mrm');
+    expect(asAdmin).toContain('audit');
+    // A non-admin manager must not see admin-only surfaces (avoids a 403 dead-end).
+    const asOperator = navFor('manager', 'operator').map((n) => n.id);
+    expect(asOperator).not.toContain('mrm');
+    expect(asOperator).not.toContain('audit');
+    expect(asOperator).toContain('cases'); // non-admin items remain
+    // Omitting role (pre-/v1/me) shows the full set, matching prior behavior.
+    expect(navFor('manager').map((n) => n.id)).toContain('mrm');
+  });
+
   it('different personas compose different navigation', () => {
     const builder = navFor('builder').map((n) => n.id);
     const operator = navFor('operator').map((n) => n.id);

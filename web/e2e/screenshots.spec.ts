@@ -71,6 +71,25 @@ test.beforeAll(async ({ request }) => {
     headers: { 'X-Api-Key': KEY },
     data: { prompt: 'screen this applicant' }
   });
+  // A second version (so the agent-detail version history renders) + eval cases.
+  await request.post('/v1/agents', {
+    headers: { 'X-Api-Key': KEY },
+    data: { name: 'screener', system: 'screen applicants carefully', tools: ['bureau'] }
+  });
+  await request.put('/v1/agents/screener/evals', {
+    headers: { 'X-Api-Key': KEY },
+    data: {
+      cases: [
+        {
+          name: 'approves clean',
+          prompt: 'applicant with score 800',
+          mode: 'contains',
+          expect: 'screen'
+        },
+        { name: 'flags risk', prompt: 'applicant on watchlist', mode: 'contains', expect: 'screen' }
+      ]
+    }
+  });
   // A simple decideable flow + a run so /decisions has content.
   const simple = await request.post('/v1/flows', {
     headers: { 'X-Api-Key': KEY },
@@ -106,6 +125,17 @@ test.beforeAll(async ({ request }) => {
     expect(body.status).toBe('completed');
     decisionId = body.decision_id;
   }).toPass({ timeout: 5000 });
+
+  // Deploy the simple flow to sandbox + give it an SLO, so the deploy panel
+  // (rollback) and the observability / MRM pages have populated content.
+  await request.post(`/v1/flows/${simpleId}/deployments`, {
+    headers: { 'X-Api-Key': KEY },
+    data: { environment: 'sandbox', version: 1 }
+  });
+  await request.put(`/v1/flows/${simpleId}/slo`, {
+    headers: { 'X-Api-Key': KEY },
+    data: { success_target: 0.95, latency_target_ms: 5000 }
+  });
 
   // Context Layer: a connector, a feature, and an entity with events so /data and
   // a /data detail page have real content.
@@ -197,6 +227,12 @@ for (const themeMode of ['light', 'dark']) {
       'agent-detail': '/agents/screener',
       data: '/data',
       'data-detail': `/data/${entityType}/${entityId}`,
+      policies: '/policies',
+      preapprovals: '/preapprovals',
+      models: '/models',
+      observability: '/observability',
+      mrm: '/mrm',
+      keys: '/keys',
       audit: '/audit'
     };
     for (const [label, path] of Object.entries(routes)) {

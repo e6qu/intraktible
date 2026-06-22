@@ -481,6 +481,9 @@ func (s *Service) publish(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, err)
 		return
 	}
+	if !s.allowFlowAny(w, r, id, r.PathValue("flow_id")) {
+		return
+	}
 	version, etag, e, err := s.cmd.PublishVersion(r.Context(), id, domain.PublishVersion{
 		FlowID:      r.PathValue("flow_id"),
 		Graph:       req.Graph,
@@ -633,6 +636,9 @@ func (s *Service) listSchedules(w http.ResponseWriter, r *http.Request) {
 func (s *Service) cancelSchedule(w http.ResponseWriter, r *http.Request) {
 	id, ok := httpx.Caller(w, r)
 	if !ok {
+		return
+	}
+	if !s.allowFlowAny(w, r, id, r.PathValue("flow_id")) {
 		return
 	}
 	e, err := s.cmd.CancelSchedule(r.Context(), id, r.PathValue("flow_id"), r.PathValue("schedule_id"), "")
@@ -912,6 +918,9 @@ func (s *Service) requestDeployment(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, err)
 		return
 	}
+	if !s.allowFlow(w, r, id, r.PathValue("flow_id"), req.Environment) {
+		return
+	}
 	reqID, e, err := s.cmd.RequestDeployment(r.Context(), id, domain.DeployVersion{
 		FlowID:            r.PathValue("flow_id"),
 		Environment:       req.Environment,
@@ -938,6 +947,9 @@ func (s *Service) approveDeployment(w http.ResponseWriter, r *http.Request) {
 		Reason string `json:"reason,omitempty"`
 	}
 	_ = httpx.DecodeJSON(r, &req)
+	if !s.allowFlowAny(w, r, id, r.PathValue("flow_id")) {
+		return
+	}
 	e, err := s.cmd.ApproveDeployment(r.Context(), id, r.PathValue("flow_id"), r.PathValue("req_id"), req.Reason)
 	if err != nil {
 		httpx.Error(w, http.StatusBadRequest, err)
@@ -956,6 +968,9 @@ func (s *Service) rejectDeployment(w http.ResponseWriter, r *http.Request) {
 		Reason string `json:"reason,omitempty"`
 	}
 	_ = httpx.DecodeJSON(r, &req)
+	if !s.allowFlowAny(w, r, id, r.PathValue("flow_id")) {
+		return
+	}
 	e, err := s.cmd.RejectDeployment(r.Context(), id, r.PathValue("flow_id"), r.PathValue("req_id"), req.Reason)
 	if err != nil {
 		httpx.Error(w, http.StatusBadRequest, err)
@@ -1047,6 +1062,25 @@ func (s *Service) allowFlow(w http.ResponseWriter, r *http.Request, id identity.
 	}
 	if !ok {
 		httpx.Error(w, http.StatusForbidden, fmt.Errorf("requires a per-flow grant for %q in %q", flowID, env))
+		return false
+	}
+	return true
+}
+
+// allowFlowAny is allowFlow for change-control actions not tied to one environment
+// (publishing a version, cancelling a schedule): the caller must hold any grant for
+// the flow when it is grant-restricted. Admins always pass; an ungranted flow is open.
+func (s *Service) allowFlowAny(w http.ResponseWriter, r *http.Request, id identity.Identity, flowID string) bool {
+	if httpx.RoleOf(r.Context()) == auth.RoleAdmin {
+		return true
+	}
+	ok, err := grants.AllowedAny(r.Context(), s.store, id, flowID, id.Actor)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, err)
+		return false
+	}
+	if !ok {
+		httpx.Error(w, http.StatusForbidden, fmt.Errorf("requires a per-flow grant for %q", flowID))
 		return false
 	}
 	return true

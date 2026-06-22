@@ -39,8 +39,9 @@
   });
 
   // Navigation is the current persona's ordered (and optionally relabelled) subset
-  // of the shared catalog — each role sees the sections that matter to it.
-  const nav = $derived(navFor(persona));
+  // of the shared catalog. The signed-in role (from /v1/me) also drops admin-only
+  // surfaces for non-admins, so a manager/executive never lands on a 403 dead-end.
+  const nav = $derived(navFor(persona, $user?.role));
 
   const path = $derived($page.url.pathname);
   // The sign-in screen shows only minimal chrome (brand + theme) — not the full

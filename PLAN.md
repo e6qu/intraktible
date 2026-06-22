@@ -751,6 +751,21 @@ new SSE-parser fuzz harness. Two pure cross-package signature refactors (EntityR
 follow-ups — they prevent only theoretical transpositions with trusted callers and carry large churn /
 auth-regression surface for no behavioral change (detail in BUGS.md).
 
+**Review sweep — bugs + UX/a11y + persona dead-ends (one fat PR).** A cross-cutting review (Go bug sweep,
+web UX/a11y sweep, persona-flow coherence, plus light/dark screenshots of every route) turned up and fixed:
+(bugs) the encrypting event-log's `Subscribe` silently corrupted on an undecryptable payload (forwarded a
+sealed envelope that projectors decoded to a zero-value struct and checkpointed) — now substitutes a
+non-decodable sentinel so the projector errors and /healthz degrades; and per-flow grants were enforced on
+only four of the documented change-control actions — added `grants.AllowedAny` + enforcement to
+publish/approve/reject/cancel-schedule/request-deployment. (UX) destructive actions (rollback, cancel
+schedule, revoke grant, clear SLO) now confirm + toast; the SLO editor validates input + has a
+non-destructive edit path; the agents page got success toasts + an escalate confirm; pass/fail glyphs got
+aria-labels. (persona) `/v1/me` now returns role so the nav hides admin-only items (mrm, audit) for
+non-admins and `/mrm` renders a graceful forbidden state (no more 403 dead-end for manager/executive
+personas); the evaluator nav gained `cases` (its tour routed there) and the builder deck's dead `/hello`
+link became a real "context data" link. The screenshot design-review helper was extended to cover the new
+pages and seed richer fixtures. Tests added for the log halt, grant enforcement, role-aware nav.
+
 **Model risk management packaging (SR 11-7 / SS1/23).** A new read-only `mrm` package aggregates the
 inventory + validation evidence + monitoring that already exists across the platform into one regulated
 artifact (`GET /v1/mrm/report`, admin-gated). It inventories every "model" — a decision flow, a predictive

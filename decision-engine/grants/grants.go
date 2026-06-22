@@ -121,6 +121,26 @@ func Allowed(ctx context.Context, s store.Store, id identity.Identity, flowID, e
 	return false, nil
 }
 
+// AllowedAny reports whether actor may take a change-control action on flowID that
+// is not tied to a specific environment (publish, cancel a schedule). Opt-in like
+// Allowed: a flow with no grants is allowed; otherwise the actor must hold at least
+// one grant for the flow (in any environment).
+func AllowedAny(ctx context.Context, s store.Store, id identity.Identity, flowID, actor string) (bool, error) {
+	gs, err := ForFlow(ctx, s, id, flowID)
+	if err != nil {
+		return false, err
+	}
+	if len(gs) == 0 {
+		return true, nil
+	}
+	for _, g := range gs {
+		if g.Actor == actor {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // NewID returns a random grant id.
 func NewID() string {
 	var b [16]byte

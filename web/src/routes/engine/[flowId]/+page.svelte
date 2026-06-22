@@ -1103,6 +1103,8 @@
 
   // rollback reverts an environment to its previous live version (instant rollback).
   async function rollback(environment: string) {
+    // Rollback changes which version serves live traffic — confirm first (like promote).
+    if (!confirm(`Roll back ${environment} to its previous live version?`)) return;
     error = '';
     deploying = true;
     try {
@@ -1151,11 +1153,13 @@
     }
   }
   async function dropSchedule(scheduleId: string) {
+    if (!confirm('Cancel this scheduled deploy?')) return;
     try {
       await cancelSchedule(key, flowId, scheduleId);
+      toast.success('Scheduled deploy cancelled');
       await loadSchedules();
     } catch (e) {
-      error = msg(e);
+      toast.error(msg(e));
     }
   }
 
@@ -1186,11 +1190,13 @@
     }
   }
   async function ungrant(grantId: string) {
+    if (!confirm('Revoke this access grant?')) return;
     try {
       await revokeGrant(key, flowId, grantId);
+      toast.success('Grant revoked');
       await loadGrants();
     } catch (e) {
-      error = msg(e);
+      toast.error(msg(e));
     }
   }
 

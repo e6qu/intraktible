@@ -124,6 +124,46 @@ func TestEncryptedLogPlaintextPassthrough(t *testing.T) {
 	}
 }
 
+// When a delivered payload can't be decrypted (wrong/rotated-away key), Subscribe
+// must NOT forward the still-sealed envelope (which a projector would decode to a
+// zero-value struct and silently apply). It substitutes a non-decodable sentinel so
+// the projector errors loudly.
+func TestEncryptedLogSubscribeDecryptFailureIsLoud(t *testing.T) {
+	ctx := context.Background()
+	inner, err := eventlog.OpenWAL(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = inner.Close() }()
+
+	keyA := make([]byte, 32)
+	for i := range keyA {
+		keyA[i] = 1
+	}
+	keyB := make([]byte, 32)
+	for i := range keyB {
+		keyB[i] = 2
+	}
+	krA, _ := secretbox.NewKeyring(keyA)
+	krB, _ := secretbox.NewKeyring(keyB)
+
+	logA := eventlog.Encrypted(inner, krA) // seals writes under key A
+	logB := eventlog.Encrypted(inner, krB) // reads with key B — can't open A's payloads
+
+	ch, cancel := logB.Subscribe()
+	defer cancel()
+	if _, err := logA.Append(ctx, eventlog.Envelope{Org: "o", Workspace: "w", Type: "t", Payload: json.RawMessage(`{"secret":1}`)}); err != nil {
+		t.Fatal(err)
+	}
+	e := <-ch
+	// The delivered payload must be neither the plaintext nor a decodable JSON object
+	// (a sealed envelope would unmarshal cleanly into a struct — exactly the silent bug).
+	var into map[string]any
+	if json.Unmarshal(e.Payload, &into) == nil {
+		t.Fatalf("undecryptable payload must NOT be decodable JSON, got %s", e.Payload)
+	}
+}
+
 func TestEncryptedLogNilKeyringPassthrough(t *testing.T) {
 	inner, err := eventlog.OpenWAL(t.TempDir())
 	if err != nil {
