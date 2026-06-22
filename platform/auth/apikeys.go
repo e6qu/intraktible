@@ -165,6 +165,19 @@ func (s *StoreAPIKeys) indexHash(ctx context.Context, h, keyID string) error {
 	return store.PutDoc(ctx, s.store, managedKeyIndexCollection, h, keyIndexEntry{KeyID: keyID})
 }
 
+// deindexHash drops a hash's index row once it can no longer authenticate (a
+// superseded rotation hash or a revoked key's hashes), so the global index does
+// not accumulate orphaned rows for every rotation/revocation over a key's life.
+// Best-effort: the durable key doc and any new index row are already written, and
+// a stale row never authenticates (validate gates on Usable + secretMatches), so a
+// failure to prune is hygiene, not correctness — never block the operation on it.
+func (s *StoreAPIKeys) deindexHash(ctx context.Context, h string) {
+	if h == "" {
+		return
+	}
+	_ = s.store.Delete(ctx, managedKeyIndexCollection, h)
+}
+
 // List returns active and revoked managed tokens, with hashes omitted.
 func (s *StoreAPIKeys) List(ctx context.Context) ([]ManagedAPIKey, error) {
 	recs, err := store.ListDocs[ManagedAPIKey](ctx, s.store, managedKeyCollection, "")
@@ -200,6 +213,10 @@ func (s *StoreAPIKeys) Revoke(ctx context.Context, id string) (ManagedAPIKey, er
 	if err := store.PutDoc(ctx, s.store, managedKeyCollection, id, key); err != nil {
 		return ManagedAPIKey{}, err
 	}
+	// A revoked key authenticates nothing, so its index rows are dead — prune both
+	// the current and any in-grace previous hash rather than leaving them orphaned.
+	s.deindexHash(ctx, key.Hash)
+	s.deindexHash(ctx, key.PrevHash)
 	return redactManagedKey(key), nil
 }
 
@@ -219,6 +236,11 @@ func (s *StoreAPIKeys) Rotate(ctx context.Context, id string, grace time.Duratio
 	}
 	now := s.now().UTC()
 	secret := "itk_" + newToken()
+	// Capture the hashes this rotation supersedes so their index rows can be pruned:
+	// the prior in-grace previous hash always retires now, and the current hash too
+	// unless this rotation keeps it as the new grace-window previous.
+	retiredPrev := key.PrevHash
+	priorHash := key.Hash
 	if grace > 0 {
 		exp := now.Add(grace)
 		key.PrevHash = key.Hash
@@ -236,6 +258,14 @@ func (s *StoreAPIKeys) Rotate(ctx context.Context, id string, grace time.Duratio
 	// Create/Rotate) stays valid through the grace window — secretMatches gates it.
 	if err := s.indexHash(ctx, key.Hash, id); err != nil {
 		return ManagedAPIKey{}, "", err
+	}
+	// Prune the index rows this rotation retired: the superseded previous hash, and
+	// (when no grace window keeps it) the just-rotated current hash. Guard against
+	// dropping a row we still rely on — the new current hash or the kept previous.
+	for _, h := range []string{retiredPrev, priorHash} {
+		if h != "" && h != key.Hash && h != key.PrevHash {
+			s.deindexHash(ctx, h)
+		}
 	}
 	return redactManagedKey(key), secret, nil
 }

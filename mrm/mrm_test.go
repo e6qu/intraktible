@@ -4,6 +4,7 @@ package mrm_test
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/e6qu/intraktible/agent-manager/agents"
 	"github.com/e6qu/intraktible/agent-manager/eval"
 	"github.com/e6qu/intraktible/decision-engine/flows"
+	"github.com/e6qu/intraktible/decision-engine/models"
 	"github.com/e6qu/intraktible/mrm"
 	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/store"
@@ -83,6 +85,32 @@ func TestValidatedAgentHasNoIssue(t *testing.T) {
 	m := rep.Models[0]
 	if m.Validation.Coverage != mrm.CoverageTested || m.Validation.EvalCases != 1 || len(m.Issues) != 0 {
 		t.Fatalf("a validated agent should be tested with no issues: %+v", m)
+	}
+}
+
+// A predictive model surfaces its owner (the recorded definer) in the inventory,
+// the same accountability signal flows and agents already carry.
+func TestPredictiveModelSurfacesOwner(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemory()
+	id := identity.Identity{Org: "demo", Workspace: "main"}
+	put(t, st, models.Collection, store.Key("demo", "main", "risk"), models.ModelView{
+		Org: "demo", Workspace: "main", Name: "risk", Owner: "dana",
+		Spec:      json.RawMessage(`{"kind":"logistic","intercept":0,"coefficients":{"x":1}}`),
+		UpdatedAt: "2026-06-22T12:00:00Z",
+	})
+	rep, err := mrm.Build(ctx, st, id, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m mrm.Model
+	for _, e := range rep.Models {
+		if e.Kind == mrm.KindPredictive {
+			m = e
+		}
+	}
+	if m.ID != "risk" || m.Owner != "dana" {
+		t.Fatalf("predictive model entry = %+v", m)
 	}
 }
 

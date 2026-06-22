@@ -38,7 +38,11 @@ type ModelView struct {
 	Name      string          `json:"name"`
 	Kind      ModelKind       `json:"kind"`
 	Spec      json.RawMessage `json:"spec"`
-	UpdatedAt string          `json:"updated_at"`
+	// Owner is the actor who last defined the model — the model-owner proxy MRM
+	// surfaces, mirroring flows/agents' PublishedBy. Derived from the event actor,
+	// so it is populated retroactively for every prior ModelDefined on replay.
+	Owner     string `json:"owner,omitempty"`
+	UpdatedAt string `json:"updated_at"`
 }
 
 // Projector folds ModelDefined events into ModelView documents.
@@ -69,7 +73,8 @@ func (Projector) Apply(ctx context.Context, e eventlog.Envelope, s store.Store) 
 	kind := spec.Kind
 	v := ModelView{
 		Org: e.Org, Workspace: e.Workspace,
-		Name: p.Name, Kind: kind, Spec: p.Spec, UpdatedAt: e.Time.UTC().Format("2006-01-02T15:04:05Z07:00"),
+		Name: p.Name, Kind: kind, Spec: p.Spec, Owner: e.Actor,
+		UpdatedAt: e.Time.UTC().Format("2006-01-02T15:04:05Z07:00"),
 	}
 	return store.PutDoc(ctx, s, Collection, store.Key(e.Org, e.Workspace, p.Name), v)
 }

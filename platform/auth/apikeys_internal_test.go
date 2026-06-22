@@ -46,6 +46,69 @@ func TestResolveBackfillsAndRevokes(t *testing.T) {
 	}
 }
 
+// indexRows counts the hash-index entries — white-box visibility into the leak
+// the prune fixes (a stale row never authenticates, but it shouldn't accumulate).
+func indexRows(t *testing.T, st store.Store) int {
+	t.Helper()
+	rows, err := store.ListDocs[keyIndexEntry](context.Background(), st, managedKeyIndexCollection, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return len(rows)
+}
+
+// Rotation and revocation prune the hash-index rows they retire, so the global
+// index holds only rows that can still authenticate — it does not grow by one
+// orphan per rotation over a key's lifetime.
+func TestRotateAndRevokePruneIndex(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemory()
+	keys := NewStoreAPIKeys(st)
+	clock := time.Now().UTC()
+	keys.now = func() time.Time { return clock }
+	id := identity.Identity{Org: "o", Workspace: "w", Actor: "svc"}
+
+	created, _, err := keys.Create(ctx, ManagedAPIKey{Name: "svc", Identity: id, Role: RoleOperator})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := indexRows(t, st); n != 1 {
+		t.Fatalf("after create: %d index rows, want 1", n)
+	}
+
+	// A grace rotation keeps the previous hash live → two rows (current + previous).
+	if _, _, err := keys.Rotate(ctx, created.ID, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if n := indexRows(t, st); n != 2 {
+		t.Fatalf("after grace rotation: %d index rows, want 2", n)
+	}
+
+	// A second grace rotation retires the first rotation's previous hash → still two.
+	if _, _, err := keys.Rotate(ctx, created.ID, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if n := indexRows(t, st); n != 2 {
+		t.Fatalf("after second grace rotation: %d index rows, want 2 (no orphan accrual)", n)
+	}
+
+	// A zero-grace rotation drops the prior current + previous → one row.
+	if _, _, err := keys.Rotate(ctx, created.ID, 0); err != nil {
+		t.Fatal(err)
+	}
+	if n := indexRows(t, st); n != 1 {
+		t.Fatalf("after zero-grace rotation: %d index rows, want 1", n)
+	}
+
+	// Revoking prunes the remaining row(s).
+	if _, err := keys.Revoke(ctx, created.ID); err != nil {
+		t.Fatal(err)
+	}
+	if n := indexRows(t, st); n != 0 {
+		t.Fatalf("after revoke: %d index rows, want 0", n)
+	}
+}
+
 // White-box: drive the token clock to exercise rotation's grace window.
 func TestRotateGraceWindow(t *testing.T) {
 	ctx := context.Background()

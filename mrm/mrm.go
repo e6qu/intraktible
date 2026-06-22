@@ -232,7 +232,7 @@ func buildModels(ctx context.Context, s store.Store, id identity.Identity, rep *
 		return err
 	}
 	for _, mv := range mvs {
-		m := Model{Kind: KindPredictive, ID: mv.Name, Name: mv.Name}
+		m := Model{Kind: KindPredictive, ID: mv.Name, Name: mv.Name, Owner: mv.Owner}
 		if t, err := time.Parse(time.RFC3339, mv.UpdatedAt); err == nil {
 			m.UpdatedAt = t
 		}
