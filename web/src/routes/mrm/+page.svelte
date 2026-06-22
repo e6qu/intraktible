@@ -5,6 +5,7 @@
   import Skeleton from '$lib/Skeleton.svelte';
   import { pct } from '$lib/dashboard';
   import { getMrmReport, type MrmReport } from '$lib/api';
+  import { appHref } from '$lib/paths';
 
   const key = '';
   let report = $state<MrmReport | null>(null);
@@ -70,8 +71,8 @@
     </div>
 
     <div class="row">
-      <a class="btn" href="/v1/mrm/report?format=csv" download>Export CSV</a>
-      <a class="btn" href="/v1/mrm/report?format=md" download>Export Markdown</a>
+      <a class="btn" href={appHref('/v1/mrm/report?format=csv')} download>Export CSV</a>
+      <a class="btn" href={appHref('/v1/mrm/report?format=md')} download>Export Markdown</a>
     </div>
 
     {#if report.models.length === 0}

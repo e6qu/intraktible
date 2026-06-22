@@ -877,6 +877,17 @@ conversion fixpoint, and CSV-injection neutralization. Documented-not-fixed (del
 follow-ups): the cross-process version/slug TOCTOU (needs a storage-layer compare-and-set; the
 monolith is correct), NATS live-delivery catch-up across reconnect, and SCIM list pagination.
 
+**Public demo + base-path portability + UI/UX review** (done). The SvelteKit app is now base-path
+portable (`paths.base` from `BASE_PATH`; internal links via a `$lib/paths` `appHref` that no-ops at
+the embedded root; fonts moved into the source tree so Vite base-rewrites them), enabling a fully
+interactive, **backend-less build that runs on GitHub Pages at `/demo/`**. A `src/lib/demo/` mock
+backend (in-memory store typed against `api.ts`, a safe JS flow interpreter, a `/v1` router) is
+installed only via a `VITE_DEMO`-guarded dynamic import, so it is dead-code-eliminated from the
+binary. A `pages` workflow builds + smoke-tests the demo and assembles a one-artifact site — demo at
+`/demo/`, a versioned root landing reserving `/` for a future presentation page, and a `/docs/`
+placeholder (a rendered docs site + Storybook deferred). A UI/UX screenshot review across personas
+confirmed the app is sound; the one fix was reconciling a demo-seed run-count inconsistency.
+
 ---
 
 ## 9. MVP non-goals

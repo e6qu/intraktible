@@ -4,6 +4,7 @@
   import EmptyState from '$lib/EmptyState.svelte';
   import Skeleton from '$lib/Skeleton.svelte';
   import { listAgents, defineAgent, getRunSummary, type Agent, type RunSummary } from '$lib/api';
+  import { appHref } from '$lib/paths';
 
   // API calls authenticate via the session cookie (empty key -> no X-Api-Key header).
   const key = '';
@@ -159,7 +160,7 @@
         <tbody>
           {#each list as a (a.name)}
             <tr>
-              <td><a href={`/agents/${a.name}`}>{a.name}</a></td>
+              <td><a href={appHref(`/agents/${a.name}`)}>{a.name}</a></td>
               <td>{a.model || '—'}</td>
               <td>
                 {#if a.schema}<span class="badge">structured</span>{/if}

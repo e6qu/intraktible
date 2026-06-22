@@ -78,6 +78,7 @@
     type Environment
   } from '$lib/api';
   import { toast } from '$lib/toast';
+  import { appHref } from '$lib/paths';
   import { diffGraphs, diffIsEmpty } from '$lib/diff';
   import { layoutLanes, type XY } from '$lib/layout';
   import { theme } from '$lib/theme';
@@ -1545,7 +1546,7 @@
 </script>
 
 <main>
-  <p><a href="/engine">← all flows</a></p>
+  <p><a href={appHref('/engine')}>← all flows</a></p>
   <h1>{flow?.name ?? flowId}</h1>
   <div class="row">
     <button onclick={load}><Icon name="reload" size={15} /> Reload</button>
@@ -1647,7 +1648,7 @@
       {#each Object.entries(metrics.by_variant ?? {}) as [variant, v] (variant)}
         <span class="muted">{variant}: {v.completed}/{v.started}</span>
       {/each}
-      <a href="/decisions">view runs →</a>
+      <a href={appHref('/decisions')}>view runs →</a>
     </div>
   {/if}
 
@@ -2950,7 +2951,8 @@
                 >
                 <td>{r.disposition ?? '—'}</td>
                 <td>
-                  {#if r.decision_id}<a href={`/decisions/${r.decision_id}`}>view</a>{:else}—{/if}
+                  {#if r.decision_id}<a href={appHref(`/decisions/${r.decision_id}`)}>view</a
+                    >{:else}—{/if}
                 </td>
                 <td>{r.error || JSON.stringify(r.data)}</td>
               </tr>
@@ -2963,10 +2965,10 @@
     <section>
       <h2>Promote to pre-approvals</h2>
       <p class="muted">
-        Run the dataset above through the flow's bound <a href="/policies">policy</a> and grant a
-        time-boxed <a href="/preapprovals">pre-approval</a> for every row it disposes to the chosen disposition
-        — keyed by a field in each row. Each grant's decision output becomes the stored offer terms, honored
-        instantly the next time that entity is decided.
+        Run the dataset above through the flow's bound <a href={appHref('/policies')}>policy</a> and
+        grant a time-boxed <a href={appHref('/preapprovals')}>pre-approval</a> for every row it disposes
+        to the chosen disposition — keyed by a field in each row. Each grant's decision output becomes
+        the stored offer terms, honored instantly the next time that entity is decided.
       </p>
       <div class="row pa-controls">
         <label>

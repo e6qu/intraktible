@@ -13,6 +13,7 @@
     type Variant
   } from '$lib/api';
   import { resolvePersona, personaLens, type DecisionColumn } from '$lib/persona';
+  import { appHref } from '$lib/paths';
 
   // API calls authenticate via the session cookie (empty key → no X-Api-Key).
   const key = '';
@@ -177,7 +178,7 @@
   {:else if list.length === 0}
     <EmptyState icon="diagram" title={emptyTitle} hint={emptyHint}>
       {#snippet action()}
-        <a href="/engine">Open the Decision Engine →</a>
+        <a href={appHref('/engine')}>Open the Decision Engine →</a>
       {/snippet}
     </EmptyState>
   {:else}
@@ -195,7 +196,7 @@
                 {#if col === 'status'}
                   <td><span class="badge {d.status}">{d.status}</span></td>
                 {:else if col === 'flow'}
-                  <td><a href={`/decisions/${d.decision_id}`}>{d.slug}</a></td>
+                  <td><a href={appHref(`/decisions/${d.decision_id}`)}>{d.slug}</a></td>
                 {:else if col === 'env'}
                   <td>{d.environment}</td>
                 {:else if col === 'version'}

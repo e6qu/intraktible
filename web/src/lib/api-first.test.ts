@@ -29,8 +29,16 @@ describe('API-first guarantee', () => {
     // All calls go through the injected `fetcher(...)`; a literal `fetch(` is a
     // direct network call that bypasses the typed api.ts seam. (`fetcher(` and the
     // default param `= fetch` have no `(` right after `fetch`, so they don't match.)
+    // src/lib/demo/ is the client-side mock backend for the static GitHub Pages
+    // build: it deliberately overrides window.fetch to INTERCEPT the app's /v1 calls
+    // (the opposite of a network backdoor — it makes the app run with no network), so
+    // it is exempt from the route-through-api.ts rule that governs the real client.
+    const demoDir = join('src', 'lib', 'demo');
     const offenders = srcFiles.filter(
-      (f) => f !== join('src', 'lib', 'api.ts') && /[^a-zA-Z]fetch\(/.test(readFileSync(f, 'utf8'))
+      (f) =>
+        f !== join('src', 'lib', 'api.ts') &&
+        !f.startsWith(demoDir) &&
+        /[^a-zA-Z]fetch\(/.test(readFileSync(f, 'utf8'))
     );
     expect(offenders).toEqual([]);
   });

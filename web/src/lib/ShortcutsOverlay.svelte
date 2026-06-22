@@ -7,6 +7,7 @@
   import { goto } from '$app/navigation';
   import { theme, setTheme } from '$lib/theme';
   import { shortcutsOpen, closeShortcuts, GO_NAV } from '$lib/shortcuts';
+  import { appHref } from '$lib/paths';
 
   let pendingG = $state(false);
   let gTimer: ReturnType<typeof setTimeout> | undefined;
@@ -39,7 +40,7 @@
         if (target) {
           e.preventDefault();
           closeShortcuts();
-          goto(target.href);
+          goto(appHref(target.href));
         }
         return;
       }

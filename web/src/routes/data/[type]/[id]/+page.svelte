@@ -11,6 +11,7 @@
     type EntityEvent,
     type FeatureValue
   } from '$lib/api';
+  import { appHref } from '$lib/paths';
 
   const key = '';
   // Derive from the route params so navigating between sibling entities reloads.
@@ -55,7 +56,7 @@
 </script>
 
 <main>
-  <p><a href="/data">← context data</a></p>
+  <p><a href={appHref('/data')}>← context data</a></p>
   <h1>{type} / {id}</h1>
   {#if error}<p class="err">{error}</p>{/if}
   {#if loading}

@@ -83,3 +83,23 @@ jobs:
       - name: e2e (Playwright — all UI flows)
         working-directory: web
         run: npm run test:e2e
+
+  # Smoke-tests the backend-less GitHub Pages demo (BASE_PATH=/demo, VITE_DEMO=true):
+  # every route renders from the in-browser mock and a write mutates the store. Guards
+  # the demo on PRs; the `pages` workflow runs the same gate before deploying on main.
+  demo:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+      - name: install
+        run: npm ci
+      - name: install Playwright browser
+        run: npx playwright install --with-deps chromium
+      - name: demo smoke (Playwright — static, no backend)
+        run: npx playwright test --config=playwright.demo.config.ts

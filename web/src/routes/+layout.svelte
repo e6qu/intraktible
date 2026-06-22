@@ -16,11 +16,13 @@
     navFor
   } from '$lib/persona';
   import { user, refreshUser, signOut } from '$lib/session';
+  import { appHref } from '$lib/paths';
   import { openPalette } from '$lib/palette';
   import Toasts from '$lib/Toasts.svelte';
   import CommandPalette from '$lib/CommandPalette.svelte';
   import ShortcutsOverlay from '$lib/ShortcutsOverlay.svelte';
   import NotificationsBell from '$lib/NotificationsBell.svelte';
+  import DemoBanner from '$lib/DemoBanner.svelte';
 
   let { children } = $props();
   let theme = $state<'light' | 'dark'>('light');
@@ -106,8 +108,9 @@
 </script>
 
 <a class="skip-link" href="#main">Skip to content</a>
+<DemoBanner />
 <header>
-  <a class="brand" href="/">
+  <a class="brand" href={appHref('/')}>
     <span class="mark"><Icon name="logo" size={20} /></span>
     <span class="wordmark">intraktible</span>
   </a>
@@ -115,7 +118,7 @@
     <nav aria-label="Primary">
       {#each nav as item (item.href)}
         <a
-          href={item.href}
+          href={appHref(item.href)}
           class="navlink"
           class:active={active(item.href)}
           aria-current={active(item.href) ? 'page' : undefined}
@@ -190,7 +193,7 @@
             <Icon name="signout" size={14} /> Sign out
           </button>
         {:else}
-          <a class="acct-action" href="/login">Sign in</a>
+          <a class="acct-action" href={appHref('/login')}>Sign in</a>
         {/if}
       </div>
     </details>

@@ -5,6 +5,7 @@
 <script lang="ts">
   import Icon from '$lib/Icon.svelte';
   import { decisionStats, deployStats, pct, type DashboardData } from '$lib/dashboard';
+  import { appHref } from '$lib/paths';
 
   let { data }: { data: DashboardData } = $props();
 
@@ -32,10 +33,10 @@
       <span class="prompt">▸</span> command deck
     </div>
     <nav class="quick">
-      <a href="/engine">flows</a>
-      <a href="/decisions">decisions</a>
-      <a href="/data">context</a>
-      <a href="/agents">agents</a>
+      <a href={appHref('/engine')}>flows</a>
+      <a href={appHref('/decisions')}>decisions</a>
+      <a href={appHref('/data')}>context</a>
+      <a href={appHref('/agents')}>agents</a>
     </nav>
   </header>
 
@@ -64,14 +65,16 @@
     <section class="panel tape">
       <h2>decision tape</h2>
       {#if recent.length === 0}
-        <p class="empty">no decisions yet — run a flow from the <a href="/engine">engine</a>.</p>
+        <p class="empty">
+          no decisions yet — run a flow from the <a href={appHref('/engine')}>engine</a>.
+        </p>
       {:else}
         <table>
           <tbody>
             {#each recent as d (d.decision_id)}
               <tr>
                 <td class="st"><span class="dot {d.status}"></span></td>
-                <td class="slug"><a href={`/decisions/${d.decision_id}`}>{d.slug}</a></td>
+                <td class="slug"><a href={appHref(`/decisions/${d.decision_id}`)}>{d.slug}</a></td>
                 <td class="dim">{d.environment}</td>
                 <td class="dim">v{d.version}</td>
                 <td class="num">{d.duration_ms ?? 0}<small>ms</small></td>
@@ -91,7 +94,7 @@
         <ul class="attn">
           {#each attention as f (f.flow_id)}
             <li>
-              <a href={`/engine/${f.flow_id}`}>{f.slug}</a>
+              <a href={appHref(`/engine/${f.flow_id}`)}>{f.slug}</a>
               <span class="badge"
                 >{(f.deployment_requests ?? []).filter((r) => r.status === 'pending').length} pending</span
               >
@@ -101,9 +104,9 @@
       {/if}
       <h2 class="mt">shortcuts</h2>
       <div class="shortcuts">
-        <a class="sc" href="/engine"><Icon name="plus" size={14} /> new flow</a>
-        <a class="sc" href="/decisions"><Icon name="diagram" size={14} /> trace runs</a>
-        <a class="sc" href="/data"><Icon name="database" size={14} /> context data</a>
+        <a class="sc" href={appHref('/engine')}><Icon name="plus" size={14} /> new flow</a>
+        <a class="sc" href={appHref('/decisions')}><Icon name="diagram" size={14} /> trace runs</a>
+        <a class="sc" href={appHref('/data')}><Icon name="database" size={14} /> context data</a>
       </div>
     </section>
   </div>

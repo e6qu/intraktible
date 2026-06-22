@@ -7,6 +7,7 @@
   import Skeleton from '$lib/Skeleton.svelte';
   import { toast } from '$lib/toast';
   import { listFlows, createFlow, importFlow, importFlowBundle, type Flow } from '$lib/api';
+  import { appHref } from '$lib/paths';
 
   // API calls authenticate via the session cookie (empty key -> no X-Api-Key header).
   const key = '';
@@ -97,7 +98,7 @@
         );
         importText = '';
         await load();
-        await goto(`/engine/${res.flow_id}`);
+        await goto(appHref(`/engine/${res.flow_id}`));
       }
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
@@ -207,7 +208,7 @@
           <tbody>
             {#each visible as f (f.flow_id)}
               <tr>
-                <td><a href={`/engine/${f.flow_id}`}>{f.name}</a></td>
+                <td><a href={appHref(`/engine/${f.flow_id}`)}>{f.name}</a></td>
                 <td><code>{f.slug}</code></td>
                 <td>v{f.latest}</td>
                 <td>

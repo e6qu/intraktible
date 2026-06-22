@@ -5,6 +5,7 @@
 <script lang="ts">
   import Icon from '$lib/Icon.svelte';
   import { decisionStats, deployStats, pct, compact, type DashboardData } from '$lib/dashboard';
+  import { appHref } from '$lib/paths';
 
   let { data }: { data: DashboardData } = $props();
 
@@ -32,7 +33,7 @@
   </header>
 
   {#if dep.pending > 0}
-    <a class="callout" href="/engine">
+    <a class="callout" href={appHref('/engine')}>
       <Icon name="shield" size={18} />
       <span
         ><b>{dep.pending}</b> production deploy{dep.pending === 1 ? '' : 's'} awaiting four-eyes approval</span
@@ -42,28 +43,28 @@
   {/if}
 
   <section class="kpis">
-    <a class="kpi" href="/decisions">
+    <a class="kpi" href={appHref('/decisions')}>
       <span class="kpi-label">Decisions</span>
       <span class="kpi-num">{compact(ds.total)}</span>
       <span class="kpi-foot {ds.failed ? 'warn' : 'ok'}"
         >{ds.total ? pct(ds.completionRate) + ' success' : 'no runs yet'} · {ds.failed} failed</span
       >
     </a>
-    <a class="kpi" href="/cases">
+    <a class="kpi" href={appHref('/cases')}>
       <span class="kpi-label">Cases in review</span>
       <span class="kpi-num">{needsReview}</span>
       <span class="kpi-foot {c.overdue ? 'danger' : 'muted'}"
         >{c.overdue} overdue · {c.unassigned} unassigned</span
       >
     </a>
-    <a class="kpi" href="/agents">
+    <a class="kpi" href={appHref('/agents')}>
       <span class="kpi-label">Agent runs</span>
       <span class="kpi-num">{compact(r.total)}</span>
       <span class="kpi-foot {r.failed ? 'warn' : 'ok'}"
         >{r.total ? pct(runSuccess) + ' success' : 'no runs yet'} · {r.failed} failed</span
       >
     </a>
-    <a class="kpi" href="/engine">
+    <a class="kpi" href={appHref('/engine')}>
       <span class="kpi-label">Live flows</span>
       <span class="kpi-num">{dep.live}</span>
       <span class="kpi-foot muted">of {data.flows.length} flows · p95 {ds.p95Ms}ms</span>
@@ -112,7 +113,9 @@
           <dd>{compact(ds.completed)}</dd>
         </div>
       </dl>
-      <a class="audit-link" href="/audit"><Icon name="shield" size={14} /> Open the audit log</a>
+      <a class="audit-link" href={appHref('/audit')}
+        ><Icon name="shield" size={14} /> Open the audit log</a
+      >
     </section>
   </div>
 </main>
