@@ -888,6 +888,13 @@ binary. A `pages` workflow builds + smoke-tests the demo and assembles a one-art
 placeholder (a rendered docs site + Storybook deferred). A UI/UX screenshot review across personas
 confirmed the app is sound; the one fix was reconciling a demo-seed run-count inconsistency.
 
+A follow-up substantially enriched the demo (6 multi-node flows, ~44 decisions, 14 cases, plus
+agents/models/context/policies/audit) and added a cast of demo **users with RBAC roles** and a
+demo-only identity switcher, so a visitor can view the app AS any role and watch role-gated surfaces
+change live. That re-review surfaced one real app bug — the persona HOME wasn't role-gating its
+workspace chips / primary actions like the header nav did — fixed with a new
+`persona.actionsFor(p, role)` and threading the signed-in role into PersonaHome.
+
 ---
 
 ## 9. MVP non-goals

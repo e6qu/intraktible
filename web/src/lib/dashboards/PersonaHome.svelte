@@ -5,14 +5,18 @@
      land here, so adding a persona needs no new component — just config. -->
 <script lang="ts">
   import Icon from '$lib/Icon.svelte';
-  import { persona, personaConfig, navFor } from '$lib/persona';
+  import { persona, personaConfig, navFor, actionsFor } from '$lib/persona';
+  import { user } from '$lib/session';
   import { personaHomeStats, DEFAULT_HOME_STATS, type DashboardData } from '$lib/dashboard';
   import { appHref } from '$lib/paths';
 
   let { data }: { data: DashboardData } = $props();
 
   const cfg = $derived(personaConfig($persona));
-  const nav = $derived(navFor($persona));
+  // Gate the nav chips and primary actions by the signed-in role, like the header
+  // nav — so a non-admin's home never links to an admin-only page they can't use.
+  const nav = $derived(navFor($persona, $user?.role));
+  const actions = $derived(actionsFor($persona, $user?.role));
   // The at-a-glance tiles are the persona's chosen questions over the shared data —
   // a manager sees pending/overdue, a developer failed/latency — falling back to the
   // generic deck when a persona declares none.
@@ -36,7 +40,7 @@
 
   <h2>Start here</h2>
   <div class="actions">
-    {#each cfg.actions as a (a.href)}
+    {#each actions as a (a.href)}
       <a class="action" href={appHref(a.href)}>
         <span class="ico"><Icon name={a.icon} size={20} /></span>
         <span class="lbl">{a.label}</span>
