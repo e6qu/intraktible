@@ -6,6 +6,22 @@
 // bundle never references this module.
 
 import { handleDemo, type DemoResponse } from './router';
+import { USERS, setDemoUser, state, type DemoUser } from './store';
+
+// DemoControl is the small surface the demo UI (DemoBanner) reads off window to
+// drive the identity switcher, without statically importing this module (which
+// would pull demo code into the normal bundle). Set only in the demo build.
+export interface DemoControl {
+  users: DemoUser[];
+  current(): string;
+  setUser(actor: string): void;
+}
+
+declare global {
+  interface Window {
+    __demo?: DemoControl;
+  }
+}
 
 let installed = false;
 
@@ -15,6 +31,14 @@ export function installDemoBackend(): void {
   if (installed || typeof window === 'undefined') return;
   installed = true;
   const original = window.fetch.bind(window);
+
+  // Expose the identity-switch control for the demo banner (read off window so the
+  // always-compiled banner needn't statically import demo code).
+  window.__demo = {
+    users: USERS,
+    current: () => state.identity.actor,
+    setUser: (actor: string) => void setDemoUser(actor)
+  };
 
   window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     try {

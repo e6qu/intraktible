@@ -4,6 +4,7 @@ import {
   PERSONAS,
   NAV,
   navFor,
+  actionsFor,
   personaConfig,
   personaLens,
   defaultPersona,
@@ -63,6 +64,19 @@ describe('persona config', () => {
     expect(asOperator).toContain('cases'); // non-admin items remain
     // Omitting role (pre-/v1/me) shows the full set, matching prior behavior.
     expect(navFor('manager').map((n) => n.id)).toContain('mrm');
+  });
+
+  it('actionsFor gates admin-only home actions by role, like navFor', () => {
+    // The manager persona surfaces an Audit shortcut among its primary actions.
+    const adminHrefs = actionsFor('manager', 'admin').map((a) => a.href);
+    expect(adminHrefs).toContain('/audit');
+    // A non-admin manager must not see the admin-only shortcut on the home.
+    const opHrefs = actionsFor('manager', 'operator').map((a) => a.href);
+    expect(opHrefs).not.toContain('/audit');
+    expect(opHrefs).not.toContain('/mrm');
+    expect(opHrefs.length).toBeGreaterThan(0); // non-admin actions remain
+    // Omitting role (pre-/v1/me) keeps the full set.
+    expect(actionsFor('manager').map((a) => a.href)).toContain('/audit');
   });
 
   it('different personas compose different navigation', () => {

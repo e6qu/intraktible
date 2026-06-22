@@ -69,6 +69,23 @@ test('opens a flow, a decision, a case, and an agent from their lists', async ({
   expect(errors, `uncaught error(s) on detail pages: ${errors.join('; ')}`).toEqual([]);
 });
 
+// The demo identity switcher changes the signed-in role, and role-gated nav reacts
+// live: admin-only surfaces (Model risk, Audit) vanish for a non-admin viewer.
+test('switching demo role updates the role-gated navigation', async ({ page }) => {
+  // The manager persona's nav includes the admin-only items, so gating is observable.
+  await page.addInitScript(() => localStorage.setItem('intraktible-persona', 'manager'));
+  await page.goto('');
+  // Scope to the primary nav (the role-gated surface); "Model risk" also appears as a
+  // persona-home action chip.
+  const navModelRisk = page
+    .getByRole('navigation', { name: 'Primary' })
+    .getByRole('link', { name: 'Model risk' });
+  await expect(navModelRisk).toBeVisible(); // default identity is the admin (Ava)
+
+  await page.getByLabel('Viewing as (switch role)').selectOption({ label: 'Lena Hoff · viewer' });
+  await expect(navModelRisk).toHaveCount(0); // viewer loses the admin-only surface
+});
+
 // The demo is interactive, not a slideshow: a write mutates the in-memory store and
 // the new record shows up in the list.
 test('defining an agent adds it to the list (writes mutate the store)', async ({ page }) => {

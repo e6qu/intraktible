@@ -290,6 +290,20 @@ const adminOnlyNav = new Set<NavId>(['mrm', 'audit']);
 // given and is not "admin", admin-only items are dropped — so admin surfaces only
 // show to callers who can actually use them. Omitting role (or passing it before
 // /v1/me resolves) shows the full persona set, matching prior behavior.
+// adminOnlyHrefs is the set of hrefs behind adminOnlyNav, so non-nav surfaces (the
+// persona-home actions) can gate by role with the same source of truth.
+const adminOnlyHrefs = new Set<string>(
+  [...adminOnlyNav].map((id) => NAV.get(id)?.href).filter((h): h is string => h !== undefined)
+);
+
+// actionsFor resolves a persona's primary home actions, dropping admin-only targets
+// for a non-admin caller — so the persona home doesn't surface a shortcut to a page
+// the viewer's role can't use (mirrors navFor; the nav and the home stay consistent).
+export function actionsFor(p: Persona, role?: string): Action[] {
+  const isAdmin = role === 'admin' || role === undefined;
+  return personaConfig(p).actions.filter((a) => isAdmin || !adminOnlyHrefs.has(a.href));
+}
+
 export function navFor(p: Persona, role?: string): NavItem[] {
   const cfg = personaConfig(p);
   const terms = new Map(Object.entries(cfg.terms ?? {}));
