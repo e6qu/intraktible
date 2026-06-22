@@ -751,6 +751,18 @@ new SSE-parser fuzz harness. Two pure cross-package signature refactors (EntityR
 follow-ups — they prevent only theoretical transpositions with trusted callers and carry large churn /
 auth-regression surface for no behavioral change (detail in BUGS.md).
 
+**Model risk management packaging (SR 11-7 / SS1/23).** A new read-only `mrm` package aggregates the
+inventory + validation evidence + monitoring that already exists across the platform into one regulated
+artifact (`GET /v1/mrm/report`, admin-gated). It inventories every "model" — a decision flow, a predictive
+model, and an AI agent — with version + owner (last publisher) + deployments; validation evidence (a
+flow's assertion suite run live + shadow divergence; an agent's eval cases; a predictive model's drift
+baseline) classified tested/failing/none; and monitoring (decisions, success rate, firing monitors, PSI
+drift, SLO attainment). It flags governance gaps per model (unvalidated, failing assertions, firing
+monitor, breaching SLO, drifting), and exports as JSON / CSV / Markdown (the filed document). No new
+events or write side — a pure aggregation over the existing read models (it only runs the pure assertion
+suite). Surfaced as a **Model risk** UI page (manager/showcase nav). Tests cover the aggregation, the
+issue flags, validation coverage, and the CSV/Markdown export (incl. formula-injection neutralization).
+
 **AI/ML governance: agent registry/versioning + offline eval.** An agent's definition (model + system
 prompt + schema + tools) is now an immutably **versioned** registry entry: each define appends a
 content-etag'd version to the agent's history (idempotent on an unchanged redefine), mirroring the

@@ -2463,6 +2463,67 @@ export async function runAgentEval(
   return (await res.json()) as EvalReport;
 }
 
+// --- Model risk management (SR 11-7) report ---
+
+export type MrmModelKind = 'flow' | 'predictive_model' | 'agent';
+export type MrmCoverage = 'tested' | 'failing' | 'none';
+
+export interface MrmValidation {
+  coverage: MrmCoverage;
+  has_assertions?: boolean;
+  assertions_total?: number;
+  assertions_passed?: number;
+  has_eval_cases?: boolean;
+  eval_cases?: number;
+  has_baseline?: boolean;
+  shadow_diverged?: number;
+}
+
+export interface MrmMonitoring {
+  decisions: number;
+  success_rate: number;
+  firing_monitors?: string[];
+  drift_psi?: number;
+  drift_firing?: boolean;
+  slo_met?: boolean;
+}
+
+export interface MrmModel {
+  kind: MrmModelKind;
+  id: string;
+  name: string;
+  version: number;
+  owner?: string;
+  deployments?: Record<string, number>;
+  validation: MrmValidation;
+  monitoring: MrmMonitoring;
+  issues?: string[];
+  updated_at: string;
+}
+
+export interface MrmReport {
+  generated_at: string;
+  org: string;
+  workspace: string;
+  summary: {
+    total: number;
+    by_kind: Record<string, number>;
+    deployed: number;
+    unvalidated: number;
+    with_issues: number;
+  };
+  models: MrmModel[];
+}
+
+// getMrmReport fetches the model-risk report (admin-gated).
+export async function getMrmReport(key: string, fetcher: typeof fetch = fetch): Promise<MrmReport> {
+  const res = await fetcher('/v1/mrm/report', { headers: authHeaders(key) });
+  if (!res.ok) {
+    return errorOrStatus(res, 'GET /v1/mrm/report');
+  }
+  return (await res.json()) as MrmReport;
+}
+
 export async function listAgentRuns(
   key: string,
   name: string,
