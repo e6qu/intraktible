@@ -82,7 +82,16 @@ func MeHandler() http.HandlerFunc {
 			Error(w, http.StatusUnauthorized, errors.New("authentication required"))
 			return
 		}
-		writeIdentity(w, id)
+		// Include the caller's role + scope so the UI can hide admin-only surfaces
+		// from non-admins (the role is resolved by Authenticate into the Principal).
+		role, scope := RoleOf(r.Context()), ""
+		if p, ok := PrincipalOf(r.Context()); ok {
+			scope = string(p.Scope)
+		}
+		JSON(w, http.StatusOK, map[string]string{
+			"org": id.Org, "workspace": id.Workspace, "actor": id.Actor,
+			"role": string(role), "scope": scope,
+		})
 	}
 }
 

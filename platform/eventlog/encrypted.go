@@ -32,6 +32,11 @@ type encLog struct {
 	kr    *secretbox.Keyring
 }
 
+// undecodablePayload is deliberately invalid JSON, substituted for a payload that
+// failed to decrypt on the live bus so the owning projector errors loudly (rather
+// than decoding a sealed envelope into a zero-value struct).
+var undecodablePayload = []byte("\x00eventlog: payload decryption failed")
+
 // open returns the plaintext payload: a sealed envelope is opened, a plaintext
 // payload (or an empty one) passes through.
 func (l *encLog) open(p json.RawMessage) (json.RawMessage, error) {
@@ -83,11 +88,15 @@ func (l *encLog) Subscribe() (<-chan Envelope, func()) {
 		for e := range in {
 			p, err := l.open(e.Payload)
 			if err != nil {
-				// A payload that won't open (e.g. a missing/rotated-away key) is an
-				// operator misconfiguration. Deliver it as-is so the projector fails
-				// loudly (the runtime marks /healthz degraded) rather than silently
-				// dropping an event from the ordered stream.
+				// A payload that won't open (a missing/rotated-away key) is an operator
+				// misconfiguration. Replace it with a NON-DECODABLE sentinel rather than
+				// forwarding the sealed envelope: a sealed envelope is valid JSON, so a
+				// projector would unmarshal it into a zero-value struct (no error) and
+				// the runtime would advance its checkpoint — silently writing corrupt
+				// docs. The sentinel makes the owning projector's decode fail, so the
+				// runtime halts and /healthz reports degraded (the intended loud failure).
 				slog.Error("eventlog: decrypt payload on delivery", "seq", e.Seq, "stream", e.Stream, "err", err)
+				e.Payload = undecodablePayload
 			} else {
 				e.Payload = p
 			}

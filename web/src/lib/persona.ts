@@ -264,7 +264,7 @@ export const PERSONAS: PersonaConfig[] = [
     blurb: 'A guided look at the platform',
     icon: 'search',
     home: 'evaluator',
-    nav: ['engine', 'decisions'],
+    nav: ['engine', 'decisions', 'cases'],
     actions: [
       { label: 'Explore the flow builder', href: '/engine', icon: 'engine' },
       { label: 'See decisions in action', href: '/decisions', icon: 'diagram' }
@@ -281,10 +281,21 @@ export function personaConfig(p: Persona): PersonaConfig {
 }
 
 // navFor returns a persona's ordered, relabelled navigation items.
-export function navFor(p: Persona): NavItem[] {
+// adminOnlyNav lists nav targets whose page is admin-gated at the API. They're
+// hidden from a non-admin caller's nav so a manager/executive doesn't land on a 403
+// dead-end (the pages themselves also gate gracefully, as defense in depth).
+const adminOnlyNav = new Set<NavId>(['mrm', 'audit']);
+
+// navFor resolves a persona's ordered nav subset (with term relabels). When role is
+// given and is not "admin", admin-only items are dropped — so admin surfaces only
+// show to callers who can actually use them. Omitting role (or passing it before
+// /v1/me resolves) shows the full persona set, matching prior behavior.
+export function navFor(p: Persona, role?: string): NavItem[] {
   const cfg = personaConfig(p);
   const terms = new Map(Object.entries(cfg.terms ?? {}));
+  const isAdmin = role === 'admin' || role === undefined;
   return cfg.nav
+    .filter((id) => isAdmin || !adminOnlyNav.has(id))
     .map((id) => NAV.get(id))
     .filter((item): item is NavItem => item !== undefined)
     .map((item) => {

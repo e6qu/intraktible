@@ -34,6 +34,8 @@ test('defines an agent from the registry and shows the run summary', async ({ pa
 });
 
 test('runs an agent and escalates the run to a case', async ({ page, request }) => {
+  // Escalation confirms before opening a case — accept the dialog.
+  page.on('dialog', (d) => d.accept());
   // Seed an agent through the API.
   const name = uniqueName();
   const created = await request.post('/v1/agents', {

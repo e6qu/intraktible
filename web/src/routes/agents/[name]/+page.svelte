@@ -3,6 +3,7 @@
   import { onDestroy } from 'svelte';
   import { page } from '$app/stores';
   import Icon from '$lib/Icon.svelte';
+  import { toast } from '$lib/toast';
   import {
     getAgent,
     runAgent,
@@ -63,6 +64,7 @@
     try {
       const cases = (evalText.trim() ? JSON.parse(evalText) : []) as EvalCase[];
       await setAgentEvals(key, name, cases);
+      toast.success(`Saved ${cases.length} eval case${cases.length === 1 ? '' : 's'}`);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     } finally {
@@ -75,6 +77,7 @@
     evalBusy = true;
     try {
       evalReport = await runAgentEval(key, name);
+      toast.success(`${evalReport.passed}/${evalReport.total} eval cases passed`);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     } finally {
@@ -100,14 +103,17 @@
   let escalating = $state('');
   async function escalate(runID: string) {
     if (escalating) return; // guard against double-click opening duplicate cases
+    // Escalation opens a real human-review case — confirm the side effect.
+    if (!confirm('Open a human-review case from this run?')) return;
     error = '';
     escalating = runID;
     try {
-      await escalateRun(key, name, runID, {
+      const { case_id } = await escalateRun(key, name, runID, {
         company_name: 'Review from ' + name,
         case_type: 'agent_review',
         sla_days: 3
       });
+      toast.success(`Opened review case ${case_id.slice(0, 8)} (see Cases)`);
       await load();
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
@@ -323,7 +329,11 @@
         <ul>
           {#each evalReport.results as r (r.name)}
             <li>
-              <span class={r.passed ? 'ok' : 'err'}>{r.passed ? '✓' : '✗'}</span>
+              <span
+                class={r.passed ? 'ok' : 'err'}
+                role="img"
+                aria-label={r.passed ? 'passed' : 'failed'}>{r.passed ? '✓' : '✗'}</span
+              >
               {r.name}
               {#if !r.passed && r.detail}<span class="muted">— {r.detail}</span>{/if}
             </li>

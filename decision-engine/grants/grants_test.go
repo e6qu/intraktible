@@ -84,4 +84,16 @@ func TestGrantEnforcement(t *testing.T) {
 	if _, _, err := cmd.Add(ctx, id, "f1", "eve", "banana"); err == nil {
 		t.Fatal("expected an invalid-environment error")
 	}
+
+	// AllowedAny (env-agnostic actions like publish/cancel): any grant for the flow
+	// suffices; a non-grantee is denied; an ungranted flow is open.
+	if ok, _ := grants.AllowedAny(ctx, st, id, "f1", "alice"); !ok {
+		t.Fatal("alice holds a production grant — AllowedAny should pass")
+	}
+	if ok, _ := grants.AllowedAny(ctx, st, id, "f1", "bob"); ok {
+		t.Fatal("bob has no grant on f1 — AllowedAny should deny")
+	}
+	if ok, _ := grants.AllowedAny(ctx, st, id, "f2", "bob"); !ok {
+		t.Fatal("f2 has no grants — AllowedAny should be open")
+	}
 }

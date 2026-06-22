@@ -8,6 +8,7 @@
 <script lang="ts">
   import Icon from '$lib/Icon.svelte';
   import { pct } from '$lib/dashboard';
+  import { toast } from '$lib/toast';
   import { getFlowSLO, putFlowSLO, type SLOResponse } from '$lib/api';
 
   let { flowId, name, initial }: { flowId: string; name: string; initial: SLOResponse } = $props();
@@ -17,23 +18,43 @@
   // avoids seeding $state directly from a prop, which Svelte flags).
   let override = $state<SLOResponse | null>(null);
   const r = $derived(override ?? initial);
+  let editing = $state(false);
   let targetPct = $state(99);
   let latencyMs = $state(0);
   let busy = $state(false);
-  let error = $state('');
+
+  // Guard the inputs: success target is a percentage in [0,100], latency >= 0.
+  const valid = $derived(
+    Number.isFinite(targetPct) &&
+      targetPct >= 0 &&
+      targetPct <= 100 &&
+      Number.isFinite(latencyMs) &&
+      latencyMs >= 0
+  );
+
+  // Edit seeds the form from the current objective (non-destructive — unlike the old
+  // clear-then-re-enter flow).
+  function edit() {
+    if (r.slo) {
+      targetPct = Math.round(r.slo.success_target * 1000) / 10;
+      latencyMs = r.slo.latency_target_ms;
+    }
+    editing = true;
+  }
 
   async function save() {
-    if (busy) return;
+    if (busy || !valid) return;
     busy = true;
-    error = '';
     try {
       await putFlowSLO(key, flowId, {
         success_target: targetPct / 100,
         latency_target_ms: latencyMs
       });
       override = await getFlowSLO(key, flowId);
+      editing = false;
+      toast.success(`Objective set for ${name}`);
     } catch (e) {
-      error = e instanceof Error ? e.message : String(e);
+      toast.error(e instanceof Error ? e.message : String(e));
     } finally {
       busy = false;
     }
@@ -41,13 +62,15 @@
 
   async function clear() {
     if (busy) return;
+    if (!confirm(`Clear the SLO objective for ${name}?`)) return;
     busy = true;
-    error = '';
     try {
       await putFlowSLO(key, flowId, { success_target: 0, latency_target_ms: 0 });
       override = await getFlowSLO(key, flowId);
+      editing = false;
+      toast.success(`Objective cleared for ${name}`);
     } catch (e) {
-      error = e instanceof Error ? e.message : String(e);
+      toast.error(e instanceof Error ? e.message : String(e));
     } finally {
       busy = false;
     }
@@ -63,8 +86,7 @@
       </span>
     {/if}
   </div>
-  {#if error}<p class="err">{error}</p>{/if}
-  {#if r.slo && r.attainment}
+  {#if r.slo && r.attainment && !editing}
     <div class="attain">
       <span class="stat"
         >Success <b>{pct(r.attainment.success_rate)}</b>
@@ -86,6 +108,7 @@
       {/if}
       <span class="stat muted"><Icon name="diagram" /> {r.attainment.decisions} decisions</span>
     </div>
+    <button class="link" onclick={edit} disabled={busy}>Edit objective</button>
     <button class="link" onclick={clear} disabled={busy}>Clear objective</button>
   {:else}
     <div class="slo-form">
@@ -97,7 +120,10 @@
         >Latency target ms
         <input type="number" min="0" bind:value={latencyMs} placeholder="0 = none" /></label
       >
-      <button onclick={save} disabled={busy}>{busy ? 'Saving…' : 'Set objective'}</button>
+      <button onclick={save} disabled={busy || !valid}>{busy ? 'Saving…' : 'Set objective'}</button>
+      {#if editing}<button class="link" onclick={() => (editing = false)} disabled={busy}
+          >Cancel</button
+        >{/if}
     </div>
   {/if}
 </div>
@@ -185,8 +211,5 @@
   }
   .muted {
     color: var(--fg-subtle);
-  }
-  .err {
-    color: var(--danger);
   }
 </style>

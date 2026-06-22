@@ -2569,6 +2569,8 @@ export interface Identity {
   org: string;
   workspace: string;
   actor: string;
+  role?: string; // viewer|operator|editor|approver|admin — present from /v1/me
+  scope?: string;
 }
 
 // login exchanges an API key for a session cookie (set by the server).

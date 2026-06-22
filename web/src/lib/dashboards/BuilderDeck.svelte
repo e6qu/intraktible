@@ -103,7 +103,7 @@
       <div class="shortcuts">
         <a class="sc" href="/engine"><Icon name="plus" size={14} /> new flow</a>
         <a class="sc" href="/decisions"><Icon name="diagram" size={14} /> trace runs</a>
-        <a class="sc" href="/hello"><Icon name="code" size={14} /> phase-0 slice</a>
+        <a class="sc" href="/data"><Icon name="database" size={14} /> context data</a>
       </div>
     </section>
   </div>

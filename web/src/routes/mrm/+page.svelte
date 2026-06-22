@@ -9,15 +9,23 @@
   const key = '';
   let report = $state<MrmReport | null>(null);
   let error = $state('');
+  let forbidden = $state(false);
   let loading = $state(true);
 
   async function load() {
     loading = true;
     error = '';
+    forbidden = false;
     try {
       report = await getMrmReport(key);
     } catch (e) {
-      error = e instanceof Error ? e.message : String(e);
+      const m = e instanceof Error ? e.message : String(e);
+      // The model-risk report is admin-only; surface that clearly, not as a raw 403.
+      if (m.includes('admin') || m.includes('403')) {
+        forbidden = true;
+      } else {
+        error = m;
+      }
     } finally {
       loading = false;
     }
@@ -43,6 +51,12 @@
 
   {#if loading}
     <Skeleton rows={6} />
+  {:else if forbidden}
+    <EmptyState
+      icon="shield"
+      title="Restricted to the admin role"
+      hint="The model-risk report aggregates every model across the workspace, so it is available only to admins. Ask an admin to share the exported report."
+    />
   {:else if report}
     <div class="summary" aria-label="inventory summary">
       <span class="stat">Models <b>{report.summary.total}</b></span>
@@ -96,7 +110,7 @@
                 <td>
                   {#if m.issues && m.issues.length > 0}
                     <span class="err">{m.issues.join('; ')}</span>
-                  {:else}<span class="ok">✓</span>{/if}
+                  {:else}<span class="ok" role="img" aria-label="no open issues">✓</span>{/if}
                 </td>
               </tr>
             {/each}
