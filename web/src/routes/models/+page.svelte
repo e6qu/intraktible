@@ -213,13 +213,14 @@
     <div class="table-wrap">
       <table>
         <thead>
-          <tr><th>Name</th><th>Kind</th><th>Updated</th><th></th></tr>
+          <tr><th>Name</th><th>Kind</th><th>Owner</th><th>Updated</th><th></th></tr>
         </thead>
         <tbody>
           {#each models as m (m.name)}
             <tr>
               <td>{m.name}</td>
               <td><span class="badge">{m.kind || '—'}</span></td>
+              <td class="muted">{m.owner || '—'}</td>
               <td class="muted"><RelativeTime value={m.updated_at} /></td>
               <td
                 ><button class="link" onclick={() => toggleDrift(m.name)}
@@ -229,7 +230,7 @@
             </tr>
             {#if driftOpen === m.name && drift}
               <tr class="drift-row" data-testid="model-drift">
-                <td colspan="4">
+                <td colspan="5">
                   {#if drift.count === 0}
                     <p class="muted">
                       No predictions recorded yet for this model — run decisions through a Predict

@@ -1919,6 +1919,7 @@ export interface Model {
   name: string;
   kind: ModelKind;
   spec: unknown;
+  owner?: string;
   updated_at: string;
 }
 

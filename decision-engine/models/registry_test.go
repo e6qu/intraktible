@@ -9,8 +9,11 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/e6qu/intraktible/decision-engine/events"
 	"github.com/e6qu/intraktible/decision-engine/models"
+	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/store"
 )
@@ -173,6 +176,34 @@ func TestWindowedDriftAndMonitor(t *testing.T) {
 	}
 	if all.PSI == nil || *all.PSI >= *win.PSI {
 		t.Fatalf("expected the windowed shift to read higher than all-time: window=%v all=%v", win.PSI, all.PSI)
+	}
+}
+
+// The projector records the defining actor as the model's owner, so MRM can
+// surface accountability for a predictive model the same way it does for flows
+// and agents — and so a replay of prior events backfills it with no migration.
+func TestProjectorRecordsOwnerFromActor(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemory()
+	payload, err := json.Marshal(events.ModelDefined{
+		Name: "risk", Spec: json.RawMessage(`{"kind":"logistic","intercept":0,"coefficients":{"x":1}}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := eventlog.Envelope{
+		Org: "demo", Workspace: "main", Actor: "dana", Seq: 1,
+		Type: events.TypeModelDefined, Payload: payload, Time: time.Now().UTC(),
+	}
+	if err := (models.Projector{}).Apply(ctx, env, st); err != nil {
+		t.Fatal(err)
+	}
+	mv, ok, err := models.Read(ctx, st, identity.Identity{Org: "demo", Workspace: "main", Actor: "x"}, "risk")
+	if err != nil || !ok {
+		t.Fatalf("read model: ok=%v err=%v", ok, err)
+	}
+	if mv.Owner != "dana" {
+		t.Fatalf("owner = %q, want dana", mv.Owner)
 	}
 }
 
