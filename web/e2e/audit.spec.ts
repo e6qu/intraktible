@@ -30,7 +30,7 @@ test('shows the event-log audit trail and filters it', async ({ page, request })
   // Filtering to a stream that produced no events empties the table.
   await page.getByLabel('stream filter').fill('does-not-exist');
   await page.getByRole('button', { name: 'Apply' }).click();
-  await expect(page.getByText('No matching audit events.')).toBeVisible();
+  await expect(page.getByText('No matching audit events')).toBeVisible();
 
   // The active filter lives in the URL — the view is deep-linkable / shareable.
   await expect(page).toHaveURL(/[?&]stream=does-not-exist/);

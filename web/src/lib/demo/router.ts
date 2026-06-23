@@ -27,7 +27,7 @@ import type {
   Scope,
   MrmModel
 } from '$lib/api';
-import { state, nextId, driftReportFor, ACTOR, ahead } from './store';
+import { state, nextId, driftReportFor, ahead } from './store';
 import {
   decideFlow,
   runAssertionsFor,
@@ -56,6 +56,27 @@ function text(t: string): DemoResponse {
 function notFound(): DemoResponse {
   return { status: 404, body: { error: 'not found' } };
 }
+function badRequest(error: string): DemoResponse {
+  return { status: 400, body: { error } };
+}
+function forbidden(error: string): DemoResponse {
+  return { status: 403, body: { error } };
+}
+
+// RBAC ranks, mirroring the platform's roles (viewer < operator < editor < approver
+// < admin). roleAtLeast lets handlers gate writes by the switched demo user's role so
+// maker-checker (and read-only viewers) behave like the real backend.
+const ROLE_RANK = new Map<string, number>([
+  ['viewer', 1],
+  ['operator', 2],
+  ['editor', 3],
+  ['approver', 4],
+  ['admin', 5]
+]);
+function roleAtLeast(min: string): boolean {
+  const have = ROLE_RANK.get(state.identity.role ?? '') ?? 0;
+  return have >= (ROLE_RANK.get(min) ?? 99);
+}
 
 function findFlow(idOrSlug: string): Flow | undefined {
   return state.flows.find((f) => f.flow_id === idOrSlug || f.slug === idOrSlug);
@@ -67,7 +88,7 @@ function pushAudit(type: string, stream: string, payload?: unknown): void {
     seq: state.seq,
     id: `aud_${state.seq}`,
     time: new Date().toISOString(),
-    actor: ACTOR,
+    actor: state.identity.actor,
     stream,
     type,
     payload
@@ -133,7 +154,7 @@ route('POST', '/v1/flows', (_m, body) => {
         etag: 'e1',
         graph: emptyGraph,
         published_at: new Date().toISOString(),
-        published_by: ACTOR
+        published_by: state.identity.actor
       }
     ],
     deployments: {}
@@ -175,7 +196,7 @@ route('POST', '/v1/flows/:id/versions', (m, body) => {
     graph: (body.graph as FlowVersion['graph']) ?? { nodes: [], edges: [] },
     input_schema: body.input_schema,
     published_at: new Date().toISOString(),
-    published_by: ACTOR
+    published_by: state.identity.actor
   };
   flow.versions.push(v);
   flow.latest = version;
@@ -382,7 +403,7 @@ route('POST', '/v1/flows/:id/grants', (m, body) => {
     flow_id: flow.flow_id,
     actor: String(body.actor ?? ''),
     environment: String(body.environment ?? '*'),
-    created_by: ACTOR,
+    created_by: state.identity.actor,
     created_at: new Date().toISOString()
   };
   list.push(grant);
@@ -468,26 +489,35 @@ route('POST', '/v1/flows/:id/deployment-requests/:rid/approve', (m, body) => {
   const flow = findFlow(m[1]);
   if (!flow) return notFound();
   const req = (flow.deployment_requests ?? []).find((r) => r.request_id === m[2]);
-  if (req) {
-    req.status = 'approved';
-    req.decided_by = ACTOR;
-    req.decided_at = new Date().toISOString();
-    req.reason = String(body.reason ?? '');
-    setDeployment(flow, req.environment, req.version, req.challenger_version, req.challenger_pct);
-    pushAudit('deployment.approved', flow.flow_id, { version: req.version });
+  if (!req) return notFound();
+  // Four-eyes: an approval requires the approver role, and the proposer cannot
+  // approve their own request — so the maker-checker story is real once you switch
+  // user with the demo identity switcher.
+  if (!roleAtLeast('approver'))
+    return forbidden('approving a deployment requires the approver role');
+  if (req.requested_by === state.identity.actor) {
+    return badRequest('four-eyes: the requester cannot approve their own deployment');
   }
+  req.status = 'approved';
+  req.decided_by = state.identity.actor;
+  req.decided_at = new Date().toISOString();
+  req.reason = String(body.reason ?? '');
+  setDeployment(flow, req.environment, req.version, req.challenger_version, req.challenger_pct);
+  pushAudit('deployment.approved', flow.flow_id, { version: req.version });
   return ok({});
 });
 route('POST', '/v1/flows/:id/deployment-requests/:rid/reject', (m, body) => {
   const flow = findFlow(m[1]);
   if (!flow) return notFound();
   const req = (flow.deployment_requests ?? []).find((r) => r.request_id === m[2]);
-  if (req) {
-    req.status = 'rejected';
-    req.decided_by = ACTOR;
-    req.decided_at = new Date().toISOString();
-    req.reason = String(body.reason ?? '');
-  }
+  if (!req) return notFound();
+  if (!roleAtLeast('approver'))
+    return forbidden('rejecting a deployment requires the approver role');
+  req.status = 'rejected';
+  req.decided_by = state.identity.actor;
+  req.decided_at = new Date().toISOString();
+  req.reason = String(body.reason ?? '');
+  pushAudit('deployment.rejected', flow.flow_id, { version: req.version });
   return ok({});
 });
 route('POST', '/v1/flows/:id/backtest', (m, body) => {
@@ -529,6 +559,14 @@ route('POST', '/v1/flows/:slug/:env/decide', (m, body) => {
   if (!flow) return notFound();
   const data = (body.data as Body) ?? {};
   const { result } = decideFlow(flow, m[2] as Environment, data);
+  // Surface the run in the global audit trail so the build→decide→case→resolve
+  // journey actually shows up on the Audit page.
+  pushAudit('decision.created', flow.flow_id, {
+    environment: m[2],
+    decision_id: result.decision_id,
+    status: result.status,
+    disposition: result.disposition
+  });
   return ok(result);
 });
 route('POST', '/v1/flows/:slug/:env/decide/batch', (m, body) => {
@@ -586,7 +624,7 @@ route('POST', '/v1/flows/:slug/:env/preapprove/batch', (m, body) => {
         honored_count: 0,
         note: body.note ? String(body.note) : undefined,
         granted_at: new Date().toISOString(),
-        granted_by: ACTOR,
+        granted_by: state.identity.actor,
         updated_at: new Date().toISOString()
       });
       return {
@@ -645,7 +683,7 @@ route('POST', '/v1/cases', (_m, body) => {
     days_left: slaDays,
     sla_state: 'on_track',
     notes: [],
-    audit: [{ type: 'case.opened', actor: ACTOR, at: now }],
+    audit: [{ type: 'case.opened', actor: state.identity.actor, at: now }],
     created_at: now,
     updated_at: now
   });
@@ -661,7 +699,13 @@ route('POST', '/v1/cases/:id/assign', (m, body) => {
   if (!c) return notFound();
   c.assignee = String(body.assignee ?? '');
   c.updated_at = new Date().toISOString();
-  c.audit.push({ type: 'case.assigned', actor: ACTOR, at: c.updated_at, detail: c.assignee });
+  c.audit.push({
+    type: 'case.assigned',
+    actor: state.identity.actor,
+    at: c.updated_at,
+    detail: c.assignee
+  });
+  pushAudit('case.assigned', c.case_id, { assignee: c.assignee });
   return ok({});
 });
 route('POST', '/v1/cases/:id/status', (m, body) => {
@@ -669,16 +713,23 @@ route('POST', '/v1/cases/:id/status', (m, body) => {
   if (!c) return notFound();
   c.status = body.status as CaseStatus;
   c.updated_at = new Date().toISOString();
-  c.audit.push({ type: 'case.status', actor: ACTOR, at: c.updated_at, detail: c.status });
+  c.audit.push({
+    type: 'case.status',
+    actor: state.identity.actor,
+    at: c.updated_at,
+    detail: c.status
+  });
+  pushAudit('case.status', c.case_id, { status: c.status });
   return ok({});
 });
 route('POST', '/v1/cases/:id/notes', (m, body) => {
   const c = state.cases.find((x) => x.case_id === m[1]);
   if (!c) return notFound();
   const at = new Date().toISOString();
-  c.notes.push({ author: ACTOR, text: String(body.text ?? ''), at });
-  c.audit.push({ type: 'case.note', actor: ACTOR, at });
+  c.notes.push({ author: state.identity.actor, text: String(body.text ?? ''), at });
+  c.audit.push({ type: 'case.note', actor: state.identity.actor, at });
   c.updated_at = at;
+  pushAudit('case.note', c.case_id, {});
   return ok({});
 });
 
@@ -757,10 +808,18 @@ route('POST', '/v1/agents/:name/runs/:rid/escalate', (m, body) => {
     days_left: slaDays,
     sla_state: 'on_track',
     notes: [],
-    audit: [{ type: 'case.opened', actor: ACTOR, at: now, detail: `escalated from run ${m[2]}` }],
+    audit: [
+      {
+        type: 'case.opened',
+        actor: state.identity.actor,
+        at: now,
+        detail: `escalated from run ${m[2]}`
+      }
+    ],
     created_at: now,
     updated_at: now
   });
+  pushAudit('case.opened', caseId, { from_agent: m[1], run: m[2] });
   return ok({ case_id: caseId });
 });
 
@@ -774,7 +833,7 @@ route('POST', '/v1/models', (_m, body) => {
     name,
     kind: (spec?.kind as Model['kind']) ?? 'expression',
     spec,
-    owner: ACTOR,
+    owner: state.identity.actor,
     updated_at: new Date().toISOString()
   };
   if (existing) Object.assign(existing, model);
@@ -893,7 +952,7 @@ route('POST', '/v1/policies/:id/versions', (m, body) => {
     etag: `pe${version}`,
     spec: (body.spec as Policy['versions'][number]['spec']) ?? { rules: [] },
     published_at: new Date().toISOString(),
-    published_by: ACTOR
+    published_by: state.identity.actor
   });
   policy.latest = version;
   policy.updated_at = new Date().toISOString();
@@ -922,7 +981,7 @@ route('POST', '/v1/preapprovals', (_m, body) => {
     honored_count: 0,
     note: body.note ? String(body.note) : undefined,
     granted_at: now,
-    granted_by: ACTOR,
+    granted_by: state.identity.actor,
     updated_at: now
   });
   return ok({ preapproval_id: preapprovalId });
@@ -978,7 +1037,7 @@ route('PUT', '/v1/privacy', (_m, body) => {
   state.privacy = {
     fields: Array.isArray(body.fields) ? (body.fields as string[]) : [],
     updated_at: new Date().toISOString(),
-    updated_by: ACTOR
+    updated_by: state.identity.actor
   };
   return ok({});
 });
@@ -989,7 +1048,7 @@ route('POST', '/v1/api-keys', (_m, body) => {
   const key: ManagedApiKey = {
     id: nextId('key'),
     name: String(body.name ?? ''),
-    identity: { org: 'demo', workspace: 'main', actor: String(body.actor ?? ACTOR) },
+    identity: { org: 'demo', workspace: 'main', actor: String(body.actor ?? state.identity.actor) },
     scope: (body.scope as Scope) ?? 'sandbox',
     role: (body.role as Role) ?? 'viewer',
     created_at: new Date().toISOString(),
@@ -1026,7 +1085,7 @@ route('POST', '/v1/comments/:type/:id', (m, body) => {
     subject_id: decodeURIComponent(m[2]),
     body: String(body.body ?? ''),
     parent_id: body.parent_id ? String(body.parent_id) : undefined,
-    author: ACTOR,
+    author: state.identity.actor,
     at: new Date().toISOString()
   });
   state.comments.set(key, list);
@@ -1170,7 +1229,7 @@ function addRequest(
     challenger_version: challengerVersion,
     challenger_pct: challengerPct,
     status: 'pending',
-    requested_by: ACTOR,
+    requested_by: state.identity.actor,
     requested_at: new Date().toISOString()
   });
   flow.deployment_requests = reqs;

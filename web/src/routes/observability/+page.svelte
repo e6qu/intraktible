@@ -111,7 +111,11 @@
           </table>
         </div>
       {:else}
-        <p class="muted">No agent runs yet.</p>
+        <EmptyState
+          icon="agents"
+          title="No agent runs yet"
+          hint="AI usage and cost appear here once a flow runs an Agent node or you invoke an agent."
+        />
       {/if}
     {/if}
 

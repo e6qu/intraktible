@@ -26,6 +26,7 @@
 
   let keys = $state<ManagedApiKey[]>([]);
   let error = $state('');
+  let forbidden = $state(false);
   let loading = $state(true);
 
   // new-key form
@@ -51,10 +52,17 @@
   async function load() {
     loading = true;
     error = '';
+    forbidden = false;
     try {
       keys = await listApiKeys(key);
     } catch (e) {
-      error = msg(e);
+      const m = msg(e);
+      // Listing keys is admin-only; surface that clearly, not as a raw 403.
+      if (m.includes('admin') || m.includes('403')) {
+        forbidden = true;
+      } else {
+        error = m;
+      }
     } finally {
       loading = false;
     }
@@ -194,6 +202,12 @@
 
   {#if loading}
     <Skeleton rows={4} />
+  {:else if forbidden}
+    <EmptyState
+      icon="connect"
+      title="Restricted to the admin role"
+      hint="Managing API keys is available only to admins. Ask an admin to create or rotate a key for you."
+    />
   {:else if keys.length === 0}
     <EmptyState
       icon="connect"

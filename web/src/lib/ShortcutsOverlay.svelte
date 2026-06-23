@@ -8,6 +8,15 @@
   import { theme, setTheme } from '$lib/theme';
   import { shortcutsOpen, closeShortcuts, GO_NAV } from '$lib/shortcuts';
   import { appHref } from '$lib/paths';
+  import { isAdminOnlyRoute } from '$lib/persona';
+  import { user } from '$lib/session';
+  import { roleAtLeast } from '$lib/roles';
+
+  // Drop g-nav targets the signed-in role can't use (e.g. audit for a non-admin), so
+  // a shortcut never lands on a restricted dead-end — matches the gated nav/palette.
+  const navTargets = $derived(
+    GO_NAV.filter((g) => roleAtLeast($user?.role, 'admin') || !isAdminOnlyRoute(g.href))
+  );
 
   let pendingG = $state(false);
   let gTimer: ReturnType<typeof setTimeout> | undefined;
@@ -36,7 +45,7 @@
       }
       if (pendingG) {
         pendingG = false;
-        const target = GO_NAV.find((g) => g.key === e.key.toLowerCase());
+        const target = navTargets.find((g) => g.key === e.key.toLowerCase());
         if (target) {
           e.preventDefault();
           closeShortcuts();
@@ -86,7 +95,7 @@
           <dt><kbd>g</kbd> then…</dt>
           <dd>Jump to a section</dd>
         </div>
-        {#each GO_NAV as g (g.key)}
+        {#each navTargets as g (g.key)}
           <div>
             <dt class="indent"><kbd>g</kbd> <kbd>{g.key}</kbd></dt>
             <dd>{g.label}</dd>

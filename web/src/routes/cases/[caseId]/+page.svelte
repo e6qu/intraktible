@@ -12,6 +12,9 @@
   import { displayEntries } from '$lib/kv';
   import Breadcrumb from '$lib/Breadcrumb.svelte';
   import RelativeTime from '$lib/RelativeTime.svelte';
+  import Skeleton from '$lib/Skeleton.svelte';
+  import { roleAtLeast } from '$lib/roles';
+  import { user } from '$lib/session';
 
   // API calls authenticate via the session cookie (empty key -> no X-Api-Key header).
   const key = '';
@@ -90,6 +93,9 @@
         {/each}
       </dl>
     {/if}
+  {:else if !error}
+    <h1>{caseID}</h1>
+    <Skeleton rows={5} />
   {:else}
     <h1>{caseID}</h1>
   {/if}
@@ -103,7 +109,10 @@
   <div class="actions">
     <div class="row">
       <input bind:value={assignee} placeholder="assignee" aria-label="assignee" />
-      <button onclick={() => run(() => assignCase(key, caseID, assignee))} disabled={busy}
+      <button
+        onclick={() => run(() => assignCase(key, caseID, assignee))}
+        disabled={busy || !roleAtLeast($user?.role, 'operator')}
+        title={!roleAtLeast($user?.role, 'operator') ? 'Requires the operator role' : undefined}
         >Assign</button
       >
     </div>
@@ -113,7 +122,10 @@
         <option value="in_progress">in_progress</option>
         <option value="completed">completed</option>
       </select>
-      <button onclick={() => run(() => setCaseStatus(key, caseID, newStatus))} disabled={busy}
+      <button
+        onclick={() => run(() => setCaseStatus(key, caseID, newStatus))}
+        disabled={busy || !roleAtLeast($user?.role, 'operator')}
+        title={!roleAtLeast($user?.role, 'operator') ? 'Requires the operator role' : undefined}
         >Set status</button
       >
     </div>
@@ -125,7 +137,8 @@
             await addCaseNote(key, caseID, noteText);
             noteText = ''; // only clear after a successful save (run() swallows errors)
           })}
-        disabled={busy}
+        disabled={busy || !roleAtLeast($user?.role, 'operator')}
+        title={!roleAtLeast($user?.role, 'operator') ? 'Requires the operator role' : undefined}
       >
         Add note
       </button>

@@ -98,6 +98,8 @@
     parseCell,
     addUniqueEdge
   } from '$lib/nodeconfig';
+  import { roleAtLeast } from '$lib/roles';
+  import { user } from '$lib/session';
 
   const ENVIRONMENTS = ['sandbox', 'staging', 'production'];
 
@@ -1550,7 +1552,11 @@
   <h1>{flow?.name ?? flowId}</h1>
   <div class="row">
     <button onclick={load}><Icon name="reload" size={15} /> Reload</button>
-    <button class="primary" onclick={publish} disabled={publishing}
+    <button
+      class="primary"
+      onclick={publish}
+      disabled={publishing || !roleAtLeast($user?.role, 'editor')}
+      title={!roleAtLeast($user?.role, 'editor') ? 'Requires the editor role' : undefined}
       ><Icon name="check" size={15} /> {publishing ? 'Publishing…' : 'Publish version'}</button
     >
   </div>
@@ -1711,8 +1717,11 @@
           Note
           <input bind:value={monDesc} aria-label="monitor description" placeholder="optional" />
         </label>
-        <button onclick={addMonitor} disabled={monBusy} data-testid="add-monitor"
-          >Add monitor</button
+        <button
+          onclick={addMonitor}
+          disabled={monBusy || !roleAtLeast($user?.role, 'editor')}
+          title={!roleAtLeast($user?.role, 'editor') ? 'Requires the editor role' : undefined}
+          data-testid="add-monitor">Add monitor</button
         >
       </div>
       {#if monitors.length > 0}
@@ -1725,7 +1734,13 @@
               <span class="mon-rule"><b>{m.metric}</b> {fmtThreshold(m)}</span>
               <span class="mon-actual">now: {fmtActual(m)}</span>
               {#if m.description}<span class="muted">{m.description}</span>{/if}
-              <button class="link danger" onclick={() => removeMonitor(m)}>remove</button>
+              <button
+                class="link danger"
+                onclick={() => removeMonitor(m)}
+                disabled={!roleAtLeast($user?.role, 'editor')}
+                title={!roleAtLeast($user?.role, 'editor') ? 'Requires the editor role' : undefined}
+                >remove</button
+              >
             </li>
           {/each}
         </ul>
@@ -1767,7 +1782,8 @@
           <span class="exportlabel">Last check delivered to:</span>
           {#each lastCheck.deliveries as d (d.webhook_id)}
             <span class={d.ok ? 'ok' : 'err'}
-              >{d.ok ? '✓' : '✗'} {d.url}{d.status ? ` (${d.status})` : ''}</span
+              ><span role="img" aria-label={d.ok ? 'delivered' : 'failed'}>{d.ok ? '✓' : '✗'}</span>
+              {d.url}{d.status ? ` (${d.status})` : ''}</span
             >
           {/each}
         </div>
@@ -1853,8 +1869,10 @@
               <button
                 class="linkbtn"
                 onclick={() => rollback(e)}
-                disabled={deploying}
-                title="Revert to the previous live version">rollback</button
+                disabled={deploying || !roleAtLeast($user?.role, 'editor')}
+                title={!roleAtLeast($user?.role, 'editor')
+                  ? 'Requires the editor role'
+                  : 'Revert to the previous live version'}>rollback</button
               >{:else}<span class="muted">—</span>{/if}
           </span>
         {/each}
@@ -1889,7 +1907,8 @@
         <button
           class="primary"
           onclick={submitDeploy}
-          disabled={!flow || deploying}
+          disabled={!flow || deploying || !roleAtLeast($user?.role, 'editor')}
+          title={!roleAtLeast($user?.role, 'editor') ? 'Requires the editor role' : undefined}
           data-testid="deploy-submit"
         >
           {#if deploying}Working…{:else if depEnv === 'production'}Propose for review{:else}Deploy{/if}
@@ -1912,7 +1931,8 @@
         <button
           class="primary"
           onclick={submitPromote}
-          disabled={!flow || promoting}
+          disabled={!flow || promoting || !roleAtLeast($user?.role, 'editor')}
+          title={!roleAtLeast($user?.role, 'editor') ? 'Requires the editor role' : undefined}
           data-testid="promote-submit"
         >
           {promoting ? 'Working…' : promoteTo === 'production' ? 'Promote (review)' : 'Promote'}
@@ -1929,13 +1949,15 @@
         <div class="policy-grid">
           {#each ENVIRONMENTS as e (e)}
             {@const p = promotionPolicyFor(e)}
+            {@const noPolicy = !roleAtLeast($user?.role, 'editor')}
+            {@const policyTitle = noPolicy ? 'Requires the editor role' : undefined}
             <div class="policy-stage">
               <b>{e}</b>
-              <label>
+              <label title={policyTitle}>
                 <input
                   type="checkbox"
                   checked={p.require_no_firing_monitors}
-                  disabled={policySaving}
+                  disabled={policySaving || noPolicy}
                   onchange={(ev) =>
                     updatePromotionPolicy(e, {
                       require_no_firing_monitors: ev.currentTarget.checked
@@ -1943,31 +1965,31 @@
                 />
                 no firing monitors
               </label>
-              <label>
+              <label title={policyTitle}>
                 <input
                   type="checkbox"
                   checked={p.require_assertions}
-                  disabled={policySaving}
+                  disabled={policySaving || noPolicy}
                   onchange={(ev) =>
                     updatePromotionPolicy(e, { require_assertions: ev.currentTarget.checked })}
                 />
                 passing assertions
               </label>
-              <label>
+              <label title={policyTitle}>
                 <input
                   type="checkbox"
                   checked={p.allow_force}
-                  disabled={policySaving}
+                  disabled={policySaving || noPolicy}
                   onchange={(ev) =>
                     updatePromotionPolicy(e, { allow_force: ev.currentTarget.checked })}
                 />
                 force override
               </label>
-              <label>
+              <label title={policyTitle}>
                 <input
                   type="checkbox"
                   checked={p.require_review}
-                  disabled={policySaving || e === 'production'}
+                  disabled={policySaving || e === 'production' || noPolicy}
                   onchange={(ev) =>
                     updatePromotionPolicy(e, { require_review: ev.currentTarget.checked })}
                 />
@@ -1991,7 +2013,8 @@
               <b>{e}</b>
               <select
                 value={shadowVersionFor(e)}
-                disabled={shadowSaving}
+                disabled={shadowSaving || !roleAtLeast($user?.role, 'editor')}
+                title={!roleAtLeast($user?.role, 'editor') ? 'Requires the editor role' : undefined}
                 onchange={(ev) => updateShadow(e, parseInt(ev.currentTarget.value, 10))}
                 aria-label={`shadow version for ${e}`}
               >
@@ -2017,43 +2040,58 @@
       {#if allRequests.length > 0}
         <div class="requests" data-testid="deployment-requests">
           <h3>Deployment requests</h3>
-          <table>
-            <thead>
-              <tr><th>Env</th><th>Version</th><th>Status</th><th>Proposed by</th><th></th></tr>
-            </thead>
-            <tbody>
-              {#each allRequests as r (r.request_id)}
-                <tr>
-                  <td>{r.environment}</td>
-                  <td
-                    >v{r.version}{#if r.challenger_version}
-                      + v{r.challenger_version} @ {r.challenger_pct ?? 0}%{/if}</td
-                  >
-                  <td><span class="reqstatus {r.status}">{r.status}</span></td>
-                  <td>{r.requested_by}</td>
-                  <td class="reqactions">
-                    {#if r.status === 'pending'}
-                      <button class="primary" onclick={() => approve(r.request_id)}>Approve</button>
-                      <button onclick={() => reject(r.request_id)}>Reject</button>
-                    {:else}
-                      <span class="muted"
-                        >{r.status} by {r.decided_by ?? '—'}{#if r.reason}: {r.reason}{/if}</span
-                      >
-                    {/if}
-                  </td>
-                </tr>
-                <tr class="threadrow">
-                  <td colspan="5">
-                    <CommentThread
-                      subjectType="deployment_request"
-                      subjectId={r.request_id}
-                      title="Approval discussion"
-                    />
-                  </td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>Env</th><th>Version</th><th>Status</th><th>Proposed by</th><th></th></tr>
+              </thead>
+              <tbody>
+                {#each allRequests as r (r.request_id)}
+                  <tr>
+                    <td>{r.environment}</td>
+                    <td
+                      >v{r.version}{#if r.challenger_version}
+                        + v{r.challenger_version} @ {r.challenger_pct ?? 0}%{/if}</td
+                    >
+                    <td><span class="reqstatus {r.status}">{r.status}</span></td>
+                    <td>{r.requested_by}</td>
+                    <td class="reqactions">
+                      {#if r.status === 'pending'}
+                        <button
+                          class="primary"
+                          onclick={() => approve(r.request_id)}
+                          disabled={!roleAtLeast($user?.role, 'approver')}
+                          title={!roleAtLeast($user?.role, 'approver')
+                            ? 'Requires the approver role'
+                            : undefined}>Approve</button
+                        >
+                        <button
+                          onclick={() => reject(r.request_id)}
+                          disabled={!roleAtLeast($user?.role, 'approver')}
+                          title={!roleAtLeast($user?.role, 'approver')
+                            ? 'Requires the approver role'
+                            : undefined}>Reject</button
+                        >
+                      {:else}
+                        <span class="muted"
+                          >{r.status} by {r.decided_by ?? '—'}{#if r.reason}: {r.reason}{/if}</span
+                        >
+                      {/if}
+                    </td>
+                  </tr>
+                  <tr class="threadrow">
+                    <td colspan="5">
+                      <CommentThread
+                        subjectType="deployment_request"
+                        subjectId={r.request_id}
+                        title="Approval discussion"
+                      />
+                    </td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          </div>
         </div>
       {/if}
 
@@ -2077,7 +2115,12 @@
               aria-label="until (optional, time-boxed)"
             /></label
           >
-          <button onclick={addSchedule} disabled={schBusy || !schAt}>Schedule</button>
+          <button
+            onclick={addSchedule}
+            disabled={schBusy || !schAt || !roleAtLeast($user?.role, 'editor')}
+            title={!roleAtLeast($user?.role, 'editor') ? 'Requires the editor role' : undefined}
+            >Schedule</button
+          >
         </div>
         {#if schedules.length > 0}
           <ul class="mon-list">
@@ -2088,8 +2131,13 @@
                   >{/if}
                 <span class="reqstatus {sc.status}">{sc.status}</span>
                 {#if sc.status === 'pending' || sc.status === 'active'}
-                  <button class="linkbtn" onclick={() => dropSchedule(sc.schedule_id)}
-                    >cancel</button
+                  <button
+                    class="linkbtn"
+                    onclick={() => dropSchedule(sc.schedule_id)}
+                    disabled={!roleAtLeast($user?.role, 'editor')}
+                    title={!roleAtLeast($user?.role, 'editor')
+                      ? 'Requires the editor role'
+                      : undefined}>cancel</button
                   >
                 {/if}
               </li>
@@ -2117,14 +2165,26 @@
               <option value="production">production</option>
             </select></label
           >
-          <button onclick={grant} disabled={grantBusy || !grantActor.trim()}>Grant</button>
+          <button
+            onclick={grant}
+            disabled={grantBusy || !grantActor.trim() || !roleAtLeast($user?.role, 'editor')}
+            title={!roleAtLeast($user?.role, 'editor') ? 'Requires the editor role' : undefined}
+            >Grant</button
+          >
         </div>
         {#if grants.length > 0}
           <ul class="mon-list">
             {#each grants as g (g.grant_id)}
               <li>
                 <span><b>{g.actor}</b> — {g.environment}</span>
-                <button class="linkbtn" onclick={() => ungrant(g.grant_id)}>revoke</button>
+                <button
+                  class="linkbtn"
+                  onclick={() => ungrant(g.grant_id)}
+                  disabled={!roleAtLeast($user?.role, 'editor')}
+                  title={!roleAtLeast($user?.role, 'editor')
+                    ? 'Requires the editor role'
+                    : undefined}>revoke</button
+                >
               </li>
             {/each}
           </ul>
@@ -2790,20 +2850,22 @@
           {/if}
         </div>
         {#if btReport.summary.compare && btReport.records.length > 0}
-          <table class="bt-table">
-            <thead>
-              <tr><th>#</th><th>Baseline</th><th>Candidate</th></tr>
-            </thead>
-            <tbody>
-              {#each btReport.records as rec (rec.index)}
-                <tr>
-                  <td>{rec.index}</td>
-                  <td>{rec.baseline.error || JSON.stringify(rec.baseline.output)}</td>
-                  <td>{rec.candidate?.error || JSON.stringify(rec.candidate?.output)}</td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
+          <div class="table-wrap">
+            <table class="bt-table">
+              <thead>
+                <tr><th>#</th><th>Baseline</th><th>Candidate</th></tr>
+              </thead>
+              <tbody>
+                {#each btReport.records as rec (rec.index)}
+                  <tr>
+                    <td>{rec.index}</td>
+                    <td>{rec.baseline.error || JSON.stringify(rec.baseline.output)}</td>
+                    <td>{rec.candidate?.error || JSON.stringify(rec.candidate?.output)}</td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          </div>
         {/if}
       {/if}
     </section>
@@ -2842,19 +2904,21 @@
           <span>{wiReport.points.length} values</span>
           <span class="changed">{wiReport.transitions} transition(s)</span>
         </div>
-        <table class="bt-table" data-testid="whatif-table">
-          <thead>
-            <tr><th>{wiReport.field}</th><th>Outcome</th></tr>
-          </thead>
-          <tbody>
-            {#each wiReport.points as pt, i (i)}
-              <tr class:changed-row={pt.changed}>
-                <td>{JSON.stringify(pt.value)}</td>
-                <td>{pt.error || JSON.stringify(pt.output)}</td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
+        <div class="table-wrap">
+          <table class="bt-table" data-testid="whatif-table">
+            <thead>
+              <tr><th>{wiReport.field}</th><th>Outcome</th></tr>
+            </thead>
+            <tbody>
+              {#each wiReport.points as pt, i (i)}
+                <tr class:changed-row={pt.changed}>
+                  <td>{JSON.stringify(pt.value)}</td>
+                  <td>{pt.error || JSON.stringify(pt.output)}</td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
       {/if}
     </section>
 
@@ -2869,7 +2933,8 @@
       <div class="row">
         <button
           onclick={saveAssertions}
-          disabled={!flow || assertBusy}
+          disabled={!flow || assertBusy || !roleAtLeast($user?.role, 'editor')}
+          title={!roleAtLeast($user?.role, 'editor') ? 'Requires the editor role' : undefined}
           data-testid="save-assertions">Save tests</button
         >
         <button
@@ -2886,25 +2951,27 @@
           <span class="ok">{assertReport.passed} passed</span>
           {#if assertReport.failed > 0}<span class="err">{assertReport.failed} failed</span>{/if}
         </div>
-        <table class="bt-table">
-          <thead>
-            <tr><th>Case</th><th>Result</th><th>Detail</th></tr>
-          </thead>
-          <tbody>
-            {#each assertReport.results as r (r.name)}
-              <tr>
-                <td>{r.name}</td>
-                <td class={r.passed ? 'ok' : 'err'}>{r.passed ? 'pass' : 'fail'}</td>
-                <td
-                  >{r.error ||
-                    (r.mismatch && r.mismatch.length
-                      ? `mismatch: ${r.mismatch.join(', ')}`
-                      : 'ok')}</td
-                >
-              </tr>
-            {/each}
-          </tbody>
-        </table>
+        <div class="table-wrap">
+          <table class="bt-table">
+            <thead>
+              <tr><th>Case</th><th>Result</th><th>Detail</th></tr>
+            </thead>
+            <tbody>
+              {#each assertReport.results as r (r.name)}
+                <tr>
+                  <td>{r.name}</td>
+                  <td class={r.passed ? 'ok' : 'err'}>{r.passed ? 'pass' : 'fail'}</td>
+                  <td
+                    >{r.error ||
+                      (r.mismatch && r.mismatch.length
+                        ? `mismatch: ${r.mismatch.join(', ')}`
+                        : 'ok')}</td
+                  >
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
       {/if}
     </section>
 
@@ -2934,31 +3001,33 @@
           {#if batchReport.rejected > 0}<span class="changed">{batchReport.rejected} rejected</span
             >{/if}
         </div>
-        <table class="bt-table">
-          <thead>
-            <tr><th>#</th><th>Status</th><th>Disposition</th><th>Decision</th><th>Detail</th></tr>
-          </thead>
-          <tbody>
-            {#each batchReport.results as r (r.index)}
-              <tr>
-                <td>{r.index}</td>
-                <td
-                  class={r.status === 'completed'
-                    ? 'ok'
-                    : r.status === 'failed'
-                      ? 'err'
-                      : 'changed'}>{r.status}</td
-                >
-                <td>{r.disposition ?? '—'}</td>
-                <td>
-                  {#if r.decision_id}<a href={appHref(`/decisions/${r.decision_id}`)}>view</a
-                    >{:else}—{/if}
-                </td>
-                <td>{r.error || JSON.stringify(r.data)}</td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
+        <div class="table-wrap">
+          <table class="bt-table">
+            <thead>
+              <tr><th>#</th><th>Status</th><th>Disposition</th><th>Decision</th><th>Detail</th></tr>
+            </thead>
+            <tbody>
+              {#each batchReport.results as r (r.index)}
+                <tr>
+                  <td>{r.index}</td>
+                  <td
+                    class={r.status === 'completed'
+                      ? 'ok'
+                      : r.status === 'failed'
+                        ? 'err'
+                        : 'changed'}>{r.status}</td
+                  >
+                  <td>{r.disposition ?? '—'}</td>
+                  <td>
+                    {#if r.decision_id}<a href={appHref(`/decisions/${r.decision_id}`)}>view</a
+                      >{:else}—{/if}
+                  </td>
+                  <td>{r.error || JSON.stringify(r.data)}</td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
       {/if}
     </section>
 
@@ -3020,22 +3089,24 @@
           {#if paReport.failed > 0}<span class="err">{paReport.failed} failed</span>{/if}
           {#if paReport.rejected > 0}<span class="changed">{paReport.rejected} rejected</span>{/if}
         </div>
-        <table class="bt-table">
-          <thead>
-            <tr><th>#</th><th>Entity</th><th>Disposition</th><th>Granted</th><th>Detail</th></tr>
-          </thead>
-          <tbody>
-            {#each paReport.results as r (r.index)}
-              <tr>
-                <td>{r.index}</td>
-                <td>{r.entity_id || '—'}</td>
-                <td>{r.disposition ?? '—'}</td>
-                <td class={r.granted ? 'ok' : 'changed'}>{r.granted ? 'yes' : 'no'}</td>
-                <td>{r.error || r.reason || (r.granted ? 'pre-approved' : '')}</td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
+        <div class="table-wrap">
+          <table class="bt-table">
+            <thead>
+              <tr><th>#</th><th>Entity</th><th>Disposition</th><th>Granted</th><th>Detail</th></tr>
+            </thead>
+            <tbody>
+              {#each paReport.results as r (r.index)}
+                <tr>
+                  <td>{r.index}</td>
+                  <td>{r.entity_id || '—'}</td>
+                  <td>{r.disposition ?? '—'}</td>
+                  <td class={r.granted ? 'ok' : 'changed'}>{r.granted ? 'yes' : 'no'}</td>
+                  <td>{r.error || r.reason || (r.granted ? 'pre-approved' : '')}</td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
       {/if}
     </section>
   {/if}

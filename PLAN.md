@@ -895,6 +895,14 @@ change live. That re-review surfaced one real app bug — the persona HOME wasn'
 workspace chips / primary actions like the header nav did — fixed with a new
 `persona.actionsFor(p, role)` and threading the signed-in role into PersonaHome.
 
+A further pass made the demo genuinely **playable**: state now persists to localStorage and
+accumulates across reloads (with a Reset control), every write is attributed to the switched demo
+user (not a hardcoded actor) and lands in the audit log, and **maker-checker** is enforced (approver
+role + no self-approval) — so a visitor can drive a flow build → deploy → decide → triage → resolve
+end-to-end. A multi-agent UX review (interactivity, persona/role, a11y/layout) drove a batch of fixes:
+role-gated write controls (new `$lib/roles`), admin-gated API keys, a full-catalog role-gated command
+palette, DemoBanner contrast (`var(--on-accent)`), table-overflow + skeleton + empty-state cleanups.
+
 ---
 
 ## 9. MVP non-goals

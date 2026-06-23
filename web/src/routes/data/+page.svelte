@@ -3,6 +3,7 @@
   import { onMount } from 'svelte';
   import Icon from '$lib/Icon.svelte';
   import EmptyState from '$lib/EmptyState.svelte';
+  import Skeleton from '$lib/Skeleton.svelte';
   import RelativeTime from '$lib/RelativeTime.svelte';
   import { toast } from '$lib/toast';
   import {
@@ -18,6 +19,8 @@
     type Entity
   } from '$lib/api';
   import { appHref } from '$lib/paths';
+  import { roleAtLeast } from '$lib/roles';
+  import { user } from '$lib/session';
 
   // API calls authenticate via the session cookie (empty key → no X-Api-Key).
   const key = '';
@@ -187,10 +190,21 @@
         aria-label="connector config"
         size="34"
       />
-      <button type="submit" disabled={cBusy}>{cBusy ? 'Saving…' : 'Define connector'}</button>
+      <button
+        type="submit"
+        disabled={cBusy || !roleAtLeast($user?.role, 'editor')}
+        title={!roleAtLeast($user?.role, 'editor') ? 'Requires the editor role' : undefined}
+        >{cBusy ? 'Saving…' : 'Define connector'}</button
+      >
     </form>
-    {#if connectors.length === 0}
-      <p class="muted">No connectors yet.</p>
+    {#if loadingData && connectors.length === 0}
+      <Skeleton rows={3} />
+    {:else if connectors.length === 0}
+      <EmptyState
+        icon="database"
+        title="No connectors yet"
+        hint="Define one above — a Connect node calls a connector by name to pull data into a decision."
+      />
     {:else}
       <div class="table-wrap">
         <table>
@@ -272,11 +286,22 @@
           inputmode="numeric"
         /></label
       >
-      <button type="submit" disabled={fBusy}>{fBusy ? 'Saving…' : 'Define feature'}</button>
+      <button
+        type="submit"
+        disabled={fBusy || !roleAtLeast($user?.role, 'editor')}
+        title={!roleAtLeast($user?.role, 'editor') ? 'Requires the editor role' : undefined}
+        >{fBusy ? 'Saving…' : 'Define feature'}</button
+      >
     </form>
     <p class="muted preview" data-testid="feature-preview">{featurePreview}</p>
-    {#if features.length === 0}
-      <p class="muted">No features yet.</p>
+    {#if loadingData && features.length === 0}
+      <Skeleton rows={3} />
+    {:else if features.length === 0}
+      <EmptyState
+        icon="database"
+        title="No features yet"
+        hint="Define one above — Rule and Split nodes read features.* to make data-driven decisions."
+      />
     {:else}
       <div class="table-wrap">
         <table>

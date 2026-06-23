@@ -17,6 +17,8 @@
   } from '$lib/api';
   import { resolvePersona, personaLens } from '$lib/persona';
   import { appHref } from '$lib/paths';
+  import { roleAtLeast } from '$lib/roles';
+  import { user } from '$lib/session';
 
   function msg(e: unknown): string {
     return e instanceof Error ? e.message : String(e);
@@ -188,7 +190,13 @@
       </select>
     </label>
     <button onclick={load}>Reload</button>
-    <button onclick={runSweep} disabled={sweeping} title="Flag overdue open cases as SLA-breached">
+    <button
+      onclick={runSweep}
+      disabled={sweeping || !roleAtLeast($user?.role, 'operator')}
+      title={!roleAtLeast($user?.role, 'operator')
+        ? 'Requires the operator role'
+        : 'Flag overdue open cases as SLA-breached'}
+    >
       {sweeping ? 'Sweeping…' : 'Run SLA sweep'}
     </button>
   </div>
@@ -218,7 +226,12 @@
         style="width:5rem"
       /></label
     >
-    <button type="submit" disabled={creating}>{creating ? 'Opening…' : 'Open case'}</button>
+    <button
+      type="submit"
+      disabled={creating || !roleAtLeast($user?.role, 'operator')}
+      title={!roleAtLeast($user?.role, 'operator') ? 'Requires the operator role' : undefined}
+      >{creating ? 'Opening…' : 'Open case'}</button
+    >
   </form>
 
   {#if error}<p class="err">{error}</p>{/if}
@@ -238,8 +251,18 @@
     <div class="row bulk" data-testid="bulk-bar">
       <span class="muted">{selectedIds.length} selected</span>
       <input bind:value={bulkAssignee} placeholder="assignee" aria-label="bulk assignee" />
-      <button onclick={bulkAssign} disabled={bulkBusy || !bulkAssignee.trim()}>Assign</button>
-      <button onclick={bulkComplete} disabled={bulkBusy}>Mark completed</button>
+      <button
+        onclick={bulkAssign}
+        disabled={bulkBusy || !bulkAssignee.trim() || !roleAtLeast($user?.role, 'operator')}
+        title={!roleAtLeast($user?.role, 'operator') ? 'Requires the operator role' : undefined}
+        >Assign</button
+      >
+      <button
+        onclick={bulkComplete}
+        disabled={bulkBusy || !roleAtLeast($user?.role, 'operator')}
+        title={!roleAtLeast($user?.role, 'operator') ? 'Requires the operator role' : undefined}
+        >Mark completed</button
+      >
       <button class="link" onclick={() => (selectedIds = [])}>clear</button>
     </div>
   {/if}

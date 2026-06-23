@@ -6,7 +6,8 @@
   import { goto } from '$app/navigation';
   import Icon from '$lib/Icon.svelte';
   import { theme, setTheme } from '$lib/theme';
-  import { setPersona, PERSONAS } from '$lib/persona';
+  import { setPersona, PERSONAS, NAV, isAdminOnlyRoute } from '$lib/persona';
+  import { roleAtLeast } from '$lib/roles';
   import { user, signOut } from '$lib/session';
   import { paletteOpen, closePalette, togglePalette } from '$lib/palette';
   import { openShortcuts } from '$lib/shortcuts';
@@ -43,16 +44,18 @@
 
   // The full command set is derived so the theme/persona/auth-dependent entries
   // stay in sync with the current state.
-  const commands = $derived<Cmd[]>([
+  // "Go to" commands cover the FULL page catalog (the palette is a jump-anywhere power
+  // tool, not scoped to the persona's default nav), gated by the signed-in role so it
+  // never offers an admin-only page (audit/mrm/keys) to a non-admin.
+  const navCommands = $derived([
     navCmd('/', 'Home dashboard', 'home'),
-    navCmd('/engine', 'Decision Engine — flows', 'engine'),
-    navCmd('/policies', 'Policies', 'rule'),
-    navCmd('/preapprovals', 'Pre-approvals', 'check'),
-    navCmd('/decisions', 'Decisions', 'diagram'),
-    navCmd('/data', 'Context data', 'database'),
-    navCmd('/cases', 'Cases', 'cases'),
-    navCmd('/agents', 'Agents', 'agents'),
-    navCmd('/audit', 'Audit log', 'shield'),
+    ...[...NAV.values()]
+      .filter((item) => roleAtLeast($user?.role, 'admin') || !isAdminOnlyRoute(item.href))
+      .map((item) => navCmd(item.href, item.label, item.icon))
+  ]);
+
+  const commands = $derived<Cmd[]>([
+    ...navCommands,
     {
       id: 'theme',
       section: 'Appearance',

@@ -3103,8 +3103,80 @@ export function createState(): DemoState {
   };
 }
 
-// The single shared, mutable state instance for the session.
-export const state: DemoState = createState();
+// --- Persistence ----------------------------------------------------------------
+// The demo state is persisted to localStorage so a visitor can ADVANCE flows across
+// reloads (build → publish → deploy → decide → triage → resolve), not just within a
+// single page view. Bump SCHEMA_VERSION whenever the seed/state shape changes so an
+// older persisted blob is discarded (re-seeded) instead of hydrating a stale shape.
+const SCHEMA_VERSION = 1;
+const PERSIST_KEY = 'intraktible-demo-state';
+
+// Map values can't survive JSON, so tag them on write and rebuild on read. The
+// reviver runs inner-first, so the nested `shadows` Map<string,Map<…>> round-trips
+// without special-casing. Tagging (vs enumerating fields) avoids object-injection.
+function mapReplacer(_k: string, v: unknown): unknown {
+  return v instanceof Map ? { __map: Array.from(v.entries()) } : v;
+}
+function mapReviver(_k: string, v: unknown): unknown {
+  if (v && typeof v === 'object' && '__map' in v) {
+    return new Map((v as { __map: [unknown, unknown][] }).__map);
+  }
+  return v;
+}
+
+function canPersist(): boolean {
+  try {
+    return typeof localStorage !== 'undefined';
+  } catch {
+    return false;
+  }
+}
+
+// loadPersisted hydrates the saved state when present and schema-compatible; any
+// version mismatch or parse error discards it (returns null) so we fall back to a
+// fresh seed — never hydrate a shape the code no longer understands.
+function loadPersisted(): DemoState | null {
+  if (!canPersist()) return null;
+  try {
+    const raw = localStorage.getItem(PERSIST_KEY);
+    if (!raw) return null;
+    const blob = JSON.parse(raw, mapReviver) as { v: number; idCounter: number; state: DemoState };
+    if (blob.v !== SCHEMA_VERSION || !blob.state) return null;
+    if (typeof blob.idCounter === 'number') idCounter = blob.idCounter;
+    return blob.state;
+  } catch {
+    return null;
+  }
+}
+
+// persist saves the current state (called after each mutating request). Best-effort:
+// a serialization/quota failure must never crash the demo.
+export function persist(): void {
+  if (!canPersist()) return;
+  try {
+    localStorage.setItem(
+      PERSIST_KEY,
+      JSON.stringify({ v: SCHEMA_VERSION, idCounter, state }, mapReplacer)
+    );
+  } catch {
+    // ignore (quota / serialization) — the in-memory state is still authoritative
+  }
+}
+
+// resetDemo clears the persisted state so the next load re-seeds. The Reset control
+// in DemoBanner calls this then reloads the page.
+export function resetDemo(): void {
+  if (!canPersist()) return;
+  try {
+    localStorage.removeItem(PERSIST_KEY);
+  } catch {
+    // ignore
+  }
+}
+
+// The single shared, mutable state instance for the session: the persisted blob if
+// one exists and matches the schema, otherwise a fresh seed.
+export const state: DemoState = loadPersisted() ?? createState();
 
 // driftReportFor computes a DriftReport from a flow's captured baseline vs the
 // current disposition distribution over its recorded decisions.

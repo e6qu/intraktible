@@ -6,15 +6,16 @@
 // bundle never references this module.
 
 import { handleDemo, type DemoResponse } from './router';
-import { USERS, setDemoUser, state, type DemoUser } from './store';
+import { USERS, setDemoUser, persist, resetDemo, state, type DemoUser } from './store';
 
 // DemoControl is the small surface the demo UI (DemoBanner) reads off window to
-// drive the identity switcher, without statically importing this module (which
-// would pull demo code into the normal bundle). Set only in the demo build.
+// drive the identity switcher + reset, without statically importing this module
+// (which would pull demo code into the normal bundle). Set only in the demo build.
 export interface DemoControl {
   users: DemoUser[];
   current(): string;
   setUser(actor: string): void;
+  reset(): void;
 }
 
 declare global {
@@ -37,7 +38,8 @@ export function installDemoBackend(): void {
   window.__demo = {
     users: USERS,
     current: () => state.identity.actor,
-    setUser: (actor: string) => void setDemoUser(actor)
+    setUser: (actor: string) => void setDemoUser(actor),
+    reset: resetDemo
   };
 
   window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
@@ -48,7 +50,11 @@ export function installDemoBackend(): void {
         return original(input, init);
       }
       const body = await readBody(input, init);
-      const res = handleDemo(method.toUpperCase(), parsed.pathname, parsed.searchParams, body);
+      const verb = method.toUpperCase();
+      const res = handleDemo(verb, parsed.pathname, parsed.searchParams, body);
+      // Persist after any successful mutation so flow/case/etc. progress survives a
+      // reload — the demo accumulates state instead of resetting every page view.
+      if (verb !== 'GET' && res.status < 400) persist();
       return toResponse(res);
     } catch {
       // Never throw out of the wrapper — a thrown fetch would crash the page.
