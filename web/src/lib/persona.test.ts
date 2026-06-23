@@ -5,6 +5,7 @@ import {
   NAV,
   navFor,
   actionsFor,
+  isAdminOnlyRoute,
   personaConfig,
   personaLens,
   defaultPersona,
@@ -24,7 +25,9 @@ describe('persona config', () => {
     for (const p of PERSONAS) {
       expect(p.actions.length).toBeGreaterThan(0);
       for (const a of p.actions) {
-        expect(a.href).toMatch(/^\//);
+        // An action targets either an in-app route or an absolute external URL
+        // (e.g. the developer persona's docs link).
+        expect(a.href).toMatch(/^(\/|https?:\/\/)/);
         expect(a.label.length).toBeGreaterThan(0);
       }
     }
@@ -77,6 +80,17 @@ describe('persona config', () => {
     expect(opHrefs.length).toBeGreaterThan(0); // non-admin actions remain
     // Omitting role (pre-/v1/me) keeps the full set.
     expect(actionsFor('manager').map((a) => a.href)).toContain('/audit');
+  });
+
+  it('gates keys/mrm/audit as admin-only in nav and via isAdminOnlyRoute', () => {
+    // keys is now admin-gated alongside mrm + audit.
+    expect(isAdminOnlyRoute('/keys')).toBe(true);
+    expect(isAdminOnlyRoute('/mrm')).toBe(true);
+    expect(isAdminOnlyRoute('/audit')).toBe(true);
+    expect(isAdminOnlyRoute('/decisions')).toBe(false);
+    // The developer persona nav includes keys for an admin but not for a non-admin.
+    expect(navFor('developer', 'admin').map((n) => n.id)).toContain('keys');
+    expect(navFor('developer', 'operator').map((n) => n.id)).not.toContain('keys');
   });
 
   it('different personas compose different navigation', () => {

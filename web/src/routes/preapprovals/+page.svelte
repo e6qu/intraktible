@@ -20,6 +20,8 @@
     type Flow,
     type Disposition
   } from '$lib/api';
+  import { roleAtLeast } from '$lib/roles';
+  import { user } from '$lib/session';
 
   const key = '';
   const DISPOSITIONS = ['approve', 'decline'];
@@ -192,7 +194,12 @@
       </label>
     </div>
     <div class="actions">
-      <button class="primary" onclick={grant} disabled={granting || !gType.trim() || !gId.trim()}>
+      <button
+        class="primary"
+        onclick={grant}
+        disabled={granting || !gType.trim() || !gId.trim() || !roleAtLeast($user?.role, 'editor')}
+        title={!roleAtLeast($user?.role, 'editor') ? 'Requires the editor role' : undefined}
+      >
         <Icon name="check" size={15} />
         {granting ? 'Granting…' : 'Grant pre-approval'}
       </button>
@@ -236,7 +243,14 @@
               <td><span class="status {st}">{st}</span></td>
               <td class="right">
                 {#if st === 'active' && revokingId !== p.preapproval_id}
-                  <button class="link danger" onclick={() => startRevoke(p)}>Revoke</button>
+                  <button
+                    class="link danger"
+                    onclick={() => startRevoke(p)}
+                    disabled={!roleAtLeast($user?.role, 'editor')}
+                    title={!roleAtLeast($user?.role, 'editor')
+                      ? 'Requires the editor role'
+                      : undefined}>Revoke</button
+                  >
                 {/if}
               </td>
             </tr>

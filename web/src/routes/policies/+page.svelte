@@ -21,6 +21,8 @@
     type Flow,
     type Disposition
   } from '$lib/api';
+  import { roleAtLeast } from '$lib/roles';
+  import { user } from '$lib/session';
 
   const key = '';
   const DISPOSITIONS = ['approve', 'decline', 'refer'];
@@ -187,7 +189,10 @@
         <option value={f.slug}>{f.name} ({f.slug})</option>
       {/each}
     </select>
-    <button type="submit" disabled={creating || !cFlow}
+    <button
+      type="submit"
+      disabled={creating || !cFlow || !roleAtLeast($user?.role, 'editor')}
+      title={!roleAtLeast($user?.role, 'editor') ? 'Requires the editor role' : undefined}
       >{creating ? 'Creating…' : 'Create policy'}</button
     >
   </form>
@@ -285,7 +290,8 @@
         <button
           class="primary"
           onclick={publish}
-          disabled={publishing}
+          disabled={publishing || !roleAtLeast($user?.role, 'editor')}
+          title={!roleAtLeast($user?.role, 'editor') ? 'Requires the editor role' : undefined}
           data-testid="publish-policy"
         >
           <Icon name="check" size={14} />
@@ -312,29 +318,31 @@
         placeholder={'[\n  {"score": 0.9},\n  {"score": 0.4}\n]'}
       ></textarea>
       {#if btReport}
-        <table class="bt" data-testid="backtest-result">
-          <thead>
-            <tr><th></th><th>Approve</th><th>Decline</th><th>Refer</th><th>Failed</th></tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td>draft</td>
-              <td class="ok">{btReport.summary.evaluated.approve}</td>
-              <td>{btReport.summary.evaluated.decline}</td>
-              <td>{btReport.summary.evaluated.refer}</td>
-              <td class="err">{btReport.summary.evaluated.failed}</td>
-            </tr>
-            {#if btReport.summary.compare}
-              <tr class="muted">
-                <td>published</td>
-                <td>{btReport.summary.compare.approve}</td>
-                <td>{btReport.summary.compare.decline}</td>
-                <td>{btReport.summary.compare.refer}</td>
-                <td>{btReport.summary.compare.failed}</td>
+        <div class="table-wrap">
+          <table class="bt" data-testid="backtest-result">
+            <thead>
+              <tr><th></th><th>Approve</th><th>Decline</th><th>Refer</th><th>Failed</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>draft</td>
+                <td class="ok">{btReport.summary.evaluated.approve}</td>
+                <td>{btReport.summary.evaluated.decline}</td>
+                <td>{btReport.summary.evaluated.refer}</td>
+                <td class="err">{btReport.summary.evaluated.failed}</td>
               </tr>
-            {/if}
-          </tbody>
-        </table>
+              {#if btReport.summary.compare}
+                <tr class="muted">
+                  <td>published</td>
+                  <td>{btReport.summary.compare.approve}</td>
+                  <td>{btReport.summary.compare.decline}</td>
+                  <td>{btReport.summary.compare.refer}</td>
+                  <td>{btReport.summary.compare.failed}</td>
+                </tr>
+              {/if}
+            </tbody>
+          </table>
+        </div>
         <p class="muted">
           {btReport.summary.total} records{#if btReport.summary.compare}
             · <b class="changed">{btReport.summary.flipped ?? 0}</b> would change disposition{/if}
@@ -425,6 +433,7 @@
   }
   .band {
     display: flex;
+    flex-wrap: wrap;
     gap: 0.4rem;
     margin: 0.35rem 0;
     align-items: center;

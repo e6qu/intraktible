@@ -20,6 +20,8 @@
     type EvalReport
   } from '$lib/api';
   import { appHref } from '$lib/paths';
+  import { roleAtLeast } from '$lib/roles';
+  import { user } from '$lib/session';
 
   // API calls authenticate via the session cookie (empty key -> no X-Api-Key header).
   const key = '';
@@ -263,7 +265,12 @@
   <section class="actions">
     <div class="row">
       <input bind:value={prompt} placeholder="prompt" aria-label="prompt" />
-      <button onclick={run} disabled={!agent || running}>{running ? 'Running…' : 'Run'}</button>
+      <button
+        onclick={run}
+        disabled={!agent || running || !roleAtLeast($user?.role, 'operator')}
+        title={!roleAtLeast($user?.role, 'operator') ? 'Requires the operator role' : undefined}
+        >{running ? 'Running…' : 'Run'}</button
+      >
     </div>
     {#if lastRunID}<p class="muted">Last run: <code>{lastRunID}</code></p>{/if}
   </section>
@@ -276,7 +283,12 @@
         <option value="sse">SSE</option>
         <option value="ws">WebSocket</option>
       </select>
-      <button class="primary" onclick={runStream} disabled={!agent || streaming}>
+      <button
+        class="primary"
+        onclick={runStream}
+        disabled={!agent || streaming || !roleAtLeast($user?.role, 'operator')}
+        title={!roleAtLeast($user?.role, 'operator') ? 'Requires the operator role' : undefined}
+      >
         <Icon name="play" size={14} />
         {streaming ? 'Streaming…' : 'Stream'}
       </button>
@@ -317,9 +329,18 @@
         placeholder={'[{"name":"approves","prompt":"score 800","mode":"contains","expect":"approve"}]'}
       ></textarea>
       <div class="row">
-        <button onclick={saveEvals} disabled={evalBusy} data-testid="save-evals">Save cases</button>
-        <button class="primary" onclick={runEval} disabled={evalBusy} data-testid="run-evals"
-          >{evalBusy ? 'Running…' : 'Run eval'}</button
+        <button
+          onclick={saveEvals}
+          disabled={evalBusy || !roleAtLeast($user?.role, 'editor')}
+          title={!roleAtLeast($user?.role, 'editor') ? 'Requires the editor role' : undefined}
+          data-testid="save-evals">Save cases</button
+        >
+        <button
+          class="primary"
+          onclick={runEval}
+          disabled={evalBusy || !roleAtLeast($user?.role, 'editor')}
+          title={!roleAtLeast($user?.role, 'editor') ? 'Requires the editor role' : undefined}
+          data-testid="run-evals">{evalBusy ? 'Running…' : 'Run eval'}</button
         >
       </div>
       {#if evalReport}
@@ -354,7 +375,8 @@
           — {r.text || (r.error ? 'error: ' + r.error : '(structured)')}
           <button
             onclick={() => escalate(r.run_id)}
-            disabled={!!escalating}
+            disabled={!!escalating || !roleAtLeast($user?.role, 'operator')}
+            title={!roleAtLeast($user?.role, 'operator') ? 'Requires the operator role' : undefined}
             aria-label={`escalate ${r.run_id}`}
           >
             {escalating === r.run_id ? 'Escalating…' : 'Escalate'}

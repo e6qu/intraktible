@@ -8,6 +8,8 @@
   import { toast } from '$lib/toast';
   import { listFlows, createFlow, importFlow, importFlowBundle, type Flow } from '$lib/api';
   import { appHref } from '$lib/paths';
+  import { roleAtLeast } from '$lib/roles';
+  import { user } from '$lib/session';
 
   // API calls authenticate via the session cookie (empty key -> no X-Api-Key header).
   const key = '';
@@ -138,7 +140,12 @@
   >
     <label>Slug <input bind:value={slug} placeholder="loan-origination" aria-label="slug" /></label>
     <label>Name <input bind:value={name} placeholder="Loan Origination" aria-label="name" /></label>
-    <button type="submit" disabled={busy}>{busy ? 'Creating…' : 'Create flow'}</button>
+    <button
+      type="submit"
+      disabled={busy || !roleAtLeast($user?.role, 'editor')}
+      title={!roleAtLeast($user?.role, 'editor') ? 'Requires the editor role' : undefined}
+      >{busy ? 'Creating…' : 'Create flow'}</button
+    >
   </form>
 
   <details class="import" data-testid="import-flow">
@@ -163,7 +170,8 @@
       />
       <button
         onclick={runImport}
-        disabled={importing || !importText.trim()}
+        disabled={importing || !importText.trim() || !roleAtLeast($user?.role, 'editor')}
+        title={!roleAtLeast($user?.role, 'editor') ? 'Requires the editor role' : undefined}
         data-testid="import-submit"
       >
         {importing ? 'Importing…' : 'Import'}

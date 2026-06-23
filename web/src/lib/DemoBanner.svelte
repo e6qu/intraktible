@@ -3,13 +3,14 @@
   A slim strip shown only in the public GitHub Pages demo. Rendered behind a static
   `import.meta.env.VITE_DEMO` guard, so the whole component is dead-code-eliminated
   from the embedded production build (the {#if false} block is dropped at build).
-  It tells the visitor the backend is an in-browser mock (interactive, but in-memory)
-  and offers an identity switcher so they can view the app AS different roles — the
-  role-gated nav/surfaces (admin-only Model risk / Audit, etc.) change live.
+  It tells the visitor the backend is an in-browser mock (interactive + persisted to
+  localStorage), offers an identity switcher so they can act AS different roles (the
+  role-gated nav/surfaces change live), and a Reset that clears local state.
 
-  The switcher reads window.__demo (set by the demo install) rather than importing
-  the demo code, so this always-compiled component pulls no demo modules into the
-  normal bundle.
+  The controls read window.__demo (set by the demo install) rather than importing the
+  demo code, so this always-compiled component pulls no demo modules into the normal
+  bundle. Colours use var(--on-accent) (not a hardcoded white) so the strip stays
+  readable on every persona accent in both themes.
 -->
 <script lang="ts">
   import { onMount } from 'svelte';
@@ -18,7 +19,12 @@
   const demo = import.meta.env.VITE_DEMO;
 
   type DemoUser = { actor: string; name: string; role: string; title: string };
-  type DemoControl = { users: DemoUser[]; current(): string; setUser(actor: string): void };
+  type DemoControl = {
+    users: DemoUser[];
+    current(): string;
+    setUser(actor: string): void;
+    reset(): void;
+  };
 
   let users = $state<DemoUser[]>([]);
   let currentActor = $state('');
@@ -43,20 +49,28 @@
     // Re-pull /v1/me so the app's $user store (and role-gated nav) updates live.
     await refreshUser();
   }
+
+  function reset(): void {
+    const c = control();
+    if (!c) return;
+    if (!confirm('Reset the demo? This clears all local changes and restores the seed.')) return;
+    c.reset();
+    location.reload();
+  }
 </script>
 
 {#if demo}
   <div class="demo-strip" role="note">
     <span class="dot" aria-hidden="true"></span>
     <span class="msg">
-      <b>Live demo.</b> Fully interactive, in your browser — no backend. Data is in-memory and resets
-      on reload.
+      <b>Live demo.</b> Fully interactive, in your browser — no backend. Changes are saved locally and
+      persist across reloads.
     </span>
     {#if users.length > 0}
       <label class="who">
-        <span class="who-label">Viewing as</span>
+        <span class="who-label">Signed in as</span>
         <select
-          aria-label="Viewing as (switch role)"
+          aria-label="Signed in as (switch demo user)"
           value={currentActor}
           onchange={(e) => switchUser(e.currentTarget.value)}
         >
@@ -65,6 +79,7 @@
           {/each}
         </select>
       </label>
+      <button class="reset" type="button" onclick={reset}>Reset</button>
     {/if}
     <a
       class="src"
@@ -83,14 +98,14 @@
     padding: 0.4rem 1rem;
     font-size: 0.82rem;
     background: var(--accent, #3b5bdb);
-    color: #fff;
+    color: var(--on-accent, #fff);
   }
   .dot {
     width: 0.55rem;
     height: 0.55rem;
     border-radius: 999px;
-    background: #fff;
-    box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.7);
+    background: var(--on-accent, #fff);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--on-accent, #fff) 70%, transparent);
     animation: pulse 2.2s ease-out infinite;
     flex: none;
   }
@@ -101,13 +116,13 @@
   }
   @keyframes pulse {
     0% {
-      box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.6);
+      box-shadow: 0 0 0 0 color-mix(in srgb, var(--on-accent, #fff) 60%, transparent);
     }
     70% {
-      box-shadow: 0 0 0 0.5rem rgba(255, 255, 255, 0);
+      box-shadow: 0 0 0 0.5rem transparent;
     }
     100% {
-      box-shadow: 0 0 0 0 rgba(255, 255, 255, 0);
+      box-shadow: 0 0 0 0 transparent;
     }
   }
   .msg {
@@ -131,15 +146,29 @@
     font-size: 0.8rem;
     padding: 0.1rem 0.35rem;
     border-radius: 4px;
-    border: 1px solid rgba(255, 255, 255, 0.5);
-    background: rgba(255, 255, 255, 0.12);
-    color: #fff;
+    border: 1px solid color-mix(in srgb, var(--on-accent, #fff) 50%, transparent);
+    background: color-mix(in srgb, var(--on-accent, #fff) 12%, transparent);
+    color: var(--on-accent, #fff);
   }
   .who select option {
     color: #1a1d23;
   }
+  .reset {
+    font: inherit;
+    font-size: 0.78rem;
+    padding: 0.15rem 0.6rem;
+    border-radius: 999px;
+    cursor: pointer;
+    white-space: nowrap;
+    border: 1px solid color-mix(in srgb, var(--on-accent, #fff) 55%, transparent);
+    background: transparent;
+    color: var(--on-accent, #fff);
+  }
+  .reset:hover {
+    background: color-mix(in srgb, var(--on-accent, #fff) 15%, transparent);
+  }
   .src {
-    color: #fff;
+    color: var(--on-accent, #fff);
     text-decoration: underline;
     white-space: nowrap;
     font-weight: 500;

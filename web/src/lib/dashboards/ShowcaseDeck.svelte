@@ -4,6 +4,7 @@
      narrative of the platform's surfaces. Atmosphere + staggered reveals. -->
 <script lang="ts">
   import Icon from '$lib/Icon.svelte';
+  import { appHref } from '$lib/paths';
   import {
     decisionStats,
     deployStats,
@@ -47,25 +48,31 @@
     }
   ]);
 
+  // Each surface links to where you can actually use it, so the executive deck has
+  // forward paths into the product (it was previously presentation-only).
   const surfaces = [
     {
       icon: 'engine',
       title: 'Decide',
+      href: '/engine',
       desc: 'Versioned flows on a visual canvas — deployed, A/B-tested, and backtested before they ever touch production.'
     },
     {
       icon: 'database',
       title: 'Contextualise',
+      href: '/data',
       desc: 'Real-time features and connectors feed every decision the freshest view of each entity.'
     },
     {
       icon: 'cases',
       title: 'Review',
+      href: '/cases',
       desc: 'When judgement is needed, a case opens with full SLA tracking and an immutable trail.'
     },
     {
       icon: 'agents',
       title: 'Reason',
+      href: '/agents',
       desc: 'AI agents with tools and structured output, every run recorded and replayable.'
     }
   ];
@@ -130,7 +137,7 @@
     {#if trend.length > 0}
       <section class="trend" data-testid="exec-trend" style="--i:4">
         <div class="trend-head">
-          <h2>Decision volume</h2>
+          <h2><a href={appHref('/decisions')}>Decision volume</a></h2>
           <p class="gov">
             <b>{dep.live}</b> in production · <b>{dep.pending}</b> awaiting four-eyes approval
           </p>
@@ -147,11 +154,11 @@
 
     <section class="surfaces">
       {#each surfaces as s, i (s.title)}
-        <article class="surface" style="--i:{i + 4}">
+        <a class="surface" href={appHref(s.href)} style="--i:{i + 4}">
           <span class="s-icon"><Icon name={s.icon} size={20} /></span>
           <h3>{s.title}</h3>
           <p>{s.desc}</p>
-        </article>
+        </a>
       {/each}
     </section>
 
@@ -315,6 +322,7 @@
     gap: 1.3rem;
   }
   .surface {
+    display: block;
     padding: 1.6rem;
     border: 1px solid var(--border);
     border-radius: var(--radius);
@@ -322,6 +330,12 @@
     backdrop-filter: blur(4px);
     animation: rise 0.6s ease both;
     animation-delay: calc(0.15s + var(--i) * 80ms);
+    color: inherit;
+    text-decoration: none;
+    transition: border-color 0.15s ease;
+  }
+  .surface:hover {
+    border-color: var(--accent);
   }
   .s-icon {
     display: inline-flex;

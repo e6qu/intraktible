@@ -41,10 +41,16 @@
   <h2>Start here</h2>
   <div class="actions">
     {#each actions as a (a.href)}
-      <a class="action" href={appHref(a.href)}>
+      {@const external = a.href.startsWith('http')}
+      <a
+        class="action"
+        href={appHref(a.href)}
+        target={external ? '_blank' : undefined}
+        rel={external ? 'noreferrer noopener' : undefined}
+      >
         <span class="ico"><Icon name={a.icon} size={20} /></span>
         <span class="lbl">{a.label}</span>
-        <span class="go"><Icon name="chevron-down" size={16} /></span>
+        <span class="go">{external ? '↗' : ''}<Icon name="chevron-down" size={16} /></span>
       </a>
     {/each}
   </div>

@@ -169,7 +169,11 @@ export const PERSONAS: PersonaConfig[] = [
     actions: [
       { label: 'Inspect decision traces', href: '/decisions', icon: 'diagram' },
       { label: 'Manage API keys', href: '/keys', icon: 'connect' },
-      { label: 'Browse the API reference', href: '/docs', icon: 'code' },
+      {
+        label: 'API reference & docs',
+        href: 'https://github.com/e6qu/intraktible/tree/main/docs',
+        icon: 'code'
+      },
       { label: 'Manage agents & tools', href: '/agents', icon: 'agents' }
     ],
     terms: { decisions: 'Traces' },
@@ -281,10 +285,11 @@ export function personaConfig(p: Persona): PersonaConfig {
 }
 
 // navFor returns a persona's ordered, relabelled navigation items.
-// adminOnlyNav lists nav targets whose page is admin-gated at the API. They're
-// hidden from a non-admin caller's nav so a manager/executive doesn't land on a 403
-// dead-end (the pages themselves also gate gracefully, as defense in depth).
-const adminOnlyNav = new Set<NavId>(['mrm', 'audit']);
+// adminOnlyNav lists nav targets whose page is admin-gated at the API (model risk,
+// audit log, and API-key management). They're hidden from a non-admin caller's nav +
+// home so a manager/executive/developer doesn't land on a 403 dead-end (the pages
+// themselves also gate gracefully, as defense in depth).
+const adminOnlyNav = new Set<NavId>(['mrm', 'audit', 'keys']);
 
 // navFor resolves a persona's ordered nav subset (with term relabels). When role is
 // given and is not "admin", admin-only items are dropped — so admin surfaces only
@@ -295,6 +300,13 @@ const adminOnlyNav = new Set<NavId>(['mrm', 'audit']);
 const adminOnlyHrefs = new Set<string>(
   [...adminOnlyNav].map((id) => NAV.get(id)?.href).filter((h): h is string => h !== undefined)
 );
+
+// isAdminOnlyRoute reports whether an app route is admin-gated (model risk, audit,
+// API keys) — used to keep the command palette + keyboard shortcuts from offering a
+// non-admin a page they can't use.
+export function isAdminOnlyRoute(href: string): boolean {
+  return adminOnlyHrefs.has(href);
+}
 
 // actionsFor resolves a persona's primary home actions, dropping admin-only targets
 // for a non-admin caller — so the persona home doesn't surface a shortcut to a page

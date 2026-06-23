@@ -17,6 +17,8 @@
     type Model,
     type ModelDrift
   } from '$lib/api';
+  import { roleAtLeast } from '$lib/roles';
+  import { user } from '$lib/session';
 
   // Authenticates via the session cookie (empty key → no X-Api-Key header).
   const key = '';
@@ -190,7 +192,12 @@
         <button type="button" onclick={() => starter('expression')}>expression</button>
         <button type="button" onclick={() => starter('external')}>external</button>
       </span>
-      <button type="submit" disabled={busy}>{busy ? 'Saving…' : 'Define model'}</button>
+      <button
+        type="submit"
+        disabled={busy || !roleAtLeast($user?.role, 'editor')}
+        title={!roleAtLeast($user?.role, 'editor') ? 'Requires the editor role' : undefined}
+        >{busy ? 'Saving…' : 'Define model'}</button
+      >
     </div>
     <label class="field"
       >Spec (JSON)
@@ -270,7 +277,13 @@
                       {:else}
                         <span class="muted">no baseline captured yet</span>
                       {/if}
-                      <button onclick={() => captureBaseline(m.name)}>Capture baseline</button>
+                      <button
+                        onclick={() => captureBaseline(m.name)}
+                        disabled={!roleAtLeast($user?.role, 'editor')}
+                        title={!roleAtLeast($user?.role, 'editor')
+                          ? 'Requires the editor role'
+                          : undefined}>Capture baseline</button
+                      >
                       <label class="win">
                         alert PSI &gt;
                         <input
@@ -281,7 +294,13 @@
                           inputmode="decimal"
                         />
                       </label>
-                      <button onclick={() => saveThreshold(m.name)}>Set monitor</button>
+                      <button
+                        onclick={() => saveThreshold(m.name)}
+                        disabled={!roleAtLeast($user?.role, 'editor')}
+                        title={!roleAtLeast($user?.role, 'editor')
+                          ? 'Requires the editor role'
+                          : undefined}>Set monitor</button
+                      >
                     </div>
                     <div class="hist" aria-label="Predicted-probability distribution (deciles)">
                       {#each drift.hist as c, i (i)}

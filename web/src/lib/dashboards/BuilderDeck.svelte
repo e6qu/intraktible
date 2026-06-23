@@ -73,7 +73,9 @@
           <tbody>
             {#each recent as d (d.decision_id)}
               <tr>
-                <td class="st"><span class="dot {d.status}"></span></td>
+                <td class="st"
+                  ><span class="dot {d.status}" role="img" aria-label={d.status}></span></td
+                >
                 <td class="slug"><a href={appHref(`/decisions/${d.decision_id}`)}>{d.slug}</a></td>
                 <td class="dim">{d.environment}</td>
                 <td class="dim">v{d.version}</td>

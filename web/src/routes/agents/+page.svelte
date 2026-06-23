@@ -5,6 +5,8 @@
   import Skeleton from '$lib/Skeleton.svelte';
   import { listAgents, defineAgent, getRunSummary, type Agent, type RunSummary } from '$lib/api';
   import { appHref } from '$lib/paths';
+  import { roleAtLeast } from '$lib/roles';
+  import { user } from '$lib/session';
 
   // API calls authenticate via the session cookie (empty key -> no X-Api-Key header).
   const key = '';
@@ -129,7 +131,12 @@
       ></textarea></label
     >
     <div class="row">
-      <button type="submit" disabled={busy}>{busy ? 'Saving…' : 'Define agent'}</button>
+      <button
+        type="submit"
+        disabled={busy || !roleAtLeast($user?.role, 'editor')}
+        title={!roleAtLeast($user?.role, 'editor') ? 'Requires the editor role' : undefined}
+        >{busy ? 'Saving…' : 'Define agent'}</button
+      >
     </div>
   </form>
 

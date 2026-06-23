@@ -5,6 +5,7 @@
   import Copyable from '$lib/Copyable.svelte';
   import Breadcrumb from '$lib/Breadcrumb.svelte';
   import CommentThread from '$lib/CommentThread.svelte';
+  import Skeleton from '$lib/Skeleton.svelte';
   import { getDecision, exportDecision, type Decision, type RunExportFormat } from '$lib/api';
   import { toast } from '$lib/toast';
   import { appHref } from '$lib/paths';
@@ -62,7 +63,7 @@
       setTimeout(() => URL.revokeObjectURL(url), 0);
       toast.success(`Downloaded ${e.label}`);
     } catch (err) {
-      error = msg(err);
+      toast.error(msg(err));
     }
   }
   async function copyTrace(format: RunExportFormat) {
@@ -70,7 +71,7 @@
       await navigator.clipboard.writeText(await exportDecision(key, id, format));
       toast.success('Copied to clipboard');
     } catch (e) {
-      error = msg(e);
+      toast.error(msg(e));
     }
   }
   $effect(() => {
@@ -173,7 +174,7 @@
 
     <CommentThread subjectType="decision" subjectId={d.decision_id} title="Discussion" />
   {:else if !error}
-    <p class="muted">Loading…</p>
+    <Skeleton rows={6} />
   {/if}
 </main>
 

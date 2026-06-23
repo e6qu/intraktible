@@ -6,6 +6,7 @@
   import Icon from '$lib/Icon.svelte';
   import RelativeTime from '$lib/RelativeTime.svelte';
   import Skeleton from '$lib/Skeleton.svelte';
+  import EmptyState from '$lib/EmptyState.svelte';
   import { onMount } from 'svelte';
   import { toast } from '$lib/toast';
   import { appHref } from '$lib/paths';
@@ -353,31 +354,34 @@
       </div>
     {/if}
     {#if keys.length > 0}
-      <table class="token-table">
-        <thead>
-          <tr><th>Name</th><th>Actor</th><th>Role</th><th>Scope</th><th>Status</th><th></th></tr>
-        </thead>
-        <tbody>
-          {#each keys as k (k.id)}
-            <tr>
-              <td>{k.name}</td>
-              <td class="muted">{k.identity.actor}</td>
-              <td>{k.role}</td>
-              <td><span class="badge">{k.scope}</span></td>
-              <td><span class="status {keyStatus(k)}">{keyStatus(k)}</span></td>
-              <td class="row-actions">
-                <a class="audit-link" href={appHref(`/audit?resource=${encodeURIComponent(k.id)}`)}
-                  >Audit</a
-                >
-                {#if keyStatus(k) === 'active'}
-                  <button class="rotate" onclick={() => rotateKey(k.id)}>Rotate</button>
-                  <button class="revoke" onclick={() => revokeKey(k.id)}>Revoke</button>
-                {/if}
-              </td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
+      <div class="table-wrap">
+        <table class="token-table">
+          <thead>
+            <tr><th>Name</th><th>Actor</th><th>Role</th><th>Scope</th><th>Status</th><th></th></tr>
+          </thead>
+          <tbody>
+            {#each keys as k (k.id)}
+              <tr>
+                <td>{k.name}</td>
+                <td class="muted">{k.identity.actor}</td>
+                <td>{k.role}</td>
+                <td><span class="badge">{k.scope}</span></td>
+                <td><span class="status {keyStatus(k)}">{keyStatus(k)}</span></td>
+                <td class="row-actions">
+                  <a
+                    class="audit-link"
+                    href={appHref(`/audit?resource=${encodeURIComponent(k.id)}`)}>Audit</a
+                  >
+                  {#if keyStatus(k) === 'active'}
+                    <button class="rotate" onclick={() => rotateKey(k.id)}>Rotate</button>
+                    <button class="revoke" onclick={() => revokeKey(k.id)}>Revoke</button>
+                  {/if}
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
     {/if}
   </details>
 
@@ -419,7 +423,11 @@
   {:else if error}
     <p class="err">{error}</p>
   {:else if list.length === 0}
-    <p class="muted">No matching audit events.</p>
+    <EmptyState
+      icon="shield"
+      title="No matching audit events"
+      hint="Nothing matches the current filter. Clear or widen the filters above, or act on the workspace to record new events."
+    />
   {:else}
     <div class="table-wrap">
       <table>
