@@ -915,6 +915,14 @@ Documentation followed: a `docs/JOURNEYS.md` documenting the end-to-end user jou
 themed with a sidebar) and a real **landing page** at the Pages root — all three assembled by the
 `pages` workflow alongside the demo.
 
+A faithfulness audit (three agents: journeys-vs-backend, fake-hunt, live walkthrough) confirmed the
+real product is substantial — not smoke-and-mirrors — and closed the specific gaps it found. The
+backend gained a **record-free preview decide** (`preview: true`) and a real **decision→case link**
+(`case_id` on the decision read-model), plus a default review SLA, a `MANUAL_REVIEW` reason code, and a
+server-side `agent_review` default. The demo was made faithful to it: agent output is a real reply
+(structured verdict or narrative) rather than a `stub:` echo, the streaming run no longer dead-ends,
+admin-only surfaces gate server-side, and Copilot describes the actual graph.
+
 ---
 
 ## 9. MVP non-goals

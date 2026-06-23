@@ -23,6 +23,11 @@ const (
 // AddDate/Duration arithmetic in Deadline/DaysLeft into a wrong (wrapped) bucket.
 const MaxSLADays = 10000
 
+// DefaultSLADays is the SLA window applied when a case opens without one: a zero
+// window makes the case due the instant it opens (immediately overdue), so a
+// sensible default gives the reviewer time to act.
+const DefaultSLADays = 3
+
 // Deadline is when a case opened at createdAt with an slaDays window is due.
 // An slaDays of 0 means the case is due at the moment it opened.
 func Deadline(createdAt time.Time, slaDays int) time.Time {

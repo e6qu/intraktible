@@ -37,6 +37,7 @@ import type {
   Environment,
   Role
 } from '$lib/api';
+import { agentReply } from './agent';
 
 // DemoUser is one entry in the demo's cast: a named person with an RBAC role. The
 // demo identity switcher (DemoBanner) lets a visitor view the app AS any of them, so
@@ -2863,13 +2864,13 @@ function seedAgentEvals(): Map<string, EvalCase[]> {
       name: 'produces narrative',
       prompt: 'Wire of $50,000 to a sanctioned region',
       mode: 'contains',
-      expect: 'stub'
+      expect: 'narrative'
     },
     {
       name: 'handles structuring',
       prompt: 'Structuring across 6 deposits under threshold',
       mode: 'contains',
-      expect: 'stub'
+      expect: 'narrative'
     }
   ]);
   m.set('kyc-extract', [
@@ -2877,7 +2878,7 @@ function seedAgentEvals(): Map<string, EvalCase[]> {
       name: 'extracts passport',
       prompt: 'Passport, DOB 1990-01-01',
       mode: 'contains',
-      expect: 'stub'
+      expect: 'doc_number'
     }
   ]);
   m.set('dispute-summarizer', [
@@ -2885,7 +2886,7 @@ function seedAgentEvals(): Map<string, EvalCase[]> {
       name: 'recommends action',
       prompt: 'Chargeback for non-receipt, $210',
       mode: 'contains',
-      expect: 'stub'
+      expect: 'recommendation'
     }
   ]);
   m.set('fraud-explainer', [
@@ -2893,7 +2894,7 @@ function seedAgentEvals(): Map<string, EvalCase[]> {
       name: 'explains drivers',
       prompt: 'Score 88: high velocity, new device',
       mode: 'contains',
-      expect: 'stub'
+      expect: 'velocity'
     }
   ]);
   return m;
@@ -2913,7 +2914,7 @@ function seedAgentRuns(): AgentRun[] {
     model,
     prompt,
     status,
-    text: status === 'completed' ? `stub: ${prompt}` : '',
+    text: status === 'completed' ? agentReply(prompt).text : '',
     structured: undefined,
     error: status === 'failed' ? 'provider timeout' : undefined,
     at: ago(hrs)

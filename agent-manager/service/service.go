@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/e6qu/intraktible/agent-manager/agents"
 	"github.com/e6qu/intraktible/agent-manager/command"
@@ -248,8 +249,15 @@ func (s *Service) escalateRun(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, err)
 		return
 	}
+	// An agent escalation is an agent_review case unless the caller named a more
+	// specific type, so the queue can route/filter it without depending on the
+	// client to send a value.
+	caseType := req.CaseType
+	if strings.TrimSpace(caseType) == "" {
+		caseType = "agent_review"
+	}
 	caseID, _, err := s.cmd.EscalateRun(r.Context(), id, domain.EscalateRun{
-		RunID: r.PathValue("run_id"), CompanyName: req.CompanyName, CaseType: req.CaseType, SLADays: req.SLADays,
+		RunID: r.PathValue("run_id"), CompanyName: req.CompanyName, CaseType: caseType, SLADays: req.SLADays,
 	})
 	if err != nil {
 		httpx.Error(w, http.StatusBadRequest, err)

@@ -175,6 +175,11 @@ func applyRequested(ctx context.Context, e eventlog.Envelope, s store.Store) err
 // openCase materializes a freshly opened case (status needs_review) with its
 // first audit entry. Used by both the manual and flow-escalation open paths.
 func openCase(ctx context.Context, e eventlog.Envelope, s store.Store, caseID, company, caseType string, slaDays int, context json.RawMessage, sourceID, detail string) error {
+	// A case opened without an SLA window would be due the instant it opens
+	// (immediately overdue); apply a sensible default so the reviewer has time.
+	if slaDays <= 0 {
+		slaDays = domain.DefaultSLADays
+	}
 	c := CaseView{
 		Org: e.Org, Workspace: e.Workspace, CaseID: caseID,
 		CompanyName: company, CaseType: caseType, Status: domain.StatusNeedsReview,

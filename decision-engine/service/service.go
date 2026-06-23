@@ -986,6 +986,10 @@ type decideRequest struct {
 	MockData   map[string]any  `json:"mock_data,omitempty"`
 	Metadata   json.RawMessage `json:"metadata,omitempty"`
 	Control    json.RawMessage `json:"control,omitempty"`
+	// Preview runs the flow without recording anything (no decision event, no case,
+	// no metrics/audit) — the builder's "Test decision". The response carries the
+	// same shape but an empty decision_id, since no decision was recorded.
+	Preview bool `json:"preview,omitempty"`
 }
 
 type decideResponse struct {
@@ -1114,8 +1118,14 @@ func (s *Service) runDecide(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, err)
 		return
 	}
-	result, err := s.decide.Decide(r.Context(), id, r.PathValue("slug"), env, req.Data,
-		command.EntityRef{Type: entity.Type(req.EntityType), ID: entity.ID(req.EntityID)})
+	ref := command.EntityRef{Type: entity.Type(req.EntityType), ID: entity.ID(req.EntityID)}
+	// Preview ("Test decision") runs the flow without recording anything; the live
+	// path records the decision (history, metrics, audit) as before.
+	decide := s.decide.Decide
+	if req.Preview {
+		decide = s.decide.Preview
+	}
+	result, err := decide(r.Context(), id, r.PathValue("slug"), env, req.Data, ref)
 	if err != nil {
 		httpx.Error(w, decideStatus(err), err)
 		return

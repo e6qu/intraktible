@@ -56,18 +56,21 @@ type Record struct {
 	ReasonCodes []ReasonCode    `json:"reason_codes,omitempty"`
 	// Disposition is the operational policy's outcome (approve|decline|refer) +
 	// the policy that assigned it, lifted first-class onto the decision record.
-	Disposition       string       `json:"disposition,omitempty"`
-	DispositionCode   string       `json:"disposition_code,omitempty"`
-	DispositionReason string       `json:"disposition_reason,omitempty"`
-	PolicyID          string       `json:"policy_id,omitempty"`
-	PolicyVersion     int          `json:"policy_version,omitempty"`
-	PreApprovalID     string       `json:"preapproval_id,omitempty"`
-	Error             string       `json:"error,omitempty"`
-	TimeOrdered       []string     `json:"time_ordered"`
-	Nodes             []NodeRecord `json:"nodes"`
-	StartedAt         time.Time    `json:"started_at"`
-	EndedAt           time.Time    `json:"ended_at,omitempty"`
-	DurationMS        int64        `json:"duration_ms,omitempty"`
+	Disposition       string `json:"disposition,omitempty"`
+	DispositionCode   string `json:"disposition_code,omitempty"`
+	DispositionReason string `json:"disposition_reason,omitempty"`
+	PolicyID          string `json:"policy_id,omitempty"`
+	PolicyVersion     int    `json:"policy_version,omitempty"`
+	PreApprovalID     string `json:"preapproval_id,omitempty"`
+	// CaseID links a decision that routed to manual_review to the case it opened,
+	// populated from the decision's ManualReviewRequested escalation event.
+	CaseID      string       `json:"case_id,omitempty"`
+	Error       string       `json:"error,omitempty"`
+	TimeOrdered []string     `json:"time_ordered"`
+	Nodes       []NodeRecord `json:"nodes"`
+	StartedAt   time.Time    `json:"started_at"`
+	EndedAt     time.Time    `json:"ended_at,omitempty"`
+	DurationMS  int64        `json:"duration_ms,omitempty"`
 }
 
 // Projector folds decision events into Record documents.
@@ -90,6 +93,8 @@ func (Projector) Apply(ctx context.Context, e eventlog.Envelope, s store.Store) 
 		return applyCompleted(ctx, e, s)
 	case events.TypeDecisionFailed:
 		return applyFailed(ctx, e, s)
+	case events.TypeManualReviewRequested:
+		return applyManualReview(ctx, e, s)
 	default:
 		return nil
 	}
@@ -165,6 +170,19 @@ func applyFailed(ctx context.Context, e eventlog.Envelope, s store.Store) error 
 	}
 	return update(ctx, s, e, p.DecisionID, func(r *Record) {
 		r.Status, r.Error, r.EndedAt, r.DurationMS = "failed", p.Error, e.Time, p.DurationMS
+	})
+}
+
+// applyManualReview links the decision to the case its manual_review node opened.
+// The event is emitted after the terminal event on the same stream, so the record
+// already exists.
+func applyManualReview(ctx context.Context, e eventlog.Envelope, s store.Store) error {
+	p, err := decode[events.ManualReviewRequested](e)
+	if err != nil {
+		return err
+	}
+	return update(ctx, s, e, p.DecisionID, func(r *Record) {
+		r.CaseID = p.CaseID
 	})
 }
 

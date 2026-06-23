@@ -36,6 +36,7 @@ import {
   runFlow,
   evalExpr
 } from './engine';
+import { agentReply } from './agent';
 
 export interface DemoResponse {
   status: number;
@@ -572,6 +573,12 @@ route('POST', '/v1/flows/:slug/:env/decide', (m, body) => {
   if (!flow) return notFound();
   if (!isEnvironment(m[2])) return badRequest(`unknown environment "${m[2]}"`);
   const data = (body.data as Body) ?? {};
+  // A preview run (the builder's test) computes the full result but records nothing —
+  // no decision, no audit, no metrics — matching the real backend's Preview.
+  if (body.preview === true) {
+    const { result } = decideFlow(flow, m[2] as Environment, data, { record: false });
+    return ok({ ...result, decision_id: '' });
+  }
   const { result } = decideFlow(flow, m[2] as Environment, data);
   // Surface the run in the global audit trail so the build→decide→case→resolve
   // journey actually shows up on the Audit page.
@@ -777,18 +784,19 @@ route('POST', '/v1/agents/:name/run', (m, body) => {
   if (!agent) return notFound();
   const runId = nextId('run');
   const prompt = String(body.prompt ?? '');
-  const out = `stub: ${prompt}`;
+  const reply = agentReply(prompt, agent.schema as { properties?: Record<string, unknown> });
   state.agentRuns.unshift({
     run_id: runId,
     agent: agent.name,
     model: agent.model,
     prompt,
     status: 'completed',
-    text: out,
+    text: reply.text,
+    structured: reply.structured,
     at: new Date().toISOString()
   });
   agent.runs += 1;
-  return ok({ run_id: runId, status: 'completed', text: out });
+  return ok({ run_id: runId, status: 'completed', text: reply.text, structured: reply.structured });
 });
 route('GET', '/v1/agents/:name/runs', (m) =>
   ok({ runs: state.agentRuns.filter((r) => r.agent === m[1]) })
@@ -805,7 +813,11 @@ route('POST', '/v1/agents/:name/evals/run', (m, body) => {
   const agent = state.agents.find((x) => x.name === m[1]);
   if (!agent) return notFound();
   const version = Number(body.version ?? agent.latest ?? 1);
-  const results = scoreEvalCases(state.agentEvals.get(m[1]) ?? [], version);
+  const results = scoreEvalCases(
+    state.agentEvals.get(m[1]) ?? [],
+    version,
+    agent.schema as { properties?: Record<string, unknown> }
+  );
   const passed = results.filter((r) => r.passed).length;
   return ok({ total: results.length, passed, failed: results.length - passed, version, results });
 });
@@ -1057,8 +1069,12 @@ route('PUT', '/v1/privacy', (_m, body) => {
 });
 
 // --- API keys -------------------------------------------------------------------
-route('GET', '/v1/api-keys', () => ok({ api_keys: state.apiKeys }));
+route('GET', '/v1/api-keys', () => {
+  if (!roleAtLeast('admin')) return forbidden('managing API keys requires the admin role');
+  return ok({ api_keys: state.apiKeys });
+});
 route('POST', '/v1/api-keys', (_m, body) => {
+  if (!roleAtLeast('admin')) return forbidden('managing API keys requires the admin role');
   const key: ManagedApiKey = {
     id: nextId('key'),
     name: String(body.name ?? ''),
@@ -1073,12 +1089,14 @@ route('POST', '/v1/api-keys', (_m, body) => {
   return ok({ api_key: key, secret: `sk-demo-${Math.random().toString(36).slice(2, 18)}` });
 });
 route('POST', '/v1/api-keys/:id/rotate', (m) => {
+  if (!roleAtLeast('admin')) return forbidden('managing API keys requires the admin role');
   const key = state.apiKeys.find((k) => k.id === decodeURIComponent(m[1]));
   if (!key) return notFound();
   key.rotated_at = new Date().toISOString();
   return ok({ api_key: key, secret: `sk-demo-${Math.random().toString(36).slice(2, 18)}` });
 });
 route('DELETE', '/v1/api-keys/:id', (m) => {
+  if (!roleAtLeast('admin')) return forbidden('managing API keys requires the admin role');
   const key = state.apiKeys.find((k) => k.id === decodeURIComponent(m[1]));
   if (!key) return notFound();
   key.revoked_at = new Date().toISOString();
@@ -1108,6 +1126,7 @@ route('POST', '/v1/comments/:type/:id', (m, body) => {
 
 // --- Audit ----------------------------------------------------------------------
 route('GET', '/v1/audit', (_m, _b, q) => {
+  if (!roleAtLeast('admin')) return forbidden('the audit log requires the admin role');
   const filtered = filterAudit(q);
   if (q.get('format') === 'csv') return text(auditCsv(filtered));
   const limit = Number(q.get('limit') ?? 0);
@@ -1118,6 +1137,7 @@ route('GET', '/v1/audit', (_m, _b, q) => {
 
 // --- MRM ------------------------------------------------------------------------
 route('GET', '/v1/mrm/report', (_m, _b, q) => {
+  if (!roleAtLeast('admin')) return forbidden('the model-risk report requires the admin role');
   const report = mrmReport();
   const fmt = q.get('format');
   if (fmt === 'csv') return text(mrmCsv(report));
@@ -1127,18 +1147,42 @@ route('GET', '/v1/mrm/report', (_m, _b, q) => {
 
 // --- Copilot --------------------------------------------------------------------
 route('POST', '/v1/copilot/explain', (_m, body) => {
+  // Describe the flow from the nodes it ACTUALLY has (the prior canned text claimed a
+  // risk-band split + manual review even for flows that had neither).
   const graph = (body.graph as { nodes?: { type?: string; name?: string }[] }) ?? {};
-  const nodeCount = graph.nodes?.length ?? 0;
-  const kinds = [...new Set((graph.nodes ?? []).map((n) => n.type))].join(', ');
+  const nodes = graph.nodes ?? [];
+  const has = (t: string) => nodes.some((n) => n.type === t);
+  const steps: string[] = [];
+  if (has('input')) steps.push('reads the input');
+  if (has('predict')) steps.push('scores it with a predictive model');
+  if (has('assignment')) steps.push('derives intermediate values');
+  if (has('ai')) steps.push('calls an AI agent');
+  if (has('split')) steps.push('branches on a condition');
+  if (has('manual_review')) steps.push('routes some cases to a human reviewer');
+  if (has('output')) steps.push('emits a decision');
+  const kinds = [...new Set(nodes.map((n) => n.type))].filter(Boolean).join(', ');
+  const flow = steps.length ? `It ${steps.join(', then ')}.` : 'It has no executable steps yet.';
   return ok({
-    text: `This flow has ${nodeCount} node(s) using ${kinds || 'no'} step types. It reads the application input, scores it, branches on the risk band, and routes high-risk cases to a manual reviewer before emitting a decision.`
+    text: `This flow has ${nodes.length} node(s) (${kinds || 'none'}). ${flow}`
   });
 });
 route('POST', '/v1/copilot/suggest', (_m, body) => {
+  // A keyword-shaped suggestion so different requirements get different advice.
   const prompt = String(body.prompt ?? '');
-  return ok({
-    text: `Suggested logic for "${prompt}":\n- Add a rule node: when income < 30000 set risk = risk + 20\n- Add a split: route risk >= 60 to manual review\n- Bind a policy: approve when risk < 30, decline when risk >= 70, otherwise refer.`
-  });
+  const p = prompt.toLowerCase();
+  const lines: string[] = [];
+  if (/income|salary|afford/.test(p))
+    lines.push('Add an assignment: dti = debt / income, then split on dti.');
+  if (/fraud|velocity|device/.test(p))
+    lines.push('Add a Predict node referencing a fraud model and branch on its probability.');
+  if (/sanction|aml|watchlist|pep/.test(p))
+    lines.push('Add a split that routes a sanctions/watchlist hit straight to manual review.');
+  if (/review|manual|human|escalat/.test(p))
+    lines.push('Add a manual_review node on the high-risk branch to open a case.');
+  if (lines.length === 0)
+    lines.push('Add a Predict node to score the input, then a split to branch on the score.');
+  lines.push('Bind a policy: approve below the low band, decline above the high band, else refer.');
+  return ok({ text: `Suggested logic for "${prompt}":\n- ${lines.join('\n- ')}` });
 });
 route('POST', '/v1/copilot/generate', () =>
   ok({
