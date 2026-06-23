@@ -1,19 +1,15 @@
 <!doctype html>
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
-<!--
-  Root landing for the GitHub Pages site. Deliberately minimal: it RESERVES the root
-  path and routes visitors to the interactive demo and the docs, without committing
-  to a marketing/presentation page — that can replace this file later without
-  touching /demo/ or /docs/.
--->
+<!-- Landing page for the GitHub Pages site. Self-contained static HTML (no build).
+     Links to the interactive demo (/demo/) and the rendered docs (/docs/). -->
 <html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>intraktible</title>
+    <title>intraktible — decisions, as data</title>
     <meta
       name="description"
-      content="intraktible — an API-first, event-sourced decision platform with a persona-adaptive UI."
+      content="An open-source, self-hosted, event-sourced decision platform: versioned flows and AI agents on a fully auditable core, with four-eyes change control and built-in model-risk governance."
     />
     <style>
       :root {
@@ -24,42 +20,69 @@
       }
       body {
         margin: 0;
-        min-height: 100vh;
-        display: grid;
-        place-items: center;
-        padding: 2rem;
         font-family:
           ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-        background: radial-gradient(120% 120% at 50% 0%, #1b2233 0%, #0c0f17 60%, #080a10 100%);
+        background: #0c0f17;
+        color: #cdd5e3;
+        line-height: 1.6;
+      }
+      a {
+        color: #8fa6ff;
+        text-decoration: none;
+      }
+      .wrap {
+        max-width: 60rem;
+        margin: 0 auto;
+        padding: 0 1.25rem;
+      }
+      header.nav {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 1rem 1.25rem;
+        border-bottom: 1px solid #1d2433;
+      }
+      .brand {
         color: #e7ecf5;
+        font-weight: 650;
+        font-size: 1.1rem;
+        letter-spacing: -0.01em;
       }
-      main {
-        width: 100%;
-        max-width: 40rem;
+      .nav-links {
+        display: flex;
+        gap: 1.2rem;
+        font-size: 0.92rem;
+      }
+      /* Hero */
+      .hero {
         text-align: center;
+        padding: 4.5rem 0 3rem;
+        background: radial-gradient(120% 120% at 50% 0%, #18203200 0%, #0c0f17 70%);
       }
-      .mark {
+      .eyebrow {
         font-size: 0.78rem;
         letter-spacing: 0.22em;
         text-transform: uppercase;
-        color: #8a93a6;
+        color: #6c7588;
       }
       h1 {
-        margin: 0.5rem 0 0.75rem;
-        font-size: clamp(2rem, 6vw, 3.25rem);
+        margin: 0.6rem auto 0.9rem;
+        max-width: 22ch;
+        font-size: clamp(2.2rem, 6vw, 3.4rem);
         font-weight: 650;
-        letter-spacing: -0.01em;
+        letter-spacing: -0.02em;
+        color: #f3f6fb;
+        line-height: 1.1;
       }
       p.lede {
         margin: 0 auto 2rem;
-        max-width: 32rem;
-        font-size: 1.05rem;
-        line-height: 1.55;
+        max-width: 40rem;
+        font-size: 1.1rem;
         color: #aeb7c7;
       }
-      .links {
+      .ctas {
         display: flex;
-        gap: 0.9rem;
+        gap: 0.8rem;
         justify-content: center;
         flex-wrap: wrap;
       }
@@ -67,11 +90,10 @@
         display: inline-flex;
         align-items: center;
         gap: 0.45rem;
-        padding: 0.7rem 1.3rem;
+        padding: 0.7rem 1.4rem;
         border-radius: 0.6rem;
-        text-decoration: none;
         font-weight: 550;
-        font-size: 0.98rem;
+        font-size: 1rem;
         border: 1px solid #2a3346;
         color: #e7ecf5;
         background: #161c29;
@@ -88,28 +110,68 @@
       a.btn.primary:hover {
         background: #4666e0;
       }
-      ul.feats {
-        list-style: none;
-        padding: 0;
-        margin: 0 auto 2rem;
+      /* Features */
+      section.features {
+        padding: 3rem 0;
+        border-top: 1px solid #1d2433;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+        gap: 1rem;
+      }
+      .card {
+        border: 1px solid #1d2433;
+        border-radius: 10px;
+        padding: 1.3rem;
+        background: #0e1320;
+      }
+      .card h3 {
+        margin: 0 0 0.4rem;
+        font-size: 1.05rem;
+        color: #eef2f8;
+      }
+      .card p {
+        margin: 0;
+        font-size: 0.92rem;
+        color: #aeb7c7;
+      }
+      /* Loop */
+      section.loop {
+        padding: 2.5rem 0 3rem;
+        border-top: 1px solid #1d2433;
+      }
+      section.loop h2 {
+        font-size: 1.4rem;
+        color: #eef2f8;
+        margin: 0 0 1rem;
+      }
+      .steps {
         display: flex;
         flex-wrap: wrap;
-        justify-content: center;
         gap: 0.5rem;
-        max-width: 34rem;
+        align-items: center;
+        color: #cdd5e3;
+        font-size: 0.95rem;
       }
-      ul.feats li {
-        font-size: 0.8rem;
-        color: #aeb7c7;
+      .steps .step {
         border: 1px solid #2a3346;
         border-radius: 999px;
-        padding: 0.25rem 0.7rem;
+        padding: 0.35rem 0.85rem;
         background: #11151f;
       }
-      footer {
-        margin-top: 2.5rem;
-        font-size: 0.82rem;
+      .steps .arrow {
         color: #6c7588;
+      }
+      .loop p {
+        color: #aeb7c7;
+      }
+      footer {
+        border-top: 1px solid #1d2433;
+        padding: 2rem 0 3rem;
+        font-size: 0.85rem;
+        color: #6c7588;
+        text-align: center;
       }
       footer a {
         color: #9aa4b6;
@@ -117,29 +179,104 @@
     </style>
   </head>
   <body>
+    <header class="nav">
+      <span class="brand">intraktible</span>
+      <nav class="nav-links">
+        <a href="./demo/">Demo</a>
+        <a href="./docs/">Docs</a>
+        <a href="https://github.com/e6qu/intraktible">Source</a>
+      </nav>
+    </header>
+
     <main>
-      <p class="mark">intraktible</p>
-      <h1>Decisions, as data.</h1>
-      <p class="lede">
-        An open-source, self-hosted decision platform: versioned flows and AI agents on an
-        event-sourced, fully auditable core, with four-eyes change control and built-in model-risk
-        governance (SR&nbsp;11-7&nbsp;/&nbsp;SS1/23). A persona-adaptive UI over one API.
-      </p>
-      <ul class="feats">
-        <li>Event-sourced &amp; replayable</li>
-        <li>Four-eyes &amp; audit trail</li>
-        <li>Model risk &amp; drift</li>
-        <li>AGPL-3.0, self-hosted</li>
-      </ul>
-      <div class="links">
-        <a class="btn primary" href="./demo/">Launch the live demo →</a>
-        <a class="btn" href="./docs/">Documentation</a>
-        <a class="btn" href="https://github.com/e6qu/intraktible">Source</a>
-      </div>
-      <footer>
-        The demo runs entirely in your browser — no sign-up, no backend, changes persist locally. ·
-        <a href="https://github.com/e6qu/intraktible">github.com/e6qu/intraktible</a>
-      </footer>
+      <section class="hero">
+        <div class="wrap">
+          <p class="eyebrow">Agentic decision platform</p>
+          <h1>Decisions, as data.</h1>
+          <p class="lede">
+            An open-source, self-hosted decision platform: versioned flows and AI agents on an
+            event-sourced, fully auditable core — with four-eyes change control and built-in
+            model-risk governance (SR&nbsp;11-7&nbsp;/&nbsp;SS1/23). A persona-adaptive UI over one
+            API.
+          </p>
+          <div class="ctas">
+            <a class="btn primary" href="./demo/">Launch the live demo →</a>
+            <a class="btn" href="./docs/">Read the docs</a>
+            <a class="btn" href="https://github.com/e6qu/intraktible">View source</a>
+          </div>
+        </div>
+      </section>
+
+      <section class="features">
+        <div class="wrap">
+          <div class="grid">
+            <div class="card">
+              <h3>Build decisions visually</h3>
+              <p>
+                Compose versioned flows from rules, decision tables, scorecards, predictive models,
+                and AI agents on a canvas. Test before you publish.
+              </p>
+            </div>
+            <div class="card">
+              <h3>Event-sourced &amp; replayable</h3>
+              <p>
+                Every decision is recorded as an immutable event with a full node-by-node trace —
+                inspect, replay, and explain any outcome.
+              </p>
+            </div>
+            <div class="card">
+              <h3>Governed by design</h3>
+              <p>
+                Four-eyes deployment approval, an immutable audit log, RBAC, and a model-risk
+                inventory with drift monitoring — built in, not bolted on.
+              </p>
+            </div>
+            <div class="card">
+              <h3>Human-in-the-loop</h3>
+              <p>
+                When judgement is needed, a flow escalates to a case with SLA tracking; reviewers
+                triage and resolve, and the trail links back to the decision.
+              </p>
+            </div>
+            <div class="card">
+              <h3>Persona-adaptive UI</h3>
+              <p>
+                One API, many lenses: the same platform re-prioritises for a builder, an operator, a
+                manager, a developer, or an executive.
+              </p>
+            </div>
+            <div class="card">
+              <h3>Open source, self-hosted</h3>
+              <p>
+                AGPL-3.0, a Go modular monolith with a SvelteKit UI, run on your own infrastructure
+                with no per-decision fees.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="loop">
+        <div class="wrap">
+          <h2>The core loop</h2>
+          <div class="steps">
+            <span class="step">Build a flow</span><span class="arrow">→</span>
+            <span class="step">Deploy</span><span class="arrow">→</span>
+            <span class="step">Run decisions</span><span class="arrow">→</span>
+            <span class="step">Escalate to review</span><span class="arrow">→</span>
+            <span class="step">Govern</span>
+          </div>
+          <p>
+            Walk it yourself in the <a href="./demo/">interactive demo</a> — fully in your browser,
+            no sign-up — or read the <a href="./docs/journeys.html">user journeys</a>.
+          </p>
+        </div>
+      </section>
     </main>
+
+    <footer>
+      The demo runs entirely in your browser — no backend; changes persist locally. ·
+      <a href="https://github.com/e6qu/intraktible">github.com/e6qu/intraktible</a> · AGPL-3.0
+    </footer>
   </body>
 </html>

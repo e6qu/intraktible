@@ -910,6 +910,11 @@ a PersonaHome **cockpit** (KPI cards + recent-activity), a decision **verdict he
 agent run output, MRM rendering its previously-discarded governance signals, and the long-broken mobile
 banner. Implementation fanned out across isolated git worktrees and integrated on the shared Badge.
 
+Documentation followed: a `docs/JOURNEYS.md` documenting the end-to-end user journeys, a **rendered
+`/docs/` site** generated from the Markdown at deploy time (`web/scripts/build-docs.mjs` via `marked`,
+themed with a sidebar) and a real **landing page** at the Pages root — all three assembled by the
+`pages` workflow alongside the demo.
+
 ---
 
 ## 9. MVP non-goals

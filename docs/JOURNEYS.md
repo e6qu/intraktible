@@ -1,0 +1,274 @@
+# User journeys
+
+intraktible is an agentic decision platform. You author a **decision flow** (a graph
+of nodes that turns an input into a verdict), version and deploy it per environment,
+then run decisions against it through a test panel or the decision API. Flows that
+need a human escalate to a **case**; predictive models and LLM agents plug into the
+same flows; and the whole workspace is governed through versioning, four-eyes
+promotion, monitoring, model-risk inventory, and an immutable audit log.
+
+The core loop is: **build a flow → deploy it → run decisions → escalate to human
+review where needed → govern the result.** Everything else (policies, pre-approvals,
+models, agents, context data) hangs off that loop.
+
+## Personas
+
+A persona is *who is looking*, not a separate product. The platform is one API-first
+application; selecting a persona re-prioritises the same data and surfaces for a role
+— it reorders and relabels the navigation, picks a default landing page, surfaces the
+stats and actions that role asks first, and applies a default lens (an initial filter)
+on shared list pages. The pages, their data, and their capabilities are identical
+across personas; only the emphasis changes. You switch persona from the account menu;
+the choice is local to your browser. Persona is orthogonal to light/dark theme and to
+your role — your role still gates what you can actually do (see [Roles](#roles-and-gating)).
+
+---
+
+## Core journeys
+
+### Author and publish a decision flow
+
+Spans: **Flows** (`/engine`) → **Flow builder** (`/engine/[flowId]`).
+
+1. On Flows, enter a slug and name and click **Create flow**. Outcome: an empty flow
+   with a single input node, version 1, nothing deployed.
+2. Open the flow. On the builder canvas, add nodes from the palette and connect them
+   from input to output. The node types are: **input**, **assignment** (set fields
+   from expressions), **split** (branch on a condition), **predict** (run a registered
+   model), **AI** (run an agent), **manual review** (escalate to a case), and
+   **output**. Outcome: a working draft graph.
+3. Select a node to edit its logic in the side panel — assignment expressions, split
+   branch conditions, the model or agent a node calls. Outcome: changes are held in
+   the working draft, not yet versioned.
+4. Run a **test decision** with sample input. Outcome: you see the path taken
+   node-by-node and the resulting output without recording anything.
+5. Click **Publish**. Outcome: the draft becomes a new immutable version; `latest`
+   advances. The active deployed version is what the decision API runs — publishing
+   alone does not deploy.
+
+### Promote with four-eyes
+
+Spans: **Flow builder** (`/engine/[flowId]`), Deploy & versions tab.
+
+1. Deploy a version to **sandbox** or **staging** directly. Outcome: that version is
+   live in the chosen non-production environment immediately.
+2. Request a **production** deployment. Production cannot be deployed directly; the
+   request becomes a **pending** deployment request recorded in the audit trail.
+   Outcome: a pending request awaiting approval.
+3. A *different* user with the **approver** role (or higher) approves it. The platform
+   enforces four-eyes: the requester cannot approve their own request, and a
+   non-approver is refused. Outcome: on approval the version goes live in production;
+   on rejection it stays pending-rejected with the recorded reason.
+
+You can also **roll back** an environment to its previously-live version, and
+**schedule** a future deployment from the same tab.
+
+### Run a decision and read its trace
+
+Spans: **Flow builder** test panel or the decision API → **Decisions** (`/decisions`)
+→ **Decision trace** (`/decisions/[decisionId]`).
+
+1. Run a decision: either from the builder's test panel, or by calling
+   `POST /v1/flows/{slug}/{env}/decide` with input data (a batch variant exists for a
+   dataset). The engine walks the deployed graph: it threads the input record through
+   assignment, predict, AI, and split nodes; a split takes the first branch whose
+   condition is true (a split with no matching branch and no default fails the
+   decision rather than silently routing). Outcome: a recorded decision with a status
+   (`completed`/`failed`), an output payload, reason codes, and — if a policy is bound
+   to the flow — a **disposition** (`approve`, `decline`, or `refer`).
+2. On Decisions, filter by flow, environment, status, variant (champion/challenger),
+   or decision id to find the run. Outcome: a list showing status, disposition, and
+   latency per run.
+3. Open the decision. Outcome: the **trace** — the verdict and its reason codes, the
+   node-by-node path with the branch taken at each split, and the input and output
+   payloads at each step. You can export the trace, and if the flow routed to manual
+   review, open the **case** it opened.
+
+### Manual review: a case from escalation to resolution
+
+Spans: a flow's manual-review node → **Case queue** (`/cases`) → **Case**
+(`/cases/[caseId]`), linking back to **Decision trace**.
+
+1. A decision hits a **manual review** node. Outcome: the decision records a
+   `MANUAL_REVIEW` reason code, and a case opens automatically in the queue with the
+   decision's output as its context, an SLA (default 3 days), `needs_review` status,
+   and a link back to its source decision.
+2. On the Case queue, filter to `needs_review` and sort by urgency (soonest-due and
+   overdue first). Run an **SLA sweep** to flag cases past their due time. Outcome: a
+   prioritised work list.
+3. Open the top case. Read its decision context and, if needed, open the source
+   decision's trace. Outcome: full context for the review.
+4. **Assign** the case (e.g. to yourself) and record **notes**. Outcome: assignment
+   and each note land on the case's immutable activity trail.
+5. Set the **status** to resolve it. Outcome: the case leaves the open queue; the
+   status change is recorded on the trail.
+
+### Configure an AI agent, review its runs, escalate to a case
+
+Spans: **Agent Manager** (`/agents`) → **Agent** (`/agents/[name]`) → **Case queue**.
+
+1. On Agent Manager, define an agent: a prompt/system, a model, optional tools, and an
+   optional structured-output schema. Outcome: a versioned agent with run/cost stats
+   across the workspace.
+2. Open the agent and **run** it (request/response or streamed) with a prompt.
+   Outcome: an output recorded as a run, with the run added to the agent's history and
+   its token/cost rollups.
+3. Review the **run history** and the offline **eval** pass-rate (the agent scored
+   against a set of eval cases). Outcome: a view of how the agent behaves and where it
+   regresses across versions.
+4. **Escalate** a run to a case for human review. Outcome: a case opens in the queue
+   (`agent_review` type) referencing the originating run, and is worked exactly like a
+   manual-review case. (Agents also run inside a flow via an **AI** node, where their
+   output feeds downstream nodes.)
+
+### Register a predictive model and monitor drift
+
+Spans: **Models** (`/models`), referenced from a flow's **predict** node.
+
+1. Define a model from a spec. Supported kinds: **logistic**, **GBM**, **expression**,
+   or an **external** endpoint. Outcome: a model hosted as data, with an owner, ready
+   to be called from a Predict node.
+2. Open the model and **capture a baseline**. Outcome: the current score distribution
+   is recorded as the reference for drift.
+3. Set a drift monitor: alert when **PSI** (Population Stability Index) exceeds a
+   threshold. Outcome: the model's drift status shows the current PSI versus the
+   baseline and whether the monitor is firing; the drift state surfaces on the model
+   list and in the model-risk inventory.
+
+### Author a policy, backtest it, publish
+
+Spans: **Policies** (`/policies`).
+
+1. Create a policy bound to a flow (by slug). A policy is the disposition layer over a
+   flow's output: ordered **bands** that map a condition to `approve`, `decline`, or
+   `refer`, with a default. Outcome: an empty, versioned policy.
+2. Author the ordered bands (condition → disposition). The first matching band wins;
+   the default applies when none match. Outcome: a draft band set.
+3. **Preview impact** (backtest the draft against recorded decisions). Outcome: the
+   mix of dispositions the draft would produce, so you see the shift before publishing.
+4. **Publish** the version. Outcome: a new immutable policy version; subsequent
+   decisions on the bound flow carry the disposition it produces, with the matched
+   band's reason code attached.
+
+### Grant a pre-approval
+
+Spans: **Pre-approvals** (`/preapprovals`).
+
+1. Grant a pre-approval for an entity — a disposition (default `approve`), optional
+   terms, an optional bound flow, and an expiry. Outcome: a standing decision for that
+   entity.
+2. The engine honours an active, unexpired grant **instantly instead of running the
+   flow** for that entity. Outcome: faster turnaround for known-good entities; each
+   grant tracks how often it has been honoured. (A batch path can derive grants from a
+   dataset run.)
+3. Review active, expiring, and revoked grants, and **revoke** a grant with a reason.
+   Outcome: the grant stops being honoured; future calls run the flow again.
+
+### Set up context data
+
+Spans: **Context data** (`/data`) → **Entity** (`/data/[type]/[id]`).
+
+1. Define a **connector** to an external source. Outcome: a named source a flow can
+   fetch signals from (resolved before execution so the core does no I/O).
+2. Define a **feature** — an aggregation (count or sum) over an entity type's events
+   within a time window. Outcome: a feature computed at read time from recorded events.
+3. Register **entities** and record **events**. Open an entity to see its attributes,
+   its event history, and the current value of each feature. Outcome: the data a
+   decision sees when it runs for that entity.
+
+### Govern the workspace
+
+Spans: **Model risk** (`/mrm`), **Observability** (`/observability`), **Audit log**
+(`/audit`), **API keys** (`/keys`). The MRM, audit, and API-keys pages are **admin
+only** — they are hidden from a non-admin's navigation and home, and the pages gate
+on the server as well.
+
+- **Model risk (MRM).** The SR 11-7 / SS1/23 model inventory in one register: every
+  flow, predictive model, and agent, each with its validation coverage (assertions for
+  flows, a drift baseline for models, eval cases for agents), live monitoring (success
+  rate, firing monitors, drift PSI), and any open governance gaps. Scan for entries
+  with open gaps or failing validation, open an entry to read its evidence, and export
+  the report (CSV or Markdown). *Admin only.*
+- **Observability.** The operational view across flows: set a success and latency
+  objective (SLO) per flow and read attainment and remaining error budget, see AI
+  usage and cost by model, and read how distributed tracing is emitted.
+- **Audit log.** The immutable, event-sourced trail of who did what, when — flow
+  publishes and deployments, decisions, case activity, key changes, and more. Filter
+  by stream, type, actor, and time (the filter lives in the URL and is shareable),
+  and export matching rows to CSV. *Admin only.*
+- **API keys.** Issue and manage the keys that authenticate decision-API calls. Create
+  a key scoped to an environment and role, rotate it with a grace window, or revoke
+  it. *Admin only.*
+
+---
+
+## By persona
+
+Each persona below lives in a subset of the journeys above. The persona sets the
+default landing page, the navigation order, the home stats/actions, and the initial
+lens on shared lists.
+
+| Persona | Label | Lands on | Lives in |
+| --- | --- | --- | --- |
+| builder | Workflow Designer | Builder home | Author & publish flows; policies; context data; models |
+| developer | Developer / Integrator | Persona home | Run decisions & read traces; API keys; agents |
+| operator | Risk Operator | Operator home | Manual review queue; pre-approvals; decisions |
+| manager | Team Manager | Persona home | Four-eyes approvals; case load; audit |
+| product | Product / Experimentation | Persona home | Policy backtests; A/B variants; models |
+| showcase | Executive | Showcase home | KPIs, trends, governance posture |
+| evaluator | Evaluator / Guest | Evaluator home | Guided look at builder, decisions, cases |
+
+- **Workflow Designer (builder).** Spends the day on the canvas: authoring and
+  versioning flows, wiring policy bands and context data, and referencing models from
+  Predict nodes. Default persona. Lives in *Author and publish a flow*, *Author a
+  policy*, and *Set up context data*.
+- **Developer / Integrator.** Integrates the decision API and debugs. The decisions
+  list is relabelled **Traces** and lands on failing traces, leading with
+  status/duration/environment. Manages API keys and agents. Lives in *Run a decision
+  and read its trace* and the agent journeys.
+- **Risk Operator.** Works the queues. Lands on the open case queue, most-urgent
+  first, and clears it; reviews pre-approvals and scans recent decisions. Lives in
+  *Manual review* and *Grant a pre-approval*.
+- **Team Manager.** Watches throughput and governance. Home stats lead with pending
+  approvals, cases needing review, and overdue cases; reviews the audit trail. Lives
+  in *Promote with four-eyes* (as the approver) and the queue/oversight side of
+  *Manual review*.
+- **Product / Experimentation.** Tunes impact. Lands on the **challenger** variant of
+  decisions, leading with the variant column; backtests flows and policy changes and
+  manages models. Lives in *Author a policy → backtest* and *Register a model*.
+- **Executive (showcase).** Reads posture, not detail: decision volume, trends, case
+  health, and governance (MRM/audit, when admin). Lives in the read side of
+  *Govern the workspace*.
+- **Evaluator / Guest.** A guided, minimal surface (builder, decisions, cases) for
+  exploring the platform without a role's clutter. Walks an abbreviated version of the
+  build → decide → review loop.
+
+---
+
+## Roles and gating
+
+Actions are gated by role, ranked **viewer < operator < editor < approver < admin**.
+A higher role includes the rights below it.
+
+| Role | Can |
+| --- | --- |
+| viewer | Read-only across surfaces |
+| operator | Work cases (assign, note, set status), run decisions |
+| editor | Author and publish flows, policies, models, agents, context data |
+| approver | Everything an editor can, plus approve/reject production deployment requests |
+| admin | Everything, plus model risk, audit log, and API-key management |
+
+Two gates matter most. **Four-eyes promotion**: approving a production deployment
+requires the approver role *and* a different actor than the requester. **Admin-only
+surfaces**: model risk, audit, and API keys are hidden from a non-admin's navigation
+and home (so no dead-end 403s) and are enforced server-side as defence in depth.
+
+Role gates what you *can do*; persona gates what you *see first*. They are independent:
+any role can run under any persona.
+
+## The in-app page guide
+
+Every page has a built-in guide. Click the **?** button in the header to open the
+guide for the current page — a one-line summary, the things you do on that page, and
+its key flows, named to match the on-screen controls. This documentation is the
+end-to-end view; the in-app guide is the per-page view.
