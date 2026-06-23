@@ -17,7 +17,7 @@
 
   // API calls authenticate via the session cookie (empty key → no X-Api-Key).
   const key = '';
-  const PAGE = 50;
+  const PAGE = 25;
   let list = $state<Decision[]>([]);
   let total = $state(0);
   let offset = $state(0);
@@ -186,7 +186,9 @@
       <table>
         <thead>
           <tr>
-            {#each columns as col (col)}<th>{columnLabel(col)}</th>{/each}
+            {#each columns as col (col)}<th class:num={col === 'version' || col === 'duration'}
+                >{columnLabel(col)}</th
+              >{/each}
           </tr>
         </thead>
         <tbody>
@@ -200,11 +202,11 @@
                 {:else if col === 'env'}
                   <td>{d.environment}</td>
                 {:else if col === 'version'}
-                  <td>v{d.version}</td>
+                  <td class="num">v{d.version}</td>
                 {:else if col === 'variant'}
                   <td class="muted">{d.variant ?? '—'}</td>
                 {:else if col === 'duration'}
-                  <td>{d.duration_ms ?? 0} ms</td>
+                  <td class="num">{d.duration_ms ?? 0} ms</td>
                 {:else if col === 'when'}
                   <td class="muted" title={absTime(d.started_at)}
                     ><RelativeTime value={d.started_at} /></td
@@ -254,6 +256,14 @@
     padding: 0.55rem 0.6rem;
     border-bottom: 1px solid var(--border);
     font-size: 0.92rem;
+  }
+  tbody tr:hover {
+    background: var(--surface-2);
+  }
+  th.num,
+  td.num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
   }
   .badge {
     display: inline-block;

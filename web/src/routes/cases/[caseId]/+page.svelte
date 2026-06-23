@@ -15,6 +15,7 @@
   import Skeleton from '$lib/Skeleton.svelte';
   import { roleAtLeast } from '$lib/roles';
   import { user } from '$lib/session';
+  import { appHref } from '$lib/paths';
 
   // API calls authenticate via the session cookie (empty key -> no X-Api-Key header).
   const key = '';
@@ -81,7 +82,10 @@
         {c.days_left}{#if c.sla_state}<span class="muted"> ({c.sla_state})</span>{/if}
       </dd>
       {#if c.source_decision_id}<dt>source decision</dt>
-        <dd><code>{c.source_decision_id}</code></dd>{/if}
+        <dd>
+          <a href={appHref(`/decisions/${c.source_decision_id}`)}>{c.source_decision_id} →</a>
+        </dd>
+      {/if}
     </dl>
 
     {#if displayEntries(c.context).length > 0}

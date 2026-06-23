@@ -27,19 +27,34 @@
       /* non-fatal */
     }
   }
+  // Escape closes the dropdown and returns focus to the bell, matching the persona
+  // menu — a keyboard/screen-reader user isn't trapped in an open <details>.
+  function onKeydown(e: KeyboardEvent) {
+    if (e.key === 'Escape' && el?.open) {
+      el.open = false;
+      summaryEl?.focus();
+    }
+  }
+  let el = $state<HTMLDetailsElement | null>(null);
+  let summaryEl = $state<HTMLElement | null>(null);
   onMount(load);
 </script>
 
 <details
+  bind:this={el}
   class="bell"
   data-testid="notifications-bell"
   ontoggle={(e) => e.currentTarget.open && load()}
 >
-  <summary aria-label={`Notifications${unread ? ` (${unread} unread)` : ''}`} title="Notifications">
+  <summary
+    bind:this={summaryEl}
+    aria-label={`Notifications${unread ? ` (${unread} unread)` : ''}`}
+    title="Notifications"
+  >
     <Icon name="bell" size={16} />
     {#if unread > 0}<span class="badge" data-testid="notif-badge">{unread}</span>{/if}
   </summary>
-  <div class="panel" role="menu">
+  <div class="panel" role="menu" tabindex="-1" onkeydown={onKeydown}>
     <p class="head">Notifications</p>
     {#if items.length === 0}
       <p class="empty">You're all caught up.</p>
@@ -47,7 +62,7 @@
       <ul>
         {#each items as n (n.notification_id)}
           <li>
-            <button class="item" class:unread={!n.read} onclick={() => markRead(n)}>
+            <button class="item" class:unread={!n.read} role="menuitem" onclick={() => markRead(n)}>
               <span class="meta"
                 ><b>{n.author}</b> mentioned you on a {n.subject_type.replace(/_/g, ' ')} ·
                 <RelativeTime value={n.created_at} /></span

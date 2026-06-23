@@ -27,6 +27,9 @@
   let query = $state('');
   let selected = $state(0);
   let inputEl = $state<HTMLInputElement | null>(null);
+  // The element focused before the palette opened, so focus returns there on close
+  // (a screen-reader/keyboard user isn't dumped back at the top of the page).
+  let restoreFocusEl: HTMLElement | null = null;
   // Tenant entities (flows/agents/cases) loaded when the palette opens, so the
   // search can jump straight to a specific flow/agent/case by name.
   let dynamic = $state<Cmd[]>([]);
@@ -179,10 +182,13 @@
     if ($paletteOpen) {
       query = '';
       selected = 0;
+      restoreFocusEl = document.activeElement as HTMLElement | null;
       queueMicrotask(() => inputEl?.focus());
       if ($user) void loadDynamic();
     } else {
       dynamic = []; // drop the stale index so a reopen never flashes old/other-tenant entities
+      restoreFocusEl?.focus();
+      restoreFocusEl = null;
     }
   });
   // Typing always re-highlights the top match.
@@ -216,6 +222,9 @@
     } else if (e.key === 'Escape') {
       e.preventDefault();
       closePalette();
+    } else if (e.key === 'Tab') {
+      // Pin focus to the search input so Tab can't escape the modal dialog.
+      e.preventDefault();
     }
   }
 </script>

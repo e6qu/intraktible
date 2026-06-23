@@ -174,6 +174,9 @@
           <p class="acct-id muted" data-testid="auth-status">Not signed in</p>
         {/if}
         <p class="persona-hint">View as</p>
+        <p class="persona-sub">
+          Reshape the whole UI for a different job — your sign-in &amp; data stay the same.
+        </p>
         {#each PERSONAS as p (p.id)}
           <button
             class="persona-opt"
@@ -466,11 +469,18 @@
     box-shadow: var(--shadow);
   }
   .persona-hint {
-    margin: 0.2rem 0.5rem 0.35rem;
+    margin: 0.2rem 0.5rem 0.15rem;
     font-size: 0.7rem;
     text-transform: uppercase;
     letter-spacing: 0.06em;
     color: var(--fg-subtle);
+  }
+  .persona-sub {
+    margin: 0 0.5rem 0.5rem;
+    font-size: 0.74rem;
+    line-height: 1.35;
+    color: var(--fg-subtle);
+    max-width: 17rem;
   }
   .persona-opt {
     display: flex;

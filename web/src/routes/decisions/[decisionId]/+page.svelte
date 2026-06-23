@@ -107,6 +107,10 @@
       {/if}
       <dt>duration</dt>
       <dd>{d.duration_ms ?? 0} ms</dd>
+      {#if d.case_id}
+        <dt>opened case</dt>
+        <dd><a href={appHref(`/cases/${d.case_id}`)}>{d.case_id} →</a></dd>
+      {/if}
       <dt>decision id</dt>
       <dd><Copyable value={d.decision_id} label="decision id" /></dd>
     </dl>

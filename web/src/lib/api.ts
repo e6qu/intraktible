@@ -140,6 +140,7 @@ export interface DeploymentView {
   version: number;
   challenger_version?: number;
   challenger_pct?: number;
+  previous_version?: number; // the version live before this one (for rollback)
 }
 
 export interface DeploymentRequest {
@@ -353,6 +354,7 @@ export interface Decision {
   policy_id?: string;
   policy_version?: number;
   preapproval_id?: string; // set when served instantly from a pre-approval
+  case_id?: string; // set when the decision routed to manual_review and opened a case
   error?: string;
   nodes?: NodeRecord[];
   started_at: string;
