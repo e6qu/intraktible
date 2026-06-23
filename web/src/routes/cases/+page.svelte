@@ -332,9 +332,30 @@
     font: inherit;
     padding: 0.4rem 0.6rem;
   }
+  /* On a narrow phone the 7-column queue would clip its right edge (Status/Days
+     left) inside the scroll wrapper, reading as broken rather than scrollable. A
+     min-width forces a clean horizontal scroll and the right-edge shadow signals
+     there's more to see. */
+  .table-wrap {
+    background:
+      linear-gradient(to right, var(--surface) 30%, transparent),
+      linear-gradient(to right, transparent, var(--surface) 70%) 0 100% / 100% 100%,
+      radial-gradient(farthest-side at 100% 50%, rgba(20, 25, 35, 0.18), transparent);
+    background-repeat: no-repeat;
+    background-size:
+      28px 100%,
+      28px 100%,
+      14px 100%;
+    background-position:
+      0 0,
+      100% 0,
+      100% 0;
+    background-attachment: local, local, scroll;
+  }
   table {
     border-collapse: collapse;
     width: 100%;
+    min-width: 34rem;
   }
   th,
   td {

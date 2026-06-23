@@ -144,7 +144,10 @@ function identityFor(u: DemoUser): Identity {
 // actors are ignored (the current identity stays).
 export function setDemoUser(actor: string): Identity {
   const u = USERS.find((x) => x.actor === actor);
-  if (u) state.identity = identityFor(u);
+  if (u) {
+    state.identity = identityFor(u);
+    persist(); // the switched identity must survive a reload, like every other write
+  }
   return state.identity;
 }
 
@@ -204,9 +207,17 @@ function seedFlows(): Flow[] {
           assignments: [
             { target: 'dti', expr: '(debt / income)' },
             { target: 'utilization', expr: '(revolving_balance / credit_limit)' },
-            { target: 'delinquencies', expr: 'delinquencies_24m' }
+            { target: 'delinquencies', expr: 'delinquencies_24m' },
+            { target: 'fico_score', expr: 'fico_score' }
           ]
         }
+      },
+      {
+        id: 'propensity',
+        type: 'predict' as const,
+        name: 'Repayment propensity',
+        lane: 'Score',
+        config: { model: 'repayment_propensity', output: 'propensity' }
       },
       {
         id: 'score',
@@ -223,7 +234,10 @@ function seedFlows(): Flow[] {
         config: {
           assignments: [
             { target: 'risk', expr: 'predict.pd.probability * 100' },
-            { target: 'offered_limit', expr: 'income * 0.3' }
+            {
+              target: 'offered_limit',
+              expr: 'risk >= 70 ? 0 : ((income - debt) / 12 * 4 < income * 0.1 ? (income - debt) / 12 * 4 : income * 0.1)'
+            }
           ]
         }
       },
@@ -269,7 +283,8 @@ function seedFlows(): Flow[] {
     ],
     edges: [
       { from: 'in', to: 'enrich' },
-      { from: 'enrich', to: 'score' },
+      { from: 'enrich', to: 'propensity' },
+      { from: 'propensity', to: 'score' },
       { from: 'score', to: 'derive' },
       { from: 'derive', to: 'narrative' },
       { from: 'narrative', to: 'band' },
@@ -408,7 +423,9 @@ function seedFlows(): Flow[] {
         type: 'output' as const,
         name: 'Screening outcome',
         lane: 'Decide',
-        config: { assignments: [{ target: 'cleared', expr: 'aml_score < 6' }] }
+        config: {
+          assignments: [{ target: 'cleared', expr: 'sanctions_hit == 1 ? false : aml_score < 6' }]
+        }
       }
     ],
     edges: [
@@ -418,6 +435,7 @@ function seedFlows(): Flow[] {
       { from: 'score', to: 'derive' },
       { from: 'derive', to: 'sar' },
       { from: 'sar', to: 'band' },
+      { from: 'band', to: 'review', branch: 'sanctions_hit == 1' },
       { from: 'band', to: 'review', branch: 'aml_score >= 6' },
       { from: 'band', to: 'clear', branch: 'aml_score < 6' },
       { from: 'clear', to: 'out' },
@@ -738,7 +756,10 @@ function seedFlows(): Flow[] {
       debt: { type: 'number' },
       revolving_balance: { type: 'number' },
       credit_limit: { type: 'number' },
-      delinquencies_24m: { type: 'number' }
+      delinquencies_24m: { type: 'number' },
+      fico_score: { type: 'number' },
+      tenure_years: { type: 'number' },
+      employment_stability: { type: 'number' }
     }
   };
 
@@ -991,26 +1012,55 @@ function seedDecisions(): Decision[] {
       policy_id: 'pol_credit',
       build: (i, disp) => {
         const income = 42000 + (i % 9) * 9000;
+        const debt = 8000 + (i % 7) * 4000;
         const risk =
           disp === 'approve' ? 18 + (i % 12) : disp === 'decline' ? 74 + (i % 18) : 48 + (i % 18);
+        // FICO anti-correlates with the PD band: prime applicants clear, mid-600s
+        // applicants refer, sub-prime decline. Mirrors the bureau score the credit
+        // flow now consumes.
+        const fico =
+          disp === 'approve'
+            ? 760 + (i % 5) * 10
+            : disp === 'decline'
+              ? 585 + (i % 6) * 5
+              : 645 + (i % 4) * 8;
+        const declined = disp === 'decline';
+        const disposable = (income - debt) / 12;
+        const offeredLimit = declined ? 0 : Math.round(Math.min(disposable * 4, income * 0.1));
         return {
           data: {
             income,
-            debt: 8000 + (i % 7) * 4000,
+            debt,
             revolving_balance: 3000 + (i % 6) * 1500,
             credit_limit: 15000,
             delinquencies_24m: i % 4,
+            fico_score: fico,
+            tenure_years: 2 + (i % 8),
+            employment_stability: 0.4 + (i % 5) * 0.12,
             risk
           },
-          output: { approved: disp === 'approve', risk, offered_limit: Math.round(income * 0.3) },
+          output: { approved: disp === 'approve', risk, offered_limit: offeredLimit },
           reason:
             disp === 'decline'
-              ? [{ code: 'HIGH_RISK', description: 'Auto-decline high risk' }]
+              ? [
+                  { code: 'DELINQUENCY_HISTORY', description: 'Serious delinquency on file' },
+                  { code: 'LOW_SCORE', description: 'Credit score below threshold' }
+                ]
               : disp === 'refer'
-                ? [{ code: 'MID_RISK', description: 'Refer mid band' }]
-                : [{ code: 'LOW_RISK', description: 'Auto-approve low risk' }],
+                ? [
+                    { code: 'DTI_TOO_HIGH', description: 'Debt-to-income ratio too high' },
+                    { code: 'THIN_FILE', description: 'Insufficient credit history' }
+                  ]
+                : [],
           nodes: [
-            { node_id: 'in', type: 'input', output: { income } },
+            { node_id: 'in', type: 'input', output: { income, fico_score: fico } },
+            {
+              node_id: 'propensity',
+              type: 'predict',
+              output: {
+                propensity: { score: 0.6 + (i % 4) * 0.08, probability: 0.6 + (i % 4) * 0.08 }
+              }
+            },
             {
               node_id: 'score',
               type: 'predict',
@@ -1040,18 +1090,26 @@ function seedDecisions(): Decision[] {
       build: (i, disp) => {
         const amount = 4000 + (i % 11) * 7000;
         const amlScore = disp === 'refer' ? 7 + (i % 5) : 2 + (i % 3);
+        // Only referrals may carry a sanctions hit; a confirmed hit (watchlist >= 80)
+        // hard-stops to review and can never clear. Cleared txns stay below the
+        // watchlist threshold so the seed stays coherent with the gated split.
+        const sanctionsHit = disp === 'refer' && i % 5 === 0;
+        const watchlistScore = sanctionsHit ? 85 : 10;
         return {
           data: {
             amount,
             origin_country: 'US',
             dest_country: i % 3 === 0 ? 'KY' : 'US',
-            watchlist_score: i % 5 === 0 ? 85 : 10,
+            watchlist_score: watchlistScore,
+            sanctions_hit: sanctionsHit ? 1 : 0,
             aml_score: amlScore
           },
           output: { cleared: disp !== 'refer', aml_score: amlScore },
           reason:
             disp === 'refer'
-              ? [{ code: 'AML_HIGH', description: 'AML risk above clearing band' }]
+              ? sanctionsHit
+                ? [{ code: 'SANCTIONS_MATCH', description: 'Confirmed sanctions/watchlist match' }]
+                : [{ code: 'AML_HIGH', description: 'AML risk above clearing band' }]
               : [],
           nodes: [
             { node_id: 'in', type: 'input', output: { amount } },
@@ -1059,7 +1117,13 @@ function seedDecisions(): Decision[] {
             {
               node_id: 'band',
               type: 'split',
-              output: { branch: amlScore >= 6 ? 'aml_score >= 6' : 'aml_score < 6' }
+              output: {
+                branch: sanctionsHit
+                  ? 'sanctions_hit == 1'
+                  : amlScore >= 6
+                    ? 'aml_score >= 6'
+                    : 'aml_score < 6'
+              }
             },
             { node_id: 'out', type: 'output', output: { cleared: disp !== 'refer' } }
           ]
@@ -1276,7 +1340,7 @@ function seedCases(): Case[] {
       daysLeft: 2,
       slaState: 'on_track',
       src: 'dec_1',
-      context: { risk: 58, segment: 'SMB', exposure_usd: 45000, dti: 0.41 },
+      context: { risk: 58, segment: 'SMB', exposure_usd: 45000, dti: 0.41, fico_score: 662 },
       notes: [
         { author: DIEGO, text: 'Requested two recent pay stubs and bank statements.', at: ago(20) }
       ],
@@ -1348,7 +1412,7 @@ function seedCases(): Case[] {
       daysLeft: 1,
       slaState: 'on_track',
       src: 'dec_7',
-      context: { risk: 52, decision: 'approved with reduced limit' },
+      context: { risk: 52, fico_score: 671, dti: 0.38, decision: 'approved with reduced limit' },
       notes: [
         { author: DIEGO, text: 'Approved at $18k limit after income verification.', at: ago(12) }
       ],
@@ -1429,7 +1493,7 @@ function seedCases(): Case[] {
       daysLeft: 0,
       slaState: 'due_soon',
       src: 'dec_13',
-      context: { risk: 61, segment: 'corporate' },
+      context: { risk: 61, segment: 'corporate', fico_score: 648, dti: 0.44 },
       notes: [{ author: DIEGO, text: 'Awaiting guarantor financials.', at: ago(14) }],
       audit: [
         { type: 'case.opened', actor: 'system', at: ago(50), detail: 'from decision dec_13' }
@@ -1547,7 +1611,7 @@ function seedCases(): Case[] {
       daysLeft: 3,
       slaState: 'on_track',
       src: 'dec_19',
-      context: { risk: 49, segment: 'SMB' },
+      context: { risk: 49, segment: 'SMB', fico_score: 668, dti: 0.36 },
       notes: [],
       audit: [{ type: 'case.opened', actor: 'system', at: ago(5), detail: 'from decision dec_19' }],
       createdHrs: 5,
@@ -1637,8 +1701,13 @@ function seedModels(): Model[] {
       kind: 'logistic',
       spec: {
         kind: 'logistic',
-        intercept: -3.2,
-        coefficients: { dti: 4.1, utilization: 2.3, delinquencies: 1.8 }
+        // FICO carries the intercept: 700 is the reference score, so the +5.3 base
+        // is ~5.3 - 0.012*fico. A negative fico weight (higher score -> lower PD)
+        // plus DTI/utilization/delinquency drivers; tuned so a mid-tier applicant
+        // (DTI ~0.35, utilization ~0.5, 1 delinquency, mid-600s FICO) lands ~0.44
+        // probability and routes to manual review rather than auto-approving/declining.
+        intercept: 5.3,
+        coefficients: { dti: 3.0, utilization: 1.2, delinquencies: 0.7, fico_score: -0.012 }
       },
       owner: AVA,
       updated_at: ago(96)
@@ -1688,10 +1757,14 @@ function seedModels(): Model[] {
       updated_at: ago(70)
     },
     {
-      name: 'income_estimator',
+      name: 'repayment_propensity',
       kind: 'logistic',
       spec: {
         kind: 'logistic',
+        // Logistic classifier of on-time repayment propensity from employment
+        // signals; an auxiliary score the credit flow enriches alongside PD.
+        // Renamed from the mis-named "income_estimator" so the name matches a
+        // logistic classifier. No baseline captured (MRM monitoring gap, intact).
         intercept: -1.1,
         coefficients: { tenure_years: 0.4, employment_stability: 0.9 }
       },
@@ -1720,20 +1793,26 @@ function seedPolicies(): Policy[] {
               {
                 when: 'risk < 30',
                 disposition: 'approve',
-                code: 'LOW_RISK',
-                description: 'Auto-approve low risk'
+                code: 'APPROVED',
+                description: 'Meets approval criteria'
+              },
+              {
+                when: 'fico_score < 620',
+                disposition: 'decline',
+                code: 'LOW_SCORE',
+                description: 'Credit score below threshold'
               },
               {
                 when: 'risk >= 70',
                 disposition: 'decline',
-                code: 'HIGH_RISK',
-                description: 'Auto-decline high risk'
+                code: 'DELINQUENCY_HISTORY',
+                description: 'Serious delinquency on file'
               },
               {
                 when: 'risk >= 30',
                 disposition: 'refer',
-                code: 'MID_RISK',
-                description: 'Refer mid band'
+                code: 'DTI_TOO_HIGH',
+                description: 'Debt-to-income ratio too high'
               }
             ],
             default: 'refer'
@@ -1745,24 +1824,33 @@ function seedPolicies(): Policy[] {
           published_at: ago(38),
           published_by: MARCUS,
           spec: {
+            // FCRA / Reg B permissible adverse-action reason codes (no generic
+            // risk-band labels): the matched rule's code becomes the decision's
+            // adverse-action reason and feeds the adverse-action narrative node.
             rules: [
               {
                 when: 'risk < 35',
                 disposition: 'approve',
-                code: 'LOW_RISK',
-                description: 'Auto-approve low risk'
+                code: 'APPROVED',
+                description: 'Meets approval criteria'
+              },
+              {
+                when: 'fico_score < 620',
+                disposition: 'decline',
+                code: 'LOW_SCORE',
+                description: 'Credit score below threshold'
               },
               {
                 when: 'risk >= 70',
                 disposition: 'decline',
-                code: 'HIGH_RISK',
-                description: 'Auto-decline high risk'
+                code: 'DELINQUENCY_HISTORY',
+                description: 'Serious delinquency on file'
               },
               {
                 when: 'risk >= 35',
                 disposition: 'refer',
-                code: 'MID_RISK',
-                description: 'Refer mid band'
+                code: 'DTI_TOO_HIGH',
+                description: 'Debt-to-income ratio too high'
               }
             ],
             default: 'refer'
@@ -2348,37 +2436,44 @@ function seedAssertions(): Map<string, AssertionCase[]> {
   const m = new Map<string, AssertionCase[]>();
   m.set('flow_credit', [
     {
-      name: 'low risk approves',
+      name: 'prime applicant approves',
       input: {
         income: 120000,
         debt: 4000,
         revolving_balance: 1000,
         credit_limit: 20000,
-        delinquencies_24m: 0
+        delinquencies_24m: 0,
+        fico_score: 800
       },
       expect: { approved: true }
     },
     {
-      name: 'high dti declines',
+      name: 'sub-prime high dti declines',
       input: {
         income: 30000,
         debt: 26000,
         revolving_balance: 14000,
         credit_limit: 15000,
-        delinquencies_24m: 3
+        delinquencies_24m: 3,
+        fico_score: 600
       },
       expect: { approved: false }
     },
     {
-      name: 'mid band refers',
+      // Mid-tier applicant (DTI ~0.47, mid-600s FICO, 1 delinquency) lands in the
+      // review band (risk ~53), opens a case, and gets a conservative affordability
+      // -aware line (min(4 mo disposable income, 10% of annual) = $6,000) — never
+      // auto-approved or auto-declined.
+      name: 'mid band refers to underwriter',
       input: {
         income: 60000,
         debt: 28000,
         revolving_balance: 8000,
         credit_limit: 15000,
-        delinquencies_24m: 1
+        delinquencies_24m: 1,
+        fico_score: 660
       },
-      expect: { approved: false }
+      expect: { offered_limit: 6000 }
     }
   ]);
   m.set('flow_aml', [
@@ -2390,6 +2485,13 @@ function seedAssertions(): Map<string, AssertionCase[]> {
     {
       name: 'large cross-border refers',
       input: { amount: 60000, origin_country: 'US', dest_country: 'KY', watchlist_score: 10 },
+      expect: { cleared: false }
+    },
+    {
+      // A confirmed sanctions/watchlist hit hard-stops: even a small domestic wire
+      // that would otherwise clear can never auto-clear once watchlist_score >= 80.
+      name: 'sanctions hit cannot clear',
+      input: { amount: 1000, origin_country: 'US', dest_country: 'US', watchlist_score: 90 },
       expect: { cleared: false }
     }
   ]);
@@ -3141,12 +3243,27 @@ function loadPersisted(): DemoState | null {
     const raw = localStorage.getItem(PERSIST_KEY);
     if (!raw) return null;
     const blob = JSON.parse(raw, mapReviver) as { v: number; idCounter: number; state: DemoState };
-    if (blob.v !== SCHEMA_VERSION || !blob.state) return null;
+    if (blob.v !== SCHEMA_VERSION || !blob.state || !isValidState(blob.state)) return null;
     if (typeof blob.idCounter === 'number') idCounter = blob.idCounter;
     return blob.state;
   } catch {
     return null;
   }
+}
+
+// isValidState is a shallow shape check so a stale/partial blob (e.g. a Map field
+// that hydrated as a plain object because SCHEMA_VERSION wasn't bumped, or a missing
+// collection) is discarded and re-seeded rather than crashing every page on the
+// first `.get`/`.filter`. Spot-checks one representative field of each kind.
+function isValidState(s: DemoState): boolean {
+  const arrays = [s.flows, s.decisions, s.cases, s.agents, s.audit];
+  const maps = [s.monitors, s.grants, s.flowSlos, s.shadows, s.comments];
+  return (
+    !!s.identity &&
+    typeof s.seq === 'number' &&
+    arrays.every(Array.isArray) &&
+    maps.every((m) => m instanceof Map)
+  );
 }
 
 // persist saves the current state (called after each mutating request). Best-effort:

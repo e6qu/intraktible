@@ -78,6 +78,11 @@ function roleAtLeast(min: string): boolean {
   return have >= (ROLE_RANK.get(min) ?? 99);
 }
 
+const ENVIRONMENTS = new Set(['sandbox', 'staging', 'production']);
+function isEnvironment(e: string): boolean {
+  return ENVIRONMENTS.has(e);
+}
+
 function findFlow(idOrSlug: string): Flow | undefined {
   return state.flows.find((f) => f.flow_id === idOrSlug || f.slug === idOrSlug);
 }
@@ -350,10 +355,14 @@ route('POST', '/v1/flows/:id/deployments/rollback', (m, body) => {
   const flow = findFlow(m[1]);
   if (!flow) return notFound();
   const env = String(body.environment);
-  const prev = Math.max(1, (flow.latest ?? 1) - 1);
+  const dep = new Map(Object.entries(flow.deployments ?? {})).get(env);
+  if (!dep) return badRequest(`nothing deployed to ${env} to roll back`);
+  // Restore the version that was live before the current one; only if that's unknown
+  // fall back to current-1.
+  const prev = dep.previous_version ?? Math.max(1, dep.version - 1);
   setDeployment(flow, env as Environment, prev);
   pushAudit('deployment.rolledback', flow.flow_id, { environment: env, version: prev });
-  return ok({});
+  return ok({ version: prev });
 });
 route('POST', '/v1/flows/:id/deployments/schedule', (m, body) => {
   const flow = findFlow(m[1]);
@@ -424,8 +433,12 @@ route('POST', '/v1/flows/:id/promote', (m, body) => {
   if (!flow) return notFound();
   const to = String(body.to);
   const from = String(body.from);
-  const version =
-    Object.entries(flow.deployments ?? {}).find(([e]) => e === from)?.[1]?.version ?? flow.latest;
+  const fromDep = new Map(Object.entries(flow.deployments ?? {})).get(from);
+  // Promote the version actually live in the source env; refuse if nothing is there
+  // (silently promoting `latest` would push a version that was never validated in
+  // the source environment past the gates).
+  if (!fromDep) return badRequest(`nothing deployed to ${from} to promote from`);
+  const version = fromDep.version;
   if (to === 'production') {
     addRequest(flow, 'production', version);
     return ok({
@@ -557,6 +570,7 @@ route('POST', '/v1/flows/:id/whatif', (m, body) => {
 route('POST', '/v1/flows/:slug/:env/decide', (m, body) => {
   const flow = findFlow(m[1]);
   if (!flow) return notFound();
+  if (!isEnvironment(m[2])) return badRequest(`unknown environment "${m[2]}"`);
   const data = (body.data as Body) ?? {};
   const { result } = decideFlow(flow, m[2] as Environment, data);
   // Surface the run in the global audit trail so the build→decide→case→resolve
@@ -1208,9 +1222,18 @@ function setDeployment(
   challengerVersion?: number,
   challengerPct?: number
 ): void {
-  const deployments = flow.deployments ?? {};
-  const m = new Map(Object.entries(deployments));
-  m.set(env, { version, challenger_version: challengerVersion, challenger_pct: challengerPct });
+  const m = new Map(Object.entries(flow.deployments ?? {}));
+  const current = m.get(env);
+  // Remember what was live so a rollback restores the ACTUAL prior version, not a
+  // naive latest-1 (which is wrong whenever live ≠ latest).
+  const previous =
+    current && current.version !== version ? current.version : current?.previous_version;
+  m.set(env, {
+    version,
+    challenger_version: challengerVersion,
+    challenger_pct: challengerPct,
+    previous_version: previous
+  });
   flow.deployments = Object.fromEntries(m);
 }
 

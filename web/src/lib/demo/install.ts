@@ -42,6 +42,18 @@ export function installDemoBackend(): void {
     reset: resetDemo
   };
 
+  // First-time visitors land on the guided Evaluator tour rather than the dense
+  // builder cockpit — it's the 10-second "what is this" on-ramp. Returning visitors
+  // (who've picked a persona) keep their choice; the real app's default is unchanged
+  // since this runs only in the demo build.
+  try {
+    if (!localStorage.getItem('intraktible-persona')) {
+      localStorage.setItem('intraktible-persona', 'evaluator');
+    }
+  } catch {
+    // ignore (storage unavailable) — falls back to the app default persona
+  }
+
   window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     try {
       const { method, url } = describe(input, init);

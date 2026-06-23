@@ -508,9 +508,24 @@ export function runFlow(
     let nextId: string | undefined;
     if (node.type === 'split') {
       const taken = outgoing.find((e) => e.branch && isTruthy(evalExpr(e.branch, rec)));
-      const chosen = taken ?? outgoing.find((e) => !e.branch) ?? outgoing[0];
-      branchTaken = chosen?.branch;
-      nextId = chosen?.to;
+      // Fall back only to an EXPLICIT default (unbranched) edge — never to the first
+      // branch. A split whose conditions all evaluated false with no default is a flow
+      // error (typically a non-finite/odd input that matched no band); fail loudly
+      // rather than silently routing down branch[0] (which could auto-approve).
+      const chosen = taken ?? outgoing.find((e) => !e.branch);
+      if (!chosen) {
+        nodes.push({ node_id: node.id, type: node.type, output: { branch: undefined } });
+        return {
+          status: 'failed',
+          data: rec,
+          output: {},
+          reasonCodes,
+          nodes,
+          error: `no branch matched at split "${node.id}"`
+        };
+      }
+      branchTaken = chosen.branch;
+      nextId = chosen.to;
       nodeOut = { branch: branchTaken };
     } else {
       nextId = outgoing[0]?.to;
@@ -618,6 +633,8 @@ export function decideFlow(
       created_at: startedAt,
       updated_at: startedAt
     });
+    // Link the decision back to the case it opened, so the trace can navigate to it.
+    decision.case_id = caseId;
   }
 
   return { result, decision };

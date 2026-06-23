@@ -20,7 +20,8 @@
   <div class="body">
     <span class="name">{data.name || data.type}</span>
     <span class="sub">{data.type} · {data.summary}</span>
-    {#if data.telemetry}<span class="telem" title="last test-run output">▸ {data.telemetry}</span
+    {#if data.telemetry}<span class="telem" title="last test-run output"
+        ><span aria-hidden="true">▸</span> {data.telemetry}</span
       >{/if}
   </div>
   {#if data.type !== 'output'}<Handle type="source" position={Position.Right} />{/if}

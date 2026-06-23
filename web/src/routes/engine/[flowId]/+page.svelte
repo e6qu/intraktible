@@ -186,7 +186,9 @@
   let edgeTo = $state('');
   let edgeBranch = $state('');
 
-  let env = $state<Environment>('production');
+  // Default the test run to sandbox — you'd never test directly against production,
+  // and it keeps experimental runs out of the production decisions/cases surfaces.
+  let env = $state<Environment>('sandbox');
   let dataText = $state('{}');
   // Live JSON validity for the test-run input, and a one-click skeleton built from
   // the flow's input schema so you don't have to hand-write the shape.
@@ -2796,6 +2798,11 @@
       {#if !dataValid}<p class="json-err">Not valid JSON — fix it before running.</p>{/if}
       <pre data-testid="run-result">{result}</pre>
       {#if lastDecisionId}
+        <div class="row">
+          <a class="view-decision" href={appHref(`/decisions/${lastDecisionId}`)}
+            >View the recorded decision →</a
+          >
+        </div>
         <div class="row">
           <span class="exportlabel"><Icon name="diagram" size={15} /> Run trace</span>
           <button onclick={downloadTrace} title="Download the run as a Mermaid sequence diagram">

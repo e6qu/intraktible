@@ -88,6 +88,18 @@ test('switching demo role updates the role-gated navigation', async ({ page }) =
   await expect(navModelRisk).toHaveCount(0); // viewer loses the admin-only surface
 });
 
+// The switched identity persists across a reload (it's saved like every other write),
+// so a mid-flow refresh doesn't silently revert you to the default admin.
+test('the switched demo user survives a reload', async ({ page }) => {
+  await page.goto('');
+  const switcher = page.getByLabel('Signed in as (switch demo user)');
+  await switcher.selectOption({ label: 'Diego Santos · operator' });
+  await page.reload();
+  await expect(page.getByLabel('Signed in as (switch demo user)')).toHaveValue(
+    'diego.santos@intraktible.dev'
+  );
+});
+
 // The demo is interactive, not a slideshow: a write mutates the in-memory store and
 // the new record shows up in the list.
 test('defining an agent adds it to the list (writes mutate the store)', async ({ page }) => {

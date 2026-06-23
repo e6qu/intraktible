@@ -236,6 +236,12 @@
   tr:last-child td {
     border-bottom: none;
   }
+  .tape tbody tr {
+    cursor: pointer;
+  }
+  .tape tbody tr:hover {
+    background: var(--surface-2);
+  }
   .st {
     width: 1.2rem;
   }

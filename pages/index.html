@@ -88,6 +88,24 @@
       a.btn.primary:hover {
         background: #4666e0;
       }
+      ul.feats {
+        list-style: none;
+        padding: 0;
+        margin: 0 auto 2rem;
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 0.5rem;
+        max-width: 34rem;
+      }
+      ul.feats li {
+        font-size: 0.8rem;
+        color: #aeb7c7;
+        border: 1px solid #2a3346;
+        border-radius: 999px;
+        padding: 0.25rem 0.7rem;
+        background: #11151f;
+      }
       footer {
         margin-top: 2.5rem;
         font-size: 0.82rem;
@@ -103,16 +121,23 @@
       <p class="mark">intraktible</p>
       <h1>Decisions, as data.</h1>
       <p class="lede">
-        An API-first, event-sourced decision platform with a persona-adaptive UI. Explore the live,
-        in-browser demo — fully interactive, no sign-up, no backend.
+        An open-source, self-hosted decision platform: versioned flows and AI agents on an
+        event-sourced, fully auditable core, with four-eyes change control and built-in model-risk
+        governance (SR&nbsp;11-7&nbsp;/&nbsp;SS1/23). A persona-adaptive UI over one API.
       </p>
+      <ul class="feats">
+        <li>Event-sourced &amp; replayable</li>
+        <li>Four-eyes &amp; audit trail</li>
+        <li>Model risk &amp; drift</li>
+        <li>AGPL-3.0, self-hosted</li>
+      </ul>
       <div class="links">
-        <a class="btn primary" href="./demo/">Launch the demo →</a>
+        <a class="btn primary" href="./demo/">Launch the live demo →</a>
         <a class="btn" href="./docs/">Documentation</a>
         <a class="btn" href="https://github.com/e6qu/intraktible">Source</a>
       </div>
       <footer>
-        This landing is a placeholder reserving the root path. ·
+        The demo runs entirely in your browser — no sign-up, no backend, changes persist locally. ·
         <a href="https://github.com/e6qu/intraktible">github.com/e6qu/intraktible</a>
       </footer>
     </main>

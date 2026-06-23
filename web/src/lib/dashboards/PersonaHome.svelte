@@ -50,7 +50,7 @@
       >
         <span class="ico"><Icon name={a.icon} size={20} /></span>
         <span class="lbl">{a.label}</span>
-        <span class="go">{external ? '↗' : ''}<Icon name="chevron-down" size={16} /></span>
+        <span class="go">{external ? '↗' : ''}<Icon name="chevron-right" size={16} /></span>
       </a>
     {/each}
   </div>
@@ -100,7 +100,8 @@
     padding: 0.9rem 1.1rem;
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    background: var(--surface-2);
+    background: var(--surface);
+    box-shadow: var(--shadow);
   }
   .tile .n {
     font-size: 1.6rem;
@@ -129,6 +130,7 @@
     border: 1px solid var(--border);
     border-radius: var(--radius);
     background: var(--surface);
+    box-shadow: var(--shadow);
     color: var(--fg);
     font-weight: 550;
   }
@@ -145,7 +147,6 @@
   }
   .action .go {
     color: var(--fg-subtle);
-    transform: rotate(-90deg);
   }
   .jump {
     display: flex;
@@ -159,7 +160,8 @@
     padding: 0.35rem 0.7rem;
     border: 1px solid var(--border);
     border-radius: 999px;
-    background: var(--surface-2);
+    background: var(--surface);
+    box-shadow: var(--shadow);
     color: var(--fg-muted);
     font-size: 0.85rem;
   }
