@@ -122,14 +122,39 @@
     return found?.[1]?.version;
   }
 
+  // Header KPIs over the loaded flows: how many ship to production vs. sit
+  // undeployed there — the at-a-glance health of the whole fleet.
+  const deployedToProd = $derived(flows.filter((f) => liveVersion(f, 'production') != null).length);
+  const notDeployedToProd = $derived(flows.length - deployedToProd);
+
+  // A flow's production deploy lags its latest published version → an editor has
+  // shipped work that production hasn't picked up yet (worth a nudge in the row).
+  function prodLagsLatest(flow: Flow): boolean {
+    const prod = liveVersion(flow, 'production');
+    return prod != null && prod < flow.latest;
+  }
+
   onMount(load);
 </script>
 
 <main>
   <div class="head">
-    <h1>Decision Engine — Flows</h1>
+    <div class="head-titles">
+      <h1>Decision Engine — Flows</h1>
+      <p class="subtitle">
+        Author decision flows on the canvas, publish versions, and deploy them across environments.
+      </p>
+    </div>
     <button onclick={load}><Icon name="reload" size={15} /> Reload</button>
   </div>
+
+  {#if !loading && flows.length > 0}
+    <div class="kpis" data-testid="flow-kpis">
+      <span class="kpi"><b>{flows.length}</b> flow{flows.length === 1 ? '' : 's'}</span>
+      <span class="kpi ok"><b>{deployedToProd}</b> in production</span>
+      <span class="kpi muted"><b>{notDeployedToProd}</b> not in production</span>
+    </div>
+  {/if}
 
   <form
     class="row"
@@ -227,7 +252,11 @@
                 <td>
                   {#if liveVersion(f, 'production')}<span class="badge live"
                       >v{liveVersion(f, 'production')}</span
-                    >{:else}<span class="badge none">not deployed</span>{/if}
+                    >{#if prodLagsLatest(f)}<span
+                        class="lag"
+                        title={`Production runs v${liveVersion(f, 'production')} but v${f.latest} is published — deploy to catch up`}
+                        >↑ v{f.latest} ready</span
+                      >{/if}{:else}<span class="badge none">not deployed</span>{/if}
                 </td>
               </tr>
             {/each}
@@ -240,14 +269,45 @@
 
 <style>
   main {
-    max-width: 56rem;
+    max-width: 72rem;
     margin: 2rem auto;
     padding: 0 1.25rem;
   }
   .head {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     justify-content: space-between;
+    gap: 1rem;
+  }
+  .head-titles h1 {
+    margin: 0;
+  }
+  .subtitle {
+    margin: 0.15rem 0 0;
+    color: var(--fg-muted);
+    font-size: 0.9rem;
+  }
+  .kpis {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+    margin: 0.85rem 0 0.25rem;
+  }
+  .kpi {
+    padding: 0.4rem 0.8rem;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface);
+    font-size: 0.9rem;
+    color: var(--fg-muted);
+  }
+  .kpi b {
+    color: var(--fg);
+    font-size: 1.05rem;
+    margin-right: 0.2rem;
+  }
+  .kpi.ok b {
+    color: var(--ok);
   }
   .row {
     display: flex;
@@ -307,9 +367,28 @@
     border-bottom: 1px solid var(--border);
   }
   td {
-    padding: 0.55rem 0.6rem;
+    padding: 0.7rem 0.6rem;
     border-bottom: 1px solid var(--border);
     font-size: 0.92rem;
+  }
+  tbody tr {
+    transition: background 0.12s ease;
+  }
+  tbody tr:hover {
+    background: var(--surface-2);
+  }
+  tbody tr:hover td:first-child a {
+    text-decoration: underline;
+  }
+  .lag {
+    margin-left: 0.4rem;
+    padding: 0.05rem 0.45rem;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    background: color-mix(in srgb, var(--warn) 18%, transparent);
+    color: var(--warn);
+    cursor: help;
   }
   code {
     background: var(--surface-2);

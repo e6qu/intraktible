@@ -104,6 +104,8 @@ test('the switched demo user survives a reload', async ({ page }) => {
 // the new record shows up in the list.
 test('defining an agent adds it to the list (writes mutate the store)', async ({ page }) => {
   await page.goto('agents');
+  // The "Define agent" form is a disclosure (content-first); open it.
+  await page.getByText('+ Define agent').click();
   const name = 'demo-screener-' + Math.random().toString(36).slice(2, 7);
   await page.getByLabel('agent name').fill(name);
   await page.getByLabel('system prompt').fill('screen applicants for risk');

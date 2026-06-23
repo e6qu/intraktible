@@ -14,6 +14,8 @@
   } from '$lib/api';
   import { resolvePersona, personaLens, type DecisionColumn } from '$lib/persona';
   import { appHref } from '$lib/paths';
+  import Badge from '$lib/Badge.svelte';
+  import { statusTone } from '$lib/badge';
 
   // API calls authenticate via the session cookie (empty key → no X-Api-Key).
   const key = '';
@@ -121,7 +123,15 @@
 
 <main>
   <div class="head">
-    <h1>Decisions</h1>
+    <div class="head-titles">
+      <h1>Decisions</h1>
+      <p class="subtitle">
+        Every determination the engine recorded — replayable, node by node.
+        {#if !loading && total > 0}<span class="count-pill"
+            >{total} match{total === 1 ? '' : 'es'}</span
+          >{/if}
+      </p>
+    </div>
     <button onclick={load}><Icon name="reload" size={15} /> Reload</button>
   </div>
 
@@ -196,7 +206,7 @@
             <tr>
               {#each columns as col (col)}
                 {#if col === 'status'}
-                  <td><span class="badge {d.status}">{d.status}</span></td>
+                  <td><Badge tone={statusTone(d.status)}>{d.status}</Badge></td>
                 {:else if col === 'flow'}
                   <td><a href={appHref(`/decisions/${d.decision_id}`)}>{d.slug}</a></td>
                 {:else if col === 'env'}
@@ -206,7 +216,7 @@
                 {:else if col === 'variant'}
                   <td class="muted">{d.variant ?? '—'}</td>
                 {:else if col === 'duration'}
-                  <td class="num">{d.duration_ms ?? 0} ms</td>
+                  <td class="num">{d.duration_ms != null ? `${d.duration_ms} ms` : '—'}</td>
                 {:else if col === 'when'}
                   <td class="muted" title={absTime(d.started_at)}
                     ><RelativeTime value={d.started_at} /></td
@@ -229,14 +239,35 @@
 
 <style>
   main {
-    max-width: 60rem;
+    max-width: 72rem;
     margin: 2rem auto;
     padding: 0 1.25rem;
   }
   .head {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     justify-content: space-between;
+    gap: 1rem;
+  }
+  .head-titles h1 {
+    margin: 0;
+  }
+  .subtitle {
+    margin: 0.15rem 0 0;
+    color: var(--fg-muted);
+    font-size: 0.9rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+  .count-pill {
+    padding: 0.05rem 0.5rem;
+    border-radius: 999px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    background: var(--surface-2);
+    color: var(--fg-muted);
   }
   table {
     width: 100%;
@@ -264,23 +295,6 @@
   td.num {
     text-align: right;
     font-variant-numeric: tabular-nums;
-  }
-  .badge {
-    display: inline-block;
-    padding: 0.1rem 0.5rem;
-    border-radius: 999px;
-    font-size: 0.78rem;
-    font-weight: 550;
-    background: var(--surface-2);
-    color: var(--fg-muted);
-  }
-  .badge.completed {
-    background: color-mix(in srgb, var(--ok) 18%, transparent);
-    color: var(--ok);
-  }
-  .badge.failed {
-    background: color-mix(in srgb, var(--danger) 16%, transparent);
-    color: var(--danger);
   }
   .muted {
     color: var(--fg-subtle);

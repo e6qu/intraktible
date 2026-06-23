@@ -19,6 +19,8 @@
   } from '$lib/api';
   import { roleAtLeast } from '$lib/roles';
   import { user } from '$lib/session';
+  import Badge from '$lib/Badge.svelte';
+  import type { Tone } from '$lib/badge';
 
   // Authenticates via the session cookie (empty key → no X-Api-Key header).
   const key = '';
@@ -52,6 +54,41 @@
   let drift = $state<ModelDrift | null>(null);
   let driftWindow = $state(0); // 0 = all-time, else N days
   let thresholdInput = $state('');
+  // True while the open drift row is fetching its report (so the row shows a
+  // loading line instead of looking empty).
+  let driftLoading = $state(false);
+
+  // An at-a-glance drift status per model, fetched once on load so the table shows
+  // which models are drifting without the operator expanding each row.
+  type DriftStatus = { tone: Tone; label: string };
+  // A Map (not a plain object) so the keyed writes below stay clean under the
+  // object-injection lint, matching the STARTERS map above.
+  let driftStatus = $state<Map<string, DriftStatus>>(new Map());
+  function statusFromDrift(d: ModelDrift): DriftStatus {
+    if (d.count === 0) return { tone: 'neutral', label: 'no data' };
+    if (!d.has_baseline || d.psi == null) return { tone: 'neutral', label: 'no baseline' };
+    if (d.firing) return { tone: 'danger', label: 'drifting' };
+    if (d.psi >= 0.25) return { tone: 'danger', label: 'significant' };
+    if (d.psi >= 0.1) return { tone: 'warn', label: 'moderate' };
+    return { tone: 'ok', label: 'stable' };
+  }
+  // Fetch every model's all-time drift status concurrently; a single failure must
+  // not blank the table, so each is settled independently and only successes land.
+  async function loadDriftStatuses(ms: Model[]) {
+    const settled = await Promise.allSettled(
+      ms.map(
+        async (m): Promise<[string, DriftStatus]> => [
+          m.name,
+          statusFromDrift(await modelDrift(key, m.name, 0))
+        ]
+      )
+    );
+    const next = new Map<string, DriftStatus>();
+    for (const res of settled) {
+      if (res.status === 'fulfilled') next.set(res.value[0], res.value[1]);
+    }
+    driftStatus = next;
+  }
 
   function msg(e: unknown): string {
     return e instanceof Error ? e.message : String(e);
@@ -71,6 +108,7 @@
   }
   async function loadDrift(m: string) {
     drift = null;
+    driftLoading = true;
     error = '';
     // Switching the window/model fires concurrent requests; capture what THIS call is
     // for and drop its result if either changed before it resolved (last-requested
@@ -82,8 +120,12 @@
       if (driftOpen !== reqModel || driftWindow !== reqWindow) return;
       drift = got;
       thresholdInput = drift.threshold ? String(drift.threshold) : '';
+      // Keep the at-a-glance row badge in sync with what the open row shows.
+      driftStatus = new Map(driftStatus).set(m, statusFromDrift(got));
     } catch (e) {
       if (driftOpen === reqModel && driftWindow === reqWindow) error = msg(e);
+    } finally {
+      if (driftOpen === reqModel && driftWindow === reqWindow) driftLoading = false;
     }
   }
   async function toggleDrift(m: string) {
@@ -134,6 +176,7 @@
     error = '';
     try {
       models = await listModels(key);
+      void loadDriftStatuses(models); // populate row badges without blocking the table
     } catch (e) {
       error = msg(e);
     } finally {
@@ -220,7 +263,7 @@
     <div class="table-wrap">
       <table>
         <thead>
-          <tr><th>Name</th><th>Kind</th><th>Owner</th><th>Updated</th><th></th></tr>
+          <tr><th>Name</th><th>Kind</th><th>Owner</th><th>Updated</th><th>Drift</th><th></th></tr>
         </thead>
         <tbody>
           {#each models as m (m.name)}
@@ -229,16 +272,26 @@
               <td><span class="badge">{m.kind || '—'}</span></td>
               <td class="muted">{m.owner || '—'}</td>
               <td class="muted"><RelativeTime value={m.updated_at} /></td>
+              <td>
+                {#if driftStatus.get(m.name)}
+                  {@const s = driftStatus.get(m.name)}
+                  <Badge tone={s?.tone ?? 'neutral'}>{s?.label}</Badge>
+                {:else}
+                  <span class="muted">…</span>
+                {/if}
+              </td>
               <td
                 ><button class="link" onclick={() => toggleDrift(m.name)}
                   >{driftOpen === m.name ? 'Hide drift' : 'Drift'}</button
                 ></td
               >
             </tr>
-            {#if driftOpen === m.name && drift}
+            {#if driftOpen === m.name}
               <tr class="drift-row" data-testid="model-drift">
-                <td colspan="5">
-                  {#if drift.count === 0}
+                <td colspan="6">
+                  {#if driftLoading || !drift}
+                    <p class="muted" aria-busy="true">Loading drift…</p>
+                  {:else if drift.count === 0}
                     <p class="muted">
                       No predictions recorded yet for this model — run decisions through a Predict
                       node that references it.

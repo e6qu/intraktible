@@ -58,3 +58,6 @@ web/.pw-data-embedded/
 .idea/
 .vscode/
 *.swp
+
+# agent worktrees (transient)
+.claude/worktrees/

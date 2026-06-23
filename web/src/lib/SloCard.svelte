@@ -109,8 +109,26 @@
       {/if}
       <span class="stat muted"><Icon name="diagram" /> {r.attainment.decisions} decisions</span>
     </div>
+    <div
+      class="budget-bar"
+      role="img"
+      aria-label={`error budget ${pct(Math.max(0, r.attainment.budget_remaining))} remaining`}
+      title={`${pct(Math.max(0, r.attainment.budget_remaining))} of the error budget remaining`}
+    >
+      <span
+        class="fill {r.attainment.budget_remaining < 0 ? 'over' : ''}"
+        style:width={`${Math.min(100, Math.max(0, r.attainment.budget_remaining * 100))}%`}
+      ></span>
+    </div>
     <button class="link" onclick={edit} disabled={busy}>Edit objective</button>
     <button class="link" onclick={clear} disabled={busy}>Clear objective</button>
+  {:else if !r.slo && !editing}
+    <div class="no-obj">
+      <p class="hint">
+        No objective set — this flow's availability and latency aren't being tracked yet.
+      </p>
+      <button onclick={edit} disabled={busy}>Set objective</button>
+    </div>
   {:else}
     <div class="slo-form">
       <label
@@ -151,6 +169,35 @@
     width: 0.9em;
     height: 0.9em;
     vertical-align: -0.1em;
+  }
+  .budget-bar {
+    height: 6px;
+    border-radius: 999px;
+    background: var(--surface-2);
+    overflow: hidden;
+    margin-top: 0.5rem;
+  }
+  .budget-bar .fill {
+    display: block;
+    height: 100%;
+    background: var(--ok, #16a34a);
+    border-radius: 999px;
+  }
+  .budget-bar .fill.over {
+    background: var(--danger);
+  }
+  .no-obj {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.8rem;
+    flex-wrap: wrap;
+    margin-top: 0.5rem;
+  }
+  .no-obj .hint {
+    margin: 0;
+    font-size: 0.85rem;
+    color: var(--fg-subtle);
   }
   .slo-form {
     display: flex;

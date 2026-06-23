@@ -179,7 +179,8 @@ test('a bound policy assigns a disposition shown on the decision detail', async 
   }).toPass({ timeout: 5000 });
 
   await page.goto(`/decisions/${decisionId}`);
-  await expect(page.locator('.disp.approve')).toHaveText('approve');
+  // The disposition is shown as the verdict hero on the trace.
+  await expect(page.getByTestId('verdict')).toContainText('approve');
 });
 
 test('a reason node yields adverse-action reason codes on the decision detail', async ({

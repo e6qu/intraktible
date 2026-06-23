@@ -173,4 +173,22 @@
     white-space: nowrap;
     font-weight: 500;
   }
+  /* Phones: stack instead of squeezing the message to one-word-per-line. The text
+     takes the first row; the switcher / reset / source wrap onto a second row. */
+  @media (max-width: 560px) {
+    .demo-strip {
+      flex-wrap: wrap;
+      gap: 0.4rem 0.6rem;
+      padding: 0.5rem 0.85rem;
+    }
+    .msg {
+      flex-basis: 100%;
+    }
+    .who {
+      margin-left: auto;
+    }
+    .who select {
+      max-width: 8.5rem;
+    }
+  }
 </style>

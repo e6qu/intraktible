@@ -7,6 +7,8 @@
   import EmptyState from '$lib/EmptyState.svelte';
   import Skeleton from '$lib/Skeleton.svelte';
   import RelativeTime from '$lib/RelativeTime.svelte';
+  import Badge from '$lib/Badge.svelte';
+  import { lifecycleTone } from '$lib/badge';
   import {
     listApiKeys,
     createApiKey,
@@ -37,8 +39,14 @@
   let expires = $state('');
   let busy = $state(false);
 
-  // The just-minted secret, shown once (from create or rotate).
-  let revealed = $state<{ id: string; secret: string } | null>(null);
+  // The just-minted secret, shown once (from create or rotate). On rotate, `note`
+  // explains how long the previous secret keeps authenticating.
+  let revealed = $state<{ id: string; secret: string; note?: string } | null>(null);
+
+  // Rotations roll the new secret out over an hour-long grace window so the old
+  // one keeps authenticating until the operator finishes redeploying. This matches
+  // the audit page so rotating from either surface behaves identically.
+  const ROTATE_GRACE_SECONDS = 3600;
 
   function msg(e: unknown): string {
     return e instanceof Error ? e.message : String(e);
@@ -98,8 +106,11 @@
     error = '';
     mutating = id;
     try {
-      const { secret } = await rotateApiKey(key, id);
-      revealed = { id, secret };
+      const { api_key, secret } = await rotateApiKey(key, id, ROTATE_GRACE_SECONDS);
+      const note = api_key.prev_hash_expires_at
+        ? `The previous secret keeps working until ${new Date(api_key.prev_hash_expires_at).toLocaleString()}.`
+        : undefined;
+      revealed = { id, secret, note };
       await load();
     } catch (e) {
       error = msg(e);
@@ -197,6 +208,7 @@
         </button>
         <button class="ghost" onclick={() => (revealed = null)}>Dismiss</button>
       </div>
+      {#if revealed.note}<p class="muted note">{revealed.note}</p>{/if}
     </div>
   {/if}
 
@@ -231,7 +243,7 @@
               <td>{k.role}</td>
               <td><span class="badge">{k.scope}</span></td>
               <td class="muted"><RelativeTime value={k.created_at} /></td>
-              <td><span class="badge {status(k)}">{status(k)}</span></td>
+              <td><Badge tone={lifecycleTone(status(k))}>{status(k)}</Badge></td>
               <td class="actions">
                 {#if status(k) === 'active'}
                   <button class="link" onclick={() => rotate(k.id)} disabled={mutating !== null}
@@ -348,15 +360,6 @@
     background: var(--surface-2);
     color: var(--fg-muted);
   }
-  .badge.active {
-    background: color-mix(in srgb, var(--ok, #16a34a) 18%, transparent);
-    color: var(--ok, #16a34a);
-  }
-  .badge.revoked,
-  .badge.expired {
-    background: color-mix(in srgb, var(--danger) 16%, transparent);
-    color: var(--danger);
-  }
   .actions {
     display: flex;
     gap: 0.6rem;
@@ -379,6 +382,10 @@
   }
   .muted {
     color: var(--fg-subtle);
+  }
+  .note {
+    margin: 0.5rem 0 0;
+    font-size: 0.82rem;
   }
   .err {
     color: var(--danger);

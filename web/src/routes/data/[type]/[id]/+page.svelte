@@ -2,6 +2,7 @@
 <script lang="ts">
   import { page } from '$app/stores';
   import { displayEntries } from '$lib/kv';
+  import EmptyState from '$lib/EmptyState.svelte';
   import RelativeTime from '$lib/RelativeTime.svelte';
   import {
     getEntity,
@@ -65,7 +66,11 @@
     <section>
       <h2>Attributes</h2>
       {#if displayEntries(entity.attributes).length === 0}
-        <p class="muted">No attributes.</p>
+        <EmptyState
+          icon="database"
+          title="No attributes"
+          hint="This entity has no stored attributes yet — they accrue as decisions and events reference it."
+        />
       {:else}
         <dl class="kv">
           {#each displayEntries(entity.attributes) as [k, v] (k)}
@@ -90,7 +95,11 @@
     <section>
       <h2>Event timeline <span class="muted">({events.length})</span></h2>
       {#if events.length === 0}
-        <p class="muted">No events.</p>
+        <EmptyState
+          icon="diagram"
+          title="No events"
+          hint="No events have been recorded for this entity. Events appear as the workspace records activity against it."
+        />
       {:else}
         <ul class="timeline">
           {#each events as ev (ev.seq)}
@@ -104,7 +113,11 @@
       {/if}
     </section>
   {:else}
-    <p class="muted">Entity not found.</p>
+    <EmptyState
+      icon="database"
+      title="Entity not found"
+      hint="No entity matches this type and id. It may not exist yet, or the id may be mistyped."
+    />
   {/if}
 </main>
 

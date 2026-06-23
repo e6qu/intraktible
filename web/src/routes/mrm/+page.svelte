@@ -3,6 +3,8 @@
   import { onMount } from 'svelte';
   import EmptyState from '$lib/EmptyState.svelte';
   import Skeleton from '$lib/Skeleton.svelte';
+  import Badge from '$lib/Badge.svelte';
+  import { coverageTone } from '$lib/badge';
   import { pct } from '$lib/dashboard';
   import { getMrmReport, type MrmReport } from '$lib/api';
   import { appHref } from '$lib/paths';
@@ -38,6 +40,17 @@
     agent: 'Agent'
   };
 
+  // Order the per-kind summary breakdown by the inventory's own kind sequence so
+  // Flows/Models/Agents read consistently rather than in Object-key order, and
+  // resolve the display label here (a Map keeps the object-injection lint happy).
+  const KIND_ORDER = ['flow', 'predictive_model', 'agent'];
+  const kindLabelMap = new Map(Object.entries(kindLabel));
+  function byKindRows(by: Record<string, number>) {
+    return Object.entries(by)
+      .sort(([a], [b]) => (KIND_ORDER.indexOf(a) + 1 || 99) - (KIND_ORDER.indexOf(b) + 1 || 99))
+      .map(([kind, n]) => ({ kind, n, label: kindLabelMap.get(kind) ?? kind }));
+  }
+
   onMount(load);
 </script>
 
@@ -59,8 +72,16 @@
       hint="The model-risk report aggregates every model across the workspace, so it is available only to admins. Ask an admin to share the exported report."
     />
   {:else if report}
+    <p class="asof">
+      As of <time datetime={report.generated_at}
+        >{new Date(report.generated_at).toLocaleString()}</time
+      >
+    </p>
     <div class="summary" aria-label="inventory summary">
       <span class="stat">Models <b>{report.summary.total}</b></span>
+      {#each byKindRows(report.summary.by_kind) as k (k.kind)}
+        <span class="stat sub">{k.label} <b>{k.n}</b></span>
+      {/each}
       <span class="stat">Deployed <b>{report.summary.deployed}</b></span>
       <span class="stat" class:warn={report.summary.unvalidated > 0}
         >Unvalidated <b>{report.summary.unvalidated}</b></span
@@ -87,7 +108,7 @@
           <thead>
             <tr>
               <th>Kind</th><th>Model</th><th>Ver</th><th>Owner</th><th>Validation</th>
-              <th>Decisions</th><th>Success</th><th>Issues</th>
+              <th>Decisions</th><th>Success</th><th>Monitoring</th><th>Issues</th>
             </tr>
           </thead>
           <tbody>
@@ -98,16 +119,42 @@
                 <td>{m.version || '—'}</td>
                 <td>{m.owner || '—'}</td>
                 <td>
-                  <span class="cov {m.validation.coverage}">{m.validation.coverage}</span>
+                  <Badge tone={coverageTone(m.validation.coverage)}>{m.validation.coverage}</Badge>
                   {#if m.validation.has_assertions}<span class="muted"
                       >{m.validation.assertions_passed}/{m.validation.assertions_total} assert</span
                     >{/if}
                   {#if m.validation.has_eval_cases}<span class="muted"
                       >{m.validation.eval_cases} eval</span
                     >{/if}
+                  {#if m.validation.shadow_diverged}<span
+                      class="muted"
+                      title="shadow runs that diverged from production"
+                      >{m.validation.shadow_diverged} shadow Δ</span
+                    >{/if}
                 </td>
                 <td>{m.monitoring.decisions}</td>
                 <td>{m.monitoring.decisions > 0 ? pct(m.monitoring.success_rate) : '—'}</td>
+                <td class="mon">
+                  {#if m.monitoring.drift_psi !== undefined}
+                    <span class="metric" title="population stability index"
+                      >PSI {m.monitoring.drift_psi.toFixed(2)}</span
+                    >
+                    {#if m.monitoring.drift_firing}<Badge tone="danger">drift</Badge>{/if}
+                  {/if}
+                  {#if m.monitoring.firing_monitors && m.monitoring.firing_monitors.length > 0}
+                    <Badge tone="danger" title={m.monitoring.firing_monitors.join(', ')}
+                      >{m.monitoring.firing_monitors.length} firing</Badge
+                    >
+                  {/if}
+                  {#if m.monitoring.slo_met !== undefined}
+                    <Badge tone={m.monitoring.slo_met ? 'ok' : 'danger'}
+                      >SLO {m.monitoring.slo_met ? 'met' : 'breach'}</Badge
+                    >
+                  {/if}
+                  {#if m.monitoring.drift_psi === undefined && !(m.monitoring.firing_monitors && m.monitoring.firing_monitors.length) && m.monitoring.slo_met === undefined}
+                    <span class="muted">—</span>
+                  {/if}
+                </td>
                 <td>
                   {#if m.issues && m.issues.length > 0}
                     <span class="err">{m.issues.join('; ')}</span>
@@ -119,6 +166,12 @@
         </table>
       </div>
     {/if}
+  {:else}
+    <EmptyState
+      icon="shield"
+      title="No report available"
+      hint="The model-risk report could not be loaded. Reload the page, or check that the workspace has any inventoried models."
+    />
   {/if}
 </section>
 
@@ -134,6 +187,11 @@
   .lede {
     color: var(--fg-muted);
     margin-top: 0;
+  }
+  .asof {
+    color: var(--fg-subtle);
+    font-size: 0.82rem;
+    margin: 0 0 0.6rem;
   }
   .summary {
     display: flex;
@@ -151,6 +209,14 @@
   .stat b {
     color: var(--fg);
     font-size: 1.05rem;
+  }
+  .stat.sub {
+    color: var(--fg-subtle);
+    font-size: 0.82rem;
+  }
+  .stat.sub b {
+    font-size: 0.95rem;
+    color: var(--fg-muted);
   }
   .stat.warn b {
     color: var(--danger);
@@ -183,20 +249,16 @@
   tr.flagged {
     background: var(--danger-bg, transparent);
   }
-  .cov {
-    text-transform: uppercase;
-    font-size: 0.7rem;
-    letter-spacing: 0.03em;
-    padding: 0.05rem 0.4rem;
-    border-radius: 999px;
-    background: var(--surface-2);
+  .mon {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    align-items: center;
   }
-  .cov.tested {
-    color: var(--ok, green);
-  }
-  .cov.failing,
-  .cov.none {
-    color: var(--danger);
+  .metric {
+    font-size: 0.78rem;
+    color: var(--fg-muted);
+    font-variant-numeric: tabular-nums;
   }
   .muted {
     color: var(--fg-subtle);

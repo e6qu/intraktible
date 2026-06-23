@@ -8,6 +8,8 @@
   import CommentThread from '$lib/CommentThread.svelte';
   import EmptyState from '$lib/EmptyState.svelte';
   import Skeleton from '$lib/Skeleton.svelte';
+  import Badge from '$lib/Badge.svelte';
+  import RelativeTime from '$lib/RelativeTime.svelte';
   import { toast } from '$lib/toast';
   import {
     listPolicies,
@@ -17,10 +19,12 @@
     listFlows,
     type Policy,
     type PolicyRule,
+    type PolicySpec,
     type PolicyBacktestReport,
     type Flow,
     type Disposition
   } from '$lib/api';
+  import type { BadgeTone } from '$lib/badge';
   import { roleAtLeast } from '$lib/roles';
   import { user } from '$lib/session';
 
@@ -55,6 +59,31 @@
   let btRunning = $state(false);
 
   const selected = $derived(policies.find((p) => p.policy_id === selectedId) ?? null);
+
+  // The policy whose version history is expanded (one row at a time).
+  let historyId = $state('');
+  function toggleHistory(policyId: string) {
+    historyId = historyId === policyId ? '' : policyId;
+  }
+
+  const DISPOSITION_TONE: Record<string, BadgeTone> = {
+    approve: 'ok',
+    decline: 'danger',
+    refer: 'warn'
+  };
+  // The disposition mix of a published spec: how many bands land on each
+  // disposition, plus the default. Drives the per-row mix indicator so an
+  // operator can read a policy's leaning without opening the editor.
+  function dispositionMix(spec: PolicySpec | undefined) {
+    const counts = new Map(DISPOSITIONS.map((d) => [d, 0]));
+    for (const r of spec?.rules ?? []) {
+      const c = counts.get(r.disposition);
+      if (c !== undefined) counts.set(r.disposition, c + 1);
+    }
+    return DISPOSITIONS.map((d) => ({ disposition: d, count: counts.get(d) ?? 0 })).filter(
+      (c) => c.count > 0
+    );
+  }
 
   function msg(e: unknown): string {
     return e instanceof Error ? e.message : String(e);
@@ -211,17 +240,76 @@
     <div class="table-wrap">
       <table>
         <thead>
-          <tr><th>Name</th><th>Flow</th><th>Version</th><th>Bands</th><th></th></tr>
+          <tr
+            ><th>Name</th><th>Flow</th><th>Version</th><th>Mix</th><th>Published</th><th>Author</th
+            ><th></th></tr
+          >
         </thead>
         <tbody>
           {#each policies as p (p.policy_id)}
+            {@const latest = p.versions?.at(-1)}
+            {@const mix = dispositionMix(latest?.spec)}
             <tr class:sel={p.policy_id === selectedId}>
               <td>{p.name}</td>
               <td class="mono">{p.flow_slug}</td>
               <td>{p.latest > 0 ? `v${p.latest}` : '—'}</td>
-              <td>{p.versions?.at(-1)?.spec?.rules?.length ?? 0}</td>
-              <td><button class="link" onclick={() => edit(p.policy_id)}>Edit bands</button></td>
+              <td>
+                {#if mix.length > 0}
+                  <span class="mix">
+                    {#each mix as c (c.disposition)}
+                      <Badge tone={DISPOSITION_TONE[c.disposition]}>{c.disposition} {c.count}</Badge
+                      >
+                    {/each}
+                  </span>
+                {:else}<span class="muted">—</span>{/if}
+              </td>
+              <td class="muted"
+                >{#if latest?.published_at}<RelativeTime
+                    value={latest.published_at}
+                  />{:else if p.updated_at}<RelativeTime value={p.updated_at} />{:else}—{/if}</td
+              >
+              <td class="muted">{latest?.published_by ?? '—'}</td>
+              <td class="row-actions">
+                <button class="link" onclick={() => edit(p.policy_id)}>Edit bands</button>
+                {#if (p.versions?.length ?? 0) > 0}
+                  <button
+                    class="link"
+                    onclick={() => toggleHistory(p.policy_id)}
+                    aria-expanded={historyId === p.policy_id}
+                    >{historyId === p.policy_id ? 'Hide history' : 'History'}</button
+                  >
+                {/if}
+              </td>
             </tr>
+            {#if historyId === p.policy_id}
+              <tr class="history-row">
+                <td colspan="7">
+                  <div class="history" data-testid="version-history">
+                    <p class="muted">Published versions (newest first):</p>
+                    <ul>
+                      {#each [...p.versions].reverse() as v (v.version)}
+                        <li>
+                          <b>v{v.version}</b>
+                          <span class="hist-mix">
+                            {#each dispositionMix(v.spec) as c (c.disposition)}
+                              <Badge tone={DISPOSITION_TONE[c.disposition]}
+                                >{c.disposition} {c.count}</Badge
+                              >
+                            {/each}
+                          </span>
+                          <span class="muted"
+                            >{#if v.published_at}<RelativeTime
+                                value={v.published_at}
+                              />{/if}{#if v.published_by}
+                              · {v.published_by}{/if}</span
+                          >
+                        </li>
+                      {/each}
+                    </ul>
+                  </div>
+                </td>
+              </tr>
+            {/if}
           {/each}
         </tbody>
       </table>
@@ -317,7 +405,14 @@
         rows="4"
         placeholder={'[\n  {"score": 0.9},\n  {"score": 0.4}\n]'}
       ></textarea>
-      {#if btReport}
+      {#if btReport && selected.latest === 0 && btReport.summary.total <= 1}
+        <p class="muted note" data-testid="preview-unpublished">
+          This policy has never been published, so there is no prior version to diff against and the
+          dataset above is empty. Add a row or two of representative inputs (e.g.
+          <code>{'{"score": 0.9}'}</code>) and run the preview again to see how these draft bands
+          would distribute dispositions.
+        </p>
+      {:else if btReport}
         <div class="table-wrap">
           <table class="bt" data-testid="backtest-result">
             <thead>
@@ -423,6 +518,50 @@
     color: var(--accent-ink);
     padding: 0;
     cursor: pointer;
+  }
+  .row-actions {
+    display: flex;
+    gap: 0.7rem;
+    align-items: center;
+  }
+  .mix,
+  .hist-mix {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+  }
+  .history-row td {
+    background: var(--surface-2);
+    padding: 0.6rem 0.9rem;
+  }
+  .history p {
+    margin: 0 0 0.4rem;
+    font-size: 0.82rem;
+  }
+  .history ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+  .history li {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    font-size: 0.88rem;
+  }
+  .note {
+    font-size: 0.85rem;
+    margin: 0.5rem 0 0;
+  }
+  .note code {
+    background: var(--surface-2);
+    padding: 0.05rem 0.3rem;
+    border-radius: 4px;
+    font-family: var(--font-mono);
   }
   .editor {
     margin-top: 1.5rem;
