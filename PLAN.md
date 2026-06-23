@@ -903,6 +903,13 @@ end-to-end. A multi-agent UX review (interactivity, persona/role, a11y/layout) d
 role-gated write controls (new `$lib/roles`), admin-gated API keys, a full-catalog role-gated command
 palette, DemoBanner contrast (`var(--on-accent)`), table-overflow + skeleton + empty-state cleanups.
 
+A third review (a 6-agent fleet incl. screenshot-driven vision agents) added an **in-app page guide**
+— a route-keyed slide-over explaining each page's purpose, capabilities, and key flows from one
+content registry (`$lib/help`) — and de-anemicised the real shared components: a shared `Badge`,
+a PersonaHome **cockpit** (KPI cards + recent-activity), a decision **verdict hero**, list-page KPIs,
+agent run output, MRM rendering its previously-discarded governance signals, and the long-broken mobile
+banner. Implementation fanned out across isolated git worktrees and integrated on the shared Badge.
+
 ---
 
 ## 9. MVP non-goals
