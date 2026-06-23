@@ -694,9 +694,18 @@ func preResolved(n events.Node, ctx map[string]any, edges []events.Edge, bucket,
 	return map[string]any{output: v}, firstEdge(edges), nil
 }
 
+// manualReviewCode is the reason code a manual_review node contributes, so a
+// decision escalated to a human carries a structured, explainable code even when
+// the flow has no explicit Reason node.
+const (
+	manualReviewCode = "MANUAL_REVIEW"
+	manualReviewDesc = "Escalated to manual review"
+)
+
 // evalManualReview evaluates the case fields for an escalation. It is pass-through
 // (the flow continues); the decide shell turns the recorded output into a
-// ManualReviewRequested event.
+// ManualReviewRequested event. It also appends a MANUAL_REVIEW reason code to the
+// reserved reason_codes list so the escalation is explainable in the decision.
 func evalManualReview(n events.Node, ctx map[string]any, edges []events.Edge) (any, string, error) {
 	var cfg manualReviewConfig
 	if err := decodeConfig(n, &cfg); err != nil {
@@ -710,10 +719,13 @@ func evalManualReview(n events.Node, ctx map[string]any, edges []events.Edge) (a
 	if err != nil {
 		return nil, "", fmt.Errorf("decision-engine: node %q case_type: %w", n.ID, err)
 	}
+	code := map[string]any{"code": manualReviewCode, "description": manualReviewDesc}
+	ctx[reasonCodesField] = append(existingReasonCodes(ctx), code)
 	return map[string]any{
-		"company_name": company,
-		"case_type":    caseType,
-		"sla_days":     cfg.SLADays,
+		"company_name":   company,
+		"case_type":      caseType,
+		"sla_days":       cfg.SLADays,
+		reasonCodesField: []any{code},
 	}, firstEdge(edges), nil
 }
 

@@ -241,39 +241,7 @@ func (h *DecideHandler) Decide(ctx context.Context, id identity.Identity, slug, 
 		}
 	}
 
-	// Validate the caller's input against the version's contract before anything
-	// is injected or recorded — a contract violation is a bad request, not a
-	// recorded decision.
-	if err := domain.ValidateInput(version.InputSchema, data); err != nil {
-		return DecideResult{}, fmt.Errorf("%w: %w", ErrBadRequest, err)
-	}
-
-	// The features/connect/ai/predict top-level keys are engine-owned namespaces,
-	// populated authoritatively by the injectors below. Strip any a caller supplied
-	// before injection: otherwise, when a flow has no corresponding node (or no
-	// provider is wired, so the injector is a no-op), the caller's value would pass
-	// straight through and be read by Rule/Split/Scorecard expressions as if it were
-	// engine-resolved — letting a request forge feature values or model scores the
-	// flow author believes are trusted.
-	stripReservedNamespaces(data)
-
-	// Features and connector calls are resolved at decide time and merged into the
-	// input (under "features" and "connect"); the augmented input is what gets
-	// recorded and executed, so the run stays replay-stable from the recorded data
-	// alone and the pure core never performs I/O.
-	data, err = h.injectFeatures(ctx, id, ref, data)
-	if err != nil {
-		return DecideResult{}, err
-	}
-	data, err = h.injectConnectors(ctx, id, version.Graph, data)
-	if err != nil {
-		return DecideResult{}, err
-	}
-	data, err = h.injectAI(ctx, id, version.Graph, data)
-	if err != nil {
-		return DecideResult{}, err
-	}
-	data, err = h.injectPredictions(ctx, id, version.Graph, data)
+	data, err = h.prepare(ctx, id, version, ref, data)
 	if err != nil {
 		return DecideResult{}, err
 	}
@@ -368,6 +336,111 @@ func (h *DecideHandler) Decide(ctx context.Context, id identity.Identity, slug, 
 		return DecideResult{}, err
 	}
 	return result, nil
+}
+
+// prepare validates the caller's input against the version contract, strips the
+// engine-owned namespaces, and resolves the feature/connector/AI/model injectors
+// into the input — the augmented input the pure core executes. Shared by the
+// recording Decide path and the record-free Preview path so both run identical
+// input preparation.
+func (h *DecideHandler) prepare(ctx context.Context, id identity.Identity, version flows.VersionView, ref EntityRef, data map[string]any) (map[string]any, error) {
+	// Validate the caller's input against the version's contract before anything
+	// is injected or recorded — a contract violation is a bad request, not a
+	// recorded decision.
+	if err := domain.ValidateInput(version.InputSchema, data); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrBadRequest, err)
+	}
+
+	// The features/connect/ai/predict top-level keys are engine-owned namespaces,
+	// populated authoritatively by the injectors below. Strip any a caller supplied
+	// before injection: otherwise, when a flow has no corresponding node (or no
+	// provider is wired, so the injector is a no-op), the caller's value would pass
+	// straight through and be read by Rule/Split/Scorecard expressions as if it were
+	// engine-resolved — letting a request forge feature values or model scores the
+	// flow author believes are trusted.
+	stripReservedNamespaces(data)
+
+	// Features and connector calls are resolved at decide time and merged into the
+	// input (under "features" and "connect"); the augmented input is what gets
+	// recorded and executed, so the run stays replay-stable from the recorded data
+	// alone and the pure core never performs I/O.
+	data, err := h.injectFeatures(ctx, id, ref, data)
+	if err != nil {
+		return nil, err
+	}
+	data, err = h.injectConnectors(ctx, id, version.Graph, data)
+	if err != nil {
+		return nil, err
+	}
+	data, err = h.injectAI(ctx, id, version.Graph, data)
+	if err != nil {
+		return nil, err
+	}
+	data, err = h.injectPredictions(ctx, id, version.Graph, data)
+	if err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+
+// Preview runs the latest published version of the flow as Decide would —
+// resolving the same version, validating input, running the injectors, executing
+// the flow, and applying the operational policy — but records NOTHING: it emits no
+// decision events, opens no case, and runs no shadow. It backs the builder's "Test
+// decision", so an author can exercise a flow (and see the trace, disposition, and
+// reason codes) without polluting history, metrics, or the audit log. The returned
+// DecideResult has the same shape as Decide's, with an empty DecisionID (no
+// decision was recorded). The pre-approval fast path is intentionally skipped:
+// honoring one would record a decision, and a preview should exercise the flow.
+func (h *DecideHandler) Preview(ctx context.Context, id identity.Identity, slug, env string, data map[string]any, ref EntityRef) (DecideResult, error) {
+	if err := id.Valid(); err != nil {
+		return DecideResult{}, err
+	}
+	if !domain.ValidEnvironment(env) {
+		return DecideResult{}, fmt.Errorf("%w: invalid environment %q (sandbox|staging|production)", ErrBadRequest, env)
+	}
+	ctx, span := h.tracer.Start(ctx, "engine.preview", trace.WithAttributes(
+		attribute.String("flow.slug", slug),
+		attribute.String("decision.environment", env),
+	))
+	defer span.End()
+
+	fv, ok, err := flows.BySlug(ctx, h.store, id, slug)
+	if err != nil {
+		return DecideResult{}, err
+	}
+	if !ok {
+		return DecideResult{}, fmt.Errorf("%w: unknown flow %q", ErrNotFound, slug)
+	}
+	if len(fv.Versions) == 0 {
+		return DecideResult{}, fmt.Errorf("%w: flow %q has no published version", ErrNotFound, slug)
+	}
+	versionNo, _ := h.resolveVersion(fv, env)
+	version, ok := versionByNumber(fv, versionNo)
+	if !ok {
+		return DecideResult{}, fmt.Errorf("%w: flow %q has no version %d", ErrNotFound, slug, versionNo)
+	}
+
+	data, err = h.prepare(ctx, id, version, ref, data)
+	if err != nil {
+		return DecideResult{}, err
+	}
+
+	run := domain.ExecuteObserved(version.Graph, data, spanObserver{ctx: ctx, tracer: h.tracer})
+	if run.Status == domain.StatusFailed {
+		return DecideResult{Status: domain.StatusFailed, Error: run.Err}, nil
+	}
+	// Apply the operational policy over the output, exactly as Decide does, so the
+	// preview reflects the disposition the real decision would assign — but without
+	// recording the decision the disposition would otherwise be attached to.
+	disp, err := h.applyPolicy(ctx, id, slug, run.Output)
+	if err != nil {
+		return DecideResult{}, err
+	}
+	return DecideResult{
+		Status: domain.StatusCompleted, Output: run.Output,
+		Disposition: disp.disposition, DispositionReason: disp.reason,
+	}, nil
 }
 
 // runShadow evaluates the environment's shadow version (if any) over the same

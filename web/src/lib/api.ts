@@ -1383,9 +1383,13 @@ export async function decide(
   env: string,
   data: Record<string, unknown>,
   entity?: EntityRef,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = fetch,
+  // preview runs the flow WITHOUT recording a decision (no history/metrics/audit) —
+  // used by the builder's test run. The result then carries no decision_id.
+  preview = false
 ): Promise<DecideResult> {
   const body: Record<string, unknown> = { data };
+  if (preview) body.preview = true;
   if (entity?.type && entity?.id) {
     body.entity_type = entity.type;
     body.entity_id = entity.id;

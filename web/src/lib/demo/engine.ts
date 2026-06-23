@@ -26,6 +26,7 @@ import type {
   Disposition
 } from '$lib/api';
 import { state, nextId } from './store';
+import { agentReply, type AgentSchema } from './agent';
 
 // --- Expression evaluator -------------------------------------------------------
 
@@ -470,7 +471,7 @@ export function runFlow(
       }
       case 'ai': {
         const prompt = String(cfg.prompt ?? rec.prompt ?? '');
-        const text = `stub: ${prompt}`;
+        const text = agentReply(prompt, cfg.schema as AgentSchema | undefined).text;
         const outKey = String(cfg.output ?? 'ai');
         const m = new Map(Object.entries(rec));
         m.set(outKey, text);
@@ -683,9 +684,13 @@ function jsonSubsetMatch(output: string, expect: unknown): boolean {
   }
 }
 
-export function scoreEvalCases(cases: EvalCase[], _version: number): EvalResult[] {
+export function scoreEvalCases(
+  cases: EvalCase[],
+  _version: number,
+  schema?: AgentSchema
+): EvalResult[] {
   return cases.map((c) => {
-    const output = `stub: ${c.prompt}`;
+    const output = agentReply(c.prompt, schema).text;
     let passed = false;
     const mode = c.mode ?? 'contains';
     if (mode === 'contains') passed = output.includes(c.expect ?? '');

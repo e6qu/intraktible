@@ -3,25 +3,37 @@
 package service_test
 
 import (
+	"context"
+	"encoding/json"
 	"net/http"
 	"testing"
 
 	"github.com/e6qu/intraktible/agent-manager/agents"
 	"github.com/e6qu/intraktible/agent-manager/command"
 	"github.com/e6qu/intraktible/agent-manager/service"
+	caseevents "github.com/e6qu/intraktible/case-manager/events"
 	"github.com/e6qu/intraktible/platform/ai"
+	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/testutil"
 )
 
 func start(t *testing.T) *testutil.API {
 	t.Helper()
+	api, _ := startWithLog(t)
+	return api
+}
+
+// startWithLog is start but also returns the shared log, so a test can inspect the
+// events a handler emitted (e.g. the case-open event an escalation writes).
+func startWithLog(t *testing.T) (*testutil.API, eventlog.Log) {
+	t.Helper()
 	log, st := testutil.NewLogStore(t)
 	reg := ai.NewRegistry()
 	reg.Register(ai.Stub{})
 	svc := service.New(command.NewHandler(log, st, reg), st)
 	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "dev"}
-	return testutil.StartAPI(t, log, st, "test-key", id, svc.Routes, agents.Projector{})
+	return testutil.StartAPI(t, log, st, "test-key", id, svc.Routes, agents.Projector{}), log
 }
 
 func TestAgentAPIEndToEnd(t *testing.T) {
@@ -104,5 +116,55 @@ func TestAgentAPIValidationAndAuth(t *testing.T) {
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("unauthenticated -> %d, want 401", resp.StatusCode)
+	}
+}
+
+// TestEscalateDefaultsCaseType proves an escalation with no case_type opens an
+// agent_review case server-side, so the queue can route it without relying on the
+// client to send a type.
+func TestEscalateDefaultsCaseType(t *testing.T) {
+	api, log := startWithLog(t)
+
+	api.Request(t, http.MethodPost, "/v1/agents",
+		map[string]any{"name": "triage", "system": "be terse"}, http.StatusAccepted, nil)
+	var run struct {
+		RunID string `json:"run_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/agents/triage/run",
+		map[string]any{"prompt": "hello"}, http.StatusOK, &run)
+
+	var esc struct {
+		CaseID string `json:"case_id"`
+	}
+	// No case_type in the request.
+	api.Request(t, http.MethodPost, "/v1/agents/triage/runs/"+run.RunID+"/escalate",
+		map[string]any{"company_name": "Acme Corp", "sla_days": 3}, http.StatusAccepted, &esc)
+	if esc.CaseID == "" {
+		t.Fatal("escalation returned no case id")
+	}
+
+	// The emitted case-open event carries the server-side default case type.
+	evs, err := log.Read(context.Background(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, e := range evs {
+		if e.Type != caseevents.TypeReviewRequested {
+			continue
+		}
+		var p caseevents.ReviewRequested
+		if err := json.Unmarshal(e.Payload, &p); err != nil {
+			t.Fatal(err)
+		}
+		if p.CaseID == esc.CaseID {
+			found = true
+			if p.CaseType != "agent_review" {
+				t.Fatalf("case_type = %q, want agent_review", p.CaseType)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("no ReviewRequested event for case %q", esc.CaseID)
 	}
 }

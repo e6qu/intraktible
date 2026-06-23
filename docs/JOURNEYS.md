@@ -41,7 +41,10 @@ Spans: **Flows** (`/engine`) → **Flow builder** (`/engine/[flowId]`).
    branch conditions, the model or agent a node calls. Outcome: changes are held in
    the working draft, not yet versioned.
 4. Run a **test decision** with sample input. Outcome: you see the path taken
-   node-by-node and the resulting output without recording anything.
+   node-by-node and the resulting disposition. The builder runs against the **sandbox**
+   environment, so the run is recorded there and you can inspect or export its trace.
+   (For a true dry run that records nothing, the decision API accepts `"preview": true`,
+   which returns the full result with no decision recorded.)
 5. Click **Publish**. Outcome: the draft becomes a new immutable version; `latest`
    advances. The active deployed version is what the decision API runs — publishing
    alone does not deploy.

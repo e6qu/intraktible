@@ -142,3 +142,18 @@ func FeatureGraph() events.Graph {
 	g.Nodes = append([]events.Node{{ID: "in", Type: events.NodeInput}}, g.Nodes...)
 	return g
 }
+
+// ManualReviewGraph is a flow that always escalates: input -> manual_review (no
+// sla_days, so the open path applies the default) -> output(decision). Used by the
+// escalation/preview tests for the decision->case link and the MANUAL_REVIEW code.
+func ManualReviewGraph() events.Graph {
+	cfg := func(s string) json.RawMessage { return json.RawMessage(s) }
+	return events.Graph{
+		Nodes: []events.Node{
+			{ID: "in", Type: events.NodeInput},
+			{ID: "review", Type: events.NodeManualReview, Config: cfg(`{"company_name":"'Acme Corp'","case_type":"'aml'"}`)},
+			{ID: "out", Type: events.NodeOutput, Config: cfg(`{"fields":["decision"]}`)},
+		},
+		Edges: []events.Edge{{From: "in", To: "review"}, {From: "review", To: "out"}},
+	}
+}

@@ -88,6 +88,19 @@ test('switching demo role updates the role-gated navigation', async ({ page }) =
   await expect(navModelRisk).toHaveCount(0); // viewer loses the admin-only surface
 });
 
+// Gating is server-side, not just nav-hiding: a non-admin who types the URL directly
+// hits the restricted state rather than seeing admin content (matches the real RBAC).
+test('a non-admin reaching an admin-only page directly sees the restricted state', async ({
+  page
+}) => {
+  await page.goto('');
+  await page
+    .getByLabel('Signed in as (switch demo user)')
+    .selectOption({ label: 'Lena Hoff · viewer' });
+  await page.goto('mrm');
+  await expect(page.getByText('Restricted to the admin role')).toBeVisible();
+});
+
 // The switched identity persists across a reload (it's saved like every other write),
 // so a mid-flow refresh doesn't silently revert you to the default admin.
 test('the switched demo user survives a reload', async ({ page }) => {
