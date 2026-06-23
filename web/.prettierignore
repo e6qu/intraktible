@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 .svelte-kit
 build
+build-docs
 node_modules
 playwright-report
 test-results

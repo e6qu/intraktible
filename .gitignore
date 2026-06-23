@@ -61,3 +61,6 @@ web/.pw-data-embedded/
 
 # agent worktrees (transient)
 .claude/worktrees/
+
+# rendered docs site (build artifact)
+web/build-docs/
