@@ -87,6 +87,10 @@
     ['user', '<circle cx="12" cy="8" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/>'],
     ['chevron-down', '<path d="M6 9l6 6 6-6"/>'],
     ['chevron-right', '<path d="M9 6l6 6-6 6"/>'],
+    [
+      'help',
+      '<circle cx="12" cy="12" r="9"/><path d="M9.3 9.2a2.8 2.8 0 015.4 1c0 1.9-2.7 2.4-2.7 4"/><path d="M12 17.3h.01"/>'
+    ],
     ['search', '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>'],
     [
       'clipboard',

@@ -18,9 +18,12 @@
   import { user, refreshUser, signOut } from '$lib/session';
   import { appHref } from '$lib/paths';
   import { openPalette } from '$lib/palette';
+  import { openGuide } from '$lib/guide';
+  import { helpFor } from '$lib/help/registry';
   import Toasts from '$lib/Toasts.svelte';
   import CommandPalette from '$lib/CommandPalette.svelte';
   import ShortcutsOverlay from '$lib/ShortcutsOverlay.svelte';
+  import PageGuide from '$lib/PageGuide.svelte';
   import NotificationsBell from '$lib/NotificationsBell.svelte';
   import DemoBanner from '$lib/DemoBanner.svelte';
 
@@ -200,6 +203,16 @@
         {/if}
       </div>
     </details>
+    <button
+      class="guide-trigger"
+      onclick={openGuide}
+      aria-label="Guide for this page"
+      title="Page guide — what this page is for and how to use it"
+      data-testid="guide-trigger"
+      disabled={!helpFor($page.route.id)}
+    >
+      <Icon name="help" size={17} />
+    </button>
   {:else}
     <span class="grow"></span>
   {/if}
@@ -218,6 +231,7 @@
 </div>
 <CommandPalette />
 <ShortcutsOverlay />
+<PageGuide />
 <Toasts />
 
 <style>
@@ -367,7 +381,8 @@
     color: var(--fg);
     text-decoration: none;
   }
-  .toggle {
+  .toggle,
+  .guide-trigger {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -375,6 +390,20 @@
     height: 36px;
     padding: 0;
     border-radius: 999px;
+  }
+  .guide-trigger {
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--fg-muted);
+    cursor: pointer;
+  }
+  .guide-trigger:hover:not(:disabled) {
+    color: var(--fg);
+    border-color: var(--accent);
+  }
+  .guide-trigger:disabled {
+    opacity: 0.4;
+    cursor: default;
   }
 
   /* ⌘K command-palette trigger — subtle, desktop-only (mobile uses the nav + the

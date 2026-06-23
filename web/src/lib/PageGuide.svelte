@@ -1,0 +1,219 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<!--
+  Per-page guide: a right slide-over that explains the current page — what it's for,
+  what you can do here, and the key flows — keyed by the route id ($page.route.id).
+  A slide-over (not a centered modal) so the content reads alongside the UI it
+  describes. Content lives in $lib/help/registry; pages need no per-page markup.
+  Opened from the header guide button or the command palette ($lib/guide store).
+-->
+<script lang="ts">
+  import { page } from '$app/stores';
+  import Icon from '$lib/Icon.svelte';
+  import { appHref } from '$lib/paths';
+  import { guideOpen, closeGuide } from '$lib/guide';
+  import { helpFor } from '$lib/help/registry';
+
+  const help = $derived(helpFor($page.route.id));
+  let panelEl = $state<HTMLElement | null>(null);
+  let closeEl = $state<HTMLButtonElement | null>(null);
+  let restoreFocusEl: HTMLElement | null = null;
+
+  // Auto-close on navigation so the guide never shows the wrong page's content.
+  let lastPath = $state($page.url.pathname);
+  $effect(() => {
+    if ($page.url.pathname !== lastPath) {
+      lastPath = $page.url.pathname;
+      closeGuide();
+    }
+  });
+
+  // On open, remember the trigger and move focus into the panel; restore on close.
+  $effect(() => {
+    if ($guideOpen) {
+      restoreFocusEl = document.activeElement as HTMLElement | null;
+      queueMicrotask(() => closeEl?.focus());
+    } else if (restoreFocusEl) {
+      restoreFocusEl.focus();
+      restoreFocusEl = null;
+    }
+  });
+
+  function onKeydown(e: KeyboardEvent): void {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      closeGuide();
+      return;
+    }
+    if (e.key === 'Tab' && panelEl) {
+      // Trap focus within the panel.
+      const f = panelEl.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), summary');
+      if (f.length === 0) return;
+      const first = f[0];
+      const last = f[f.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+  }
+</script>
+
+{#if $guideOpen && help}
+  <div class="g-root">
+    <button class="g-backdrop" aria-label="Close guide" onclick={closeGuide}></button>
+    <div
+      class="g-panel"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="g-title"
+      tabindex="-1"
+      bind:this={panelEl}
+      onkeydown={onKeydown}
+    >
+      <header class="g-head">
+        <h2 id="g-title">{help.title}</h2>
+        <button class="g-close" aria-label="Close guide" onclick={closeGuide} bind:this={closeEl}>
+          <Icon name="plus" size={16} />
+        </button>
+      </header>
+      <p class="g-summary">{help.summary}</p>
+
+      <h3>What you can do here</h3>
+      <ul class="g-caps">
+        {#each help.capabilities as c (c)}<li>{c}</li>{/each}
+      </ul>
+
+      {#if help.journeys && help.journeys.length > 0}
+        <h3>Key flows</h3>
+        {#each help.journeys as j (j.name)}
+          <details class="g-journey">
+            <summary>{j.name}</summary>
+            <ol>
+              {#each j.steps as s (s)}<li>{s}</li>{/each}
+            </ol>
+          </details>
+        {/each}
+      {/if}
+
+      {#if help.links && help.links.length > 0}
+        <nav class="g-links" aria-label="Related">
+          {#each help.links as l (l.href)}<a href={appHref(l.href)}>{l.label} →</a>{/each}
+        </nav>
+      {/if}
+    </div>
+  </div>
+{/if}
+
+<style>
+  .g-root {
+    position: fixed;
+    inset: 0;
+    z-index: 200;
+    display: flex;
+    justify-content: flex-end;
+  }
+  .g-backdrop {
+    position: absolute;
+    inset: 0;
+    border: none;
+    cursor: pointer;
+    background: color-mix(in srgb, #000 35%, transparent);
+  }
+  .g-panel {
+    position: relative;
+    width: min(26rem, 92vw);
+    height: 100%;
+    overflow-y: auto;
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    box-shadow: var(--shadow, -8px 0 24px rgba(0, 0, 0, 0.18));
+    padding: 1.1rem 1.25rem 2rem;
+    animation: slide-in 0.16s ease;
+  }
+  @keyframes slide-in {
+    from {
+      transform: translateX(100%);
+    }
+    to {
+      transform: translateX(0);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .g-panel {
+      animation: none;
+    }
+  }
+  .g-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+  .g-head h2 {
+    margin: 0;
+    font-size: 1.1rem;
+  }
+  .g-close {
+    display: inline-flex;
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    color: var(--fg-muted);
+    border-radius: 6px;
+    padding: 0.3rem;
+    cursor: pointer;
+    transform: rotate(45deg);
+  }
+  .g-summary {
+    color: var(--fg-muted);
+    margin: 0.5rem 0 1rem;
+    line-height: 1.5;
+  }
+  h3 {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--fg-subtle);
+    margin: 1.1rem 0 0.4rem;
+  }
+  .g-caps {
+    margin: 0;
+    padding-left: 1.1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    line-height: 1.4;
+  }
+  .g-journey {
+    border: 1px solid var(--border);
+    border-radius: var(--radius, 8px);
+    padding: 0.4rem 0.7rem;
+    margin-bottom: 0.4rem;
+    background: var(--surface-2);
+  }
+  .g-journey summary {
+    cursor: pointer;
+    font-weight: 550;
+    font-size: 0.9rem;
+  }
+  .g-journey ol {
+    margin: 0.5rem 0 0.2rem;
+    padding-left: 1.1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    color: var(--fg-muted);
+    line-height: 1.4;
+  }
+  .g-links {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    margin-top: 1rem;
+  }
+  .g-links a {
+    font-size: 0.9rem;
+  }
+</style>

@@ -115,6 +115,8 @@ export interface HomeStat {
   id: HomeStatId;
   value: string | number;
   label: string;
+  href: string; // the surface this KPI drills into
+  sub?: string; // a one-line qualifier (e.g. "93% success · 3 failed")
 }
 
 // DEFAULT_HOME_STATS is the generic deck for personas that declare no homeStats.
@@ -132,27 +134,55 @@ export function personaHomeStats(ids: HomeStatId[], data: DashboardData): HomeSt
   const stat = (id: HomeStatId): HomeStat => {
     switch (id) {
       case 'decisions':
-        return { id, value: stats.total, label: 'decisions' };
+        return {
+          id,
+          value: stats.total,
+          label: 'decisions',
+          href: '/decisions',
+          sub: `${pct(stats.completionRate)} success · ${stats.failed} failed`
+        };
       case 'completed':
-        return { id, value: stats.completed, label: 'completed' };
+        return { id, value: stats.completed, label: 'completed', href: '/decisions' };
       case 'failed':
-        return { id, value: stats.failed, label: 'failed' };
+        return { id, value: stats.failed, label: 'failed', href: '/decisions' };
       case 'flows':
-        return { id, value: data.flows.length, label: 'flows' };
+        return {
+          id,
+          value: data.flows.length,
+          label: 'flows',
+          href: '/engine',
+          sub: `${deploy.live} live · ${deploy.pending} pending`
+        };
       case 'p95':
-        return { id, value: `${stats.p95Ms} ms`, label: 'p95 latency' };
+        return { id, value: `${stats.p95Ms} ms`, label: 'p95 latency', href: '/observability' };
       case 'completion_rate':
-        return { id, value: pct(stats.completionRate), label: 'completion' };
+        return {
+          id,
+          value: pct(stats.completionRate),
+          label: 'completion',
+          href: '/observability'
+        };
       case 'pending_approvals':
-        return { id, value: deploy.pending, label: 'pending approvals' };
+        return {
+          id,
+          value: deploy.pending,
+          label: 'pending approvals',
+          href: '/preapprovals'
+        };
       case 'needs_review':
-        return { id, value: data.cases.by_status?.needs_review ?? 0, label: 'needs review' };
+        return {
+          id,
+          value: data.cases.by_status?.needs_review ?? 0,
+          label: 'needs review',
+          href: '/cases',
+          sub: `${data.cases.overdue} overdue · ${data.cases.unassigned} unassigned`
+        };
       case 'overdue':
-        return { id, value: data.cases.overdue, label: 'overdue' };
+        return { id, value: data.cases.overdue, label: 'overdue', href: '/cases' };
       case 'unassigned':
-        return { id, value: data.cases.unassigned, label: 'unassigned' };
+        return { id, value: data.cases.unassigned, label: 'unassigned', href: '/cases' };
       case 'challenger':
-        return { id, value: challenger, label: 'challenger arm' };
+        return { id, value: challenger, label: 'challenger arm', href: '/decisions' };
     }
   };
   return ids.map(stat);
