@@ -13,6 +13,8 @@
   import Breadcrumb from '$lib/Breadcrumb.svelte';
   import RelativeTime from '$lib/RelativeTime.svelte';
   import Skeleton from '$lib/Skeleton.svelte';
+  import Badge from '$lib/Badge.svelte';
+  import { caseStatusTone, slaTone } from '$lib/badge';
   import { roleAtLeast } from '$lib/roles';
   import { user } from '$lib/session';
   import { appHref } from '$lib/paths';
@@ -25,6 +27,11 @@
   let assignee = $state('');
   let newStatus = $state<CaseStatus>('in_progress');
   let noteText = $state('');
+  // Seed the status <select> from the case's real status once, on first load, so it
+  // doesn't default to in_progress (which invites an accidental backward
+  // transition). Only the first load seeds it — later reloads must not clobber a
+  // selection the user is mid-way through making.
+  let statusSeeded = false;
 
   // Derive from the route param so navigating between sibling cases reloads.
   const caseID = $derived($page.params.caseId ?? '');
@@ -39,9 +46,31 @@
       const got = await getCase(key, caseID);
       if (caseID !== reqID) return;
       c = got;
+      if (!statusSeeded) {
+        newStatus = got.status;
+        statusSeeded = true;
+      }
     } catch (e) {
       if (caseID === reqID) error = e instanceof Error ? e.message : String(e);
     }
+  }
+
+  // Format a context value for the scannable fact grid: *_usd / *_amount keys get
+  // currency formatting; everything else is shown verbatim (displayEntries has
+  // already stringified nested objects to compact JSON).
+  const usdFmt = new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits: 0
+  });
+  function factValue(key: string, value: string): string {
+    const n = Number(value);
+    if (/(_usd|_amount)$/.test(key) && Number.isFinite(n)) return usdFmt.format(n);
+    return value;
+  }
+  // The risk figure is the headline number a reviewer scans for — emphasise it.
+  function isRisk(key: string): boolean {
+    return /risk|score/i.test(key);
   }
 
   let busy = $state(false);
@@ -67,12 +96,20 @@
 <main>
   <Breadcrumb sectionHref="/cases" sectionLabel="Cases" current={caseID} />
   {#if c}
-    <h1>{c.company_name}</h1>
+    <div class="head">
+      <h1>{c.company_name}</h1>
+      <Badge tone={caseStatusTone(c.status)}
+        ><span data-testid="case-status">{c.status}</span></Badge
+      >
+      {#if c.sla_state && c.sla_state !== 'on_track'}
+        <Badge tone={slaTone(c.sla_state)} title="SLA urgency">
+          {c.sla_state === 'overdue' ? '⚠ overdue' : 'due soon'} · {c.days_left}d left
+        </Badge>
+      {/if}
+    </div>
     <dl>
       <dt>type</dt>
-      <dd>{c.case_type}</dd>
-      <dt>status</dt>
-      <dd data-testid="case-status">{c.status}</dd>
+      <dd><span class="chip">{c.case_type}</span></dd>
       <dt>assignee</dt>
       <dd>{c.assignee || '—'}</dd>
       <dt>SLA</dt>
@@ -90,12 +127,14 @@
 
     {#if displayEntries(c.context).length > 0}
       <h2>Context</h2>
-      <dl class="ctx" data-testid="context">
+      <div class="facts" data-testid="context">
         {#each displayEntries(c.context) as [k, v] (k)}
-          <dt>{k}</dt>
-          <dd>{v}</dd>
+          <div class="fact" class:risk={isRisk(k)}>
+            <span class="fact-key">{k}</span>
+            <span class="fact-val">{factValue(k, v)}</span>
+          </div>
         {/each}
-      </dl>
+      </div>
     {/if}
   {:else if !error}
     <h1>{caseID}</h1>
@@ -108,6 +147,22 @@
   <div class="row">
     <button onclick={load}>Reload</button>
   </div>
+
+  {#if c && c.status !== 'completed'}
+    <div class="resolve-bar">
+      <button
+        class="resolve"
+        onclick={() => run(() => setCaseStatus(key, caseID, 'completed'))}
+        disabled={busy || !roleAtLeast($user?.role, 'operator')}
+        title={!roleAtLeast($user?.role, 'operator') ? 'Requires the operator role' : undefined}
+      >
+        {busy ? 'Working…' : '✓ Resolve case'}
+      </button>
+      <span class="muted">Mark this case completed.</span>
+    </div>
+  {:else if c}
+    <p class="resolved muted">✓ This case is resolved.</p>
+  {/if}
 
   <h2>Actions</h2>
   <div class="actions">
@@ -193,6 +248,16 @@
     font: inherit;
     padding: 0.4rem 0.6rem;
   }
+  .head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.6rem;
+    margin-bottom: 0.4rem;
+  }
+  .head h1 {
+    margin: 0;
+  }
   dl {
     display: grid;
     grid-template-columns: 8rem 1fr;
@@ -200,6 +265,75 @@
   }
   dt {
     color: var(--fg-subtle);
+  }
+  .chip {
+    display: inline-block;
+    padding: 0.1rem 0.5rem;
+    border-radius: 999px;
+    font-size: 0.78rem;
+    background: var(--surface-2);
+    color: var(--fg-muted);
+    border: 1px solid var(--border);
+  }
+  .facts {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
+    gap: 0.5rem;
+    margin: 0.5rem 0 1rem;
+  }
+  .fact {
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+    padding: 0.5rem 0.65rem;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 0.5rem;
+  }
+  .fact-key {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--fg-subtle);
+  }
+  .fact-val {
+    font-size: 0.95rem;
+    color: var(--fg);
+    word-break: break-word;
+  }
+  .fact.risk {
+    border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+    background: color-mix(in srgb, var(--accent) 8%, var(--surface-2));
+  }
+  .fact.risk .fact-val {
+    font-size: 1.35rem;
+    font-weight: 700;
+    color: var(--accent-ink, var(--accent));
+  }
+  .resolve-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.6rem;
+    margin: 1rem 0;
+  }
+  .resolve {
+    font: inherit;
+    font-weight: 600;
+    padding: 0.5rem 1rem;
+    border: 1px solid color-mix(in srgb, var(--ok, #16a34a) 40%, transparent);
+    border-radius: 0.5rem;
+    background: color-mix(in srgb, var(--ok, #16a34a) 16%, transparent);
+    color: var(--ok, #16a34a);
+    cursor: pointer;
+  }
+  .resolve:disabled {
+    opacity: 0.6;
+    cursor: default;
+  }
+  .resolved {
+    margin: 1rem 0;
+    font-weight: 600;
   }
   .actions {
     margin: 1rem 0;

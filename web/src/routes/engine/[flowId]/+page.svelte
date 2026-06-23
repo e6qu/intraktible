@@ -64,6 +64,7 @@
     approveDeployment,
     rejectDeployment,
     type ExportFormat,
+    type DecideResult,
     type Flow,
     type FlowMetrics,
     type PromotionStagePolicy,
@@ -83,6 +84,8 @@
   import { layoutLanes, type XY } from '$lib/layout';
   import { theme } from '$lib/theme';
   import Icon from '$lib/Icon.svelte';
+  import Badge from '$lib/Badge.svelte';
+  import { statusTone, dispositionTone } from '$lib/badge';
   import CommentThread from '$lib/CommentThread.svelte';
   import FlowNode from '$lib/FlowNode.svelte';
   import BpmnNode from '$lib/BpmnNode.svelte';
@@ -658,8 +661,31 @@
     updateSelected({ config: JSON.stringify(cleanConfig({ ...nodeCfg(), ...patch })) });
   }
   function addEdge() {
-    if (!edgeFrom || !edgeTo) return;
-    editEdges = [...editEdges, { from: edgeFrom, to: edgeTo, branch: edgeBranch || undefined }];
+    if (!edgeFrom || !edgeTo) {
+      toast.error('Pick both a from and a to node.');
+      return;
+    }
+    if (edgeFrom === edgeTo) {
+      toast.error('An edge must connect two different nodes.');
+      return;
+    }
+    const branch = edgeBranch.trim();
+    // A branched edge is distinct per branch; an unbranched one dedupes through the
+    // same path as drag-connect so the manual form can't add a duplicate either.
+    if (branch) {
+      if (editEdges.some((e) => e.from === edgeFrom && e.to === edgeTo && e.branch === branch)) {
+        toast.error('That branch edge already exists.');
+        return;
+      }
+      editEdges = [...editEdges, { from: edgeFrom, to: edgeTo, branch }];
+    } else {
+      const next = addUniqueEdge(editEdges, edgeFrom, edgeTo);
+      if (next === editEdges) {
+        toast.error('That edge already exists.');
+        return;
+      }
+      editEdges = next;
+    }
     edgeFrom = edgeTo = edgeBranch = '';
     clearTelemetry();
     syncCanvas();
@@ -830,14 +856,35 @@
 
   let lastDecisionId = $state('');
   let running = $state(false);
+  // The parsed last run (for the verdict card) and the wall-clock round-trip, kept
+  // alongside the raw `result` JSON (which still backs the data-testid="run-result"
+  // <pre> behind the details). null until the first run / cleared on an error.
+  let runResult = $state<DecideResult | null>(null);
+  let runMs = $state<number | null>(null);
+  // The decide result's primary output fields (the `data` map) for the card — at
+  // most a handful, the rest collapse into the raw JSON.
+  const runOutputFields = $derived.by(() => {
+    const d = runResult?.data;
+    return d && typeof d === 'object' && !Array.isArray(d)
+      ? Object.entries(d as Record<string, unknown>)
+      : [];
+  });
+  function fieldText(v: unknown): string {
+    return typeof v === 'object' && v !== null ? JSON.stringify(v) : String(v);
+  }
   async function run() {
     result = '';
+    runResult = null;
+    runMs = null;
     lastDecisionId = '';
     if (!flow) return;
     running = true;
+    const startedAt = performance.now();
     try {
       const entity = entityType && entityID ? { type: entityType, id: entityID } : undefined;
       const res = await decide(key, flow.slug, env, JSON.parse(dataText), entity);
+      runMs = Math.round(performance.now() - startedAt);
+      runResult = res;
       lastDecisionId = res.decision_id ?? '';
       result = JSON.stringify(res, null, 2);
       void loadMetrics();
@@ -2796,7 +2843,38 @@
       <textarea bind:value={dataText} aria-label="input data" rows="3" class:invalid={!dataValid}
       ></textarea>
       {#if !dataValid}<p class="json-err">Not valid JSON — fix it before running.</p>{/if}
-      <pre data-testid="run-result">{result}</pre>
+      {#if runResult}
+        <div
+          class="verdict-card {dispositionTone(runResult.disposition)}"
+          data-testid="run-verdict"
+        >
+          <div class="verdict-top">
+            {#if runResult.disposition}
+              <Badge tone={dispositionTone(runResult.disposition)}>{runResult.disposition}</Badge>
+            {/if}
+            <Badge tone={statusTone(runResult.status)}>{runResult.status}</Badge>
+            {#if runMs != null}<span class="dur">{runMs} ms</span>{/if}
+          </div>
+          {#if runResult.error}
+            <p class="verdict-err">{runResult.error}</p>
+          {:else if runOutputFields.length}
+            <dl class="verdict-out">
+              {#each runOutputFields.slice(0, 6) as [k, v] (k)}
+                <dt>{k}</dt>
+                <dd>{fieldText(v)}</dd>
+              {/each}
+            </dl>
+          {/if}
+        </div>
+      {/if}
+      {#if result}
+        <details class="raw-result">
+          <summary>Raw result</summary>
+          <pre data-testid="run-result">{result}</pre>
+        </details>
+      {:else}
+        <pre data-testid="run-result" hidden>{result}</pre>
+      {/if}
       {#if lastDecisionId}
         <div class="row">
           <a class="view-decision" href={appHref(`/decisions/${lastDecisionId}`)}
@@ -3258,6 +3336,70 @@
     margin: 0.2rem 0;
     color: var(--danger);
     font-size: 0.8rem;
+  }
+  .verdict-card {
+    --tone: var(--fg-muted);
+    margin: 0.5rem 0;
+    padding: 0.7rem 0.9rem;
+    border: 1px solid var(--tone);
+    border-left-width: 4px;
+    border-radius: var(--radius);
+    background: color-mix(in srgb, var(--tone) 8%, var(--surface));
+  }
+  .verdict-card.ok {
+    --tone: var(--ok);
+  }
+  .verdict-card.danger {
+    --tone: var(--danger);
+  }
+  .verdict-card.warn {
+    --tone: var(--warn);
+  }
+  .verdict-top {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+  .verdict-top .dur {
+    margin-left: auto;
+    font-size: 0.82rem;
+    color: var(--fg-subtle);
+    font-variant-numeric: tabular-nums;
+  }
+  .verdict-err {
+    margin: 0.5rem 0 0;
+    color: var(--danger);
+    font-size: 0.88rem;
+  }
+  .verdict-out {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 0.2rem 0.9rem;
+    margin: 0.55rem 0 0;
+    font-size: 0.88rem;
+  }
+  .verdict-out dt {
+    color: var(--fg-subtle);
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+  }
+  .verdict-out dd {
+    margin: 0;
+    font-variant-numeric: tabular-nums;
+    word-break: break-word;
+  }
+  .raw-result {
+    margin: 0.3rem 0;
+  }
+  .raw-result summary {
+    cursor: pointer;
+    font-size: 0.82rem;
+    color: var(--fg-muted);
+    width: max-content;
+  }
+  .raw-result pre {
+    margin-top: 0.4rem;
   }
   .grid {
     display: grid;

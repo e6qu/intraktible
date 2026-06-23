@@ -4,6 +4,8 @@
   import { toast } from '$lib/toast';
   import EmptyState from '$lib/EmptyState.svelte';
   import Skeleton from '$lib/Skeleton.svelte';
+  import Badge from '$lib/Badge.svelte';
+  import { caseStatusTone, slaTone } from '$lib/badge';
   import {
     listCases,
     getCaseSummary,
@@ -300,11 +302,17 @@
                 /></td
               >
               <td><a href={appHref(`/cases/${c.case_id}`)}>{c.company_name}</a></td>
-              <td>{c.case_type}</td>
-              <td>{c.status}</td>
+              <td><span class="chip">{c.case_type}</span></td>
+              <td><Badge tone={caseStatusTone(c.status)}>{c.status}</Badge></td>
               <td>{c.assignee || '—'}</td>
               <td>{c.sla_days}d</td>
-              <td class={`sla-${c.sla_state ?? ''}`}>{c.days_left}d</td>
+              <td class={`sla-${c.sla_state ?? ''}`}>
+                {#if c.sla_state && c.sla_state !== 'on_track'}
+                  <Badge tone={slaTone(c.sla_state)}>{c.days_left}d</Badge>
+                {:else}
+                  {c.days_left}d
+                {/if}
+              </td>
             </tr>
           {/each}
         </tbody>
@@ -421,5 +429,14 @@
     color: var(--accent);
     cursor: pointer;
     padding: 0.2rem;
+  }
+  .chip {
+    display: inline-block;
+    padding: 0.1rem 0.5rem;
+    border-radius: 999px;
+    font-size: 0.78rem;
+    background: var(--surface-2);
+    color: var(--fg-muted);
+    border: 1px solid var(--border);
   }
 </style>

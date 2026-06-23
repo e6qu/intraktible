@@ -9,10 +9,14 @@
   import type { Snippet } from 'svelte';
   import type { Tone } from '$lib/badge';
 
-  let { tone = 'neutral', children }: { tone?: Tone; children: Snippet } = $props();
+  let {
+    tone = 'neutral',
+    title,
+    children
+  }: { tone?: Tone; title?: string; children: Snippet } = $props();
 </script>
 
-<span class="badge {tone}">{@render children()}</span>
+<span class="badge {tone}" {title}>{@render children()}</span>
 
 <style>
   .badge {

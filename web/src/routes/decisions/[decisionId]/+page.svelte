@@ -9,6 +9,9 @@
   import { getDecision, exportDecision, type Decision, type RunExportFormat } from '$lib/api';
   import { toast } from '$lib/toast';
   import { appHref } from '$lib/paths';
+  import Badge from '$lib/Badge.svelte';
+  import { statusTone, dispositionTone } from '$lib/badge';
+  import { nodeAccent } from '$lib/nodevis';
 
   // API calls authenticate via the session cookie (empty key → no X-Api-Key).
   const key = '';
@@ -85,8 +88,23 @@
   {#if error}<p class="err">{error}</p>{/if}
   {#if d}
     <div class="head">
-      <h1>{d.slug} <span class="badge {d.status}">{d.status}</span></h1>
+      <h1>{d.slug} <Badge tone={statusTone(d.status)}>{d.status}</Badge></h1>
     </div>
+
+    {#if d.disposition}
+      <div class="verdict {dispositionTone(d.disposition)}" data-testid="verdict">
+        <span class="verdict-mark" aria-hidden="true">
+          <Icon name={d.disposition === 'refer' ? 'manual_review' : 'check'} size={22} />
+        </span>
+        <div class="verdict-body">
+          <span class="verdict-disp">
+            {d.disposition}
+            {#if d.preapproval_id}<span class="pa-tag">pre-approval</span>{/if}
+          </span>
+          {#if d.disposition_reason}<span class="verdict-reason">{d.disposition_reason}</span>{/if}
+        </div>
+      </div>
+    {/if}
 
     <dl class="fields">
       <dt>flow</dt>
@@ -97,16 +115,8 @@
       <dd>{d.environment}</dd>
       <dt>variant</dt>
       <dd>{d.variant ?? '—'}</dd>
-      {#if d.disposition}
-        <dt>disposition</dt>
-        <dd>
-          <span class="disp {d.disposition}">{d.disposition}</span>
-          {#if d.preapproval_id}<span class="pa-tag">pre-approval</span>{/if}
-          {#if d.disposition_reason}<span class="muted"> · {d.disposition_reason}</span>{/if}
-        </dd>
-      {/if}
       <dt>duration</dt>
-      <dd>{d.duration_ms ?? 0} ms</dd>
+      <dd>{d.duration_ms != null ? `${d.duration_ms} ms` : '—'}</dd>
       {#if d.case_id}
         <dt>opened case</dt>
         <dd><a href={appHref(`/cases/${d.case_id}`)}>{d.case_id} →</a></dd>
@@ -130,14 +140,18 @@
     {#if d.nodes && d.nodes.length}
       <ol class="trace">
         {#each d.nodes as n, i (i)}
-          <li>
-            <span class="nodeicon"><Icon name={n.type} size={15} /></span>
-            <span class="nid">{n.node_id}</span>
-            <span class="ntype">{n.type}</span>
-            {#if branchOf(n.output)}<span class="branch" data-testid="trace-branch"
-                >→ {branchOf(n.output)}</span
-              >{/if}
-            {#if n.output !== undefined}<code class="nout">{pretty(n.output)}</code>{/if}
+          <li style="--accent: {nodeAccent(n.type)}">
+            <span class="dot"><Icon name={n.type} size={14} /></span>
+            <div class="step">
+              <div class="step-head">
+                <span class="nid">{n.node_id}</span>
+                <span class="ntype">{n.type}</span>
+                {#if branchOf(n.output)}<span class="branch" data-testid="trace-branch"
+                    >→ {branchOf(n.output)}</span
+                  >{/if}
+              </div>
+              {#if n.output !== undefined}<code class="nout">{pretty(n.output)}</code>{/if}
+            </div>
           </li>
         {/each}
       </ol>
@@ -193,21 +207,58 @@
     align-items: center;
     gap: 0.6rem;
   }
-  .badge {
-    padding: 0.1rem 0.5rem;
+  .verdict {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin: 0.75rem 0 0.4rem;
+    padding: 0.75rem 1rem;
+    border-radius: 12px;
+    border: 1px solid var(--tone, var(--border));
+    background: color-mix(in srgb, var(--tone, var(--fg-muted)) 10%, var(--surface));
+  }
+  .verdict.ok {
+    --tone: var(--ok);
+  }
+  .verdict.danger {
+    --tone: var(--danger);
+  }
+  .verdict.warn {
+    --tone: var(--warn);
+  }
+  .verdict.neutral {
+    --tone: var(--fg-muted);
+  }
+  .verdict-mark {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.4rem;
+    height: 2.4rem;
     border-radius: 999px;
-    font-size: 0.8rem;
-    font-weight: 550;
-    background: var(--surface-2);
+    background: color-mix(in srgb, var(--tone) 20%, transparent);
+    color: var(--tone);
+    flex: none;
+  }
+  .verdict-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+    min-width: 0;
+  }
+  .verdict-disp {
+    font-size: 1.35rem;
+    font-weight: 700;
+    text-transform: capitalize;
+    color: var(--tone);
+    line-height: 1.1;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .verdict-reason {
+    font-size: 0.9rem;
     color: var(--fg-muted);
-  }
-  .badge.completed {
-    background: color-mix(in srgb, var(--ok) 18%, transparent);
-    color: var(--ok);
-  }
-  .badge.failed {
-    background: color-mix(in srgb, var(--danger) 16%, transparent);
-    color: var(--danger);
   }
   dl.fields {
     display: grid;
@@ -230,33 +281,13 @@
     align-items: baseline;
     gap: 0.6rem;
   }
-  .disp {
-    padding: 0.05rem 0.5rem;
-    border-radius: 999px;
-    font-size: 0.78rem;
-    font-weight: 600;
-    text-transform: capitalize;
-    background: var(--surface-2);
-    color: var(--fg-muted);
-  }
-  .disp.approve {
-    background: color-mix(in srgb, var(--ok) 18%, transparent);
-    color: var(--ok);
-  }
-  .disp.decline {
-    background: color-mix(in srgb, var(--danger) 16%, transparent);
-    color: var(--danger);
-  }
-  .disp.refer {
-    background: color-mix(in srgb, var(--warn) 18%, transparent);
-    color: var(--warn);
-  }
   .pa-tag {
-    margin-left: 0.4rem;
     padding: 0.05rem 0.45rem;
     border-radius: 999px;
-    font-size: 0.72rem;
+    font-size: 0.7rem;
     font-weight: 600;
+    text-transform: none;
+    letter-spacing: 0.02em;
     background: color-mix(in srgb, var(--accent) 14%, transparent);
     color: var(--accent-ink);
   }
@@ -270,53 +301,84 @@
   }
   ol.trace {
     list-style: none;
-    counter-reset: step;
     padding: 0;
+    margin: 0.4rem 0 1rem;
   }
+  /* A vertical rail connects the steps; each step's dot/rail picks up the node
+     type's accent (--accent is set inline from nodeAccent()). */
   ol.trace li {
-    counter-increment: step;
+    --accent: var(--fg-subtle);
+    position: relative;
     display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.35rem 0.4rem;
-    border-bottom: 1px solid var(--border);
+    align-items: flex-start;
+    gap: 0.7rem;
+    padding: 0 0 0.9rem 0;
   }
   ol.trace li::before {
-    content: counter(step);
-    color: var(--fg-subtle);
-    font-size: 0.78rem;
-    min-width: 1.2rem;
+    content: '';
+    position: absolute;
+    left: 0.7rem;
+    top: 1.5rem;
+    bottom: -0.05rem;
+    width: 2px;
+    background: var(--border);
   }
-  .nodeicon {
+  ol.trace li:last-child::before {
+    display: none;
+  }
+  .dot {
+    position: relative;
+    z-index: 1;
     display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.5rem;
+    height: 1.5rem;
+    border-radius: 999px;
+    flex: none;
     color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 16%, var(--surface));
+    border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  }
+  .step {
+    flex: 1;
+    min-width: 0;
+    padding-top: 0.1rem;
+  }
+  .step-head {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 0.5rem;
   }
   .nid {
-    font-weight: 550;
+    font-weight: 600;
   }
   .ntype {
-    font-size: 0.75rem;
+    font-size: 0.74rem;
     color: var(--fg-subtle);
     font-family: var(--font-mono);
   }
   .branch {
-    font-size: 0.78rem;
+    font-size: 0.74rem;
     font-weight: 600;
     color: var(--accent);
-    background: color-mix(in srgb, var(--accent) 14%, transparent);
+    background: color-mix(in srgb, var(--accent) 16%, transparent);
     padding: 0.05rem 0.4rem;
     border-radius: 999px;
   }
   .nout {
-    margin-left: auto;
+    display: block;
+    margin-top: 0.3rem;
     background: var(--surface-2);
-    padding: 0.1rem 0.4rem;
+    padding: 0.2rem 0.5rem;
     border-radius: 6px;
     font-size: 0.82rem;
-    max-width: 22rem;
+    max-width: 100%;
     overflow: hidden;
     text-overflow: ellipsis;
-    white-space: nowrap;
+    white-space: pre;
+    overflow-x: auto;
   }
   .cols {
     display: grid;

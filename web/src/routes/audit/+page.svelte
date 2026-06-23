@@ -7,6 +7,8 @@
   import RelativeTime from '$lib/RelativeTime.svelte';
   import Skeleton from '$lib/Skeleton.svelte';
   import EmptyState from '$lib/EmptyState.svelte';
+  import Badge from '$lib/Badge.svelte';
+  import { lifecycleTone } from '$lib/badge';
   import { onMount } from 'svelte';
   import { toast } from '$lib/toast';
   import { appHref } from '$lib/paths';
@@ -366,7 +368,7 @@
                 <td class="muted">{k.identity.actor}</td>
                 <td>{k.role}</td>
                 <td><span class="badge">{k.scope}</span></td>
-                <td><span class="status {keyStatus(k)}">{keyStatus(k)}</span></td>
+                <td><Badge tone={lifecycleTone(keyStatus(k))}>{keyStatus(k)}</Badge></td>
                 <td class="row-actions">
                   <a
                     class="audit-link"
@@ -543,22 +545,6 @@
   }
   .token-table {
     margin-top: 0.7rem;
-  }
-  .status {
-    display: inline-block;
-    padding: 0.05rem 0.5rem;
-    border-radius: 999px;
-    font-size: 0.76rem;
-    font-weight: 600;
-  }
-  .status.active {
-    color: var(--ok, #15803d);
-    background: color-mix(in srgb, var(--ok, #15803d) 14%, transparent);
-  }
-  .status.revoked,
-  .status.expired {
-    color: var(--fg-subtle);
-    background: var(--surface-2);
   }
   .row-actions {
     display: flex;

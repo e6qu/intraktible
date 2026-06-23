@@ -16,6 +16,8 @@ test('defines an agent from the registry and shows the run summary', async ({ pa
   await page.goto('/agents');
   await expect(page.getByRole('heading', { name: /Agent Manager/i })).toBeVisible();
 
+  // The "Define agent" form is a disclosure (content-first); open it.
+  await page.getByText('+ Define agent').click();
   const name = uniqueName();
   await page.getByLabel('agent name').fill(name);
   await page.getByLabel('system prompt').fill('be terse');

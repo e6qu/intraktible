@@ -43,7 +43,9 @@ test('sets and clears a per-flow SLO objective', async ({ page, request }) => {
   const card = page.locator('.slo-card').filter({ hasText: 'SLO Target' });
   await expect(card).toBeVisible();
 
-  // Set an objective, then confirm attainment renders for the flow.
+  // Open the editor (the no-objective state leads with a Set-objective CTA), set an
+  // objective, then confirm attainment renders for the flow.
+  await card.getByRole('button', { name: 'Set objective' }).click();
   await card.getByLabel('Success target %').fill('95');
   await card.getByLabel('Latency target ms').fill('2000');
   await card.getByRole('button', { name: 'Set objective' }).click();

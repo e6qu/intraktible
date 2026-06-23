@@ -23,12 +23,24 @@
   let schema = $state('');
   let tools = $state('');
   let busy = $state(false);
+  // The creation form is secondary to the existing-agents table; keep it folded
+  // away so the table leads (the form is tall and otherwise pushes it below the
+  // fold). Auto-opens when there are no agents yet.
+  let defineOpen = $state(false);
+
+  const tokenFmt = new Intl.NumberFormat('en-US');
+  const usdFmt = new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits: 4
+  });
 
   async function load() {
     loading = true;
     error = '';
     try {
       [list, summary] = await Promise.all([listAgents(key), getRunSummary(key)]);
+      if (list.length === 0) defineOpen = true; // no agents yet → surface the form
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     } finally {
@@ -83,63 +95,6 @@
     <button onclick={load}>Reload</button>
   </div>
 
-  <form
-    class="define"
-    onsubmit={(e) => {
-      e.preventDefault();
-      create();
-    }}
-  >
-    <p class="grouphdr">Identity</p>
-    <div class="row">
-      <label
-        >Name (required) <input
-          bind:value={name}
-          placeholder="sanctions-screener"
-          aria-label="agent name"
-          required
-        /></label
-      >
-      <label
-        >Provider <input
-          bind:value={provider}
-          placeholder="optional"
-          aria-label="provider"
-        /></label
-      >
-      <label>Model <input bind:value={model} placeholder="optional" aria-label="model" /></label>
-    </div>
-    <p class="grouphdr">Behavior</p>
-    <label class="field"
-      >System prompt
-      <input bind:value={system} placeholder="optional" aria-label="system prompt" /></label
-    >
-    <label class="field"
-      >Tools <input
-        bind:value={tools}
-        placeholder="comma-separated (optional)"
-        aria-label="tools"
-      /></label
-    >
-    <label class="field"
-      >Output schema (optional)
-      <textarea
-        bind:value={schema}
-        placeholder={'JSON Schema, e.g. {"type":"object","required":["risk"]}'}
-        aria-label="output schema"
-        rows="3"
-      ></textarea></label
-    >
-    <div class="row">
-      <button
-        type="submit"
-        disabled={busy || !roleAtLeast($user?.role, 'editor')}
-        title={!roleAtLeast($user?.role, 'editor') ? 'Requires the editor role' : undefined}
-        >{busy ? 'Saving…' : 'Define agent'}</button
-      >
-    </div>
-  </form>
-
   {#if error}<p class="err">{error}</p>{/if}
 
   {#if summary}
@@ -147,6 +102,12 @@
       <span class="stat">Runs <b>{summary.total}</b></span>
       <span class="stat">Completed <b>{summary.completed}</b></span>
       <span class="stat fail">Failed <b>{summary.failed}</b></span>
+      <span class="stat"
+        >Tokens <b>{tokenFmt.format(summary.prompt_tokens + summary.completion_tokens)}</b></span
+      >
+      {#if summary.priced}
+        <span class="stat">Cost <b>{usdFmt.format(summary.total_cost_usd)}</b></span>
+      {/if}
     </div>
   {/if}
 
@@ -156,7 +117,7 @@
     <EmptyState
       icon="agents"
       title="No agents defined"
-      hint="Define an agent above — a system prompt over the AI provider, optionally with tools and a structured-output schema — then run and monitor it here."
+      hint="Define an agent below — a system prompt over the AI provider, optionally with tools and a structured-output schema — then run and monitor it here."
     />
   {:else}
     <div class="table-wrap">
@@ -183,6 +144,66 @@
       </table>
     </div>
   {/if}
+
+  <details class="define-disclosure" bind:open={defineOpen}>
+    <summary>+ Define agent</summary>
+    <form
+      class="define"
+      onsubmit={(e) => {
+        e.preventDefault();
+        create();
+      }}
+    >
+      <p class="grouphdr">Identity</p>
+      <div class="row">
+        <label
+          >Name (required) <input
+            bind:value={name}
+            placeholder="sanctions-screener"
+            aria-label="agent name"
+            required
+          /></label
+        >
+        <label
+          >Provider <input
+            bind:value={provider}
+            placeholder="optional"
+            aria-label="provider"
+          /></label
+        >
+        <label>Model <input bind:value={model} placeholder="optional" aria-label="model" /></label>
+      </div>
+      <p class="grouphdr">Behavior</p>
+      <label class="field"
+        >System prompt
+        <input bind:value={system} placeholder="optional" aria-label="system prompt" /></label
+      >
+      <label class="field"
+        >Tools <input
+          bind:value={tools}
+          placeholder="comma-separated (optional)"
+          aria-label="tools"
+        /></label
+      >
+      <label class="field"
+        >Output schema (optional)
+        <textarea
+          bind:value={schema}
+          placeholder={'JSON Schema, e.g. {"type":"object","required":["risk"]}'}
+          aria-label="output schema"
+          rows="3"
+        ></textarea></label
+      >
+      <div class="row">
+        <button
+          type="submit"
+          disabled={busy || !roleAtLeast($user?.role, 'editor')}
+          title={!roleAtLeast($user?.role, 'editor') ? 'Requires the editor role' : undefined}
+          >{busy ? 'Saving…' : 'Define agent'}</button
+        >
+      </div>
+    </form>
+  </details>
 </main>
 
 <style>
@@ -198,11 +219,32 @@
     margin: 0.6rem 0;
     align-items: center;
   }
+  .define-disclosure {
+    margin: 1.25rem 0 0.6rem;
+    border: 1px solid var(--border);
+    border-radius: 0.5rem;
+    background: var(--surface-2);
+  }
+  .define-disclosure > summary {
+    cursor: pointer;
+    padding: 0.6rem 0.8rem;
+    font-weight: 600;
+    color: var(--accent-ink, var(--accent));
+    list-style: none;
+    user-select: none;
+  }
+  .define-disclosure > summary::-webkit-details-marker {
+    display: none;
+  }
+  .define-disclosure[open] > summary {
+    border-bottom: 1px solid var(--border);
+  }
   .define {
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
-    margin: 0.6rem 0;
+    margin: 0;
+    padding: 0.6rem 0.8rem 0.8rem;
   }
   .define .row {
     margin: 0;

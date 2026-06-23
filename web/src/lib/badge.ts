@@ -4,6 +4,7 @@
 // lifecycle). Maps are used (not object indexing) to keep the object-injection lint
 // happy; an unknown value falls back to a neutral tone.
 export type Tone = 'ok' | 'warn' | 'danger' | 'info' | 'neutral';
+export type BadgeTone = Tone; // alias used by callers that import the tone type
 
 function lookup(m: Map<string, Tone>, v: string | undefined): Tone {
   return (v && m.get(v)) || 'neutral';
