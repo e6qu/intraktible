@@ -9,6 +9,20 @@ import { test, expect } from '@playwright/test';
 
 const ROUTES = ['/', '/engine', '/decisions/dec_1', '/cases/case_1', '/mrm', '/observability'];
 
+// Persona only swaps the accent tokens (--accent / --accent-ink / --link), which colour
+// the active nav + links — so persona-specific contrast bugs (e.g. an active nav item
+// painted with a low-contrast raw --accent) only surface if every persona is checked,
+// not just the default. The original audit missed exactly this.
+const PERSONAS = [
+  'builder',
+  'operator',
+  'showcase',
+  'developer',
+  'manager',
+  'product',
+  'evaluator'
+];
+
 // The audit runs in the browser: for each text-bearing element, resolve its foreground
 // colour and the first opaque background up its ancestor chain, then return both so the
 // node side can compute the WCAG ratio.
@@ -78,18 +92,26 @@ function ratio(a: number[], b: number[]): number {
 for (const theme of ['light', 'dark']) {
   test(`text meets WCAG AA contrast in ${theme} mode`, async ({ page }) => {
     const failures: string[] = [];
-    for (const route of ROUTES) {
-      await page.goto(route);
-      await page.evaluate((t) => document.documentElement.setAttribute('data-theme', t), theme);
-      await page.waitForTimeout(150);
-      const pairs = await page.evaluate(collectPairs);
-      for (const p of pairs) {
-        const cr = ratio(p.fg, p.bg);
-        const min = p.large ? 3.0 : 4.5;
-        if (cr < min - 0.05) {
-          failures.push(
-            `${route} [.${p.cls}] ${cr.toFixed(2)}:1 (need ${min}) fg(${p.fg}) bg(${p.bg}) "${p.txt}"`
-          );
+    for (const persona of PERSONAS) {
+      for (const route of ROUTES) {
+        await page.goto(route);
+        await page.evaluate(
+          ([t, p]) => {
+            document.documentElement.setAttribute('data-theme', t);
+            document.documentElement.setAttribute('data-persona', p);
+          },
+          [theme, persona]
+        );
+        await page.waitForTimeout(120);
+        const pairs = await page.evaluate(collectPairs);
+        for (const p of pairs) {
+          const cr = ratio(p.fg, p.bg);
+          const min = p.large ? 3.0 : 4.5;
+          if (cr < min - 0.05) {
+            failures.push(
+              `[${persona}] ${route} [.${p.cls}] ${cr.toFixed(2)}:1 (need ${min}) fg(${p.fg}) bg(${p.bg}) "${p.txt}"`
+            );
+          }
         }
       }
     }

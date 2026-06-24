@@ -380,7 +380,9 @@
   }
   .navlink.active {
     background: color-mix(in srgb, var(--accent) 14%, transparent);
-    color: var(--accent);
+    /* --accent-ink (not raw --accent) is the text-safe accent — some personas' --accent
+       is a low-contrast colour (e.g. evaluator's slate) that fails WCAG AA as text. */
+    color: var(--accent-ink);
   }
   .grow {
     flex: 1;
