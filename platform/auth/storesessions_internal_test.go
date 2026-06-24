@@ -57,3 +57,40 @@ func TestStoreSessions(t *testing.T) {
 		t.Fatal("revoked session should not resolve")
 	}
 }
+
+// TestSessionValidatorRevokesSSO proves an SSO session stops resolving once the
+// validator (e.g. the SCIM deprovisioning gate) rejects its user, while non-SSO
+// sessions and SSO sessions of still-valid users are untouched — across both stores.
+func TestSessionValidatorRevokesSSO(t *testing.T) {
+	stores := map[string]SessionStore{
+		"memory": NewSessions(),
+		"store":  NewStoreSessions(store.NewMemory()),
+	}
+	for name, s := range stores {
+		t.Run(name, func(t *testing.T) {
+			deactivated := map[string]bool{}
+			s.SetValidator(func(id identity.Identity) bool { return !deactivated[id.Actor] })
+			ada := identity.Identity{Org: "o", Workspace: "w", Actor: "ada"}
+			grace := identity.Identity{Org: "o", Workspace: "w", Actor: "grace"}
+
+			ssoTok, _ := s.IssueSSO(ada, RoleEditor, ScopeAll)
+			keyTok, _ := s.Issue(ada, RoleEditor, Production) // non-SSO, never revalidated
+			okTok, _ := s.IssueSSO(grace, RoleEditor, ScopeAll)
+
+			if _, _, _, ok := s.Resolve(ssoTok); !ok {
+				t.Fatal("active SSO user should resolve")
+			}
+
+			deactivated["ada"] = true
+			if _, _, _, ok := s.Resolve(ssoTok); ok {
+				t.Fatal("deactivated SSO user's session must not resolve")
+			}
+			if _, _, _, ok := s.Resolve(keyTok); !ok {
+				t.Fatal("non-SSO session must be unaffected by the SSO validator")
+			}
+			if _, _, _, ok := s.Resolve(okTok); !ok {
+				t.Fatal("still-active SSO user's session should resolve")
+			}
+		})
+	}
+}

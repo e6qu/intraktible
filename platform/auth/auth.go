@@ -170,6 +170,7 @@ type Sessions struct {
 	sessions map[string]session
 	ttl      time.Duration
 	now      func() time.Time
+	validate SessionValidator
 }
 
 type session struct {
@@ -177,6 +178,7 @@ type session struct {
 	role    Role
 	scope   Scope
 	expires time.Time
+	sso     bool
 }
 
 // NewSessions returns an empty session store using DefaultSessionTTL.
@@ -196,20 +198,40 @@ func (s *Sessions) TTL() time.Duration { return s.ttl }
 // to every environment (see SessionStore). The in-memory store never fails; the
 // error is part of the SessionStore contract.
 func (s *Sessions) Issue(id identity.Identity, role Role, scope Scope) (string, error) {
+	return s.issue(id, role, scope, false)
+}
+
+// IssueSSO is Issue for an SSO session, which Resolve revalidates each time.
+func (s *Sessions) IssueSSO(id identity.Identity, role Role, scope Scope) (string, error) {
+	return s.issue(id, role, scope, true)
+}
+
+func (s *Sessions) issue(id identity.Identity, role Role, scope Scope, sso bool) (string, error) {
 	tok := newToken()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.sessions[tok] = session{id: id, role: role, scope: scope, expires: s.now().Add(s.ttl)}
+	s.sessions[tok] = session{id: id, role: role, scope: scope, expires: s.now().Add(s.ttl), sso: sso}
 	return tok, nil
 }
 
+// SetValidator installs the per-Resolve SSO revalidation predicate.
+func (s *Sessions) SetValidator(v SessionValidator) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.validate = v
+}
+
 // Resolve returns the identity + role + scope for a token, treating an expired one
-// as absent.
+// — or an SSO session the validator now rejects (e.g. SCIM-deactivated) — as absent.
 func (s *Sessions) Resolve(tok string) (identity.Identity, Role, Scope, bool) {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
 	sess, ok := s.sessions[tok]
+	validate := s.validate
+	s.mu.RUnlock()
 	if !ok || s.now().After(sess.expires) {
+		return identity.Identity{}, "", "", false
+	}
+	if sess.sso && validate != nil && !validate(sess.id) {
 		return identity.Identity{}, "", "", false
 	}
 	return sess.id, sess.role, sess.scope, true

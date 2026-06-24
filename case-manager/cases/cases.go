@@ -259,6 +259,12 @@ func List(ctx context.Context, s store.Store, id identity.Identity, f Filter) ([
 	return out, nil
 }
 
+// ListAll returns every case across all tenants (the SLA scheduler's sweep input;
+// each view carries its own Org/Workspace).
+func ListAll(ctx context.Context, s store.Store) ([]CaseView, error) {
+	return store.ListDocs[CaseView](ctx, s, Collection, "")
+}
+
 func audit(e eventlog.Envelope, typ, detail string) AuditEntry {
 	return AuditEntry{Type: typ, Actor: e.Actor, At: e.Time, Detail: detail}
 }

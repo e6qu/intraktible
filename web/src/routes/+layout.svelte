@@ -54,7 +54,10 @@
   const pageTitle = $derived(helpFor($page.route.id ?? '')?.title);
   // The sign-in screen shows only minimal chrome (brand + theme) — not the full
   // authenticated nav/account controls.
-  const isLogin = $derived(path === '/login');
+  // Route id (not the pathname) so it matches under a base path too — comparing the raw
+  // pathname to "/login" is always false on the /<repo>/demo/ deploy, which would leak
+  // the full app chrome onto the sign-in screen.
+  const isLogin = $derived(($page.route.id ?? '') === '/login');
   // Compare against the BASE-PREFIXED href (what's actually rendered): under a base
   // path (e.g. the /intraktible/demo/ deploy) the pathname carries the prefix, so
   // comparing the raw "/engine" would never match and no item would read as current.

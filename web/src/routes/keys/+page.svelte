@@ -78,7 +78,8 @@
   }
 
   async function create() {
-    if (busy) return; // Enter fires onsubmit directly, bypassing the disabled button
+    // Enter fires onsubmit directly, bypassing the disabled button — guard both gates.
+    if (busy || !name.trim() || !actor.trim()) return;
     error = '';
     busy = true;
     try {
@@ -193,7 +194,13 @@
         >Expires (optional)
         <input type="date" bind:value={expires} aria-label="key expiry" /></label
       >
-      <button type="submit" disabled={busy}>{busy ? 'Creating…' : 'Create key'}</button>
+      <button
+        type="submit"
+        disabled={busy || !name.trim() || !actor.trim()}
+        title={!name.trim() || !actor.trim()
+          ? 'A key needs a name and an owner (actor)'
+          : undefined}>{busy ? 'Creating…' : 'Create key'}</button
+      >
     </div>
   </form>
 

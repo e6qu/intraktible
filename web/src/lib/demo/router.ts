@@ -18,6 +18,7 @@ import type {
   ManagedApiKey,
   ScheduledDeploy,
   FlowGrant,
+  FlowGraph,
   Environment,
   Disposition,
   CaseStatus,
@@ -173,19 +174,68 @@ route('POST', '/v1/flows', (_m, body) => {
   return ok({ flow_id: flowId });
 });
 route('POST', '/v1/flows/import', (_m, body) => {
-  const slug = String((body as Body).slug ?? 'imported');
-  return ok({
-    flow_id: nextId('flow'),
+  const slug = String((body as Body).slug ?? '').trim();
+  if (!slug) return badRequest('slug is required');
+  if (state.flows.some((f) => f.slug === slug))
+    return badRequest(`a flow with slug "${slug}" already exists`);
+  const name = String((body as Body).name ?? slug);
+  const graph = ((body as Body).graph as FlowGraph | undefined) ?? {
+    nodes: [{ id: 'in', type: 'input', name: 'Input' }],
+    edges: []
+  };
+  const flowId = nextId('flow');
+  state.flows.push({
+    flow_id: flowId,
     slug,
-    version: 1,
-    etag: 'e1',
-    created: true,
-    published: true
+    name,
+    latest: 1,
+    versions: [
+      {
+        version: 1,
+        etag: 'e1',
+        graph,
+        published_at: new Date().toISOString(),
+        published_by: state.identity.actor
+      }
+    ],
+    deployments: {}
   });
+  pushAudit('flow.created', flowId, { slug, name, imported: true });
+  return ok({ flow_id: flowId, slug, version: 1, etag: 'e1', created: true, published: true });
 });
-route('POST', '/v1/flows/import-bundle', () =>
-  ok({ results: [], published: 0, failed: 0, unchanged: 0 })
-);
+route('POST', '/v1/flows/import-bundle', (_m, body) => {
+  // Import each flow in the bundle that doesn't already exist (real, not a no-op).
+  const flows = Array.isArray((body as Body).flows) ? ((body as Body).flows as Body[]) : [];
+  let published = 0;
+  let unchanged = 0;
+  for (const f of flows) {
+    const slug = String(f.slug ?? '').trim();
+    if (!slug || state.flows.some((x) => x.slug === slug)) {
+      unchanged += 1;
+      continue;
+    }
+    const flowId = nextId('flow');
+    state.flows.push({
+      flow_id: flowId,
+      slug,
+      name: String(f.name ?? slug),
+      latest: 1,
+      versions: [
+        {
+          version: 1,
+          etag: 'e1',
+          graph: (f.graph as FlowGraph | undefined) ?? { nodes: [], edges: [] },
+          published_at: new Date().toISOString(),
+          published_by: state.identity.actor
+        }
+      ],
+      deployments: {}
+    });
+    pushAudit('flow.created', flowId, { slug, imported: true });
+    published += 1;
+  }
+  return ok({ results: [], published, failed: 0, unchanged });
+});
 route('GET', '/v1/flows/:id', (m) => {
   const flow = findFlow(m[1]);
   return flow ? ok(flow) : notFound();
@@ -251,10 +301,63 @@ route('PUT', '/v1/flows/:id/slo', (m, body) => {
   });
   return ok({});
 });
+// monitorStatus evaluates a monitor against the flow's live analytics, so a monitor a
+// user just created actually computes (it used to be pinned to "no data" forever).
+// Metrics that need data the demo can't derive live (e.g. drift without a baseline)
+// report not-computable, and the caller keeps any seeded status for those.
+function monitorStatus(
+  flow: Flow,
+  metric: MonitorMetric,
+  op: MonitorOp,
+  threshold: number
+): { actual: number; computable: boolean; firing: boolean } {
+  const mtr = flowMetrics(flow);
+  const total = mtr.total;
+  const disp = mtr.by_disposition as Record<string, number>;
+  let actual = 0;
+  let computable = total > 0;
+  switch (metric) {
+    case 'failure_rate':
+      actual = total ? mtr.failed / total : 0;
+      break;
+    case 'refer_rate':
+      actual = total ? (disp.refer ?? 0) / total : 0;
+      break;
+    case 'decline_rate':
+      actual = total ? (disp.decline ?? 0) / total : 0;
+      break;
+    case 'automation_rate':
+      actual = total ? (total - (disp.refer ?? 0)) / total : 0;
+      break;
+    case 'volume':
+      actual = total;
+      computable = true;
+      break;
+    case 'avg_latency_ms':
+      actual = mtr.avg_duration_ms;
+      break;
+    case 'distribution_drift_psi': {
+      const dr = driftReportFor(flow.flow_id);
+      actual = dr.psi ?? 0;
+      computable = dr.has_baseline && dr.has_current;
+      break;
+    }
+    default:
+      computable = false;
+  }
+  actual = Math.round(actual * 1000) / 1000;
+  const firing = computable && (op === 'lt' ? actual < threshold : actual > threshold);
+  return { actual, computable, firing };
+}
+
 route('GET', '/v1/flows/:id/monitors', (m) => {
   const flow = findFlow(m[1]);
   if (!flow) return notFound();
-  return ok({ monitors: state.monitors.get(flow.flow_id) ?? [] });
+  const monitors = (state.monitors.get(flow.flow_id) ?? []).map((mon) => {
+    const s = monitorStatus(flow, mon.metric, mon.op, mon.threshold);
+    return { ...mon, status: s.computable ? s : mon.status };
+  });
+  return ok({ monitors });
 });
 route('POST', '/v1/flows/:id/monitors', (m, body) => {
   const flow = findFlow(m[1]);
@@ -286,13 +389,14 @@ route('POST', '/v1/flows/:id/monitors/check', (m) => {
   const flow = findFlow(m[1]);
   if (!flow) return notFound();
   const fired = (state.monitors.get(flow.flow_id) ?? [])
-    .filter((x) => x.status.firing)
-    .map((x) => ({
+    .map((x) => ({ x, s: monitorStatus(flow, x.metric, x.op, x.threshold) }))
+    .filter(({ x, s }) => (s.computable ? s.firing : x.status.firing))
+    .map(({ x, s }) => ({
       monitor_id: x.monitor_id,
       metric: x.metric,
       op: x.op,
       threshold: x.threshold,
-      actual: x.status.actual,
+      actual: s.computable ? s.actual : x.status.actual,
       description: x.description
     }));
   return ok({
@@ -468,14 +572,38 @@ route('GET', '/v1/flows/:id/shadow', (m) => {
   const shadows = Object.fromEntries(state.shadows.get(flow.flow_id) ?? new Map());
   const report: Record<string, unknown> = {};
   for (const [env, v] of Object.entries(shadows)) {
+    // Replay the shadow version over this env's recorded decisions and compare its
+    // disposition to what actually shipped — a real divergence count (so v1/v2/v3 give
+    // different numbers), not a constant.
+    const version = flow.versions.find((ver) => ver.version === Number(v));
+    const recent = state.decisions
+      .filter((d) => d.flow_id === flow.flow_id && d.environment === env && d.disposition)
+      .slice(0, 25);
+    let matched = 0;
+    let diverged = 0;
+    let errored = 0;
+    const sampleDiverged: string[] = [];
+    for (const d of recent) {
+      const run = version
+        ? runFlow(flow, version.graph, (d.data as Record<string, unknown>) ?? {})
+        : undefined;
+      if (!run || run.status !== 'completed' || !run.disposition) {
+        errored += 1;
+      } else if (run.disposition === d.disposition) {
+        matched += 1;
+      } else {
+        diverged += 1;
+        if (sampleDiverged.length < 3) sampleDiverged.push(d.decision_id);
+      }
+    }
     const rmap = new Map(Object.entries(report));
     rmap.set(env, {
       shadow_version: v,
-      total: 18,
-      matched: 16,
-      diverged: 2,
-      errored: 0,
-      sample_diverged: state.decisions.slice(0, 2).map((d) => d.decision_id)
+      total: recent.length,
+      matched,
+      diverged,
+      errored,
+      sample_diverged: sampleDiverged
     });
     Object.assign(report, Object.fromEntries(rmap));
   }
@@ -1027,7 +1155,14 @@ route('GET', '/v1/context/entities/:type/:id/features', (m) => {
   const features = state.features
     .filter((f) => f.entity_type === m[1])
     .map((f) => {
-      const matched = events.filter((e) => e.event_name === f.event_name);
+      // Honour the feature's window — only events within window_hours of now count
+      // (a 7d feature must exclude a 2-week-old event; it used to sum all of them).
+      const cutoff = Date.now() - (f.window_hours ?? 0) * 3600 * 1000;
+      const matched = events.filter(
+        (e) =>
+          e.event_name === f.event_name &&
+          (!f.window_hours || new Date(e.occurred_at).getTime() >= cutoff)
+      );
       const value =
         f.aggregation === 'count'
           ? matched.length
@@ -1274,16 +1409,37 @@ route('POST', '/v1/copilot/suggest', (_m, body) => {
   lines.push('Bind a policy: approve below the low band, decline above the high band, else refer.');
   return ok({ text: `Suggested logic for "${prompt}":\n- ${lines.join('\n- ')}` });
 });
-route('POST', '/v1/copilot/generate', () =>
-  ok({
+route('POST', '/v1/copilot/generate', (_m, body) => {
+  // Shape the generated flow from the prompt's keywords, so different requests produce
+  // different flows (it used to return one fixed credit graph regardless of input).
+  const prompt = String(body.prompt ?? '').toLowerCase();
+  let d: { input: string; score: string; expr: string; threshold: number };
+  if (/fraud|velocity|device|chargeback/.test(prompt))
+    d = {
+      input: 'Transaction',
+      score: 'fraud_score',
+      expr: 'velocity_24h * 8 + (new_device ? 30 : 0)',
+      threshold: 60
+    };
+  else if (/sanction|aml|watchlist|pep/.test(prompt))
+    d = {
+      input: 'Party',
+      score: 'aml_score',
+      expr: 'watchlist_score + (pep ? 40 : 0)',
+      threshold: 50
+    };
+  else if (/kyc|identity|onboard|document/.test(prompt))
+    d = { input: 'Applicant', score: 'kyc_risk', expr: '100 - identity_confidence', threshold: 40 };
+  else d = { input: 'Application', score: 'risk', expr: 'debt / income * 100', threshold: 50 };
+  return ok({
     graph: {
       nodes: [
-        { id: 'in', type: 'input', name: 'Application' },
+        { id: 'in', type: 'input', name: d.input },
         {
           id: 'assign',
           type: 'assignment',
-          name: 'Risk',
-          config: { assignments: [{ target: 'risk', expr: 'debt / income * 100' }] }
+          name: 'Score',
+          config: { assignments: [{ target: d.score, expr: d.expr }] }
         },
         { id: 'gate', type: 'split', name: 'Band' },
         {
@@ -1296,19 +1452,19 @@ route('POST', '/v1/copilot/generate', () =>
           id: 'out',
           type: 'output',
           name: 'Decision',
-          config: { assignments: [{ target: 'approved', expr: 'risk < 50' }] }
+          config: { assignments: [{ target: 'approved', expr: `${d.score} < ${d.threshold}` }] }
         }
       ],
       edges: [
         { from: 'in', to: 'assign' },
         { from: 'assign', to: 'gate' },
-        { from: 'gate', to: 'out', branch: 'risk < 50' },
-        { from: 'gate', to: 'review', branch: 'risk >= 50' },
+        { from: 'gate', to: 'out', branch: `${d.score} < ${d.threshold}` },
+        { from: 'gate', to: 'review', branch: `${d.score} >= ${d.threshold}` },
         { from: 'review', to: 'out' }
       ]
     }
-  })
-);
+  });
+});
 
 // Helper type alias for the Feature aggregation field (kept local to avoid an
 // import clash; mirrors the api.ts Feature interface).
