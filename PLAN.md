@@ -964,6 +964,16 @@ sealing is unconfigured, **HTTP security headers** + a **CSRF** header gate (`X-
 per-decide **evaluator timeout**, the AI client routes through the SSRF egress guard, and `crypto/rand`
 errors are handled. Plus a header-overflow fix and demo validation parity.
 
+A sixth review paired deeper security with a dedicated **fake-hunter**. The fake-hunter confirmed the
+real shipping product has **no deceptive fakes** (engine, models, PSI, four-eyes, connectors, audit, SSO
+are all genuinely real). Security found a HIGH **environment-scope bypass** — the env restriction was
+enforced only on `/decide`, not on deploy/promote/rollback, so a sandbox-scoped key could push to
+production (now `allowEnv`-gated everywhere) — plus SSO sessions now honour SCIM deprovisioning and the
+SLA sweep is scheduled. The canned spots the agents found were all in the demo mock and were made real
+(shadow report replays, monitors compute, the feature window is honoured, flow generation varies by
+prompt, import actually persists); the `/login` chrome leak (another base-path bug) and create-key
+validation were fixed in the real app.
+
 ---
 
 ## 9. MVP non-goals
