@@ -58,7 +58,7 @@ export const HELP = new Map<string, PageHelp>([
       capabilities: [
         'Add and connect nodes: input, assignment, split, predict, AI, manual review, output.',
         'Edit a node’s logic in the side panel; changes stay in the working draft.',
-        'Run a test decision with sample input to see the path and outcome.',
+        'Run a test decision with sample input — record it to sandbox, or tick Preview for a dry run that records nothing.',
         'Publish the draft to create a new immutable version.',
         'Deploy a version to an environment, or roll back to the previous one.'
       ],

@@ -923,6 +923,11 @@ server-side `agent_review` default. The demo was made faithful to it: agent outp
 (structured verdict or narrative) rather than a `stub:` echo, the streaming run no longer dead-ends,
 admin-only surfaces gate server-side, and Copilot describes the actual graph.
 
+A follow-up closed the remaining demo-representation gaps and surfaced the preview in the UI: the demo
+decide path now honours pre-approvals (short-circuit + honored count), interprets the connect node,
+and computes a real PSI per model; the builder's Test tab exposes a no-record **Preview** toggle (off
+by default, so an ordinary test still records an inspectable sandbox decision).
+
 ---
 
 ## 9. MVP non-goals
