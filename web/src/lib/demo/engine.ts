@@ -504,7 +504,7 @@ export function runFlow(
       }
       case 'ai': {
         const prompt = String(cfg.prompt ?? rec.prompt ?? '');
-        const text = agentReply(prompt, cfg.schema as AgentSchema | undefined).text;
+        const text = agentReply(prompt, cfg.schema as AgentSchema | undefined, rec).text;
         const outKey = String(cfg.output ?? 'ai');
         const m = new Map(Object.entries(rec));
         m.set(outKey, text);

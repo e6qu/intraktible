@@ -109,6 +109,49 @@ func FuzzDOT(f *testing.F) {
 	})
 }
 
+// FuzzJSONRoundTrip asserts the portable FlowExport JSON form is panic-free and
+// stable: an arbitrary graph renders to JSON, the JSON re-imports (the {graph,
+// input_schema} subset is exactly what the publish endpoint accepts), and a second
+// render of the re-imported value is byte-identical to the first. Malformed import
+// must error, not crash; a successful round-trip must be a fixpoint, so an
+// export/re-import can't silently mutate a flow.
+func FuzzJSONRoundTrip(f *testing.F) {
+	seeds := []string{
+		`{"nodes":[{"id":"in","type":"input"},{"id":"o","type":"output"}],"edges":[{"from":"in","to":"o"}]}`,
+		`{"nodes":[{"id":"r","type":"rule","config":{"rules":[{"when":"x>1","then":[]}]}}],"edges":[]}`,
+		`{"nodes":[{"id":"a\"b","type":"split"}],"edges":[{"from":"a\"b","to":"ghost","branch":"yes"}]}`,
+		`{}`,
+	}
+	for _, s := range seeds {
+		f.Add(s)
+	}
+	f.Fuzz(func(t *testing.T, graphJSON string) {
+		if !json.Valid([]byte(graphJSON)) {
+			return
+		}
+		var g events.Graph
+		if err := json.Unmarshal([]byte(graphJSON), &g); err != nil {
+			return
+		}
+		exp := export.FlowExport{Slug: "s", Name: "n", Version: 1, Graph: g}
+		out, err := export.JSON(exp) // must not panic
+		if err != nil {
+			return
+		}
+		var reimported export.FlowExport
+		if err := json.Unmarshal([]byte(out), &reimported); err != nil {
+			t.Fatalf("export JSON does not re-import: %v\n%s", err, out)
+		}
+		out2, err := export.JSON(reimported)
+		if err != nil {
+			t.Fatalf("re-export failed: %v", err)
+		}
+		if out != out2 {
+			t.Fatalf("JSON round-trip is not a fixpoint:\nfirst:  %q\nsecond: %q", out, out2)
+		}
+	})
+}
+
 // unescapedQuoteCount counts double quotes not preceded by an (odd run of) backslash
 // escape — the quotes that actually open/close a DOT token.
 func unescapedQuoteCount(s string) int {

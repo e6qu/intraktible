@@ -91,6 +91,11 @@
 
 <main>
   <h1>Agents</h1>
+  <p class="lede">
+    LLM task-agents — each a prompt, a model, optional tools, and a structured-output schema. A
+    flow's AI node references one by name; here you author, version, run, and monitor them (latency,
+    token cost, guardrail blocks).
+  </p>
   <div class="row">
     <button onclick={load}>Reload</button>
   </div>
@@ -306,6 +311,11 @@
     text-align: left;
     padding: 0.4rem 0.6rem;
     border-bottom: 1px solid var(--border);
+  }
+  .lede {
+    color: var(--fg-muted);
+    margin: 0.25rem 0 0.9rem;
+    max-width: 60ch;
   }
   .err {
     color: var(--danger);

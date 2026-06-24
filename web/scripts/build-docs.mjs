@@ -47,6 +47,12 @@ const PAGES = [
     nav: 'Enterprise & governance'
   },
   {
+    file: 'docs/GAPS.md',
+    slug: 'gaps',
+    title: 'Honest gaps & scope',
+    nav: 'Honest gaps & scope'
+  },
+  {
     file: 'docs/EXAMPLE.md',
     slug: 'example',
     title: 'End-to-end example',

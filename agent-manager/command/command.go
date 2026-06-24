@@ -345,9 +345,15 @@ func (h *Handler) EscalateRun(ctx context.Context, id identity.Identity, cmd dom
 	if err != nil {
 		return "", eventlog.Envelope{}, fmt.Errorf("agent-manager: marshal escalation context: %w", err)
 	}
+	// An agent escalation opens a dedicated agent_review case (per the journeys doc) so
+	// these are filterable apart from flow manual-reviews; an explicit type still wins.
+	caseType := cmd.CaseType
+	if caseType == "" {
+		caseType = "agent_review"
+	}
 	e, err := eventlog.AppendJSON(ctx, h.log, id.Org, id.Workspace, id.Actor,
 		caseevents.StreamCases, caseevents.TypeReviewRequested, h.now(), caseevents.ReviewRequested{
-			CaseID: caseID, CompanyName: cmd.CompanyName, CaseType: cmd.CaseType, SLADays: cmd.SLADays, Context: source,
+			CaseID: caseID, CompanyName: cmd.CompanyName, CaseType: caseType, SLADays: cmd.SLADays, Context: source,
 		})
 	if err != nil {
 		return "", eventlog.Envelope{}, err

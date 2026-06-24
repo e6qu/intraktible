@@ -4,6 +4,7 @@
   import EmptyState from '$lib/EmptyState.svelte';
   import Skeleton from '$lib/Skeleton.svelte';
   import Badge from '$lib/Badge.svelte';
+  import Hint from '$lib/Hint.svelte';
   import { coverageTone } from '$lib/badge';
   import { pct } from '$lib/dashboard';
   import { getMrmReport, mrmReportText, type MrmReport } from '$lib/api';
@@ -135,7 +136,15 @@
           <thead>
             <tr>
               <th>Kind</th><th>Model</th><th>Ver</th><th>Owner</th><th>Validation</th>
-              <th>Decisions</th><th>Success</th><th>Monitoring</th><th>Issues</th>
+              <th>Decisions</th><th>Success</th><th
+                ><Hint label="Monitoring"
+                  >Live health signals per model: <b>PSI</b> (Population Stability Index — how far
+                  the recent score distribution has drifted from its baseline; &gt;0.2 fires), any
+                  <b>firing</b>
+                  custom monitors, and whether the <b>SLO</b>
+                  (success-rate / latency target) is met.</Hint
+                ></th
+              ><th>Issues</th>
             </tr>
           </thead>
           <tbody>

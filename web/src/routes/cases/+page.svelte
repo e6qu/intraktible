@@ -5,6 +5,7 @@
   import EmptyState from '$lib/EmptyState.svelte';
   import Skeleton from '$lib/Skeleton.svelte';
   import Badge from '$lib/Badge.svelte';
+  import Hint from '$lib/Hint.svelte';
   import { caseStatusTone, slaTone } from '$lib/badge';
   import {
     listCases,
@@ -181,6 +182,11 @@
 
 <main>
   <h1>Cases</h1>
+  <p class="lede">
+    Work queue for decisions the engine escalated to a human — a <code>manual_review</code>
+    node opens a case here. Each carries the triggering decision, an SLA clock, and an assignee; resolving
+    one records the outcome back to the audit trail.
+  </p>
   <div class="row">
     <label
       >status
@@ -285,9 +291,13 @@
                 onchange={toggleAll}
                 aria-label="select all cases"
               /></th
-            ><th>Company</th><th>Type</th><th>Status</th><th>Assignee</th><th>SLA</th><th
-              >Days left</th
-            ></tr
+            ><th>Company</th><th>Type</th><th>Status</th><th>Assignee</th><th
+              ><Hint label="SLA"
+                >Service-level agreement — the target time to resolve a case (set by the
+                manual-review node). "Days left" counts down to that deadline; a breached case is
+                flagged.</Hint
+              ></th
+            ><th>Days left</th></tr
           >
         </thead>
         <tbody>
@@ -383,6 +393,11 @@
   }
   .muted {
     color: var(--fg-subtle);
+  }
+  .lede {
+    color: var(--fg-muted);
+    margin: 0.25rem 0 0.9rem;
+    max-width: 64ch;
   }
   .summary {
     display: flex;

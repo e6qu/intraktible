@@ -166,21 +166,32 @@ func (p Provider) predictExternal(ctx context.Context, spec Spec, features map[s
 	if err != nil {
 		return nil, fmt.Errorf("models: read external response: %w", err)
 	}
+	pred, err := parseExternalPrediction(raw)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(pred)
+}
+
+// parseExternalPrediction decodes and validates a {score, probability?} response
+// from an external (BYO served) model. It rejects malformed JSON, a non-finite
+// score, and an out-of-[0,1] (or non-finite) probability up front (fail loudly)
+// rather than recording a value that would corrupt downstream branching and the
+// drift histogram. It is the trust boundary for an attacker-influenced HTTP body,
+// so it must never panic — only ever return a prediction or an error.
+func parseExternalPrediction(raw []byte) (Prediction, error) {
 	var pred Prediction
 	if err := json.Unmarshal(raw, &pred); err != nil {
-		return nil, fmt.Errorf("models: external response is not a {score,probability} prediction: %w", err)
+		return Prediction{}, fmt.Errorf("models: external response is not a {score,probability} prediction: %w", err)
 	}
-	// Reject a non-finite or out-of-range result up front (fail loudly) rather than
-	// recording a NaN/Inf score or an out-of-[0,1] probability that would corrupt
-	// downstream branching and the drift histogram.
 	if math.IsNaN(pred.Score) || math.IsInf(pred.Score, 0) {
-		return nil, fmt.Errorf("models: external model returned a non-finite score")
+		return Prediction{}, fmt.Errorf("models: external model returned a non-finite score")
 	}
 	if pred.Probability != nil {
 		p := *pred.Probability
-		if math.IsNaN(p) || p < 0 || p > 1 {
-			return nil, fmt.Errorf("models: external model returned probability %v outside [0,1]", p)
+		if math.IsNaN(p) || math.IsInf(p, 0) || p < 0 || p > 1 {
+			return Prediction{}, fmt.Errorf("models: external model returned probability %v outside [0,1]", p)
 		}
 	}
-	return json.Marshal(pred)
+	return pred, nil
 }

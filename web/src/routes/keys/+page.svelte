@@ -154,6 +154,18 @@
     once at creation (and on rotation) — copy it now; it is stored hashed and cannot be retrieved.
   </p>
 
+  <details class="api-usage">
+    <summary>How you'll call the decision API</summary>
+    <p class="muted">
+      Every key authenticates the decision endpoint. Mint one below, then swap its secret in for
+      <code>YOUR_API_KEY</code> (and your host + a flow slug):
+    </p>
+    <CodeSnippet
+      code={`curl -X POST https://YOUR_HOST/v1/flows/YOUR_FLOW/production/decide \\\n  -H "X-Api-Key: YOUR_API_KEY" \\\n  -H "Content-Type: application/json" \\\n  -d '{"data": {}}'`}
+      label="curl command"
+    />
+  </details>
+
   <form
     class="define"
     onsubmit={(e) => {
@@ -294,6 +306,17 @@
   }
   .define {
     margin: 0.8rem 0;
+  }
+  .api-usage {
+    margin: 0.6rem 0 1rem;
+    padding: 0.5rem 0.8rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface-2);
+  }
+  .api-usage summary {
+    cursor: pointer;
+    font-weight: 600;
   }
   .row {
     display: flex;

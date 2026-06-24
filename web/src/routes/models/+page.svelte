@@ -20,6 +20,7 @@
   import { roleAtLeast } from '$lib/roles';
   import { user } from '$lib/session';
   import Badge from '$lib/Badge.svelte';
+  import Hint from '$lib/Hint.svelte';
   import type { Tone } from '$lib/badge';
 
   // Authenticates via the session cookie (empty key → no X-Api-Key header).
@@ -263,7 +264,15 @@
     <div class="table-wrap">
       <table>
         <thead>
-          <tr><th>Name</th><th>Kind</th><th>Owner</th><th>Updated</th><th>Drift</th><th></th></tr>
+          <tr
+            ><th>Name</th><th>Kind</th><th>Owner</th><th>Updated</th><th
+              ><Hint label="Drift"
+                >Population Stability Index (PSI) of the model's recent prediction distribution
+                versus its captured baseline — <code>&gt;0.2</code> signals meaningful drift. "no baseline"
+                means none has been captured yet.</Hint
+              ></th
+            ><th></th></tr
+          >
         </thead>
         <tbody>
           {#each models as m (m.name)}
