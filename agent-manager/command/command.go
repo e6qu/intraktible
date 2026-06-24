@@ -12,6 +12,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"sync"
 	"time"
@@ -398,6 +399,8 @@ func (h *Handler) append(ctx context.Context, id identity.Identity, typ string, 
 
 func newID() string {
 	var b [16]byte
-	_, _ = rand.Read(b[:])
+	if _, err := io.ReadFull(rand.Reader, b[:]); err != nil {
+		panic("agent-manager: crypto/rand unavailable: " + err.Error())
+	}
 	return hex.EncodeToString(b[:])
 }

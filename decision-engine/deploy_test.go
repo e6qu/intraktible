@@ -220,3 +220,81 @@ func TestMakerCheckerApproval(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// TestMakerCheckerConcurrentDecision exercises the cross-process TOCTOU guard:
+// two handlers on the SAME log (two nodes, each with its own in-process mutex)
+// decide the same pending request. The per-request decision claim must let exactly
+// one decision commit, even though neither mutex sees the other.
+func TestMakerCheckerConcurrentDecision(t *testing.T) {
+	ctx := context.Background()
+	log, err := eventlog.OpenWAL(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = log.Close() }()
+	maker := identity.Identity{Org: "demo", Workspace: "main", Actor: "maker"}
+	approver := identity.Identity{Org: "demo", Workspace: "main", Actor: "approver"}
+	rejecter := identity.Identity{Org: "demo", Workspace: "main", Actor: "rejecter"}
+
+	// Two handlers share the log — two independent "nodes".
+	nodeA := command.NewHandler(log)
+	nodeB := command.NewHandler(log)
+
+	flowID, _, err := nodeA.CreateFlow(ctx, maker, domain.CreateFlow{Slug: "race", Name: "Race"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := nodeA.PublishVersion(ctx, maker, domain.PublishVersion{FlowID: flowID, Graph: flowtest.ConstGraph("v1")}); err != nil {
+		t.Fatal(err)
+	}
+	reqID, _, err := nodeA.RequestDeployment(ctx, maker, domain.DeployVersion{FlowID: flowID, Environment: "production", Version: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Node A approves; node B concurrently rejects the same request. Both re-fold a
+	// pending request (the simultaneity window), but they contend on the same
+	// decision claim, so exactly one commits and the other conflicts/already-decided.
+	type result struct{ err error }
+	results := make(chan result, 2)
+	start := make(chan struct{})
+	go func() {
+		<-start
+		_, err := nodeA.ApproveDeployment(ctx, approver, flowID, reqID, "ship")
+		results <- result{err}
+	}()
+	go func() {
+		<-start
+		_, err := nodeB.RejectDeployment(ctx, rejecter, flowID, reqID, "no")
+		results <- result{err}
+	}()
+	close(start)
+	r1, r2 := <-results, <-results
+
+	committed := 0
+	if r1.err == nil {
+		committed++
+	}
+	if r2.err == nil {
+		committed++
+	}
+	if committed != 1 {
+		t.Fatalf("exactly one decision must commit, got %d (errs: %v, %v)", committed, r1.err, r2.err)
+	}
+
+	// The request ends in exactly one terminal state.
+	s := store.NewMemory()
+	if err := projection.New(log, s, flows.Projector{}).Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	fv, _, err := flows.Read(ctx, s, maker, flowID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fv.DeploymentRequests) != 1 {
+		t.Fatalf("want one request, got %+v", fv.DeploymentRequests)
+	}
+	if st := fv.DeploymentRequests[0].Status; st != "approved" && st != "rejected" {
+		t.Fatalf("request not in a terminal state: %q", st)
+	}
+}

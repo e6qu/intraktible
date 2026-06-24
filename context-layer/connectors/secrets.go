@@ -43,6 +43,20 @@ func EncryptSecrets(config json.RawMessage, kr *Keyring) (json.RawMessage, error
 	return transformSecrets(config, kr, encryptSecretValue)
 }
 
+// SealConfigForRecord prepares a connector config for the ConnectorDefined event:
+// with a keyring it seals credential fields (recoverable for fetch); WITHOUT one
+// it redacts them. Either way no plaintext credential is persisted to the event
+// log — so the default (no keyring) configuration is fail-safe, not a plaintext
+// leak to the tenant-readable audit surface. A redacted (no-keyring) definition
+// can still route, but its connector cannot authenticate until a keyring is
+// configured and the definition is re-saved.
+func SealConfigForRecord(config json.RawMessage, kr *Keyring) (json.RawMessage, error) {
+	if kr == nil {
+		return RedactConfig(config), nil
+	}
+	return EncryptSecrets(config, kr)
+}
+
 // DecryptSecrets opens encrypted credential envelopes in config, selecting the
 // key that sealed each value. Plaintext configs continue to work, which keeps
 // dev/test definitions and old logs readable.

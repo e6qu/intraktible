@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"io"
 	"net/http"
 	"sort"
 
@@ -171,6 +172,8 @@ func clearFlowCookie(w http.ResponseWriter, r *http.Request, name, path string) 
 // randToken returns a 256-bit random hex string for CSRF state / nonce.
 func randToken() string {
 	var b [32]byte
-	_, _ = rand.Read(b[:])
+	if _, err := io.ReadFull(rand.Reader, b[:]); err != nil {
+		panic("httpx: crypto/rand unavailable: " + err.Error())
+	}
 	return hex.EncodeToString(b[:])
 }

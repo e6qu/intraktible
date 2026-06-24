@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"reflect"
 	"time"
 
@@ -98,7 +99,15 @@ type DecideHandler struct {
 	models     ModelProvider
 	sealer     PIISealer
 	tracer     trace.Tracer
+	// evalTimeout bounds per-node expression/Code evaluation so a CPU-heavy
+	// expression a flow author ships can't tie up the synchronous decide.
+	evalTimeout time.Duration
 }
+
+// defaultEvalTimeout is the wall-clock budget for a single decide's expression and
+// Code evaluation. Generous for legitimate flows, tight enough that a pathological
+// expression fails loudly instead of hanging the synchronous decide.
+const defaultEvalTimeout = 5 * time.Second
 
 // DecideOption customizes a DecideHandler (used by tests to make A/B routing
 // deterministic).
@@ -137,18 +146,26 @@ func WithPIISealer(s PIISealer) DecideOption {
 	return func(h *DecideHandler) { h.sealer = s }
 }
 
+// WithEvalTimeout overrides the per-decide expression/Code evaluation budget. A
+// non-positive value disables the deadline (the evaluators then rely only on their
+// step/structure bounds). Configured at the composition root.
+func WithEvalTimeout(d time.Duration) DecideOption {
+	return func(h *DecideHandler) { h.evalTimeout = d }
+}
+
 // NewDecideHandler builds a DecideHandler using the system clock and random id +
 // routing sources. id generation, timing, and the routing draw are the only
 // effects, and all are recorded (the chosen version and variant land in the
 // DecisionStarted event, so replay is deterministic).
 func NewDecideHandler(log eventlog.Log, st store.Store, opts ...DecideOption) *DecideHandler {
 	h := &DecideHandler{
-		log:    log,
-		store:  st,
-		now:    func() time.Time { return time.Now().UTC() },
-		newID:  newID,
-		roll:   rollPercent,
-		tracer: telemetry.Tracer(),
+		log:         log,
+		store:       st,
+		now:         func() time.Time { return time.Now().UTC() },
+		newID:       newID,
+		roll:        rollPercent,
+		tracer:      telemetry.Tracer(),
+		evalTimeout: defaultEvalTimeout,
 	}
 	for _, opt := range opts {
 		opt(h)
@@ -156,12 +173,25 @@ func NewDecideHandler(log eventlog.Log, st store.Store, opts ...DecideOption) *D
 	return h
 }
 
+// execute runs a graph under the handler's per-decide evaluation deadline. A
+// non-positive timeout disables the deadline. obs may be nil (no per-node observer).
+func (h *DecideHandler) execute(ctx context.Context, g events.Graph, data map[string]any, obs domain.NodeObserver) domain.Run {
+	if h.evalTimeout <= 0 {
+		return domain.ExecuteObserved(g, data, obs)
+	}
+	ctx, cancel := context.WithTimeout(ctx, h.evalTimeout)
+	defer cancel()
+	return domain.ExecuteContext(ctx, g, data, obs)
+}
+
 // rollPercent returns a near-uniform draw in [0,100) from a cryptographic source
 // (avoids the weak-RNG SAST finding; routing is not security-sensitive). One byte
 // is mapped to [0,99] via *100/256, so the conversion is a safe widening byte->int.
 func rollPercent() int {
 	var b [1]byte
-	_, _ = rand.Read(b[:])
+	if _, err := io.ReadFull(rand.Reader, b[:]); err != nil {
+		panic("decision-engine: crypto/rand unavailable: " + err.Error())
+	}
 	return int(b[0]) * 100 / 256
 }
 
@@ -267,7 +297,7 @@ func (h *DecideHandler) Decide(ctx context.Context, id identity.Identity, slug, 
 		return DecideResult{}, err
 	}
 
-	run := domain.ExecuteObserved(version.Graph, data, spanObserver{ctx: ctx, tracer: h.tracer})
+	run := h.execute(ctx, version.Graph, data, spanObserver{ctx: ctx, tracer: h.tracer})
 	for _, r := range run.Results {
 		// Seal PII in each node's output too — node outputs echo input-derived PII
 		// (assignment/rule/table targets, code merges, manual_review fields), so an
@@ -426,7 +456,7 @@ func (h *DecideHandler) Preview(ctx context.Context, id identity.Identity, slug,
 		return DecideResult{}, err
 	}
 
-	run := domain.ExecuteObserved(version.Graph, data, spanObserver{ctx: ctx, tracer: h.tracer})
+	run := h.execute(ctx, version.Graph, data, spanObserver{ctx: ctx, tracer: h.tracer})
 	if run.Status == domain.StatusFailed {
 		return DecideResult{Status: domain.StatusFailed, Error: run.Err}, nil
 	}
@@ -462,7 +492,7 @@ func (h *DecideHandler) runShadow(ctx context.Context, id identity.Identity, fv 
 	if !ok {
 		ev.ShadowError = fmt.Sprintf("shadow version %d not found", shadowVer)
 	} else {
-		srun := domain.Execute(sv.Graph, data)
+		srun := h.execute(ctx, sv.Graph, data, nil)
 		ev.ShadowStatus = string(srun.Status)
 		if srun.Status == domain.StatusFailed {
 			ev.ShadowError = srun.Err

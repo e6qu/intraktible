@@ -341,6 +341,52 @@ func TestConnectorDefinitionEncryptsStoredSecrets(t *testing.T) {
 	}
 }
 
+// TestConnectorDefinitionRedactsSecretsWithoutKeyring is the fail-safe-default
+// guard: with NO keyring configured, a connector's credential fields must be
+// redacted in the recorded ConnectorDefined event (and so in the tenant-readable
+// audit surface), never persisted in plaintext.
+func TestConnectorDefinitionRedactsSecretsWithoutKeyring(t *testing.T) {
+	log, st := testutil.NewLogStore(t)
+	svc := service.New(command.NewHandler(log), st) // no WithSecrets — the default
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "dev"}
+	api := testutil.StartAPI(t, log, st, "test-key", id, svc.Routes,
+		entities.Projector{}, features.Projector{}, connectors.Projector{})
+
+	const secret = "super-secret-token-value"
+	api.Request(t, http.MethodPost, "/v1/context/connectors",
+		map[string]any{
+			"name": "leaky-http",
+			"type": "http",
+			"config": map[string]any{
+				"url": "https://example.test/api",
+				"headers": map[string]any{
+					"authorization": "Bearer " + secret,
+				},
+			},
+		}, http.StatusAccepted, nil)
+
+	evs, err := log.Read(t.Context(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sawDefined bool
+	for _, e := range evs {
+		if e.Type != "context.connector_defined" {
+			continue
+		}
+		sawDefined = true
+		if strings.Contains(string(e.Payload), secret) {
+			t.Fatalf("ConnectorDefined event leaked plaintext secret: %s", e.Payload)
+		}
+		if !strings.Contains(string(e.Payload), "[redacted]") {
+			t.Fatalf("ConnectorDefined event did not redact the credential: %s", e.Payload)
+		}
+	}
+	if !sawDefined {
+		t.Fatal("no ConnectorDefined event recorded")
+	}
+}
+
 func TestContextAPIValidationAndAuth(t *testing.T) {
 	api := start(t)
 

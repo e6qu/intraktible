@@ -350,6 +350,14 @@
     display: flex;
     gap: 0.25rem;
     margin-right: auto;
+    /* Shrink + scroll rather than pushing the trailing header controls (theme toggle)
+       off-screen when the full-label nav doesn't fit (~720–1300px). */
+    min-width: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  nav::-webkit-scrollbar {
+    display: none;
   }
   .navlink {
     display: inline-flex;

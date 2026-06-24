@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -55,13 +56,52 @@ type Principal struct {
 	Scope auth.Scope
 }
 
+// contentSecurityPolicy is the CSP served on every response. The embedded SPA and
+// docs serve their own JS/CSS same-origin (and SvelteKit injects an inline bootstrap
+// script + inline styles), so script/style allow 'self' and 'unsafe-inline'; no
+// remote origins are permitted. connect-src 'self' covers the XHR/SSE/WebSocket
+// calls the UI makes to its own API. frame-ancestors 'none' is the real anti-
+// clickjacking control (X-Frame-Options is the legacy companion); object-src and
+// base-uri are locked down to shrink injection surface.
+const contentSecurityPolicy = "default-src 'self'; " +
+	"script-src 'self' 'unsafe-inline'; " +
+	"style-src 'self' 'unsafe-inline'; " +
+	"img-src 'self' data:; " +
+	"font-src 'self' data:; " +
+	"connect-src 'self'; " +
+	"object-src 'none'; " +
+	"base-uri 'self'; " +
+	"frame-ancestors 'none'"
+
+// SecurityHeaders sets the standard browser hardening headers on every response:
+// clickjacking defense (X-Frame-Options + CSP frame-ancestors), MIME-sniffing
+// defense (nosniff), a strict referrer policy, and a same-origin CSP. HSTS is sent
+// only over TLS — asserting it on a plaintext dev/test listener would be wrong (and
+// would poison a browser that later hits the same host over http). It belongs on
+// the OUTER chain so it covers every response, including errors and the embedded UI.
+func SecurityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("Referrer-Policy", "no-referrer")
+		h.Set("Content-Security-Policy", contentSecurityPolicy)
+		if r.TLS != nil {
+			h.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // RequestID assigns a request id and echoes it in the X-Request-Id header.
 func RequestID(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := r.Header.Get("X-Request-Id")
 		if id == "" {
 			var b [8]byte
-			_, _ = rand.Read(b[:])
+			if _, err := io.ReadFull(rand.Reader, b[:]); err != nil {
+				panic("httpx: crypto/rand unavailable: " + err.Error())
+			}
 			id = hex.EncodeToString(b[:])
 		}
 		w.Header().Set("X-Request-Id", id)
@@ -176,6 +216,17 @@ func Authenticate(keyring *auth.Keyring, sessions auth.SessionStore) Middleware 
 			}
 			if c, err := r.Cookie("session"); err == nil {
 				if id, role, scope, ok := sessions.Resolve(c.Value); ok {
+					// CSRF defense for cookie auth: the session cookie is SameSite=Lax, so a
+					// browser auto-sends it on top-level GET navigations but a custom request
+					// header cannot be set cross-origin without a CORS preflight the server
+					// never grants. Require X-Requested-With on state-changing (non-GET)
+					// requests; an attacker's cross-site form/img/script can't add it.
+					// API-key callers never reach this branch and so stay exempt — browsers
+					// don't auto-send X-Api-Key, so those requests can't be forged.
+					if !isSafeMethod(r.Method) && r.Header.Get("X-Requested-With") == "" {
+						Error(w, http.StatusForbidden, errors.New("missing X-Requested-With header (CSRF protection)"))
+						return
+					}
 					ctx := identity.With(r.Context(), id)
 					ctx = withPrincipal(ctx, Principal{Role: auth.ParseRole(string(role)), Scope: scope})
 					next.ServeHTTP(w, r.WithContext(ctx))
@@ -185,6 +236,12 @@ func Authenticate(keyring *auth.Keyring, sessions auth.SessionStore) Middleware 
 			Error(w, http.StatusUnauthorized, errors.New("authentication required"))
 		})
 	}
+}
+
+// isSafeMethod reports whether the method is a read (no state change), exempting
+// it from the CSRF header requirement. GET/HEAD/OPTIONS are the safe methods.
+func isSafeMethod(method string) bool {
+	return method == http.MethodGet || method == http.MethodHead || method == http.MethodOptions
 }
 
 func withPrincipal(ctx context.Context, p Principal) context.Context {
@@ -280,6 +337,13 @@ func requiredRole(method, path string) auth.Role {
 	// The streaming run endpoints are GET (EventSource/WebSocket are GET-only) but
 	// they MUTATE — each invokes the agent (a billable provider call) and records a
 	// run. Gate them like the POST run path, before the "all GETs are reads" rule.
+	//
+	// Residual CSRF note: because browser EventSource/WebSocket cannot set custom
+	// request headers, these two GET endpoints are deliberately exempt from the
+	// X-Requested-With CSRF check (requiring it would break the legitimate streaming
+	// UI). A cross-site trigger could therefore start a billable run, but the
+	// same-origin policy stops it from reading the streamed output cross-origin, and
+	// the SameSite=Lax session cookie limits the cookie-auth attack surface.
 	if strings.HasSuffix(path, "/run/stream") || strings.HasSuffix(path, "/run/ws") {
 		return auth.RoleOperator
 	}

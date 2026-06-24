@@ -10,6 +10,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"time"
 
 	"github.com/e6qu/intraktible/context-layer/domain"
@@ -112,6 +113,8 @@ func (h *Handler) append(ctx context.Context, id identity.Identity, typ string, 
 
 func newID() string {
 	var b [16]byte
-	_, _ = rand.Read(b[:])
+	if _, err := io.ReadFull(rand.Reader, b[:]); err != nil {
+		panic("context-layer: crypto/rand unavailable: " + err.Error())
+	}
 	return hex.EncodeToString(b[:])
 }

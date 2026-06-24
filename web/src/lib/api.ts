@@ -80,7 +80,12 @@ export interface SayHelloResult {
 // authHeaders adds the API-key header only when a key is given; with an empty key
 // the request authenticates via the session cookie (sent automatically same-origin).
 function authHeaders(key: string): Record<string, string> {
-  return key ? { 'X-Api-Key': key } : {};
+  // X-Requested-With satisfies the backend's CSRF check for cookie-authenticated
+  // requests — a cross-site form/navigation can't set a custom header. Harmless on
+  // API-key requests (which the check exempts) and on the demo's fetch mock.
+  const h: Record<string, string> = { 'X-Requested-With': 'intraktible' };
+  if (key) h['X-Api-Key'] = key;
+  return h;
 }
 
 export async function getStats(key: string, fetcher: typeof fetch = fetch): Promise<HelloStats> {

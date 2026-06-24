@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/e6qu/intraktible/context-layer/connectors"
 	"github.com/e6qu/intraktible/platform/ai"
 )
 
@@ -41,6 +42,32 @@ func chatServer(t *testing.T, status int, content string) *httptest.Server {
 func mustJSONString(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
+}
+
+// TestHTTPProviderEgressGuard wires the provider with the shared SSRF-safe egress
+// client (as the composition root does). The default policy blocks loopback, so a
+// provider URL resolving to 127.0.0.1 is refused at dial time — proving the guard is
+// active. With AllowPrivate the same call succeeds, proving the configured endpoint
+// still works.
+func TestHTTPProviderEgressGuard(t *testing.T) {
+	srv := chatServer(t, http.StatusOK, "ok") // httptest binds to loopback (127.0.0.1)
+	defer srv.Close()
+
+	guarded := ai.NewHTTP("openai", srv.URL, "sk-test", "gpt-test",
+		ai.WithHTTPClient(connectors.EgressPolicy{}.Client(ai.HTTPTimeout)))
+	if _, err := guarded.Complete(context.Background(), ai.Request{Prompt: "hi"}); err == nil {
+		t.Fatal("egress guard should block a provider call to a loopback address")
+	}
+
+	allowed := ai.NewHTTP("openai", srv.URL, "sk-test", "gpt-test",
+		ai.WithHTTPClient(connectors.EgressPolicy{AllowPrivate: true}.Client(ai.HTTPTimeout)))
+	resp, err := allowed.Complete(context.Background(), ai.Request{Prompt: "hi"})
+	if err != nil {
+		t.Fatalf("AllowPrivate egress should permit the configured endpoint: %v", err)
+	}
+	if resp.Text != "ok" {
+		t.Fatalf("unexpected response: %+v", resp)
+	}
 }
 
 func TestHTTPProviderText(t *testing.T) {

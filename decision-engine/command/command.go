@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 	"sync"
@@ -330,28 +331,42 @@ func (h *Handler) ApproveDeployment(ctx context.Context, id identity.Identity, f
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	req, ok, err := h.foldRequest(ctx, id, flowID, reqID)
-	if err != nil {
-		return eventlog.Envelope{}, err
+	// Re-fold + append under a per-request decision claim so the fold-then-append is
+	// correct across processes, not just within this Handler's mutex: an approve and
+	// a concurrent reject (or two approvals) of the same request contend on the SAME
+	// claim, so exactly one terminal decision can commit. The loser re-reads the now-
+	// decided request and fails loudly.
+	for attempt := 0; ; attempt++ {
+		req, ok, err := h.foldRequest(ctx, id, flowID, reqID)
+		if err != nil {
+			return eventlog.Envelope{}, err
+		}
+		if !ok {
+			return eventlog.Envelope{}, fmt.Errorf("decision-engine: unknown deployment request %q", reqID)
+		}
+		if req.status != flows.RequestPending {
+			return eventlog.Envelope{}, fmt.Errorf("decision-engine: deployment request %q is already %s", reqID, req.status)
+		}
+		if req.requestedBy == id.Actor {
+			return eventlog.Envelope{}, fmt.Errorf("decision-engine: four-eyes — %q cannot approve their own deployment request", id.Actor)
+		}
+		payload, err := json.Marshal(events.DeploymentApproved{
+			RequestID: reqID, FlowID: flowID, Environment: req.env,
+			Version: req.version, ChallengerVersion: req.challengerVersion, ChallengerPct: req.challengerPct,
+			Reason: reason,
+		})
+		if err != nil {
+			return eventlog.Envelope{}, fmt.Errorf("decision-engine: marshal approved: %w", err)
+		}
+		e, err := h.appendFlowEventUnique(ctx, id, events.TypeDeploymentApproved, payload, decisionClaim(flowID, reqID))
+		if err != nil {
+			if errors.Is(err, eventlog.ErrConflict) && attempt < maxClaimRetries {
+				continue // a concurrent approve/reject took this request's decision; re-fold
+			}
+			return eventlog.Envelope{}, err
+		}
+		return e, nil
 	}
-	if !ok {
-		return eventlog.Envelope{}, fmt.Errorf("decision-engine: unknown deployment request %q", reqID)
-	}
-	if req.status != flows.RequestPending {
-		return eventlog.Envelope{}, fmt.Errorf("decision-engine: deployment request %q is already %s", reqID, req.status)
-	}
-	if req.requestedBy == id.Actor {
-		return eventlog.Envelope{}, fmt.Errorf("decision-engine: four-eyes — %q cannot approve their own deployment request", id.Actor)
-	}
-	payload, err := json.Marshal(events.DeploymentApproved{
-		RequestID: reqID, FlowID: flowID, Environment: req.env,
-		Version: req.version, ChallengerVersion: req.challengerVersion, ChallengerPct: req.challengerPct,
-		Reason: reason,
-	})
-	if err != nil {
-		return eventlog.Envelope{}, fmt.Errorf("decision-engine: marshal approved: %w", err)
-	}
-	return h.appendFlowEvent(ctx, id, events.TypeDeploymentApproved, payload)
 }
 
 // RejectDeployment rejects a pending deployment request.
@@ -361,21 +376,32 @@ func (h *Handler) RejectDeployment(ctx context.Context, id identity.Identity, fl
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	req, ok, err := h.foldRequest(ctx, id, flowID, reqID)
-	if err != nil {
-		return eventlog.Envelope{}, err
+	// Same per-request decision claim as ApproveDeployment, so a reject racing an
+	// approve cannot both commit (see ApproveDeployment).
+	for attempt := 0; ; attempt++ {
+		req, ok, err := h.foldRequest(ctx, id, flowID, reqID)
+		if err != nil {
+			return eventlog.Envelope{}, err
+		}
+		if !ok {
+			return eventlog.Envelope{}, fmt.Errorf("decision-engine: unknown deployment request %q", reqID)
+		}
+		if req.status != flows.RequestPending {
+			return eventlog.Envelope{}, fmt.Errorf("decision-engine: deployment request %q is already %s", reqID, req.status)
+		}
+		payload, err := json.Marshal(events.DeploymentRejected{RequestID: reqID, FlowID: flowID, Reason: reason})
+		if err != nil {
+			return eventlog.Envelope{}, fmt.Errorf("decision-engine: marshal rejected: %w", err)
+		}
+		e, err := h.appendFlowEventUnique(ctx, id, events.TypeDeploymentRejected, payload, decisionClaim(flowID, reqID))
+		if err != nil {
+			if errors.Is(err, eventlog.ErrConflict) && attempt < maxClaimRetries {
+				continue // a concurrent approve/reject took this request's decision; re-fold
+			}
+			return eventlog.Envelope{}, err
+		}
+		return e, nil
 	}
-	if !ok {
-		return eventlog.Envelope{}, fmt.Errorf("decision-engine: unknown deployment request %q", reqID)
-	}
-	if req.status != flows.RequestPending {
-		return eventlog.Envelope{}, fmt.Errorf("decision-engine: deployment request %q is already %s", reqID, req.status)
-	}
-	payload, err := json.Marshal(events.DeploymentRejected{RequestID: reqID, FlowID: flowID, Reason: reason})
-	if err != nil {
-		return eventlog.Envelope{}, fmt.Errorf("decision-engine: marshal rejected: %w", err)
-	}
-	return h.appendFlowEvent(ctx, id, events.TypeDeploymentRejected, payload)
 }
 
 // deployHistory returns the ordered list of versions that have been live in an
@@ -829,6 +855,13 @@ func versionClaim(flowID string, version int) string {
 	return "flow.version\x00" + flowID + "\x00" + strconv.Itoa(version)
 }
 
+// decisionClaim reserves the terminal decision (approve OR reject) for one
+// deployment request, so two concurrent checkers — even an approve racing a reject
+// across processes — cannot both commit a decision on the same request.
+func decisionClaim(flowID, reqID string) string {
+	return "deployment.decision\x00" + flowID + "\x00" + reqID
+}
+
 // foldTenant replays the flow stream for id's tenant into per-flow aggregates,
 // indexed by flow id and by slug. Callers hold h.mu.
 func (h *Handler) foldTenant(ctx context.Context, id identity.Identity) (map[string]*flowAgg, map[string]string, error) {
@@ -866,6 +899,8 @@ func (h *Handler) foldTenant(ctx context.Context, id identity.Identity) (map[str
 
 func newID() string {
 	var b [16]byte
-	_, _ = rand.Read(b[:])
+	if _, err := io.ReadFull(rand.Reader, b[:]); err != nil {
+		panic("decision-engine: crypto/rand unavailable: " + err.Error())
+	}
 	return hex.EncodeToString(b[:])
 }

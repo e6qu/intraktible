@@ -3,6 +3,7 @@
 package domain
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -14,6 +15,14 @@ import (
 
 	"github.com/e6qu/intraktible/decision-engine/events"
 )
+
+// evalContext carries the per-execution wall-clock deadline down to the leaf
+// evaluators (expr and Starlark), so a pathological expression a flow author ships
+// is cut off rather than hanging the synchronous decide. A nil/Background ctx
+// (the plain Execute path) imposes no deadline.
+type evalContext struct {
+	ctx context.Context
+}
 
 // RunStatus is the terminal outcome of executing a flow. A named type (mirroring
 // case-manager's CaseStatus) so a status can't be a typo'd bare string in the
@@ -73,6 +82,16 @@ func Execute(g events.Graph, input map[string]any) Run {
 // result — it is called purely for its side effect in the shell — so the function
 // stays deterministic and replay-stable for any given graph+input.
 func ExecuteObserved(g events.Graph, input map[string]any, obs NodeObserver) Run {
+	return ExecuteContext(context.Background(), g, input, obs)
+}
+
+// ExecuteContext is ExecuteObserved with a context whose deadline bounds the
+// per-node expression and Code (Starlark) evaluation: a CPU-heavy expression a
+// flow author ships can't tie up the synchronous decide indefinitely — it is cut
+// off with a deadline error instead. The context only bounds wall-clock; the
+// result stays deterministic for any graph+input that completes within it.
+func ExecuteContext(runCtx context.Context, g events.Graph, input map[string]any, obs NodeObserver) Run {
+	ec := evalContext{ctx: runCtx}
 	nodes := make(map[string]events.Node, len(g.Nodes))
 	for _, n := range g.Nodes {
 		nodes[n.ID] = n
@@ -103,10 +122,10 @@ func ExecuteObserved(g events.Graph, input map[string]any, obs NodeObserver) Run
 		)
 		if obs != nil {
 			done := obs.NodeStart(n.ID, n.Type)
-			output, next, err = evalNode(n, ctx, outgoing[n.ID])
+			output, next, err = evalNode(ec, n, ctx, outgoing[n.ID])
 			done(err)
 		} else {
-			output, next, err = evalNode(n, ctx, outgoing[n.ID])
+			output, next, err = evalNode(ec, n, ctx, outgoing[n.ID])
 		}
 		run.Results = append(run.Results, NodeResult{NodeID: n.ID, Type: n.Type, Output: toJSON(output)})
 		if err != nil {
@@ -125,24 +144,24 @@ func ExecuteObserved(g events.Graph, input map[string]any, obs NodeObserver) Run
 	return fail(run, cur, "decision-engine: execution exceeded the node bound")
 }
 
-func evalNode(n events.Node, ctx map[string]any, edges []events.Edge) (any, string, error) {
+func evalNode(ec evalContext, n events.Node, ctx map[string]any, edges []events.Edge) (any, string, error) {
 	switch n.Type {
 	case events.NodeInput:
 		return map[string]any{}, firstEdge(edges), nil
 	case events.NodeAssignment:
-		return evalAssignment(n, ctx, edges)
+		return evalAssignment(ec, n, ctx, edges)
 	case events.NodeRule:
-		return evalRule(n, ctx, edges)
+		return evalRule(ec, n, ctx, edges)
 	case events.NodeSplit:
-		return evalSplit(n, ctx, edges)
+		return evalSplit(ec, n, ctx, edges)
 	case events.NodeScorecard:
-		return evalScorecard(n, ctx, edges)
+		return evalScorecard(ec, n, ctx, edges)
 	case events.NodeDecisionTable:
-		return evalDecisionTable(n, ctx, edges)
+		return evalDecisionTable(ec, n, ctx, edges)
 	case events.NodeMatrix2D:
-		return evalMatrix(n, ctx, edges)
+		return evalMatrix(ec, n, ctx, edges)
 	case events.NodeCode:
-		return evalCode(n, ctx, edges)
+		return evalCode(ec, n, ctx, edges)
 	case events.NodeConnect:
 		return evalConnect(n, ctx, edges)
 	case events.NodeAI:
@@ -150,9 +169,9 @@ func evalNode(n events.Node, ctx map[string]any, edges []events.Edge) (any, stri
 	case events.NodePredict:
 		return evalPredict(n, ctx, edges)
 	case events.NodeManualReview:
-		return evalManualReview(n, ctx, edges)
+		return evalManualReview(ec, n, ctx, edges)
 	case events.NodeReason:
-		return evalReason(n, ctx, edges)
+		return evalReason(ec, n, ctx, edges)
 	case events.NodeOutput:
 		return evalOutput(n, ctx)
 	default:
@@ -160,14 +179,14 @@ func evalNode(n events.Node, ctx map[string]any, edges []events.Edge) (any, stri
 	}
 }
 
-func evalAssignment(n events.Node, ctx map[string]any, edges []events.Edge) (any, string, error) {
+func evalAssignment(ec evalContext, n events.Node, ctx map[string]any, edges []events.Edge) (any, string, error) {
 	var cfg assignmentConfig
 	if err := decodeConfig(n, &cfg); err != nil {
 		return nil, "", err
 	}
 	applied := make(map[string]any, len(cfg.Assignments))
 	for _, a := range cfg.Assignments {
-		v, err := evalAny(a.Expr, ctx)
+		v, err := evalAny(ec, a.Expr, ctx)
 		if err != nil {
 			return nil, "", fmt.Errorf("decision-engine: node %q assignment %q: %w", n.ID, a.Target, err)
 		}
@@ -177,14 +196,14 @@ func evalAssignment(n events.Node, ctx map[string]any, edges []events.Edge) (any
 	return applied, firstEdge(edges), nil
 }
 
-func evalRule(n events.Node, ctx map[string]any, edges []events.Edge) (any, string, error) {
+func evalRule(ec evalContext, n events.Node, ctx map[string]any, edges []events.Edge) (any, string, error) {
 	var cfg ruleConfig
 	if err := decodeConfig(n, &cfg); err != nil {
 		return nil, "", err
 	}
 	applied := make(map[string]any)
 	for i, r := range cfg.Rules {
-		match, err := evalBool(r.When, ctx)
+		match, err := evalBool(ec, r.When, ctx)
 		if err != nil {
 			return nil, "", fmt.Errorf("decision-engine: node %q rule %d condition: %w", n.ID, i, err)
 		}
@@ -192,7 +211,7 @@ func evalRule(n events.Node, ctx map[string]any, edges []events.Edge) (any, stri
 			continue
 		}
 		for _, a := range r.Then {
-			v, err := evalAny(a.Expr, ctx)
+			v, err := evalAny(ec, a.Expr, ctx)
 			if err != nil {
 				return nil, "", fmt.Errorf("decision-engine: node %q rule %d assignment %q: %w", n.ID, i, a.Target, err)
 			}
@@ -203,12 +222,12 @@ func evalRule(n events.Node, ctx map[string]any, edges []events.Edge) (any, stri
 	return applied, firstEdge(edges), nil
 }
 
-func evalSplit(n events.Node, ctx map[string]any, edges []events.Edge) (any, string, error) {
+func evalSplit(ec evalContext, n events.Node, ctx map[string]any, edges []events.Edge) (any, string, error) {
 	var cfg splitConfig
 	if err := decodeConfig(n, &cfg); err != nil {
 		return nil, "", err
 	}
-	match, err := evalBool(cfg.Condition, ctx)
+	match, err := evalBool(ec, cfg.Condition, ctx)
 	if err != nil {
 		return nil, "", fmt.Errorf("decision-engine: node %q split condition: %w", n.ID, err)
 	}
@@ -223,7 +242,7 @@ func evalSplit(n events.Node, ctx map[string]any, edges []events.Edge) (any, str
 	return map[string]any{"branch": branch}, next, nil
 }
 
-func evalScorecard(n events.Node, ctx map[string]any, edges []events.Edge) (any, string, error) {
+func evalScorecard(ec evalContext, n events.Node, ctx map[string]any, edges []events.Edge) (any, string, error) {
 	var cfg scorecardConfig
 	if err := decodeConfig(n, &cfg); err != nil {
 		return nil, "", err
@@ -234,7 +253,7 @@ func evalScorecard(n events.Node, ctx map[string]any, edges []events.Edge) (any,
 	}
 	var score float64
 	for i, f := range cfg.Factors {
-		match, err := evalBool(f.When, ctx)
+		match, err := evalBool(ec, f.When, ctx)
 		if err != nil {
 			return nil, "", fmt.Errorf("decision-engine: node %q factor %d: %w", n.ID, i, err)
 		}
@@ -252,7 +271,7 @@ const reasonCodesField = "reason_codes"
 
 // evalReason appends a {code, description} entry for every reason whose condition
 // holds to the reserved reason_codes list, accumulating across the flow.
-func evalReason(n events.Node, ctx map[string]any, edges []events.Edge) (any, string, error) {
+func evalReason(ec evalContext, n events.Node, ctx map[string]any, edges []events.Edge) (any, string, error) {
 	var cfg reasonConfig
 	if err := decodeConfig(n, &cfg); err != nil {
 		return nil, "", err
@@ -260,7 +279,7 @@ func evalReason(n events.Node, ctx map[string]any, edges []events.Edge) (any, st
 	codes := existingReasonCodes(ctx)
 	added := make([]any, 0, len(cfg.Reasons))
 	for i, r := range cfg.Reasons {
-		match, err := evalBool(r.When, ctx)
+		match, err := evalBool(ec, r.When, ctx)
 		if err != nil {
 			return nil, "", fmt.Errorf("decision-engine: node %q reason %d condition: %w", n.ID, i, err)
 		}
@@ -299,7 +318,7 @@ const (
 	hitCollect   hitPolicy = "collect"
 )
 
-func evalDecisionTable(n events.Node, ctx map[string]any, edges []events.Edge) (any, string, error) {
+func evalDecisionTable(ec evalContext, n events.Node, ctx map[string]any, edges []events.Edge) (any, string, error) {
 	var cfg decisionTableConfig
 	if err := decodeConfig(n, &cfg); err != nil {
 		return nil, "", err
@@ -309,7 +328,7 @@ func evalDecisionTable(n events.Node, ctx map[string]any, edges []events.Edge) (
 		// Back-compat with the predecessor "mode" field: "all" applied every
 		// matching row in order (last write wins per target); anything else was FIRST.
 		if strings.EqualFold(strings.TrimSpace(cfg.Mode), "all") {
-			return evalTableApplyAll(n, cfg, ctx, edges)
+			return evalTableApplyAll(ec, n, cfg, ctx, edges)
 		}
 		hit = hitFirst
 	}
@@ -325,7 +344,7 @@ func evalDecisionTable(n events.Node, ctx map[string]any, edges []events.Edge) (
 		// Conditions read the input context; outputs write to a per-row scratch env
 		// (a clone) so a later output in the SAME row can read an earlier one without
 		// leaking across rows.
-		out, ok, err := evalTableRow(n.ID, i, row, ctx, cloneEnv(ctx))
+		out, ok, err := evalTableRow(ec, n.ID, i, row, ctx, cloneEnv(ctx))
 		if err != nil {
 			return nil, "", err
 		}
@@ -394,10 +413,10 @@ func evalDecisionTable(n events.Node, ctx map[string]any, edges []events.Edge) (
 // evalTableApplyAll is the deprecated mode:"all" path: apply every matching row's
 // outputs in order, last write winning per target (rows see earlier rows' writes,
 // so condition and outputs share the live context).
-func evalTableApplyAll(n events.Node, cfg decisionTableConfig, ctx map[string]any, edges []events.Edge) (any, string, error) {
+func evalTableApplyAll(ec evalContext, n events.Node, cfg decisionTableConfig, ctx map[string]any, edges []events.Edge) (any, string, error) {
 	applied := make(map[string]any)
 	for i, row := range cfg.Rows {
-		out, ok, err := evalTableRow(n.ID, i, row, ctx, ctx)
+		out, ok, err := evalTableRow(ec, n.ID, i, row, ctx, ctx)
 		if err != nil {
 			return nil, "", err
 		}
@@ -416,8 +435,8 @@ func evalTableApplyAll(n events.Node, cfg decisionTableConfig, ctx map[string]an
 // they are written back into outEnv). It returns the row's output map and whether it
 // matched. Callers pass outEnv == condEnv to apply outputs to the live context, or a
 // clone to keep rows independent.
-func evalTableRow(nodeID string, i int, row decisionRow, condEnv, outEnv map[string]any) (map[string]any, bool, error) {
-	ok, err := evalBool(row.When, condEnv)
+func evalTableRow(ec evalContext, nodeID string, i int, row decisionRow, condEnv, outEnv map[string]any) (map[string]any, bool, error) {
+	ok, err := evalBool(ec, row.When, condEnv)
 	if err != nil {
 		return nil, false, fmt.Errorf("decision-engine: node %q row %d condition: %w", nodeID, i, err)
 	}
@@ -426,7 +445,7 @@ func evalTableRow(nodeID string, i int, row decisionRow, condEnv, outEnv map[str
 	}
 	out := make(map[string]any, len(row.Outputs))
 	for _, a := range row.Outputs {
-		v, err := evalAny(a.Expr, outEnv)
+		v, err := evalAny(ec, a.Expr, outEnv)
 		if err != nil {
 			return nil, false, fmt.Errorf("decision-engine: node %q row %d output %q: %w", nodeID, i, a.Target, err)
 		}
@@ -519,7 +538,7 @@ func toFloat(v any) (float64, bool) {
 	}
 }
 
-func evalMatrix(n events.Node, ctx map[string]any, edges []events.Edge) (any, string, error) {
+func evalMatrix(ec evalContext, n events.Node, ctx map[string]any, edges []events.Edge) (any, string, error) {
 	var cfg matrixConfig
 	if err := decodeConfig(n, &cfg); err != nil {
 		return nil, "", err
@@ -528,11 +547,11 @@ func evalMatrix(n events.Node, ctx map[string]any, edges []events.Edge) (any, st
 	if output == "" {
 		output = "result"
 	}
-	row, err := matchAxis(n, "row", cfg.Rows, ctx)
+	row, err := matchAxis(ec, n, "row", cfg.Rows, ctx)
 	if err != nil {
 		return nil, "", err
 	}
-	col, err := matchAxis(n, "col", cfg.Cols, ctx)
+	col, err := matchAxis(ec, n, "col", cfg.Cols, ctx)
 	if err != nil {
 		return nil, "", err
 	}
@@ -549,9 +568,9 @@ func evalMatrix(n events.Node, ctx map[string]any, edges []events.Edge) (any, st
 
 // matchAxis returns the index of the first axis condition that holds, failing
 // loudly when none match (a 2D matrix must cover the input).
-func matchAxis(n events.Node, axis string, conds []axisCond, ctx map[string]any) (int, error) {
+func matchAxis(ec evalContext, n events.Node, axis string, conds []axisCond, ctx map[string]any) (int, error) {
 	for i, c := range conds {
-		match, err := evalBool(c.When, ctx)
+		match, err := evalBool(ec, c.When, ctx)
 		if err != nil {
 			return 0, fmt.Errorf("decision-engine: node %q %s %d: %w", n.ID, axis, i, err)
 		}
@@ -706,16 +725,16 @@ const (
 // (the flow continues); the decide shell turns the recorded output into a
 // ManualReviewRequested event. It also appends a MANUAL_REVIEW reason code to the
 // reserved reason_codes list so the escalation is explainable in the decision.
-func evalManualReview(n events.Node, ctx map[string]any, edges []events.Edge) (any, string, error) {
+func evalManualReview(ec evalContext, n events.Node, ctx map[string]any, edges []events.Edge) (any, string, error) {
 	var cfg manualReviewConfig
 	if err := decodeConfig(n, &cfg); err != nil {
 		return nil, "", err
 	}
-	company, err := evalString(cfg.CompanyName, ctx)
+	company, err := evalString(ec, cfg.CompanyName, ctx)
 	if err != nil {
 		return nil, "", fmt.Errorf("decision-engine: node %q company_name: %w", n.ID, err)
 	}
-	caseType, err := evalString(cfg.CaseType, ctx)
+	caseType, err := evalString(ec, cfg.CaseType, ctx)
 	if err != nil {
 		return nil, "", fmt.Errorf("decision-engine: node %q case_type: %w", n.ID, err)
 	}
@@ -729,8 +748,8 @@ func evalManualReview(n events.Node, ctx map[string]any, edges []events.Edge) (a
 	}, firstEdge(edges), nil
 }
 
-func evalString(code string, env map[string]any) (string, error) {
-	v, err := evalAny(code, env)
+func evalString(ec evalContext, code string, env map[string]any) (string, error) {
+	v, err := evalAny(ec, code, env)
 	if err != nil {
 		return "", err
 	}
@@ -763,20 +782,20 @@ func evalOutput(n events.Node, ctx map[string]any) (any, string, error) {
 	return resp, "", nil
 }
 
-func evalAny(code string, env map[string]any) (any, error) {
+func evalAny(ec evalContext, code string, env map[string]any) (any, error) {
 	program, err := compile(code, env)
 	if err != nil {
 		return nil, err
 	}
-	return expr.Run(program, env)
+	return runProgram(ec, code, program, env)
 }
 
-func evalBool(code string, env map[string]any) (bool, error) {
+func evalBool(ec evalContext, code string, env map[string]any) (bool, error) {
 	program, err := compile(code, env)
 	if err != nil {
 		return false, err
 	}
-	out, err := expr.Run(program, env)
+	out, err := runProgram(ec, code, program, env)
 	if err != nil {
 		return false, err
 	}
@@ -785,6 +804,42 @@ func evalBool(code string, env map[string]any) (bool, error) {
 		return false, fmt.Errorf("condition %q did not evaluate to a boolean", code)
 	}
 	return b, nil
+}
+
+// runProgram runs a compiled expression, bounded by the execution context's
+// wall-clock deadline. The expr VM is not context-interruptible, so the run
+// happens on a goroutine and the caller returns a deadline error the moment the
+// context expires — a CPU-heavy expression a flow author ships can't tie up the
+// synchronous decide past its budget. With no deadline (the plain Execute path) it
+// runs inline. The expression language has no unbounded loop construct, so the
+// abandoned goroutine still finishes and is reclaimed.
+func runProgram(ec evalContext, code string, program *vm.Program, env map[string]any) (any, error) {
+	if ec.ctx == nil {
+		return expr.Run(program, env)
+	}
+	if _, ok := ec.ctx.Deadline(); !ok {
+		return expr.Run(program, env)
+	}
+	// Fast-fail when the budget is already spent (e.g. a long-running earlier node
+	// consumed it), so a later expression isn't even started.
+	if err := ec.ctx.Err(); err != nil {
+		return nil, fmt.Errorf("decision-engine: expression %q skipped past the evaluation deadline: %w", code, err)
+	}
+	type result struct {
+		out any
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		out, err := expr.Run(program, env)
+		done <- result{out, err}
+	}()
+	select {
+	case r := <-done:
+		return r.out, r.err
+	case <-ec.ctx.Done():
+		return nil, fmt.Errorf("decision-engine: expression %q exceeded the evaluation deadline: %w", code, ec.ctx.Err())
+	}
 }
 
 func compile(code string, env map[string]any) (*vm.Program, error) {

@@ -660,6 +660,7 @@ route('POST', '/v1/flows/:slug/:env/decide', (m, body) => {
 route('POST', '/v1/flows/:slug/:env/decide/batch', (m, body) => {
   const flow = findFlow(m[1]);
   if (!flow) return notFound();
+  if (!isEnvironment(m[2])) return badRequest(`unknown environment "${m[2]}"`);
   const dataset = (body.dataset as Body[]) ?? [];
   let completed = 0;
   let failed = 0;
@@ -681,6 +682,7 @@ route('POST', '/v1/flows/:slug/:env/decide/batch', (m, body) => {
 route('POST', '/v1/flows/:slug/:env/preapprove/batch', (m, body) => {
   const flow = findFlow(m[1]);
   if (!flow) return notFound();
+  if (!isEnvironment(m[2])) return badRequest(`unknown environment "${m[2]}"`);
   const dataset = (body.dataset as Body[]) ?? [];
   const wantDisp = (body.disposition as Disposition) ?? 'approve';
   const entityType = String(body.entity_type ?? 'applicant');
@@ -796,10 +798,13 @@ route('POST', '/v1/cases/:id/assign', (m, body) => {
   pushAudit('case.assigned', c.case_id, { assignee: c.assignee });
   return ok({});
 });
+const CASE_STATUSES = new Set<string>(['needs_review', 'in_progress', 'completed']);
 route('POST', '/v1/cases/:id/status', (m, body) => {
   const c = state.cases.find((x) => x.case_id === m[1]);
   if (!c) return notFound();
-  c.status = body.status as CaseStatus;
+  const next = String(body.status ?? '');
+  if (!CASE_STATUSES.has(next)) return badRequest(`unknown case status "${next}"`);
+  c.status = next as CaseStatus;
   c.updated_at = new Date().toISOString();
   c.audit.push({
     type: 'case.status',
