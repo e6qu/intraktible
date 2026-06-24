@@ -298,49 +298,51 @@
     <button onclick={load}>Reload</button>
   </div>
 
-  <section class="actions">
-    <div class="row">
-      <input bind:value={prompt} placeholder="prompt" aria-label="prompt" />
-      <button
-        onclick={run}
-        disabled={!agent || running || !roleAtLeast($user?.role, 'operator')}
-        title={!roleAtLeast($user?.role, 'operator') ? 'Requires the operator role' : undefined}
-        >{running ? 'Running…' : 'Run'}</button
-      >
-    </div>
-    {#if lastResult}
-      <div class="run-output" data-testid="run-result">
-        <div class="run-output-head">
-          <Badge tone={statusTone(lastResult.status)}>{lastResult.status}</Badge>
-          <code class="muted">{lastResult.run_id}</code>
-        </div>
-        <pre class:err={lastResult.status === 'failed'}>{outputText(lastResult)}</pre>
+  {#if agent}
+    <section class="actions">
+      <div class="row">
+        <input bind:value={prompt} placeholder="prompt" aria-label="prompt" />
+        <button
+          onclick={run}
+          disabled={running || !roleAtLeast($user?.role, 'operator')}
+          title={!roleAtLeast($user?.role, 'operator') ? 'Requires the operator role' : undefined}
+          >{running ? 'Running…' : 'Run'}</button
+        >
       </div>
-    {:else if lastRunID}
-      <p class="muted">Last run: <code>{lastRunID}</code></p>
-    {/if}
-  </section>
+      {#if lastResult}
+        <div class="run-output" data-testid="run-result">
+          <div class="run-output-head">
+            <Badge tone={statusTone(lastResult.status)}>{lastResult.status}</Badge>
+            <code class="muted">{lastResult.run_id}</code>
+          </div>
+          <pre class:err={lastResult.status === 'failed'}>{outputText(lastResult)}</pre>
+        </div>
+      {:else if lastRunID}
+        <p class="muted">Last run: <code>{lastRunID}</code></p>
+      {/if}
+    </section>
 
-  <section class="actions">
-    <h2>Stream a run</h2>
-    <div class="row">
-      <input bind:value={streamPrompt} placeholder="prompt" aria-label="stream prompt" />
-      <select bind:value={transport} aria-label="transport">
-        <option value="sse">SSE</option>
-        <option value="ws">WebSocket</option>
-      </select>
-      <button
-        class="primary"
-        onclick={runStream}
-        disabled={!agent || streaming || !roleAtLeast($user?.role, 'operator')}
-        title={!roleAtLeast($user?.role, 'operator') ? 'Requires the operator role' : undefined}
-      >
-        <Icon name="play" size={14} />
-        {streaming ? 'Streaming…' : 'Stream'}
-      </button>
-    </div>
-    {#if streamText || streaming}<pre data-testid="stream-output">{streamText}</pre>{/if}
-  </section>
+    <section class="actions">
+      <h2>Stream a run</h2>
+      <div class="row">
+        <input bind:value={streamPrompt} placeholder="prompt" aria-label="stream prompt" />
+        <select bind:value={transport} aria-label="transport">
+          <option value="sse">SSE</option>
+          <option value="ws">WebSocket</option>
+        </select>
+        <button
+          class="primary"
+          onclick={runStream}
+          disabled={streaming || !roleAtLeast($user?.role, 'operator')}
+          title={!roleAtLeast($user?.role, 'operator') ? 'Requires the operator role' : undefined}
+        >
+          <Icon name="play" size={14} />
+          {streaming ? 'Streaming…' : 'Stream'}
+        </button>
+      </div>
+      {#if streamText || streaming}<pre data-testid="stream-output">{streamText}</pre>{/if}
+    </section>
+  {/if}
 
   {#if agent && versions.length > 0}
     <section class="actions" data-testid="versions">

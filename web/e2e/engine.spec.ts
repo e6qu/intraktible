@@ -12,11 +12,16 @@ test.beforeEach(async ({ page }) => {
 test('lists and creates a flow', async ({ page }) => {
   const slug = uniqueSlug();
   await page.goto('/engine');
-  await expect(page.getByRole('heading', { name: /Decision Engine/i })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Flows/i })).toBeVisible();
 
   await page.getByLabel('slug').fill(slug);
   await page.getByLabel('name').fill('UI Flow');
   await page.getByRole('button', { name: 'Create flow' }).click();
+
+  // Creating a flow now navigates straight into its builder; return to the list to
+  // confirm it's there and undeployed.
+  await expect(page).toHaveURL(/\/engine\/.+/);
+  await page.goto('/engine');
 
   // .first(): a reused dev server may carry flows named "UI Flow" from prior
   // runs; the unique slug below pins down the one this test created.
@@ -103,7 +108,7 @@ test('the test-run input guards invalid JSON and prefills a schema sample', asyn
   // "Sample input" prefills a valid skeleton from the flow's input schema.
   await page.getByRole('button', { name: 'Sample input' }).click();
   await expect(page.getByText('Not valid JSON')).toHaveCount(0);
-  await expect(data).toHaveValue(/"score": 0/);
+  await expect(data).toHaveValue(/"score": 1/);
   await expect(page.getByRole('button', { name: 'Run', exact: true })).toBeEnabled();
 });
 

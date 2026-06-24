@@ -85,6 +85,7 @@
   import { theme } from '$lib/theme';
   import Icon from '$lib/Icon.svelte';
   import Badge from '$lib/Badge.svelte';
+  import Hint from '$lib/Hint.svelte';
   import { statusTone, dispositionTone } from '$lib/badge';
   import CommentThread from '$lib/CommentThread.svelte';
   import FlowNode from '$lib/FlowNode.svelte';
@@ -203,11 +204,18 @@
       return false;
     }
   });
-  function sampleValue(type?: string): unknown {
-    switch (type) {
+  type SchemaProp = { type?: string; example?: unknown; default?: unknown; enum?: unknown[] };
+  // Prefer a representative value from the schema (example/default/enum) so the sample
+  // input exercises a real branch instead of zeros — a test run that routes and returns
+  // a disposition is far more instructive than one that fails "no branch matched".
+  function sampleValue(p?: SchemaProp): unknown {
+    if (p?.example !== undefined) return p.example;
+    if (p?.default !== undefined) return p.default;
+    if (Array.isArray(p?.enum) && p.enum.length) return p.enum[0];
+    switch (p?.type) {
       case 'number':
       case 'integer':
-        return 0;
+        return 1;
       case 'boolean':
         return false;
       case 'array':
@@ -219,16 +227,14 @@
     }
   }
   function sampleFromSchema() {
-    const props = (inputSchema as { properties?: Record<string, { type?: string }> } | undefined)
+    const props = (inputSchema as { properties?: Record<string, SchemaProp> } | undefined)
       ?.properties;
     if (!props) {
       dataText = '{}';
       return;
     }
     // Build via fromEntries (no dynamic-key writes — keeps eslint-security clean).
-    const obj = Object.fromEntries(
-      Object.entries(props).map(([k, p]) => [k, sampleValue(p?.type)])
-    );
+    const obj = Object.fromEntries(Object.entries(props).map(([k, p]) => [k, sampleValue(p)]));
     dataText = JSON.stringify(obj, null, 2);
   }
   let entityType = $state('');
@@ -2823,7 +2829,15 @@
 
   {#if tab === 'test'}
     <section>
-      <h2>Test run</h2>
+      <h2>
+        Test run
+        <Hint label="Test run"
+          >Executes this flow's graph against your input on the same engine production uses —
+          walking nodes, taking the matching branch at each split, and applying the policy to
+          produce a disposition. The result links to the recorded trace (or tick Preview to record
+          nothing).</Hint
+        >
+      </h2>
       <div class="row">
         <select bind:value={env} aria-label="environment">
           {#each ENVIRONMENTS as e (e)}<option value={e}>{e}</option>{/each}

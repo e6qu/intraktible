@@ -40,5 +40,5 @@ test('the embedded UI boots in a browser and logs in', async ({ page }) => {
   // i.e. the assets loaded from the binary. A blank page fails here.
   await page.goto('/engine');
   await expect(page.getByRole('link', { name: 'intraktible' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: /Decision Engine/i })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Flows/i })).toBeVisible();
 });

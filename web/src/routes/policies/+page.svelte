@@ -523,6 +523,7 @@
     display: flex;
     gap: 0.7rem;
     align-items: center;
+    white-space: nowrap;
   }
   .mix,
   .hist-mix {

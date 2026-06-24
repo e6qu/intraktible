@@ -928,6 +928,15 @@ decide path now honours pre-approvals (short-circuit + honored count), interpret
 and computes a real PSI per model; the builder's Test tab exposes a no-record **Preview** toggle (off
 by default, so an ordinary test still records an inspectable sandbox decision).
 
+A four-agent review (UI/UX, user-flows, QA, product) then drove an **execution-legibility** pass: the
+product was substantial but the engine was invisible and the docs/guide layer thin. A new
+**`docs/EXECUTION.md` — "How a decision runs"** documents the node-graph execution model end to end
+(and how the in-browser demo mirrors the real Go engine), rendered into `/docs/`. **Discreet inline
+docs** (a new `Hint` component) explain reason codes, the node trace, and what a test run executes; the
+trace always surfaces reason codes; and the demo banner now says a real engine runs in the browser. The
+same pass unified the core surface's name to **Flows**, added a **disposition column** to the decisions
+list, made "Sample input" route a real branch, and cleared a batch of UX/QA nits.
+
 ---
 
 ## 9. MVP non-goals

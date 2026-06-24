@@ -40,11 +40,11 @@ export type NavItem = { id: NavId; href: string; label: string; icon: string };
 // relabel an item via PersonaConfig.terms). One source of truth for hrefs/icons. A
 // Map (not a plain object) so variable-key lookups don't trip the object-injection lint.
 export const NAV = new Map<NavId, NavItem>([
-  ['engine', { id: 'engine', href: '/engine', label: 'Engine', icon: 'engine' }],
+  ['engine', { id: 'engine', href: '/engine', label: 'Flows', icon: 'engine' }],
   ['policies', { id: 'policies', href: '/policies', label: 'Policies', icon: 'rule' }],
   [
     'preapprovals',
-    { id: 'preapprovals', href: '/preapprovals', label: 'Approvals', icon: 'check' }
+    { id: 'preapprovals', href: '/preapprovals', label: 'Pre-approvals', icon: 'check' }
   ],
   ['decisions', { id: 'decisions', href: '/decisions', label: 'Decisions', icon: 'diagram' }],
   ['data', { id: 'data', href: '/data', label: 'Data', icon: 'database' }],
@@ -81,6 +81,7 @@ export type CaseSort = 'urgency' | 'recent';
 // a developer leads with status/duration, product with the experiment variant.
 export type DecisionColumn =
   | 'status'
+  | 'disposition'
   | 'flow'
   | 'env'
   | 'version'
@@ -228,7 +229,6 @@ export const PERSONAS: PersonaConfig[] = [
       { label: 'Check case load', href: '/cases', icon: 'cases' },
       { label: 'Review the audit trail', href: '/audit', icon: 'shield' }
     ],
-    terms: { preapprovals: 'Approvals' },
     homeStats: ['pending_approvals', 'needs_review', 'overdue']
   },
   {

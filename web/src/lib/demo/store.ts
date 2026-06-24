@@ -750,17 +750,19 @@ function seedFlows(): Flow[] {
     ]
   };
 
+  // Examples land a sampled "Sample input" run in a real (mid) band so a test run
+  // routes a branch and returns a disposition instead of failing "no branch matched".
   const creditSchema = {
     type: 'object',
     properties: {
-      income: { type: 'number' },
-      debt: { type: 'number' },
-      revolving_balance: { type: 'number' },
-      credit_limit: { type: 'number' },
-      delinquencies_24m: { type: 'number' },
-      fico_score: { type: 'number' },
-      tenure_years: { type: 'number' },
-      employment_stability: { type: 'number' }
+      income: { type: 'number', example: 52000 },
+      debt: { type: 'number', example: 14000 },
+      revolving_balance: { type: 'number', example: 4200 },
+      credit_limit: { type: 'number', example: 12000 },
+      delinquencies_24m: { type: 'number', example: 0 },
+      fico_score: { type: 'number', example: 668 },
+      tenure_years: { type: 'number', example: 4 },
+      employment_stability: { type: 'number', example: 0.8 }
     }
   };
 
@@ -1052,7 +1054,7 @@ function seedDecisions(): Decision[] {
                     { code: 'DTI_TOO_HIGH', description: 'Debt-to-income ratio too high' },
                     { code: 'THIN_FILE', description: 'Insufficient credit history' }
                   ]
-                : [],
+                : [{ code: 'BAND_PRIME', description: 'Prime risk band — auto-approve' }],
           nodes: [
             { node_id: 'in', type: 'input', output: { income, fico_score: fico } },
             {
@@ -1111,7 +1113,7 @@ function seedDecisions(): Decision[] {
               ? sanctionsHit
                 ? [{ code: 'SANCTIONS_MATCH', description: 'Confirmed sanctions/watchlist match' }]
                 : [{ code: 'AML_HIGH', description: 'AML risk above clearing band' }]
-              : [],
+              : [{ code: 'AML_CLEAR', description: 'AML risk below clearing band' }],
           nodes: [
             { node_id: 'in', type: 'input', output: { amount } },
             { node_id: 'score', type: 'predict', output: { aml: { score: amlScore } } },
@@ -1153,7 +1155,7 @@ function seedDecisions(): Decision[] {
               ? [{ code: 'FRAUD_BLOCK', description: 'Fraud probability above block threshold' }]
               : disp === 'refer'
                 ? [{ code: 'FRAUD_REVIEW', description: 'Routed to fraud analyst' }]
-                : [],
+                : [{ code: 'FRAUD_LOW', description: 'Fraud probability below review band' }],
           nodes: [
             { node_id: 'in', type: 'input', output: { amount } },
             {
@@ -1186,7 +1188,7 @@ function seedDecisions(): Decision[] {
           reason:
             disp === 'refer'
               ? [{ code: 'KYC_EDD', description: 'Enhanced due diligence required' }]
-              : [],
+              : [{ code: 'KYC_PASS', description: 'Identity confidence above verify gate' }],
           nodes: [
             { node_id: 'in', type: 'input', output: {} },
             {
@@ -1217,7 +1219,7 @@ function seedDecisions(): Decision[] {
           reason:
             disp === 'refer'
               ? [{ code: 'DISPUTE_REVIEW', description: 'Routed to disputes ops' }]
-              : [],
+              : [{ code: 'DISPUTE_AUTO_REFUND', description: 'Below triage band — auto-refund' }],
           nodes: [
             { node_id: 'in', type: 'input', output: { amount } },
             {
@@ -1251,7 +1253,7 @@ function seedDecisions(): Decision[] {
           reason:
             disp === 'refer'
               ? [{ code: 'MCC_RISK', description: 'High-risk MCC underwriting review' }]
-              : [],
+              : [{ code: 'UW_PASS', description: 'Underwriting score below review gate' }],
           nodes: [
             { node_id: 'in', type: 'input', output: {} },
             {
@@ -1340,13 +1342,13 @@ function seedCases(): Case[] {
       slaDays: 3,
       daysLeft: 2,
       slaState: 'on_track',
-      src: 'dec_1',
+      src: 'dec_6',
       context: { risk: 58, segment: 'SMB', exposure_usd: 45000, dti: 0.41, fico_score: 662 },
       notes: [
         { author: DIEGO, text: 'Requested two recent pay stubs and bank statements.', at: ago(20) }
       ],
       audit: [
-        { type: 'case.opened', actor: 'system', at: ago(48), detail: 'from decision dec_1' },
+        { type: 'case.opened', actor: 'system', at: ago(48), detail: 'from decision dec_6' },
         { type: 'case.note', actor: DIEGO, at: ago(20) }
       ],
       createdHrs: 48,
@@ -1361,7 +1363,7 @@ function seedCases(): Case[] {
       slaDays: 5,
       daysLeft: 1,
       slaState: 'due_soon',
-      src: 'dec_2',
+      src: 'dec_37',
       context: { aml_score: 9, amount_usd: 52000, corridor: 'US→KY' },
       notes: [
         {
@@ -1372,7 +1374,7 @@ function seedCases(): Case[] {
         { author: MARCUS, text: 'Escalate to SAR drafting if counterparty unverified.', at: ago(6) }
       ],
       audit: [
-        { type: 'case.opened', actor: 'system', at: ago(70), detail: 'from decision dec_2' },
+        { type: 'case.opened', actor: 'system', at: ago(70), detail: 'from decision dec_37' },
         { type: 'case.assigned', actor: AVA, at: ago(64), detail: `to ${DIEGO}` },
         { type: 'case.note', actor: MARCUS, at: ago(6) }
       ],
@@ -1388,6 +1390,7 @@ function seedCases(): Case[] {
       slaDays: 2,
       daysLeft: -1,
       slaState: 'overdue',
+      src: 'dec_9',
       context: { identity_conf: 44, pep_flag: 1 },
       notes: [
         {
@@ -1397,7 +1400,7 @@ function seedCases(): Case[] {
         }
       ],
       audit: [
-        { type: 'case.opened', actor: 'system', at: ago(96), detail: 'from decision dec_15' },
+        { type: 'case.opened', actor: 'system', at: ago(96), detail: 'from decision dec_9' },
         { type: 'case.breached', actor: 'system', at: ago(4), detail: 'SLA exceeded' }
       ],
       createdHrs: 96,
@@ -1412,13 +1415,13 @@ function seedCases(): Case[] {
       slaDays: 3,
       daysLeft: 1,
       slaState: 'on_track',
-      src: 'dec_7',
+      src: 'dec_30',
       context: { risk: 52, fico_score: 671, dti: 0.38, decision: 'approved with reduced limit' },
       notes: [
         { author: DIEGO, text: 'Approved at $18k limit after income verification.', at: ago(12) }
       ],
       audit: [
-        { type: 'case.opened', actor: 'system', at: ago(60), detail: 'from decision dec_7' },
+        { type: 'case.opened', actor: 'system', at: ago(60), detail: 'from decision dec_30' },
         { type: 'case.resolved', actor: DIEGO, at: ago(12), detail: 'approved' }
       ],
       createdHrs: 60,
@@ -1432,10 +1435,10 @@ function seedCases(): Case[] {
       slaDays: 1,
       daysLeft: 1,
       slaState: 'on_track',
-      src: 'dec_3',
+      src: 'dec_2',
       context: { fraud_p: 64, device_risk: 80, amount_usd: 1290 },
       notes: [],
-      audit: [{ type: 'case.opened', actor: 'system', at: ago(8), detail: 'from decision dec_3' }],
+      audit: [{ type: 'case.opened', actor: 'system', at: ago(8), detail: 'from decision dec_2' }],
       createdHrs: 8,
       updatedHrs: 8
     },
@@ -1448,6 +1451,7 @@ function seedCases(): Case[] {
       slaDays: 4,
       daysLeft: 2,
       slaState: 'on_track',
+      src: 'dec_23',
       context: { uw_score: 38, mcc: '7995 (gambling)' },
       notes: [
         {
@@ -1457,7 +1461,7 @@ function seedCases(): Case[] {
         }
       ],
       audit: [
-        { type: 'case.opened', actor: 'system', at: ago(40), detail: 'merchant underwriting' },
+        { type: 'case.opened', actor: 'system', at: ago(40), detail: 'from decision dec_23' },
         { type: 'case.assigned', actor: AVA, at: ago(38), detail: `to ${MARCUS}` }
       ],
       createdHrs: 40,
@@ -1472,6 +1476,7 @@ function seedCases(): Case[] {
       slaDays: 7,
       daysLeft: 4,
       slaState: 'on_track',
+      src: 'dec_16',
       context: { amount_usd: 740, reason: 'fraud', recommendation: 'representment' },
       notes: [
         {
@@ -1480,7 +1485,9 @@ function seedCases(): Case[] {
           at: ago(26)
         }
       ],
-      audit: [{ type: 'case.opened', actor: 'system', at: ago(36), detail: 'chargeback triage' }],
+      audit: [
+        { type: 'case.opened', actor: 'system', at: ago(36), detail: 'from decision dec_16' }
+      ],
       createdHrs: 36,
       updatedHrs: 26
     },
@@ -1493,12 +1500,10 @@ function seedCases(): Case[] {
       slaDays: 3,
       daysLeft: 0,
       slaState: 'due_soon',
-      src: 'dec_13',
+      src: 'dec_6',
       context: { risk: 61, segment: 'corporate', fico_score: 648, dti: 0.44 },
       notes: [{ author: DIEGO, text: 'Awaiting guarantor financials.', at: ago(14) }],
-      audit: [
-        { type: 'case.opened', actor: 'system', at: ago(50), detail: 'from decision dec_13' }
-      ],
+      audit: [{ type: 'case.opened', actor: 'system', at: ago(50), detail: 'from decision dec_6' }],
       createdHrs: 50,
       updatedHrs: 14
     },
@@ -1511,6 +1516,7 @@ function seedCases(): Case[] {
       slaDays: 5,
       daysLeft: 2,
       slaState: 'on_track',
+      src: 'dec_37',
       context: { aml_score: 7, outcome: 'no SAR — false positive' },
       notes: [
         {
@@ -1520,7 +1526,7 @@ function seedCases(): Case[] {
         }
       ],
       audit: [
-        { type: 'case.opened', actor: 'system', at: ago(140), detail: 'from decision dec_20' },
+        { type: 'case.opened', actor: 'system', at: ago(140), detail: 'from decision dec_37' },
         { type: 'case.resolved', actor: DIEGO, at: ago(90), detail: 'cleared' }
       ],
       createdHrs: 140,
@@ -1535,10 +1541,11 @@ function seedCases(): Case[] {
       slaDays: 1,
       daysLeft: 0,
       slaState: 'on_track',
+      src: 'dec_20',
       context: { fraud_p: 88, outcome: 'confirmed fraud — card blocked' },
       notes: [{ author: DIEGO, text: 'Account takeover confirmed; card reissued.', at: ago(110) }],
       audit: [
-        { type: 'case.opened', actor: 'system', at: ago(118), detail: 'from decision dec_8' },
+        { type: 'case.opened', actor: 'system', at: ago(118), detail: 'from decision dec_20' },
         { type: 'case.resolved', actor: DIEGO, at: ago(110), detail: 'blocked' }
       ],
       createdHrs: 118,
@@ -1569,7 +1576,7 @@ function seedCases(): Case[] {
       slaDays: 4,
       daysLeft: -2,
       slaState: 'overdue',
-      src: 'dec_23',
+      src: 'dec_41',
       context: { uw_score: 42, mcc: '6051 (crypto)' },
       notes: [
         {
@@ -1579,7 +1586,7 @@ function seedCases(): Case[] {
         }
       ],
       audit: [
-        { type: 'case.opened', actor: 'system', at: ago(150), detail: 'from decision dec_23' },
+        { type: 'case.opened', actor: 'system', at: ago(150), detail: 'from decision dec_41' },
         { type: 'case.breached', actor: 'system', at: ago(6), detail: 'SLA exceeded' }
       ],
       createdHrs: 150,
@@ -1594,12 +1601,13 @@ function seedCases(): Case[] {
       slaDays: 7,
       daysLeft: 3,
       slaState: 'on_track',
+      src: 'dec_34',
       context: { amount_usd: 210, outcome: 'refunded' },
       notes: [
         { author: DIEGO, text: 'Low value, product-not-received; auto-refunded.', at: ago(160) }
       ],
       audit: [
-        { type: 'case.opened', actor: 'system', at: ago(180), detail: 'chargeback triage' },
+        { type: 'case.opened', actor: 'system', at: ago(180), detail: 'from decision dec_34' },
         { type: 'case.resolved', actor: DIEGO, at: ago(160), detail: 'refund' }
       ],
       createdHrs: 180,
@@ -1613,10 +1621,10 @@ function seedCases(): Case[] {
       slaDays: 3,
       daysLeft: 3,
       slaState: 'on_track',
-      src: 'dec_19',
+      src: 'dec_30',
       context: { risk: 49, segment: 'SMB', fico_score: 668, dti: 0.36 },
       notes: [],
-      audit: [{ type: 'case.opened', actor: 'system', at: ago(5), detail: 'from decision dec_19' }],
+      audit: [{ type: 'case.opened', actor: 'system', at: ago(5), detail: 'from decision dec_30' }],
       createdHrs: 5,
       updatedHrs: 5
     }

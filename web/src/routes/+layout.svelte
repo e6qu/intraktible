@@ -143,8 +143,9 @@
       <kbd>⌘K</kbd>
     </button>
     {#if $user}<NotificationsBell />{/if}
-    <!-- One account-and-view control: the role switcher (for everyone) plus the
-         signed-in identity and sign-out, instead of competing top-bar controls. -->
+    <!-- One account-and-view control: the persona switcher (reshapes the UI for the
+         viewer's role) plus the signed-in identity and sign-out, instead of competing
+         top-bar controls. Role is switched separately, in the demo banner strip. -->
     <details
       class="persona"
       bind:this={personaEl}
@@ -342,6 +343,7 @@
     color: var(--fg-muted);
     font-size: 0.9rem;
     font-weight: 500;
+    white-space: nowrap;
   }
   .navlink:hover {
     background: var(--surface-2);

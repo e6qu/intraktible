@@ -83,7 +83,8 @@ test('assigns, transitions, and notes a case', async ({ page, request }) => {
   await page.goto(`/cases/${case_id}`);
 
   await page.getByLabel('assignee').fill('adam');
-  await page.getByRole('button', { name: 'Assign' }).click();
+  // exact: the page now also has an "Assign to me" button.
+  await page.getByRole('button', { name: 'Assign', exact: true }).click();
   await page.getByLabel('set status').selectOption('in_progress');
   await page.getByRole('button', { name: 'Set status' }).click();
   await page.getByLabel('note', { exact: true }).fill('reviewed the docs');

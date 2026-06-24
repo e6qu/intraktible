@@ -55,10 +55,12 @@
     error = '';
     busy = true;
     try {
-      await createFlow(key, slug, name);
+      const created = await createFlow(key, slug, name);
+      const label = name.trim() || slug.trim();
       slug = '';
       name = '';
-      await load();
+      toast.success(`Created ${label}`);
+      await goto(appHref(`/engine/${created.flow_id}`));
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     } finally {
@@ -140,7 +142,7 @@
 <main>
   <div class="head">
     <div class="head-titles">
-      <h1>Decision Engine — Flows</h1>
+      <h1>Flows</h1>
       <p class="subtitle">
         Author decision flows on the canvas, publish versions, and deploy them across environments.
       </p>

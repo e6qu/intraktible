@@ -84,8 +84,8 @@
       </div>
       {#if !summary.priced}
         <p class="muted note">
-          Set <code>INTRAKTIBLE_AI_PRICES</code> (e.g. <code>gpt-4o=2.5/10</code>, USD per million
-          input/output tokens) to attribute cost. Token usage is shown regardless.
+          Set <code>INTRAKTIBLE_AI_PRICES</code> (e.g. <code>claude-sonnet=3/15</code>, USD per
+          million input/output tokens) to attribute cost. Token usage is shown regardless.
         </p>
       {/if}
       {#if modelRows.length > 0}

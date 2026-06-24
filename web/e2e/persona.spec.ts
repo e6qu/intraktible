@@ -23,7 +23,7 @@ test('a persona composes its own navigation and landing', async ({ page, context
   await page.evaluate(() => localStorage.setItem('intraktible-persona', 'builder'));
   await page.reload();
   const designerNav = page.getByRole('navigation', { name: 'Primary' });
-  await expect(designerNav.getByText('Engine')).toBeVisible();
+  await expect(designerNav.getByText('Flows')).toBeVisible();
   await expect(designerNav.getByText('Traces')).toHaveCount(0);
   await expect(page.getByTestId('persona-home')).toHaveCount(0);
 });
