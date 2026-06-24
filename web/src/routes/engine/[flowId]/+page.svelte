@@ -161,7 +161,14 @@
   // order); the operational panels live behind tabs so the page is no longer one
   // endless scroll. Default to Test — the most common post-edit action.
   type Tab = 'test' | 'deploy' | 'monitor' | 'discuss' | 'copilot';
-  let tab = $state<Tab>('test');
+  const TAB_IDS: Tab[] = ['test', 'deploy', 'monitor', 'discuss', 'copilot'];
+  // Honour a ?tab= deep link (e.g. an approver following a "review this deploy" link
+  // lands directly on the Deploy tab), falling back to Test.
+  function tabFromUrl(): Tab {
+    const t = $page.url.searchParams.get('tab') as Tab | null;
+    return t && TAB_IDS.includes(t) ? t : 'test';
+  }
+  let tab = $state<Tab>(tabFromUrl());
   const TABS: { id: Tab; label: string }[] = [
     { id: 'test', label: 'Test & analyze' },
     { id: 'deploy', label: 'Deploy & versions' },
@@ -379,6 +386,9 @@
         inputSchema = version.input_schema;
         counter = editNodes.length;
         syncCanvas();
+        // Prefill the test input from the schema so the FIRST Run routes a real branch
+        // and returns a disposition, rather than failing "no branch matched" on {}.
+        if (dataText === '{}') sampleFromSchema();
       }
       // Default the version-diff selectors to the two most recent versions (by
       // version number, independent of array order).
@@ -2122,10 +2132,13 @@
                         <button
                           class="primary"
                           onclick={() => approve(r.request_id)}
-                          disabled={!roleAtLeast($user?.role, 'approver')}
+                          disabled={!roleAtLeast($user?.role, 'approver') ||
+                            r.requested_by === $user?.actor}
                           title={!roleAtLeast($user?.role, 'approver')
                             ? 'Requires the approver role'
-                            : undefined}>Approve</button
+                            : r.requested_by === $user?.actor
+                              ? 'Four-eyes: you requested this — a different approver must approve'
+                              : undefined}>Approve</button
                         >
                         <button
                           onclick={() => reject(r.request_id)}

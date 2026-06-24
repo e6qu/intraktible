@@ -104,7 +104,9 @@
             {#each approvals as a (a.req.request_id)}
               <li>
                 <Badge tone="warn">{a.req.environment}</Badge>
-                <a class="slug" href={appHref(`/engine/${a.flow.flow_id}`)}>{a.flow.name}</a>
+                <a class="slug" href={appHref(`/engine/${a.flow.flow_id}?tab=deploy`)}
+                  >{a.flow.name}</a
+                >
                 <span class="env">v{a.req.version} · {a.req.requested_by.split('@')[0]}</span>
                 <span class="when"><RelativeTime value={a.req.requested_at} /></span>
               </li>

@@ -86,16 +86,17 @@
   .hint-pop {
     position: absolute;
     top: calc(100% + 0.35rem);
-    left: 50%;
-    transform: translateX(-50%);
+    /* Anchor to the trigger's left and clamp to the viewport so a Hint near a screen
+       edge (e.g. inside a heading at 390px) never clips off-screen. */
+    left: 0;
     z-index: 40;
     width: max-content;
-    max-width: 18rem;
+    max-width: min(18rem, calc(100vw - 2rem));
     padding: 0.6rem 0.75rem;
     border-radius: 8px;
     border: 1px solid var(--border);
     background: var(--surface);
-    box-shadow: 0 8px 24px rgb(0 0 0 / 0.18);
+    box-shadow: 0 10px 28px rgb(0 0 0 / 0.32);
     font-size: 0.82rem;
     font-weight: 400;
     line-height: 1.45;

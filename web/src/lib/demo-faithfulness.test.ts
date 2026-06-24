@@ -115,6 +115,18 @@ describe('seeded cases reference a coherent source decision', () => {
     }
   });
 
+  it('each referred decision links back to a case via case_id', () => {
+    // The reverse link (decision.case_id) is what the trace page renders to jump to
+    // the opened case — every seeded case's source decision must carry it.
+    const byId = new Map(state.decisions.map((d) => [d.decision_id, d]));
+    for (const c of state.cases) {
+      const dec = byId.get(c.source_decision_id ?? '');
+      expect(dec?.case_id, `${c.source_decision_id} should link to a case`).toBeTruthy();
+    }
+    const linked = state.decisions.filter((d) => d.case_id);
+    expect(linked.length).toBeGreaterThan(0);
+  });
+
   it('the source decision id in each case audit trail matches its src', () => {
     for (const c of state.cases) {
       const opened = c.audit.find((a) => a.detail?.startsWith('from decision'));
@@ -132,6 +144,44 @@ describe('seeded cases reference a coherent source decision', () => {
         `${d.decision_id} should have a reason code`
       ).toBeGreaterThan(0);
     }
+  });
+});
+
+describe('create-flow validation', () => {
+  it('rejects an empty/whitespace slug and a duplicate slug', () => {
+    const before = state.flows.length;
+    expect(handleDemo('POST', '/v1/flows', params(), { slug: '   ' }).status).toBe(400);
+    expect(handleDemo('POST', '/v1/flows', params(), { slug: 'credit-decision' }).status).toBe(400);
+    expect(state.flows.length).toBe(before);
+  });
+
+  it('creates a flow for a fresh, non-empty slug', () => {
+    const before = state.flows.length;
+    const res = handleDemo('POST', '/v1/flows', params(), { slug: 'new-unique-flow' });
+    expect(res.status).toBe(200);
+    expect(state.flows.length).toBe(before + 1);
+  });
+});
+
+describe('agent escalation carries run context', () => {
+  it('opens an agent_review case populated from the escalated run', () => {
+    const agent = state.agents[0].name;
+    const run = handleDemo('POST', `/v1/agents/${agent}/run`, params(), {
+      prompt: 'score this transaction'
+    });
+    const runId = (run.body as { run_id: string }).run_id;
+    const res = handleDemo('POST', `/v1/agents/${agent}/runs/${runId}/escalate`, params(), {
+      case_type: 'agent_review',
+      sla_days: 3
+    });
+    expect(res.status).toBe(200);
+    const caseId = (res.body as { case_id: string }).case_id;
+    const opened = state.cases.find((c) => c.case_id === caseId);
+    expect(opened?.case_type).toBe('agent_review');
+    const ctx = opened?.context as Record<string, unknown> | undefined;
+    expect(ctx?.run_id).toBe(runId);
+    expect(ctx?.prompt).toBe('score this transaction');
+    expect(ctx?.output).toBeTruthy();
   });
 });
 

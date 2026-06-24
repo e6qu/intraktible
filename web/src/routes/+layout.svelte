@@ -49,11 +49,17 @@
   const nav = $derived(navFor(persona, $user?.role));
 
   const path = $derived($page.url.pathname);
+  // A per-page browser title from the help registry (which already names every page),
+  // so tabs/bookmarks read "Decision trace · intraktible" rather than "untitled page".
+  const pageTitle = $derived(helpFor($page.route.id ?? '')?.title);
   // The sign-in screen shows only minimal chrome (brand + theme) — not the full
   // authenticated nav/account controls.
   const isLogin = $derived(path === '/login');
-  function active(href: string): boolean {
-    return path === href || path.startsWith(href + '/');
+  // Compare against the BASE-PREFIXED href (what's actually rendered): under a base
+  // path (e.g. the /intraktible/demo/ deploy) the pathname carries the prefix, so
+  // comparing the raw "/engine" would never match and no item would read as current.
+  function active(prefixedHref: string): boolean {
+    return path === prefixedHref || path.startsWith(prefixedHref + '/');
   }
 
   const currentPersona = $derived(personaConfig(persona));
@@ -110,6 +116,10 @@
   });
 </script>
 
+<svelte:head>
+  <title>{pageTitle ? `${pageTitle} · intraktible` : 'intraktible'}</title>
+</svelte:head>
+
 <a class="skip-link" href="#main">Skip to content</a>
 <DemoBanner />
 <header>
@@ -123,8 +133,9 @@
         <a
           href={appHref(item.href)}
           class="navlink"
-          class:active={active(item.href)}
-          aria-current={active(item.href) ? 'page' : undefined}
+          class:active={active(appHref(item.href))}
+          aria-current={active(appHref(item.href)) ? 'page' : undefined}
+          title={item.label}
         >
           <Icon name={item.icon} size={16} />
           <span class="navlabel">{item.label}</span>
@@ -478,6 +489,7 @@
   }
   .persona-name {
     font-weight: 550;
+    white-space: nowrap;
   }
   .caret {
     display: inline-flex;

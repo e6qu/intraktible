@@ -51,7 +51,9 @@
   }
 
   async function create() {
-    if (busy) return; // Enter fires onsubmit directly, bypassing the disabled button
+    // Enter fires onsubmit directly, bypassing the disabled button — re-check the
+    // same guards (busy and a non-empty slug) so a blank-slug flow can't slip through.
+    if (busy || !slug.trim()) return;
     error = '';
     busy = true;
     try {
@@ -169,9 +171,12 @@
     <label>Name <input bind:value={name} placeholder="Loan Origination" aria-label="name" /></label>
     <button
       type="submit"
-      disabled={busy || !roleAtLeast($user?.role, 'editor')}
-      title={!roleAtLeast($user?.role, 'editor') ? 'Requires the editor role' : undefined}
-      >{busy ? 'Creating…' : 'Create flow'}</button
+      disabled={busy || !slug.trim() || !roleAtLeast($user?.role, 'editor')}
+      title={!roleAtLeast($user?.role, 'editor')
+        ? 'Requires the editor role'
+        : !slug.trim()
+          ? 'A slug is required'
+          : undefined}>{busy ? 'Creating…' : 'Create flow'}</button
     >
   </form>
 

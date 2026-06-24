@@ -82,10 +82,11 @@ test('deploys to sandbox and runs the production four-eyes flow', async ({ page,
   await thread.getByTestId('post-comment').click();
   await expect(thread).toContainText('Holding until the backtest passes.');
 
-  // Approving prompts for an explanation; four-eyes still blocks self-approval.
-  page.once('dialog', (d) => d.accept('LGTM'));
-  await requests.getByRole('button', { name: 'Approve' }).click();
-  await expect(page.locator('.err')).toContainText('four-eyes');
+  // Four-eyes: the requester cannot approve their own deploy. The UI disables Approve
+  // with an explanatory tooltip (the server also rejects it as defence in depth).
+  const approve = requests.getByRole('button', { name: 'Approve' });
+  await expect(approve).toBeDisabled();
+  await expect(approve).toHaveAttribute('title', /four-eyes/i);
 
   // The flow list now surfaces the sandbox deployment for this flow.
   await page.goto('/engine');

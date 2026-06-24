@@ -10,7 +10,7 @@ test.beforeEach(async ({ page }) => {
 
 test('opens a case from the queue and shows SLA + summary', async ({ page }) => {
   await page.goto('/cases');
-  await expect(page.getByRole('heading', { name: /Case Manager/i })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Cases', exact: true })).toBeVisible();
 
   await page.getByLabel('company name').fill('Acme UI');
   await page.getByLabel('case type').fill('aml');

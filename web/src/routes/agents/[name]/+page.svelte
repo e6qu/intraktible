@@ -129,6 +129,9 @@
   // the button after a successful open to stop duplicate-case spam).
   let escalating = $state('');
   let escalated = $state<Set<string>>(new Set());
+  // run_id → the case opened for it, so each escalated run can surface a clickable
+  // "Open case" link (not just a transient toast) straight to the new case.
+  let escalatedCase = $state<Map<string, string>>(new Map());
   // A completed run that hasn't been escalated yet is the only one worth
   // escalating — a failed run has nothing to review, and re-escalating opens a
   // duplicate case.
@@ -152,6 +155,7 @@
         sla_days: 3
       });
       escalated = new Set(escalated).add(r.run_id);
+      escalatedCase = new Map(escalatedCase).set(r.run_id, case_id);
       toast.success(`Opened review case ${case_id.slice(0, 8)} (see Cases)`);
       await load();
     } catch (e) {
@@ -445,6 +449,13 @@
               </button>
             {/if}
           </div>
+          {#if escalatedCase.has(r.run_id)}
+            <p class="run-case">
+              <a href={appHref(`/cases/${escalatedCase.get(r.run_id)}`)}
+                >→ Open case {escalatedCase.get(r.run_id)}</a
+              >
+            </p>
+          {/if}
           {#if r.prompt}<p class="run-prompt" title={r.prompt}>{truncate(r.prompt, 120)}</p>{/if}
           <pre class:err={r.status === 'failed'}>{outputText(r)}</pre>
         </li>
@@ -566,6 +577,10 @@
     margin: 0.4rem 0 0;
     font-size: 0.88rem;
     color: var(--fg);
+  }
+  .run-case {
+    margin: 0.4rem 0 0;
+    font-size: 0.85rem;
   }
   .escalate {
     margin-left: auto;
