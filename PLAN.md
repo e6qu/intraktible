@@ -937,6 +937,11 @@ trace always surfaces reason codes; and the demo banner now says a real engine r
 same pass unified the core surface's name to **Flows**, added a **disposition column** to the decisions
 list, made "Sample input" route a real branch, and cleared a batch of UX/QA nits.
 
+To make the personas a true deep adaptation rather than skins, the developer/manager/product homes —
+which previously shared one generic "recent decisions" feed — each gained a **role-specific panel**
+(config-driven via `persona.homePanel`): manager → pending four-eyes approvals, developer → failing
+traces, product → champion-vs-challenger.
+
 ---
 
 ## 9. MVP non-goals

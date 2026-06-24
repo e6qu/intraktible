@@ -139,4 +139,17 @@ describe('persona config', () => {
       if (d?.env) expect(env.has(d.env)).toBe(true);
     }
   });
+
+  it('persona-home personas declare a role-specific panel (not a shared feed)', () => {
+    expect(personaConfig('manager').homePanel).toBe('approvals');
+    expect(personaConfig('developer').homePanel).toBe('failing');
+    expect(personaConfig('product').homePanel).toBe('experiment');
+    const kinds = new Set(['recent', 'approvals', 'failing', 'experiment']);
+    for (const p of PERSONAS) {
+      if (p.homePanel) expect(kinds.has(p.homePanel)).toBe(true);
+      // a persona that lands on the config-driven home must pick a panel, so the three
+      // don't collapse back into the same generic feed.
+      if (p.home === 'persona') expect(p.homePanel).toBeDefined();
+    }
+  });
 });

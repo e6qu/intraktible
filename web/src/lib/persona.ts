@@ -129,6 +129,11 @@ export type HomeStatId =
   | 'unassigned'
   | 'challenger';
 
+// HomePanel selects the persona home's right-rail panel — the role's primary live
+// surface, not a generic feed: a manager's pending approvals, a developer's failing
+// traces, a product owner's champion/challenger split (default → recent decisions).
+export type HomePanel = 'recent' | 'approvals' | 'failing' | 'experiment';
+
 export type PersonaConfig = {
   id: Persona;
   label: string;
@@ -140,6 +145,7 @@ export type PersonaConfig = {
   terms?: Partial<Record<NavId, string>>; // per-persona nav relabels
   lens?: PersonaLens; // default filter focus on shared list surfaces
   homeStats?: HomeStatId[]; // PersonaHome tiles (unset → the default decisions/completed/flows)
+  homePanel?: HomePanel; // PersonaHome right-rail panel (unset → recent decisions)
 };
 
 const KEY = 'intraktible-persona';
@@ -190,7 +196,8 @@ export const PERSONAS: PersonaConfig[] = [
         }
       }
     },
-    homeStats: ['failed', 'p95', 'completion_rate']
+    homeStats: ['failed', 'p95', 'completion_rate'],
+    homePanel: 'failing'
   },
   {
     id: 'operator',
@@ -229,7 +236,8 @@ export const PERSONAS: PersonaConfig[] = [
       { label: 'Check case load', href: '/cases', icon: 'cases' },
       { label: 'Review the audit trail', href: '/audit', icon: 'shield' }
     ],
-    homeStats: ['pending_approvals', 'needs_review', 'overdue']
+    homeStats: ['pending_approvals', 'needs_review', 'overdue'],
+    homePanel: 'approvals'
   },
   {
     id: 'product',
@@ -251,7 +259,8 @@ export const PERSONAS: PersonaConfig[] = [
         columns: ['variant', 'status', 'flow', 'env', 'duration', 'when']
       }
     },
-    homeStats: ['challenger', 'decisions', 'completion_rate']
+    homeStats: ['challenger', 'decisions', 'completion_rate'],
+    homePanel: 'experiment'
   },
   {
     id: 'showcase',
