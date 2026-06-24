@@ -198,24 +198,29 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 		slog.Info("ai: guardrails enabled", "rate_per_sec", guardrails.RatePerSec,
 			"redact_pii", guardrails.RedactPII, "block_injection", guardrails.BlockInjection)
 	}
+	// HTTP connectors dial operator-configured URLs; the default egress policy
+	// blocks loopback/private targets (SSRF guard). Operators whose connectors
+	// legitimately reach internal hosts opt in with INTRAKTIBLE_CONNECTOR_ALLOW_PRIVATE.
+	// The same policy guards the AI provider client below, so a provider URL that
+	// redirects to a metadata IP is blocked too.
+	egress := connectors.EgressPolicy{AllowPrivate: truthy(os.Getenv("INTRAKTIBLE_CONNECTOR_ALLOW_PRIVATE"))}
+	if egress.AllowPrivate {
+		slog.Warn("connectors: egress to private/loopback targets is ALLOWED (INTRAKTIBLE_CONNECTOR_ALLOW_PRIVATE)")
+	}
+
 	aiRegistry := ai.NewRegistry()
 	if base := os.Getenv("INTRAKTIBLE_AI_BASE_URL"); base != "" {
 		name := os.Getenv("INTRAKTIBLE_AI_PROVIDER")
 		if name == "" {
 			name = "openai"
 		}
-		aiRegistry.Register(ai.Guard(ai.NewHTTP(name, base, os.Getenv("INTRAKTIBLE_AI_API_KEY"), os.Getenv("INTRAKTIBLE_AI_MODEL")), guardrails))
+		provider := ai.NewHTTP(name, base, os.Getenv("INTRAKTIBLE_AI_API_KEY"), os.Getenv("INTRAKTIBLE_AI_MODEL"),
+			ai.WithHTTPClient(egress.Client(ai.HTTPTimeout)))
+		aiRegistry.Register(ai.Guard(provider, guardrails))
 		slog.Info("ai: registered HTTP provider", "name", name, "model", os.Getenv("INTRAKTIBLE_AI_MODEL"))
 	}
 	aiRegistry.Register(ai.Guard(ai.Stub{}, guardrails))
 
-	// HTTP connectors dial operator-configured URLs; the default egress policy
-	// blocks loopback/private targets (SSRF guard). Operators whose connectors
-	// legitimately reach internal hosts opt in with INTRAKTIBLE_CONNECTOR_ALLOW_PRIVATE.
-	egress := connectors.EgressPolicy{AllowPrivate: truthy(os.Getenv("INTRAKTIBLE_CONNECTOR_ALLOW_PRIVATE"))}
-	if egress.AllowPrivate {
-		slog.Warn("connectors: egress to private/loopback targets is ALLOWED (INTRAKTIBLE_CONNECTOR_ALLOW_PRIVATE)")
-	}
 	connectorSecrets, err := connectorSecretBoxFromEnv(ctx)
 	if err != nil {
 		return err
@@ -255,6 +260,15 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 		// fields are configured (same set as the Context Layer's event sealing).
 		if len(erasurePIIFields) > 0 {
 			decideOpts = append(decideOpts, enginecmd.WithPIISealer(newPIISealer(erasureVault, erasurePIIFields)))
+		}
+		// Override the per-decide expression/Code evaluation budget (default is a few
+		// seconds) so an operator can tune the wall-clock cap on flow-author logic.
+		if v := strings.TrimSpace(os.Getenv("INTRAKTIBLE_DECIDE_EVAL_TIMEOUT")); v != "" {
+			d, err := time.ParseDuration(v)
+			if err != nil {
+				return fmt.Errorf("INTRAKTIBLE_DECIDE_EVAL_TIMEOUT %q: %w", v, err)
+			}
+			decideOpts = append(decideOpts, enginecmd.WithEvalTimeout(d))
 		}
 		decide := enginecmd.NewDecideHandler(log, st, decideOpts...)
 		// The pre-approval write side is shared: the engine service uses it to
@@ -444,7 +458,7 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 		slog.Info("sso: SAML enabled", "providers", samlNames(samlers))
 	}
 	root.Handle("/v1/", httpx.Chain(api, httpx.Authenticate(keyring, sessions), httpx.AuthorizeRoutes(api)))
-	handler := httpx.Chain(root, httpx.Recover, httpx.RequestID, httpx.Tracing, httpx.Logger, httpx.Metrics)
+	handler := httpx.Chain(root, httpx.SecurityHeaders, httpx.Recover, httpx.RequestID, httpx.Tracing, httpx.Logger, httpx.Metrics)
 
 	srv := &http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: 5 * time.Second}
 	errc := make(chan error, 1)

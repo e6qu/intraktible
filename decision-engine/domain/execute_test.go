@@ -3,9 +3,11 @@
 package domain_test
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/e6qu/intraktible/decision-engine/domain"
 	"github.com/e6qu/intraktible/decision-engine/events"
@@ -85,6 +87,53 @@ func TestExecuteLinear(t *testing.T) {
 				t.Fatalf("non-deterministic: %s != %s", again, got)
 			}
 		})
+	}
+}
+
+// TestExecuteContextTimeout proves the per-decide wall-clock deadline cuts off a
+// pathological Code (Starlark) program rather than hanging the synchronous decide.
+// An unbounded Starlark loop without the deadline would run until the 1M-step bound,
+// well past the tiny budget here. The outer select guards the test itself: had the
+// deadline NOT cut the work off, the test would hit that bound and fail loudly.
+func TestExecuteContextTimeout(t *testing.T) {
+	graph := linear(
+		cfgNode("m", events.NodeCode, `{"code":"x = 0\nwhile True:\n    x = x + 1"}`),
+		cfgNode("out", events.NodeOutput, ""))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	doneAt := make(chan domain.Run, 1)
+	start := time.Now()
+	go func() { doneAt <- domain.ExecuteContext(ctx, graph, map[string]any{}, nil) }()
+	select {
+	case run := <-doneAt:
+		if run.Status != domain.StatusFailed {
+			t.Fatalf("pathological evaluation should fail, got status=%s output=%v", run.Status, run.Output)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatalf("evaluation hung past the deadline (%s elapsed) — it was not cut off", time.Since(start))
+	}
+}
+
+// TestExecuteContextDeadlineSkipsExpr proves an already-spent budget short-circuits
+// expression evaluation: a node isn't even started once the deadline has passed
+// (e.g. an earlier heavy node consumed the budget). The expr VM has its own memory
+// budget so it can't be made to spin, so the deadline is asserted via a pre-expired
+// context, which is the same boundary the runtime deadline trips.
+func TestExecuteContextDeadlineSkipsExpr(t *testing.T) {
+	graph := linear(
+		cfgNode("m", events.NodeAssignment, `{"assignments":[{"target":"s","expr":"1 + 1"}]}`),
+		cfgNode("out", events.NodeOutput, `{"fields":["s"]}`))
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Nanosecond)
+	defer cancel()
+	time.Sleep(time.Millisecond) // ensure the deadline has elapsed
+	run := domain.ExecuteContext(ctx, graph, map[string]any{}, nil)
+	if run.Status != domain.StatusFailed {
+		t.Fatalf("an expired deadline must fail the decide, got status=%s output=%v", run.Status, run.Output)
+	}
+	if !strings.Contains(run.Err, "deadline") {
+		t.Fatalf("expected a deadline failure, got %q", run.Err)
 	}
 }
 

@@ -14,8 +14,12 @@ import (
 	"time"
 )
 
-// httpTimeout bounds a single completion call.
+// httpTimeout bounds a single completion call. HTTPTimeout exposes it so the
+// composition root can build an egress-guarded client with the matching timeout.
 const httpTimeout = 60 * time.Second
+
+// HTTPTimeout is the default single-completion-call timeout (see httpTimeout).
+const HTTPTimeout = httpTimeout
 
 // HTTP is a real provider speaking the OpenAI-compatible Chat Completions API
 // (`POST {base}/chat/completions`), which OpenAI, Ollama, vLLM, and many gateways
@@ -29,13 +33,35 @@ type HTTP struct {
 	client  *http.Client
 }
 
+// Option customizes an HTTP provider.
+type Option func(*HTTP)
+
+// WithHTTPClient injects the HTTP client the provider dials with — used at the
+// composition root to supply the shared SSRF-safe egress client (dial-time IP
+// blocking + cross-host redirect refusal), so a provider URL that redirects to a
+// cloud metadata IP is blocked just like connector egress. The client's timeout
+// should bound a single completion call.
+func WithHTTPClient(c *http.Client) Option {
+	return func(h *HTTP) {
+		if c != nil {
+			h.client = c
+		}
+	}
+}
+
 // NewHTTP builds an HTTP provider. name is how it is registered/selected; model is
-// the default used when a Request does not set one.
-func NewHTTP(name, baseURL, apiKey, model string) HTTP {
-	return HTTP{
+// the default used when a Request does not set one. By default it dials with a
+// plain client; pass WithHTTPClient at the composition root to enforce the egress
+// guard.
+func NewHTTP(name, baseURL, apiKey, model string, opts ...Option) HTTP {
+	h := HTTP{
 		name: name, baseURL: baseURL, apiKey: apiKey, model: model,
 		client: &http.Client{Timeout: httpTimeout},
 	}
+	for _, opt := range opts {
+		opt(&h)
+	}
+	return h
 }
 
 // Name identifies the provider.

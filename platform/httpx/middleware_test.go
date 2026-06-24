@@ -3,8 +3,10 @@
 package httpx_test
 
 import (
+	"crypto/tls"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/e6qu/intraktible/platform/auth"
@@ -30,6 +32,46 @@ func TestRequestID(t *testing.T) {
 	h.ServeHTTP(w, r)
 	if w.Header().Get("X-Request-Id") != "abc123" || seen != "abc123" {
 		t.Fatalf("request id not echoed: header=%q seen=%q", w.Header().Get("X-Request-Id"), seen)
+	}
+}
+
+func TestSecurityHeaders(t *testing.T) {
+	h := httpx.SecurityHeaders(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", http.NoBody))
+	want := map[string]string{
+		"X-Frame-Options":         "DENY",
+		"X-Content-Type-Options":  "nosniff",
+		"Referrer-Policy":         "no-referrer",
+		"Content-Security-Policy": "default-src 'self'; ",
+	}
+	for k, v := range want {
+		got := w.Header().Get(k)
+		if k == "Content-Security-Policy" {
+			if got == "" || !strings.HasPrefix(got, v) || !strings.Contains(got, "frame-ancestors 'none'") {
+				t.Fatalf("CSP = %q, want prefix %q including frame-ancestors 'none'", got, v)
+			}
+			continue
+		}
+		if got != v {
+			t.Fatalf("%s = %q, want %q", k, got, v)
+		}
+	}
+	// HSTS is asserted only over TLS — a plaintext request must NOT carry it.
+	if got := w.Header().Get("Strict-Transport-Security"); got != "" {
+		t.Fatalf("HSTS set on a plaintext request: %q", got)
+	}
+
+	// Over TLS, HSTS is present.
+	w = httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "https://example.test/", http.NoBody)
+	r.TLS = &tls.ConnectionState{}
+	h.ServeHTTP(w, r)
+	if got := w.Header().Get("Strict-Transport-Security"); got == "" {
+		t.Fatal("HSTS missing on a TLS request")
 	}
 }
 
@@ -225,6 +267,58 @@ func TestAuthenticateSession(t *testing.T) {
 	h.ServeHTTP(w, r)
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("valid session -> %d", w.Code)
+	}
+}
+
+// TestCSRFHeaderGate covers the cookie-auth CSRF mitigation: a state-changing
+// (non-GET) request authenticated by the session cookie must carry X-Requested-With
+// or be rejected 403; an API-key-authenticated mutation is exempt (browsers don't
+// auto-send X-Api-Key, so it can't be forged).
+func TestCSRFHeaderGate(t *testing.T) {
+	kr := auth.NewKeyring()
+	id := identity.Identity{Org: "o", Workspace: "w", Actor: "u"}
+	kr.Add("good-key", auth.APIKey{ID: "k", Identity: id, Scope: auth.ScopeAll})
+	sessions := auth.NewSessions()
+	tok, _ := sessions.Issue(id, auth.RoleEditor, auth.ScopeAll)
+
+	h := httpx.Authenticate(kr, sessions)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	serve := func(setup func(*http.Request)) int {
+		r := httptest.NewRequest(http.MethodPost, "/v1/x", http.NoBody)
+		setup(r)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w.Code
+	}
+
+	// Cookie-auth POST without the header -> 403.
+	if got := serve(func(r *http.Request) {
+		r.AddCookie(&http.Cookie{Name: "session", Value: tok})
+	}); got != http.StatusForbidden {
+		t.Fatalf("cookie POST without X-Requested-With -> %d, want 403", got)
+	}
+	// Cookie-auth POST with the header -> ok.
+	if got := serve(func(r *http.Request) {
+		r.AddCookie(&http.Cookie{Name: "session", Value: tok})
+		r.Header.Set("X-Requested-With", "intraktible")
+	}); got != http.StatusNoContent {
+		t.Fatalf("cookie POST with X-Requested-With -> %d, want 204", got)
+	}
+	// API-key POST without the header -> ok (exempt).
+	if got := serve(func(r *http.Request) {
+		r.Header.Set("X-Api-Key", "good-key")
+	}); got != http.StatusNoContent {
+		t.Fatalf("api-key POST without X-Requested-With -> %d, want 204 (must stay exempt)", got)
+	}
+	// Cookie-auth GET (a read) without the header -> ok (safe method).
+	rg := httptest.NewRequest(http.MethodGet, "/v1/x", http.NoBody)
+	rg.AddCookie(&http.Cookie{Name: "session", Value: tok})
+	wg := httptest.NewRecorder()
+	h.ServeHTTP(wg, rg)
+	if wg.Code != http.StatusNoContent {
+		t.Fatalf("cookie GET without X-Requested-With -> %d, want 204", wg.Code)
 	}
 }
 

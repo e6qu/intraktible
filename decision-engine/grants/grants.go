@@ -16,6 +16,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"time"
 
 	"github.com/e6qu/intraktible/platform/eventlog"
@@ -144,6 +145,8 @@ func AllowedAny(ctx context.Context, s store.Store, id identity.Identity, flowID
 // NewID returns a random grant id.
 func NewID() string {
 	var b [16]byte
-	_, _ = rand.Read(b[:])
+	if _, err := io.ReadFull(rand.Reader, b[:]); err != nil {
+		panic("decision-engine: crypto/rand unavailable: " + err.Error())
+	}
 	return hex.EncodeToString(b[:])
 }

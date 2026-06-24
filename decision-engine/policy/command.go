@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"sync"
 	"time"
 
@@ -32,7 +33,9 @@ func NewHandler(log eventlog.Log) *Handler {
 
 func newID() string {
 	var b [16]byte
-	_, _ = rand.Read(b[:])
+	if _, err := io.ReadFull(rand.Reader, b[:]); err != nil {
+		panic("decision-engine: crypto/rand unavailable: " + err.Error())
+	}
 	return hex.EncodeToString(b[:])
 }
 

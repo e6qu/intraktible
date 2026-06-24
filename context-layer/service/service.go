@@ -230,7 +230,10 @@ func (s *Service) defineConnector(w http.ResponseWriter, r *http.Request) {
 				return eventlog.Envelope{}, err
 			}
 		}
-		cfg, err := connectors.EncryptSecrets(req.Config, s.secrets)
+		// Seal credential fields under the keyring, or redact them when no keyring is
+		// configured — so plaintext credentials never reach the event log or the
+		// tenant-readable audit surface regardless of sealing config.
+		cfg, err := connectors.SealConfigForRecord(req.Config, s.secrets)
 		if err != nil {
 			return eventlog.Envelope{}, err
 		}

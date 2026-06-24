@@ -225,6 +225,8 @@ func (w *WAL) Close() error {
 
 func newID() string {
 	var b [16]byte
-	_, _ = rand.Read(b[:])
+	if _, err := io.ReadFull(rand.Reader, b[:]); err != nil {
+		panic("eventlog: crypto/rand unavailable: " + err.Error())
+	}
 	return hex.EncodeToString(b[:])
 }

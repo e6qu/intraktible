@@ -3,6 +3,7 @@
 package domain
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"sort"
@@ -31,7 +32,7 @@ var codeOpts = &syntax.FileOptions{
 // evalCode runs a Code node's Starlark script with the context predeclared as
 // the `data` dict and merges the script's top-level assignments back into the
 // context (skipping non-serializable values such as helper functions).
-func evalCode(n events.Node, ctx map[string]any, edges []events.Edge) (any, string, error) {
+func evalCode(ec evalContext, n events.Node, ctx map[string]any, edges []events.Edge) (any, string, error) {
 	var cfg codeConfig
 	if err := decodeConfig(n, &cfg); err != nil {
 		return nil, "", err
@@ -45,6 +46,13 @@ func evalCode(n events.Node, ctx map[string]any, edges []events.Edge) (any, stri
 	}
 	thread := &starlark.Thread{Name: n.ID}
 	thread.SetMaxExecutionSteps(maxCodeSteps)
+	// Bound wall-clock too: the step limit caps total work, but a deadline cuts off a
+	// program that ties up the synchronous decide. A Starlark thread is cancellable
+	// mid-execution, so a watchdog cancels it the moment the context expires. stop
+	// tears the watchdog down on the normal (fast) path so it never leaks.
+	if stop := watchStarlark(ec.ctx, thread); stop != nil {
+		defer stop()
+	}
 	globals, err := starlark.ExecFileOptions(codeOpts, thread, n.ID+".star", []byte(cfg.Code), starlark.StringDict{"data": data})
 	if err != nil {
 		return nil, "", fmt.Errorf("decision-engine: node %q code: %w", n.ID, err)
@@ -59,6 +67,28 @@ func evalCode(n events.Node, ctx map[string]any, edges []events.Edge) (any, stri
 		applied[name] = v
 	}
 	return applied, firstEdge(edges), nil
+}
+
+// watchStarlark cancels thread when ctx's deadline elapses, returning a stop
+// function the caller defers to tear the watchdog down on the fast path. It is a
+// no-op (returns nil) when ctx is nil or carries no deadline, so the plain Execute
+// path keeps the step bound as its only limit.
+func watchStarlark(ctx context.Context, thread *starlark.Thread) func() {
+	if ctx == nil {
+		return nil
+	}
+	if _, ok := ctx.Deadline(); !ok {
+		return nil
+	}
+	stopped := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			thread.Cancel("evaluation deadline exceeded")
+		case <-stopped:
+		}
+	}()
+	return func() { close(stopped) }
 }
 
 func sortedKeys[V any](m map[string]V) []string {
