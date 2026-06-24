@@ -697,6 +697,11 @@ func (s *Service) setPromotionPolicy(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// A grant-restricted flow's promotion gates are change-control: require a grant
+	// like the other deploy-path writes (it spans environments, so any grant suffices).
+	if !s.allowFlowAny(w, r, id, r.PathValue("flow_id")) {
+		return
+	}
 	var req promotionPolicyRequest
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.Error(w, http.StatusBadRequest, err)
@@ -776,6 +781,14 @@ func (s *Service) setShadow(w http.ResponseWriter, r *http.Request) {
 	var req shadowRequest
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	// Shadow assignment targets an environment — gate it like the other deploy-path
+	// writes (env scope + per-flow grant) instead of only the global role.
+	if !allowEnv(w, r, req.Environment) {
+		return
+	}
+	if !s.allowFlow(w, r, id, r.PathValue("flow_id"), req.Environment) {
 		return
 	}
 	e, err := s.cmd.SetShadow(r.Context(), id, domain.SetShadow{

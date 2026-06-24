@@ -5,6 +5,7 @@ package connectors_test
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -19,8 +20,17 @@ import (
 	"github.com/e6qu/intraktible/context-layer/domain"
 	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/kms"
+	"github.com/e6qu/intraktible/platform/secretbox"
 	"github.com/e6qu/intraktible/platform/store"
 )
+
+// loc is a stable test SecretLocation; seal and open must use the same one for the
+// AAD binding to authenticate. The connector fetch path derives it from the stored
+// definition's org/workspace/name (see InvokeWithSecrets), so tests that round-trip
+// through it must match those identifiers.
+func loc(connector string) connectors.SecretLocation {
+	return connectors.SecretLocation{Org: "demo", Workspace: "main", Connector: connector}
+}
 
 func define(ctx context.Context, t *testing.T, s store.Store, id identity.Identity, v connectors.ConnectorView) {
 	t.Helper()
@@ -305,14 +315,14 @@ func TestEncryptDecryptSecrets(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := json.RawMessage(`{"driver":"sqlite","dsn":"file:secret.db","nested":{"api_key":"sk-123","keep":"ok"}}`)
-	enc, err := connectors.EncryptSecrets(cfg, kr)
+	enc, err := connectors.EncryptSecrets(cfg, kr, loc("c1"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if string(enc) == string(cfg) || strings.Contains(string(enc), "file:secret.db") || strings.Contains(string(enc), "sk-123") {
 		t.Fatalf("encrypted config leaked plaintext: %s", enc)
 	}
-	dec, err := connectors.DecryptSecrets(enc, kr)
+	dec, err := connectors.DecryptSecrets(enc, kr, loc("c1"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -337,7 +347,7 @@ func TestEncryptSecretsSealsEnvelopeLookalike(t *testing.T) {
 	}
 	// A "password" whose value carries the marker AND an extra "evil" plaintext field.
 	cfg := json.RawMessage(`{"password":{"$intraktible_sealed":"intraktible.sealed.v1","value":"x","evil":"leak-me"}}`)
-	enc, err := connectors.EncryptSecrets(cfg, kr)
+	enc, err := connectors.EncryptSecrets(cfg, kr, loc("c1"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -346,10 +356,101 @@ func TestEncryptSecretsSealsEnvelopeLookalike(t *testing.T) {
 	}
 }
 
+// A legacy v1 connector envelope (sealed before AAD binding, no aad) still opens —
+// and opens regardless of the location passed, since v1 carries no binding. This is
+// the backward-compatibility guarantee for all already-stored connector configs.
+func TestDecryptSecretsOpensLegacyV1(t *testing.T) {
+	rawKey := []byte("0123456789abcdef0123456789abcdef")
+	kr, err := connectors.NewKeyring(rawKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	box, _ := secretbox.NewAESGCMSecretBox(rawKey)
+	sealedBytes, _ := box.Encrypt([]byte(`"sk-legacy"`), nil) // v1: no aad
+	env := secretbox.Envelope{
+		Version: secretbox.Version,
+		Key:     secretbox.KeyFingerprint(rawKey),
+		Value:   base64.StdEncoding.EncodeToString(sealedBytes),
+	}
+	envJSON, _ := json.Marshal(env)
+	cfg, err := json.Marshal(map[string]any{"token": json.RawMessage(envJSON)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Opens even with a non-matching location — v1 ignores the aad.
+	dec, err := connectors.DecryptSecrets(cfg, kr, loc("any-connector"))
+	if err != nil {
+		t.Fatalf("legacy v1 connector envelope must still decrypt: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(dec, &got); err != nil || got["token"] != "sk-legacy" {
+		t.Fatalf("legacy v1 decrypt mismatch: %s", dec)
+	}
+}
+
+// A v2 connector seal opens with the correct location AAD and FAILS to open with a
+// different one — the replay defense. Different org, workspace, or connector name
+// all change the AAD, so each must reject the ciphertext.
+func TestEncryptSecretsAADReplayDefense(t *testing.T) {
+	kr, err := connectors.NewKeyring([]byte("0123456789abcdef0123456789abcdef"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := json.RawMessage(`{"token":"sk-secret","host":"db.example"}`)
+	sealed, err := connectors.EncryptSecrets(cfg, kr, loc("scores"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(sealed), secretbox.VersionAAD) {
+		t.Fatalf("a connector seal should carry the v2 marker: %s", sealed)
+	}
+	// Correct location opens.
+	if _, err := connectors.DecryptSecrets(sealed, kr, loc("scores")); err != nil {
+		t.Fatalf("matching location must open: %v", err)
+	}
+	wrong := []connectors.SecretLocation{
+		{Org: "other", Workspace: "main", Connector: "scores"},
+		{Org: "demo", Workspace: "other", Connector: "scores"},
+		{Org: "demo", Workspace: "main", Connector: "renamed"},
+	}
+	for _, w := range wrong {
+		if _, err := connectors.DecryptSecrets(sealed, kr, w); err == nil {
+			t.Fatalf("a transplanted location must not open: %+v", w)
+		}
+	}
+}
+
+// A connector envelope transplanted to a DIFFERENT FIELD of the same connector
+// fails authentication: each field's AAD includes its path, so moving the sealed
+// "token" value into a "password" slot (same key, wrong field AAD) cannot open.
+func TestEncryptSecretsFieldTransplantFails(t *testing.T) {
+	kr, err := connectors.NewKeyring([]byte("0123456789abcdef0123456789abcdef"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed, err := connectors.EncryptSecrets(
+		json.RawMessage(`{"token":"sk-secret"}`), kr, loc("scores"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Lift the sealed "token" envelope and graft it under "password".
+	var m map[string]any
+	if err := json.Unmarshal(sealed, &m); err != nil {
+		t.Fatal(err)
+	}
+	transplanted, err := json.Marshal(map[string]any{"password": m["token"]})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := connectors.DecryptSecrets(transplanted, kr, loc("scores")); err == nil {
+		t.Fatal("a field-transplanted envelope must not authenticate")
+	}
+}
+
 func TestKMSKeyringRoundTrip(t *testing.T) {
 	kr := connectors.NewKMSKeyring("kms:test", kms.Fake{})
 	cfg := json.RawMessage(`{"dsn":"file:secret.db","token":"sk-123","keep":"ok"}`)
-	enc, err := connectors.EncryptSecrets(cfg, kr)
+	enc, err := connectors.EncryptSecrets(cfg, kr, loc("c1"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -359,7 +460,7 @@ func TestKMSKeyringRoundTrip(t *testing.T) {
 	if !strings.Contains(string(enc), "kms:test") {
 		t.Fatalf("envelope should record the KMS key id: %s", enc)
 	}
-	dec, err := connectors.DecryptSecrets(enc, kr)
+	dec, err := connectors.DecryptSecrets(enc, kr, loc("c1"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -382,7 +483,7 @@ func TestKeyringRotation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sealed, err := connectors.EncryptSecrets(cfg, oldRing)
+	sealed, err := connectors.EncryptSecrets(cfg, oldRing, loc("c1"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -392,7 +493,7 @@ func TestKeyringRotation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dec, err := connectors.DecryptSecrets(sealed, rotated)
+	dec, err := connectors.DecryptSecrets(sealed, rotated, loc("c1"))
 	if err != nil {
 		t.Fatalf("rotation must keep old values readable: %v", err)
 	}
@@ -402,7 +503,7 @@ func TestKeyringRotation(t *testing.T) {
 	}
 
 	// New values are sealed under the NEW key.
-	reSealed, err := connectors.EncryptSecrets(cfg, rotated)
+	reSealed, err := connectors.EncryptSecrets(cfg, rotated, loc("c1"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -416,10 +517,10 @@ func TestKeyringRotation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := connectors.DecryptSecrets(sealed, newOnly); err == nil {
+	if _, err := connectors.DecryptSecrets(sealed, newOnly, loc("c1")); err == nil {
 		t.Fatal("a value sealed under a dropped key must not decrypt")
 	}
-	if _, err := connectors.DecryptSecrets(reSealed, newOnly); err != nil {
+	if _, err := connectors.DecryptSecrets(reSealed, newOnly, loc("c1")); err != nil {
 		t.Fatalf("re-sealed value should open under the new key alone: %v", err)
 	}
 
@@ -430,7 +531,7 @@ func TestKeyringRotation(t *testing.T) {
 	if string(legacy) == string(sealed) {
 		t.Fatal("test setup: key field not stripped")
 	}
-	if _, err := connectors.DecryptSecrets(legacy, oldRing); err != nil {
+	if _, err := connectors.DecryptSecrets(legacy, oldRing, loc("c1")); err != nil {
 		t.Fatalf("legacy (no key id) value should still decrypt: %v", err)
 	}
 }
@@ -456,7 +557,7 @@ func TestInvokeWithEncryptedSQLConnector(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := json.RawMessage(`{"dsn":"` + dsn + `","query":"SELECT risk FROM scores WHERE subject = :subject","args":["subject"]}`)
-	enc, err := connectors.EncryptSecrets(cfg, kr)
+	enc, err := connectors.EncryptSecrets(cfg, kr, loc("scores"))
 	if err != nil {
 		t.Fatal(err)
 	}

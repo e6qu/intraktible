@@ -69,15 +69,16 @@
   --surface: #ffffff;
   --surface-2: #eef1f6;
   --fg: #1a1d23;
-  --fg-muted: #586273;
-  /* Secondary text (timestamps/metadata/helper): darkened to meet WCAG AA 4.5:1
-     on white/surface — the old #8a929e was ~3.1:1. */
-  --fg-subtle: #6b7280;
+  --fg-muted: #4d5666;
+  /* Secondary text (timestamps/metadata/helper) + the semantic ink below are tuned to
+     meet WCAG AA 4.5:1 on the TINTED --surface-2 (#eef1f6), not just white — that's
+     where most muted text and the badge tints actually sit (measured, not eyeballed). */
+  --fg-subtle: #565e6b;
   --border: #e1e6ee;
   --border-strong: #cfd6e0;
-  --danger: #dc2640;
-  --ok: #16a34a;
-  --warn: #b26a00;
+  --danger: #c4122f;
+  --ok: #157f3c;
+  --warn: #8a5200;
   --shadow: 0 1px 2px rgba(20, 25, 35, 0.06), 0 2px 8px rgba(20, 25, 35, 0.05);
   /* Grid/texture line colour for persona backdrops. */
   --hairline: rgba(20, 25, 35, 0.05);
@@ -108,9 +109,10 @@
   --surface: #161b22;
   --surface-2: #1b222c;
   --fg: #e6e9ef;
-  --fg-muted: #9aa4b2;
-  /* Lightened to meet WCAG AA on the dark surface — the old #6b7480 was ~3.5:1. */
-  --fg-subtle: #828c99;
+  --fg-muted: #a3adba;
+  /* Lightened to clear WCAG AA on the tinted dark --surface-2 (#1b222c), not just the
+     base bg — the old #828c99 was ~3.5:1 there (measured). */
+  --fg-subtle: #97a1ae;
   --border: #2a313b;
   --border-strong: #3a424e;
   --danger: #ff6b6b;

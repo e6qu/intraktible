@@ -43,13 +43,13 @@ func (l *encLog) open(p json.RawMessage) (json.RawMessage, error) {
 	if len(p) == 0 || !secretbox.IsSealed(p) {
 		return p, nil
 	}
-	return l.kr.Open(p)
+	return l.kr.Open(p, nil)
 }
 
 func (l *encLog) Append(ctx context.Context, e Envelope) (Envelope, error) {
 	plain := e.Payload
 	if len(e.Payload) > 0 {
-		sealed, err := l.kr.Seal(e.Payload)
+		sealed, err := l.kr.Seal(e.Payload, nil)
 		if err != nil {
 			return Envelope{}, err
 		}

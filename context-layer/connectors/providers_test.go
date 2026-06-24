@@ -99,7 +99,7 @@ func TestAuthBlockSealedAtRest(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := json.RawMessage(`{"url":"` + srv.URL + `","method":"POST","auth":{"type":"bearer","token":"super-secret"}}`)
-	enc, err := connectors.EncryptSecrets(cfg, kr)
+	enc, err := connectors.EncryptSecrets(cfg, kr, loc("rest"))
 	if err != nil {
 		t.Fatal(err)
 	}

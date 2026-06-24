@@ -43,8 +43,10 @@ type encStore struct {
 	kr    *secretbox.Keyring
 }
 
+// seal/open pass a nil aad: a stored document's value is not bound to a specific
+// location the way a connector credential is, so it needs no AAD binding.
 func (e *encStore) seal(doc json.RawMessage) (json.RawMessage, error) {
-	return e.kr.Seal(doc)
+	return e.kr.Seal(doc, nil)
 }
 
 // open returns the plaintext of a stored doc: a sealed envelope is opened, while a
@@ -53,7 +55,7 @@ func (e *encStore) open(doc json.RawMessage) (json.RawMessage, error) {
 	if !secretbox.IsSealed(doc) {
 		return doc, nil
 	}
-	return e.kr.Open(doc)
+	return e.kr.Open(doc, nil)
 }
 
 func (e *encStore) Put(ctx context.Context, collection, key string, doc json.RawMessage) error {

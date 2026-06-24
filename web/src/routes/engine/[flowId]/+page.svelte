@@ -158,6 +158,9 @@
   let nodes = $state.raw<Node[]>([]);
   let edges = $state.raw<Edge[]>([]);
   let canvasView = $state<'cards' | 'bpmn'>('cards');
+  // The canvas is the center stage; the node palette/inspector floats over it as a
+  // collapsible overlay (a Miro-style board), so it can be dismissed for a full canvas.
+  let panelOpen = $state(true);
   // The canvas is the always-visible primary surface (floated to the top via CSS
   // order); the operational panels live behind tabs so the page is no longer one
   // endless scroll. Default to Test — the most common post-edit action.
@@ -2380,6 +2383,16 @@
         >
           <Icon name="diagram" size={14} /> Auto-layout
         </button>
+        <button
+          class="relax-btn"
+          onclick={() => (panelOpen = !panelOpen)}
+          aria-pressed={panelOpen}
+          title={panelOpen ? 'Hide the tools panel for a full canvas' : 'Show the tools panel'}
+          data-testid="toggle-panel"
+        >
+          <Icon name={panelOpen ? 'chevron-right' : 'plus'} size={14} />
+          {panelOpen ? 'Hide panel' : 'Tools'}
+        </button>
       </div>
       <SvelteFlow
         bind:nodes
@@ -2396,454 +2409,456 @@
       </SvelteFlow>
     </div>
 
-    <aside>
-      <h2>Add node</h2>
-      <div class="row">
-        <select bind:value={newType} aria-label="new node type">
-          {#each NODE_TYPES as t (t)}<option value={t}>{t}</option>{/each}
-        </select>
-        <button onclick={addNode}>Add</button>
-      </div>
-
-      <h2>Nodes</h2>
-      <ul class="nodes">
-        {#each editNodes as n (n.id)}
-          <li class:sel={n.id === selectedId}>
-            <button class="link" onclick={() => (selectedId = n.id)}>
-              <span class="nodeicon" title={n.type}><Icon name={n.type} size={15} /></span>
-              <span>{n.name || n.id}</span>
-              <span class="nodetype">{n.type}</span>
-            </button>
-            <button class="x" aria-label={`delete ${n.id}`} onclick={() => deleteNode(n.id)}>
-              <Icon name="trash" size={14} />
-            </button>
-          </li>
-        {/each}
-      </ul>
-
-      {#if selected}
-        <h2>Node: {selected.id}</h2>
-        <label
-          >name <input
-            value={selected.name}
-            oninput={(e) => updateSelected({ name: e.currentTarget.value })}
-            aria-label="node name"
-          /></label
-        >
-        <label
-          >type
-          <select
-            value={selected.type}
-            onchange={(e) => updateSelected({ type: e.currentTarget.value as NodeType })}
-            aria-label="selected node type"
-          >
+    {#if panelOpen}
+      <aside>
+        <h2>Add node</h2>
+        <div class="row">
+          <select bind:value={newType} aria-label="new node type">
             {#each NODE_TYPES as t (t)}<option value={t}>{t}</option>{/each}
           </select>
-        </label>
-        <label
-          >lane <input
-            value={selected.lane ?? ''}
-            oninput={(e) => updateSelected({ lane: e.currentTarget.value || undefined })}
-            placeholder="Main"
-            aria-label="node lane"
-            list="lane-suggestions"
-          /></label
-        >
-        <datalist id="lane-suggestions">
-          {#each laneNames as l (l)}<option value={l}></option>{/each}
-        </datalist>
-        {#if selected.type === 'split'}
+          <button onclick={addNode}>Add</button>
+        </div>
+
+        <h2>Nodes</h2>
+        <ul class="nodes">
+          {#each editNodes as n (n.id)}
+            <li class:sel={n.id === selectedId}>
+              <button class="link" onclick={() => (selectedId = n.id)}>
+                <span class="nodeicon" title={n.type}><Icon name={n.type} size={15} /></span>
+                <span>{n.name || n.id}</span>
+                <span class="nodetype">{n.type}</span>
+              </button>
+              <button class="x" aria-label={`delete ${n.id}`} onclick={() => deleteNode(n.id)}>
+                <Icon name="trash" size={14} />
+              </button>
+            </li>
+          {/each}
+        </ul>
+
+        {#if selected}
+          <h2>Node: {selected.id}</h2>
           <label
-            >condition <input
-              value={asText(nodeCfg().condition)}
-              oninput={(e) => patchCfg({ condition: e.currentTarget.value })}
-              aria-label="condition"
-            /></label
-          >
-        {:else if selected.type === 'connect'}
-          <label
-            >connector <input
-              value={asText(nodeCfg().connector)}
-              oninput={(e) => patchCfg({ connector: e.currentTarget.value })}
-              aria-label="connector"
-            /></label
-          >
-          <label
-            >output key <input
-              value={asText(nodeCfg().output)}
-              oninput={(e) => patchCfg({ output: e.currentTarget.value })}
-              aria-label="connect output"
-            /></label
-          >
-        {:else if selected.type === 'ai'}
-          <label
-            >agent <input
-              value={asText(nodeCfg().agent)}
-              oninput={(e) => patchCfg({ agent: e.currentTarget.value })}
-              aria-label="agent"
+            >name <input
+              value={selected.name}
+              oninput={(e) => updateSelected({ name: e.currentTarget.value })}
+              aria-label="node name"
             /></label
           >
           <label
-            >output key <input
-              value={asText(nodeCfg().output)}
-              oninput={(e) => patchCfg({ output: e.currentTarget.value })}
-              aria-label="ai output"
+            >type
+            <select
+              value={selected.type}
+              onchange={(e) => updateSelected({ type: e.currentTarget.value as NodeType })}
+              aria-label="selected node type"
+            >
+              {#each NODE_TYPES as t (t)}<option value={t}>{t}</option>{/each}
+            </select>
+          </label>
+          <label
+            >lane <input
+              value={selected.lane ?? ''}
+              oninput={(e) => updateSelected({ lane: e.currentTarget.value || undefined })}
+              placeholder="Main"
+              aria-label="node lane"
+              list="lane-suggestions"
             /></label
           >
+          <datalist id="lane-suggestions">
+            {#each laneNames as l (l)}<option value={l}></option>{/each}
+          </datalist>
+          {#if selected.type === 'split'}
+            <label
+              >condition <input
+                value={asText(nodeCfg().condition)}
+                oninput={(e) => patchCfg({ condition: e.currentTarget.value })}
+                aria-label="condition"
+              /></label
+            >
+          {:else if selected.type === 'connect'}
+            <label
+              >connector <input
+                value={asText(nodeCfg().connector)}
+                oninput={(e) => patchCfg({ connector: e.currentTarget.value })}
+                aria-label="connector"
+              /></label
+            >
+            <label
+              >output key <input
+                value={asText(nodeCfg().output)}
+                oninput={(e) => patchCfg({ output: e.currentTarget.value })}
+                aria-label="connect output"
+              /></label
+            >
+          {:else if selected.type === 'ai'}
+            <label
+              >agent <input
+                value={asText(nodeCfg().agent)}
+                oninput={(e) => patchCfg({ agent: e.currentTarget.value })}
+                aria-label="agent"
+              /></label
+            >
+            <label
+              >output key <input
+                value={asText(nodeCfg().output)}
+                oninput={(e) => patchCfg({ output: e.currentTarget.value })}
+                aria-label="ai output"
+              /></label
+            >
+            <label
+              >prompt <input
+                value={asText(nodeCfg().prompt)}
+                oninput={(e) => patchCfg({ prompt: e.currentTarget.value })}
+                aria-label="ai prompt"
+              /></label
+            >
+          {:else if selected.type === 'predict'}
+            <label
+              >model <input
+                value={asText(nodeCfg().model)}
+                oninput={(e) => patchCfg({ model: e.currentTarget.value })}
+                aria-label="predict model"
+                placeholder="risk"
+              /></label
+            >
+            <label
+              >output key <input
+                value={asText(nodeCfg().output)}
+                oninput={(e) => patchCfg({ output: e.currentTarget.value })}
+                aria-label="predict output"
+                placeholder="risk"
+              /></label
+            >
+            <p class="muted">
+              Reads <code>predict.&lt;output&gt;.probability</code> / <code>.score</code> downstream.
+            </p>
+          {:else if selected.type === 'manual_review'}
+            <label
+              >company_name expr <input
+                value={asText(nodeCfg().company_name)}
+                oninput={(e) => patchCfg({ company_name: e.currentTarget.value })}
+                aria-label="company_name expr"
+              /></label
+            >
+            <label
+              >case_type expr <input
+                value={asText(nodeCfg().case_type)}
+                oninput={(e) => patchCfg({ case_type: e.currentTarget.value })}
+                aria-label="case_type expr"
+              /></label
+            >
+            <label
+              >sla_days <input
+                type="number"
+                value={asText(nodeCfg().sla_days)}
+                oninput={(e) =>
+                  patchCfg({
+                    sla_days: e.currentTarget.value === '' ? '' : Number(e.currentTarget.value)
+                  })}
+                aria-label="sla_days"
+              /></label
+            >
+          {:else if selected.type === 'output'}
+            <label
+              >fields (comma-separated; empty = whole context) <input
+                value={asCsv(nodeCfg().fields)}
+                oninput={(e) => patchCfg({ fields: fromCsv(e.currentTarget.value) })}
+                aria-label="output fields"
+              /></label
+            >
+          {:else if selected.type === 'code'}
+            <label
+              >code (Starlark)
+              <textarea
+                value={asText(nodeCfg().code)}
+                oninput={(e) => patchCfg({ code: e.currentTarget.value })}
+                aria-label="code"
+                rows="4"
+              ></textarea>
+            </label>
+          {:else if selected.type === 'assignment'}
+            <p class="muted">assignments</p>
+            {#each assignmentRows() as row, i (i)}
+              <div class="row">
+                <input
+                  value={asText(row.target)}
+                  oninput={(e) => setAssignment(i, { target: e.currentTarget.value })}
+                  aria-label={`assignment ${i} target`}
+                  placeholder="target"
+                />
+                <input
+                  value={asText(row.expr)}
+                  oninput={(e) => setAssignment(i, { expr: e.currentTarget.value })}
+                  aria-label={`assignment ${i} expr`}
+                  placeholder="expr"
+                />
+                <button
+                  class="x"
+                  aria-label={`remove assignment ${i}`}
+                  onclick={() => removeAssignment(i)}>✕</button
+                >
+              </div>
+            {/each}
+            <button onclick={addAssignment}>Add assignment</button>
+          {:else if selected.type === 'rule'}
+            <p class="muted">rules (when → then assignments)</p>
+            {#each ruleClauses() as clause, i (i)}
+              <div class="clause">
+                <div class="row">
+                  <input
+                    value={asText(clause.when)}
+                    oninput={(e) => setRuleWhen(i, e.currentTarget.value)}
+                    aria-label={`rule ${i} when`}
+                    placeholder="when"
+                  />
+                  <button class="x" aria-label={`remove rule ${i}`} onclick={() => removeRule(i)}
+                    >✕</button
+                  >
+                </div>
+                {#each ruleThen(i) as t, k (k)}
+                  <div class="row indent">
+                    <input
+                      value={asText(t.target)}
+                      oninput={(e) => setRuleThen(i, k, { target: e.currentTarget.value })}
+                      aria-label={`rule ${i} then ${k} target`}
+                      placeholder="target"
+                    />
+                    <input
+                      value={asText(t.expr)}
+                      oninput={(e) => setRuleThen(i, k, { expr: e.currentTarget.value })}
+                      aria-label={`rule ${i} then ${k} expr`}
+                      placeholder="expr"
+                    />
+                    <button
+                      class="x"
+                      aria-label={`remove rule ${i} then ${k}`}
+                      onclick={() => removeRuleThen(i, k)}>✕</button
+                    >
+                  </div>
+                {/each}
+                <button onclick={() => addRuleThen(i)}>Add then</button>
+              </div>
+            {/each}
+            <button onclick={addRule}>Add rule</button>
+          {:else if selected.type === 'scorecard'}
+            <label
+              >output key <input
+                value={asText(nodeCfg().output)}
+                oninput={(e) => patchCfg({ output: e.currentTarget.value })}
+                aria-label="scorecard output"
+              /></label
+            >
+            <p class="muted">factors (when → weight)</p>
+            {#each factors() as f, i (i)}
+              <div class="row">
+                <input
+                  value={asText(f.when)}
+                  oninput={(e) => setFactor(i, { when: e.currentTarget.value })}
+                  aria-label={`factor ${i} when`}
+                  placeholder="when"
+                />
+                <input
+                  type="number"
+                  step="any"
+                  value={asNum(f.weight)}
+                  oninput={(e) =>
+                    setFactor(i, {
+                      weight: e.currentTarget.value === '' ? 0 : Number(e.currentTarget.value)
+                    })}
+                  aria-label={`factor ${i} weight`}
+                  placeholder="weight"
+                  size="6"
+                />
+                <button class="x" aria-label={`remove factor ${i}`} onclick={() => removeFactor(i)}
+                  >✕</button
+                >
+              </div>
+            {/each}
+            <button onclick={addFactor}>Add factor</button>
+          {:else if selected.type === 'reason'}
+            <p class="muted">reason codes (when → code + description)</p>
+            {#each reasons() as r, i (i)}
+              <div class="row">
+                <input
+                  value={asText(r.when)}
+                  oninput={(e) => setReason(i, { when: e.currentTarget.value })}
+                  aria-label={`reason ${i} when`}
+                  placeholder="when"
+                />
+                <input
+                  value={asText(r.code)}
+                  oninput={(e) => setReason(i, { code: e.currentTarget.value })}
+                  aria-label={`reason ${i} code`}
+                  placeholder="code"
+                  size="8"
+                />
+                <input
+                  value={asText(r.description)}
+                  oninput={(e) => setReason(i, { description: e.currentTarget.value })}
+                  aria-label={`reason ${i} description`}
+                  placeholder="description"
+                />
+                <button class="x" aria-label={`remove reason ${i}`} onclick={() => removeReason(i)}
+                  >✕</button
+                >
+              </div>
+            {/each}
+            <button onclick={addReason}>Add reason</button>
+          {:else if selected.type === 'decision_table'}
+            <label
+              >hit policy
+              <select
+                value={asText(nodeCfg().hit) || 'first'}
+                onchange={(e) => patchCfg({ hit: e.currentTarget.value, mode: undefined })}
+                aria-label="decision table hit policy"
+              >
+                <option value="first">first match</option>
+                <option value="unique">unique (one match, else conflict)</option>
+                <option value="any">any (matches must agree)</option>
+                <option value="rule_order">rule order (collect, ordered)</option>
+                <option value="collect">collect (aggregate)</option>
+              </select>
+            </label>
+            {#if (asText(nodeCfg().hit) || 'first') === 'collect'}
+              <label
+                >aggregate
+                <select
+                  value={asText(nodeCfg().aggregate) || ''}
+                  onchange={(e) => patchCfg({ aggregate: e.currentTarget.value })}
+                  aria-label="decision table aggregate"
+                >
+                  <option value="">list (all values)</option>
+                  <option value="sum">sum</option>
+                  <option value="min">min</option>
+                  <option value="max">max</option>
+                  <option value="count">count</option>
+                </select>
+              </label>
+            {/if}
+            <p class="muted">rows (when → outputs)</p>
+            {#each tableRows() as row, i (i)}
+              <div class="clause">
+                <div class="row">
+                  <input
+                    value={asText(row.when)}
+                    oninput={(e) => setRowWhen(i, e.currentTarget.value)}
+                    aria-label={`row ${i} when`}
+                    placeholder="when"
+                  />
+                  <button class="x" aria-label={`remove row ${i}`} onclick={() => removeTableRow(i)}
+                    >✕</button
+                  >
+                </div>
+                {#each rowOutputs(i) as o, k (k)}
+                  <div class="row indent">
+                    <input
+                      value={asText(o.target)}
+                      oninput={(e) => setRowOutput(i, k, { target: e.currentTarget.value })}
+                      aria-label={`row ${i} output ${k} target`}
+                      placeholder="target"
+                    />
+                    <input
+                      value={asText(o.expr)}
+                      oninput={(e) => setRowOutput(i, k, { expr: e.currentTarget.value })}
+                      aria-label={`row ${i} output ${k} expr`}
+                      placeholder="expr"
+                    />
+                    <button
+                      class="x"
+                      aria-label={`remove row ${i} output ${k}`}
+                      onclick={() => removeRowOutput(i, k)}>✕</button
+                    >
+                  </div>
+                {/each}
+                <button onclick={() => addRowOutput(i)}>Add output</button>
+              </div>
+            {/each}
+            <button onclick={addTableRow}>Add row</button>
+          {:else if selected.type === '2d_matrix'}
+            <label
+              >output key <input
+                value={asText(nodeCfg().output)}
+                oninput={(e) => patchCfg({ output: e.currentTarget.value })}
+                aria-label="matrix output"
+              /></label
+            >
+            <p class="muted">row conditions</p>
+            {#each matrixRows() as r, i (i)}
+              <div class="row">
+                <input
+                  value={asText(r.when)}
+                  oninput={(e) => setMatrixRowWhen(i, e.currentTarget.value)}
+                  aria-label={`matrix row ${i} when`}
+                  placeholder="row when"
+                />
+              </div>
+            {/each}
+            <button onclick={addMatrixRow}>Add row</button>
+            <p class="muted">column conditions</p>
+            {#each matrixCols() as c, i (i)}
+              <div class="row">
+                <input
+                  value={asText(c.when)}
+                  oninput={(e) => setMatrixColWhen(i, e.currentTarget.value)}
+                  aria-label={`matrix col ${i} when`}
+                  placeholder="col when"
+                />
+              </div>
+            {/each}
+            <button onclick={addMatrixCol}>Add column</button>
+            {#if matrixRows().length && matrixCols().length}
+              <p class="muted">cells [row][col] (literal values)</p>
+              {#each matrixRows() as r, i (i)}
+                <div class="row">
+                  <span class="cellrow">{asText(r.when) || `row ${i}`}</span>
+                  {#each matrixCols() as c, j (j)}
+                    <input
+                      value={cellText(i, j)}
+                      oninput={(e) => setCell(i, j, e.currentTarget.value)}
+                      aria-label={`matrix cell ${i} ${j}`}
+                      title={asText(c.when)}
+                      size="6"
+                    />
+                  {/each}
+                </div>
+              {/each}
+            {/if}
+          {/if}
           <label
-            >prompt <input
-              value={asText(nodeCfg().prompt)}
-              oninput={(e) => patchCfg({ prompt: e.currentTarget.value })}
-              aria-label="ai prompt"
-            /></label
-          >
-        {:else if selected.type === 'predict'}
-          <label
-            >model <input
-              value={asText(nodeCfg().model)}
-              oninput={(e) => patchCfg({ model: e.currentTarget.value })}
-              aria-label="predict model"
-              placeholder="risk"
-            /></label
-          >
-          <label
-            >output key <input
-              value={asText(nodeCfg().output)}
-              oninput={(e) => patchCfg({ output: e.currentTarget.value })}
-              aria-label="predict output"
-              placeholder="risk"
-            /></label
-          >
-          <p class="muted">
-            Reads <code>predict.&lt;output&gt;.probability</code> / <code>.score</code> downstream.
-          </p>
-        {:else if selected.type === 'manual_review'}
-          <label
-            >company_name expr <input
-              value={asText(nodeCfg().company_name)}
-              oninput={(e) => patchCfg({ company_name: e.currentTarget.value })}
-              aria-label="company_name expr"
-            /></label
-          >
-          <label
-            >case_type expr <input
-              value={asText(nodeCfg().case_type)}
-              oninput={(e) => patchCfg({ case_type: e.currentTarget.value })}
-              aria-label="case_type expr"
-            /></label
-          >
-          <label
-            >sla_days <input
-              type="number"
-              value={asText(nodeCfg().sla_days)}
-              oninput={(e) =>
-                patchCfg({
-                  sla_days: e.currentTarget.value === '' ? '' : Number(e.currentTarget.value)
-                })}
-              aria-label="sla_days"
-            /></label
-          >
-        {:else if selected.type === 'output'}
-          <label
-            >fields (comma-separated; empty = whole context) <input
-              value={asCsv(nodeCfg().fields)}
-              oninput={(e) => patchCfg({ fields: fromCsv(e.currentTarget.value) })}
-              aria-label="output fields"
-            /></label
-          >
-        {:else if selected.type === 'code'}
-          <label
-            >code (Starlark)
+            >{STRUCTURED.includes(selected.type) ? 'config (JSON, advanced)' : 'config (JSON)'}
             <textarea
-              value={asText(nodeCfg().code)}
-              oninput={(e) => patchCfg({ code: e.currentTarget.value })}
-              aria-label="code"
+              value={selected.config}
+              oninput={(e) => updateSelected({ config: e.currentTarget.value })}
+              aria-label="node config"
               rows="4"
             ></textarea>
           </label>
-        {:else if selected.type === 'assignment'}
-          <p class="muted">assignments</p>
-          {#each assignmentRows() as row, i (i)}
-            <div class="row">
-              <input
-                value={asText(row.target)}
-                oninput={(e) => setAssignment(i, { target: e.currentTarget.value })}
-                aria-label={`assignment ${i} target`}
-                placeholder="target"
-              />
-              <input
-                value={asText(row.expr)}
-                oninput={(e) => setAssignment(i, { expr: e.currentTarget.value })}
-                aria-label={`assignment ${i} expr`}
-                placeholder="expr"
-              />
-              <button
-                class="x"
-                aria-label={`remove assignment ${i}`}
-                onclick={() => removeAssignment(i)}>✕</button
-              >
-            </div>
-          {/each}
-          <button onclick={addAssignment}>Add assignment</button>
-        {:else if selected.type === 'rule'}
-          <p class="muted">rules (when → then assignments)</p>
-          {#each ruleClauses() as clause, i (i)}
-            <div class="clause">
-              <div class="row">
-                <input
-                  value={asText(clause.when)}
-                  oninput={(e) => setRuleWhen(i, e.currentTarget.value)}
-                  aria-label={`rule ${i} when`}
-                  placeholder="when"
-                />
-                <button class="x" aria-label={`remove rule ${i}`} onclick={() => removeRule(i)}
-                  >✕</button
-                >
-              </div>
-              {#each ruleThen(i) as t, k (k)}
-                <div class="row indent">
-                  <input
-                    value={asText(t.target)}
-                    oninput={(e) => setRuleThen(i, k, { target: e.currentTarget.value })}
-                    aria-label={`rule ${i} then ${k} target`}
-                    placeholder="target"
-                  />
-                  <input
-                    value={asText(t.expr)}
-                    oninput={(e) => setRuleThen(i, k, { expr: e.currentTarget.value })}
-                    aria-label={`rule ${i} then ${k} expr`}
-                    placeholder="expr"
-                  />
-                  <button
-                    class="x"
-                    aria-label={`remove rule ${i} then ${k}`}
-                    onclick={() => removeRuleThen(i, k)}>✕</button
-                  >
-                </div>
-              {/each}
-              <button onclick={() => addRuleThen(i)}>Add then</button>
-            </div>
-          {/each}
-          <button onclick={addRule}>Add rule</button>
-        {:else if selected.type === 'scorecard'}
-          <label
-            >output key <input
-              value={asText(nodeCfg().output)}
-              oninput={(e) => patchCfg({ output: e.currentTarget.value })}
-              aria-label="scorecard output"
-            /></label
-          >
-          <p class="muted">factors (when → weight)</p>
-          {#each factors() as f, i (i)}
-            <div class="row">
-              <input
-                value={asText(f.when)}
-                oninput={(e) => setFactor(i, { when: e.currentTarget.value })}
-                aria-label={`factor ${i} when`}
-                placeholder="when"
-              />
-              <input
-                type="number"
-                step="any"
-                value={asNum(f.weight)}
-                oninput={(e) =>
-                  setFactor(i, {
-                    weight: e.currentTarget.value === '' ? 0 : Number(e.currentTarget.value)
-                  })}
-                aria-label={`factor ${i} weight`}
-                placeholder="weight"
-                size="6"
-              />
-              <button class="x" aria-label={`remove factor ${i}`} onclick={() => removeFactor(i)}
-                >✕</button
-              >
-            </div>
-          {/each}
-          <button onclick={addFactor}>Add factor</button>
-        {:else if selected.type === 'reason'}
-          <p class="muted">reason codes (when → code + description)</p>
-          {#each reasons() as r, i (i)}
-            <div class="row">
-              <input
-                value={asText(r.when)}
-                oninput={(e) => setReason(i, { when: e.currentTarget.value })}
-                aria-label={`reason ${i} when`}
-                placeholder="when"
-              />
-              <input
-                value={asText(r.code)}
-                oninput={(e) => setReason(i, { code: e.currentTarget.value })}
-                aria-label={`reason ${i} code`}
-                placeholder="code"
-                size="8"
-              />
-              <input
-                value={asText(r.description)}
-                oninput={(e) => setReason(i, { description: e.currentTarget.value })}
-                aria-label={`reason ${i} description`}
-                placeholder="description"
-              />
-              <button class="x" aria-label={`remove reason ${i}`} onclick={() => removeReason(i)}
-                >✕</button
-              >
-            </div>
-          {/each}
-          <button onclick={addReason}>Add reason</button>
-        {:else if selected.type === 'decision_table'}
-          <label
-            >hit policy
-            <select
-              value={asText(nodeCfg().hit) || 'first'}
-              onchange={(e) => patchCfg({ hit: e.currentTarget.value, mode: undefined })}
-              aria-label="decision table hit policy"
-            >
-              <option value="first">first match</option>
-              <option value="unique">unique (one match, else conflict)</option>
-              <option value="any">any (matches must agree)</option>
-              <option value="rule_order">rule order (collect, ordered)</option>
-              <option value="collect">collect (aggregate)</option>
-            </select>
-          </label>
-          {#if (asText(nodeCfg().hit) || 'first') === 'collect'}
-            <label
-              >aggregate
-              <select
-                value={asText(nodeCfg().aggregate) || ''}
-                onchange={(e) => patchCfg({ aggregate: e.currentTarget.value })}
-                aria-label="decision table aggregate"
-              >
-                <option value="">list (all values)</option>
-                <option value="sum">sum</option>
-                <option value="min">min</option>
-                <option value="max">max</option>
-                <option value="count">count</option>
-              </select>
-            </label>
-          {/if}
-          <p class="muted">rows (when → outputs)</p>
-          {#each tableRows() as row, i (i)}
-            <div class="clause">
-              <div class="row">
-                <input
-                  value={asText(row.when)}
-                  oninput={(e) => setRowWhen(i, e.currentTarget.value)}
-                  aria-label={`row ${i} when`}
-                  placeholder="when"
-                />
-                <button class="x" aria-label={`remove row ${i}`} onclick={() => removeTableRow(i)}
-                  >✕</button
-                >
-              </div>
-              {#each rowOutputs(i) as o, k (k)}
-                <div class="row indent">
-                  <input
-                    value={asText(o.target)}
-                    oninput={(e) => setRowOutput(i, k, { target: e.currentTarget.value })}
-                    aria-label={`row ${i} output ${k} target`}
-                    placeholder="target"
-                  />
-                  <input
-                    value={asText(o.expr)}
-                    oninput={(e) => setRowOutput(i, k, { expr: e.currentTarget.value })}
-                    aria-label={`row ${i} output ${k} expr`}
-                    placeholder="expr"
-                  />
-                  <button
-                    class="x"
-                    aria-label={`remove row ${i} output ${k}`}
-                    onclick={() => removeRowOutput(i, k)}>✕</button
-                  >
-                </div>
-              {/each}
-              <button onclick={() => addRowOutput(i)}>Add output</button>
-            </div>
-          {/each}
-          <button onclick={addTableRow}>Add row</button>
-        {:else if selected.type === '2d_matrix'}
-          <label
-            >output key <input
-              value={asText(nodeCfg().output)}
-              oninput={(e) => patchCfg({ output: e.currentTarget.value })}
-              aria-label="matrix output"
-            /></label
-          >
-          <p class="muted">row conditions</p>
-          {#each matrixRows() as r, i (i)}
-            <div class="row">
-              <input
-                value={asText(r.when)}
-                oninput={(e) => setMatrixRowWhen(i, e.currentTarget.value)}
-                aria-label={`matrix row ${i} when`}
-                placeholder="row when"
-              />
-            </div>
-          {/each}
-          <button onclick={addMatrixRow}>Add row</button>
-          <p class="muted">column conditions</p>
-          {#each matrixCols() as c, i (i)}
-            <div class="row">
-              <input
-                value={asText(c.when)}
-                oninput={(e) => setMatrixColWhen(i, e.currentTarget.value)}
-                aria-label={`matrix col ${i} when`}
-                placeholder="col when"
-              />
-            </div>
-          {/each}
-          <button onclick={addMatrixCol}>Add column</button>
-          {#if matrixRows().length && matrixCols().length}
-            <p class="muted">cells [row][col] (literal values)</p>
-            {#each matrixRows() as r, i (i)}
-              <div class="row">
-                <span class="cellrow">{asText(r.when) || `row ${i}`}</span>
-                {#each matrixCols() as c, j (j)}
-                  <input
-                    value={cellText(i, j)}
-                    oninput={(e) => setCell(i, j, e.currentTarget.value)}
-                    aria-label={`matrix cell ${i} ${j}`}
-                    title={asText(c.when)}
-                    size="6"
-                  />
-                {/each}
-              </div>
-            {/each}
-          {/if}
         {/if}
-        <label
-          >{STRUCTURED.includes(selected.type) ? 'config (JSON, advanced)' : 'config (JSON)'}
-          <textarea
-            value={selected.config}
-            oninput={(e) => updateSelected({ config: e.currentTarget.value })}
-            aria-label="node config"
-            rows="4"
-          ></textarea>
-        </label>
-      {/if}
 
-      <h2>Add edge</h2>
-      <div class="row">
-        <select bind:value={edgeFrom} aria-label="edge from">
-          <option value="">from…</option>
-          {#each editNodes as n (n.id)}<option value={n.id}>{n.id}</option>{/each}
-        </select>
-        <select bind:value={edgeTo} aria-label="edge to">
-          <option value="">to…</option>
-          {#each editNodes as n (n.id)}<option value={n.id}>{n.id}</option>{/each}
-        </select>
-        <input bind:value={edgeBranch} placeholder="branch" aria-label="edge branch" size="6" />
-        <button onclick={addEdge}>Add edge</button>
-      </div>
-      <ul class="edges">
-        {#each editEdges as e, i (i)}
-          <li>
-            {e.from} → {e.to}{e.branch ? ` (${e.branch})` : ''}
-            <button class="x" aria-label={`delete edge ${i}`} onclick={() => deleteEdge(i)}
-              >✕</button
-            >
-          </li>
-        {/each}
-      </ul>
-    </aside>
+        <h2>Add edge</h2>
+        <div class="row">
+          <select bind:value={edgeFrom} aria-label="edge from">
+            <option value="">from…</option>
+            {#each editNodes as n (n.id)}<option value={n.id}>{n.id}</option>{/each}
+          </select>
+          <select bind:value={edgeTo} aria-label="edge to">
+            <option value="">to…</option>
+            {#each editNodes as n (n.id)}<option value={n.id}>{n.id}</option>{/each}
+          </select>
+          <input bind:value={edgeBranch} placeholder="branch" aria-label="edge branch" size="6" />
+          <button onclick={addEdge}>Add edge</button>
+        </div>
+        <ul class="edges">
+          {#each editEdges as e, i (i)}
+            <li>
+              {e.from} → {e.to}{e.branch ? ` (${e.branch})` : ''}
+              <button class="x" aria-label={`delete edge ${i}`} onclick={() => deleteEdge(i)}
+                >✕</button
+              >
+            </li>
+          {/each}
+        </ul>
+      </aside>
+    {/if}
   </div>
 
   <nav class="tabbar" aria-label="builder panels">
@@ -3491,15 +3506,10 @@
     margin: 0.4rem 0 0;
     font-size: 0.82rem;
   }
+  /* Miro-style board: the canvas is the full center stage; the tools/inspector float
+     over it as overlays rather than taking a fixed column. */
   .grid {
-    display: grid;
-    grid-template-columns: 1fr 22rem;
-    gap: 1rem;
-  }
-  @media (max-width: 860px) {
-    .grid {
-      grid-template-columns: 1fr;
-    }
+    position: relative;
   }
   .row {
     display: flex;
@@ -3547,15 +3557,16 @@
   }
   .canvas {
     position: relative;
-    height: 560px;
+    height: 72vh;
+    min-height: 480px;
     border: 1px solid var(--border-strong);
     border-radius: 0.5rem;
   }
   .canvas-tools {
     position: absolute;
-    top: 0.5rem;
-    right: 0.5rem;
-    z-index: 5;
+    top: 0.6rem;
+    left: 0.6rem;
+    z-index: 7;
     display: inline-flex;
     align-items: center;
     gap: 0.4rem;
@@ -3596,7 +3607,26 @@
     box-shadow: 0 1px 4px rgb(0 0 0 / 0.12);
   }
   aside {
-    font-size: 0.95rem;
+    position: absolute;
+    top: 0.6rem;
+    right: 0.6rem;
+    width: 21rem;
+    max-height: calc(100% - 1.2rem);
+    overflow-y: auto;
+    padding: 0.2rem 0.9rem 0.9rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 0.7rem;
+    box-shadow: 0 10px 30px rgb(0 0 0 / 0.18);
+    z-index: 6;
+    font-size: 0.92rem;
+  }
+  @media (max-width: 720px) {
+    aside {
+      left: 0.6rem;
+      width: auto;
+      max-height: 55%;
+    }
   }
   h2 {
     font-size: 0.9rem;
