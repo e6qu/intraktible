@@ -95,7 +95,7 @@ test('switching demo role updates the role-gated navigation', async ({ page }) =
   await expect(navModelRisk).toBeVisible(); // default identity is the admin (Ava)
 
   await page
-    .getByLabel('Signed in as (switch demo user)')
+    .getByLabel('Demo user (switch acting identity)')
     .selectOption({ label: 'Lena Hoff · viewer' });
   await expect(navModelRisk).toHaveCount(0); // viewer loses the admin-only surface
 });
@@ -107,7 +107,7 @@ test('a non-admin reaching an admin-only page directly sees the restricted state
 }) => {
   await page.goto('');
   await page
-    .getByLabel('Signed in as (switch demo user)')
+    .getByLabel('Demo user (switch acting identity)')
     .selectOption({ label: 'Lena Hoff · viewer' });
   await page.goto('mrm');
   await expect(page.getByText('Restricted to the admin role')).toBeVisible();
@@ -117,10 +117,10 @@ test('a non-admin reaching an admin-only page directly sees the restricted state
 // so a mid-flow refresh doesn't silently revert you to the default admin.
 test('the switched demo user survives a reload', async ({ page }) => {
   await page.goto('');
-  const switcher = page.getByLabel('Signed in as (switch demo user)');
+  const switcher = page.getByLabel('Demo user (switch acting identity)');
   await switcher.selectOption({ label: 'Diego Santos · operator' });
   await page.reload();
-  await expect(page.getByLabel('Signed in as (switch demo user)')).toHaveValue(
+  await expect(page.getByLabel('Demo user (switch acting identity)')).toHaveValue(
     'diego.santos@intraktible.dev'
   );
 });

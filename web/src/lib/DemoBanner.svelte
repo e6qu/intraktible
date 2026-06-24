@@ -72,9 +72,9 @@
     </span>
     {#if users.length > 0}
       <label class="who">
-        <span class="who-label">Signed in as</span>
+        <span class="who-label">Demo user:</span>
         <select
-          aria-label="Signed in as (switch demo user)"
+          aria-label="Demo user (switch acting identity)"
           value={currentActor}
           onchange={(e) => switchUser(e.currentTarget.value)}
         >

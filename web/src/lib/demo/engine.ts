@@ -353,7 +353,11 @@ export function evaluateModel(model: Model, features: Record<string, unknown>): 
     case 'logistic': {
       let z = spec.intercept ?? 0;
       for (const [name, w] of Object.entries(spec.coefficients ?? {})) {
-        z += w * num(resolvePath(features, name));
+        // Skip a missing / non-numeric feature rather than poisoning the whole sum
+        // with NaN (which serializes as null in the trace). Behaviour is unchanged
+        // when every feature is present.
+        const term = w * num(resolvePath(features, name));
+        if (Number.isFinite(term)) z += term;
       }
       return { score: z, probability: sigmoid(z) };
     }

@@ -5,6 +5,8 @@
 
 import { describe, it, expect } from 'vitest';
 import { agentReply } from './demo/agent';
+import { evaluateModel } from './demo/engine';
+import type { Model } from './api';
 import { handleDemo } from './demo/router';
 import { setDemoUser, state, USERS, psi, modelDrift } from './demo/store';
 
@@ -182,6 +184,84 @@ describe('agent escalation carries run context', () => {
     expect(ctx?.run_id).toBe(runId);
     expect(ctx?.prompt).toBe('score this transaction');
     expect(ctx?.output).toBeTruthy();
+  });
+
+  it('404s an escalate for a missing agent or unknown run id, opening no case', () => {
+    const agent = state.agents[0].name;
+    const before = state.cases.length;
+    expect(
+      handleDemo('POST', '/v1/agents/no-such-agent/runs/run_x/escalate', params(), {}).status
+    ).toBe(404);
+    expect(
+      handleDemo('POST', `/v1/agents/${agent}/runs/run_does_not_exist/escalate`, params(), {})
+        .status
+    ).toBe(404);
+    expect(state.cases.length).toBe(before);
+  });
+});
+
+describe('deployment request decide guards', () => {
+  // Approve/reject must be one-shot: re-deciding an already-decided request would
+  // overwrite decided_by/decided_at and push a duplicate audit entry.
+  function freshRequest(): string {
+    setDemoUser(USERS[2].actor); // Priya — editor, proposes
+    const flow = state.flows[0];
+    const version = flow.latest;
+    const res = handleDemo('POST', `/v1/flows/${flow.slug}/deployment-requests`, params(), {
+      environment: 'production',
+      version
+    });
+    return (res.body as { request_id: string }).request_id;
+  }
+
+  it('rejects a second approve on an already-approved request', () => {
+    const rid = freshRequest();
+    const flow = state.flows[0];
+    setDemoUser(USERS[1].actor); // Marcus — approver, decides
+    expect(
+      handleDemo('POST', `/v1/flows/${flow.slug}/deployment-requests/${rid}/approve`, params(), {})
+        .status
+    ).toBe(200);
+    expect(
+      handleDemo('POST', `/v1/flows/${flow.slug}/deployment-requests/${rid}/approve`, params(), {})
+        .status
+    ).toBe(400);
+  });
+
+  it('rejects approving an already-rejected request', () => {
+    const rid = freshRequest();
+    const flow = state.flows[0];
+    setDemoUser(USERS[1].actor); // Marcus — approver
+    expect(
+      handleDemo('POST', `/v1/flows/${flow.slug}/deployment-requests/${rid}/reject`, params(), {})
+        .status
+    ).toBe(200);
+    expect(
+      handleDemo('POST', `/v1/flows/${flow.slug}/deployment-requests/${rid}/approve`, params(), {})
+        .status
+    ).toBe(400);
+  });
+});
+
+describe('logistic model NaN guard', () => {
+  const model: Model = {
+    name: 'test_logit',
+    kind: 'logistic',
+    spec: { kind: 'logistic', intercept: 0.5, coefficients: { a: 2, b: -1 } },
+    updated_at: new Date().toISOString()
+  };
+
+  it('produces a finite score when a feature is missing (skips that term)', () => {
+    const p = evaluateModel(model, { a: 1 });
+    expect(Number.isFinite(p.score)).toBe(true);
+    expect(Number.isFinite(p.probability ?? NaN)).toBe(true);
+    // intercept 0.5 + 2*1, with the missing 'b' term skipped
+    expect(p.score).toBe(2.5);
+  });
+
+  it('is unchanged when every feature is present', () => {
+    const p = evaluateModel(model, { a: 1, b: 3 });
+    expect(p.score).toBe(0.5 + 2 * 1 + -1 * 3);
   });
 });
 

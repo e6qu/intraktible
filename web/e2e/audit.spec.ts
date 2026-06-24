@@ -35,8 +35,13 @@ test('shows the event-log audit trail and filters it', async ({ page, request })
   // The active filter lives in the URL — the view is deep-linkable / shareable.
   await expect(page).toHaveURL(/[?&]stream=does-not-exist/);
 
-  // The CSV export link carries the active filter.
-  await expect(page.getByTestId('audit-csv')).toHaveAttribute('href', /format=csv/);
+  // The CSV export downloads the filtered log (a Blob, so it works through the demo's
+  // fetch mock — an <a href="/v1/…"> would escape it).
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    page.getByTestId('audit-csv').click()
+  ]);
+  expect(download.suggestedFilename()).toBe('audit.csv');
 
   // Navigating straight to a filtered URL restores the inputs and the view.
   await page.goto('/audit?type=decision.flow.created');

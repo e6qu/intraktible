@@ -14,7 +14,7 @@
   import { appHref } from '$lib/paths';
   import {
     listAuditPage,
-    auditExportUrl,
+    auditCsvText,
     getPrivacy,
     setPrivacy,
     listApiKeys,
@@ -75,7 +75,22 @@
   // The CSV export must match the rows on screen, which are driven by the applied
   // (URL) filter — not the inputs the user may have edited but not yet applied.
   let applied = $state<AuditFilter>({});
-  let csvUrl = $derived(auditExportUrl(applied));
+  // Fetch the CSV via api.ts (so the demo's window.fetch mock serves it) and download
+  // it as a Blob — an <a href="/v1/..."> would navigate past the mock and 404 on the
+  // static demo host.
+  async function downloadCsv(): Promise<void> {
+    try {
+      const blob = new Blob([await auditCsvText(key, applied)], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'audit.csv';
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+    } catch {
+      // best-effort download
+    }
+  }
 
   // Apply pushes the current inputs into the URL; the effect below re-fetches.
   // (Applying a new filter resets to the first page.)
@@ -270,9 +285,9 @@
   <div class="head">
     <h1><Icon name="shield" size={20} /> Audit log</h1>
     <div class="actions">
-      <a class="btn" href={csvUrl} download="audit.csv" data-testid="audit-csv">
+      <button class="btn" onclick={downloadCsv} data-testid="audit-csv">
         <Icon name="download" size={14} /> CSV
-      </a>
+      </button>
       <button onclick={() => load()}><Icon name="reload" size={15} /> Reload</button>
     </div>
   </div>
@@ -369,15 +384,17 @@
                 <td>{k.role}</td>
                 <td><span class="badge">{k.scope}</span></td>
                 <td><Badge tone={lifecycleTone(keyStatus(k))}>{keyStatus(k)}</Badge></td>
-                <td class="row-actions">
-                  <a
-                    class="audit-link"
-                    href={appHref(`/audit?resource=${encodeURIComponent(k.id)}`)}>Audit</a
-                  >
-                  {#if keyStatus(k) === 'active'}
-                    <button class="rotate" onclick={() => rotateKey(k.id)}>Rotate</button>
-                    <button class="revoke" onclick={() => revokeKey(k.id)}>Revoke</button>
-                  {/if}
+                <td>
+                  <div class="row-actions">
+                    <a
+                      class="audit-link"
+                      href={appHref(`/audit?resource=${encodeURIComponent(k.id)}`)}>Audit</a
+                    >
+                    {#if keyStatus(k) === 'active'}
+                      <button class="rotate" onclick={() => rotateKey(k.id)}>Rotate</button>
+                      <button class="revoke" onclick={() => revokeKey(k.id)}>Revoke</button>
+                    {/if}
+                  </div>
                 </td>
               </tr>
             {/each}

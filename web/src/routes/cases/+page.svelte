@@ -303,7 +303,7 @@
               >
               <td><a href={appHref(`/cases/${c.case_id}`)}>{c.company_name}</a></td>
               <td><span class="chip">{c.case_type}</span></td>
-              <td><Badge tone={caseStatusTone(c.status)}>{c.status}</Badge></td>
+              <td class="status-cell"><Badge tone={caseStatusTone(c.status)}>{c.status}</Badge></td>
               <td>{c.assignee || '—'}</td>
               <td>{c.sla_days}d</td>
               <td class={`sla-${c.sla_state ?? ''}`}>
@@ -370,6 +370,13 @@
     text-align: left;
     padding: 0.4rem 0.6rem;
     border-bottom: 1px solid var(--border);
+  }
+  /* Keep the status pill whole when the queue scrolls/clips on a narrow phone: a
+     min-width plus nowrap means the right-edge clip falls between columns, never
+     through the middle of the pill's text. */
+  .status-cell {
+    min-width: 7.5rem;
+    white-space: nowrap;
   }
   .err {
     color: var(--danger);

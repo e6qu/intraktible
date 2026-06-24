@@ -269,16 +269,18 @@
                   />{:else if p.updated_at}<RelativeTime value={p.updated_at} />{:else}—{/if}</td
               >
               <td class="muted">{latest?.published_by ?? '—'}</td>
-              <td class="row-actions">
-                <button class="link" onclick={() => edit(p.policy_id)}>Edit bands</button>
-                {#if (p.versions?.length ?? 0) > 0}
-                  <button
-                    class="link"
-                    onclick={() => toggleHistory(p.policy_id)}
-                    aria-expanded={historyId === p.policy_id}
-                    >{historyId === p.policy_id ? 'Hide history' : 'History'}</button
-                  >
-                {/if}
+              <td>
+                <div class="row-actions">
+                  <button class="link" onclick={() => edit(p.policy_id)}>Edit bands</button>
+                  {#if (p.versions?.length ?? 0) > 0}
+                    <button
+                      class="link"
+                      onclick={() => toggleHistory(p.policy_id)}
+                      aria-expanded={historyId === p.policy_id}
+                      >{historyId === p.policy_id ? 'Hide history' : 'History'}</button
+                    >
+                  {/if}
+                </div>
               </td>
             </tr>
             {#if historyId === p.policy_id}

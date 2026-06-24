@@ -516,6 +516,7 @@ route('POST', '/v1/flows/:id/deployment-requests/:rid/approve', (m, body) => {
   if (req.requested_by === state.identity.actor) {
     return badRequest('four-eyes: the requester cannot approve their own deployment');
   }
+  if (req.status !== 'pending') return badRequest('request already decided');
   req.status = 'approved';
   req.decided_by = state.identity.actor;
   req.decided_at = new Date().toISOString();
@@ -531,6 +532,7 @@ route('POST', '/v1/flows/:id/deployment-requests/:rid/reject', (m, body) => {
   if (!req) return notFound();
   if (!roleAtLeast('approver'))
     return forbidden('rejecting a deployment requires the approver role');
+  if (req.status !== 'pending') return badRequest('request already decided');
   req.status = 'rejected';
   req.decided_by = state.identity.actor;
   req.decided_at = new Date().toISOString();
@@ -887,6 +889,12 @@ route('POST', '/v1/agents/:name/evals/run', (m, body) => {
   return ok({ total: results.length, passed, failed: results.length - passed, version, results });
 });
 route('POST', '/v1/agents/:name/runs/:rid/escalate', (m, body) => {
+  // Don't open a case for a run that doesn't exist: 404 a missing agent or run id
+  // before creating anything, mirroring how POST /v1/agents/:name/run 404s.
+  const agent = state.agents.find((x) => x.name === m[1]);
+  if (!agent) return notFound();
+  const run = state.agentRuns.find((r) => r.run_id === m[2] && r.agent === m[1]);
+  if (!run) return notFound();
   const caseId = nextId('case');
   const now = new Date().toISOString();
   const slaDays = Number(body.sla_days ?? 3);
@@ -894,7 +902,6 @@ route('POST', '/v1/agents/:name/runs/:rid/escalate', (m, body) => {
   // context (the flat fact grid the case detail renders), so an agent_review case is
   // self-explanatory — the reviewer sees what was asked and what came back, not an
   // empty stub. Mirrors how manual-review cases carry their decision context.
-  const run = state.agentRuns.find((r) => r.run_id === m[2] && r.agent === m[1]);
   const runOutput = run?.error
     ? `error: ${run.error}`
     : (run?.text ?? (run?.structured != null ? JSON.stringify(run.structured) : ''));

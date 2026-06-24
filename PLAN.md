@@ -949,6 +949,13 @@ test input, the seed's reverse decision→case link, agent-escalation context + 
 create-flow validation, and a batch of a11y/polish (Hint viewport clamp, table scroll-shadow, landing
 deep-links to proof).
 
+A third review — where all four agents independently judged the product "mature, diminishing returns" —
+closed the final layer: the central **API-first** claim is now *shown* (a copyable decide `curl` in the
+builder and on the keys page via a new `CodeSnippet`), the MRM/Audit **exports** work in the demo
+(Blob downloads via `api.ts`, not dead `/v1` anchors), a systemic `display:flex`-on-`<td>` alignment
+bug across five tables, MRM row drill-through, two mobile clipping fixes, and small demo-robustness
+guards.
+
 ---
 
 ## 9. MVP non-goals
