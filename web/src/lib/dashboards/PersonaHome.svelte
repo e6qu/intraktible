@@ -1,7 +1,8 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <!-- Config-driven persona home: a role-focused cockpit composed from the active
-     persona's config (its at-a-glance KPIs + primary actions) over the shared
-     dashboard data, plus a recent-activity panel. Personas without a bespoke deck
+     persona's config — its at-a-glance KPIs, primary actions, and a role-specific
+     right-rail panel (manager: pending approvals; developer: failing traces; product:
+     champion vs challenger; else recent decisions). Personas without a bespoke deck
      (Developer, Manager, Product) land here, so adding a persona needs only config. -->
 <script lang="ts">
   import Icon from '$lib/Icon.svelte';
@@ -20,9 +21,39 @@
   const actions = $derived(actionsFor($persona, $user?.role));
   // The at-a-glance tiles are the persona's chosen questions over the shared data.
   const tiles = $derived(personaHomeStats(cfg.homeStats ?? DEFAULT_HOME_STATS, data));
-  // Recent decisions — the workspace's live activity, newest first.
-  const recent = $derived(
-    [...data.decisions].sort((a, b) => b.started_at.localeCompare(a.started_at)).slice(0, 6)
+
+  // The right-rail panel is the persona's primary live surface, not a generic feed.
+  const panel = $derived(cfg.homePanel ?? 'recent');
+  const byNewest = (a: { started_at: string }, b: { started_at: string }): number =>
+    b.started_at.localeCompare(a.started_at);
+  // recent — the workspace's live activity (default panel).
+  const recent = $derived([...data.decisions].sort(byNewest).slice(0, 6));
+  // failing — the traces that failed, newest first (developer's debugging feed).
+  const failing = $derived(
+    data.decisions
+      .filter((d) => d.status === 'failed')
+      .sort(byNewest)
+      .slice(0, 6)
+  );
+  // experiment — champion vs challenger, with the challenger arm's recent runs (product).
+  const challengerRuns = $derived(
+    data.decisions
+      .filter((d) => d.variant === 'challenger')
+      .sort(byNewest)
+      .slice(0, 6)
+  );
+  const challengerCount = $derived(data.decisions.filter((d) => d.variant === 'challenger').length);
+  const championCount = $derived(data.decisions.length - challengerCount);
+  // approvals — production changes awaiting four-eyes sign-off across flows (manager).
+  const approvals = $derived(
+    data.flows
+      .flatMap((f) =>
+        (f.deployment_requests ?? [])
+          .filter((r) => r.status === 'pending')
+          .map((r) => ({ flow: f, req: r }))
+      )
+      .sort((a, b) => b.req.requested_at.localeCompare(a.req.requested_at))
+      .slice(0, 6)
   );
 </script>
 
@@ -63,24 +94,87 @@
       </div>
     </section>
 
-    <section aria-label="Recent activity">
-      <h2>Recent decisions</h2>
-      {#if recent.length === 0}
-        <p class="empty">No decisions yet — run one from a flow.</p>
-      {:else}
-        <ul class="recent">
-          {#each recent as d (d.decision_id)}
-            <li>
-              <Badge tone={statusTone(d.status)}>{d.status}</Badge>
-              <a class="slug" href={appHref(`/decisions/${d.decision_id}`)}>{d.slug}</a>
-              <span class="env">{d.environment}</span>
-              <span class="when"><RelativeTime value={d.started_at} /></span>
-            </li>
-          {/each}
-        </ul>
-        <a class="more" href={appHref('/decisions')}>All decisions →</a>
-      {/if}
-    </section>
+    {#if panel === 'approvals'}
+      <section aria-label="Pending approvals">
+        <h2>Pending approvals</h2>
+        {#if approvals.length === 0}
+          <p class="empty">No approvals pending — production changes are all signed off.</p>
+        {:else}
+          <ul class="recent">
+            {#each approvals as a (a.req.request_id)}
+              <li>
+                <Badge tone="warn">{a.req.environment}</Badge>
+                <a class="slug" href={appHref(`/engine/${a.flow.flow_id}`)}>{a.flow.name}</a>
+                <span class="env">v{a.req.version} · {a.req.requested_by.split('@')[0]}</span>
+                <span class="when"><RelativeTime value={a.req.requested_at} /></span>
+              </li>
+            {/each}
+          </ul>
+          <a class="more" href={appHref('/engine')}>All flows →</a>
+        {/if}
+      </section>
+    {:else if panel === 'failing'}
+      <section aria-label="Failing traces">
+        <h2>Failing traces</h2>
+        {#if failing.length === 0}
+          <p class="empty">No failing traces — your integration is clean.</p>
+        {:else}
+          <ul class="recent">
+            {#each failing as d (d.decision_id)}
+              <li>
+                <Badge tone="danger">failed</Badge>
+                <a class="slug" href={appHref(`/decisions/${d.decision_id}`)}>{d.slug}</a>
+                <span class="env">{d.environment}</span>
+                <span class="when"><RelativeTime value={d.started_at} /></span>
+              </li>
+            {/each}
+          </ul>
+          <a class="more" href={appHref('/decisions')}>All traces →</a>
+        {/if}
+      </section>
+    {:else if panel === 'experiment'}
+      <section aria-label="Champion vs challenger">
+        <h2>Champion vs challenger</h2>
+        <p class="split">
+          <span><b>{championCount}</b> champion</span>
+          <span><b>{challengerCount}</b> challenger</span>
+        </p>
+        {#if challengerRuns.length === 0}
+          <p class="empty">No challenger arm running — promote a challenger to compare.</p>
+        {:else}
+          <ul class="recent">
+            {#each challengerRuns as d (d.decision_id)}
+              <li>
+                <Badge tone={statusTone(d.status)}>{d.status}</Badge>
+                <a class="slug" href={appHref(`/decisions/${d.decision_id}`)}>{d.slug}</a>
+                <span class="env">{d.environment}</span>
+                <span class="when"><RelativeTime value={d.started_at} /></span>
+              </li>
+            {/each}
+          </ul>
+          <a class="more" href={appHref('/decisions')}>All decisions →</a>
+        {/if}
+      </section>
+    {:else}
+      <section aria-label="Recent activity">
+        <h2>Recent decisions</h2>
+        {#if recent.length === 0}
+          <p class="empty">No decisions yet — run one from a flow.</p>
+        {:else}
+          <ul class="recent">
+            {#each recent as d (d.decision_id)}
+              <li>
+                <Badge tone={statusTone(d.status)}>{d.status}</Badge>
+                <a class="slug" href={appHref(`/decisions/${d.decision_id}`)}>{d.slug}</a>
+                <span class="env">{d.environment}</span>
+                <span class="when"><RelativeTime value={d.started_at} /></span>
+              </li>
+            {/each}
+          </ul>
+          <a class="more" href={appHref('/decisions')}>All decisions →</a>
+        {/if}
+      </section>
+    {/if}
   </div>
 </main>
 
@@ -234,5 +328,17 @@
   .empty {
     color: var(--fg-subtle);
     font-size: 0.9rem;
+  }
+  .split {
+    display: flex;
+    gap: 1.3rem;
+    margin: 0 0 0.7rem;
+    font-size: 0.92rem;
+    color: var(--fg-muted);
+  }
+  .split b {
+    color: var(--fg);
+    font-size: 1.05rem;
+    font-variant-numeric: tabular-nums;
   }
 </style>
