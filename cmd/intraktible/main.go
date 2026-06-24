@@ -31,6 +31,7 @@ import (
 	"github.com/e6qu/intraktible/agent-manager/tools"
 	"github.com/e6qu/intraktible/case-manager/cases"
 	casecmd "github.com/e6qu/intraktible/case-manager/command"
+	caseschedule "github.com/e6qu/intraktible/case-manager/schedule"
 	caseservice "github.com/e6qu/intraktible/case-manager/service"
 	contextcmd "github.com/e6qu/intraktible/context-layer/command"
 	"github.com/e6qu/intraktible/context-layer/connectors"
@@ -218,6 +219,9 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 			ai.WithHTTPClient(egress.Client(ai.HTTPTimeout)))
 		aiRegistry.Register(ai.Guard(provider, guardrails))
 		slog.Info("ai: registered HTTP provider", "name", name, "model", os.Getenv("INTRAKTIBLE_AI_MODEL"))
+	} else {
+		slog.Warn("ai: no provider configured; AI nodes/agents/copilot use a deterministic stub",
+			"set", "INTRAKTIBLE_AI_BASE_URL")
 	}
 	aiRegistry.Register(ai.Guard(ai.Stub{}, guardrails))
 
@@ -245,6 +249,7 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 	var monitorScheduler *monitor.Scheduler
 	var driftScheduler *enginemodels.Scheduler
 	var deployScheduler *schedule.Scheduler
+	var caseScheduler *caseschedule.Scheduler
 	if enabled(modules, "decision-engine") {
 		// A decision can fold in a Context Layer entity's features, call Context
 		// Layer connectors from Connect nodes, and run Agent Manager agents from AI
@@ -312,7 +317,12 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 		grants.New(grants.NewHandler(log), st).Routes(api)
 	}
 	if enabled(modules, "case-manager") {
-		caseservice.New(casecmd.NewHandler(log), st).Routes(api)
+		caseCmd := casecmd.NewHandler(log)
+		caseservice.New(caseCmd, st).Routes(api)
+		// SLA sweeper: records breaches for open cases past deadline on the same
+		// cadence as the monitor/drift/deploy sweeps (the /cases/sla-sweep endpoint
+		// is the on-demand alternative).
+		caseScheduler = caseschedule.NewScheduler(st, caseCmd)
 	}
 	if enabled(modules, "context-layer") {
 		contextservice.New(contextcmd.NewHandler(log), st,
@@ -396,6 +406,9 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 			if deployScheduler != nil {
 				go deployScheduler.Run(ctx, d)
 			}
+			if caseScheduler != nil {
+				go caseScheduler.Run(ctx, d)
+			}
 		}
 	}
 
@@ -442,6 +455,12 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 		if groupRoles := parseGroupRoles(os.Getenv("INTRAKTIBLE_SCIM_GROUP_ROLES")); len(groupRoles) > 0 {
 			ssoAugment = scimRoleAugmenter(scimStore, groupRoles)
 		}
+		// Re-run the deprovisioning gate on every Resolve of an SSO session, so a
+		// SCIM-deactivated user loses access within the request cycle instead of
+		// keeping a valid session until the 24h TTL expires.
+		sessions.SetValidator(func(id identity.Identity) bool {
+			return scimStore.Allowed(context.Background(), id, id.Actor)
+		})
 	}
 	if authers := oidcAuthenticators(ctx); len(authers) > 0 {
 		oh := httpx.NewOIDCHandler(sessions, authers...)

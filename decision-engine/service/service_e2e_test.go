@@ -1444,6 +1444,61 @@ func TestDecideEnvironmentScopeEnforced(t *testing.T) {
 		map[string]any{"data": map[string]any{}}, http.StatusNotFound, nil)
 }
 
+// TestWriteEnvironmentScopeEnforced proves the change-control write paths (deploy,
+// rollback, schedule, promote, deployment-request) honor the caller's environment
+// scope, not just the per-flow grant + role. A sandbox-scoped admin key cannot push
+// a version live to production through any of them, but may act on sandbox.
+func TestWriteEnvironmentScopeEnforced(t *testing.T) {
+	log, st := testutil.NewLogStore(t)
+	svc := service.New(command.NewHandler(log), command.NewDecideHandler(log, st), preapproval.NewHandler(log), st)
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "author"}
+	api := testutil.StartAPIScoped(t, log, st, "sandbox-key", auth.Sandbox, id, svc.Routes,
+		flows.Projector{}, history.Projector{})
+
+	var created struct {
+		FlowID string `json:"flow_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows", map[string]any{"slug": "scoped", "name": "Scoped"}, http.StatusCreated, &created)
+	publish := func() {
+		api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/versions", map[string]any{
+			"graph": map[string]any{
+				"nodes": []map[string]any{
+					{"id": "in", "type": "input"},
+					{"id": "out", "type": "output", "config": map[string]any{"fields": []string{"x"}}},
+				},
+				"edges": []map[string]any{{"from": "in", "to": "out"}},
+			},
+		}, http.StatusCreated, nil)
+	}
+	publish()
+	publish()
+
+	fid := created.FlowID
+	// Every write targeting production is a 403 (scope), regardless of admin role.
+	api.Request(t, http.MethodPost, "/v1/flows/"+fid+"/deployments",
+		map[string]any{"environment": "production", "version": 1}, http.StatusForbidden, nil)
+	api.Request(t, http.MethodPost, "/v1/flows/"+fid+"/deployments/rollback",
+		map[string]any{"environment": "production"}, http.StatusForbidden, nil)
+	api.Request(t, http.MethodPost, "/v1/flows/"+fid+"/deployments/schedule",
+		map[string]any{"environment": "production", "version": 1, "at": "2999-01-01T00:00:00Z"}, http.StatusForbidden, nil)
+	api.Request(t, http.MethodPost, "/v1/flows/"+fid+"/deployment-requests",
+		map[string]any{"environment": "production", "version": 1}, http.StatusForbidden, nil)
+	// Promote requires BOTH endpoints in scope: sandbox->production is blocked
+	// (target out of scope) and production->sandbox is blocked (source out of scope).
+	api.Request(t, http.MethodPost, "/v1/flows/"+fid+"/promote",
+		map[string]any{"from": "sandbox", "to": "production"}, http.StatusForbidden, nil)
+	api.Request(t, http.MethodPost, "/v1/flows/"+fid+"/promote",
+		map[string]any{"from": "production", "to": "sandbox"}, http.StatusForbidden, nil)
+
+	// The same writes against sandbox pass the scope gate and succeed.
+	api.Request(t, http.MethodPost, "/v1/flows/"+fid+"/deployments",
+		map[string]any{"environment": "sandbox", "version": 1}, http.StatusCreated, nil)
+	api.Request(t, http.MethodPost, "/v1/flows/"+fid+"/deployments/schedule",
+		map[string]any{"environment": "sandbox", "version": 1, "at": "2999-01-01T00:00:00Z"}, http.StatusCreated, nil)
+	api.Request(t, http.MethodPost, "/v1/flows/"+fid+"/deployment-requests",
+		map[string]any{"environment": "sandbox", "version": 2}, http.StatusCreated, nil)
+}
+
 // TestFlowOpenAPIEndpoint proves the per-flow generated contract carries the flow's
 // decide endpoints and embeds its published input schema.
 func TestFlowOpenAPIEndpoint(t *testing.T) {

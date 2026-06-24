@@ -534,6 +534,9 @@ func (s *Service) deploy(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, err)
 		return
 	}
+	if !allowEnv(w, r, req.Environment) {
+		return
+	}
 	if !s.allowFlow(w, r, id, r.PathValue("flow_id"), req.Environment) {
 		return
 	}
@@ -566,6 +569,9 @@ func (s *Service) rollback(w http.ResponseWriter, r *http.Request) {
 	var req rollbackRequest
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	if !allowEnv(w, r, req.Environment) {
 		return
 	}
 	if !s.allowFlow(w, r, id, r.PathValue("flow_id"), req.Environment) {
@@ -610,6 +616,9 @@ func (s *Service) scheduleDeploy(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		until = &u
+	}
+	if !allowEnv(w, r, req.Environment) {
+		return
 	}
 	if !s.allowFlow(w, r, id, r.PathValue("flow_id"), req.Environment) {
 		return
@@ -806,6 +815,9 @@ func (s *Service) promote(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, fmt.Errorf("promote: from and to must differ"))
 		return
 	}
+	if !allowEnv(w, r, req.From) || !allowEnv(w, r, req.To) {
+		return
+	}
 	if !s.allowFlow(w, r, id, r.PathValue("flow_id"), req.To) {
 		return
 	}
@@ -916,6 +928,9 @@ func (s *Service) requestDeployment(w http.ResponseWriter, r *http.Request) {
 	var req deployRequest
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	if !allowEnv(w, r, req.Environment) {
 		return
 	}
 	if !s.allowFlow(w, r, id, r.PathValue("flow_id"), req.Environment) {
