@@ -54,8 +54,13 @@ jobs:
         run: |
           rm -rf _site && mkdir -p _site/demo
           cp -r web/build/. _site/demo/
-          # SPA fallback: GitHub Pages serves 404.html for unknown paths, so a deep
-          # link like /demo/engine boots the app instead of 404-ing.
+          # SPA fallback for deep dynamic links (e.g. /demo/cases/case_1, /demo/decisions/
+          # dec_1) that aren't prerendered to a static .html. GitHub Pages serves the
+          # custom 404 page ONLY from the site ROOT, not per-directory — so the demo shell
+          # must live at _site/404.html (a _site/demo/404.html is never consulted for
+          # /demo/* misses). The shell's base is /intraktible/demo, so it boots and client-
+          # routes correctly. Keep the demo-local copy too; it's harmless.
+          cp web/build/index.html _site/404.html
           cp web/build/index.html _site/demo/404.html
           cp -r web/build-docs _site/docs
           cp pages/index.html _site/index.html
