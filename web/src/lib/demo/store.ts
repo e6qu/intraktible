@@ -3161,11 +3161,23 @@ export function createState(): DemoState {
     ...a,
     runs: agentRuns.filter((r) => r.agent === a.name).length
   }));
+  const decisions = seedDecisions();
+  const cases = seedCases();
+  // Backfill the reverse decision→case link: a seeded case carries its source
+  // decision id, but the decision needs `case_id` set for the trace page to surface
+  // the "opened case" link. One-time at state creation; first case wins when several
+  // share a source decision (the link only needs to land on a real, related case).
+  const decisionById = new Map(decisions.map((d) => [d.decision_id, d]));
+  for (const c of cases) {
+    if (!c.source_decision_id) continue;
+    const dec = decisionById.get(c.source_decision_id);
+    if (dec && !dec.case_id) dec.case_id = c.case_id;
+  }
   return {
     identity: identityFor(USERS[0]),
     flows: seedFlows(),
-    decisions: seedDecisions(),
-    cases: seedCases(),
+    decisions,
+    cases,
     agents,
     agentRuns,
     agentVersions: seedAgentVersions(),

@@ -942,6 +942,13 @@ which previously shared one generic "recent decisions" feed — each gained a **
 (config-driven via `persona.homePanel`): manager → pending four-eyes approvals, developer → failing
 traces, product → champion-vs-challenger.
 
+A second four-agent review then cleared the next layer: a real **active-nav/`aria-current` bug** under
+the base path, **per-page `<title>`s**, naming-register drift (Cases/Agents/Traces H1s), four-eyes
+self-approval disabled in the UI, deploy **deep-linking** (`?tab=deploy`), a schema-prefilled builder
+test input, the seed's reverse decision→case link, agent-escalation context + an "open case" link,
+create-flow validation, and a batch of a11y/polish (Hint viewport clamp, table scroll-shadow, landing
+deep-links to proof).
+
 ---
 
 ## 9. MVP non-goals

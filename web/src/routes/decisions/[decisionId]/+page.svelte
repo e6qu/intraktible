@@ -86,7 +86,9 @@
 
 <main>
   <Breadcrumb sectionHref="/decisions" sectionLabel="Decisions" current={id} />
-  {#if error}<p class="err">{error}</p>{/if}
+  {#if error}
+    <p class="err">This decision couldn't be loaded — it may not exist or the link is stale.</p>
+  {/if}
   {#if d}
     <div class="head">
       <h1>{d.slug} <Badge tone={statusTone(d.status)}>{d.status}</Badge></h1>

@@ -466,18 +466,17 @@ select:focus-visible,
   width: 100%;
   overflow-x: auto;
   background:
-    linear-gradient(to right, var(--surface) 30%, transparent),
-    linear-gradient(to right, transparent, var(--surface) 70%) 0 100% / 100% 100%,
-    radial-gradient(farthest-side at 100% 50%, rgba(20, 25, 35, 0.18), transparent);
+    linear-gradient(to right, var(--surface) 45%, transparent) 0 0,
+    linear-gradient(to left, var(--surface) 60%, transparent) 100% 0,
+    radial-gradient(farthest-side at 100% 50%, rgba(20, 25, 35, 0.18), transparent) 100% 0;
   background-repeat: no-repeat;
+  /* The right cover (2nd layer, local) is sized to fully mask the right-edge shadow
+     (3rd layer, scroll) when the table fits — so no stray band shows; scrolling moves
+     the local cover off the edge to reveal the shadow only while there's more to see. */
   background-size:
-    28px 100%,
-    28px 100%,
-    14px 100%;
-  background-position:
-    0 0,
-    100% 0,
-    100% 0;
+    24px 100%,
+    24px 100%,
+    12px 100%;
   background-attachment: local, local, scroll;
 }
 

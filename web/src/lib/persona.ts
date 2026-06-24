@@ -234,6 +234,7 @@ export const PERSONAS: PersonaConfig[] = [
     actions: [
       { label: 'Clear pending approvals', href: '/preapprovals', icon: 'check' },
       { label: 'Check case load', href: '/cases', icon: 'cases' },
+      { label: 'Check model-risk posture', href: '/mrm', icon: 'shield' },
       { label: 'Review the audit trail', href: '/audit', icon: 'shield' }
     ],
     homeStats: ['pending_approvals', 'needs_review', 'overdue'],
@@ -242,7 +243,7 @@ export const PERSONAS: PersonaConfig[] = [
   {
     id: 'product',
     label: 'Product / Experimentation',
-    blurb: 'A/B, shadow, backtests, and policy impact',
+    blurb: 'A/B, backtests, and policy impact',
     icon: 'diagram',
     home: 'persona',
     nav: ['engine', 'policies', 'models', 'decisions', 'data', 'observability'],

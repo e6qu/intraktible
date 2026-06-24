@@ -14,7 +14,7 @@ test.beforeEach(async ({ page }) => {
 
 test('defines an agent from the registry and shows the run summary', async ({ page }) => {
   await page.goto('/agents');
-  await expect(page.getByRole('heading', { name: /Agent Manager/i })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Agents', exact: true })).toBeVisible();
 
   // The "Define agent" form is a disclosure (content-first); open it.
   await page.getByText('+ Define agent').click();

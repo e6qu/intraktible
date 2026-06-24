@@ -90,7 +90,7 @@
 </script>
 
 <main>
-  <h1>Agent Manager</h1>
+  <h1>Agents</h1>
   <div class="row">
     <button onclick={load}>Reload</button>
   </div>

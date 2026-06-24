@@ -180,7 +180,7 @@
 </script>
 
 <main>
-  <h1>Case Manager — Queue</h1>
+  <h1>Cases</h1>
   <div class="row">
     <label
       >status

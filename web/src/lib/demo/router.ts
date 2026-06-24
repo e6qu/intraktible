@@ -146,7 +146,10 @@ route('POST', '/v1/hello', (_m, body) =>
 // --- Flows ----------------------------------------------------------------------
 route('GET', '/v1/flows', () => ok({ flows: state.flows }));
 route('POST', '/v1/flows', (_m, body) => {
-  const slug = String(body.slug ?? '');
+  const slug = String(body.slug ?? '').trim();
+  if (!slug) return badRequest('slug is required');
+  if (state.flows.some((f) => f.slug === slug))
+    return badRequest(`a flow with slug "${slug}" already exists`);
   const name = String(body.name ?? slug);
   const flowId = nextId('flow');
   const emptyGraph = { nodes: [{ id: 'in', type: 'input' as const, name: 'Input' }], edges: [] };
@@ -887,6 +890,18 @@ route('POST', '/v1/agents/:name/runs/:rid/escalate', (m, body) => {
   const caseId = nextId('case');
   const now = new Date().toISOString();
   const slaDays = Number(body.sla_days ?? 3);
+  // Carry the escalated run's prompt + a short form of its output into the case
+  // context (the flat fact grid the case detail renders), so an agent_review case is
+  // self-explanatory — the reviewer sees what was asked and what came back, not an
+  // empty stub. Mirrors how manual-review cases carry their decision context.
+  const run = state.agentRuns.find((r) => r.run_id === m[2] && r.agent === m[1]);
+  const runOutput = run?.error
+    ? `error: ${run.error}`
+    : (run?.text ?? (run?.structured != null ? JSON.stringify(run.structured) : ''));
+  const context: Record<string, unknown> = { agent: m[1], run_id: m[2] };
+  if (run?.prompt) context.prompt = run.prompt;
+  if (runOutput)
+    context.output = runOutput.length > 280 ? runOutput.slice(0, 280) + '…' : runOutput;
   state.cases.unshift({
     case_id: caseId,
     company_name: String(body.company_name ?? 'Agent escalation'),
@@ -895,6 +910,7 @@ route('POST', '/v1/agents/:name/runs/:rid/escalate', (m, body) => {
     sla_days: slaDays,
     days_left: slaDays,
     sla_state: 'on_track',
+    context,
     notes: [],
     audit: [
       {

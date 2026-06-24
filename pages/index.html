@@ -136,6 +136,16 @@
         font-size: 0.92rem;
         color: #aeb7c7;
       }
+      .card a.see-it {
+        display: inline-block;
+        margin-top: 0.7rem;
+        font-size: 0.85rem;
+        font-weight: 600;
+        color: #8fa6ff;
+      }
+      .card a.see-it:hover {
+        text-decoration: underline;
+      }
       /* Loop */
       section.loop {
         padding: 2.5rem 0 3rem;
@@ -223,6 +233,7 @@
                 Every decision is recorded as an immutable event with a full node-by-node trace —
                 inspect, replay, and explain any outcome.
               </p>
+              <a class="see-it" href="./demo/decisions/dec_1">See a trace →</a>
             </div>
             <div class="card">
               <h3>Governed by design</h3>
@@ -230,6 +241,7 @@
                 Four-eyes deployment approval, an immutable audit log, RBAC, and a model-risk
                 inventory with drift monitoring — built in, not bolted on.
               </p>
+              <a class="see-it" href="./demo/mrm">See the model-risk inventory →</a>
             </div>
             <div class="card">
               <h3>Human-in-the-loop</h3>

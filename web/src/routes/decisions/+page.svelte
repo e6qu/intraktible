@@ -12,7 +12,7 @@
     type Environment,
     type Variant
   } from '$lib/api';
-  import { resolvePersona, personaLens, type DecisionColumn } from '$lib/persona';
+  import { resolvePersona, personaConfig, personaLens, type DecisionColumn } from '$lib/persona';
   import { appHref } from '$lib/paths';
   import Badge from '$lib/Badge.svelte';
   import { statusTone, dispositionTone } from '$lib/badge';
@@ -30,6 +30,9 @@
   // decisions lens — a developer lands on failed traces, product on the challenger arm
   // — and are freely changeable/clearable.
   const lens = personaLens(resolvePersona()).decisions ?? {};
+  // The page heading follows the persona's term for this surface (a developer's nav and
+  // page both say "Traces", not just the nav item).
+  const heading = personaConfig(resolvePersona()).terms?.decisions ?? 'Decisions';
   // The visible columns and their order come from the persona lens (a developer leads
   // with status/duration, product with the experiment variant); unset → the full set.
   const DEFAULT_COLUMNS: DecisionColumn[] = [
@@ -55,7 +58,8 @@
   ]);
   const columnLabel = (c: DecisionColumn): string => COLUMN_LABELS.get(c) ?? c;
   const DEFAULT_EMPTY_HINT =
-    'Run a flow from the Decision Engine and every determination shows up here — replayable, node by node.';
+    'Run a flow from Flows and every determination shows up here — replayable, node by node.';
+  const NO_MATCH_HINT = 'No decisions match these filters — clear or widen them to see more.';
   let fFlow = $state('');
   let fEnv = $state<Environment | ''>(lens.env ?? '');
   let fStatus = $state<DecisionStatus | ''>(lens.status ?? '');
@@ -118,7 +122,7 @@
       : (lens.empty?.title ?? 'No decisions match these filters')
   );
   const emptyHint = $derived(
-    total === 0 && noFilters ? DEFAULT_EMPTY_HINT : (lens.empty?.hint ?? DEFAULT_EMPTY_HINT)
+    total === 0 && noFilters ? DEFAULT_EMPTY_HINT : (lens.empty?.hint ?? NO_MATCH_HINT)
   );
   onMount(load);
 </script>
@@ -126,7 +130,7 @@
 <main>
   <div class="head">
     <div class="head-titles">
-      <h1>Decisions</h1>
+      <h1>{heading}</h1>
       <p class="subtitle">
         Every determination the engine recorded — replayable, node by node.
         {#if !loading && total > 0}<span class="count-pill"
