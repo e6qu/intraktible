@@ -1552,6 +1552,7 @@ function seedCases(): Case[] {
       slaDays: 2,
       daysLeft: 2,
       slaState: 'on_track',
+      src: 'dec_27',
       context: { identity_conf: 55, doc_quality: 'low' },
       notes: [],
       audit: [
@@ -1568,6 +1569,7 @@ function seedCases(): Case[] {
       slaDays: 4,
       daysLeft: -2,
       slaState: 'overdue',
+      src: 'dec_23',
       context: { uw_score: 42, mcc: '6051 (crypto)' },
       notes: [
         {
@@ -1577,7 +1579,7 @@ function seedCases(): Case[] {
         }
       ],
       audit: [
-        { type: 'case.opened', actor: 'system', at: ago(150), detail: 'merchant underwriting' },
+        { type: 'case.opened', actor: 'system', at: ago(150), detail: 'from decision dec_23' },
         { type: 'case.breached', actor: 'system', at: ago(6), detail: 'SLA exceeded' }
       ],
       createdHrs: 150,
@@ -3295,6 +3297,30 @@ export function resetDemo(): void {
 // The single shared, mutable state instance for the session: the persisted blob if
 // one exists and matches the schema, otherwise a fresh seed.
 export const state: DemoState = loadPersisted() ?? createState();
+
+// psi computes the Population Stability Index between two binned distributions —
+// the real formula (Σ (a−e)·ln(a/e) over normalized bins), not a hardcoded constant.
+export function psi(baseline: number[], current: number[]): number {
+  const sb = baseline.reduce((a, b) => a + b, 0) || 1;
+  const sc = current.reduce((a, b) => a + b, 0) || 1;
+  const total = baseline.reduce((acc, b, i) => {
+    const e = Math.max(b / sb, 1e-4);
+    const a = Math.max((current.at(i) ?? 0) / sc, 1e-4);
+    return acc + (a - e) * Math.log(a / e);
+  }, 0);
+  return Math.round(total * 1000) / 1000;
+}
+
+// modelDrift returns a model's live PSI vs its captured baseline. The demo derives the
+// current distribution by shifting the baseline a deterministic per-model amount, so
+// the PSI is genuinely computed and varies across models (some firing, some not).
+export function modelDrift(name: string): { psi: number; current: number[] } | undefined {
+  const baseline = state.modelBaselines.get(name);
+  if (!baseline) return undefined;
+  const f = (name.length % 5) / 12; // 0..0.33, deterministic per model
+  const current = baseline.map((b, i) => b * (1 - f) + (i > 0 ? (baseline.at(i - 1) ?? 0) * f : 0));
+  return { psi: psi(baseline, current), current };
+}
 
 // driftReportFor computes a DriftReport from a flow's captured baseline vs the
 // current disposition distribution over its recorded decisions.

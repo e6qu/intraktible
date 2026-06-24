@@ -27,14 +27,15 @@ import type {
   Scope,
   MrmModel
 } from '$lib/api';
-import { state, nextId, driftReportFor, ahead } from './store';
+import { state, nextId, driftReportFor, modelDrift, ahead } from './store';
 import {
   decideFlow,
   runAssertionsFor,
   scoreEvalCases,
   backtestFlowDataset,
   runFlow,
-  evalExpr
+  evalExpr,
+  pickVersion
 } from './engine';
 import { agentReply } from './agent';
 
@@ -568,6 +569,62 @@ route('POST', '/v1/flows/:id/whatif', (m, body) => {
 });
 
 // --- Decide ---------------------------------------------------------------------
+
+// honorPreapproval returns a decision served straight from an active pre-approval when
+// one matches the request's entity (and bound flow, if any), incrementing its honored
+// count — else null, so the caller walks the flow normally.
+function honorPreapproval(
+  flow: Flow,
+  env: Environment,
+  body: Body,
+  data: Record<string, unknown>
+): DemoResponse | null {
+  const entityType = body.entity_type ? String(body.entity_type) : '';
+  const entityId = body.entity_id ? String(body.entity_id) : '';
+  if (!entityType || !entityId) return null;
+  const grant = state.preapprovals.find(
+    (g) =>
+      g.status === 'active' &&
+      g.entity_type === entityType &&
+      g.entity_id === entityId &&
+      (!g.flow_slug || g.flow_slug === flow.slug) &&
+      new Date(g.valid_until).getTime() > Date.now()
+  );
+  if (!grant) return null;
+  grant.honored_count += 1;
+  grant.updated_at = new Date().toISOString();
+  const decisionId = nextId('dec');
+  const now = new Date().toISOString();
+  const decision: Decision = {
+    decision_id: decisionId,
+    flow_id: flow.flow_id,
+    slug: flow.slug,
+    version: pickVersion(flow, env).version,
+    environment: env,
+    variant: 'champion',
+    status: 'completed',
+    data,
+    output: data,
+    reason_codes: [
+      { code: 'PRE_APPROVED', description: `Served from pre-approval ${grant.preapproval_id}` }
+    ],
+    disposition: grant.disposition,
+    preapproval_id: grant.preapproval_id,
+    nodes: [],
+    started_at: now,
+    ended_at: now,
+    duration_ms: 1
+  };
+  state.decisions.unshift(decision);
+  pushAudit('decision.created', flow.flow_id, {
+    environment: env,
+    decision_id: decisionId,
+    status: 'completed',
+    disposition: grant.disposition,
+    preapproval_id: grant.preapproval_id
+  });
+  return ok({ decision_id: decisionId, status: 'completed', data, disposition: grant.disposition });
+}
 route('POST', '/v1/flows/:slug/:env/decide', (m, body) => {
   const flow = findFlow(m[1]);
   if (!flow) return notFound();
@@ -579,6 +636,11 @@ route('POST', '/v1/flows/:slug/:env/decide', (m, body) => {
     const { result } = decideFlow(flow, m[2] as Environment, data, { record: false });
     return ok({ ...result, decision_id: '' });
   }
+  // Pre-approval fast path: an active grant for this entity short-circuits the flow —
+  // the decision is served instantly from the grant (the real backend's behavior),
+  // incrementing its honored count, rather than walking the graph.
+  const honored = honorPreapproval(flow, m[2] as Environment, body, data);
+  if (honored) return honored;
   const { result } = decideFlow(flow, m[2] as Environment, data);
   // Surface the run in the global audit trail so the build→decide→case→resolve
   // journey actually shows up on the Audit page.
@@ -872,7 +934,7 @@ route('GET', '/v1/models/:name/drift', (m, _b, q) => {
   const hist = state.modelBaselines.get(model.name) ?? [4, 6, 9, 5, 3];
   const threshold = state.modelMonitors.get(model.name);
   const hasBaseline = state.modelBaselines.has(model.name);
-  const psi = hasBaseline ? 0.12 : undefined;
+  const psi = modelDrift(model.name)?.psi;
   const windowDays = Number((q.get('window') ?? '0').replace('d', '')) || 30;
   return ok({
     model: model.name,
@@ -1511,9 +1573,18 @@ function mrmFlow(f: Flow): MrmModel {
     m.set(env, dep.version);
     Object.assign(deployments, Object.fromEntries(m));
   }
+  // Reuse the same SLO attainment the /slo endpoint computes, so the MRM health column
+  // can't disagree with the observability page (no objective set ⇒ nothing to breach).
+  const slo = state.flowSlos.get(f.flow_id);
+  const successRate = metrics.total ? metrics.completed / metrics.total : 1;
+  const sloMet = slo
+    ? successRate >= slo.success_target &&
+      (slo.latency_target_ms === 0 || metrics.avg_duration_ms <= slo.latency_target_ms)
+    : true;
   const issues: string[] = [];
   if (assertions.length === 0) issues.push('No assertions defined');
   if (monitors.length > 0) issues.push(`${monitors.length} monitor(s) firing`);
+  if (slo && !sloMet) issues.push('SLO not met');
   return {
     kind: 'flow' as const,
     id: f.flow_id,
@@ -1533,7 +1604,7 @@ function mrmFlow(f: Flow): MrmModel {
         ? Math.round((metrics.completed / metrics.total) * 1000) / 1000
         : 1,
       firing_monitors: monitors,
-      slo_met: true
+      slo_met: sloMet
     },
     issues: issues.length ? issues : undefined,
     updated_at: f.versions.at(-1)?.published_at ?? new Date().toISOString()
@@ -1542,6 +1613,8 @@ function mrmFlow(f: Flow): MrmModel {
 
 function mrmModel(m: Model): MrmModel {
   const hasBaseline = state.modelBaselines.has(m.name);
+  const drift = modelDrift(m.name);
+  const threshold = state.modelMonitors.get(m.name);
   return {
     kind: 'predictive_model' as const,
     id: m.name,
@@ -1555,8 +1628,8 @@ function mrmModel(m: Model): MrmModel {
     monitoring: {
       decisions: 0,
       success_rate: 1,
-      drift_psi: hasBaseline ? 0.12 : undefined,
-      drift_firing: false
+      drift_psi: drift?.psi,
+      drift_firing: drift !== undefined && threshold !== undefined ? drift.psi > threshold : false
     },
     issues: hasBaseline ? undefined : ['No drift baseline captured'],
     updated_at: m.updated_at

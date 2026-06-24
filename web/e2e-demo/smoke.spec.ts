@@ -69,6 +69,18 @@ test('opens a flow, a decision, a case, and an agent from their lists', async ({
   expect(errors, `uncaught error(s) on detail pages: ${errors.join('; ')}`).toEqual([]);
 });
 
+// A builder preview run produces a verdict but records nothing (the Test tab is the
+// default tab, so the controls are immediately available after opening a flow).
+test('a builder preview run shows a verdict but records no decision', async ({ page }) => {
+  await page.goto('engine');
+  await page.locator('a[href*="/engine/"]').first().click();
+  await page.getByLabel("preview (don't record)").check();
+  await page.getByRole('button', { name: 'Run', exact: true }).click();
+  await expect(page.getByTestId('run-verdict')).toBeVisible();
+  await expect(page.getByText('preview · not recorded')).toBeVisible();
+  await expect(page.getByText('View the recorded decision')).toHaveCount(0);
+});
+
 // The demo identity switcher changes the signed-in role, and role-gated nav reacts
 // live: admin-only surfaces (Model risk, Audit) vanish for a non-admin viewer.
 test('switching demo role updates the role-gated navigation', async ({ page }) => {

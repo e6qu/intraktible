@@ -861,6 +861,9 @@
   // <pre> behind the details). null until the first run / cleared on an error.
   let runResult = $state<DecideResult | null>(null);
   let runMs = $state<number | null>(null);
+  // Preview = a dry run that records nothing (no decision/audit/metrics); off by
+  // default, so an ordinary test records a sandbox decision you can inspect.
+  let preview = $state(false);
   // The decide result's primary output fields (the `data` map) for the card — at
   // most a handful, the rest collapse into the raw JSON.
   const runOutputFields = $derived.by(() => {
@@ -882,13 +885,17 @@
     const startedAt = performance.now();
     try {
       const entity = entityType && entityID ? { type: entityType, id: entityID } : undefined;
-      const res = await decide(key, flow.slug, env, JSON.parse(dataText), entity);
+      const res = await decide(key, flow.slug, env, JSON.parse(dataText), entity, fetch, preview);
       runMs = Math.round(performance.now() - startedAt);
       runResult = res;
       lastDecisionId = res.decision_id ?? '';
       result = JSON.stringify(res, null, 2);
-      void loadMetrics();
-      void loadTelemetry(lastDecisionId);
+      // A preview records nothing, so there are no metrics to refresh and no recorded
+      // decision to fetch a node trace from — the verdict card alone reflects the run.
+      if (!preview) {
+        void loadMetrics();
+        void loadTelemetry(lastDecisionId);
+      }
     } catch (e) {
       result = `Error: ${msg(e)}`;
     } finally {
@@ -2825,6 +2832,10 @@
           >{running ? 'Running…' : 'Run'}</button
         >
         <button type="button" class="link" onclick={sampleFromSchema}>Sample input</button>
+        <label class="preview-toggle" title="Run the flow without recording a decision">
+          <input type="checkbox" bind:checked={preview} aria-label="preview (don't record)" />
+          Preview (don't record)
+        </label>
       </div>
       <div class="row">
         <input
@@ -2854,6 +2865,11 @@
             {/if}
             <Badge tone={statusTone(runResult.status)}>{runResult.status}</Badge>
             {#if runMs != null}<span class="dur">{runMs} ms</span>{/if}
+            {#if !lastDecisionId}
+              <span class="dur" title="Preview run — no decision was recorded"
+                >preview · not recorded</span
+              >
+            {/if}
           </div>
           {#if runResult.error}
             <p class="verdict-err">{runResult.error}</p>
@@ -3366,6 +3382,15 @@
     font-size: 0.82rem;
     color: var(--fg-subtle);
     font-variant-numeric: tabular-nums;
+  }
+  .preview-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.85rem;
+    color: var(--fg-muted);
+    cursor: pointer;
+    white-space: nowrap;
   }
   .verdict-err {
     margin: 0.5rem 0 0;

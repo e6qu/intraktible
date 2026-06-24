@@ -384,7 +384,7 @@ function findNode(graph: FlowGraph, id: string): GraphNode | undefined {
 
 // pickVersion resolves the graph for a flow in an environment (deployed version,
 // else latest), and the version number used for the recorded decision.
-function pickVersion(flow: Flow, env: string): { graph: FlowGraph; version: number } {
+export function pickVersion(flow: Flow, env: string): { graph: FlowGraph; version: number } {
   const deployed = Object.entries(flow.deployments ?? {}).find(([e]) => e === env)?.[1]?.version;
   const version = deployed ?? flow.latest;
   const v = flow.versions.find((x) => x.version === version) ?? flow.versions.at(-1);
@@ -394,6 +394,23 @@ function pickVersion(flow: Flow, env: string): { graph: FlowGraph; version: numb
 export interface DecideOptions {
   record?: boolean; // append a Decision to the store (default true)
   variant?: 'champion' | 'challenger';
+}
+
+// connectorSample returns plausible, connector-shaped data for a connect node, keyed
+// off the connector name (the demo stands in for a real external fetch).
+function connectorSample(connector: string): Record<string, unknown> {
+  const n = connector.toLowerCase();
+  if (/experian|bureau|credit/.test(n))
+    return { fico_score: 712, open_accounts: 4, utilization: 0.34, delinquencies_24m: 0 };
+  if (/ofac|sanction|watchlist|pep/.test(n))
+    return { hit: false, lists_checked: ['OFAC', 'EU', 'UN'], score: 0 };
+  if (/device|fraud|intel/.test(n))
+    return { device_risk: 22, vpn: false, new_device: false, velocity_24h: 3 };
+  if (/jumio|kyc|identity|document/.test(n))
+    return { verified: true, document_valid: true, liveness: 0.97 };
+  if (/bank|core|account|ledger/.test(n))
+    return { balance_usd: 5400, tenure_months: 28, nsf_12m: 0 };
+  return { ok: true, fetched_at: new Date().toISOString() };
 }
 
 // runFlow walks a FlowGraph from its input node, threading a mutable record
@@ -467,6 +484,18 @@ export function runFlow(
         m.set(outKey, pred);
         rec.predict = Object.fromEntries(m);
         nodeOut = Object.fromEntries([[outKey, pred]]);
+        break;
+      }
+      case 'connect': {
+        // The real connect node fetches from an external connector; the demo injects
+        // plausible, connector-shaped data so flows that read external signals resolve.
+        const connector = String(cfg.connector ?? cfg.name ?? '');
+        const outKey = String(cfg.output ?? 'connect');
+        const fetched = connectorSample(connector);
+        const m = new Map(Object.entries((rec.connect as Record<string, unknown>) ?? {}));
+        m.set(outKey, fetched);
+        rec.connect = Object.fromEntries(m);
+        nodeOut = Object.fromEntries([[outKey, fetched]]);
         break;
       }
       case 'ai': {
