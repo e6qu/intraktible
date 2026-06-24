@@ -162,7 +162,7 @@ func seal(key, plain []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return box.Encrypt(plain)
+	return box.Encrypt(plain, nil)
 }
 
 func open(key, sealed []byte) ([]byte, error) {
@@ -170,5 +170,5 @@ func open(key, sealed []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return box.Decrypt(sealed)
+	return box.Decrypt(sealed, nil)
 }

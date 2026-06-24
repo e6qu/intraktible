@@ -974,6 +974,15 @@ SLA sweep is scheduled. The canned spots the agents found were all in the demo m
 prompt, import actually persists); the `/login` chrome leak (another base-path bug) and create-key
 validation were fixed in the real app.
 
+A seventh round closed three things at once. **Color contrast** — long judged "fine" by eyeballed
+reviews but genuinely poor — was fixed by *measuring*: an automated WCAG-AA audit found 17 failing text
+styles (worst in dark mode and on tinted surfaces) rooted in the muted/semantic tokens, retuned to 0
+failures, and a permanent `contrast.spec.ts` now fails CI under AA so it can't regress (the durable
+methodology fix). The **flow builder** became Miro-style — the canvas is the full center stage with the
+node palette/inspector floating over it as a collapsible overlay. And the **deferred AEAD-AAD** binding
+landed (sealed connector credentials are now bound to their tenant/connector/field, backward-compatible),
+plus a Low grant-check gap on `setPromotionPolicy`/`setShadow`.
+
 ---
 
 ## 9. MVP non-goals

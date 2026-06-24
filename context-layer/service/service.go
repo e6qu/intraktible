@@ -233,7 +233,9 @@ func (s *Service) defineConnector(w http.ResponseWriter, r *http.Request) {
 		// Seal credential fields under the keyring, or redact them when no keyring is
 		// configured — so plaintext credentials never reach the event log or the
 		// tenant-readable audit surface regardless of sealing config.
-		cfg, err := connectors.SealConfigForRecord(req.Config, s.secrets)
+		cfg, err := connectors.SealConfigForRecord(req.Config, s.secrets, connectors.SecretLocation{
+			Org: id.Org, Workspace: id.Workspace, Connector: req.Name,
+		})
 		if err != nil {
 			return eventlog.Envelope{}, err
 		}

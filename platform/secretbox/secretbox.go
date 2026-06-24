@@ -15,6 +15,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -25,12 +26,24 @@ import (
 
 // Version marks a sealed envelope (the JSON wire form a sealed value takes). The
 // marker doubles as the field name so a sealed value is recognizable on sight.
-const Version = "intraktible.sealed.v1"
+// Version is the legacy marker: its envelopes were sealed with no additional
+// authenticated data (AAD), so they open without one. VersionAAD (v2) is the
+// current marker: its envelopes bind an AAD into the AEAD, so a ciphertext cannot
+// be replayed into a different record/tenant/field — Open authenticates the same
+// AAD the caller supplies. Both are recognized on read so existing v1 data keeps
+// decrypting; new seals always use VersionAAD.
+const (
+	Version    = "intraktible.sealed.v1"
+	VersionAAD = "intraktible.sealed.v2"
+)
 
-// SecretBox encrypts and decrypts opaque byte blobs.
+// SecretBox encrypts and decrypts opaque byte blobs, binding aad into the
+// ciphertext's authentication tag so a value sealed for one location cannot be
+// opened as another. A nil aad means "no binding" (used by callers whose values
+// are not location-scoped, and to reproduce the v1 construction).
 type SecretBox interface {
-	Encrypt(plain []byte) ([]byte, error)
-	Decrypt(ciphertext []byte) ([]byte, error)
+	Encrypt(plain, aad []byte) ([]byte, error)
+	Decrypt(ciphertext, aad []byte) ([]byte, error)
 }
 
 // AESGCMSecretBox seals values with AES-256-GCM. The caller supplies and retains
@@ -56,24 +69,26 @@ func NewAESGCMSecretBox(key []byte) (*AESGCMSecretBox, error) {
 }
 
 // Encrypt seals plain with a fresh nonce, prepended to the returned blob so
-// Decrypt can recover it.
-func (b *AESGCMSecretBox) Encrypt(plain []byte) ([]byte, error) {
+// Decrypt can recover it. aad is bound into GCM's authentication tag (not stored),
+// so Decrypt must be given the same aad; a nil aad reproduces the v1 construction.
+func (b *AESGCMSecretBox) Encrypt(plain, aad []byte) ([]byte, error) {
 	nonce := make([]byte, b.aead.NonceSize())
 	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
 		return nil, fmt.Errorf("secretbox: nonce: %w", err)
 	}
 	out := append([]byte{}, nonce...)
-	return b.aead.Seal(out, nonce, plain, nil), nil
+	return b.aead.Seal(out, nonce, plain, aad), nil
 }
 
-// Decrypt opens a blob produced by Encrypt.
-func (b *AESGCMSecretBox) Decrypt(ciphertext []byte) ([]byte, error) {
+// Decrypt opens a blob produced by Encrypt. It must be given the same aad that
+// sealed it; a mismatched (or absent) aad fails authentication.
+func (b *AESGCMSecretBox) Decrypt(ciphertext, aad []byte) ([]byte, error) {
 	if len(ciphertext) < b.aead.NonceSize() {
 		return nil, fmt.Errorf("secretbox: ciphertext too short")
 	}
 	nonce := ciphertext[:b.aead.NonceSize()]
 	sealed := ciphertext[b.aead.NonceSize():]
-	plain, err := b.aead.Open(nil, nonce, sealed, nil)
+	plain, err := b.aead.Open(nil, nonce, sealed, aad)
 	if err != nil {
 		return nil, fmt.Errorf("secretbox: decrypt: %w", err)
 	}
@@ -137,23 +152,80 @@ func NewKMSKeyring(keyID string, k kms.KMS) *Keyring {
 }
 
 // kmsBox adapts an external KMS to SecretBox. SecretBox has no context, so KMS
-// calls use a background context (the SDKs carry their own timeouts).
+// calls use a background context (the SDKs carry their own timeouts). The provider
+// Encrypt/Decrypt take no AAD, so the binding is carried inside the plaintext: aad
+// is length-prefixed ahead of the value before sealing and verified on open, which
+// is authenticated because the whole blob is. A nil aad prefixes a zero length, so
+// it round-trips with no binding (matching the AES-GCM box's nil-aad behavior).
 type kmsBox struct{ kms kms.KMS }
 
-func (b kmsBox) Encrypt(plain []byte) ([]byte, error) {
-	return b.kms.Encrypt(context.Background(), plain)
+func (b kmsBox) Encrypt(plain, aad []byte) ([]byte, error) {
+	return b.kms.Encrypt(context.Background(), prefixAAD(aad, plain))
 }
 
-func (b kmsBox) Decrypt(ciphertext []byte) ([]byte, error) {
-	return b.kms.Decrypt(context.Background(), ciphertext)
+func (b kmsBox) Decrypt(ciphertext, aad []byte) ([]byte, error) {
+	framed, err := b.kms.Decrypt(context.Background(), ciphertext)
+	if err != nil {
+		return nil, err
+	}
+	return stripAAD(aad, framed)
+}
+
+// prefixAAD frames a blob as uvarint(len(aad))||aad||plain so the AAD travels with
+// the (authenticated) ciphertext for providers that cannot take AAD natively. The
+// uvarint length avoids any fixed-width integer conversion.
+func prefixAAD(aad, plain []byte) []byte {
+	var hdr [binary.MaxVarintLen64]byte
+	n := binary.PutUvarint(hdr[:], uint64(len(aad)))
+	out := make([]byte, 0, n+len(aad)+len(plain))
+	out = append(out, hdr[:n]...)
+	out = append(out, aad...)
+	out = append(out, plain...)
+	return out
+}
+
+// stripAAD reverses prefixAAD, failing if the recovered AAD does not match the
+// one the caller expects — the replay defense for the KMS path.
+func stripAAD(aad, framed []byte) ([]byte, error) {
+	u, hdr := binary.Uvarint(framed)
+	if hdr <= 0 || u > maxFramedAAD {
+		return nil, fmt.Errorf("secretbox: kms aad length unreadable")
+	}
+	n := int(u)
+	if n > len(framed)-hdr {
+		return nil, fmt.Errorf("secretbox: kms aad length out of range")
+	}
+	got := framed[hdr : hdr+n]
+	if !bytesEqual(got, aad) {
+		return nil, fmt.Errorf("secretbox: kms aad mismatch")
+	}
+	return framed[hdr+n:], nil
+}
+
+// maxFramedAAD caps a decoded AAD length so the uvarint-to-int conversion cannot
+// overflow on any platform; real AADs are short identifier strings, far below it.
+const maxFramedAAD = 1 << 20
+
+// bytesEqual compares two byte slices, treating nil and empty as equal so a
+// nil-aad seal opens with an empty (or nil) aad.
+func bytesEqual(a, b []byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // SealValue seals plain under the primary key and returns the key id alongside the
 // raw sealed bytes — the low-level entry point for callers that embed the result in
 // their own structure (e.g. the connector-config field walker). Most callers want
 // Seal, which wraps this in a JSON envelope.
-func (kr *Keyring) SealValue(plain []byte) (keyID string, sealed []byte, err error) {
-	sealed, err = kr.byID[kr.primaryID].Encrypt(plain)
+func (kr *Keyring) SealValue(plain, aad []byte) (keyID string, sealed []byte, err error) {
+	sealed, err = kr.byID[kr.primaryID].Encrypt(plain, aad)
 	if err != nil {
 		return "", nil, err
 	}
@@ -164,16 +236,16 @@ func (kr *Keyring) SealValue(plain []byte) (keyID string, sealed []byte, err err
 // (failing loudly if the keyring lacks it). Without one — a value sealed before key
 // ids were recorded — it tries each key in turn; AEAD authentication rejects the
 // wrong key, so only the right one opens it.
-func (kr *Keyring) OpenValue(keyID string, sealed []byte) ([]byte, error) {
+func (kr *Keyring) OpenValue(keyID string, sealed, aad []byte) ([]byte, error) {
 	if keyID != "" {
 		box, ok := kr.byID[keyID]
 		if !ok {
 			return nil, fmt.Errorf("secretbox: value sealed under unknown key %q", keyID)
 		}
-		return box.Decrypt(sealed)
+		return box.Decrypt(sealed, aad)
 	}
 	for _, id := range kr.order {
-		if plain, err := kr.byID[id].Decrypt(sealed); err == nil {
+		if plain, err := kr.byID[id].Decrypt(sealed, aad); err == nil {
 			return plain, nil
 		}
 	}
@@ -191,33 +263,41 @@ type Envelope struct {
 
 // Seal seals plain and returns it as a self-describing JSON envelope (valid JSON,
 // so it can be stored anywhere the plaintext could — a JSONB column, an event
-// payload). Open reverses it.
-func (kr *Keyring) Seal(plain []byte) ([]byte, error) {
-	keyID, sealed, err := kr.SealValue(plain)
+// payload), binding aad into the authentication tag. New envelopes carry the
+// VersionAAD (v2) marker. Open reverses it. A nil aad is allowed (no binding).
+func (kr *Keyring) Seal(plain, aad []byte) ([]byte, error) {
+	keyID, sealed, err := kr.SealValue(plain, aad)
 	if err != nil {
 		return nil, err
 	}
 	return json.Marshal(Envelope{
-		Version: Version,
+		Version: VersionAAD,
 		Key:     keyID,
 		Value:   base64.StdEncoding.EncodeToString(sealed),
 	})
 }
 
-// Open reverses Seal, recovering the plaintext from a JSON envelope.
-func (kr *Keyring) Open(envelope []byte) ([]byte, error) {
+// Open reverses Seal, recovering the plaintext from a JSON envelope. It reads the
+// envelope version: a v2 (VersionAAD) envelope is opened with the supplied aad, so
+// a ciphertext transplanted to a different location fails authentication; a v1
+// (legacy) envelope was sealed with no aad and is opened with none, so all existing
+// sealed data keeps decrypting regardless of the aad passed here.
+func (kr *Keyring) Open(envelope, aad []byte) ([]byte, error) {
 	var e Envelope
 	if err := json.Unmarshal(envelope, &e); err != nil {
 		return nil, fmt.Errorf("secretbox: decode envelope: %w", err)
 	}
-	if e.Version != Version || e.Value == "" {
+	if e.Value == "" || (e.Version != Version && e.Version != VersionAAD) {
 		return nil, fmt.Errorf("secretbox: not a sealed envelope")
 	}
 	sealed, err := base64.StdEncoding.DecodeString(e.Value)
 	if err != nil {
 		return nil, fmt.Errorf("secretbox: decode envelope value: %w", err)
 	}
-	return kr.OpenValue(e.Key, sealed)
+	if e.Version == Version {
+		aad = nil
+	}
+	return kr.OpenValue(e.Key, sealed, aad)
 }
 
 // IsSealed reports whether b is a sealed envelope (vs plaintext). It requires
@@ -231,7 +311,7 @@ func IsSealed(b []byte) bool {
 		return false
 	}
 	var ver string
-	if err := json.Unmarshal(m["$intraktible_sealed"], &ver); err != nil || ver != Version {
+	if err := json.Unmarshal(m["$intraktible_sealed"], &ver); err != nil || (ver != Version && ver != VersionAAD) {
 		return false
 	}
 	var val string

@@ -61,13 +61,13 @@ func FuzzSecretsRoundTrip(f *testing.F) {
 		}
 		raw := json.RawMessage(cfg)
 		// Adversarial path: opening arbitrary JSON must never panic.
-		_, _ = connectors.DecryptSecrets(raw, kr)
+		_, _ = connectors.DecryptSecrets(raw, kr, loc("fuzz"))
 		// Round-trip path: only configs that seal cleanly are required to open back.
-		sealed, err := connectors.EncryptSecrets(raw, kr)
+		sealed, err := connectors.EncryptSecrets(raw, kr, loc("fuzz"))
 		if err != nil {
 			return
 		}
-		opened, err := connectors.DecryptSecrets(sealed, kr)
+		opened, err := connectors.DecryptSecrets(sealed, kr, loc("fuzz"))
 		if err != nil {
 			t.Fatalf("round-trip open failed: %v (cfg=%s)", err, cfg)
 		}

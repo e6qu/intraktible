@@ -310,7 +310,9 @@ func InvokeWithSecrets(ctx context.Context, s store.Store, id identity.Identity,
 	if !ok {
 		return nil, fmt.Errorf("context-layer: unknown connector %q", name)
 	}
-	def.Config, err = DecryptSecrets(def.Config, secrets)
+	def.Config, err = DecryptSecrets(def.Config, secrets, SecretLocation{
+		Org: def.Org, Workspace: def.Workspace, Connector: def.Name,
+	})
 	if err != nil {
 		return nil, err
 	}
