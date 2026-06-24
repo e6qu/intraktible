@@ -956,6 +956,14 @@ builder and on the keys page via a new `CodeSnippet`), the MRM/Audit **exports**
 bug across five tables, MRM row drill-through, two mobile clipping fixes, and small demo-robustness
 guards.
 
+A fifth review added a dedicated **security reviewer** of the real Go backend (the first such pass; the
+UX/flows/QA/product agents again confirmed diminishing returns). The posture was judged strong, and the
+concrete findings were fixed: connector credentials no longer reach the audit log in plaintext when
+sealing is unconfigured, **HTTP security headers** + a **CSRF** header gate (`X-Requested-With`, sent by
+`api.ts`), the maker-checker approve/reject path is race-safe across nodes (claim key + retry), a
+per-decide **evaluator timeout**, the AI client routes through the SSRF egress guard, and `crypto/rand`
+errors are handled. Plus a header-overflow fix and demo validation parity.
+
 ---
 
 ## 9. MVP non-goals
