@@ -17,6 +17,9 @@
   import { refreshUser } from '$lib/session';
 
   const demo = import.meta.env.VITE_DEMO;
+  // The rendered docs live as a sibling of the demo under the Pages base
+  // (/<repo>/demo/ → /<repo>/docs/), so a visitor can read how the engine works.
+  const docsHref = import.meta.env.BASE_URL.replace(/demo\/?$/, 'docs/') + 'execution.html';
 
   type DemoUser = { actor: string; name: string; role: string; title: string };
   type DemoControl = {
@@ -63,8 +66,9 @@
   <div class="demo-strip" role="note">
     <span class="dot" aria-hidden="true"></span>
     <span class="msg">
-      <b>Live demo.</b> Fully interactive, in your browser — no backend. Changes are saved locally and
-      persist across reloads.
+      <b>Live demo.</b> A real decision engine runs in your browser — no backend. Build flows, run
+      decisions, and inspect their traces; changes persist locally.
+      <a class="how" href={docsHref} target="_blank" rel="noreferrer noopener">How it works ↗</a>
     </span>
     {#if users.length > 0}
       <label class="who">
@@ -168,6 +172,12 @@
     background: color-mix(in srgb, var(--on-accent, #fff) 15%, transparent);
   }
   .src {
+    color: var(--on-accent, #fff);
+    text-decoration: underline;
+    white-space: nowrap;
+    font-weight: 500;
+  }
+  .how {
     color: var(--on-accent, #fff);
     text-decoration: underline;
     white-space: nowrap;

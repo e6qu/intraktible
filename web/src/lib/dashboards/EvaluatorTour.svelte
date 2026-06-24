@@ -49,9 +49,12 @@
     <h1>See intraktible in four steps</h1>
     <p class="lede">
       You're in a live sandbox. Walk the core loop — design, decide, explain, review — on real,
-      API-backed screens.{#if ds.total > 0}
-        There {ds.total === 1 ? 'is' : 'are'} already <b>{ds.total}</b>
-        decision{ds.total === 1 ? '' : 's'} recorded to explore.{/if}
+      API-backed screens.{#if ds.total > 0}{' '}There {ds.total === 1 ? 'is' : 'are'} already
+        <b>{ds.total}</b> decision{ds.total === 1 ? '' : 's'} recorded to explore.{/if}
+    </p>
+    <p class="lede signed-in">
+      You're signed in as an admin, so every surface is open. The persona menu (top-right) reshapes
+      the UI around a role's job without changing what you can access.
     </p>
   </header>
 
@@ -138,6 +141,11 @@
   .body h2 {
     font-size: 1.1rem;
     margin: 0 0 0.25rem;
+    color: var(--fg);
+  }
+  .signed-in {
+    margin-top: 0.75rem;
+    font-size: 0.95rem;
   }
   .body p {
     margin: 0 0 0.6rem;

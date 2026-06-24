@@ -15,7 +15,7 @@
   import { resolvePersona, personaLens, type DecisionColumn } from '$lib/persona';
   import { appHref } from '$lib/paths';
   import Badge from '$lib/Badge.svelte';
-  import { statusTone } from '$lib/badge';
+  import { statusTone, dispositionTone } from '$lib/badge';
 
   // API calls authenticate via the session cookie (empty key → no X-Api-Key).
   const key = '';
@@ -34,6 +34,7 @@
   // with status/duration, product with the experiment variant); unset → the full set.
   const DEFAULT_COLUMNS: DecisionColumn[] = [
     'status',
+    'disposition',
     'flow',
     'env',
     'version',
@@ -44,6 +45,7 @@
   const columns: DecisionColumn[] = lens.columns ?? DEFAULT_COLUMNS;
   const COLUMN_LABELS = new Map<DecisionColumn, string>([
     ['status', 'Status'],
+    ['disposition', 'Disposition'],
     ['flow', 'Flow'],
     ['env', 'Env'],
     ['version', 'Ver'],
@@ -207,6 +209,12 @@
               {#each columns as col (col)}
                 {#if col === 'status'}
                   <td><Badge tone={statusTone(d.status)}>{d.status}</Badge></td>
+                {:else if col === 'disposition'}
+                  <td>
+                    {#if d.disposition}<Badge tone={dispositionTone(d.disposition)}
+                        >{d.disposition}</Badge
+                      >{:else}<span class="muted">—</span>{/if}
+                  </td>
                 {:else if col === 'flow'}
                   <td><a href={appHref(`/decisions/${d.decision_id}`)}>{d.slug}</a></td>
                 {:else if col === 'env'}

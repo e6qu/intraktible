@@ -146,6 +146,8 @@ test('a created flow persists across a reload', async ({ page }) => {
   await page.getByLabel('slug', { exact: true }).fill(slug);
   await page.getByLabel('name', { exact: true }).fill('Persist Test');
   await page.getByRole('button', { name: 'Create flow' }).click();
+  // Create navigates into the new flow's builder; return to the list to see the row.
+  await page.goto('engine');
   await expect(page.getByRole('cell', { name: slug })).toBeVisible();
 
   await page.reload();
@@ -161,6 +163,8 @@ test('reset restores the seed', async ({ page }) => {
   await page.getByLabel('slug', { exact: true }).fill(slug);
   await page.getByLabel('name', { exact: true }).fill('Reset Test');
   await page.getByRole('button', { name: 'Create flow' }).click();
+  // Create navigates into the new flow's builder; return to the list to see the row.
+  await page.goto('engine');
   await expect(page.getByRole('cell', { name: slug })).toBeVisible();
 
   await page.getByRole('button', { name: 'Reset' }).click();

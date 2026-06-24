@@ -90,6 +90,51 @@ describe('PSI drift', () => {
   });
 });
 
+describe('seeded cases reference a coherent source decision', () => {
+  // Each case opens FROM a review-worthy (refer), non-failed decision of the SAME
+  // flow as the case, so the "source decision" link always lands on a real trace
+  // that explains why a human is in the loop.
+  const caseTypeToFlow = new Map<string, string>([
+    ['credit_review', 'credit-decision'],
+    ['aml_alert', 'aml-screening'],
+    ['fraud_review', 'card-fraud'],
+    ['kyc_review', 'kyc-onboarding'],
+    ['dispute', 'dispute-triage'],
+    ['merchant_review', 'merchant-onboarding']
+  ]);
+
+  it('every case src is a same-flow, refer, non-failed decision', () => {
+    const byId = new Map(state.decisions.map((d) => [d.decision_id, d]));
+    for (const c of state.cases) {
+      expect(c.source_decision_id, `${c.case_id} should have a source decision`).toBeTruthy();
+      const dec = byId.get(c.source_decision_id ?? '');
+      expect(dec, `${c.case_id} → ${c.source_decision_id} should resolve`).toBeDefined();
+      expect(dec?.slug).toBe(caseTypeToFlow.get(c.case_type));
+      expect(dec?.disposition).toBe('refer');
+      expect(dec?.status).not.toBe('failed');
+    }
+  });
+
+  it('the source decision id in each case audit trail matches its src', () => {
+    for (const c of state.cases) {
+      const opened = c.audit.find((a) => a.detail?.startsWith('from decision'));
+      if (opened) expect(opened.detail).toBe(`from decision ${c.source_decision_id}`);
+    }
+  });
+
+  it('every non-failed seeded decision carries reason codes', () => {
+    const seeded = state.decisions.filter((d) => d.decision_id.startsWith('dec_'));
+    expect(seeded.length).toBeGreaterThan(0);
+    for (const d of seeded) {
+      if (d.status === 'failed') continue;
+      expect(
+        (d.reason_codes ?? []).length,
+        `${d.decision_id} should have a reason code`
+      ).toBeGreaterThan(0);
+    }
+  });
+});
+
 describe('admin-only surfaces gate on role', () => {
   it('403s the MRM report for a non-admin and 200s for an admin', () => {
     setDemoUser('lena.hoff@intraktible.dev'); // viewer

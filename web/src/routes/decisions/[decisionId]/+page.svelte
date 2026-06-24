@@ -12,6 +12,7 @@
   import Badge from '$lib/Badge.svelte';
   import { statusTone, dispositionTone } from '$lib/badge';
   import { nodeAccent } from '$lib/nodevis';
+  import Hint from '$lib/Hint.svelte';
 
   // API calls authenticate via the session cookie (empty key → no X-Api-Key).
   const key = '';
@@ -127,16 +128,30 @@
 
     {#if d.error}<p class="err">Error: {d.error}</p>{/if}
 
+    <h2>
+      Reason codes
+      <Hint label="Reason codes"
+        >The machine-readable reasons behind this outcome — emitted by reason nodes, a manual-review
+        step, or the policy. They make a decision explainable and auditable after the fact.</Hint
+      >
+    </h2>
     {#if d.reason_codes && d.reason_codes.length}
-      <h2>Reason codes</h2>
       <ul class="reasons" data-testid="reason-codes">
         {#each d.reason_codes as rc (rc.code)}
           <li><span class="rcode">{rc.code}</span> {rc.description}</li>
         {/each}
       </ul>
+    {:else}
+      <p class="muted">No reason codes were emitted for this decision.</p>
     {/if}
 
-    <h2>Node trace</h2>
+    <h2>
+      Node trace
+      <Hint label="Node trace"
+        >The node-by-node path the engine walked for this decision: each step is a node, its output,
+        and (at a split) the branch taken. This is the recorded execution — replayed, not re-run.</Hint
+      >
+    </h2>
     {#if d.nodes && d.nodes.length}
       <ol class="trace">
         {#each d.nodes as n, i (i)}

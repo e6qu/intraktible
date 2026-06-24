@@ -164,45 +164,53 @@
     <p class="resolved muted">✓ This case is resolved.</p>
   {/if}
 
-  <h2>Actions</h2>
-  <div class="actions">
-    <div class="row">
-      <input bind:value={assignee} placeholder="assignee" aria-label="assignee" />
-      <button
-        onclick={() => run(() => assignCase(key, caseID, assignee))}
-        disabled={busy || !roleAtLeast($user?.role, 'operator')}
-        title={!roleAtLeast($user?.role, 'operator') ? 'Requires the operator role' : undefined}
-        >Assign</button
-      >
+  {#if c}
+    <h2>Actions</h2>
+    <div class="actions">
+      <div class="row">
+        <input bind:value={assignee} placeholder="assignee" aria-label="assignee" />
+        <button
+          onclick={() => run(() => assignCase(key, caseID, assignee))}
+          disabled={busy || !roleAtLeast($user?.role, 'operator')}
+          title={!roleAtLeast($user?.role, 'operator') ? 'Requires the operator role' : undefined}
+          >Assign</button
+        >
+        <button
+          onclick={() => run(() => assignCase(key, caseID, $user?.actor ?? ''))}
+          disabled={busy || !$user?.actor || !roleAtLeast($user?.role, 'operator')}
+          title={!roleAtLeast($user?.role, 'operator') ? 'Requires the operator role' : undefined}
+          >Assign to me</button
+        >
+      </div>
+      <div class="row">
+        <select bind:value={newStatus} aria-label="set status">
+          <option value="needs_review">needs_review</option>
+          <option value="in_progress">in_progress</option>
+          <option value="completed">completed</option>
+        </select>
+        <button
+          onclick={() => run(() => setCaseStatus(key, caseID, newStatus))}
+          disabled={busy || !roleAtLeast($user?.role, 'operator')}
+          title={!roleAtLeast($user?.role, 'operator') ? 'Requires the operator role' : undefined}
+          >Set status</button
+        >
+      </div>
+      <div class="row">
+        <input bind:value={noteText} placeholder="note" aria-label="note" />
+        <button
+          onclick={() =>
+            run(async () => {
+              await addCaseNote(key, caseID, noteText);
+              noteText = ''; // only clear after a successful save (run() swallows errors)
+            })}
+          disabled={busy || !roleAtLeast($user?.role, 'operator')}
+          title={!roleAtLeast($user?.role, 'operator') ? 'Requires the operator role' : undefined}
+        >
+          Add note
+        </button>
+      </div>
     </div>
-    <div class="row">
-      <select bind:value={newStatus} aria-label="set status">
-        <option value="needs_review">needs_review</option>
-        <option value="in_progress">in_progress</option>
-        <option value="completed">completed</option>
-      </select>
-      <button
-        onclick={() => run(() => setCaseStatus(key, caseID, newStatus))}
-        disabled={busy || !roleAtLeast($user?.role, 'operator')}
-        title={!roleAtLeast($user?.role, 'operator') ? 'Requires the operator role' : undefined}
-        >Set status</button
-      >
-    </div>
-    <div class="row">
-      <input bind:value={noteText} placeholder="note" aria-label="note" />
-      <button
-        onclick={() =>
-          run(async () => {
-            await addCaseNote(key, caseID, noteText);
-            noteText = ''; // only clear after a successful save (run() swallows errors)
-          })}
-        disabled={busy || !roleAtLeast($user?.role, 'operator')}
-        title={!roleAtLeast($user?.role, 'operator') ? 'Requires the operator role' : undefined}
-      >
-        Add note
-      </button>
-    </div>
-  </div>
+  {/if}
 
   {#if c}
     <h2>Notes</h2>

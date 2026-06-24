@@ -28,6 +28,12 @@ const PAGES = [
     nav: 'API-first design'
   },
   {
+    file: 'docs/EXECUTION.md',
+    slug: 'execution',
+    title: 'How a decision runs',
+    nav: 'How a decision runs'
+  },
+  {
     file: 'docs/EXPRESSIONS.md',
     slug: 'expressions',
     title: 'Expression language',

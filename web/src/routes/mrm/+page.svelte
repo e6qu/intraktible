@@ -155,7 +155,7 @@
                     <span class="muted">—</span>
                   {/if}
                 </td>
-                <td>
+                <td class="issues">
                   {#if m.issues && m.issues.length > 0}
                     <span class="err">{m.issues.join('; ')}</span>
                   {:else}<span class="ok" role="img" aria-label="no open issues">✓</span>{/if}
@@ -254,6 +254,10 @@
     flex-wrap: wrap;
     gap: 0.3rem;
     align-items: center;
+    white-space: nowrap;
+  }
+  .issues {
+    min-width: 12rem;
   }
   .metric {
     font-size: 0.78rem;
