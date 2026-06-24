@@ -86,6 +86,7 @@
   import Icon from '$lib/Icon.svelte';
   import Badge from '$lib/Badge.svelte';
   import Hint from '$lib/Hint.svelte';
+  import CodeSnippet from '$lib/CodeSnippet.svelte';
   import { statusTone, dispositionTone } from '$lib/badge';
   import CommentThread from '$lib/CommentThread.svelte';
   import FlowNode from '$lib/FlowNode.svelte';
@@ -246,6 +247,22 @@
   }
   let entityType = $state('');
   let entityID = $state('');
+  // The exact API call this test run is — so a developer can copy/paste the same
+  // decision against the deployed flow (the "API-first" claim, shown not just stated).
+  const apiSnippet = $derived.by(() => {
+    let body: string;
+    try {
+      body = JSON.stringify({ data: JSON.parse(dataText) });
+    } catch {
+      body = '{"data": {}}';
+    }
+    return [
+      `curl -X POST https://YOUR_HOST/v1/flows/${flow?.slug ?? flowId}/${env}/decide \\`,
+      `  -H "X-Api-Key: YOUR_API_KEY" \\`,
+      `  -H "Content-Type: application/json" \\`,
+      `  -d '${body}'`
+    ].join('\n');
+  });
   let result = $state('');
 
   // Derive from the route param so navigating between sibling flows reloads.
@@ -2939,6 +2956,13 @@
           </button>
         </div>
       {/if}
+      <details class="api-call">
+        <summary>Call this via the API</summary>
+        <p class="muted">
+          The same decision over HTTP — issue a key on the API keys page and swap in your host.
+        </p>
+        <CodeSnippet code={apiSnippet} label="curl command" />
+      </details>
     </section>
 
     <section>
@@ -3452,6 +3476,20 @@
   }
   .raw-result pre {
     margin-top: 0.4rem;
+  }
+  .api-call {
+    margin: 0.8rem 0 0.2rem;
+  }
+  .api-call summary {
+    cursor: pointer;
+    font-size: 0.86rem;
+    font-weight: 550;
+    color: var(--fg);
+    width: max-content;
+  }
+  .api-call .muted {
+    margin: 0.4rem 0 0;
+    font-size: 0.82rem;
   }
   .grid {
     display: grid;

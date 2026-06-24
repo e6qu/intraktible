@@ -116,7 +116,7 @@
       <dd>{c.sla_days} days</dd>
       <dt>days left</dt>
       <dd class={`sla-${c.sla_state ?? ''}`} data-testid="days-left">
-        {c.days_left}{#if c.sla_state}<span class="muted"> ({c.sla_state})</span>{/if}
+        {c.days_left}{#if c.sla_state}<span class="muted">{' ('}{c.sla_state})</span>{/if}
       </dd>
       {#if c.source_decision_id}<dt>source decision</dt>
         <dd>

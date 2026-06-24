@@ -1635,6 +1635,18 @@ export function auditExportUrl(filter: AuditFilter = {}): string {
   const q = auditQuery({ ...filter });
   return `/v1/audit${q ? q + '&' : '?'}format=csv`;
 }
+// The filtered audit log as CSV text — wrapped in a Blob download by the page.
+export async function auditCsvText(
+  key: string,
+  filter: AuditFilter = {},
+  fetcher: typeof fetch = fetch
+): Promise<string> {
+  const res = await fetcher(auditExportUrl(filter), { headers: authHeaders(key) });
+  if (!res.ok) {
+    throw new Error(`export audit csv failed: ${res.status}`);
+  }
+  return res.text();
+}
 
 export interface Comment {
   comment_id: string;
@@ -2529,6 +2541,19 @@ export async function getMrmReport(key: string, fetcher: typeof fetch = fetch): 
     return errorOrStatus(res, 'GET /v1/mrm/report');
   }
   return (await res.json()) as MrmReport;
+}
+// The MRM report as CSV/Markdown text — the page wraps it in a Blob download (an
+// <a href> would escape the demo's fetch mock and 404 on the static host).
+export async function mrmReportText(
+  key: string,
+  format: 'csv' | 'md',
+  fetcher: typeof fetch = fetch
+): Promise<string> {
+  const res = await fetcher(`/v1/mrm/report?format=${format}`, { headers: authHeaders(key) });
+  if (!res.ok) {
+    throw new Error(`export mrm report (${format}) failed: ${res.status}`);
+  }
+  return res.text();
 }
 
 export async function listAgentRuns(

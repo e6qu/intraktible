@@ -6,7 +6,7 @@
   import Badge from '$lib/Badge.svelte';
   import { coverageTone } from '$lib/badge';
   import { pct } from '$lib/dashboard';
-  import { getMrmReport, type MrmReport } from '$lib/api';
+  import { getMrmReport, mrmReportText, type MrmReport } from '$lib/api';
   import { appHref } from '$lib/paths';
 
   const key = '';
@@ -32,6 +32,33 @@
     } finally {
       loading = false;
     }
+  }
+
+  // Fetch the report bytes through the app's fetch (so the demo's window.fetch mock can
+  // serve them) and offer a Blob download — an <a href="/v1/..."> would be a browser
+  // navigation that escapes the mock and 404s on the static demo host.
+  async function downloadReport(format: 'csv' | 'md'): Promise<void> {
+    try {
+      const blob = new Blob([await mrmReportText(key, format)], {
+        type: format === 'csv' ? 'text/csv' : 'text/markdown'
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = format === 'csv' ? 'mrm-report.csv' : 'mrm-report.md';
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+    } catch {
+      // best-effort download; the report stays visible on the page
+    }
+  }
+
+  // Each inventory row drills through to its underlying entity so a gap is actionable.
+  function entityHref(kind: string, id: string): string | null {
+    if (kind === 'flow') return appHref(`/engine/${id}`);
+    if (kind === 'agent') return appHref(`/agents/${id}`);
+    if (kind === 'predictive_model') return appHref('/models');
+    return null;
   }
 
   const kindLabel: Record<string, string> = {
@@ -92,8 +119,8 @@
     </div>
 
     <div class="row">
-      <a class="btn" href={appHref('/v1/mrm/report?format=csv')} download>Export CSV</a>
-      <a class="btn" href={appHref('/v1/mrm/report?format=md')} download>Export Markdown</a>
+      <button class="btn" onclick={() => downloadReport('csv')}>Export CSV</button>
+      <button class="btn" onclick={() => downloadReport('md')}>Export Markdown</button>
     </div>
 
     {#if report.models.length === 0}
@@ -115,7 +142,11 @@
             {#each report.models as m (m.kind + '/' + m.id)}
               <tr class:flagged={m.issues && m.issues.length > 0}>
                 <td>{kindLabel[m.kind] ?? m.kind}</td>
-                <td>{m.name || m.id}</td>
+                <td>
+                  {#if entityHref(m.kind, m.id)}
+                    <a href={entityHref(m.kind, m.id)}>{m.name || m.id}</a>
+                  {:else}{m.name || m.id}{/if}
+                </td>
                 <td>{m.version || '—'}</td>
                 <td>{m.owner || '—'}</td>
                 <td>
@@ -134,26 +165,28 @@
                 </td>
                 <td>{m.monitoring.decisions}</td>
                 <td>{m.monitoring.decisions > 0 ? pct(m.monitoring.success_rate) : '—'}</td>
-                <td class="mon">
-                  {#if m.monitoring.drift_psi !== undefined}
-                    <span class="metric" title="population stability index"
-                      >PSI {m.monitoring.drift_psi.toFixed(2)}</span
-                    >
-                    {#if m.monitoring.drift_firing}<Badge tone="danger">drift</Badge>{/if}
-                  {/if}
-                  {#if m.monitoring.firing_monitors && m.monitoring.firing_monitors.length > 0}
-                    <Badge tone="danger" title={m.monitoring.firing_monitors.join(', ')}
-                      >{m.monitoring.firing_monitors.length} firing</Badge
-                    >
-                  {/if}
-                  {#if m.monitoring.slo_met !== undefined}
-                    <Badge tone={m.monitoring.slo_met ? 'ok' : 'danger'}
-                      >SLO {m.monitoring.slo_met ? 'met' : 'breach'}</Badge
-                    >
-                  {/if}
-                  {#if m.monitoring.drift_psi === undefined && !(m.monitoring.firing_monitors && m.monitoring.firing_monitors.length) && m.monitoring.slo_met === undefined}
-                    <span class="muted">—</span>
-                  {/if}
+                <td>
+                  <div class="mon">
+                    {#if m.monitoring.drift_psi !== undefined}
+                      <span class="metric" title="population stability index"
+                        >PSI {m.monitoring.drift_psi.toFixed(2)}</span
+                      >
+                      {#if m.monitoring.drift_firing}<Badge tone="danger">drift</Badge>{/if}
+                    {/if}
+                    {#if m.monitoring.firing_monitors && m.monitoring.firing_monitors.length > 0}
+                      <Badge tone="danger" title={m.monitoring.firing_monitors.join(', ')}
+                        >{m.monitoring.firing_monitors.length} firing</Badge
+                      >
+                    {/if}
+                    {#if m.monitoring.slo_met !== undefined}
+                      <Badge tone={m.monitoring.slo_met ? 'ok' : 'danger'}
+                        >SLO {m.monitoring.slo_met ? 'met' : 'breach'}</Badge
+                      >
+                    {/if}
+                    {#if m.monitoring.drift_psi === undefined && !(m.monitoring.firing_monitors && m.monitoring.firing_monitors.length) && m.monitoring.slo_met === undefined}
+                      <span class="muted">—</span>
+                    {/if}
+                  </div>
                 </td>
                 <td class="issues">
                   {#if m.issues && m.issues.length > 0}

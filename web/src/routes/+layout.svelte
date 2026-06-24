@@ -295,6 +295,12 @@
       overflow-x: auto;
       scrollbar-width: none;
       -webkit-overflow-scrolling: touch;
+      /* A right-edge fade plus trailing pad so the last icon, when the scroll clips
+         it against the pinned header controls, reads as "there's more" rather than a
+         half-glyph glitch. Scoped to the icon-only mobile nav, not the desktop one. */
+      mask-image: linear-gradient(to right, #000, #000 88%, transparent);
+      -webkit-mask-image: linear-gradient(to right, #000, #000 88%, transparent);
+      padding-right: 0.5rem;
     }
     nav::-webkit-scrollbar {
       display: none;

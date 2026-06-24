@@ -8,6 +8,7 @@
   import Skeleton from '$lib/Skeleton.svelte';
   import RelativeTime from '$lib/RelativeTime.svelte';
   import Badge from '$lib/Badge.svelte';
+  import CodeSnippet from '$lib/CodeSnippet.svelte';
   import { lifecycleTone } from '$lib/badge';
   import {
     listApiKeys,
@@ -209,6 +210,11 @@
         <button class="ghost" onclick={() => (revealed = null)}>Dismiss</button>
       </div>
       {#if revealed.note}<p class="muted note">{revealed.note}</p>{/if}
+      <p class="muted note">Call the decision API with it (swap in your host and a flow slug):</p>
+      <CodeSnippet
+        code={`curl -X POST https://YOUR_HOST/v1/flows/YOUR_FLOW/production/decide \\\n  -H "X-Api-Key: ${revealed.secret}" \\\n  -H "Content-Type: application/json" \\\n  -d '{"data": {}}'`}
+        label="curl command"
+      />
     </div>
   {/if}
 
@@ -244,19 +250,21 @@
               <td><span class="badge">{k.scope}</span></td>
               <td class="muted"><RelativeTime value={k.created_at} /></td>
               <td><Badge tone={lifecycleTone(status(k))}>{status(k)}</Badge></td>
-              <td class="actions">
-                {#if status(k) === 'active'}
-                  <button class="link" onclick={() => rotate(k.id)} disabled={mutating !== null}
-                    >Rotate</button
-                  >
-                  <button
-                    class="link danger"
-                    onclick={() => revoke(k.id)}
-                    disabled={mutating !== null}>Revoke</button
-                  >
-                {:else}
-                  <span class="muted">—</span>
-                {/if}
+              <td>
+                <div class="actions">
+                  {#if status(k) === 'active'}
+                    <button class="link" onclick={() => rotate(k.id)} disabled={mutating !== null}
+                      >Rotate</button
+                    >
+                    <button
+                      class="link danger"
+                      onclick={() => revoke(k.id)}
+                      disabled={mutating !== null}>Revoke</button
+                    >
+                  {:else}
+                    <span class="muted">—</span>
+                  {/if}
+                </div>
               </td>
             </tr>
           {/each}
