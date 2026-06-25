@@ -60,6 +60,9 @@ function text(t: string): DemoResponse {
 function notFound(): DemoResponse {
   return { status: 404, body: { error: 'not found' } };
 }
+function unauthorized(): DemoResponse {
+  return { status: 401, body: { error: 'not authenticated' } };
+}
 function badRequest(error: string): DemoResponse {
   return { status: 400, body: { error } };
 }
@@ -89,6 +92,23 @@ function isEnvironment(e: string): boolean {
 
 function findFlow(idOrSlug: string): Flow | undefined {
   return state.flows.find((f) => f.flow_id === idOrSlug || f.slug === idOrSlug);
+}
+
+// sameGraph compares two flow graphs by their LOGIC only (node id/type/name/config + edge
+// from/to/branch), ignoring canvas positions — so a re-publish with no logic change is a
+// no-op rather than a new duplicate version.
+function sameGraph(a: FlowGraph, b: FlowGraph): boolean {
+  const norm = (g: FlowGraph) =>
+    JSON.stringify({
+      nodes: (g.nodes ?? []).map((n) => ({
+        id: n.id,
+        type: n.type,
+        name: n.name,
+        config: n.config
+      })),
+      edges: (g.edges ?? []).map((e) => ({ from: e.from, to: e.to, branch: e.branch }))
+    });
+  return norm(a) === norm(b);
 }
 
 function pushAudit(type: string, stream: string, payload?: unknown): void {
@@ -125,9 +145,19 @@ function route(method: string, pattern: string, fn: Handler): void {
 }
 
 // --- Auth -----------------------------------------------------------------------
-route('POST', '/v1/login', () => ok(state.identity));
-route('GET', '/v1/me', () => ok(state.identity));
-route('POST', '/v1/logout', () => ok({}));
+// Sign-out is real in the demo: logout flips this flag so /v1/me 401s (refreshUser then
+// clears the user and the shell shows the logged-out screen) until the next login. It is
+// module-scoped (not persisted), so a fresh page load starts signed in, like a new visit.
+let loggedOut = false;
+route('POST', '/v1/login', () => {
+  loggedOut = false;
+  return ok(state.identity);
+});
+route('GET', '/v1/me', () => (loggedOut ? unauthorized() : ok(state.identity)));
+route('POST', '/v1/logout', () => {
+  loggedOut = true;
+  return ok({});
+});
 route('GET', '/v1/auth/oidc/providers', () => ok({ providers: [] }));
 route('GET', '/v1/auth/saml/providers', () => ok({ providers: [] }));
 
@@ -250,11 +280,19 @@ route('GET', '/v1/flows/:id/export', (m, _b, q) => {
 route('POST', '/v1/flows/:id/versions', (m, body) => {
   const flow = findFlow(m[1]);
   if (!flow) return notFound();
+  const graph = (body.graph as FlowVersion['graph']) ?? { nodes: [], edges: [] };
+  const latest = flow.versions.find((vv) => vv.version === flow.latest);
+  // A no-op publish (logic identical to the latest version, ignoring canvas positions)
+  // returns the current version instead of stacking duplicate versions — matching the
+  // /engine import path, which already says "already at vN — no change".
+  if (latest && sameGraph(latest.graph, graph)) {
+    return ok({ version: latest.version, etag: latest.etag, published: false });
+  }
   const version = flow.latest + 1;
   const v: FlowVersion = {
     version,
     etag: `e${version}`,
-    graph: (body.graph as FlowVersion['graph']) ?? { nodes: [], edges: [] },
+    graph,
     input_schema: body.input_schema,
     published_at: new Date().toISOString(),
     published_by: state.identity.actor
@@ -262,7 +300,7 @@ route('POST', '/v1/flows/:id/versions', (m, body) => {
   flow.versions.push(v);
   flow.latest = version;
   pushAudit('flow.published', flow.flow_id, { version });
-  return ok({ version, etag: v.etag });
+  return ok({ version, etag: v.etag, published: true });
 });
 route('GET', '/v1/flows/:id/metrics', (m) => {
   const flow = findFlow(m[1]);
@@ -296,8 +334,16 @@ route('GET', '/v1/flows/:id/slo', (m) => {
 route('PUT', '/v1/flows/:id/slo', (m, body) => {
   const flow = findFlow(m[1]);
   if (!flow) return notFound();
+  if (!roleAtLeast('operator')) return forbidden('setting an SLO requires the operator role');
+  const success = Number(body.success_target ?? 0);
+  // Clearing (target 0) REMOVES the objective so the card reads "no objective set",
+  // rather than persisting a degenerate always-passing 0% target.
+  if (!success) {
+    state.flowSlos.delete(flow.flow_id);
+    return ok({});
+  }
   state.flowSlos.set(flow.flow_id, {
-    success_target: Number(body.success_target ?? 0.95),
+    success_target: success,
     latency_target_ms: Number(body.latency_target_ms ?? 0)
   });
   return ok({});
@@ -738,7 +784,9 @@ function honorPreapproval(
     variant: 'champion',
     status: 'completed',
     data,
-    output: data,
+    // The grant's terms (limit/apr/…) ARE the decision output on honor — the grant form
+    // labels them exactly that. They used to be dropped (output = the input echo).
+    output: grant.terms && typeof grant.terms === 'object' ? { ...data, ...grant.terms } : data,
     reason_codes: [
       { code: 'PRE_APPROVED', description: `Served from pre-approval ${grant.preapproval_id}` }
     ],
@@ -919,11 +967,24 @@ route('POST', '/v1/decisions/:id/resume', (m, body) => {
 
 // --- Cases ----------------------------------------------------------------------
 route('GET', '/v1/cases/summary', (_m, _b, q) => ok(caseSummary(q)));
-route('POST', '/v1/cases/sla-sweep', () =>
-  ok({
-    count: state.cases.filter((c) => c.sla_state === 'overdue' && c.status !== 'completed').length
-  })
-);
+route('POST', '/v1/cases/sla-sweep', () => {
+  // A real sweep: recompute every OPEN case's SLA state from its remaining days and flag
+  // newly-breached ones (it used to only COUNT cases already seeded overdue and mutate
+  // nothing, so the summary never moved). A re-run then breaches 0 — there's nothing new.
+  let breached = 0;
+  const now = new Date().toISOString();
+  for (const c of state.cases) {
+    if (c.status === 'completed') continue;
+    const was = c.sla_state;
+    c.sla_state = c.days_left <= 0 ? 'overdue' : c.days_left <= 1 ? 'due_soon' : 'on_track';
+    if (c.sla_state === 'overdue' && was !== 'overdue') {
+      breached += 1;
+      c.updated_at = now;
+      c.audit.push({ type: 'case.sla_breached', actor: 'system', at: now });
+    }
+  }
+  return ok({ count: breached });
+});
 route('GET', '/v1/cases', (_m, _b, q) => ok({ cases: filterCases(q) }));
 route('POST', '/v1/cases', (_m, body) => {
   const caseId = nextId('case');
@@ -994,8 +1055,12 @@ route('POST', '/v1/cases/:id/notes', (m, body) => {
 // --- Agents ---------------------------------------------------------------------
 route('GET', '/v1/agents', () => ok({ agents: state.agents }));
 route('POST', '/v1/agents', (_m, body) => {
-  const name = String(body.name ?? '');
+  const name = String(body.name ?? '').trim();
+  if (!name) return badRequest('an agent name is required');
   const existing = state.agents.find((a) => a.name === name);
+  // The Define-agent form is a CREATE: a blank resubmit of an existing name used to
+  // Object.assign undefined over its provider/model/tools, silently wiping it.
+  if (existing) return badRequest(`an agent named "${name}" already exists`);
   const agent: Agent = {
     name,
     provider: body.provider ? String(body.provider) : undefined,
@@ -1003,12 +1068,11 @@ route('POST', '/v1/agents', (_m, body) => {
     system: body.system ? String(body.system) : undefined,
     schema: body.schema,
     tools: Array.isArray(body.tools) ? (body.tools as string[]) : [],
-    latest: existing?.latest ?? 1,
-    runs: existing?.runs ?? 0,
+    latest: 1,
+    runs: 0,
     updated_at: new Date().toISOString()
   };
-  if (existing) Object.assign(existing, agent);
-  else state.agents.push(agent);
+  state.agents.push(agent);
   return ok({});
 });
 route('GET', '/v1/agent-runs/summary', () => ok(runSummary()));
@@ -1106,13 +1170,19 @@ route('POST', '/v1/agents/:name/runs/:rid/escalate', (m, body) => {
 
 // --- Models ---------------------------------------------------------------------
 route('GET', '/v1/models', () => ok({ models: state.models }));
+const MODEL_KINDS = ['logistic', 'gbm', 'expression', 'external'];
 route('POST', '/v1/models', (_m, body) => {
-  const name = String(body.name ?? '');
+  const name = String(body.name ?? '').trim();
+  if (!name) return badRequest('a model name is required');
   const spec = body.spec as { kind?: string };
+  const kind = spec?.kind ?? 'expression';
+  // Reject an unknown kind up front rather than creating a model a Predict node can't run.
+  if (!MODEL_KINDS.includes(kind))
+    return badRequest(`unknown model kind "${kind}" — expected one of ${MODEL_KINDS.join(', ')}`);
   const existing = state.models.find((x) => x.name === name);
   const model: Model = {
     name,
-    kind: (spec?.kind as Model['kind']) ?? 'expression',
+    kind: kind as Model['kind'],
     spec,
     owner: state.identity.actor,
     updated_at: new Date().toISOString()
@@ -1350,11 +1420,17 @@ route('POST', '/v1/api-keys', (_m, body) => {
   pushAudit('apikey.created', key.id, { name: key.name });
   return ok({ api_key: key, secret: `sk-demo-${Math.random().toString(36).slice(2, 18)}` });
 });
-route('POST', '/v1/api-keys/:id/rotate', (m) => {
+route('POST', '/v1/api-keys/:id/rotate', (m, body) => {
   if (!roleAtLeast('admin')) return forbidden('managing API keys requires the admin role');
   const key = state.apiKeys.find((k) => k.id === decodeURIComponent(m[1]));
   if (!key) return notFound();
-  key.rotated_at = new Date().toISOString();
+  const now = Date.now();
+  key.rotated_at = new Date(now).toISOString();
+  // Honor the rotation grace window the client asks for: the previous secret keeps
+  // authenticating until this instant (the UI renders it as the "keeps working until …"
+  // note). It used to be dropped, so the grace note never appeared.
+  const grace = Number((body as { grace_seconds?: unknown }).grace_seconds) || 3600;
+  key.prev_hash_expires_at = new Date(now + grace * 1000).toISOString();
   return ok({ api_key: key, secret: `sk-demo-${Math.random().toString(36).slice(2, 18)}` });
 });
 route('DELETE', '/v1/api-keys/:id', (m) => {

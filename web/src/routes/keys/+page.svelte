@@ -166,55 +166,57 @@
     />
   </details>
 
-  <form
-    class="define"
-    onsubmit={(e) => {
-      e.preventDefault();
-      create();
-    }}
-  >
-    <div class="row">
-      <label
-        >Name (required) <input
-          bind:value={name}
-          placeholder="ci-pipeline"
-          aria-label="key name"
-          required
-        /></label
-      >
-      <label
-        >Actor <input
-          bind:value={actor}
-          placeholder="svc-ci"
-          aria-label="key actor"
-          required
-        /></label
-      >
-      <label
-        >Role
-        <select bind:value={role} aria-label="key role">
-          {#each ROLES as r (r)}<option value={r}>{r}</option>{/each}
-        </select></label
-      >
-      <label
-        >Scope
-        <select bind:value={scope} aria-label="key scope">
-          {#each SCOPES as s (s)}<option value={s}>{s === '*' ? '* (any env)' : s}</option>{/each}
-        </select></label
-      >
-      <label
-        >Expires (optional)
-        <input type="date" bind:value={expires} aria-label="key expiry" /></label
-      >
-      <button
-        type="submit"
-        disabled={busy || !name.trim() || !actor.trim()}
-        title={!name.trim() || !actor.trim()
-          ? 'A key needs a name and an owner (actor)'
-          : undefined}>{busy ? 'Creating…' : 'Create key'}</button
-      >
-    </div>
-  </form>
+  {#if !forbidden}
+    <form
+      class="define"
+      onsubmit={(e) => {
+        e.preventDefault();
+        create();
+      }}
+    >
+      <div class="row">
+        <label
+          >Name (required) <input
+            bind:value={name}
+            placeholder="ci-pipeline"
+            aria-label="key name"
+            required
+          /></label
+        >
+        <label
+          >Actor <input
+            bind:value={actor}
+            placeholder="svc-ci"
+            aria-label="key actor"
+            required
+          /></label
+        >
+        <label
+          >Role
+          <select bind:value={role} aria-label="key role">
+            {#each ROLES as r (r)}<option value={r}>{r}</option>{/each}
+          </select></label
+        >
+        <label
+          >Scope
+          <select bind:value={scope} aria-label="key scope">
+            {#each SCOPES as s (s)}<option value={s}>{s === '*' ? '* (any env)' : s}</option>{/each}
+          </select></label
+        >
+        <label
+          >Expires (optional)
+          <input type="date" bind:value={expires} aria-label="key expiry" /></label
+        >
+        <button
+          type="submit"
+          disabled={busy || !name.trim() || !actor.trim()}
+          title={!name.trim() || !actor.trim()
+            ? 'A key needs a name and an owner (actor)'
+            : undefined}>{busy ? 'Creating…' : 'Create key'}</button
+        >
+      </div>
+    </form>
+  {/if}
 
   {#if error}<p class="err">{error}</p>{/if}
 

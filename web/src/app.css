@@ -67,6 +67,10 @@
 :root {
   --bg: #f6f8fb;
   --surface: #ffffff;
+  /* --surface-1 is a slightly-raised opaque surface (dropdowns, toolbar buttons). It was
+     referenced in several components but never defined, so those backgrounds computed to
+     transparent — the notifications panel showed the page through it. */
+  --surface-1: #f8fafc;
   --surface-2: #eef1f6;
   --fg: #1a1d23;
   --fg-muted: #4d5666;
@@ -107,6 +111,7 @@
 :root[data-theme='dark'] {
   --bg: #0e1117;
   --surface: #161b22;
+  --surface-1: #19202a;
   --surface-2: #1b222c;
   --fg: #e6e9ef;
   --fg-muted: #a3adba;

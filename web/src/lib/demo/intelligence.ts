@@ -34,7 +34,13 @@ export function nodeStats(flow: Flow, decisions: Decision[]): FlowNodeStats {
   const counts = new Map<string, number>();
   const dispositions = emptyDisp();
   for (const d of decs) {
-    for (const n of d.nodes ?? []) counts.set(n.node_id, (counts.get(n.node_id) ?? 0) + 1);
+    // Reconstruct the FULL path by re-running the (pure) engine over the recorded input:
+    // some seeded decisions carry a truncated node trace, which would otherwise show
+    // mandatory nodes (enrich/derive/…) as never-traversed. Fall back to the stored trace.
+    const input = (d.data as Record<string, unknown>) ?? {};
+    const run = runFlow(flow, graph, input);
+    const trace = run.status === 'completed' && run.nodes.length ? run.nodes : (d.nodes ?? []);
+    for (const n of trace) counts.set(n.node_id, (counts.get(n.node_id) ?? 0) + 1);
     tally(dispositions, d.disposition);
   }
   const total = decs.length;
@@ -113,14 +119,12 @@ function searchFlip(
       const d = disp(val, field);
       if (isBetter(d, base)) {
         const r = refineBoundary(from, val, base, field, disp);
-        if (round(r.to) === round(from)) return null; // boundary sits on the current value
-        return {
-          field,
-          from,
-          to: round(r.to),
-          direction: r.to > from ? 'increase' : 'decrease',
-          disposition: r.d
-        };
+        const up = r.to > from;
+        // Snap an integer-valued field (a count like delinquencies) to a whole number on
+        // the improving side of the boundary — "reduce delinquencies to 1.1" is nonsense.
+        const to = Number.isInteger(from) ? (up ? Math.ceil(r.to) : Math.floor(r.to)) : round(r.to);
+        if (to === from) return null; // boundary sits on the current value
+        return { field, from, to, direction: up ? 'increase' : 'decrease', disposition: r.d };
       }
     }
   }

@@ -64,8 +64,15 @@
       if (provider.trim()) body.provider = provider.trim();
       if (model.trim()) body.model = model.trim();
       if (system.trim()) body.system = system.trim();
-      // A structured-output schema, if given, must be valid JSON (fail loudly).
-      if (schema.trim()) body.schema = JSON.parse(schema);
+      // A structured-output schema, if given, must be valid JSON — surface a friendly
+      // message rather than leaking the raw "Unexpected token …" parser error.
+      if (schema.trim()) {
+        try {
+          body.schema = JSON.parse(schema);
+        } catch {
+          throw new Error('The output schema must be valid JSON (e.g. {"type":"object"}).');
+        }
+      }
       const tl = tools
         .split(',')
         .map((t) => t.trim())

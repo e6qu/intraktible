@@ -863,7 +863,9 @@
     try {
       foldPositions(); // persist the current canvas layout with the version
       const r = await publishVersion(key, flowId, currentGraph(), inputSchema);
-      toast.success(`Published v${r.version}`);
+      toast.success(
+        r.published === false ? `Already at v${r.version} — no change` : `Published v${r.version}`
+      );
       await load();
     } catch (e) {
       error = msg(e);
@@ -1733,1806 +1735,1853 @@
 <main>
   <p><a href={appHref('/engine')}>← all flows</a></p>
   <h1>{flow?.name ?? flowId}</h1>
-  <div class="row">
-    <button onclick={load}><Icon name="reload" size={15} /> Reload</button>
-    <button
-      class="primary"
-      onclick={publish}
-      disabled={publishing || !roleAtLeast($user?.role, 'editor')}
-      title={!roleAtLeast($user?.role, 'editor') ? 'Requires the editor role' : undefined}
-      ><Icon name="check" size={15} /> {publishing ? 'Publishing…' : 'Publish version'}</button
-    >
-  </div>
-  <div class="row export">
-    <span class="exportlabel"><Icon name="diagram" size={15} /> Export</span>
-    <div class="grp">
-      <button onclick={() => downloadExport('mermaid')} title="Download Mermaid flowchart">
-        <Icon name="download" size={14} /> Mermaid
-      </button>
-      <button
-        class="icon"
-        aria-label="Copy Mermaid"
-        title="Copy Mermaid"
-        onclick={() => copyExport('mermaid')}
-      >
-        <Icon name="copy" size={14} />
-      </button>
-    </div>
-    <button onclick={() => downloadExport('mermaid-state')} title="Download Mermaid state diagram">
-      <Icon name="download" size={14} /> State
-    </button>
-    <div class="grp">
-      <button onclick={() => downloadExport('bpmn')} title="Download BPMN 2.0 XML">
-        <Icon name="download" size={14} /> BPMN
-      </button>
-      <button
-        class="icon"
-        aria-label="Copy BPMN"
-        title="Copy BPMN"
-        onclick={() => copyExport('bpmn')}
-      >
-        <Icon name="copy" size={14} />
-      </button>
-    </div>
-    <div class="grp">
-      <button onclick={() => downloadExport('dot')} title="Download Graphviz DOT">
-        <Icon name="download" size={14} /> DOT
-      </button>
-      <button class="icon" aria-label="Copy DOT" title="Copy DOT" onclick={() => copyExport('dot')}>
-        <Icon name="copy" size={14} />
-      </button>
-    </div>
-    <div class="grp">
-      <button onclick={() => downloadExport('json')} title="Download flow JSON (re-importable)">
-        <Icon name="download" size={14} /> JSON
-      </button>
-      <button
-        class="icon"
-        aria-label="Copy JSON"
-        title="Copy JSON"
-        onclick={() => copyExport('json')}
-      >
-        <Icon name="copy" size={14} />
-      </button>
-    </div>
-  </div>
-  <details class="importflow">
-    <summary><Icon name="download" size={15} /> Import JSON</summary>
-    <p class="importhint">
-      Load a flow export (or a bare <code>graph</code> / <code>{'{nodes, edges}'}</code> object)
-      onto the canvas, then <b>Publish</b> to save it as a new version — the inverse of JSON export.
+  {#if !flow}
+    <p class="err">
+      {error || "This flow couldn't be loaded — it may not exist or the link is stale."}
     </p>
+    <p><button onclick={load}><Icon name="reload" size={15} /> Retry</button></p>
+  {:else}
     <div class="row">
-      <input
-        type="file"
-        accept="application/json,.json"
-        aria-label="import flow file"
-        onchange={importFile}
-      />
+      <button onclick={load}><Icon name="reload" size={15} /> Reload</button>
+      <button
+        class="primary"
+        onclick={publish}
+        disabled={publishing || !roleAtLeast($user?.role, 'editor')}
+        title={!roleAtLeast($user?.role, 'editor') ? 'Requires the editor role' : undefined}
+        ><Icon name="check" size={15} /> {publishing ? 'Publishing…' : 'Publish version'}</button
+      >
     </div>
-    <textarea
-      class="importbox"
-      bind:value={importText}
-      placeholder={'{"graph":{"nodes":[…],"edges":[…]}}'}
-      aria-label="import flow json"
-      rows="4"
-    ></textarea>
-    <div class="row">
-      <button onclick={() => importJSON(importText)} data-testid="import-load">
-        <Icon name="download" size={14} /> Load into editor
-      </button>
-    </div>
-  </details>
-  {#if metrics && metrics.total > 0}
-    <div class="metrics">
-      <span class="exportlabel"><Icon name="diagram" size={15} /> Analytics</span>
-      <span><b>{metrics.total}</b> decisions</span>
-      <span class="ok">{metrics.completed} completed</span>
-      <span class="err">{metrics.failed} failed</span>
-      <span class="muted">avg {metrics.avg_duration_ms} ms</span>
-      {#if automation}
-        <span class="ok" data-testid="automation-rate">{automation.rate}% automated</span>
-        <span class="muted">{automation.refer} referred</span>
-      {/if}
-      {#each Object.entries(metrics.by_variant ?? {}) as [variant, v] (variant)}
-        <span class="muted">{variant}: {v.completed}/{v.started}</span>
-      {/each}
-      <a href={appHref('/decisions')}>view runs →</a>
-    </div>
-  {/if}
-
-  {#if tab === 'monitor'}
-    <section class="monitors" data-testid="monitors-panel">
-      <div class="mon-head">
-        <h2>Monitors</h2>
-        <div class="row">
-          <button class="ghost" onclick={loadMonitors} title="Re-evaluate against current metrics">
-            <Icon name="reload" size={14} /> Refresh
-          </button>
-          <button
-            class="ghost"
-            onclick={captureBaselineNow}
-            data-testid="capture-baseline"
-            title="Snapshot the current disposition mix as the drift baseline"
-          >
-            <Icon name="scorecard" size={14} /> Capture baseline
-          </button>
-          <button
-            class="ghost"
-            onclick={checkNow}
-            disabled={checking}
-            data-testid="check-monitors"
-            title="Evaluate and push firing monitors to webhooks"
-          >
-            <Icon name="check" size={14} /> Check &amp; notify
-          </button>
-        </div>
-      </div>
-      <p class="muted">
-        Thresholds over this flow's live metrics — failure / refer / automation rate, latency, and
-        volume. Each is evaluated against the analytics roll-up; a breached rule shows as
-        <b>firing</b>.
-      </p>
-      <div class="row mon-form">
-        <label>
-          Metric
-          <select bind:value={monMetric} aria-label="monitor metric">
-            {#each MONITOR_METRICS as m (m)}<option value={m}>{m}</option>{/each}
-          </select>
-        </label>
-        <label>
-          When
-          <select bind:value={monOp} aria-label="monitor op">
-            <option value="gt">above</option>
-            <option value="lt">below</option>
-          </select>
-        </label>
-        <label>
-          Threshold {monIsRate ? '(0–1)' : ''}
-          <input
-            type="number"
-            step={monIsRate ? '0.01' : '1'}
-            bind:value={monThreshold}
-            aria-label="monitor threshold"
-          />
-        </label>
-        <label class="grow">
-          Note
-          <input bind:value={monDesc} aria-label="monitor description" placeholder="optional" />
-        </label>
+    <div class="row export">
+      <span class="exportlabel"><Icon name="diagram" size={15} /> Export</span>
+      <div class="grp">
+        <button onclick={() => downloadExport('mermaid')} title="Download Mermaid flowchart">
+          <Icon name="download" size={14} /> Mermaid
+        </button>
         <button
-          onclick={addMonitor}
-          disabled={monBusy || !roleAtLeast($user?.role, 'editor')}
-          title={!roleAtLeast($user?.role, 'editor') ? 'Requires the editor role' : undefined}
-          data-testid="add-monitor">Add monitor</button
+          class="icon"
+          aria-label="Copy Mermaid"
+          title="Copy Mermaid"
+          onclick={() => copyExport('mermaid')}
         >
+          <Icon name="copy" size={14} />
+        </button>
       </div>
-      {#if monitors.length > 0}
-        <ul class="mon-list">
-          {#each monitors as m (m.monitor_id)}
-            <li class:firing={m.status.firing}>
-              <span class="mon-state" class:firing={m.status.firing}
-                >{m.status.firing ? 'firing' : m.status.computable ? 'ok' : 'no data'}</span
-              >
-              <span class="mon-rule"><b>{m.metric}</b> {fmtThreshold(m)}</span>
-              <span class="mon-actual">now: {fmtActual(m)}</span>
-              {#if m.description}<span class="muted">{m.description}</span>{/if}
-              <button
-                class="link danger"
-                onclick={() => removeMonitor(m)}
-                disabled={!roleAtLeast($user?.role, 'editor')}
-                title={!roleAtLeast($user?.role, 'editor') ? 'Requires the editor role' : undefined}
-                >remove</button
-              >
-            </li>
-          {/each}
-        </ul>
-      {:else}
-        <p class="muted">No monitors yet.</p>
-      {/if}
-
-      {#if drift}
-        <div class="drift" data-testid="drift-panel">
-          <span class="exportlabel"><Icon name="scorecard" size={15} /> Distribution drift</span>
-          {#if !drift.has_baseline}
-            <span class="muted">No baseline captured — use <b>Capture baseline</b> to set one.</span
-            >
-          {:else if !drift.has_current}
-            <span class="muted">Baseline set; no dispositioned decisions yet.</span>
-          {:else}
-            <span class:err={drift.max_drift > 0.2} class:ok={drift.max_drift <= 0.2}
-              >max drift {pct(drift.max_drift)}</span
-            >
-            <span
-              class:err={drift.psi > 0.25}
-              class:ok={drift.psi <= 0.1}
-              title="population stability index">PSI {drift.psi.toFixed(3)}</span
-            >
-            <span class="muted" title="Kullback–Leibler divergence">KL {drift.kl.toFixed(3)}</span>
-            {#each drift.buckets ?? [] as b (b.disposition)}
-              <span class="muted"
-                >{b.disposition}: {pct(b.baseline)}→{pct(b.current)} ({b.delta >= 0 ? '+' : ''}{pct(
-                  b.delta
-                )})</span
-              >
-            {/each}
-          {/if}
-        </div>
-      {/if}
-
-      {#if lastCheck && lastCheck.deliveries && lastCheck.deliveries.length > 0}
-        <div class="mon-deliveries" data-testid="check-deliveries">
-          <span class="exportlabel">Last check delivered to:</span>
-          {#each lastCheck.deliveries as d (d.webhook_id)}
-            <span class={d.ok ? 'ok' : 'err'}
-              ><span role="img" aria-label={d.ok ? 'delivered' : 'failed'}>{d.ok ? '✓' : '✗'}</span>
-              {d.url}{d.status ? ` (${d.status})` : ''}</span
-            >
-          {/each}
-        </div>
-      {/if}
-
-      <details class="webhooks">
-        <summary
-          >Notification webhooks <span class="muted">(shared across flows · {webhooks.length})</span
-          ></summary
+      <button
+        onclick={() => downloadExport('mermaid-state')}
+        title="Download Mermaid state diagram"
+      >
+        <Icon name="download" size={14} /> State
+      </button>
+      <div class="grp">
+        <button onclick={() => downloadExport('bpmn')} title="Download BPMN 2.0 XML">
+          <Icon name="download" size={14} /> BPMN
+        </button>
+        <button
+          class="icon"
+          aria-label="Copy BPMN"
+          title="Copy BPMN"
+          onclick={() => copyExport('bpmn')}
         >
-        <div class="row mon-form">
-          <label class="grow">
-            Endpoint URL
-            <input
-              bind:value={hookURL}
-              aria-label="webhook url"
-              placeholder="https://hooks.example.com/alerts"
-            />
-          </label>
-          <label>
-            Note
-            <input bind:value={hookNote} aria-label="webhook note" placeholder="optional" />
-          </label>
-          <label>
-            Events
-            <input
-              bind:value={hookEvents}
-              aria-label="webhook events"
-              placeholder="monitor, drift (blank = all)"
-            />
-          </label>
-          <button
-            onclick={addWebhook}
-            disabled={hookBusy || !hookURL.trim()}
-            data-testid="add-webhook">Add webhook</button
-          >
-        </div>
-        <label class="grow">
-          Message template <span class="muted">(optional Go template, e.g. {`{{.flow_id}}`})</span>
-          <input
-            bind:value={hookTemplate}
-            aria-label="webhook template"
-            placeholder="leave blank to send the raw JSON payload"
-          />
-        </label>
-        {#if webhooks.length > 0}
-          <ul class="mon-list">
-            {#each webhooks as h (h.webhook_id)}
-              <li>
-                <span class="mon-rule">{h.url}</span>
-                {#if h.note}<span class="muted">{h.note}</span>{/if}
-                <span class="mon-actual"
-                  >{h.delivery_count} sent{h.delivery_count > 0
-                    ? h.last_ok
-                      ? ' · last ok'
-                      : ' · last failed'
-                    : ''}</span
-                >
-                <button class="link danger" onclick={() => removeWebhook(h.webhook_id)}
-                  >remove</button
-                >
-              </li>
-            {/each}
-          </ul>
-        {:else}
-          <p class="muted">
-            No webhooks. Add one, then <b>Check &amp; notify</b> pushes firing monitors to it.
-          </p>
-        {/if}
-      </details>
-    </section>
-  {/if}
-
-  {#if tab === 'deploy'}
-    <section class="deploy" data-testid="deploy-panel">
-      <h2>Deployment</h2>
-      <div class="live">
-        <span class="exportlabel"><Icon name="check" size={15} /> Live</span>
-        {#each ['sandbox', 'staging', 'production'] as e (e)}
-          <span class="env">
-            {e}:
-            {#if liveVersion(e) !== undefined}<b>v{liveVersion(e)}</b>
-              <button
-                class="linkbtn"
-                onclick={() => rollback(e)}
-                disabled={deploying || !roleAtLeast($user?.role, 'editor')}
-                title={!roleAtLeast($user?.role, 'editor')
-                  ? 'Requires the editor role'
-                  : 'Revert to the previous live version'}>rollback</button
-              >{:else}<span class="muted">—</span>{/if}
-          </span>
-        {/each}
+          <Icon name="copy" size={14} />
+        </button>
       </div>
+      <div class="grp">
+        <button onclick={() => downloadExport('dot')} title="Download Graphviz DOT">
+          <Icon name="download" size={14} /> DOT
+        </button>
+        <button
+          class="icon"
+          aria-label="Copy DOT"
+          title="Copy DOT"
+          onclick={() => copyExport('dot')}
+        >
+          <Icon name="copy" size={14} />
+        </button>
+      </div>
+      <div class="grp">
+        <button onclick={() => downloadExport('json')} title="Download flow JSON (re-importable)">
+          <Icon name="download" size={14} /> JSON
+        </button>
+        <button
+          class="icon"
+          aria-label="Copy JSON"
+          title="Copy JSON"
+          onclick={() => copyExport('json')}
+        >
+          <Icon name="copy" size={14} />
+        </button>
+      </div>
+    </div>
+    <details class="importflow">
+      <summary><Icon name="download" size={15} /> Import JSON</summary>
+      <p class="importhint">
+        Load a flow export (or a bare <code>graph</code> / <code>{'{nodes, edges}'}</code> object)
+        onto the canvas, then <b>Publish</b> to save it as a new version — the inverse of JSON export.
+      </p>
       <div class="row">
         <input
-          bind:value={depVersion}
-          placeholder={`version (default latest v${flow?.latest ?? '?'})`}
-          aria-label="deploy version"
-          size="22"
-          inputmode="numeric"
+          type="file"
+          accept="application/json,.json"
+          aria-label="import flow file"
+          onchange={importFile}
         />
-        <select bind:value={depEnv} aria-label="deploy environment">
-          <option value="sandbox">sandbox</option>
-          <option value="staging">staging</option>
-          <option value="production">production (four-eyes)</option>
-        </select>
-        <input
-          bind:value={depChallenger}
-          placeholder="challenger ver (optional)"
-          aria-label="challenger version"
-          size="18"
-          inputmode="numeric"
-        />
-        <input
-          bind:value={depChallengerPct}
-          placeholder="challenger %"
-          aria-label="challenger pct"
-          size="10"
-          inputmode="numeric"
-        />
-        <button
-          class="primary"
-          onclick={submitDeploy}
-          disabled={!flow || deploying || !roleAtLeast($user?.role, 'editor')}
-          title={!roleAtLeast($user?.role, 'editor') ? 'Requires the editor role' : undefined}
-          data-testid="deploy-submit"
-        >
-          {#if deploying}Working…{:else if depEnv === 'production'}Propose for review{:else}Deploy{/if}
+      </div>
+      <textarea
+        class="importbox"
+        bind:value={importText}
+        placeholder={'{"graph":{"nodes":[…],"edges":[…]}}'}
+        aria-label="import flow json"
+        rows="4"
+      ></textarea>
+      <div class="row">
+        <button onclick={() => importJSON(importText)} data-testid="import-load">
+          <Icon name="download" size={14} /> Load into editor
         </button>
       </div>
-      <p class="hint muted">
-        Production deploys require maker-checker approval: proposing creates a request that a
-        <em>different</em> user must approve.
-      </p>
-
-      <div class="row promote-row">
-        <span class="exportlabel"><Icon name="split" size={14} /> Promote</span>
-        <select bind:value={promoteFrom} aria-label="promote from">
-          {#each ['sandbox', 'staging', 'production'] as e (e)}<option value={e}>{e}</option>{/each}
-        </select>
-        <span aria-hidden="true">→</span>
-        <select bind:value={promoteTo} aria-label="promote to">
-          {#each ['sandbox', 'staging', 'production'] as e (e)}<option value={e}>{e}</option>{/each}
-        </select>
-        <button
-          class="primary"
-          onclick={submitPromote}
-          disabled={!flow || promoting || !roleAtLeast($user?.role, 'editor')}
-          title={!roleAtLeast($user?.role, 'editor') ? 'Requires the editor role' : undefined}
-          data-testid="promote-submit"
-        >
-          {promoting ? 'Working…' : promoteTo === 'production' ? 'Promote (review)' : 'Promote'}
-        </button>
-        <label class="force"
-          ><input type="checkbox" bind:checked={promoteForce} aria-label="force promote" /> force</label
-        >
-        <span class="hint muted"
-          >ships the live version up the chain; blocked if monitors are firing (prod via review).</span
-        >
+    </details>
+    {#if metrics && metrics.total > 0}
+      <div class="metrics">
+        <span class="exportlabel"><Icon name="diagram" size={15} /> Analytics</span>
+        <span><b>{metrics.total}</b> decisions</span>
+        <span class="ok">{metrics.completed} completed</span>
+        <span class="err">{metrics.failed} failed</span>
+        <span class="muted">avg {metrics.avg_duration_ms} ms</span>
+        {#if automation}
+          <span class="ok" data-testid="automation-rate">{automation.rate}% automated</span>
+          <span class="muted">{automation.refer} referred</span>
+        {/if}
+        {#each Object.entries(metrics.by_variant ?? {}) as [variant, v] (variant)}
+          <span class="muted">{variant}: {v.completed}/{v.started}</span>
+        {/each}
+        <a href={appHref('/decisions')}>view runs →</a>
       </div>
-      <details class="promotion-policy" data-testid="promotion-policy">
-        <summary><Icon name="shield" size={15} /> Promotion policy</summary>
-        <div class="policy-grid">
-          {#each ENVIRONMENTS as e (e)}
-            {@const p = promotionPolicyFor(e)}
-            {@const noPolicy = !roleAtLeast($user?.role, 'editor')}
-            {@const policyTitle = noPolicy ? 'Requires the editor role' : undefined}
-            <div class="policy-stage">
-              <b>{e}</b>
-              <label title={policyTitle}>
-                <input
-                  type="checkbox"
-                  checked={p.require_no_firing_monitors}
-                  disabled={policySaving || noPolicy}
-                  onchange={(ev) =>
-                    updatePromotionPolicy(e, {
-                      require_no_firing_monitors: ev.currentTarget.checked
-                    })}
-                />
-                no firing monitors
-              </label>
-              <label title={policyTitle}>
-                <input
-                  type="checkbox"
-                  checked={p.require_assertions}
-                  disabled={policySaving || noPolicy}
-                  onchange={(ev) =>
-                    updatePromotionPolicy(e, { require_assertions: ev.currentTarget.checked })}
-                />
-                passing assertions
-              </label>
-              <label title={policyTitle}>
-                <input
-                  type="checkbox"
-                  checked={p.allow_force}
-                  disabled={policySaving || noPolicy}
-                  onchange={(ev) =>
-                    updatePromotionPolicy(e, { allow_force: ev.currentTarget.checked })}
-                />
-                force override
-              </label>
-              <label title={policyTitle}>
-                <input
-                  type="checkbox"
-                  checked={p.require_review}
-                  disabled={policySaving || e === 'production' || noPolicy}
-                  onchange={(ev) =>
-                    updatePromotionPolicy(e, { require_review: ev.currentTarget.checked })}
-                />
-                review request
-              </label>
-            </div>
-          {/each}
-        </div>
-      </details>
+    {/if}
 
-      <details class="shadow-panel" data-testid="shadow-panel">
-        <summary><Icon name="diagram" size={15} /> Shadow deploys</summary>
-        <p class="hint muted">
-          Run a candidate version alongside live decisions to measure how often it would diverge —
-          its result is never returned to callers.
-        </p>
-        <div class="shadow-grid">
-          {#each ENVIRONMENTS as e (e)}
-            {@const rep = shadowReportFor(e)}
-            <div class="shadow-stage">
-              <b>{e}</b>
-              <select
-                value={shadowVersionFor(e)}
-                disabled={shadowSaving || !roleAtLeast($user?.role, 'editor')}
-                title={!roleAtLeast($user?.role, 'editor') ? 'Requires the editor role' : undefined}
-                onchange={(ev) => updateShadow(e, parseInt(ev.currentTarget.value, 10))}
-                aria-label={`shadow version for ${e}`}
-              >
-                <option value={0}>none</option>
-                {#each flow?.versions ?? [] as v (v.version)}
-                  <option value={v.version}>v{v.version}</option>
-                {/each}
-              </select>
-              {#if rep && rep.total > 0}
-                <span class="shadow-stats muted">
-                  {rep.matched}/{rep.total} match{rep.diverged
-                    ? `, ${rep.diverged} diverged`
-                    : ''}{rep.errored ? `, ${rep.errored} errored` : ''}
-                </span>
-              {:else}
-                <span class="muted">no comparisons yet</span>
-              {/if}
-            </div>
-          {/each}
-        </div>
-      </details>
-
-      {#if allRequests.length > 0}
-        <div class="requests" data-testid="deployment-requests">
-          <h3>Deployment requests</h3>
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr><th>Env</th><th>Version</th><th>Status</th><th>Proposed by</th><th></th></tr>
-              </thead>
-              <tbody>
-                {#each allRequests as r (r.request_id)}
-                  <tr>
-                    <td>{r.environment}</td>
-                    <td
-                      >v{r.version}{#if r.challenger_version}
-                        + v{r.challenger_version} @ {r.challenger_pct ?? 0}%{/if}</td
-                    >
-                    <td><span class="reqstatus {r.status}">{r.status}</span></td>
-                    <td>{r.requested_by}</td>
-                    <td class="reqactions">
-                      {#if r.status === 'pending'}
-                        <button
-                          class="primary"
-                          onclick={() => approve(r.request_id)}
-                          disabled={!roleAtLeast($user?.role, 'approver') ||
-                            r.requested_by === $user?.actor}
-                          title={!roleAtLeast($user?.role, 'approver')
-                            ? 'Requires the approver role'
-                            : r.requested_by === $user?.actor
-                              ? 'Four-eyes: you requested this — a different approver must approve'
-                              : undefined}>Approve</button
-                        >
-                        <button
-                          onclick={() => reject(r.request_id)}
-                          disabled={!roleAtLeast($user?.role, 'approver')}
-                          title={!roleAtLeast($user?.role, 'approver')
-                            ? 'Requires the approver role'
-                            : undefined}>Reject</button
-                        >
-                      {:else}
-                        <span class="muted"
-                          >{r.status} by {r.decided_by ?? '—'}{#if r.reason}: {r.reason}{/if}</span
-                        >
-                      {/if}
-                    </td>
-                  </tr>
-                  <tr class="threadrow">
-                    <td colspan="5">
-                      <CommentThread
-                        subjectType="deployment_request"
-                        subjectId={r.request_id}
-                        title="Approval discussion"
-                      />
-                    </td>
-                  </tr>
-                {/each}
-              </tbody>
-            </table>
+    {#if tab === 'monitor'}
+      <section class="monitors" data-testid="monitors-panel">
+        <div class="mon-head">
+          <h2>Monitors</h2>
+          <div class="row">
+            <button
+              class="ghost"
+              onclick={loadMonitors}
+              title="Re-evaluate against current metrics"
+            >
+              <Icon name="reload" size={14} /> Refresh
+            </button>
+            <button
+              class="ghost"
+              onclick={captureBaselineNow}
+              data-testid="capture-baseline"
+              title="Snapshot the current disposition mix as the drift baseline"
+            >
+              <Icon name="scorecard" size={14} /> Capture baseline
+            </button>
+            <button
+              class="ghost"
+              onclick={checkNow}
+              disabled={checking}
+              data-testid="check-monitors"
+              title="Evaluate and push firing monitors to webhooks"
+            >
+              <Icon name="check" size={14} /> Check &amp; notify
+            </button>
           </div>
         </div>
-      {/if}
-
-      <details class="schedules" data-testid="schedules-panel">
-        <summary>Scheduled deploys <span class="muted">({schedules.length})</span></summary>
-        <div class="row mon-form">
-          <label
-            >Env
-            <select bind:value={schEnv}>
-              <option value="sandbox">sandbox</option>
-              <option value="staging">staging</option>
-              <option value="production">production</option>
-            </select></label
-          >
-          <label>Version <input bind:value={schVersion} placeholder="latest" /></label>
-          <label>At <input type="datetime-local" bind:value={schAt} /></label>
-          <label
-            >Until <input
-              type="datetime-local"
-              bind:value={schUntil}
-              aria-label="until (optional, time-boxed)"
-            /></label
-          >
-          <button
-            onclick={addSchedule}
-            disabled={schBusy || !schAt || !roleAtLeast($user?.role, 'editor')}
-            title={!roleAtLeast($user?.role, 'editor') ? 'Requires the editor role' : undefined}
-            >Schedule</button
-          >
-        </div>
-        {#if schedules.length > 0}
-          <ul class="mon-list">
-            {#each schedules as sc (sc.schedule_id)}
-              <li>
-                <span>{sc.environment} v{sc.version} @ {new Date(sc.at).toLocaleString()}</span>
-                {#if sc.until}<span class="muted">→ {new Date(sc.until).toLocaleString()}</span
-                  >{/if}
-                <span class="reqstatus {sc.status}">{sc.status}</span>
-                {#if sc.status === 'pending' || sc.status === 'active'}
-                  <button
-                    class="linkbtn"
-                    onclick={() => dropSchedule(sc.schedule_id)}
-                    disabled={!roleAtLeast($user?.role, 'editor')}
-                    title={!roleAtLeast($user?.role, 'editor')
-                      ? 'Requires the editor role'
-                      : undefined}>cancel</button
-                  >
-                {/if}
-              </li>
-            {/each}
-          </ul>
-        {/if}
-      </details>
-
-      <details class="grants" data-testid="grants-panel">
-        <summary>Access grants <span class="muted">(admin · {grants.length})</span></summary>
-        <p class="hint">
-          With no grants, change-control follows the global roles. Add a grant to restrict who may
-          deploy / roll back / schedule / promote this flow (per environment, or <code>*</code> for all).
+        <p class="muted">
+          Thresholds over this flow's live metrics — failure / refer / automation rate, latency, and
+          volume. Each is evaluated against the analytics roll-up; a breached rule shows as
+          <b>firing</b>.
         </p>
         <div class="row mon-form">
-          <label class="grow"
-            >Actor <input bind:value={grantActor} placeholder="user id / email" /></label
-          >
-          <label
-            >Env
-            <select bind:value={grantEnv}>
-              <option value="*">all (*)</option>
-              <option value="sandbox">sandbox</option>
-              <option value="staging">staging</option>
-              <option value="production">production</option>
-            </select></label
-          >
+          <label>
+            Metric
+            <select bind:value={monMetric} aria-label="monitor metric">
+              {#each MONITOR_METRICS as m (m)}<option value={m}>{m}</option>{/each}
+            </select>
+          </label>
+          <label>
+            When
+            <select bind:value={monOp} aria-label="monitor op">
+              <option value="gt">above</option>
+              <option value="lt">below</option>
+            </select>
+          </label>
+          <label>
+            Threshold {monIsRate ? '(0–1)' : ''}
+            <input
+              type="number"
+              step={monIsRate ? '0.01' : '1'}
+              bind:value={monThreshold}
+              aria-label="monitor threshold"
+            />
+          </label>
+          <label class="grow">
+            Note
+            <input bind:value={monDesc} aria-label="monitor description" placeholder="optional" />
+          </label>
           <button
-            onclick={grant}
-            disabled={grantBusy || !grantActor.trim() || !roleAtLeast($user?.role, 'editor')}
+            onclick={addMonitor}
+            disabled={monBusy || !roleAtLeast($user?.role, 'editor')}
             title={!roleAtLeast($user?.role, 'editor') ? 'Requires the editor role' : undefined}
-            >Grant</button
+            data-testid="add-monitor">Add monitor</button
           >
         </div>
-        {#if grants.length > 0}
+        {#if monitors.length > 0}
           <ul class="mon-list">
-            {#each grants as g (g.grant_id)}
-              <li>
-                <span><b>{g.actor}</b> — {g.environment}</span>
+            {#each monitors as m (m.monitor_id)}
+              <li class:firing={m.status.firing}>
+                <span class="mon-state" class:firing={m.status.firing}
+                  >{m.status.firing ? 'firing' : m.status.computable ? 'ok' : 'no data'}</span
+                >
+                <span class="mon-rule"><b>{m.metric}</b> {fmtThreshold(m)}</span>
+                <span class="mon-actual">now: {fmtActual(m)}</span>
+                {#if m.description}<span class="muted">{m.description}</span>{/if}
                 <button
-                  class="linkbtn"
-                  onclick={() => ungrant(g.grant_id)}
+                  class="link danger"
+                  onclick={() => removeMonitor(m)}
                   disabled={!roleAtLeast($user?.role, 'editor')}
                   title={!roleAtLeast($user?.role, 'editor')
                     ? 'Requires the editor role'
-                    : undefined}>revoke</button
+                    : undefined}>remove</button
                 >
               </li>
             {/each}
           </ul>
+        {:else}
+          <p class="muted">No monitors yet.</p>
         {/if}
-      </details>
-    </section>
 
-    {#if flow && flow.versions.length > 0}
-      <section class="versions" data-testid="versions-panel">
-        <h2>Versions</h2>
-        <div class="vlist">
-          {#each [...flow.versions].reverse() as v (v.version)}
-            <span class="vchip">
-              <b>v{v.version}</b>
-              <code>{v.etag.slice(0, 8)}</code>
-              {#if v.published_by}<span class="muted">by {v.published_by}</span>{/if}
+        {#if drift}
+          <div class="drift" data-testid="drift-panel">
+            <span class="exportlabel"><Icon name="scorecard" size={15} /> Distribution drift</span>
+            {#if !drift.has_baseline}
+              <span class="muted"
+                >No baseline captured — use <b>Capture baseline</b> to set one.</span
+              >
+            {:else if !drift.has_current}
+              <span class="muted">Baseline set; no dispositioned decisions yet.</span>
+            {:else}
+              <span class:err={drift.max_drift > 0.2} class:ok={drift.max_drift <= 0.2}
+                >max drift {pct(drift.max_drift)}</span
+              >
+              <span
+                class:err={drift.psi > 0.25}
+                class:ok={drift.psi <= 0.1}
+                title="population stability index">PSI {drift.psi.toFixed(3)}</span
+              >
+              <span class="muted" title="Kullback–Leibler divergence">KL {drift.kl.toFixed(3)}</span
+              >
+              {#each drift.buckets ?? [] as b (b.disposition)}
+                <span class="muted"
+                  >{b.disposition}: {pct(b.baseline)}→{pct(b.current)} ({b.delta >= 0
+                    ? '+'
+                    : ''}{pct(b.delta)})</span
+                >
+              {/each}
+            {/if}
+          </div>
+        {/if}
+
+        {#if lastCheck && lastCheck.deliveries && lastCheck.deliveries.length > 0}
+          <div class="mon-deliveries" data-testid="check-deliveries">
+            <span class="exportlabel">Last check delivered to:</span>
+            {#each lastCheck.deliveries as d (d.webhook_id)}
+              <span class={d.ok ? 'ok' : 'err'}
+                ><span role="img" aria-label={d.ok ? 'delivered' : 'failed'}
+                  >{d.ok ? '✓' : '✗'}</span
+                >
+                {d.url}{d.status ? ` (${d.status})` : ''}</span
+              >
+            {/each}
+          </div>
+        {/if}
+
+        <details class="webhooks">
+          <summary
+            >Notification webhooks <span class="muted"
+              >(shared across flows · {webhooks.length})</span
+            ></summary
+          >
+          <div class="row mon-form">
+            <label class="grow">
+              Endpoint URL
+              <input
+                bind:value={hookURL}
+                aria-label="webhook url"
+                placeholder="https://hooks.example.com/alerts"
+              />
+            </label>
+            <label>
+              Note
+              <input bind:value={hookNote} aria-label="webhook note" placeholder="optional" />
+            </label>
+            <label>
+              Events
+              <input
+                bind:value={hookEvents}
+                aria-label="webhook events"
+                placeholder="monitor, drift (blank = all)"
+              />
+            </label>
+            <button
+              onclick={addWebhook}
+              disabled={hookBusy || !hookURL.trim()}
+              data-testid="add-webhook">Add webhook</button
+            >
+          </div>
+          <label class="grow">
+            Message template <span class="muted">(optional Go template, e.g. {`{{.flow_id}}`})</span
+            >
+            <input
+              bind:value={hookTemplate}
+              aria-label="webhook template"
+              placeholder="leave blank to send the raw JSON payload"
+            />
+          </label>
+          {#if webhooks.length > 0}
+            <ul class="mon-list">
+              {#each webhooks as h (h.webhook_id)}
+                <li>
+                  <span class="mon-rule">{h.url}</span>
+                  {#if h.note}<span class="muted">{h.note}</span>{/if}
+                  <span class="mon-actual"
+                    >{h.delivery_count} sent{h.delivery_count > 0
+                      ? h.last_ok
+                        ? ' · last ok'
+                        : ' · last failed'
+                      : ''}</span
+                  >
+                  <button class="link danger" onclick={() => removeWebhook(h.webhook_id)}
+                    >remove</button
+                  >
+                </li>
+              {/each}
+            </ul>
+          {:else}
+            <p class="muted">
+              No webhooks. Add one, then <b>Check &amp; notify</b> pushes firing monitors to it.
+            </p>
+          {/if}
+        </details>
+      </section>
+    {/if}
+
+    {#if tab === 'deploy'}
+      <section class="deploy" data-testid="deploy-panel">
+        <h2>Deployment</h2>
+        <div class="live">
+          <span class="exportlabel"><Icon name="check" size={15} /> Live</span>
+          {#each ['sandbox', 'staging', 'production'] as e (e)}
+            <span class="env">
+              {e}:
+              {#if liveVersion(e) !== undefined}<b>v{liveVersion(e)}</b>
+                <button
+                  class="linkbtn"
+                  onclick={() => rollback(e)}
+                  disabled={deploying || !roleAtLeast($user?.role, 'editor')}
+                  title={!roleAtLeast($user?.role, 'editor')
+                    ? 'Requires the editor role'
+                    : 'Revert to the previous live version'}>rollback</button
+                >{:else}<span class="muted">—</span>{/if}
             </span>
           {/each}
         </div>
-        {#if flow.versions.length >= 2}
-          <div class="row">
+        <div class="row">
+          <input
+            bind:value={depVersion}
+            placeholder={`version (default latest v${flow?.latest ?? '?'})`}
+            aria-label="deploy version"
+            size="22"
+            inputmode="numeric"
+          />
+          <select bind:value={depEnv} aria-label="deploy environment">
+            <option value="sandbox">sandbox</option>
+            <option value="staging">staging</option>
+            <option value="production">production (four-eyes)</option>
+          </select>
+          <input
+            bind:value={depChallenger}
+            placeholder="challenger ver (optional)"
+            aria-label="challenger version"
+            size="18"
+            inputmode="numeric"
+          />
+          <input
+            bind:value={depChallengerPct}
+            placeholder="challenger %"
+            aria-label="challenger pct"
+            size="10"
+            inputmode="numeric"
+          />
+          <button
+            class="primary"
+            onclick={submitDeploy}
+            disabled={!flow || deploying || !roleAtLeast($user?.role, 'editor')}
+            title={!roleAtLeast($user?.role, 'editor') ? 'Requires the editor role' : undefined}
+            data-testid="deploy-submit"
+          >
+            {#if deploying}Working…{:else if depEnv === 'production'}Propose for review{:else}Deploy{/if}
+          </button>
+        </div>
+        <p class="hint muted">
+          Production deploys require maker-checker approval: proposing creates a request that a
+          <em>different</em> user must approve.
+        </p>
+
+        <div class="row promote-row">
+          <span class="exportlabel"><Icon name="split" size={14} /> Promote</span>
+          <select bind:value={promoteFrom} aria-label="promote from">
+            {#each ['sandbox', 'staging', 'production'] as e (e)}<option value={e}>{e}</option
+              >{/each}
+          </select>
+          <span aria-hidden="true">→</span>
+          <select bind:value={promoteTo} aria-label="promote to">
+            {#each ['sandbox', 'staging', 'production'] as e (e)}<option value={e}>{e}</option
+              >{/each}
+          </select>
+          <button
+            class="primary"
+            onclick={submitPromote}
+            disabled={!flow || promoting || !roleAtLeast($user?.role, 'editor')}
+            title={!roleAtLeast($user?.role, 'editor') ? 'Requires the editor role' : undefined}
+            data-testid="promote-submit"
+          >
+            {promoting ? 'Working…' : promoteTo === 'production' ? 'Promote (review)' : 'Promote'}
+          </button>
+          <label class="force"
+            ><input type="checkbox" bind:checked={promoteForce} aria-label="force promote" /> force</label
+          >
+          <span class="hint muted"
+            >ships the live version up the chain; blocked if monitors are firing (prod via review).</span
+          >
+        </div>
+        <details class="promotion-policy" data-testid="promotion-policy">
+          <summary><Icon name="shield" size={15} /> Promotion policy</summary>
+          <div class="policy-grid">
+            {#each ENVIRONMENTS as e (e)}
+              {@const p = promotionPolicyFor(e)}
+              {@const noPolicy = !roleAtLeast($user?.role, 'editor')}
+              {@const policyTitle = noPolicy ? 'Requires the editor role' : undefined}
+              <div class="policy-stage">
+                <b>{e}</b>
+                <label title={policyTitle}>
+                  <input
+                    type="checkbox"
+                    checked={p.require_no_firing_monitors}
+                    disabled={policySaving || noPolicy}
+                    onchange={(ev) =>
+                      updatePromotionPolicy(e, {
+                        require_no_firing_monitors: ev.currentTarget.checked
+                      })}
+                  />
+                  no firing monitors
+                </label>
+                <label title={policyTitle}>
+                  <input
+                    type="checkbox"
+                    checked={p.require_assertions}
+                    disabled={policySaving || noPolicy}
+                    onchange={(ev) =>
+                      updatePromotionPolicy(e, { require_assertions: ev.currentTarget.checked })}
+                  />
+                  passing assertions
+                </label>
+                <label title={policyTitle}>
+                  <input
+                    type="checkbox"
+                    checked={p.allow_force}
+                    disabled={policySaving || noPolicy}
+                    onchange={(ev) =>
+                      updatePromotionPolicy(e, { allow_force: ev.currentTarget.checked })}
+                  />
+                  force override
+                </label>
+                <label title={policyTitle}>
+                  <input
+                    type="checkbox"
+                    checked={p.require_review}
+                    disabled={policySaving || e === 'production' || noPolicy}
+                    onchange={(ev) =>
+                      updatePromotionPolicy(e, { require_review: ev.currentTarget.checked })}
+                  />
+                  review request
+                </label>
+              </div>
+            {/each}
+          </div>
+        </details>
+
+        <details class="shadow-panel" data-testid="shadow-panel">
+          <summary><Icon name="diagram" size={15} /> Shadow deploys</summary>
+          <p class="hint muted">
+            Run a candidate version alongside live decisions to measure how often it would diverge —
+            its result is never returned to callers.
+          </p>
+          <div class="shadow-grid">
+            {#each ENVIRONMENTS as e (e)}
+              {@const rep = shadowReportFor(e)}
+              <div class="shadow-stage">
+                <b>{e}</b>
+                <select
+                  value={shadowVersionFor(e)}
+                  disabled={shadowSaving || !roleAtLeast($user?.role, 'editor')}
+                  title={!roleAtLeast($user?.role, 'editor')
+                    ? 'Requires the editor role'
+                    : undefined}
+                  onchange={(ev) => updateShadow(e, parseInt(ev.currentTarget.value, 10))}
+                  aria-label={`shadow version for ${e}`}
+                >
+                  <option value={0}>none</option>
+                  {#each flow?.versions ?? [] as v (v.version)}
+                    <option value={v.version}>v{v.version}</option>
+                  {/each}
+                </select>
+                {#if rep && rep.total > 0}
+                  <span class="shadow-stats muted">
+                    {rep.matched}/{rep.total} match{rep.diverged
+                      ? `, ${rep.diverged} diverged`
+                      : ''}{rep.errored ? `, ${rep.errored} errored` : ''}
+                  </span>
+                {:else}
+                  <span class="muted">no comparisons yet</span>
+                {/if}
+              </div>
+            {/each}
+          </div>
+        </details>
+
+        {#if allRequests.length > 0}
+          <div class="requests" data-testid="deployment-requests">
+            <h3>Deployment requests</h3>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr><th>Env</th><th>Version</th><th>Status</th><th>Proposed by</th><th></th></tr>
+                </thead>
+                <tbody>
+                  {#each allRequests as r (r.request_id)}
+                    <tr>
+                      <td>{r.environment}</td>
+                      <td
+                        >v{r.version}{#if r.challenger_version}
+                          + v{r.challenger_version} @ {r.challenger_pct ?? 0}%{/if}</td
+                      >
+                      <td><span class="reqstatus {r.status}">{r.status}</span></td>
+                      <td>{r.requested_by}</td>
+                      <td class="reqactions">
+                        {#if r.status === 'pending'}
+                          <button
+                            class="primary"
+                            onclick={() => approve(r.request_id)}
+                            disabled={!roleAtLeast($user?.role, 'approver') ||
+                              r.requested_by === $user?.actor}
+                            title={!roleAtLeast($user?.role, 'approver')
+                              ? 'Requires the approver role'
+                              : r.requested_by === $user?.actor
+                                ? 'Four-eyes: you requested this — a different approver must approve'
+                                : undefined}>Approve</button
+                          >
+                          <button
+                            onclick={() => reject(r.request_id)}
+                            disabled={!roleAtLeast($user?.role, 'approver')}
+                            title={!roleAtLeast($user?.role, 'approver')
+                              ? 'Requires the approver role'
+                              : undefined}>Reject</button
+                          >
+                        {:else}
+                          <span class="muted"
+                            >{r.status} by {r.decided_by ?? '—'}{#if r.reason}: {r.reason}{/if}</span
+                          >
+                        {/if}
+                      </td>
+                    </tr>
+                    <tr class="threadrow">
+                      <td colspan="5">
+                        <CommentThread
+                          subjectType="deployment_request"
+                          subjectId={r.request_id}
+                          title="Approval discussion"
+                        />
+                      </td>
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        {/if}
+
+        <details class="schedules" data-testid="schedules-panel">
+          <summary>Scheduled deploys <span class="muted">({schedules.length})</span></summary>
+          <div class="row mon-form">
             <label
-              >diff <select bind:value={diffA} aria-label="diff base version">
+              >Env
+              <select bind:value={schEnv}>
+                <option value="sandbox">sandbox</option>
+                <option value="staging">staging</option>
+                <option value="production">production</option>
+              </select></label
+            >
+            <label>Version <input bind:value={schVersion} placeholder="latest" /></label>
+            <label>At <input type="datetime-local" bind:value={schAt} /></label>
+            <label
+              >Until <input
+                type="datetime-local"
+                bind:value={schUntil}
+                aria-label="until (optional, time-boxed)"
+              /></label
+            >
+            <button
+              onclick={addSchedule}
+              disabled={schBusy || !schAt || !roleAtLeast($user?.role, 'editor')}
+              title={!roleAtLeast($user?.role, 'editor') ? 'Requires the editor role' : undefined}
+              >Schedule</button
+            >
+          </div>
+          {#if schedules.length > 0}
+            <ul class="mon-list">
+              {#each schedules as sc (sc.schedule_id)}
+                <li>
+                  <span>{sc.environment} v{sc.version} @ {new Date(sc.at).toLocaleString()}</span>
+                  {#if sc.until}<span class="muted">→ {new Date(sc.until).toLocaleString()}</span
+                    >{/if}
+                  <span class="reqstatus {sc.status}">{sc.status}</span>
+                  {#if sc.status === 'pending' || sc.status === 'active'}
+                    <button
+                      class="linkbtn"
+                      onclick={() => dropSchedule(sc.schedule_id)}
+                      disabled={!roleAtLeast($user?.role, 'editor')}
+                      title={!roleAtLeast($user?.role, 'editor')
+                        ? 'Requires the editor role'
+                        : undefined}>cancel</button
+                    >
+                  {/if}
+                </li>
+              {/each}
+            </ul>
+          {/if}
+        </details>
+
+        <details class="grants" data-testid="grants-panel">
+          <summary>Access grants <span class="muted">(admin · {grants.length})</span></summary>
+          <p class="hint">
+            With no grants, change-control follows the global roles. Add a grant to restrict who may
+            deploy / roll back / schedule / promote this flow (per environment, or <code>*</code> for
+            all).
+          </p>
+          <div class="row mon-form">
+            <label class="grow"
+              >Actor <input bind:value={grantActor} placeholder="user id / email" /></label
+            >
+            <label
+              >Env
+              <select bind:value={grantEnv}>
+                <option value="*">all (*)</option>
+                <option value="sandbox">sandbox</option>
+                <option value="staging">staging</option>
+                <option value="production">production</option>
+              </select></label
+            >
+            <button
+              onclick={grant}
+              disabled={grantBusy || !grantActor.trim() || !roleAtLeast($user?.role, 'editor')}
+              title={!roleAtLeast($user?.role, 'editor') ? 'Requires the editor role' : undefined}
+              >Grant</button
+            >
+          </div>
+          {#if grants.length > 0}
+            <ul class="mon-list">
+              {#each grants as g (g.grant_id)}
+                <li>
+                  <span><b>{g.actor}</b> — {g.environment}</span>
+                  <button
+                    class="linkbtn"
+                    onclick={() => ungrant(g.grant_id)}
+                    disabled={!roleAtLeast($user?.role, 'editor')}
+                    title={!roleAtLeast($user?.role, 'editor')
+                      ? 'Requires the editor role'
+                      : undefined}>revoke</button
+                  >
+                </li>
+              {/each}
+            </ul>
+          {/if}
+        </details>
+      </section>
+
+      {#if flow && flow.versions.length > 0}
+        <section class="versions" data-testid="versions-panel">
+          <h2>Versions</h2>
+          <div class="vlist">
+            {#each [...flow.versions].reverse() as v (v.version)}
+              <span class="vchip">
+                <b>v{v.version}</b>
+                <code>{v.etag.slice(0, 8)}</code>
+                {#if v.published_by}<span class="muted">by {v.published_by}</span>{/if}
+              </span>
+            {/each}
+          </div>
+          {#if flow.versions.length >= 2}
+            <div class="row">
+              <label
+                >diff <select bind:value={diffA} aria-label="diff base version">
+                  {#each flow.versions as v (v.version)}<option value={String(v.version)}
+                      >v{v.version}</option
+                    >{/each}
+                </select></label
+              >
+              <span>→</span>
+              <select bind:value={diffB} aria-label="diff candidate version">
                 {#each flow.versions as v (v.version)}<option value={String(v.version)}
                     >v{v.version}</option
                   >{/each}
-              </select></label
-            >
-            <span>→</span>
-            <select bind:value={diffB} aria-label="diff candidate version">
-              {#each flow.versions as v (v.version)}<option value={String(v.version)}
-                  >v{v.version}</option
-                >{/each}
-            </select>
-          </div>
-          {#if graphDiff}
-            {#if diffIsEmpty(graphDiff)}
-              <p class="muted" data-testid="version-diff">v{diffA} and v{diffB} are identical.</p>
-            {:else}
-              <ul class="diff" data-testid="version-diff">
-                {#each graphDiff.nodesAdded as id (id)}<li>
-                    <span class="add">+ node</span>
-                    {id}
-                  </li>{/each}
-                {#each graphDiff.nodesRemoved as id (id)}<li>
-                    <span class="del">− node</span>
-                    {id}
-                  </li>{/each}
-                {#each graphDiff.nodesChanged as id (id)}<li>
-                    <span class="chg">~ node</span>
-                    {id}
-                  </li>{/each}
-                {#each graphDiff.edgesAdded as e (e)}<li>
-                    <span class="add">+ edge</span>
-                    {e}
-                  </li>{/each}
-                {#each graphDiff.edgesRemoved as e (e)}<li>
-                    <span class="del">− edge</span>
-                    {e}
-                  </li>{/each}
-              </ul>
+              </select>
+            </div>
+            {#if graphDiff}
+              {#if diffIsEmpty(graphDiff)}
+                <p class="muted" data-testid="version-diff">v{diffA} and v{diffB} are identical.</p>
+              {:else}
+                <ul class="diff" data-testid="version-diff">
+                  {#each graphDiff.nodesAdded as id (id)}<li>
+                      <span class="add">+ node</span>
+                      {id}
+                    </li>{/each}
+                  {#each graphDiff.nodesRemoved as id (id)}<li>
+                      <span class="del">− node</span>
+                      {id}
+                    </li>{/each}
+                  {#each graphDiff.nodesChanged as id (id)}<li>
+                      <span class="chg">~ node</span>
+                      {id}
+                    </li>{/each}
+                  {#each graphDiff.edgesAdded as e (e)}<li>
+                      <span class="add">+ edge</span>
+                      {e}
+                    </li>{/each}
+                  {#each graphDiff.edgesRemoved as e (e)}<li>
+                      <span class="del">− edge</span>
+                      {e}
+                    </li>{/each}
+                </ul>
+              {/if}
             {/if}
+          {:else}
+            <p class="muted">Publish another version to compare.</p>
           {/if}
-        {:else}
-          <p class="muted">Publish another version to compare.</p>
-        {/if}
-      </section>
+        </section>
+      {/if}
     {/if}
-  {/if}
 
-  {#if error}<p class="err">{error}</p>{/if}
+    {#if error}<p class="err">{error}</p>{/if}
 
-  <div class="grid">
-    <div class="canvas" data-testid="flow-canvas">
-      <div class="canvas-tools">
-        <div class="view-toggle" aria-label="canvas view">
-          <button
-            class:active={canvasView === 'cards'}
-            aria-pressed={canvasView === 'cards'}
-            onclick={() => setCanvasView('cards')}
-            title="Show detailed node cards"
-            data-testid="canvas-view-cards"
-          >
-            <Icon name="clipboard" size={14} /> Cards
-          </button>
-          <button
-            class:active={canvasView === 'bpmn'}
-            aria-pressed={canvasView === 'bpmn'}
-            onclick={() => setCanvasView('bpmn')}
-            title="Show BPMN process notation"
-            data-testid="canvas-view-bpmn"
-          >
-            <Icon name="diagram" size={14} /> BPMN
-          </button>
-        </div>
-        <button
-          class="relax-btn"
-          onclick={relax}
-          title="Auto-arrange every node by flow order (the only thing that moves nodes you've placed)"
-          data-testid="relax-layout"
-        >
-          <Icon name="diagram" size={14} /> Auto-layout
-        </button>
-        <button
-          class="relax-btn"
-          onclick={() => (panelOpen = !panelOpen)}
-          aria-pressed={panelOpen}
-          title={panelOpen ? 'Hide the tools panel for a full canvas' : 'Show the tools panel'}
-          data-testid="toggle-panel"
-        >
-          <Icon name={panelOpen ? 'chevron-right' : 'plus'} size={14} />
-          {panelOpen ? 'Hide panel' : 'Tools'}
-        </button>
-        <button
-          class="relax-btn"
-          class:active={heatOn}
-          aria-pressed={heatOn}
-          onclick={toggleHeat}
-          disabled={heatBusy}
-          title="Tint each node by how often it's traversed across this flow's recorded decisions"
-          data-testid="heatmap-toggle"
-        >
-          <Icon name="gauge" size={14} />
-          {heatBusy ? 'Loading…' : 'Heatmap'}
-        </button>
-        <button
-          class="relax-btn"
-          onclick={replayLatest}
-          disabled={replaying}
-          title="Animate a recent decision's path through the canvas, node by node"
-          data-testid="replay-decision"
-        >
-          <Icon name="play" size={14} />
-          {replaying ? 'Replaying…' : 'Replay'}
-        </button>
-        {#if heatOn}<span class="heat-legend" data-testid="heat-legend"
-            >{heatTotal} decision{heatTotal === 1 ? '' : 's'} · count = traversals</span
-          >{/if}
-      </div>
-      <SvelteFlow
-        bind:nodes
-        bind:edges
-        {nodeTypes}
-        onconnect={onConnect}
-        ondelete={onCanvasDelete}
-        colorMode={$theme}
-        proOptions={{ hideAttribution: true }}
-        fitView
-      >
-        <Background />
-        <Controls />
-      </SvelteFlow>
-    </div>
-
-    {#if panelOpen}
-      <aside>
-        <h2>Add node</h2>
-        <div class="row">
-          <select bind:value={newType} aria-label="new node type">
-            {#each NODE_TYPES as t (t)}<option value={t}>{nodeTypeLabel(t)}</option>{/each}
-          </select>
-          <button onclick={addNode}>Add</button>
-        </div>
-        {#if editNodes.length <= 1}
-          <p class="blank-hint">
-            New flow: pick a node (e.g. a <b>Scorecard</b> or <b>Decision table</b>) and <b>Add</b>
-            it, then connect it from <code>input</code> on the canvas. <b>Auto-layout</b> arranges them.
-          </p>
-        {/if}
-
-        <h2>Nodes</h2>
-        <ul class="nodes">
-          {#each editNodes as n (n.id)}
-            <li class:sel={n.id === selectedId}>
-              <button class="link" onclick={() => (selectedId = n.id)}>
-                <span class="nodeicon" title={n.type}><Icon name={n.type} size={15} /></span>
-                <span>{n.name || n.id}</span>
-                <span class="nodetype">{n.type}</span>
-              </button>
-              <button class="x" aria-label={`delete ${n.id}`} onclick={() => deleteNode(n.id)}>
-                <Icon name="trash" size={14} />
-              </button>
-            </li>
-          {/each}
-        </ul>
-
-        {#if selected}
-          <h2>Node: {selected.id}</h2>
-          <label
-            >name <input
-              value={selected.name}
-              oninput={(e) => updateSelected({ name: e.currentTarget.value })}
-              aria-label="node name"
-            /></label
-          >
-          <label
-            >type
-            <select
-              value={selected.type}
-              onchange={(e) => updateSelected({ type: e.currentTarget.value as NodeType })}
-              aria-label="selected node type"
+    <div class="grid">
+      <div class="canvas" data-testid="flow-canvas">
+        <div class="canvas-tools">
+          <div class="view-toggle" aria-label="canvas view">
+            <button
+              class:active={canvasView === 'cards'}
+              aria-pressed={canvasView === 'cards'}
+              onclick={() => setCanvasView('cards')}
+              title="Show detailed node cards"
+              data-testid="canvas-view-cards"
             >
+              <Icon name="clipboard" size={14} /> Cards
+            </button>
+            <button
+              class:active={canvasView === 'bpmn'}
+              aria-pressed={canvasView === 'bpmn'}
+              onclick={() => setCanvasView('bpmn')}
+              title="Show BPMN process notation"
+              data-testid="canvas-view-bpmn"
+            >
+              <Icon name="diagram" size={14} /> BPMN
+            </button>
+          </div>
+          <button
+            class="relax-btn"
+            onclick={relax}
+            title="Auto-arrange every node by flow order (the only thing that moves nodes you've placed)"
+            data-testid="relax-layout"
+          >
+            <Icon name="diagram" size={14} /> Auto-layout
+          </button>
+          <button
+            class="relax-btn"
+            onclick={() => (panelOpen = !panelOpen)}
+            aria-pressed={panelOpen}
+            title={panelOpen ? 'Hide the tools panel for a full canvas' : 'Show the tools panel'}
+            data-testid="toggle-panel"
+          >
+            <Icon name={panelOpen ? 'chevron-right' : 'plus'} size={14} />
+            {panelOpen ? 'Hide panel' : 'Tools'}
+          </button>
+          <button
+            class="relax-btn"
+            class:active={heatOn}
+            aria-pressed={heatOn}
+            onclick={toggleHeat}
+            disabled={heatBusy}
+            title="Tint each node by how often it's traversed across this flow's recorded decisions"
+            data-testid="heatmap-toggle"
+          >
+            <Icon name="gauge" size={14} />
+            {heatBusy ? 'Loading…' : 'Heatmap'}
+          </button>
+          <button
+            class="relax-btn"
+            onclick={replayLatest}
+            disabled={replaying}
+            title="Animate a recent decision's path through the canvas, node by node"
+            data-testid="replay-decision"
+          >
+            <Icon name="play" size={14} />
+            {replaying ? 'Replaying…' : 'Replay'}
+          </button>
+          {#if heatOn}<span class="heat-legend" data-testid="heat-legend"
+              >{heatTotal} decision{heatTotal === 1 ? '' : 's'} · count = traversals</span
+            >{/if}
+        </div>
+        <SvelteFlow
+          bind:nodes
+          bind:edges
+          {nodeTypes}
+          onconnect={onConnect}
+          ondelete={onCanvasDelete}
+          colorMode={$theme}
+          proOptions={{ hideAttribution: true }}
+          fitView
+        >
+          <Background />
+          <Controls />
+        </SvelteFlow>
+      </div>
+
+      {#if panelOpen}
+        <aside>
+          <h2>Add node</h2>
+          <div class="row">
+            <select bind:value={newType} aria-label="new node type">
               {#each NODE_TYPES as t (t)}<option value={t}>{nodeTypeLabel(t)}</option>{/each}
             </select>
-          </label>
-          <label
-            >lane <input
-              value={selected.lane ?? ''}
-              oninput={(e) => updateSelected({ lane: e.currentTarget.value || undefined })}
-              placeholder="Main"
-              aria-label="node lane"
-              list="lane-suggestions"
-            /></label
-          >
-          <datalist id="lane-suggestions">
-            {#each laneNames as l (l)}<option value={l}></option>{/each}
-          </datalist>
-          {#if selected.type === 'split'}
-            <label
-              >condition <input
-                value={asText(nodeCfg().condition)}
-                oninput={(e) => patchCfg({ condition: e.currentTarget.value })}
-                aria-label="condition"
-              /></label
-            >
-          {:else if selected.type === 'connect'}
-            <label
-              >connector <input
-                value={asText(nodeCfg().connector)}
-                oninput={(e) => patchCfg({ connector: e.currentTarget.value })}
-                aria-label="connector"
-              /></label
-            >
-            <label
-              >output key <input
-                value={asText(nodeCfg().output)}
-                oninput={(e) => patchCfg({ output: e.currentTarget.value })}
-                aria-label="connect output"
-              /></label
-            >
-          {:else if selected.type === 'ai'}
-            <label
-              >agent <input
-                value={asText(nodeCfg().agent)}
-                oninput={(e) => patchCfg({ agent: e.currentTarget.value })}
-                aria-label="agent"
-              /></label
-            >
-            <label
-              >output key <input
-                value={asText(nodeCfg().output)}
-                oninput={(e) => patchCfg({ output: e.currentTarget.value })}
-                aria-label="ai output"
-              /></label
-            >
-            <label
-              >prompt <input
-                value={asText(nodeCfg().prompt)}
-                oninput={(e) => patchCfg({ prompt: e.currentTarget.value })}
-                aria-label="ai prompt"
-              /></label
-            >
-          {:else if selected.type === 'predict'}
-            <label
-              >model <input
-                value={asText(nodeCfg().model)}
-                oninput={(e) => patchCfg({ model: e.currentTarget.value })}
-                aria-label="predict model"
-                placeholder="risk"
-              /></label
-            >
-            <label
-              >output key <input
-                value={asText(nodeCfg().output)}
-                oninput={(e) => patchCfg({ output: e.currentTarget.value })}
-                aria-label="predict output"
-                placeholder="risk"
-              /></label
-            >
-            <p class="muted">
-              Reads <code>predict.&lt;output&gt;.probability</code> / <code>.score</code> downstream.
+            <button onclick={addNode}>Add</button>
+          </div>
+          {#if editNodes.length <= 1}
+            <p class="blank-hint">
+              New flow: pick a node (e.g. a <b>Scorecard</b> or <b>Decision table</b>) and
+              <b>Add</b>
+              it, then connect it from <code>input</code> on the canvas. <b>Auto-layout</b> arranges them.
             </p>
-          {:else if selected.type === 'manual_review'}
+          {/if}
+
+          <h2>Nodes</h2>
+          <ul class="nodes">
+            {#each editNodes as n (n.id)}
+              <li class:sel={n.id === selectedId}>
+                <button class="link" onclick={() => (selectedId = n.id)}>
+                  <span class="nodeicon" title={n.type}><Icon name={n.type} size={15} /></span>
+                  <span>{n.name || n.id}</span>
+                  <span class="nodetype">{n.type}</span>
+                </button>
+                <button class="x" aria-label={`delete ${n.id}`} onclick={() => deleteNode(n.id)}>
+                  <Icon name="trash" size={14} />
+                </button>
+              </li>
+            {/each}
+          </ul>
+
+          {#if selected}
+            <h2>Node: {selected.id}</h2>
             <label
-              >company_name expr <input
-                value={asText(nodeCfg().company_name)}
-                oninput={(e) => patchCfg({ company_name: e.currentTarget.value })}
-                aria-label="company_name expr"
+              >name <input
+                value={selected.name}
+                oninput={(e) => updateSelected({ name: e.currentTarget.value })}
+                aria-label="node name"
               /></label
             >
             <label
-              >case_type expr <input
-                value={asText(nodeCfg().case_type)}
-                oninput={(e) => patchCfg({ case_type: e.currentTarget.value })}
-                aria-label="case_type expr"
-              /></label
-            >
+              >type
+              <select
+                value={selected.type}
+                onchange={(e) => updateSelected({ type: e.currentTarget.value as NodeType })}
+                aria-label="selected node type"
+              >
+                {#each NODE_TYPES as t (t)}<option value={t}>{nodeTypeLabel(t)}</option>{/each}
+              </select>
+            </label>
             <label
-              >sla_days <input
-                type="number"
-                value={asText(nodeCfg().sla_days)}
-                oninput={(e) =>
-                  patchCfg({
-                    sla_days: e.currentTarget.value === '' ? '' : Number(e.currentTarget.value)
-                  })}
-                aria-label="sla_days"
+              >lane <input
+                value={selected.lane ?? ''}
+                oninput={(e) => updateSelected({ lane: e.currentTarget.value || undefined })}
+                placeholder="Main"
+                aria-label="node lane"
+                list="lane-suggestions"
               /></label
             >
-            <label class="check"
-              ><input
-                type="checkbox"
-                checked={Boolean(nodeCfg().suspend)}
-                onchange={(e) => patchCfg({ suspend: e.currentTarget.checked })}
-                aria-label="suspend as a durable human task"
-              /> Suspend — pause the decision here until a reviewer acts (a durable human task; it resumes
-              from the decision's Resume control)</label
-            >
-            {#if nodeCfg().suspend}
+            <datalist id="lane-suggestions">
+              {#each laneNames as l (l)}<option value={l}></option>{/each}
+            </datalist>
+            {#if selected.type === 'split'}
               <label
-                >output_key (where the reviewer's outcome is injected on resume) <input
-                  value={asText(nodeCfg().output_key)}
-                  oninput={(e) => patchCfg({ output_key: e.currentTarget.value })}
-                  placeholder="review"
-                  aria-label="output_key"
+                >condition <input
+                  value={asText(nodeCfg().condition)}
+                  oninput={(e) => patchCfg({ condition: e.currentTarget.value })}
+                  aria-label="condition"
                 /></label
               >
+            {:else if selected.type === 'connect'}
+              <label
+                >connector <input
+                  value={asText(nodeCfg().connector)}
+                  oninput={(e) => patchCfg({ connector: e.currentTarget.value })}
+                  aria-label="connector"
+                /></label
+              >
+              <label
+                >output key <input
+                  value={asText(nodeCfg().output)}
+                  oninput={(e) => patchCfg({ output: e.currentTarget.value })}
+                  aria-label="connect output"
+                /></label
+              >
+            {:else if selected.type === 'ai'}
+              <label
+                >agent <input
+                  value={asText(nodeCfg().agent)}
+                  oninput={(e) => patchCfg({ agent: e.currentTarget.value })}
+                  aria-label="agent"
+                /></label
+              >
+              <label
+                >output key <input
+                  value={asText(nodeCfg().output)}
+                  oninput={(e) => patchCfg({ output: e.currentTarget.value })}
+                  aria-label="ai output"
+                /></label
+              >
+              <label
+                >prompt <input
+                  value={asText(nodeCfg().prompt)}
+                  oninput={(e) => patchCfg({ prompt: e.currentTarget.value })}
+                  aria-label="ai prompt"
+                /></label
+              >
+            {:else if selected.type === 'predict'}
+              <label
+                >model <input
+                  value={asText(nodeCfg().model)}
+                  oninput={(e) => patchCfg({ model: e.currentTarget.value })}
+                  aria-label="predict model"
+                  placeholder="risk"
+                /></label
+              >
+              <label
+                >output key <input
+                  value={asText(nodeCfg().output)}
+                  oninput={(e) => patchCfg({ output: e.currentTarget.value })}
+                  aria-label="predict output"
+                  placeholder="risk"
+                /></label
+              >
+              <p class="muted">
+                Reads <code>predict.&lt;output&gt;.probability</code> / <code>.score</code> downstream.
+              </p>
+            {:else if selected.type === 'manual_review'}
+              <label
+                >company_name expr <input
+                  value={asText(nodeCfg().company_name)}
+                  oninput={(e) => patchCfg({ company_name: e.currentTarget.value })}
+                  aria-label="company_name expr"
+                /></label
+              >
+              <label
+                >case_type expr <input
+                  value={asText(nodeCfg().case_type)}
+                  oninput={(e) => patchCfg({ case_type: e.currentTarget.value })}
+                  aria-label="case_type expr"
+                /></label
+              >
+              <label
+                >sla_days <input
+                  type="number"
+                  value={asText(nodeCfg().sla_days)}
+                  oninput={(e) =>
+                    patchCfg({
+                      sla_days: e.currentTarget.value === '' ? '' : Number(e.currentTarget.value)
+                    })}
+                  aria-label="sla_days"
+                /></label
+              >
+              <label class="check"
+                ><input
+                  type="checkbox"
+                  checked={Boolean(nodeCfg().suspend)}
+                  onchange={(e) => patchCfg({ suspend: e.currentTarget.checked })}
+                  aria-label="suspend as a durable human task"
+                /> Suspend — pause the decision here until a reviewer acts (a durable human task; it resumes
+                from the decision's Resume control)</label
+              >
+              {#if nodeCfg().suspend}
+                <label
+                  >output_key (where the reviewer's outcome is injected on resume) <input
+                    value={asText(nodeCfg().output_key)}
+                    oninput={(e) => patchCfg({ output_key: e.currentTarget.value })}
+                    placeholder="review"
+                    aria-label="output_key"
+                  /></label
+                >
+              {/if}
+            {:else if selected.type === 'output'}
+              <label
+                >fields (comma-separated; empty = whole context) <input
+                  value={asCsv(nodeCfg().fields)}
+                  oninput={(e) => patchCfg({ fields: fromCsv(e.currentTarget.value) })}
+                  aria-label="output fields"
+                /></label
+              >
+            {:else if selected.type === 'code'}
+              <label
+                >code (Starlark)
+                <textarea
+                  value={asText(nodeCfg().code)}
+                  oninput={(e) => patchCfg({ code: e.currentTarget.value })}
+                  aria-label="code"
+                  rows="4"
+                ></textarea>
+              </label>
+            {:else if selected.type === 'assignment'}
+              <p class="muted">assignments</p>
+              {#each assignmentRows() as row, i (i)}
+                <div class="row">
+                  <input
+                    value={asText(row.target)}
+                    oninput={(e) => setAssignment(i, { target: e.currentTarget.value })}
+                    aria-label={`assignment ${i} target`}
+                    placeholder="target"
+                  />
+                  <input
+                    value={asText(row.expr)}
+                    oninput={(e) => setAssignment(i, { expr: e.currentTarget.value })}
+                    aria-label={`assignment ${i} expr`}
+                    placeholder="expr"
+                  />
+                  <button
+                    class="x"
+                    aria-label={`remove assignment ${i}`}
+                    onclick={() => removeAssignment(i)}>✕</button
+                  >
+                </div>
+              {/each}
+              <button onclick={addAssignment}>Add assignment</button>
+            {:else if selected.type === 'rule'}
+              <p class="muted">rules (when → then assignments)</p>
+              {#each ruleClauses() as clause, i (i)}
+                <div class="clause">
+                  <div class="row">
+                    <input
+                      value={asText(clause.when)}
+                      oninput={(e) => setRuleWhen(i, e.currentTarget.value)}
+                      aria-label={`rule ${i} when`}
+                      placeholder="when"
+                    />
+                    <button class="x" aria-label={`remove rule ${i}`} onclick={() => removeRule(i)}
+                      >✕</button
+                    >
+                  </div>
+                  {#each ruleThen(i) as t, k (k)}
+                    <div class="row indent">
+                      <input
+                        value={asText(t.target)}
+                        oninput={(e) => setRuleThen(i, k, { target: e.currentTarget.value })}
+                        aria-label={`rule ${i} then ${k} target`}
+                        placeholder="target"
+                      />
+                      <input
+                        value={asText(t.expr)}
+                        oninput={(e) => setRuleThen(i, k, { expr: e.currentTarget.value })}
+                        aria-label={`rule ${i} then ${k} expr`}
+                        placeholder="expr"
+                      />
+                      <button
+                        class="x"
+                        aria-label={`remove rule ${i} then ${k}`}
+                        onclick={() => removeRuleThen(i, k)}>✕</button
+                      >
+                    </div>
+                  {/each}
+                  <button onclick={() => addRuleThen(i)}>Add then</button>
+                </div>
+              {/each}
+              <button onclick={addRule}>Add rule</button>
+            {:else if selected.type === 'scorecard'}
+              <label
+                >output key <input
+                  value={asText(nodeCfg().output)}
+                  oninput={(e) => patchCfg({ output: e.currentTarget.value })}
+                  aria-label="scorecard output"
+                /></label
+              >
+              <p class="muted">factors (when → weight)</p>
+              {#each factors() as f, i (i)}
+                <div class="row">
+                  <input
+                    value={asText(f.when)}
+                    oninput={(e) => setFactor(i, { when: e.currentTarget.value })}
+                    aria-label={`factor ${i} when`}
+                    placeholder="when"
+                  />
+                  <input
+                    type="number"
+                    step="any"
+                    value={asNum(f.weight)}
+                    oninput={(e) =>
+                      setFactor(i, {
+                        weight: e.currentTarget.value === '' ? 0 : Number(e.currentTarget.value)
+                      })}
+                    aria-label={`factor ${i} weight`}
+                    placeholder="weight"
+                    size="6"
+                  />
+                  <button
+                    class="x"
+                    aria-label={`remove factor ${i}`}
+                    onclick={() => removeFactor(i)}>✕</button
+                  >
+                </div>
+              {/each}
+              <button onclick={addFactor}>Add factor</button>
+            {:else if selected.type === 'reason'}
+              <p class="muted">reason codes (when → code + description)</p>
+              {#each reasons() as r, i (i)}
+                <div class="row">
+                  <input
+                    value={asText(r.when)}
+                    oninput={(e) => setReason(i, { when: e.currentTarget.value })}
+                    aria-label={`reason ${i} when`}
+                    placeholder="when"
+                  />
+                  <input
+                    value={asText(r.code)}
+                    oninput={(e) => setReason(i, { code: e.currentTarget.value })}
+                    aria-label={`reason ${i} code`}
+                    placeholder="code"
+                    size="8"
+                  />
+                  <input
+                    value={asText(r.description)}
+                    oninput={(e) => setReason(i, { description: e.currentTarget.value })}
+                    aria-label={`reason ${i} description`}
+                    placeholder="description"
+                  />
+                  <button
+                    class="x"
+                    aria-label={`remove reason ${i}`}
+                    onclick={() => removeReason(i)}>✕</button
+                  >
+                </div>
+              {/each}
+              <button onclick={addReason}>Add reason</button>
+            {:else if selected.type === 'decision_table'}
+              <label
+                >hit policy
+                <select
+                  value={asText(nodeCfg().hit) || 'first'}
+                  onchange={(e) => patchCfg({ hit: e.currentTarget.value, mode: undefined })}
+                  aria-label="decision table hit policy"
+                >
+                  <option value="first">first match</option>
+                  <option value="unique">unique (one match, else conflict)</option>
+                  <option value="any">any (matches must agree)</option>
+                  <option value="rule_order">rule order (collect, ordered)</option>
+                  <option value="collect">collect (aggregate)</option>
+                </select>
+              </label>
+              {#if (asText(nodeCfg().hit) || 'first') === 'collect'}
+                <label
+                  >aggregate
+                  <select
+                    value={asText(nodeCfg().aggregate) || ''}
+                    onchange={(e) => patchCfg({ aggregate: e.currentTarget.value })}
+                    aria-label="decision table aggregate"
+                  >
+                    <option value="">list (all values)</option>
+                    <option value="sum">sum</option>
+                    <option value="min">min</option>
+                    <option value="max">max</option>
+                    <option value="count">count</option>
+                  </select>
+                </label>
+              {/if}
+              <p class="muted">rows (when → outputs)</p>
+              {#each tableRows() as row, i (i)}
+                <div class="clause">
+                  <div class="row">
+                    <input
+                      value={asText(row.when)}
+                      oninput={(e) => setRowWhen(i, e.currentTarget.value)}
+                      aria-label={`row ${i} when`}
+                      placeholder="when"
+                    />
+                    <button
+                      class="x"
+                      aria-label={`remove row ${i}`}
+                      onclick={() => removeTableRow(i)}>✕</button
+                    >
+                  </div>
+                  {#each rowOutputs(i) as o, k (k)}
+                    <div class="row indent">
+                      <input
+                        value={asText(o.target)}
+                        oninput={(e) => setRowOutput(i, k, { target: e.currentTarget.value })}
+                        aria-label={`row ${i} output ${k} target`}
+                        placeholder="target"
+                      />
+                      <input
+                        value={asText(o.expr)}
+                        oninput={(e) => setRowOutput(i, k, { expr: e.currentTarget.value })}
+                        aria-label={`row ${i} output ${k} expr`}
+                        placeholder="expr"
+                      />
+                      <button
+                        class="x"
+                        aria-label={`remove row ${i} output ${k}`}
+                        onclick={() => removeRowOutput(i, k)}>✕</button
+                      >
+                    </div>
+                  {/each}
+                  <button onclick={() => addRowOutput(i)}>Add output</button>
+                </div>
+              {/each}
+              <button onclick={addTableRow}>Add row</button>
+            {:else if selected.type === '2d_matrix'}
+              <label
+                >output key <input
+                  value={asText(nodeCfg().output)}
+                  oninput={(e) => patchCfg({ output: e.currentTarget.value })}
+                  aria-label="matrix output"
+                /></label
+              >
+              <p class="muted">row conditions</p>
+              {#each matrixRows() as r, i (i)}
+                <div class="row">
+                  <input
+                    value={asText(r.when)}
+                    oninput={(e) => setMatrixRowWhen(i, e.currentTarget.value)}
+                    aria-label={`matrix row ${i} when`}
+                    placeholder="row when"
+                  />
+                </div>
+              {/each}
+              <button onclick={addMatrixRow}>Add row</button>
+              <p class="muted">column conditions</p>
+              {#each matrixCols() as c, i (i)}
+                <div class="row">
+                  <input
+                    value={asText(c.when)}
+                    oninput={(e) => setMatrixColWhen(i, e.currentTarget.value)}
+                    aria-label={`matrix col ${i} when`}
+                    placeholder="col when"
+                  />
+                </div>
+              {/each}
+              <button onclick={addMatrixCol}>Add column</button>
+              {#if matrixRows().length && matrixCols().length}
+                <p class="muted">cells [row][col] (literal values)</p>
+                {#each matrixRows() as r, i (i)}
+                  <div class="row">
+                    <span class="cellrow">{asText(r.when) || `row ${i}`}</span>
+                    {#each matrixCols() as c, j (j)}
+                      <input
+                        value={cellText(i, j)}
+                        oninput={(e) => setCell(i, j, e.currentTarget.value)}
+                        aria-label={`matrix cell ${i} ${j}`}
+                        title={asText(c.when)}
+                        size="6"
+                      />
+                    {/each}
+                  </div>
+                {/each}
+              {/if}
             {/if}
-          {:else if selected.type === 'output'}
             <label
-              >fields (comma-separated; empty = whole context) <input
-                value={asCsv(nodeCfg().fields)}
-                oninput={(e) => patchCfg({ fields: fromCsv(e.currentTarget.value) })}
-                aria-label="output fields"
-              /></label
-            >
-          {:else if selected.type === 'code'}
-            <label
-              >code (Starlark)
+              >{STRUCTURED.includes(selected.type) ? 'config (JSON, advanced)' : 'config (JSON)'}
               <textarea
-                value={asText(nodeCfg().code)}
-                oninput={(e) => patchCfg({ code: e.currentTarget.value })}
-                aria-label="code"
+                value={selected.config}
+                oninput={(e) => updateSelected({ config: e.currentTarget.value })}
+                aria-label="node config"
                 rows="4"
               ></textarea>
             </label>
-          {:else if selected.type === 'assignment'}
-            <p class="muted">assignments</p>
-            {#each assignmentRows() as row, i (i)}
-              <div class="row">
-                <input
-                  value={asText(row.target)}
-                  oninput={(e) => setAssignment(i, { target: e.currentTarget.value })}
-                  aria-label={`assignment ${i} target`}
-                  placeholder="target"
-                />
-                <input
-                  value={asText(row.expr)}
-                  oninput={(e) => setAssignment(i, { expr: e.currentTarget.value })}
-                  aria-label={`assignment ${i} expr`}
-                  placeholder="expr"
-                />
-                <button
-                  class="x"
-                  aria-label={`remove assignment ${i}`}
-                  onclick={() => removeAssignment(i)}>✕</button
-                >
-              </div>
-            {/each}
-            <button onclick={addAssignment}>Add assignment</button>
-          {:else if selected.type === 'rule'}
-            <p class="muted">rules (when → then assignments)</p>
-            {#each ruleClauses() as clause, i (i)}
-              <div class="clause">
-                <div class="row">
-                  <input
-                    value={asText(clause.when)}
-                    oninput={(e) => setRuleWhen(i, e.currentTarget.value)}
-                    aria-label={`rule ${i} when`}
-                    placeholder="when"
-                  />
-                  <button class="x" aria-label={`remove rule ${i}`} onclick={() => removeRule(i)}
-                    >✕</button
-                  >
-                </div>
-                {#each ruleThen(i) as t, k (k)}
-                  <div class="row indent">
-                    <input
-                      value={asText(t.target)}
-                      oninput={(e) => setRuleThen(i, k, { target: e.currentTarget.value })}
-                      aria-label={`rule ${i} then ${k} target`}
-                      placeholder="target"
-                    />
-                    <input
-                      value={asText(t.expr)}
-                      oninput={(e) => setRuleThen(i, k, { expr: e.currentTarget.value })}
-                      aria-label={`rule ${i} then ${k} expr`}
-                      placeholder="expr"
-                    />
-                    <button
-                      class="x"
-                      aria-label={`remove rule ${i} then ${k}`}
-                      onclick={() => removeRuleThen(i, k)}>✕</button
-                    >
-                  </div>
-                {/each}
-                <button onclick={() => addRuleThen(i)}>Add then</button>
-              </div>
-            {/each}
-            <button onclick={addRule}>Add rule</button>
-          {:else if selected.type === 'scorecard'}
-            <label
-              >output key <input
-                value={asText(nodeCfg().output)}
-                oninput={(e) => patchCfg({ output: e.currentTarget.value })}
-                aria-label="scorecard output"
-              /></label
-            >
-            <p class="muted">factors (when → weight)</p>
-            {#each factors() as f, i (i)}
-              <div class="row">
-                <input
-                  value={asText(f.when)}
-                  oninput={(e) => setFactor(i, { when: e.currentTarget.value })}
-                  aria-label={`factor ${i} when`}
-                  placeholder="when"
-                />
-                <input
-                  type="number"
-                  step="any"
-                  value={asNum(f.weight)}
-                  oninput={(e) =>
-                    setFactor(i, {
-                      weight: e.currentTarget.value === '' ? 0 : Number(e.currentTarget.value)
-                    })}
-                  aria-label={`factor ${i} weight`}
-                  placeholder="weight"
-                  size="6"
-                />
-                <button class="x" aria-label={`remove factor ${i}`} onclick={() => removeFactor(i)}
+          {/if}
+
+          <h2>Add edge</h2>
+          <div class="row">
+            <select bind:value={edgeFrom} aria-label="edge from">
+              <option value="">from…</option>
+              {#each editNodes as n (n.id)}<option value={n.id}>{n.id}</option>{/each}
+            </select>
+            <select bind:value={edgeTo} aria-label="edge to">
+              <option value="">to…</option>
+              {#each editNodes as n (n.id)}<option value={n.id}>{n.id}</option>{/each}
+            </select>
+            <input bind:value={edgeBranch} placeholder="branch" aria-label="edge branch" size="6" />
+            <button onclick={addEdge}>Add edge</button>
+          </div>
+          <ul class="edges">
+            {#each editEdges as e, i (i)}
+              <li>
+                {e.from} → {e.to}{e.branch ? ` (${e.branch})` : ''}
+                <button class="x" aria-label={`delete edge ${i}`} onclick={() => deleteEdge(i)}
                   >✕</button
                 >
-              </div>
+              </li>
             {/each}
-            <button onclick={addFactor}>Add factor</button>
-          {:else if selected.type === 'reason'}
-            <p class="muted">reason codes (when → code + description)</p>
-            {#each reasons() as r, i (i)}
-              <div class="row">
-                <input
-                  value={asText(r.when)}
-                  oninput={(e) => setReason(i, { when: e.currentTarget.value })}
-                  aria-label={`reason ${i} when`}
-                  placeholder="when"
-                />
-                <input
-                  value={asText(r.code)}
-                  oninput={(e) => setReason(i, { code: e.currentTarget.value })}
-                  aria-label={`reason ${i} code`}
-                  placeholder="code"
-                  size="8"
-                />
-                <input
-                  value={asText(r.description)}
-                  oninput={(e) => setReason(i, { description: e.currentTarget.value })}
-                  aria-label={`reason ${i} description`}
-                  placeholder="description"
-                />
-                <button class="x" aria-label={`remove reason ${i}`} onclick={() => removeReason(i)}
-                  >✕</button
-                >
-              </div>
-            {/each}
-            <button onclick={addReason}>Add reason</button>
-          {:else if selected.type === 'decision_table'}
-            <label
-              >hit policy
-              <select
-                value={asText(nodeCfg().hit) || 'first'}
-                onchange={(e) => patchCfg({ hit: e.currentTarget.value, mode: undefined })}
-                aria-label="decision table hit policy"
-              >
-                <option value="first">first match</option>
-                <option value="unique">unique (one match, else conflict)</option>
-                <option value="any">any (matches must agree)</option>
-                <option value="rule_order">rule order (collect, ordered)</option>
-                <option value="collect">collect (aggregate)</option>
-              </select>
-            </label>
-            {#if (asText(nodeCfg().hit) || 'first') === 'collect'}
-              <label
-                >aggregate
-                <select
-                  value={asText(nodeCfg().aggregate) || ''}
-                  onchange={(e) => patchCfg({ aggregate: e.currentTarget.value })}
-                  aria-label="decision table aggregate"
-                >
-                  <option value="">list (all values)</option>
-                  <option value="sum">sum</option>
-                  <option value="min">min</option>
-                  <option value="max">max</option>
-                  <option value="count">count</option>
-                </select>
-              </label>
-            {/if}
-            <p class="muted">rows (when → outputs)</p>
-            {#each tableRows() as row, i (i)}
-              <div class="clause">
-                <div class="row">
-                  <input
-                    value={asText(row.when)}
-                    oninput={(e) => setRowWhen(i, e.currentTarget.value)}
-                    aria-label={`row ${i} when`}
-                    placeholder="when"
-                  />
-                  <button class="x" aria-label={`remove row ${i}`} onclick={() => removeTableRow(i)}
-                    >✕</button
-                  >
-                </div>
-                {#each rowOutputs(i) as o, k (k)}
-                  <div class="row indent">
-                    <input
-                      value={asText(o.target)}
-                      oninput={(e) => setRowOutput(i, k, { target: e.currentTarget.value })}
-                      aria-label={`row ${i} output ${k} target`}
-                      placeholder="target"
-                    />
-                    <input
-                      value={asText(o.expr)}
-                      oninput={(e) => setRowOutput(i, k, { expr: e.currentTarget.value })}
-                      aria-label={`row ${i} output ${k} expr`}
-                      placeholder="expr"
-                    />
-                    <button
-                      class="x"
-                      aria-label={`remove row ${i} output ${k}`}
-                      onclick={() => removeRowOutput(i, k)}>✕</button
-                    >
-                  </div>
-                {/each}
-                <button onclick={() => addRowOutput(i)}>Add output</button>
-              </div>
-            {/each}
-            <button onclick={addTableRow}>Add row</button>
-          {:else if selected.type === '2d_matrix'}
-            <label
-              >output key <input
-                value={asText(nodeCfg().output)}
-                oninput={(e) => patchCfg({ output: e.currentTarget.value })}
-                aria-label="matrix output"
-              /></label
-            >
-            <p class="muted">row conditions</p>
-            {#each matrixRows() as r, i (i)}
-              <div class="row">
-                <input
-                  value={asText(r.when)}
-                  oninput={(e) => setMatrixRowWhen(i, e.currentTarget.value)}
-                  aria-label={`matrix row ${i} when`}
-                  placeholder="row when"
-                />
-              </div>
-            {/each}
-            <button onclick={addMatrixRow}>Add row</button>
-            <p class="muted">column conditions</p>
-            {#each matrixCols() as c, i (i)}
-              <div class="row">
-                <input
-                  value={asText(c.when)}
-                  oninput={(e) => setMatrixColWhen(i, e.currentTarget.value)}
-                  aria-label={`matrix col ${i} when`}
-                  placeholder="col when"
-                />
-              </div>
-            {/each}
-            <button onclick={addMatrixCol}>Add column</button>
-            {#if matrixRows().length && matrixCols().length}
-              <p class="muted">cells [row][col] (literal values)</p>
-              {#each matrixRows() as r, i (i)}
-                <div class="row">
-                  <span class="cellrow">{asText(r.when) || `row ${i}`}</span>
-                  {#each matrixCols() as c, j (j)}
-                    <input
-                      value={cellText(i, j)}
-                      oninput={(e) => setCell(i, j, e.currentTarget.value)}
-                      aria-label={`matrix cell ${i} ${j}`}
-                      title={asText(c.when)}
-                      size="6"
-                    />
-                  {/each}
-                </div>
-              {/each}
-            {/if}
-          {/if}
-          <label
-            >{STRUCTURED.includes(selected.type) ? 'config (JSON, advanced)' : 'config (JSON)'}
-            <textarea
-              value={selected.config}
-              oninput={(e) => updateSelected({ config: e.currentTarget.value })}
-              aria-label="node config"
-              rows="4"
-            ></textarea>
-          </label>
-        {/if}
-
-        <h2>Add edge</h2>
-        <div class="row">
-          <select bind:value={edgeFrom} aria-label="edge from">
-            <option value="">from…</option>
-            {#each editNodes as n (n.id)}<option value={n.id}>{n.id}</option>{/each}
-          </select>
-          <select bind:value={edgeTo} aria-label="edge to">
-            <option value="">to…</option>
-            {#each editNodes as n (n.id)}<option value={n.id}>{n.id}</option>{/each}
-          </select>
-          <input bind:value={edgeBranch} placeholder="branch" aria-label="edge branch" size="6" />
-          <button onclick={addEdge}>Add edge</button>
-        </div>
-        <ul class="edges">
-          {#each editEdges as e, i (i)}
-            <li>
-              {e.from} → {e.to}{e.branch ? ` (${e.branch})` : ''}
-              <button class="x" aria-label={`delete edge ${i}`} onclick={() => deleteEdge(i)}
-                >✕</button
-              >
-            </li>
-          {/each}
-        </ul>
-      </aside>
-    {/if}
-  </div>
-
-  <nav class="tabbar" aria-label="builder panels">
-    {#each TABS as t (t.id)}
-      <button
-        class:active={tab === t.id}
-        aria-pressed={tab === t.id}
-        onclick={() => (tab = t.id)}
-        data-testid={`tab-${t.id}`}>{t.label}</button
-      >
-    {/each}
-  </nav>
-
-  {#if tab === 'test'}
-    <section data-testid="coverage-panel">
-      <h2>
-        Coverage / red-team
-        <Hint label="Coverage"
-          >Fuzzes hundreds of synthetic inputs through the published graph and reports which nodes
-          and branches were exercised — surfacing branches the fuzz never reached and the
-          disposition spread. A red-team for your policy.</Hint
-        >
-      </h2>
-      <button onclick={runCoverage} disabled={coverageBusy} data-testid="run-coverage">
-        {coverageBusy ? 'Fuzzing…' : 'Run coverage'}
-      </button>
-      {#if coverageReport}
-        <div class="coverage" data-testid="coverage-report">
-          <p class="muted">
-            {coverageReport.runs} synthetic runs over {coverageReport.fields.length} input field{coverageReport
-              .fields.length === 1
-              ? ''
-              : 's'}{coverageReport.fields.length ? ` (${coverageReport.fields.join(', ')})` : ''}.
-          </p>
-          {#if coverageReport.dispositions.approve + coverageReport.dispositions.refer + coverageReport.dispositions.decline > 0}
-            <div class="cov-dispo">
-              <Badge tone={dispositionTone('approve')}
-                >{coverageReport.dispositions.approve} approve</Badge
-              >
-              <Badge tone={dispositionTone('refer')}
-                >{coverageReport.dispositions.refer} refer</Badge
-              >
-              <Badge tone={dispositionTone('decline')}
-                >{coverageReport.dispositions.decline} decline</Badge
-              >
-            </div>
-          {:else}
-            <p class="muted">
-              No policy is bound to this flow, so the fuzzed inputs produce no disposition spread —
-              the node/branch coverage below still applies.
-            </p>
-          {/if}
-          {#if coverageReport.dead_nodes.length || coverageReport.dead_branches.length}
-            <div class="cov-dead">
-              {#if coverageReport.dead_nodes.length}
-                <p>
-                  <b>Not reached</b> in {coverageReport.runs} runs: {coverageReport.dead_nodes.join(
-                    ', '
-                  )}
-                </p>
-              {/if}
-              {#if coverageReport.dead_branches.length}
-                <p>
-                  <b>Uncovered branches</b> — not taken in {coverageReport.runs} runs (a branch behind
-                  a model score or a narrow input band may need targeted inputs to reach):
-                </p>
-                <ul>
-                  {#each coverageReport.dead_branches as b (b.from + b.to + b.branch)}
-                    <li><code>{b.from} → {b.to}</code> when <code>{b.branch}</code></li>
-                  {/each}
-                </ul>
-              {/if}
-            </div>
-          {:else}
-            <p class="cov-clean">Full coverage — every node and branch was exercised.</p>
-          {/if}
-        </div>
+          </ul>
+        </aside>
       {/if}
-    </section>
+    </div>
 
-    <section>
-      <h2>
-        Test run
-        <Hint label="Test run"
-          >Executes this flow's graph against your input on the same engine production uses —
-          walking nodes, taking the matching branch at each split, and applying the policy to
-          produce a disposition. The result links to the recorded trace (or tick Preview to record
-          nothing).</Hint
+    <nav class="tabbar" aria-label="builder panels">
+      {#each TABS as t (t.id)}
+        <button
+          class:active={tab === t.id}
+          aria-pressed={tab === t.id}
+          onclick={() => (tab = t.id)}
+          data-testid={`tab-${t.id}`}>{t.label}</button
         >
-      </h2>
-      <div class="row">
-        <select bind:value={env} aria-label="environment">
-          {#each ENVIRONMENTS as e (e)}<option value={e}>{e}</option>{/each}
-        </select>
-        <button onclick={run} disabled={!flow || running || !dataValid}
-          >{running ? 'Running…' : 'Run'}</button
-        >
-        <button type="button" class="link" onclick={sampleFromSchema}>Sample input</button>
-        <label class="preview-toggle" title="Run the flow without recording a decision">
-          <input type="checkbox" bind:checked={preview} aria-label="preview (don't record)" />
-          Preview (don't record)
-        </label>
-      </div>
-      <div class="row">
-        <input
-          bind:value={entityType}
-          placeholder="entity type (optional)"
-          aria-label="entity type"
-          size="16"
-        />
-        <input
-          bind:value={entityID}
-          placeholder="entity id (optional)"
-          aria-label="entity id"
-          size="16"
-        />
-      </div>
-      <textarea bind:value={dataText} aria-label="input data" rows="3" class:invalid={!dataValid}
-      ></textarea>
-      {#if !dataValid}<p class="json-err">Not valid JSON — fix it before running.</p>{/if}
-      {#if runResult}
-        <div
-          class="verdict-card {dispositionTone(runResult.disposition)}"
-          data-testid="run-verdict"
-        >
-          <div class="verdict-top">
-            {#if runResult.disposition}
-              <Badge tone={dispositionTone(runResult.disposition)}>{runResult.disposition}</Badge>
+      {/each}
+    </nav>
+
+    {#if tab === 'test'}
+      <section data-testid="coverage-panel">
+        <h2>
+          Coverage / red-team
+          <Hint label="Coverage"
+            >Fuzzes hundreds of synthetic inputs through the published graph and reports which nodes
+            and branches were exercised — surfacing branches the fuzz never reached and the
+            disposition spread. A red-team for your policy.</Hint
+          >
+        </h2>
+        <button onclick={runCoverage} disabled={coverageBusy} data-testid="run-coverage">
+          {coverageBusy ? 'Fuzzing…' : 'Run coverage'}
+        </button>
+        {#if coverageReport}
+          <div class="coverage" data-testid="coverage-report">
+            <p class="muted">
+              {coverageReport.runs} synthetic runs over {coverageReport.fields.length} input field{coverageReport
+                .fields.length === 1
+                ? ''
+                : 's'}{coverageReport.fields.length
+                ? ` (${coverageReport.fields.join(', ')})`
+                : ''}.
+            </p>
+            {#if coverageReport.dispositions.approve + coverageReport.dispositions.refer + coverageReport.dispositions.decline > 0}
+              <div class="cov-dispo">
+                <Badge tone={dispositionTone('approve')}
+                  >{coverageReport.dispositions.approve} approve</Badge
+                >
+                <Badge tone={dispositionTone('refer')}
+                  >{coverageReport.dispositions.refer} refer</Badge
+                >
+                <Badge tone={dispositionTone('decline')}
+                  >{coverageReport.dispositions.decline} decline</Badge
+                >
+              </div>
+            {:else}
+              <p class="muted">
+                No policy is bound to this flow, so the fuzzed inputs produce no disposition spread
+                — the node/branch coverage below still applies.
+              </p>
             {/if}
-            <Badge tone={statusTone(runResult.status)}>{runResult.status}</Badge>
-            {#if runMs != null}<span class="dur">{runMs} ms</span>{/if}
-            {#if !lastDecisionId}
-              <span class="dur" title="Preview run — no decision was recorded"
-                >preview · not recorded</span
-              >
+            {#if coverageReport.dead_nodes.length || coverageReport.dead_branches.length}
+              <div class="cov-dead">
+                {#if coverageReport.dead_nodes.length}
+                  <p>
+                    <b>Not reached</b> in {coverageReport.runs} runs: {coverageReport.dead_nodes.join(
+                      ', '
+                    )}
+                  </p>
+                {/if}
+                {#if coverageReport.dead_branches.length}
+                  <p>
+                    <b>Uncovered branches</b> — not taken in {coverageReport.runs} runs (a branch behind
+                    a model score or a narrow input band may need targeted inputs to reach):
+                  </p>
+                  <ul>
+                    {#each coverageReport.dead_branches as b (b.from + b.to + b.branch)}
+                      <li><code>{b.from} → {b.to}</code> when <code>{b.branch}</code></li>
+                    {/each}
+                  </ul>
+                {/if}
+              </div>
+            {:else}
+              <p class="cov-clean">Full coverage — every node and branch was exercised.</p>
             {/if}
           </div>
-          {#if runResult.error}
-            <p class="verdict-err">{runResult.error}</p>
-          {:else if runOutputFields.length}
-            <dl class="verdict-out">
-              {#each runOutputFields.slice(0, 6) as [k, v] (k)}
-                <dt>{k}</dt>
-                <dd>{fieldText(v)}</dd>
-              {/each}
-            </dl>
-          {/if}
-        </div>
-      {/if}
-      {#if result}
-        <details class="raw-result">
-          <summary>Raw result</summary>
-          <pre data-testid="run-result">{result}</pre>
-        </details>
-      {:else}
-        <pre data-testid="run-result" hidden>{result}</pre>
-      {/if}
-      {#if lastDecisionId}
-        <div class="row">
-          <a class="view-decision" href={appHref(`/decisions/${lastDecisionId}`)}
-            >View the recorded decision →</a
-          >
-        </div>
-        <div class="row">
-          <span class="exportlabel"><Icon name="diagram" size={15} /> Run trace</span>
-          <button onclick={downloadTrace} title="Download the run as a Mermaid sequence diagram">
-            <Icon name="download" size={14} /> Sequence
-          </button>
-          <button
-            class="icon"
-            aria-label="Copy run trace"
-            title="Copy sequence diagram"
-            onclick={copyTrace}
-          >
-            <Icon name="copy" size={14} />
-          </button>
-        </div>
-      {/if}
-      <details class="api-call">
-        <summary>Call this via the API</summary>
-        <p class="muted">
-          The same decision over HTTP — issue a key on the API keys page and swap in your host.
-        </p>
-        <CodeSnippet code={apiSnippet} label="curl command" />
-      </details>
-    </section>
+        {/if}
+      </section>
 
-    <section>
-      <h2>Backtest</h2>
-      <p class="muted">
-        Replay a dataset of inputs through the published flow — nothing is recorded. Leave the
-        compare version blank to check the latest version, or set it to diff two versions before
-        deploying.
-      </p>
-      <div class="row">
-        <input
-          bind:value={btCompare}
-          placeholder="compare version (optional)"
-          aria-label="compare version"
-          size="20"
-          inputmode="numeric"
-        />
-        <button onclick={runBacktest} disabled={!flow || btRunning} data-testid="run-backtest">
-          {btRunning ? 'Running…' : 'Run backtest'}
-        </button>
-      </div>
-      <textarea
-        bind:value={btDataset}
-        aria-label="backtest dataset"
-        rows="4"
-        placeholder={'[\n  {"score": 720},\n  {"score": 540}\n]'}
-      ></textarea>
-      {#if btReport}
-        <div class="metrics" data-testid="backtest-summary">
-          <span>{btReport.summary.total} records</span>
-          <span class="ok">{btReport.summary.baseline_completed} completed</span>
-          {#if btReport.summary.baseline_failed > 0}
-            <span class="err">{btReport.summary.baseline_failed} failed</span>
-          {/if}
-          {#if btReport.summary.compare}
-            <span class="changed">{btReport.summary.changed} changed</span>
-          {/if}
+      <section>
+        <h2>
+          Test run
+          <Hint label="Test run"
+            >Executes this flow's graph against your input on the same engine production uses —
+            walking nodes, taking the matching branch at each split, and applying the policy to
+            produce a disposition. The result links to the recorded trace (or tick Preview to record
+            nothing).</Hint
+          >
+        </h2>
+        <div class="row">
+          <select bind:value={env} aria-label="environment">
+            {#each ENVIRONMENTS as e (e)}<option value={e}>{e}</option>{/each}
+          </select>
+          <button onclick={run} disabled={!flow || running || !dataValid}
+            >{running ? 'Running…' : 'Run'}</button
+          >
+          <button type="button" class="link" onclick={sampleFromSchema}>Sample input</button>
+          <label class="preview-toggle" title="Run the flow without recording a decision">
+            <input type="checkbox" bind:checked={preview} aria-label="preview (don't record)" />
+            Preview (don't record)
+          </label>
         </div>
-        {#if btReport.summary.compare && btReport.records.length > 0}
+        <div class="row">
+          <input
+            bind:value={entityType}
+            placeholder="entity type (optional)"
+            aria-label="entity type"
+            size="16"
+          />
+          <input
+            bind:value={entityID}
+            placeholder="entity id (optional)"
+            aria-label="entity id"
+            size="16"
+          />
+        </div>
+        <textarea bind:value={dataText} aria-label="input data" rows="3" class:invalid={!dataValid}
+        ></textarea>
+        {#if !dataValid}<p class="json-err">Not valid JSON — fix it before running.</p>{/if}
+        {#if runResult}
+          <div
+            class="verdict-card {dispositionTone(runResult.disposition)}"
+            data-testid="run-verdict"
+          >
+            <div class="verdict-top">
+              {#if runResult.disposition}
+                <Badge tone={dispositionTone(runResult.disposition)}>{runResult.disposition}</Badge>
+              {/if}
+              <Badge tone={statusTone(runResult.status)}>{runResult.status}</Badge>
+              {#if runMs != null}<span class="dur">{runMs} ms</span>{/if}
+              {#if !lastDecisionId}
+                <span class="dur" title="Preview run — no decision was recorded"
+                  >preview · not recorded</span
+                >
+              {/if}
+            </div>
+            {#if runResult.error}
+              <p class="verdict-err">{runResult.error}</p>
+            {:else if runOutputFields.length}
+              <dl class="verdict-out">
+                {#each runOutputFields.slice(0, 6) as [k, v] (k)}
+                  <dt>{k}</dt>
+                  <dd>{fieldText(v)}</dd>
+                {/each}
+              </dl>
+            {/if}
+          </div>
+        {/if}
+        {#if result}
+          <details class="raw-result">
+            <summary>Raw result</summary>
+            <pre data-testid="run-result">{result}</pre>
+          </details>
+        {:else}
+          <pre data-testid="run-result" hidden>{result}</pre>
+        {/if}
+        {#if lastDecisionId}
+          <div class="row">
+            <a class="view-decision" href={appHref(`/decisions/${lastDecisionId}`)}
+              >View the recorded decision →</a
+            >
+          </div>
+          <div class="row">
+            <span class="exportlabel"><Icon name="diagram" size={15} /> Run trace</span>
+            <button onclick={downloadTrace} title="Download the run as a Mermaid sequence diagram">
+              <Icon name="download" size={14} /> Sequence
+            </button>
+            <button
+              class="icon"
+              aria-label="Copy run trace"
+              title="Copy sequence diagram"
+              onclick={copyTrace}
+            >
+              <Icon name="copy" size={14} />
+            </button>
+          </div>
+        {/if}
+        <details class="api-call">
+          <summary>Call this via the API</summary>
+          <p class="muted">
+            The same decision over HTTP — issue a key on the API keys page and swap in your host.
+          </p>
+          <CodeSnippet code={apiSnippet} label="curl command" />
+        </details>
+      </section>
+
+      <section>
+        <h2>Backtest</h2>
+        <p class="muted">
+          Replay a dataset of inputs through the published flow — nothing is recorded. Leave the
+          compare version blank to check the latest version, or set it to diff two versions before
+          deploying.
+        </p>
+        <div class="row">
+          <input
+            bind:value={btCompare}
+            placeholder="compare version (optional)"
+            aria-label="compare version"
+            size="20"
+            inputmode="numeric"
+          />
+          <button onclick={runBacktest} disabled={!flow || btRunning} data-testid="run-backtest">
+            {btRunning ? 'Running…' : 'Run backtest'}
+          </button>
+        </div>
+        <textarea
+          bind:value={btDataset}
+          aria-label="backtest dataset"
+          rows="4"
+          placeholder={'[\n  {"score": 720},\n  {"score": 540}\n]'}
+        ></textarea>
+        {#if btReport}
+          <div class="metrics" data-testid="backtest-summary">
+            <span>{btReport.summary.total} records</span>
+            <span class="ok">{btReport.summary.baseline_completed} completed</span>
+            {#if btReport.summary.baseline_failed > 0}
+              <span class="err">{btReport.summary.baseline_failed} failed</span>
+            {/if}
+            {#if btReport.summary.compare}
+              <span class="changed">{btReport.summary.changed} changed</span>
+            {/if}
+          </div>
+          {#if btReport.summary.compare && btReport.records.length > 0}
+            <div class="table-wrap">
+              <table class="bt-table">
+                <thead>
+                  <tr><th>#</th><th>Baseline</th><th>Candidate</th></tr>
+                </thead>
+                <tbody>
+                  {#each btReport.records as rec (rec.index)}
+                    <tr>
+                      <td>{rec.index}</td>
+                      <td>{rec.baseline.error || JSON.stringify(rec.baseline.output)}</td>
+                      <td>{rec.candidate?.error || JSON.stringify(rec.candidate?.output)}</td>
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
+          {/if}
+        {/if}
+      </section>
+
+      <section>
+        <h2>What-if</h2>
+        <p class="muted">
+          Sweep one input field across a range and see how the decision shifts — nothing is
+          recorded. A transition flags where the outcome changes (e.g. where an approve flips to a
+          decline).
+        </p>
+        <div class="row">
+          <input
+            bind:value={wiField}
+            placeholder="field (e.g. score)"
+            aria-label="whatif field"
+            size="16"
+          />
+          <input
+            bind:value={wiValues}
+            placeholder="values, comma-separated (e.g. 600, 650, 700)"
+            aria-label="whatif values"
+            size="30"
+          />
+          <button onclick={runWhatif} disabled={!flow || wiRunning} data-testid="run-whatif">
+            {wiRunning ? 'Running…' : 'Run what-if'}
+          </button>
+        </div>
+        <textarea
+          bind:value={wiBase}
+          aria-label="whatif base input"
+          rows="2"
+          placeholder={'{ "other_field": 1 }'}
+        ></textarea>
+        {#if wiReport}
+          <div class="metrics" data-testid="whatif-summary">
+            <span>{wiReport.points.length} values</span>
+            <span class="changed">{wiReport.transitions} transition(s)</span>
+          </div>
           <div class="table-wrap">
-            <table class="bt-table">
+            <table class="bt-table" data-testid="whatif-table">
               <thead>
-                <tr><th>#</th><th>Baseline</th><th>Candidate</th></tr>
+                <tr><th>{wiReport.field}</th><th>Outcome</th></tr>
               </thead>
               <tbody>
-                {#each btReport.records as rec (rec.index)}
-                  <tr>
-                    <td>{rec.index}</td>
-                    <td>{rec.baseline.error || JSON.stringify(rec.baseline.output)}</td>
-                    <td>{rec.candidate?.error || JSON.stringify(rec.candidate?.output)}</td>
+                {#each wiReport.points as pt, i (i)}
+                  <tr class:changed-row={pt.changed}>
+                    <td>{JSON.stringify(pt.value)}</td>
+                    <td>{pt.error || JSON.stringify(pt.output)}</td>
                   </tr>
                 {/each}
               </tbody>
             </table>
           </div>
         {/if}
-      {/if}
-    </section>
+      </section>
 
-    <section>
-      <h2>What-if</h2>
-      <p class="muted">
-        Sweep one input field across a range and see how the decision shifts — nothing is recorded.
-        A transition flags where the outcome changes (e.g. where an approve flips to a decline).
-      </p>
-      <div class="row">
-        <input
-          bind:value={wiField}
-          placeholder="field (e.g. score)"
-          aria-label="whatif field"
-          size="16"
-        />
-        <input
-          bind:value={wiValues}
-          placeholder="values, comma-separated (e.g. 600, 650, 700)"
-          aria-label="whatif values"
-          size="30"
-        />
-        <button onclick={runWhatif} disabled={!flow || wiRunning} data-testid="run-whatif">
-          {wiRunning ? 'Running…' : 'Run what-if'}
-        </button>
-      </div>
-      <textarea
-        bind:value={wiBase}
-        aria-label="whatif base input"
-        rows="2"
-        placeholder={'{ "other_field": 1 }'}
-      ></textarea>
-      {#if wiReport}
-        <div class="metrics" data-testid="whatif-summary">
-          <span>{wiReport.points.length} values</span>
-          <span class="changed">{wiReport.transitions} transition(s)</span>
-        </div>
-        <div class="table-wrap">
-          <table class="bt-table" data-testid="whatif-table">
-            <thead>
-              <tr><th>{wiReport.field}</th><th>Outcome</th></tr>
-            </thead>
-            <tbody>
-              {#each wiReport.points as pt, i (i)}
-                <tr class:changed-row={pt.changed}>
-                  <td>{JSON.stringify(pt.value)}</td>
-                  <td>{pt.error || JSON.stringify(pt.output)}</td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
-      {/if}
-    </section>
-
-    <section>
-      <h2>Assertions</h2>
-      <p class="muted">
-        Stored input→expected tests, run through the pure engine (no recorded decision). A case
-        passes when every field in <code>expect</code> equals the flow's output. Failing assertions
-        block a
-        <b>promote</b> (override with force).
-      </p>
-      <div class="row">
-        <button
-          onclick={saveAssertions}
-          disabled={!flow || assertBusy || !roleAtLeast($user?.role, 'editor')}
-          title={!roleAtLeast($user?.role, 'editor') ? 'Requires the editor role' : undefined}
-          data-testid="save-assertions">Save tests</button
-        >
-        <button
-          onclick={runAssertionsNow}
-          disabled={!flow || assertBusy}
-          data-testid="run-assertions">Run tests</button
-        >
-      </div>
-      <textarea bind:value={assertText} aria-label="assertion cases" rows="6" spellcheck="false"
-      ></textarea>
-      {#if assertReport}
-        <div class="metrics" data-testid="assert-summary">
-          <span>{assertReport.total} cases</span>
-          <span class="ok">{assertReport.passed} passed</span>
-          {#if assertReport.failed > 0}<span class="err">{assertReport.failed} failed</span>{/if}
-        </div>
-        <div class="table-wrap">
-          <table class="bt-table">
-            <thead>
-              <tr><th>Case</th><th>Result</th><th>Detail</th></tr>
-            </thead>
-            <tbody>
-              {#each assertReport.results as r (r.name)}
-                <tr>
-                  <td>{r.name}</td>
-                  <td class={r.passed ? 'ok' : 'err'}>{r.passed ? 'pass' : 'fail'}</td>
-                  <td
-                    >{r.error ||
-                      (r.mismatch && r.mismatch.length
-                        ? `mismatch: ${r.mismatch.join(', ')}`
-                        : 'ok')}</td
-                  >
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
-      {/if}
-    </section>
-
-    <section>
-      <h2>Batch decide</h2>
-      <p class="muted">
-        Decide a whole dataset on the <b>{env}</b> environment (from Test run above) — each row is a
-        <b>recorded</b> decision (it shows in history, metrics, and the audit log), unlike a backtest.
-        Up to 500 rows.
-      </p>
-      <div class="row">
-        <button onclick={runBatch} disabled={!flow || batchRunning} data-testid="run-batch">
-          {batchRunning ? 'Deciding…' : 'Run batch'}
-        </button>
-      </div>
-      <textarea
-        bind:value={batchDataset}
-        aria-label="batch dataset"
-        rows="4"
-        placeholder={'[\n  {"score": 720},\n  {"score": 540}\n]'}
-      ></textarea>
-      {#if batchReport}
-        <div class="metrics" data-testid="batch-summary">
-          <span>{batchReport.total} decided</span>
-          <span class="ok">{batchReport.completed} completed</span>
-          {#if batchReport.failed > 0}<span class="err">{batchReport.failed} failed</span>{/if}
-          {#if batchReport.rejected > 0}<span class="changed">{batchReport.rejected} rejected</span
-            >{/if}
-        </div>
-        <div class="table-wrap">
-          <table class="bt-table">
-            <thead>
-              <tr><th>#</th><th>Status</th><th>Disposition</th><th>Decision</th><th>Detail</th></tr>
-            </thead>
-            <tbody>
-              {#each batchReport.results as r (r.index)}
-                <tr>
-                  <td>{r.index}</td>
-                  <td
-                    class={r.status === 'completed'
-                      ? 'ok'
-                      : r.status === 'failed'
-                        ? 'err'
-                        : 'changed'}>{r.status}</td
-                  >
-                  <td>{r.disposition ?? '—'}</td>
-                  <td>
-                    {#if r.decision_id}<a href={appHref(`/decisions/${r.decision_id}`)}>view</a
-                      >{:else}—{/if}
-                  </td>
-                  <td>{r.error || JSON.stringify(r.data)}</td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
-      {/if}
-    </section>
-
-    <section>
-      <h2>Promote to pre-approvals</h2>
-      <p class="muted">
-        Run the dataset above through the flow's bound <a href={appHref('/policies')}>policy</a> and
-        grant a time-boxed <a href={appHref('/preapprovals')}>pre-approval</a> for every row it disposes
-        to the chosen disposition — keyed by a field in each row. Each grant's decision output becomes
-        the stored offer terms, honored instantly the next time that entity is decided.
-      </p>
-      <div class="row pa-controls">
-        <label>
-          Entity type
-          <input
-            bind:value={paEntityType}
-            aria-label="pre-approve entity type"
-            placeholder="applicant"
-          />
-        </label>
-        <label>
-          Key field
-          <input
-            bind:value={paEntityKey}
-            aria-label="pre-approve entity key"
-            placeholder="applicant_id"
-          />
-        </label>
-        <label>
-          Grant on
-          <select bind:value={paDisposition} aria-label="pre-approve disposition">
-            <option value="approve">approve</option>
-            <option value="decline">decline</option>
-          </select>
-        </label>
-        <label>
-          Valid (days)
-          <input
-            type="number"
-            min="1"
-            max="3650"
-            bind:value={paValidDays}
-            aria-label="pre-approve valid days"
-          />
-        </label>
-        <button
-          onclick={runPreapproveBatch}
-          disabled={!flow || paRunning || !paEntityType.trim() || !paEntityKey.trim()}
-          data-testid="run-preapprove"
-        >
-          {paRunning ? 'Granting…' : 'Promote'}
-        </button>
-      </div>
-      {#if paReport}
-        <div class="metrics" data-testid="preapprove-summary">
-          <span>{paReport.total} rows</span>
-          <span class="ok">{paReport.granted} granted</span>
-          {#if paReport.skipped > 0}<span class="changed">{paReport.skipped} skipped</span>{/if}
-          {#if paReport.failed > 0}<span class="err">{paReport.failed} failed</span>{/if}
-          {#if paReport.rejected > 0}<span class="changed">{paReport.rejected} rejected</span>{/if}
-        </div>
-        <div class="table-wrap">
-          <table class="bt-table">
-            <thead>
-              <tr><th>#</th><th>Entity</th><th>Disposition</th><th>Granted</th><th>Detail</th></tr>
-            </thead>
-            <tbody>
-              {#each paReport.results as r (r.index)}
-                <tr>
-                  <td>{r.index}</td>
-                  <td>{r.entity_id || '—'}</td>
-                  <td>{r.disposition ?? '—'}</td>
-                  <td class={r.granted ? 'ok' : 'changed'}>{r.granted ? 'yes' : 'no'}</td>
-                  <td>{r.error || r.reason || (r.granted ? 'pre-approved' : '')}</td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
-      {/if}
-    </section>
-  {/if}
-
-  {#if tab === 'discuss' && flow}
-    <section class="discussion" data-testid="flow-discussion">
-      <h2>Discussion</h2>
-      <CommentThread subjectType="flow" subjectId={flowId} title="Flow discussion" />
-    </section>
-  {/if}
-
-  {#if tab === 'copilot'}
-    <section class="copilot" data-testid="copilot">
-      <h2>Authoring copilot</h2>
-      <p class="muted">
-        Ask the AI to explain this flow, or describe the decision logic you want and get a suggested
-        node breakdown to build. (Backed by the configured AI provider.)
-      </p>
-      <div class="copilot-actions">
-        <button onclick={explainFlow} disabled={copilotBusy}>Explain this flow</button>
-      </div>
-      <form
-        class="copilot-ask"
-        onsubmit={(e) => {
-          e.preventDefault();
-          suggestLogic();
-        }}
-      >
-        <textarea
-          bind:value={copilotPrompt}
-          aria-label="copilot prompt"
-          rows="3"
-          placeholder="e.g. Auto-approve applicants with fico ≥ 720 and income ≥ 50k; refer 640–720; decline below 640."
-        ></textarea>
-        <div class="copilot-buttons">
-          <button type="submit" disabled={copilotBusy || !copilotPrompt.trim()}>
-            {copilotBusy ? 'Thinking…' : 'Suggest logic'}
-          </button>
+      <section>
+        <h2>Assertions</h2>
+        <p class="muted">
+          Stored input→expected tests, run through the pure engine (no recorded decision). A case
+          passes when every field in <code>expect</code> equals the flow's output. Failing
+          assertions block a
+          <b>promote</b> (override with force).
+        </p>
+        <div class="row">
           <button
-            type="button"
-            class="primary"
-            onclick={generateFlow}
-            disabled={copilotBusy || !copilotPrompt.trim()}
+            onclick={saveAssertions}
+            disabled={!flow || assertBusy || !roleAtLeast($user?.role, 'editor')}
+            title={!roleAtLeast($user?.role, 'editor') ? 'Requires the editor role' : undefined}
+            data-testid="save-assertions">Save tests</button
           >
-            Generate &amp; apply a flow
+          <button
+            onclick={runAssertionsNow}
+            disabled={!flow || assertBusy}
+            data-testid="run-assertions">Run tests</button
+          >
+        </div>
+        <textarea bind:value={assertText} aria-label="assertion cases" rows="6" spellcheck="false"
+        ></textarea>
+        {#if assertReport}
+          <div class="metrics" data-testid="assert-summary">
+            <span>{assertReport.total} cases</span>
+            <span class="ok">{assertReport.passed} passed</span>
+            {#if assertReport.failed > 0}<span class="err">{assertReport.failed} failed</span>{/if}
+          </div>
+          <div class="table-wrap">
+            <table class="bt-table">
+              <thead>
+                <tr><th>Case</th><th>Result</th><th>Detail</th></tr>
+              </thead>
+              <tbody>
+                {#each assertReport.results as r (r.name)}
+                  <tr>
+                    <td>{r.name}</td>
+                    <td class={r.passed ? 'ok' : 'err'}>{r.passed ? 'pass' : 'fail'}</td>
+                    <td
+                      >{r.error ||
+                        (r.mismatch && r.mismatch.length
+                          ? `mismatch: ${r.mismatch.join(', ')}`
+                          : 'ok')}</td
+                    >
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          </div>
+        {/if}
+      </section>
+
+      <section>
+        <h2>Batch decide</h2>
+        <p class="muted">
+          Decide a whole dataset on the <b>{env}</b> environment (from Test run above) — each row is
+          a
+          <b>recorded</b> decision (it shows in history, metrics, and the audit log), unlike a backtest.
+          Up to 500 rows.
+        </p>
+        <div class="row">
+          <button onclick={runBatch} disabled={!flow || batchRunning} data-testid="run-batch">
+            {batchRunning ? 'Deciding…' : 'Run batch'}
           </button>
         </div>
-      </form>
-      {#if copilotOut}
-        <pre class="copilot-out" data-testid="copilot-output">{copilotOut}</pre>
-      {/if}
-    </section>
+        <textarea
+          bind:value={batchDataset}
+          aria-label="batch dataset"
+          rows="4"
+          placeholder={'[\n  {"score": 720},\n  {"score": 540}\n]'}
+        ></textarea>
+        {#if batchReport}
+          <div class="metrics" data-testid="batch-summary">
+            <span>{batchReport.total} decided</span>
+            <span class="ok">{batchReport.completed} completed</span>
+            {#if batchReport.failed > 0}<span class="err">{batchReport.failed} failed</span>{/if}
+            {#if batchReport.rejected > 0}<span class="changed"
+                >{batchReport.rejected} rejected</span
+              >{/if}
+          </div>
+          <div class="table-wrap">
+            <table class="bt-table">
+              <thead>
+                <tr
+                  ><th>#</th><th>Status</th><th>Disposition</th><th>Decision</th><th>Detail</th></tr
+                >
+              </thead>
+              <tbody>
+                {#each batchReport.results as r (r.index)}
+                  <tr>
+                    <td>{r.index}</td>
+                    <td
+                      class={r.status === 'completed'
+                        ? 'ok'
+                        : r.status === 'failed'
+                          ? 'err'
+                          : 'changed'}>{r.status}</td
+                    >
+                    <td>{r.disposition ?? '—'}</td>
+                    <td>
+                      {#if r.decision_id}<a href={appHref(`/decisions/${r.decision_id}`)}>view</a
+                        >{:else}—{/if}
+                    </td>
+                    <td>{r.error || JSON.stringify(r.data)}</td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          </div>
+        {/if}
+      </section>
+
+      <section>
+        <h2>Promote to pre-approvals</h2>
+        <p class="muted">
+          Run the dataset above through the flow's bound <a href={appHref('/policies')}>policy</a>
+          and grant a time-boxed <a href={appHref('/preapprovals')}>pre-approval</a> for every row it
+          disposes to the chosen disposition — keyed by a field in each row. Each grant's decision output
+          becomes the stored offer terms, honored instantly the next time that entity is decided.
+        </p>
+        <div class="row pa-controls">
+          <label>
+            Entity type
+            <input
+              bind:value={paEntityType}
+              aria-label="pre-approve entity type"
+              placeholder="applicant"
+            />
+          </label>
+          <label>
+            Key field
+            <input
+              bind:value={paEntityKey}
+              aria-label="pre-approve entity key"
+              placeholder="applicant_id"
+            />
+          </label>
+          <label>
+            Grant on
+            <select bind:value={paDisposition} aria-label="pre-approve disposition">
+              <option value="approve">approve</option>
+              <option value="decline">decline</option>
+            </select>
+          </label>
+          <label>
+            Valid (days)
+            <input
+              type="number"
+              min="1"
+              max="3650"
+              bind:value={paValidDays}
+              aria-label="pre-approve valid days"
+            />
+          </label>
+          <button
+            onclick={runPreapproveBatch}
+            disabled={!flow || paRunning || !paEntityType.trim() || !paEntityKey.trim()}
+            data-testid="run-preapprove"
+          >
+            {paRunning ? 'Granting…' : 'Promote'}
+          </button>
+        </div>
+        {#if paReport}
+          <div class="metrics" data-testid="preapprove-summary">
+            <span>{paReport.total} rows</span>
+            <span class="ok">{paReport.granted} granted</span>
+            {#if paReport.skipped > 0}<span class="changed">{paReport.skipped} skipped</span>{/if}
+            {#if paReport.failed > 0}<span class="err">{paReport.failed} failed</span>{/if}
+            {#if paReport.rejected > 0}<span class="changed">{paReport.rejected} rejected</span
+              >{/if}
+          </div>
+          <div class="table-wrap">
+            <table class="bt-table">
+              <thead>
+                <tr><th>#</th><th>Entity</th><th>Disposition</th><th>Granted</th><th>Detail</th></tr
+                >
+              </thead>
+              <tbody>
+                {#each paReport.results as r (r.index)}
+                  <tr>
+                    <td>{r.index}</td>
+                    <td>{r.entity_id || '—'}</td>
+                    <td>{r.disposition ?? '—'}</td>
+                    <td class={r.granted ? 'ok' : 'changed'}>{r.granted ? 'yes' : 'no'}</td>
+                    <td>{r.error || r.reason || (r.granted ? 'pre-approved' : '')}</td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          </div>
+        {/if}
+      </section>
+    {/if}
+
+    {#if tab === 'discuss' && flow}
+      <section class="discussion" data-testid="flow-discussion">
+        <h2>Discussion</h2>
+        <CommentThread subjectType="flow" subjectId={flowId} title="Flow discussion" />
+      </section>
+    {/if}
+
+    {#if tab === 'copilot'}
+      <section class="copilot" data-testid="copilot">
+        <h2>Authoring copilot</h2>
+        <p class="muted">
+          Ask the AI to explain this flow, or describe the decision logic you want and get a
+          suggested node breakdown to build. (Backed by the configured AI provider.)
+        </p>
+        <div class="copilot-actions">
+          <button onclick={explainFlow} disabled={copilotBusy}>Explain this flow</button>
+        </div>
+        <form
+          class="copilot-ask"
+          onsubmit={(e) => {
+            e.preventDefault();
+            suggestLogic();
+          }}
+        >
+          <textarea
+            bind:value={copilotPrompt}
+            aria-label="copilot prompt"
+            rows="3"
+            placeholder="e.g. Auto-approve applicants with fico ≥ 720 and income ≥ 50k; refer 640–720; decline below 640."
+          ></textarea>
+          <div class="copilot-buttons">
+            <button type="submit" disabled={copilotBusy || !copilotPrompt.trim()}>
+              {copilotBusy ? 'Thinking…' : 'Suggest logic'}
+            </button>
+            <button
+              type="button"
+              class="primary"
+              onclick={generateFlow}
+              disabled={copilotBusy || !copilotPrompt.trim()}
+            >
+              Generate &amp; apply a flow
+            </button>
+          </div>
+        </form>
+        {#if copilotOut}
+          <pre class="copilot-out" data-testid="copilot-output">{copilotOut}</pre>
+        {/if}
+      </section>
+    {/if}
   {/if}
 </main>
 

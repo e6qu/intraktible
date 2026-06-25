@@ -378,12 +378,22 @@ func (s *Service) searchFlip(ctx context.Context, id identity.Identity, slug str
 	if best == nil {
 		return nil, used
 	}
+	rising := best.to > val
 	to := roundCF(best.to)
-	if to == roundCF(val) { // boundary sits on the current value — not a useful lever
+	// Snap an integer-valued field (a count like delinquencies) to a whole number on the
+	// improving side of the boundary — "reduce delinquencies to 1.1" is nonsense.
+	if val == math.Trunc(val) {
+		if rising {
+			to = math.Ceil(best.to)
+		} else {
+			to = math.Floor(best.to)
+		}
+	}
+	if to == val { // boundary sits on the current value — not a useful lever
 		return nil, used
 	}
 	dir := "increase"
-	if to < val {
+	if !rising {
 		dir = "decrease"
 	}
 	return &flip{

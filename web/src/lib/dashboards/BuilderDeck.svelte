@@ -84,7 +84,9 @@
                 <td class="slug"><a href={appHref(`/decisions/${d.decision_id}`)}>{d.slug}</a></td>
                 <td class="dim">{d.environment}</td>
                 <td class="dim">v{d.version}</td>
-                <td class="num">{d.duration_ms ?? 0}<small>ms</small></td>
+                <td class="num"
+                  >{#if d.duration_ms != null}{d.duration_ms}<small>ms</small>{:else}—{/if}</td
+                >
                 <td class="dim time">{clock(d.started_at)}</td>
               </tr>
             {/each}
