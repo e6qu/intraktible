@@ -6,7 +6,13 @@
   import Breadcrumb from '$lib/Breadcrumb.svelte';
   import CommentThread from '$lib/CommentThread.svelte';
   import Skeleton from '$lib/Skeleton.svelte';
-  import { getDecision, exportDecision, type Decision, type RunExportFormat } from '$lib/api';
+  import {
+    getDecision,
+    exportDecision,
+    resumeDecision,
+    type Decision,
+    type RunExportFormat
+  } from '$lib/api';
   import { toast } from '$lib/toast';
   import { appHref } from '$lib/paths';
   import Badge from '$lib/Badge.svelte';
@@ -35,6 +41,23 @@
       return typeof b === 'string' ? b : null;
     }
     return null;
+  }
+  let resuming = $state(false);
+  // Resume a decision paused at a durable human task: the reviewer's outcome is injected
+  // and the flow runs on to completion (the same decision, not a new one).
+  async function resume(outcome: string) {
+    if (resuming) return;
+    resuming = true;
+    error = '';
+    try {
+      await resumeDecision(key, id, { decision: outcome });
+      await load();
+      toast.success(`Resumed — ${outcome}`);
+    } catch (e) {
+      error = msg(e);
+    } finally {
+      resuming = false;
+    }
   }
   async function load() {
     error = '';
@@ -93,6 +116,23 @@
     <div class="head">
       <h1>{d.slug} <Badge tone={statusTone(d.status)}>{d.status}</Badge></h1>
     </div>
+
+    {#if d.status === 'suspended'}
+      <div class="resume" data-testid="resume-panel">
+        <div class="resume-body">
+          <b><Icon name="manual_review" size={16} /> Paused for human review</b>
+          <p>
+            This decision is suspended at a human task — it is durable (recorded in the event log,
+            holding no running process) and resumes when you record an outcome.
+          </p>
+        </div>
+        <div class="resume-actions">
+          <button disabled={resuming} onclick={() => resume('approve')}>Approve</button>
+          <button disabled={resuming} onclick={() => resume('decline')}>Decline</button>
+          <button class="ghost" disabled={resuming} onclick={() => resume('refer')}>Refer</button>
+        </div>
+      </div>
+    {/if}
 
     {#if d.disposition}
       <div class="verdict {dispositionTone(d.disposition)}" data-testid="verdict">
@@ -218,6 +258,38 @@
     max-width: 60rem;
     margin: 2rem auto;
     padding: 0 1.25rem;
+  }
+  .resume {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    align-items: center;
+    justify-content: space-between;
+    margin: 0.5rem 0 1rem;
+    padding: 0.8rem 1rem;
+    border: 1px solid color-mix(in srgb, var(--warn) 40%, var(--border));
+    border-radius: 0.6rem;
+    background: color-mix(in srgb, var(--warn) 10%, var(--surface));
+  }
+  .resume-body p {
+    margin: 0.3rem 0 0;
+    color: var(--fg-muted);
+    font-size: 0.9rem;
+    max-width: 48ch;
+  }
+  .resume-actions {
+    display: flex;
+    gap: 0.5rem;
+  }
+  .resume-actions button {
+    font: inherit;
+    padding: 0.4rem 0.9rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .resume-actions button.ghost {
+    background: transparent;
   }
   .head h1 {
     display: inline-flex;

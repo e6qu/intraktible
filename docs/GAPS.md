@@ -38,6 +38,17 @@ The durable suspend/resume is real and replayable (the resumed decision's trace 
 the pre- and post-pause nodes). The remaining orchestration primitives — timer/message
 resumption, parallel fork-join, sagas — are honest roadmap, not present today.
 
+**Scale-to-zero, by design.** A suspended decision is *not* a workflow held resident in a
+worker's memory (the actor/worker model of Temporal/Camunda, which keeps the instance
+alive). It is just a `DecisionSuspended` event in the durable log plus its projected
+read-model record — **pure data at rest**. While paused it consumes **no compute and no
+resident memory**; the server can scale to zero or restart entirely, and the suspended
+decision survives and rehydrates from the event log only when someone resumes it. This is
+a property of the event-sourced core, not an extra subsystem — so it adds no architectural
+complexity. It is proven by a cold-rebuild test (`history.TestSuspendedDecisionSurvivesColdRebuild`):
+the entire read model is discarded and rebuilt from the log, and the suspended decision
+still resumes to completion.
+
 ## Deficiencies & shallow areas (prioritized)
 
 Sizes are rough effort to become competitively credible. **S** = days, **M** = ~1–2

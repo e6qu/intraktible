@@ -41,7 +41,7 @@ type tsEnum struct {
 // hand-defined in api.ts.
 var enums = []tsEnum{
 	{"Disposition", "", strs(policy.Approve, policy.Decline, policy.Refer)},
-	{"RunStatus", "", strs(dedomain.StatusCompleted, dedomain.StatusFailed)},
+	{"RunStatus", "", strs(dedomain.StatusCompleted, dedomain.StatusFailed, dedomain.StatusSuspended)},
 	{"Variant", "", strs(dedomain.VariantChampion, dedomain.VariantChallenger)},
 	{"NodeType", "", strs(
 		events.NodeInput, events.NodeRule, events.NodeSplit, events.NodeAssignment,
