@@ -29,8 +29,18 @@ const MaxSLADays = 10000
 const DefaultSLADays = 3
 
 // Deadline is when a case opened at createdAt with an slaDays window is due.
-// An slaDays of 0 means the case is due at the moment it opened.
+// An slaDays of 0 means the case is due at the moment it opened. The window is
+// clamped to [0, MaxSLADays]: a value persisted outside that range (the SLA sweep
+// folds slaDays straight from recorded event payloads, which the open-command
+// validation does not re-check) would otherwise overflow AddDate and wrap a
+// far-future deadline into the past, mis-bucketing the case as overdue.
 func Deadline(createdAt time.Time, slaDays int) time.Time {
+	if slaDays < 0 {
+		slaDays = 0
+	}
+	if slaDays > MaxSLADays {
+		slaDays = MaxSLADays
+	}
 	return createdAt.AddDate(0, 0, slaDays)
 }
 

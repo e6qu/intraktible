@@ -892,17 +892,28 @@ route('POST', '/v1/decisions/:id/resume', (m, body) => {
   const graph = version?.graph ?? { nodes: [], edges: [] };
   const outcome = ((body as Body).outcome as Record<string, unknown>) ?? {};
   const run = runFlow(flow, graph, (d.data as Record<string, unknown>) ?? {}, { outcome });
+  // The reviewer's decision is AUTHORITATIVE — it becomes the disposition. The re-run
+  // re-derives the same machine outcome, so without this the three Resume buttons
+  // (approve/decline/refer) would all land on the same disposition.
+  const choice = String(outcome.decision ?? '').toLowerCase();
+  const reviewerDisp = (['approve', 'decline', 'refer'] as Disposition[]).find((x) => x === choice);
   d.status = run.status;
   d.data = run.data;
   d.output = run.output;
-  d.disposition = run.disposition;
-  d.reason_codes = run.reasonCodes;
+  d.disposition = reviewerDisp ?? run.disposition;
+  d.disposition_reason = reviewerDisp ? `Resolved by reviewer: ${choice}` : d.disposition_reason;
+  d.reason_codes = [
+    ...(reviewerDisp
+      ? [{ code: `REVIEW_${choice.toUpperCase()}`, description: `Reviewer decision: ${choice}` }]
+      : []),
+    ...run.reasonCodes.filter((rc) => rc.code !== 'MANUAL_REVIEW')
+  ];
   d.nodes = run.nodes;
   d.ended_at = new Date().toISOString();
   // Resolve the case the suspension opened.
   const c = state.cases.find((x) => x.source_decision_id === d.decision_id);
   if (c) c.status = 'completed';
-  return ok({ decision_id: d.decision_id, status: run.status, disposition: run.disposition });
+  return ok({ decision_id: d.decision_id, status: d.status, disposition: d.disposition });
 });
 
 // --- Cases ----------------------------------------------------------------------

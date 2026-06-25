@@ -55,8 +55,12 @@ export function narrative(prompt: string, context?: Record<string, unknown>): st
     return 'The risk drivers sit comfortably within policy — affordability is sound and the modelled default probability is low. Recommend approval at the assessed limit.';
   if (disp === 'refer')
     return 'The risk drivers are borderline against policy, with key factors close to threshold. Recommend referring for manual underwriting review.';
-  if (/sanction|watchlist|pep|aml/.test(p))
-    return 'Screened against sanctions and watchlists. A potential match warrants enhanced due diligence; recommend referring for review before clearing.';
+  if (
+    /sanction|watchlist|pep|aml|wire|structuring|shell|jurisdiction|pass-through|deposit|launder/.test(
+      p
+    )
+  )
+    return 'Screened against sanctions and watchlists; the funding pattern (cross-border value, layering signals) warrants enhanced due diligence. Recommend referring for review and drafting a SAR before clearing.';
   if (/fraud|velocity|device|chargeback|dispute/.test(p))
     return 'Transaction signals show elevated risk (velocity and device anomalies). Recommend a temporary hold pending review.';
   if (/credit|income|dti|underwrit|loan|limit|adverse|rationale|risk driver|decline|approv/.test(p))

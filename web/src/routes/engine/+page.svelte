@@ -63,7 +63,10 @@
       slug = '';
       name = '';
       toast.success(`Created ${label}`);
-      await goto(appHref(`/engine/${created.flow_id}`));
+      // Fire the navigation without awaiting: awaiting it can race the page's own reload
+      // in this static SPA and leave the button stuck on "Creating…" if the goto promise
+      // doesn't settle. The button clears immediately; the route advances when it can.
+      void goto(appHref(`/engine/${created.flow_id}`));
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     } finally {
@@ -89,7 +92,7 @@
     try {
       const res = await importFlow(key, { ...t.doc, slug: uniqueSlug(t.doc.slug) });
       toast.success(`Created ${res.slug} from "${t.name}"`);
-      await goto(appHref(`/engine/${res.flow_id}`));
+      void goto(appHref(`/engine/${res.flow_id}`));
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     } finally {
@@ -131,7 +134,7 @@
         );
         importText = '';
         await load();
-        await goto(appHref(`/engine/${res.flow_id}`));
+        void goto(appHref(`/engine/${res.flow_id}`));
       }
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
@@ -207,7 +210,7 @@
     >
   </form>
 
-  <details class="templates" data-testid="template-gallery">
+  <details class="templates" data-testid="template-gallery" open>
     <summary><Icon name="plus" size={14} /> New from template</summary>
     <p class="muted">
       Start from a curated flow that already wires the right node types for a use case — it's
@@ -216,7 +219,7 @@
     <div class="tmpl-grid">
       {#each TEMPLATES as t (t.id)}
         <div class="tmpl-card">
-          <h3>{t.name}</h3>
+          <h2>{t.name}</h2>
           <p class="tmpl-purpose">{t.purpose}</p>
           <div class="tmpl-chips">
             {#each t.nodeTypes as nt (nt)}<span class="chip">{nt}</span>{/each}
@@ -409,7 +412,7 @@
     padding: 0.7rem 0.8rem;
     background: var(--surface-2);
   }
-  .tmpl-card h3 {
+  .tmpl-card h2 {
     margin: 0;
     font-size: 0.95rem;
   }

@@ -89,9 +89,11 @@ weeks, **L** = a real project.
 6. **Drift covers predictions only — M.** PSI/KL run on the prediction distribution;
    there is no feature/covariate drift and no actuals/ground-truth reconciliation to
    measure live model performance.
-7. **Thin example/template library — S.** There is no in-product starter-flow gallery
-   (credit STP, fraud, onboarding, KYC/AML). The flow-as-code import exists; authoring a
-   few polished importable starters is low-effort, high-perceived-value.
+7. **Example/template library — DONE.** A "New from template" gallery on the Flows page
+   ships 6 importable starters (Consumer Credit STP, CNP Fraud, Sanctions/PEP, KYB, BNPL,
+   Chargeback) that exercise the differentiating node types. Remaining (optional): convert
+   a *seed* flow to scorecard/decision_table so those nodes appear in seeded, not just
+   template, flows.
 8. **SLO attainment is all-time cumulative, not windowed — S.** A long-lived flow's
    recent breach is diluted; a rolling window is needed for an operational SLO. (Honestly
    disclosed in `analytics`.)

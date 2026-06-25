@@ -1,10 +1,13 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
-<!-- Header notifications bell: a per-user inbox of @-mentions from comment threads.
-     Shows an unread badge and a dropdown; clicking an item marks it read. -->
+<!-- Header notifications bell: a per-user inbox of human-review tasks (assigned / due
+     soon / overdue), @-mentions, and deploy/monitor alerts. Shows an unread badge and a
+     dropdown; clicking an item opens its subject (case/decision/flow) and marks it read. -->
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { goto } from '$app/navigation';
   import Icon from '$lib/Icon.svelte';
   import RelativeTime from '$lib/RelativeTime.svelte';
+  import { appHref } from '$lib/paths';
   import { listNotifications, markNotificationRead, type Notification } from '$lib/api';
 
   const key = '';
@@ -25,6 +28,24 @@
       await load();
     } catch {
       /* non-fatal */
+    }
+  }
+  // The route a notification's subject lives on, so a reviewer clicking a task reminder
+  // lands on the case/decision/flow instead of just marking it read in place.
+  function subjectHref(n: Notification): string | undefined {
+    if (!n.subject_id) return undefined;
+    if (n.subject_type === 'case') return appHref(`/cases/${n.subject_id}`);
+    if (n.subject_type === 'decision') return appHref(`/decisions/${n.subject_id}`);
+    if (n.subject_type === 'flow') return appHref(`/engine/${n.subject_id}`);
+    return undefined;
+  }
+  // Open the item's subject and mark it read (the dropdown closes via the navigation).
+  function open(n: Notification) {
+    void markRead(n);
+    const href = subjectHref(n);
+    if (href) {
+      if (el) el.open = false;
+      void goto(href);
     }
   }
   // Escape closes the dropdown and returns focus to the bell, matching the persona
@@ -62,7 +83,7 @@
       <ul>
         {#each items as n (n.notification_id)}
           <li>
-            <button class="item" class:unread={!n.read} role="menuitem" onclick={() => markRead(n)}>
+            <button class="item" class:unread={!n.read} role="menuitem" onclick={() => open(n)}>
               <span class="meta">
                 {#if n.kind === 'task'}<b>Review task</b>
                 {:else if n.kind === 'mention'}<b>{n.author}</b> mentioned you on a {n.subject_type.replace(

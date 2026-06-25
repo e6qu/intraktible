@@ -26,8 +26,11 @@ describe('relativeTime', () => {
     expect(relativeTime(ago(400 * D), REF)).toBe('1y ago');
   });
 
-  it('treats future / clock-skew as "just now"', () => {
+  it('treats a small future delta as clock-skew "just now" but renders real future times "in X"', () => {
     expect(relativeTime(ago(-30 * S), REF)).toBe('just now');
+    expect(relativeTime(ago(-3 * H), REF)).toBe('in 3h');
+    expect(relativeTime(ago(-2 * D), REF)).toBe('in 2d');
+    expect(relativeTime(ago(-20 * D), REF)).toBe('in 3w');
   });
 });
 

@@ -391,7 +391,7 @@
   .rcode {
     font-family: var(--font-mono);
     font-weight: 600;
-    color: var(--accent);
+    color: var(--accent-ink);
     background: var(--surface-2);
     padding: 0.05rem 0.4rem;
     border-radius: 0.3rem;
@@ -459,7 +459,7 @@
   .branch {
     font-size: 0.74rem;
     font-weight: 600;
-    color: var(--accent);
+    color: var(--accent-ink);
     background: color-mix(in srgb, var(--accent) 16%, transparent);
     padding: 0.05rem 0.4rem;
     border-radius: 999px;

@@ -7,7 +7,18 @@
 // contrast can't silently regress.
 import { test, expect } from '@playwright/test';
 
-const ROUTES = ['/', '/engine', '/decisions/dec_1', '/cases/case_1', '/mrm', '/observability'];
+const ROUTES = [
+  '/',
+  '/engine',
+  '/engine/flow_credit', // the builder canvas (svelte-flow edge labels live here)
+  '/decisions/dec_1',
+  '/cases/case_1',
+  '/mrm',
+  '/observability',
+  '/preapprovals', // the .link.danger Revoke button regressed here, unmeasured
+  '/agents',
+  '/policies'
+];
 
 // Persona only swaps the accent tokens (--accent / --accent-ink / --link), which colour
 // the active nav + links — so persona-specific contrast bugs (e.g. an active nav item
