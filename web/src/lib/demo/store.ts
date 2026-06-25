@@ -99,8 +99,15 @@ export interface DemoState {
   seq: number;
 }
 
-// Stable timestamps so the seed reads coherently (a few days of history).
-const now = new Date('2026-06-22T10:00:00Z');
+// Anchor the seed to the REAL current time (floored to the hour for stable reads within
+// a session), so every ago()/ahead() offset stays correctly relative. A fixed past date
+// drifts: "expiring soon" pre-approvals and scheduled deploys render as already expired
+// once the real clock passes it.
+const now = (() => {
+  const d = new Date();
+  d.setMinutes(0, 0, 0);
+  return d;
+})();
 function ago(hours: number): string {
   return new Date(now.getTime() - hours * 3600_000).toISOString();
 }
@@ -1090,6 +1097,7 @@ function seedDecisions(): Decision[] {
       flow_id: 'flow_aml',
       slug: 'aml-screening',
       versions: [2, 3],
+      policy_id: 'pol_aml',
       build: (i, disp) => {
         const amount = 4000 + (i % 11) * 7000;
         const amlScore = disp === 'refer' ? 7 + (i % 5) : 2 + (i % 3);
@@ -1137,6 +1145,7 @@ function seedDecisions(): Decision[] {
       flow_id: 'flow_fraud',
       slug: 'card-fraud',
       versions: [3, 4],
+      policy_id: 'pol_fraud',
       build: (i, disp) => {
         const amount = 60 + (i % 13) * 240;
         const fraudP =
@@ -1180,6 +1189,7 @@ function seedDecisions(): Decision[] {
       flow_id: 'flow_kyc',
       slug: 'kyc-onboarding',
       versions: [2],
+      policy_id: 'pol_kyc',
       build: (i, disp) => {
         const conf = disp === 'refer' ? 40 + (i % 18) : 70 + (i % 25);
         return {
@@ -1210,6 +1220,7 @@ function seedDecisions(): Decision[] {
       flow_id: 'flow_dispute',
       slug: 'dispute-triage',
       versions: [1, 2],
+      policy_id: 'pol_dispute',
       build: (i, disp) => {
         const amount = 80 + (i % 10) * 130;
         const triage = disp === 'refer' ? 50 + (i % 40) : i % 40;
@@ -1240,6 +1251,7 @@ function seedDecisions(): Decision[] {
       flow_id: 'flow_merchant',
       slug: 'merchant-onboarding',
       versions: [2],
+      policy_id: 'pol_merchant',
       build: (i, disp) => {
         const uw = disp === 'refer' ? 25 + (i % 30) : i % 24;
         return {
@@ -1279,6 +1291,10 @@ function seedDecisions(): Decision[] {
     'refer'
   ];
   const out: Decision[] = [];
+  // The flows that actually run a champion/challenger split (a challenger_version is
+  // configured in their deployments) — only these get challenger decisions, so the
+  // Experimentation lens shows a real spread instead of one flow.
+  const challengerFlows = new Set(['credit-decision', 'aml-screening', 'card-fraud']);
   // Round-robin across flows so every flow has decisions across envs/time/variants.
   for (let i = 1; i <= 44; i++) {
     const profile = profiles[i % profiles.length];
@@ -1286,7 +1302,10 @@ function seedDecisions(): Decision[] {
     const status: 'completed' | 'failed' = failed ? 'failed' : 'completed';
     const disp = failed ? undefined : dispCycle[i % dispCycle.length];
     const env = envCycle[i % envCycle.length];
-    const variant: 'champion' | 'challenger' = i % 6 === 0 ? 'challenger' : 'champion';
+    // Mark roughly a third of a challenger-flow's own decisions as challenger — keyed on
+    // the per-flow occurrence (i/6), NOT i%6, which would pin it to a single flow.
+    const variant: 'champion' | 'challenger' =
+      challengerFlows.has(profile.slug) && Math.floor(i / 6) % 3 === 0 ? 'challenger' : 'champion';
     const version = profile.versions[i % profile.versions.length];
     const built = profile.build(i, disp);
     const hrs = 1 + i * 3;
@@ -1336,7 +1355,10 @@ function seedDecisions(): Decision[] {
       risk: 52
     },
     output: {},
-    reason_codes: [{ code: 'MANUAL_REVIEW', description: 'Escalated to manual review' }],
+    reason_codes: [
+      { code: 'DTI_TOO_HIGH', description: 'Debt-to-income ratio too high' },
+      { code: 'MANUAL_REVIEW', description: 'Escalated to manual review' }
+    ],
     policy_id: 'pol_credit',
     policy_version: 2,
     nodes: [],
@@ -1962,6 +1984,102 @@ function seedPolicies(): Policy[] {
                 disposition: 'approve',
                 code: 'FRAUD_PASS',
                 description: 'Allow low fraud probability'
+              }
+            ],
+            default: 'refer'
+          }
+        }
+      ]
+    },
+    {
+      policy_id: 'pol_kyc',
+      name: 'KYC Onboarding Policy',
+      flow_slug: 'kyc-onboarding',
+      latest: 1,
+      updated_at: ago(80 * 24),
+      versions: [
+        {
+          version: 1,
+          etag: 'petag-k1',
+          published_at: ago(80 * 24),
+          published_by: MARCUS,
+          spec: {
+            rules: [
+              {
+                when: 'identity_conf < 60',
+                disposition: 'refer',
+                code: 'KYC_LOW_CONF',
+                description: 'Identity confidence below threshold'
+              },
+              {
+                when: 'identity_conf >= 60',
+                disposition: 'approve',
+                code: 'KYC_CLEAR',
+                description: 'Identity verified'
+              }
+            ],
+            default: 'refer'
+          }
+        }
+      ]
+    },
+    {
+      policy_id: 'pol_dispute',
+      name: 'Chargeback Triage Policy',
+      flow_slug: 'dispute-triage',
+      latest: 1,
+      updated_at: ago(60 * 24),
+      versions: [
+        {
+          version: 1,
+          etag: 'petag-d1',
+          published_at: ago(60 * 24),
+          published_by: MARCUS,
+          spec: {
+            rules: [
+              {
+                when: 'triage >= 50',
+                disposition: 'refer',
+                code: 'DISPUTE_REVIEW',
+                description: 'High triage score — route to disputes ops'
+              },
+              {
+                when: 'triage < 50',
+                disposition: 'approve',
+                code: 'DISPUTE_REFUND',
+                description: 'Below triage band — auto-refund'
+              }
+            ],
+            default: 'refer'
+          }
+        }
+      ]
+    },
+    {
+      policy_id: 'pol_merchant',
+      name: 'Merchant Onboarding Policy',
+      flow_slug: 'merchant-onboarding',
+      latest: 1,
+      updated_at: ago(70 * 24),
+      versions: [
+        {
+          version: 1,
+          etag: 'petag-m1',
+          published_at: ago(70 * 24),
+          published_by: MARCUS,
+          spec: {
+            rules: [
+              {
+                when: 'uw_score >= 25',
+                disposition: 'refer',
+                code: 'UW_HIGH',
+                description: 'Underwriting score above the review gate'
+              },
+              {
+                when: 'uw_score < 25',
+                disposition: 'approve',
+                code: 'UW_PASS',
+                description: 'Underwriting score below the review gate'
               }
             ],
             default: 'refer'
@@ -3275,7 +3393,7 @@ export function createState(): DemoState {
       ['flow_fraud', { approve: 18, decline: 3, refer: 7 }]
     ]),
     flowSlos: new Map([
-      ['flow_credit', { success_target: 0.95, latency_target_ms: 200 }],
+      ['flow_credit', { success_target: 0.85, latency_target_ms: 200 }],
       ['flow_aml', { success_target: 0.98, latency_target_ms: 300 }],
       ['flow_fraud', { success_target: 0.99, latency_target_ms: 120 }]
     ]),
