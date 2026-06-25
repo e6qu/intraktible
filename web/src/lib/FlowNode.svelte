@@ -70,11 +70,14 @@
     border-color: var(--rail);
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--rail) 45%, transparent);
   }
-  /* Heatmap: a never-traversed node reads as dimmed + dashed; the heat bar at the
-     bottom shows traversal share. Kept off the text so contrast is unaffected. */
+  /* Heatmap: a never-traversed node reads as dashed + a "0" badge. We do NOT dim the
+     node with opacity — that composites over the body text and drops it below AA. */
   .node.cold {
     border-style: dashed;
-    opacity: 0.62;
+  }
+  .node.cold .strip {
+    /* Dim only the decorative strip (the type label is redundant with the rail + dash). */
+    opacity: 0.7;
   }
   .heat {
     margin-left: auto;
@@ -83,8 +86,9 @@
     font-variant-numeric: tabular-nums;
     padding: 0 0.35rem;
     border-radius: 999px;
-    background: color-mix(in srgb, var(--rail) 22%, var(--surface, #fff));
-    color: color-mix(in srgb, var(--rail) 82%, var(--fg));
+    background: color-mix(in srgb, var(--rail) 18%, var(--surface, #fff));
+    /* Lean on --fg for contrast (a cool rail mixed mostly with itself failed AA). */
+    color: color-mix(in srgb, var(--rail) 38%, var(--fg));
   }
   .heatbar {
     height: 4px;
@@ -122,7 +126,8 @@
     padding: 0.3rem 0.55rem;
     background: color-mix(in srgb, var(--rail) 16%, var(--surface, #fff));
     border-bottom: 1px solid color-mix(in srgb, var(--rail) 30%, transparent);
-    color: color-mix(in srgb, var(--rail) 80%, var(--fg));
+    /* Lean on --fg: an 80%-rail label failed AA on the cooler rails (split/ai ~3.7:1). */
+    color: color-mix(in srgb, var(--rail) 35%, var(--fg));
   }
   .ic {
     display: inline-flex;

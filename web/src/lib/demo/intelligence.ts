@@ -60,8 +60,12 @@ export function counterfactual(flow: Flow, decision: Decision): Counterfactual {
   }
   const { graph } = pickVersion(flow, decision.environment ?? 'production');
   const data = (decision.data as Record<string, unknown>) ?? {};
+  // Only RAW inputs are levers: a field the graph recomputes (an assignment / scorecard /
+  // model target) can't be "changed" by the applicant, and offering it produces useless
+  // X→X suggestions, so exclude the graph's own output targets.
+  const derived = graphTargets(graph);
   const numeric = Object.entries(data)
-    .filter(([, v]) => typeof v === 'number' && Number.isFinite(v as number))
+    .filter(([k, v]) => typeof v === 'number' && Number.isFinite(v as number) && !derived.has(k))
     .map(([k]) => k);
   let searched = 0;
   const disp = (val: number, field: string): Disposition | undefined => {
@@ -83,22 +87,33 @@ function relChange(f: CounterfactualFlip): number {
   return Math.abs((f.to - f.from) / (f.from || 1));
 }
 
-// searchFlip scans a field outward in both directions for the nearest value that
-// improves the disposition, then binary-searches the boundary. ~22 evals per field.
+// searchFlip scans a field outward in both directions for the nearest value that improves
+// the disposition, then binary-searches the boundary. The search is bounded to a sensible
+// window — [from/4, from*4] for a positive field — so it never suggests a negative income,
+// a zero denominator, or a wild 100x change (and degenerate from→from flips are dropped).
 function searchFlip(
   field: string,
   from: number,
   base: Disposition,
   disp: (val: number, field: string) => Disposition | undefined
 ): CounterfactualFlip | null {
-  const span = Math.max(Math.abs(from) * 8, 50);
+  const positive = from > 0;
+  const pad = Math.max(Math.abs(from) * 8, 25);
+  // A multiplicative window for a positive field keeps every probe positive (no negative
+  // income, no zero denominator) while still spanning up to 8x — enough to clear most
+  // thresholds without suggesting an absurd change.
+  const lo = positive ? from * 0.125 : Math.max(0, from - pad);
+  const hi = positive ? from * 8 : from + pad;
   const STEPS = 8;
   for (let i = 1; i <= STEPS; i++) {
-    for (const dir of [1, -1]) {
-      const val = from + (dir * span * i) / STEPS;
+    const up = from + ((hi - from) * i) / STEPS;
+    const down = from - ((from - lo) * i) / STEPS;
+    for (const val of [up, down]) {
+      if (Math.abs(val - from) < 1e-9) continue;
       const d = disp(val, field);
       if (isBetter(d, base)) {
         const r = refineBoundary(from, val, base, field, disp);
+        if (round(r.to) === round(from)) return null; // boundary sits on the current value
         return {
           field,
           from,
@@ -110,6 +125,17 @@ function searchFlip(
     }
   }
   return null;
+}
+
+// graphTargets is the set of fields a graph assigns/derives (assignment, scorecard, model,
+// reason … outputs) — used to keep derived fields out of the counterfactual levers.
+function graphTargets(graph: FlowGraph): Set<string> {
+  const targets = new Set<string>();
+  for (const nd of graph.nodes) {
+    const cfg = JSON.stringify(nd.config ?? {});
+    for (const m of cfg.matchAll(/"(?:target|output)"\s*:\s*"([^"]*)"/g)) targets.add(m[1]);
+  }
+  return targets;
 }
 
 // refineBoundary narrows [from (not improving) .. found (improving)] to the closest

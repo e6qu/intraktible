@@ -1496,7 +1496,10 @@ route('POST', '/v1/copilot/generate', (_m, body) => {
         { from: 'in', to: 'assign' },
         { from: 'assign', to: 'gate' },
         { from: 'gate', to: 'out', branch: `${d.score} < ${d.threshold}` },
-        { from: 'gate', to: 'review', branch: `${d.score} >= ${d.threshold}` },
+        // Default (unbranched) catch-all: anything not clearly below the threshold —
+        // including a missing/partial input on the first test run — routes to review and
+        // COMPLETES, rather than failing "no branch matched".
+        { from: 'gate', to: 'review' },
         { from: 'review', to: 'out' }
       ]
     }

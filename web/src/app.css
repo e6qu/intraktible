@@ -132,7 +132,8 @@
 :root[data-persona='builder'] {
   --accent: #f59e0b;
   --accent-2: #d97706;
-  --accent-ink: #b45309;
+  /* amber-800, not -700: -700 (#b45309) sat at 4.44:1 on tinted surfaces, a hair under AA. */
+  --accent-ink: #92400e;
   --on-accent: #1c1503;
   --link: var(--accent-ink);
   --font-ui: 'Plex Sans', system-ui, -apple-system, sans-serif;

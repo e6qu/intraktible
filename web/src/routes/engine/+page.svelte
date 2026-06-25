@@ -109,8 +109,9 @@
   }
 
   // --- Draft a flow with AI: a natural-language requirement -> a real, editable graph ---
-  // (POST /v1/copilot/generate; the backend asks the configured LLM for a graph and runs
-  // it through ValidateGraph, so what comes back always imports.)
+  // (POST /v1/copilot/generate. On the real backend the model's graph is checked by
+  // ValidateGraph before it's returned; the draft then opens in the builder to review,
+  // test-run, and refine before you publish — it's a starting point, not a finished flow.)
   type DraftNode = { id: string; type: string; name?: string };
   const COPILOT_EXAMPLES = [
     'Approve loans under $50k when DTI is below 40% and there are no recent delinquencies; refer the rest to a human.',

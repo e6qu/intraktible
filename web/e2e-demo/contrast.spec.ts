@@ -38,12 +38,28 @@ const PERSONAS = [
 // colour and the first opaque background up its ancestor chain, then return both so the
 // node side can compute the WCAG ratio.
 function collectPairs() {
+  const nums = (s: string) =>
+    s
+      .split(/[,\s/]+/)
+      .map(parseFloat)
+      .filter((n) => !Number.isNaN(n));
   const parse = (c: string): [number, number, number, number] | null => {
-    const m = c.match(/rgba?\(([^)]+)\)/);
-    if (!m) return null;
-    const p = m[1].split(',').map((s) => parseFloat(s));
-    if (p.length >= 4 && p[3] === 0) return null;
-    return [p[0], p[1], p[2], p[3] ?? 1];
+    const rgb = c.match(/rgba?\(([^)]+)\)/);
+    if (rgb) {
+      const p = nums(rgb[1]);
+      if (p.length >= 4 && p[3] === 0) return null;
+      return [p[0], p[1], p[2], p[3] ?? 1];
+    }
+    // Chromium serializes color-mix() / relative colors as `color(srgb r g b / a)` with
+    // 0..1 channels — the original rgba-only regex was BLIND to these, so every
+    // color-mix-based fg/bg (the node strip labels, heat badges, …) went unmeasured.
+    const srgb = c.match(/color\(srgb\s+([^)]+)\)/);
+    if (srgb) {
+      const p = nums(srgb[1]);
+      if (p.length >= 4 && p[3] === 0) return null;
+      return [p[0] * 255, p[1] * 255, p[2] * 255, p[3] ?? 1];
+    }
+    return null;
   };
   const bgOf = (el: Element): [number, number, number] => {
     let n: Element | null = el;
