@@ -6,7 +6,7 @@
 
 export type Disposition = 'approve' | 'decline' | 'refer';
 
-export type RunStatus = 'completed' | 'failed';
+export type RunStatus = 'completed' | 'failed' | 'suspended';
 
 export type Variant = 'champion' | 'challenger';
 

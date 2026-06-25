@@ -23,7 +23,8 @@ import type {
   ReasonCode,
   NodeRecord,
   Environment,
-  Disposition
+  Disposition,
+  RunStatus
 } from '$lib/api';
 import { state, nextId } from './store';
 import { agentReply, type AgentSchema } from './agent';
@@ -423,15 +424,17 @@ function connectorSample(connector: string): Record<string, unknown> {
 export function runFlow(
   flow: Flow,
   graph: FlowGraph,
-  input: Record<string, unknown>
+  input: Record<string, unknown>,
+  resume?: { outcome: Record<string, unknown> }
 ): {
-  status: 'completed' | 'failed';
+  status: 'completed' | 'failed' | 'suspended';
   data: Record<string, unknown>;
   output: Record<string, unknown>;
   disposition?: Disposition;
   reasonCodes: ReasonCode[];
   nodes: NodeRecord[];
   caseOpened?: { case_type: string; sla_days: number };
+  suspend?: { node_id: string };
   error?: string;
 } {
   const rec: Record<string, unknown> = { ...input };
@@ -439,6 +442,7 @@ export function runFlow(
   const reasonCodes: ReasonCode[] = [];
   let output: Record<string, unknown> = {};
   let caseOpened: { case_type: string; sla_days: number } | undefined;
+  let suspendHere = false;
 
   const start = graph.nodes.find((n) => n.type === 'input') ?? graph.nodes[0];
   if (!start) {
@@ -524,14 +528,33 @@ export function runFlow(
         nodeOut = { reason_codes: reasonCodes.map((r) => r.code) };
         break;
       }
-      case 'manual_review':
+      case 'manual_review': {
         caseOpened = {
           case_type: String(cfg.case_type ?? 'manual_review'),
           sla_days: typeof cfg.sla_days === 'number' ? cfg.sla_days : 3
         };
         reasonCodes.push({ code: 'MANUAL_REVIEW', description: 'Routed to manual review' });
-        nodeOut = { case_opened: true };
+        if (resume) {
+          // Resuming: inject the reviewer's outcome so downstream nodes branch on it.
+          const outKey = String(cfg.output_key ?? 'review');
+          const m = new Map(Object.entries(rec));
+          m.set(outKey, resume.outcome);
+          Object.assign(rec, Object.fromEntries(m));
+          for (const [k, v] of Object.entries(resume.outcome)) {
+            const mm = new Map(Object.entries(rec));
+            mm.set(k, v);
+            Object.assign(rec, Object.fromEntries(mm));
+          }
+          nodeOut = { resumed: true, ...resume.outcome };
+        } else if (cfg.suspend) {
+          // A durable human task: pause the decision here (handled after the trace push).
+          suspendHere = true;
+          nodeOut = { suspended: true };
+        } else {
+          nodeOut = { case_opened: true };
+        }
         break;
+      }
       case 'rule': {
         // Each rule whose `when` holds applies its `then` assignments to the record.
         const rules = Array.isArray(cfg.rules)
@@ -649,6 +672,18 @@ export function runFlow(
     }
 
     nodes.push({ node_id: node.id, type: node.type, output: nodeOut });
+    if (suspendHere) {
+      // Paused at a durable human task: no terminal output yet; resume continues here.
+      return {
+        status: 'suspended',
+        data: rec,
+        output: {},
+        reasonCodes,
+        nodes,
+        caseOpened,
+        suspend: { node_id: node.id }
+      };
+    }
     if (node.type === 'output' || !nextId) break;
     current = findNode(graph, nextId);
   }
@@ -847,8 +882,8 @@ export function backtestFlowDataset(flow: Flow, input: BacktestInput) {
     else baseFailed += 1;
     const rec: {
       index: number;
-      baseline: { status: 'completed' | 'failed'; output?: Record<string, unknown> };
-      candidate?: { status: 'completed' | 'failed'; output?: Record<string, unknown> };
+      baseline: { status: RunStatus; output?: Record<string, unknown> };
+      candidate?: { status: RunStatus; output?: Record<string, unknown> };
       changed?: boolean;
     } = { index, baseline: { status: base.status, output: base.output } };
     if (compareV) {

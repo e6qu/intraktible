@@ -879,6 +879,31 @@ route('GET', '/v1/decisions/:id', (m) => {
   const d = state.decisions.find((x) => x.decision_id === m[1]);
   return d ? ok(d) : notFound();
 });
+// Resume a decision paused at a durable human task: re-run the flow from the recorded
+// record with the reviewer's outcome injected, then complete the same decision and
+// resolve its case. Mirrors POST /v1/decisions/{id}/resume on the real backend.
+route('POST', '/v1/decisions/:id/resume', (m, body) => {
+  const d = state.decisions.find((x) => x.decision_id === m[1]);
+  if (!d) return notFound();
+  if (d.status !== 'suspended') return badRequest('decision is not suspended');
+  const flow = findFlow(d.flow_id);
+  if (!flow) return notFound();
+  const version = flow.versions.find((v) => v.version === d.version) ?? flow.versions.at(-1);
+  const graph = version?.graph ?? { nodes: [], edges: [] };
+  const outcome = ((body as Body).outcome as Record<string, unknown>) ?? {};
+  const run = runFlow(flow, graph, (d.data as Record<string, unknown>) ?? {}, { outcome });
+  d.status = run.status;
+  d.data = run.data;
+  d.output = run.output;
+  d.disposition = run.disposition;
+  d.reason_codes = run.reasonCodes;
+  d.nodes = run.nodes;
+  d.ended_at = new Date().toISOString();
+  // Resolve the case the suspension opened.
+  const c = state.cases.find((x) => x.source_decision_id === d.decision_id);
+  if (c) c.status = 'completed';
+  return ok({ decision_id: d.decision_id, status: run.status, disposition: run.disposition });
+});
 
 // --- Cases ----------------------------------------------------------------------
 route('GET', '/v1/cases/summary', (_m, _b, q) => ok(caseSummary(q)));

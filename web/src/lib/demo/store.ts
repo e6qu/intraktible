@@ -1312,6 +1312,36 @@ function seedDecisions(): Decision[] {
       duration_ms: 24 + (i % 9) * 14
     });
   }
+
+  // A decision PAUSED at a durable human task — the suspend/resume orchestration. It
+  // holds no running process: it lives in the event log and resumes when a reviewer
+  // records an outcome (the Resume control on the decision page re-runs it to completion).
+  out.push({
+    decision_id: 'dec_suspended_1',
+    flow_id: 'flow_credit',
+    slug: 'credit-decision',
+    version: 3,
+    environment: 'production',
+    variant: 'champion',
+    status: 'suspended',
+    data: {
+      income: 58000,
+      debt: 26000,
+      revolving_balance: 6000,
+      credit_limit: 15000,
+      delinquencies_24m: 1,
+      fico_score: 662,
+      tenure_years: 3,
+      employment_stability: 0.6,
+      risk: 52
+    },
+    output: {},
+    reason_codes: [{ code: 'MANUAL_REVIEW', description: 'Escalated to manual review' }],
+    policy_id: 'pol_credit',
+    policy_version: 2,
+    nodes: [],
+    started_at: ago(2)
+  });
   return out;
 }
 

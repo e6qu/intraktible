@@ -435,6 +435,29 @@ export async function getDecision(
   return (await res.json()) as Decision;
 }
 
+// resumeDecision un-pauses a decision suspended at a durable human task, injecting the
+// reviewer's outcome so the flow runs on to completion.
+export async function resumeDecision(
+  key: string,
+  id: string,
+  outcome: Record<string, unknown>,
+  fetcher: typeof fetch = fetch
+): Promise<{ decision_id: string; status: RunStatus; disposition?: Disposition }> {
+  const res = await fetcher(`/v1/decisions/${id}/resume`, {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify({ outcome })
+  });
+  if (!res.ok) {
+    throw new Error(`POST /v1/decisions/${id}/resume failed: ${res.status}`);
+  }
+  return (await res.json()) as {
+    decision_id: string;
+    status: RunStatus;
+    disposition?: Disposition;
+  };
+}
+
 export interface VariantStats {
   started: number;
   completed: number;
