@@ -7,18 +7,36 @@
   import Icon from '$lib/Icon.svelte';
   import { nodeAccent } from '$lib/nodevis';
 
-  // Svelte Flow passes the node's data; we carry the type, name, config summary,
-  // and an optional last-run telemetry string.
-  type FlowData = { type: string; name: string; summary: string; telemetry?: string };
+  // Svelte Flow passes the node's data; we carry the type, name, config summary, an
+  // optional last-run telemetry string, an optional heatmap stat (traversal count over
+  // recorded decisions), and an optional replay state (the node is on a decision's path).
+  type FlowData = {
+    type: string;
+    name: string;
+    summary: string;
+    telemetry?: string;
+    heat?: { count: number; pct: number };
+    replay?: 'head' | 'trail';
+  };
   let { data, selected }: NodeProps & { data: FlowData } = $props();
   const accent = $derived(nodeAccent(data.type));
+  const cold = $derived(data.heat != null && data.heat.count === 0);
 </script>
 
-<div class="node" class:selected style="--rail: {accent}">
+<div
+  class="node"
+  class:selected
+  class:cold
+  class:replay-head={data.replay === 'head'}
+  class:replay-trail={data.replay === 'trail'}
+  style="--rail: {accent}"
+>
   {#if data.type !== 'input'}<Handle type="target" position={Position.Left} />{/if}
   <div class="strip">
     <span class="ic"><Icon name={data.type} size={15} /></span>
     <span class="type">{data.type}</span>
+    {#if data.heat}<span class="heat" title="{data.heat.count} traversals">{data.heat.count}</span
+      >{/if}
   </div>
   <div class="body">
     <span class="name">{data.name || data.type}</span>
@@ -27,6 +45,9 @@
         ><span aria-hidden="true">▸</span> {data.telemetry}</span
       >{/if}
   </div>
+  {#if data.heat}<div class="heatbar">
+      <span style="width: {Math.round(data.heat.pct * 100)}%"></span>
+    </div>{/if}
   {#if data.type !== 'output'}<Handle type="source" position={Position.Right} />{/if}
 </div>
 
@@ -48,6 +69,51 @@
   .node.selected {
     border-color: var(--rail);
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--rail) 45%, transparent);
+  }
+  /* Heatmap: a never-traversed node reads as dimmed + dashed; the heat bar at the
+     bottom shows traversal share. Kept off the text so contrast is unaffected. */
+  .node.cold {
+    border-style: dashed;
+    opacity: 0.62;
+  }
+  .heat {
+    margin-left: auto;
+    font-size: 0.66rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    padding: 0 0.35rem;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--rail) 22%, var(--surface, #fff));
+    color: color-mix(in srgb, var(--rail) 82%, var(--fg));
+  }
+  .heatbar {
+    height: 4px;
+    background: color-mix(in srgb, var(--fg) 10%, transparent);
+  }
+  .heatbar span {
+    display: block;
+    height: 100%;
+    background: linear-gradient(90deg, #f59e0b, #ef4444);
+  }
+  /* Replay: the node currently lit by a stepped-through decision (head) pulses; nodes
+     already visited (trail) keep a steady ring. */
+  .node.replay-trail {
+    border-color: var(--rail);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--rail) 35%, transparent);
+  }
+  .node.replay-head {
+    border-color: var(--rail);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--rail) 70%, transparent);
+    animation: replay-pulse 0.9s ease-in-out infinite;
+  }
+  @keyframes replay-pulse {
+    0%,
+    100% {
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--rail) 70%, transparent);
+    }
+    50% {
+      box-shadow: 0 0 0 7px color-mix(in srgb, var(--rail) 22%, transparent);
+    }
   }
   .strip {
     display: flex;

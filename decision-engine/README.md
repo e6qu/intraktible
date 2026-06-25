@@ -31,6 +31,13 @@ Done — flow model + versioning (vertical slice, command→event→projection�
   - `POST /v1/flows/{flow_id}/versions` — publish `{graph, input_schema}` → `{version, etag}`
   - `GET /v1/flows` · `GET /v1/flows/{flow_id}` — registry read model
   - `POST /v1/flows/{flow_id}/backtest` — replay `{version?, compare_version?, dataset}` → outcome diff
+  - **Decision intelligence (re-run the pure evaluator):** `GET /v1/flows/{flow_id}/node-stats` —
+    per-node traversal counts over recorded decisions (the builder heatmap); `POST
+    /v1/decisions/{id}/counterfactual` — the minimal single-field input change that flips a
+    non-favorable decision (binary-searches each numeric field); `POST /v1/flows/{flow_id}/coverage`
+    — fuzz synthetic inputs through the graph → node/branch coverage, disposition spread, and dead
+    (unreachable) branches. A copilot turns a natural-language requirement into a validated graph
+    via `POST /v1/copilot/generate` (with `…/explain` and `…/suggest`).
   - `POST /v1/flows/{slug}/{env}/decide` · `…/decide/batch` — decide one input / an array of rows;
     the API key's `Scope` (`sandbox`/`production`/`*`) must permit `{env}` (else 403)
   - `GET /v1/flows/{slug}/openapi.json` — a generated, flow-specific OpenAPI 3.1 contract (the flow's

@@ -2044,6 +2044,98 @@ export async function copilotGenerate(
   return ((await res.json()) as { graph: unknown }).graph;
 }
 
+// --- Decision intelligence: node-stats (heatmap), counterfactual, coverage ------------
+
+export interface NodeStat {
+  node_id: string;
+  type: string;
+  count: number;
+  pct: number;
+}
+export interface FlowNodeStats {
+  total: number;
+  dispositions: { approve: number; decline: number; refer: number };
+  nodes: NodeStat[];
+}
+// flowNodeStats returns per-node traversal counts over the flow's recorded decisions —
+// the data behind the builder's heatmap (which nodes are hot, which are never hit).
+export async function flowNodeStats(
+  key: string,
+  flowId: string,
+  environment?: string,
+  fetcher: typeof fetch = fetch
+): Promise<FlowNodeStats> {
+  const q = environment ? `?environment=${encodeURIComponent(environment)}` : '';
+  const res = await fetcher(`/v1/flows/${flowId}/node-stats${q}`, { headers: authHeaders(key) });
+  if (!res.ok) {
+    throw new Error(`GET /v1/flows/${flowId}/node-stats failed: ${res.status}`);
+  }
+  return (await res.json()) as FlowNodeStats;
+}
+
+export interface CounterfactualFlip {
+  field: string;
+  from: number;
+  to: number;
+  direction: 'increase' | 'decrease';
+  disposition: string;
+}
+export interface Counterfactual {
+  disposition: string;
+  flips: CounterfactualFlip[];
+  searched: number;
+}
+// decisionCounterfactual searches the minimal single-field input changes that would flip
+// a non-favorable decision to a better disposition ("what would change the outcome?").
+export async function decisionCounterfactual(
+  key: string,
+  decisionId: string,
+  fetcher: typeof fetch = fetch
+): Promise<Counterfactual> {
+  const res = await fetcher(`/v1/decisions/${decisionId}/counterfactual`, {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: '{}'
+  });
+  if (!res.ok) {
+    throw new Error(`POST /v1/decisions/${decisionId}/counterfactual failed: ${res.status}`);
+  }
+  return (await res.json()) as Counterfactual;
+}
+
+export interface CoverageBranch {
+  from: string;
+  to: string;
+  branch: string;
+}
+export interface Coverage {
+  runs: number;
+  fields: string[];
+  nodes: { node_id: string; type: string; hits: number }[];
+  branches: { from: string; to: string; branch: string; hits: number }[];
+  dispositions: { approve: number; decline: number; refer: number };
+  dead_nodes: string[];
+  dead_branches: CoverageBranch[];
+}
+// flowCoverage fuzzes synthetic inputs through a flow and reports node/branch hit
+// coverage — surfacing dead branches and the disposition spread (a policy red-team).
+export async function flowCoverage(
+  key: string,
+  flowId: string,
+  opts: { version?: number; runs?: number } = {},
+  fetcher: typeof fetch = fetch
+): Promise<Coverage> {
+  const res = await fetcher(`/v1/flows/${flowId}/coverage`, {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify(opts)
+  });
+  if (!res.ok) {
+    throw new Error(`POST /v1/flows/${flowId}/coverage failed: ${res.status}`);
+  }
+  return (await res.json()) as Coverage;
+}
+
 export interface ModelDrift {
   model: string;
   count: number;
