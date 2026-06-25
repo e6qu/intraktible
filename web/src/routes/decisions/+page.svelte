@@ -1,6 +1,8 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { goto, afterNavigate } from '$app/navigation';
+  import { page } from '$app/stores';
+  import { get } from 'svelte/store';
   import Icon from '$lib/Icon.svelte';
   import EmptyState from '$lib/EmptyState.svelte';
   import Skeleton from '$lib/Skeleton.svelte';
@@ -26,9 +28,11 @@
   let error = $state('');
   let loading = $state(true);
 
-  // filters (applied on Search / Enter, not keystroke). They default to the persona's
-  // decisions lens — a developer lands on failed traces, product on the challenger arm
-  // — and are freely changeable/clearable.
+  // filters (applied on Search / Enter, not keystroke). The URL query string is the
+  // source of truth, so a filtered view is deep-linkable and back/forward replays it;
+  // afterNavigate hydrates these from the query string. The persona's decisions lens
+  // — a developer lands on failed traces, product on the challenger arm — seeds the
+  // defaults when the URL carries no filter of its own.
   const lens = personaLens(resolvePersona()).decisions ?? {};
   // The page heading follows the persona's term for this surface (a developer's nav and
   // page both say "Traces", not just the nav item).
@@ -95,16 +99,28 @@
       if (seq === loadSeq) loading = false;
     }
   }
+  // Apply pushes the current inputs into the URL; afterNavigate below re-fetches.
   function applyFilters() {
     offset = 0;
-    void load();
+    pushURL();
+  }
+  function pushURL() {
+    const p = new URLSearchParams();
+    if (fFlow.trim()) p.set('flow', fFlow.trim());
+    if (fEnv) p.set('env', fEnv);
+    if (fStatus) p.set('status', fStatus);
+    if (fVariant) p.set('variant', fVariant);
+    if (fQuery.trim()) p.set('q', fQuery.trim());
+    if (offset) p.set('offset', String(offset));
+    const qs = p.toString();
+    goto(qs ? `?${qs}` : get(page).url.pathname, { keepFocus: true, noScroll: true });
   }
   function go(delta: number) {
     if (loading) return; // a double-click while a page is in flight would overshoot
     const next = offset + delta * PAGE;
     if (next < 0 || next >= total) return; // out of range (no empty page past the end)
     offset = next;
-    void load();
+    pushURL();
   }
   function absTime(iso: string): string {
     const d = new Date(iso);
@@ -124,7 +140,22 @@
   const emptyHint = $derived(
     total === 0 && noFilters ? DEFAULT_EMPTY_HINT : (lens.empty?.hint ?? NO_MATCH_HINT)
   );
-  onMount(load);
+  // The URL drives the view: afterNavigate fires on mount, on Apply (goto), and on
+  // back/forward — hydrate the inputs from the query string, falling back to the
+  // persona lens defaults when a given filter is absent, then fetch.
+  afterNavigate(() => {
+    const sp = get(page).url.searchParams;
+    // The persona lens only seeds a pristine URL (no filter params). Once any filter
+    // is in the URL, an absent param means "explicitly cleared", not "use the default".
+    const pristine = !['flow', 'env', 'status', 'variant', 'q'].some((k) => sp.has(k));
+    fFlow = sp.get('flow') ?? '';
+    fEnv = (sp.get('env') as Environment | '') || (pristine ? (lens.env ?? '') : '');
+    fStatus = (sp.get('status') as DecisionStatus | '') || (pristine ? (lens.status ?? '') : '');
+    fVariant = (sp.get('variant') as Variant | '') || (pristine ? (lens.variant ?? '') : '');
+    fQuery = sp.get('q') ?? '';
+    offset = Number(sp.get('offset') ?? '0') || 0;
+    void load();
+  });
 </script>
 
 <main>
@@ -178,10 +209,10 @@
       </select></label
     >
     <label
-      >Decision ID <input
+      >Filter by ID <input
         bind:value={fQuery}
-        placeholder="search id"
-        aria-label="search by decision id"
+        placeholder="id substring"
+        aria-label="filter by decision id substring"
       /></label
     >
     <button type="submit" disabled={loading}><Icon name="search" size={14} /> Apply</button>

@@ -1526,6 +1526,14 @@ route('POST', '/v1/copilot/generate', (_m, body) => {
   // Shape the generated flow from the prompt's keywords, so different requests produce
   // different flows (it used to return one fixed credit graph regardless of input).
   const prompt = String(body.prompt ?? '').toLowerCase();
+  // Pull an explicit numeric threshold out of the prompt ("under $50k", "below 100") so a
+  // value/amount-keyed flow actually uses it instead of a fixed default.
+  const numMatch = prompt.match(
+    /(?:under|below|less than|over|above|<|>|\$)\s*\$?([\d,.]+)\s*(k|m)?/
+  );
+  let promptThreshold = numMatch ? Number(numMatch[1].replace(/,/g, '')) : undefined;
+  if (promptThreshold != null && numMatch?.[2] === 'k') promptThreshold *= 1000;
+  if (promptThreshold != null && numMatch?.[2] === 'm') promptThreshold *= 1_000_000;
   let d: { input: string; score: string; expr: string; threshold: number };
   if (/fraud|velocity|device|chargeback/.test(prompt))
     d = {
@@ -1534,7 +1542,7 @@ route('POST', '/v1/copilot/generate', (_m, body) => {
       expr: 'velocity_24h * 8 + (new_device ? 30 : 0)',
       threshold: 60
     };
-  else if (/sanction|aml|watchlist|pep/.test(prompt))
+  else if (/sanction|aml|watchlist|pep|launder/.test(prompt))
     d = {
       input: 'Party',
       score: 'aml_score',
@@ -1543,7 +1551,18 @@ route('POST', '/v1/copilot/generate', (_m, body) => {
     };
   else if (/kyc|identity|onboard|document/.test(prompt))
     d = { input: 'Applicant', score: 'kyc_risk', expr: '100 - identity_confidence', threshold: 40 };
-  else d = { input: 'Application', score: 'risk', expr: 'debt / income * 100', threshold: 50 };
+  else if (/refund|dispute|chargeback|return|reimburse/.test(prompt))
+    // A value-keyed flow: approve below the (prompt-supplied) amount, else route to review.
+    d = {
+      input: 'Dispute',
+      score: 'dispute_amount',
+      expr: 'amount',
+      threshold: promptThreshold ?? 500
+    };
+  else if (/loan|lending|mortgage|affordability|credit|income|dti|underwrit/.test(prompt))
+    d = { input: 'Application', score: 'risk', expr: 'debt / income * 100', threshold: 50 };
+  // Truly generic prompt: a value/threshold flow rather than a credit-specific one.
+  else d = { input: 'Request', score: 'value', expr: 'amount', threshold: promptThreshold ?? 100 };
   return ok({
     graph: {
       nodes: [
@@ -1819,25 +1838,50 @@ function runSummary() {
   };
 }
 
+type PolicySpec = Policy['versions'][number]['spec'];
+type Dist = { approve: number; decline: number; refer: number; failed: number };
+function bumpDist(dist: Dist, d: string): void {
+  if (d === 'approve') dist.approve += 1;
+  else if (d === 'decline') dist.decline += 1;
+  else if (d === 'refer') dist.refer += 1;
+  else dist.failed += 1;
+}
 function policyBacktest(policy: Policy, body: Body) {
   const dataset = (body.dataset as Body[]) ?? [];
-  const spec = (body.spec as Policy['versions'][number]['spec']) ??
-    policy.versions.find((v) => v.version === policy.latest)?.spec ??
+  const specOf = (v?: number) => policy.versions.find((x) => x.version === v)?.spec;
+  const spec = (body.spec as PolicySpec) ??
+    specOf(policy.latest) ??
     policy.versions.at(-1)?.spec ?? { rules: [] };
-  const evaluated = { approve: 0, decline: 0, refer: 0, failed: 0 };
-  const dispose = (row: Body): string => {
-    for (const rule of spec.rules) {
+  const disposeWith = (s: PolicySpec, row: Body): string => {
+    for (const rule of s.rules) {
       if (evalExpr(rule.when, row)) return rule.disposition;
     }
-    return (spec.default as string) ?? 'refer';
+    return (s.default as string) ?? 'refer';
   };
-  for (const row of dataset) {
-    const d = dispose(row) as keyof typeof evaluated;
-    const m = new Map(Object.entries(evaluated));
-    m.set(d, (m.get(d) ?? 0) + 1);
-    Object.assign(evaluated, Object.fromEntries(m));
-  }
-  return { summary: { total: dataset.length, evaluated } };
+  const evaluated: Dist = { approve: 0, decline: 0, refer: 0, failed: 0 };
+  // When a compare_version is given, evaluate the same dataset through THAT published
+  // version too and report the distribution shift + the rows whose disposition flipped.
+  const compareSpec = specOf(body.compare_version as number | undefined);
+  const compare: Dist | undefined = compareSpec
+    ? { approve: 0, decline: 0, refer: 0, failed: 0 }
+    : undefined;
+  const flips: { index: number; evaluated: string; compare: string }[] = [];
+  let flipped = 0;
+  dataset.forEach((row, i) => {
+    const d = disposeWith(spec, row);
+    bumpDist(evaluated, d);
+    if (compareSpec && compare) {
+      const c = disposeWith(compareSpec, row);
+      bumpDist(compare, c);
+      if (c !== d) {
+        flipped += 1;
+        if (flips.length < 100) flips.push({ index: i, evaluated: d, compare: c });
+      }
+    }
+  });
+  return compareSpec
+    ? { summary: { total: dataset.length, evaluated, compare, flipped }, flips }
+    : { summary: { total: dataset.length, evaluated } };
 }
 
 function filterAudit(q: Query): AuditEntry[] {
@@ -1853,9 +1897,18 @@ function filterAudit(q: Query): AuditEntry[] {
   return list;
 }
 
+function csvCell(v: string): string {
+  return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+}
 function auditCsv(entries: AuditEntry[]): string {
-  const rows = entries.map((e) => `${e.seq},${e.time},${e.actor},${e.stream},${e.type}`);
-  return ['seq,time,actor,stream,type', ...rows].join('\n');
+  // Include the per-row details/payload (the table shows it but the export used to drop
+  // it), JSON-encoded into one properly-escaped column.
+  const rows = entries.map((e) =>
+    [e.seq, e.time, e.actor, e.stream, e.type, e.payload != null ? JSON.stringify(e.payload) : '']
+      .map((c) => csvCell(String(c)))
+      .join(',')
+  );
+  return ['seq,time,actor,stream,type,details', ...rows].join('\n');
 }
 
 function mrmReport() {

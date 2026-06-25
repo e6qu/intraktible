@@ -13,6 +13,7 @@
   import Breadcrumb from '$lib/Breadcrumb.svelte';
   import RelativeTime from '$lib/RelativeTime.svelte';
   import Skeleton from '$lib/Skeleton.svelte';
+  import EmptyState from '$lib/EmptyState.svelte';
   import Badge from '$lib/Badge.svelte';
   import { caseStatusTone, slaTone } from '$lib/badge';
   import { roleAtLeast } from '$lib/roles';
@@ -23,6 +24,10 @@
   const key = '';
   let c = $state<Case | null>(null);
   let error = $state('');
+  // A 404 (or "not found") is a distinct, expected state — a mistyped/stale id — and
+  // gets a polished EmptyState rather than the raw red error string used for real
+  // failures (network, 5xx).
+  const notFound = $derived(/not found|404/i.test(error));
 
   let assignee = $state('');
   let newStatus = $state<CaseStatus>('in_progress');
@@ -35,6 +40,13 @@
 
   // Derive from the route param so navigating between sibling cases reloads.
   const caseID = $derived($page.params.caseId ?? '');
+
+  // A closed case has no live SLA clock — its days_left is a frozen leftover, so the
+  // urgency badge and the days-left figure are suppressed rather than shown as a stale
+  // countdown. (completed is the only terminal status today; resolved/cancelled are
+  // guarded for forward-compat.)
+  const TERMINAL = new Set(['completed', 'resolved', 'cancelled']);
+  const closed = $derived(c != null && TERMINAL.has(c.status));
 
   async function load() {
     error = '';
@@ -101,7 +113,7 @@
       <Badge tone={caseStatusTone(c.status)}
         ><span data-testid="case-status">{c.status}</span></Badge
       >
-      {#if c.sla_state && c.sla_state !== 'on_track'}
+      {#if !closed && c.sla_state && c.sla_state !== 'on_track'}
         <Badge tone={slaTone(c.sla_state)} title="SLA urgency">
           {c.sla_state === 'overdue' ? '⚠ overdue' : 'due soon'} · {c.days_left}d left
         </Badge>
@@ -115,8 +127,10 @@
       <dt>SLA</dt>
       <dd>{c.sla_days} day{c.sla_days === 1 ? '' : 's'}</dd>
       <dt>days left</dt>
-      <dd class={`sla-${c.sla_state ?? ''}`} data-testid="days-left">
-        {c.days_left}{#if c.sla_state}<span class="muted">{' ('}{c.sla_state})</span>{/if}
+      <dd class={closed ? '' : `sla-${c.sla_state ?? ''}`} data-testid="days-left">
+        {#if closed}<span class="muted">—</span>{:else}{c.days_left}{#if c.sla_state}<span
+              class="muted">{' ('}{c.sla_state})</span
+            >{/if}{/if}
       </dd>
       {#if c.source_decision_id}<dt>source decision</dt>
         <dd>
@@ -139,14 +153,26 @@
   {:else if !error}
     <h1>{caseID}</h1>
     <Skeleton rows={5} />
+  {:else if notFound}
+    <EmptyState
+      icon="cases"
+      title="Case not found"
+      hint="No case matches this id. It may have been deleted, or the id may be mistyped."
+    >
+      {#snippet action()}
+        <a href={appHref('/cases')}>← Back to the queue</a>
+      {/snippet}
+    </EmptyState>
   {:else}
     <h1>{caseID}</h1>
   {/if}
-  {#if error}<p class="err">{error}</p>{/if}
+  {#if error && !notFound}<p class="err">{error}</p>{/if}
 
-  <div class="row">
-    <button onclick={load}>Reload</button>
-  </div>
+  {#if !notFound}
+    <div class="row">
+      <button onclick={load}>Reload</button>
+    </div>
+  {/if}
 
   {#if c && c.status !== 'completed'}
     <div class="resolve-bar">

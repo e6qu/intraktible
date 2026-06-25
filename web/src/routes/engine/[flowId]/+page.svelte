@@ -843,6 +843,11 @@
           // "Unexpected token" with no clue which card is broken.
           throw new Error(`Node "${n.name || n.id}" has invalid JSON config`);
         }
+        // A node config must be a JSON object — a bare number/array/string/null
+        // parses fine but the engine drops it, silently losing the node's logic.
+        if (typeof config !== 'object' || config === null || Array.isArray(config)) {
+          throw new Error(`Node "${n.name || n.id}" config must be a JSON object`);
+        }
       }
       return {
         id: n.id,
@@ -1774,7 +1779,7 @@
       </button>
       <div class="grp">
         <button onclick={() => downloadExport('bpmn')} title="Download BPMN 2.0 XML">
-          <Icon name="download" size={14} /> BPMN
+          <Icon name="download" size={14} /> BPMN XML
         </button>
         <button
           class="icon"
@@ -2492,10 +2497,11 @@
               class:active={canvasView === 'bpmn'}
               aria-pressed={canvasView === 'bpmn'}
               onclick={() => setCanvasView('bpmn')}
-              title="Show BPMN process notation"
+              title="Render the canvas in BPMN process notation"
+              aria-label="Process view (BPMN notation)"
               data-testid="canvas-view-bpmn"
             >
-              <Icon name="diagram" size={14} /> BPMN
+              <Icon name="diagram" size={14} /> Process
             </button>
           </div>
           <button
@@ -3947,10 +3953,33 @@
     font-size: 0.92rem;
   }
   @media (max-width: 720px) {
+    /* Narrow screens can't fit the floating toolbar and the floating tools panel
+       over the canvas without them colliding (both anchored top: 0.6rem). Drop the
+       overlay model: stack the toolbar, canvas, and panel in normal flow instead. */
+    .grid {
+      display: flex;
+      flex-direction: column;
+      gap: 0.6rem;
+    }
+    .canvas {
+      display: flex;
+      flex-direction: column;
+      height: auto;
+      min-height: 0;
+    }
+    .canvas-tools {
+      position: static;
+      order: -1;
+    }
+    .canvas :global(.svelte-flow) {
+      height: 60vh;
+      min-height: 360px;
+    }
     aside {
-      left: 0.6rem;
+      position: static;
       width: auto;
-      max-height: 55%;
+      max-height: none;
+      box-shadow: none;
     }
   }
   h2 {

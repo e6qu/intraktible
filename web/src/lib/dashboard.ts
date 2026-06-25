@@ -110,6 +110,15 @@ export function pct(n: number): string {
   return `${Math.round(n * 100)}%`;
 }
 
+// pct1 keeps one decimal, dropping a trailing ".0". Used where rounding to a whole
+// percent would make related figures stop reconciling on screen — e.g. an 87.5%
+// success rate against an 85% target leaves a 17% error budget, which "88% vs 85%"
+// (a 20%-looking gap) contradicts.
+export function pct1(n: number): string {
+  const p = Math.round(n * 1000) / 10;
+  return `${Number.isInteger(p) ? p : p.toFixed(1)}%`;
+}
+
 // HomeStat is one rendered PersonaHome tile: a value plus its short label.
 export interface HomeStat {
   id: HomeStatId;

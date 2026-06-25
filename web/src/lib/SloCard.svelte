@@ -7,7 +7,7 @@
 -->
 <script lang="ts">
   import Icon from '$lib/Icon.svelte';
-  import { pct } from '$lib/dashboard';
+  import { pct1 } from '$lib/dashboard';
   import { toast } from '$lib/toast';
   import { getFlowSLO, putFlowSLO, type SLOResponse } from '$lib/api';
   import { appHref } from '$lib/paths';
@@ -90,13 +90,13 @@
   {#if r.slo && r.attainment && !editing}
     <div class="attain">
       <span class="stat"
-        >Success <b>{pct(r.attainment.success_rate)}</b>
-        <small>/ target {pct(r.attainment.success_target)}</small></span
+        >Success <b>{pct1(r.attainment.success_rate)}</b>
+        <small>/ target {pct1(r.attainment.success_target)}</small></span
       >
       <span class="stat"
         >Error budget
         <b class={r.attainment.budget_remaining < 0 ? 'over' : ''}
-          >{pct(Math.max(0, r.attainment.budget_remaining))}</b
+          >{pct1(Math.max(0, r.attainment.budget_remaining))}</b
         >
         <small>left</small></span
       >
@@ -112,8 +112,8 @@
     <div
       class="budget-bar"
       role="img"
-      aria-label={`error budget ${pct(Math.max(0, r.attainment.budget_remaining))} remaining`}
-      title={`${pct(Math.max(0, r.attainment.budget_remaining))} of the error budget remaining`}
+      aria-label={`error budget ${pct1(Math.max(0, r.attainment.budget_remaining))} remaining`}
+      title={`${pct1(Math.max(0, r.attainment.budget_remaining))} of the error budget remaining`}
     >
       <span
         class="fill {r.attainment.budget_remaining < 0 ? 'over' : ''}"
