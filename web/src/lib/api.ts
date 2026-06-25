@@ -1081,7 +1081,7 @@ export async function publishVersion(
   graph: FlowGraph,
   inputSchema?: unknown,
   fetcher: typeof fetch = fetch
-): Promise<{ version: number; etag: string }> {
+): Promise<{ version: number; etag: string; published?: boolean }> {
   const body = inputSchema === undefined ? { graph } : { graph, input_schema: inputSchema };
   const res = await fetcher(`/v1/flows/${flowId}/versions`, {
     method: 'POST',
@@ -1093,7 +1093,7 @@ export async function publishVersion(
     const body = (await res.json().catch(() => ({}))) as { error?: string };
     throw new Error(body.error ?? `publish version failed: ${res.status}`);
   }
-  return (await res.json()) as { version: number; etag: string };
+  return (await res.json()) as { version: number; etag: string; published?: boolean };
 }
 
 export interface DeployInput {

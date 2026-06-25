@@ -113,7 +113,7 @@
       <dt>assignee</dt>
       <dd>{c.assignee || '—'}</dd>
       <dt>SLA</dt>
-      <dd>{c.sla_days} days</dd>
+      <dd>{c.sla_days} day{c.sla_days === 1 ? '' : 's'}</dd>
       <dt>days left</dt>
       <dd class={`sla-${c.sla_state ?? ''}`} data-testid="days-left">
         {c.days_left}{#if c.sla_state}<span class="muted">{' ('}{c.sla_state})</span>{/if}

@@ -4,6 +4,7 @@
      it sits and offers one click back up. -->
 <script lang="ts">
   import Icon from '$lib/Icon.svelte';
+  import { appHref } from '$lib/paths';
 
   let {
     sectionHref,
@@ -13,7 +14,7 @@
 </script>
 
 <nav class="crumbs" aria-label="Breadcrumb">
-  <a href={sectionHref}><Icon name="chevron-down" size={14} /> {sectionLabel}</a>
+  <a href={appHref(sectionHref)}><Icon name="chevron-down" size={14} /> {sectionLabel}</a>
   <span class="sep" aria-hidden="true">/</span>
   <span class="current" aria-current="page">{current}</span>
 </nav>

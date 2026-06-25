@@ -12,6 +12,7 @@
   import { onMount } from 'svelte';
   import { toast } from '$lib/toast';
   import { appHref } from '$lib/paths';
+  import { user } from '$lib/session';
   import {
     listAuditPage,
     auditCsvText,
@@ -277,6 +278,20 @@
     // CSV export tracks the applied filter (rows on screen) but not the page window.
     applied = { ...filter(), limit: undefined, offset: undefined };
     void load();
+  });
+
+  // Re-gate when the demo user switches mid-page (DemoBanner changes $user without
+  // navigating, so afterNavigate doesn't fire): re-fetch on a role change so a downgraded
+  // viewer can't keep seeing admin-only audit rows / token sections until a hard reload.
+  let lastRole = $state($user?.role);
+  $effect(() => {
+    const role = $user?.role;
+    if (role !== lastRole) {
+      lastRole = role;
+      void load();
+      void loadPrivacy();
+      void loadKeys();
+    }
   });
 </script>
 
