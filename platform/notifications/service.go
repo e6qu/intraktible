@@ -5,6 +5,7 @@ package notifications
 import (
 	"net/http"
 
+	"github.com/e6qu/intraktible/platform/auth"
 	"github.com/e6qu/intraktible/platform/httpx"
 	"github.com/e6qu/intraktible/platform/store"
 )
@@ -31,7 +32,9 @@ func (s *Service) list(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	vs, err := List(r.Context(), s.store, id)
+	// A review-capable caller (operator+) also sees unassigned tasks in the shared queue.
+	canReview := httpx.RoleOf(r.Context()).AtLeast(auth.RoleOperator)
+	vs, err := List(r.Context(), s.store, id, canReview)
 	httpx.WriteList(w, "notifications", vs, err)
 }
 

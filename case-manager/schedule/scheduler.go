@@ -26,14 +26,24 @@ type Cmd interface {
 // Scheduler records SLA breaches for open cases whose deadline has passed, across
 // every tenant, on a timer.
 type Scheduler struct {
-	store store.Store
-	cmd   Cmd
-	now   func() time.Time
+	store  store.Store
+	cmd    Cmd
+	now    func() time.Time
+	notify func(ctx context.Context, id identity.Identity, caseIDs []string)
 }
 
 // NewScheduler builds an SLA-sweep scheduler over the store and command surface.
 func NewScheduler(st store.Store, cmd Cmd) *Scheduler {
 	return &Scheduler{store: st, cmd: cmd, now: func() time.Time { return time.Now().UTC() }}
+}
+
+// WithNotify registers a delivery hook called (in the shell) with the cases that just
+// breached their SLA, so an overdue human task can be pushed to an external channel
+// (a webhook) — the reviewer-facing escalation. The in-app inbox is driven separately
+// off the same events by the notifications projector.
+func (s *Scheduler) WithNotify(fn func(ctx context.Context, id identity.Identity, caseIDs []string)) *Scheduler {
+	s.notify = fn
+	return s
 }
 
 // TickSummary reports what one sweep did.
@@ -61,6 +71,9 @@ func (s *Scheduler) Tick(ctx context.Context) (TickSummary, error) {
 			return sum, err
 		}
 		sum.Breached += len(breached)
+		if s.notify != nil && len(breached) > 0 {
+			s.notify(ctx, id, breached)
+		}
 	}
 	return sum, nil
 }

@@ -54,14 +54,14 @@ func TestInboxFromMentions(t *testing.T) {
 	}
 
 	s := project()
-	mine, err := notifications.List(ctx, s, reviewer)
+	mine, err := notifications.List(ctx, s, reviewer, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(mine) != 1 || mine[0].Read || mine[0].SubjectID != "p1" || mine[0].Author != "author" {
 		t.Fatalf("reviewer inbox wrong: %+v", mine)
 	}
-	if authorInbox, _ := notifications.List(ctx, s, author); len(authorInbox) != 0 {
+	if authorInbox, _ := notifications.List(ctx, s, author, false); len(authorInbox) != 0 {
 		t.Fatalf("self-mention should not notify the author: %+v", authorInbox)
 	}
 
@@ -75,7 +75,7 @@ func TestInboxFromMentions(t *testing.T) {
 		t.Fatal("a non-recipient must not be able to mark the notification read")
 	}
 
-	after, _ := notifications.List(ctx, project(), reviewer)
+	after, _ := notifications.List(ctx, project(), reviewer, false)
 	if len(after) != 1 || !after[0].Read {
 		t.Fatalf("notification not marked read: %+v", after)
 	}
