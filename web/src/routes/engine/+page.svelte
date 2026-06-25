@@ -7,6 +7,7 @@
   import Skeleton from '$lib/Skeleton.svelte';
   import { toast } from '$lib/toast';
   import { listFlows, createFlow, importFlow, importFlowBundle, type Flow } from '$lib/api';
+  import { TEMPLATES, type FlowTemplate } from '$lib/templates';
   import { appHref } from '$lib/paths';
   import { roleAtLeast } from '$lib/roles';
   import { user } from '$lib/session';
@@ -67,6 +68,32 @@
       error = e instanceof Error ? e.message : String(e);
     } finally {
       busy = false;
+    }
+  }
+
+  // --- Start from a template: import the curated flow-as-code, then open it ---
+  let templating = $state('');
+  // Avoid a slug collision with an existing flow (e.g. importing the same starter twice)
+  // by suffixing, so "Use template" always lands on a fresh, editable flow.
+  function uniqueSlug(base: string): string {
+    const taken = new Set(flows.map((f) => f.slug));
+    if (!taken.has(base)) return base;
+    let n = 2;
+    while (taken.has(`${base}-${n}`)) n += 1;
+    return `${base}-${n}`;
+  }
+  async function pickTemplate(t: FlowTemplate) {
+    if (templating || !roleAtLeast($user?.role, 'editor')) return;
+    templating = t.id;
+    error = '';
+    try {
+      const res = await importFlow(key, { ...t.doc, slug: uniqueSlug(t.doc.slug) });
+      toast.success(`Created ${res.slug} from "${t.name}"`);
+      await goto(appHref(`/engine/${res.flow_id}`));
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    } finally {
+      templating = '';
     }
   }
 
@@ -179,6 +206,34 @@
           : undefined}>{busy ? 'Creating…' : 'Create flow'}</button
     >
   </form>
+
+  <details class="templates" data-testid="template-gallery">
+    <summary><Icon name="plus" size={14} /> New from template</summary>
+    <p class="muted">
+      Start from a curated flow that already wires the right node types for a use case — it's
+      imported as a new, fully-editable flow and opens in the builder.
+    </p>
+    <div class="tmpl-grid">
+      {#each TEMPLATES as t (t.id)}
+        <div class="tmpl-card">
+          <h3>{t.name}</h3>
+          <p class="tmpl-purpose">{t.purpose}</p>
+          <div class="tmpl-chips">
+            {#each t.nodeTypes as nt (nt)}<span class="chip">{nt}</span>{/each}
+          </div>
+          <button
+            class="tmpl-use"
+            onclick={() => pickTemplate(t)}
+            disabled={templating !== '' || !roleAtLeast($user?.role, 'editor')}
+            title={!roleAtLeast($user?.role, 'editor') ? 'Requires the editor role' : undefined}
+            data-testid={`use-template-${t.id}`}
+          >
+            {templating === t.id ? 'Creating…' : 'Use template'}
+          </button>
+        </div>
+      {/each}
+    </div>
+  </details>
 
   <details class="import" data-testid="import-flow">
     <summary><Icon name="upload" size={14} /> Import flow (as code)</summary>
@@ -321,6 +376,65 @@
     gap: 0.5rem;
     flex-wrap: wrap;
     margin: 0.6rem 0;
+  }
+  .templates {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 0.6rem 0.9rem;
+    margin: 0.6rem 0;
+  }
+  .templates > summary {
+    cursor: pointer;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    list-style: none;
+  }
+  .templates > summary::-webkit-details-marker {
+    display: none;
+  }
+  .tmpl-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+    gap: 0.7rem;
+    margin-top: 0.7rem;
+  }
+  .tmpl-card {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.7rem 0.8rem;
+    background: var(--surface-2);
+  }
+  .tmpl-card h3 {
+    margin: 0;
+    font-size: 0.95rem;
+  }
+  .tmpl-purpose {
+    margin: 0;
+    font-size: 0.82rem;
+    color: var(--fg-muted);
+    flex: 1;
+  }
+  .tmpl-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+  }
+  .chip {
+    font-size: 0.7rem;
+    padding: 0.1rem 0.4rem;
+    border-radius: 999px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--fg-muted);
+  }
+  .tmpl-use {
+    align-self: flex-start;
+    margin-top: 0.2rem;
   }
   .import {
     border: 1px solid var(--border);
