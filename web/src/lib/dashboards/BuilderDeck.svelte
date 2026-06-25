@@ -40,6 +40,11 @@
     </nav>
   </header>
 
+  <p class="deck-sub">
+    your decisioning at a glance — flows, deployments, and live throughput. p50 / p95 are the median
+    and 95th-percentile decision latency.
+  </p>
+
   <section class="readouts">
     <div class="ro"><span class="k">flows</span><span class="v">{data.flows.length}</span></div>
     <div class="ro"><span class="k">live envs</span><span class="v">{dep.live}</span></div>
@@ -138,6 +143,13 @@
   }
   .prompt {
     color: var(--accent-ink);
+  }
+  .deck-sub {
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    color: var(--fg-muted);
+    margin: 0.4rem 0 0.9rem;
+    max-width: 70ch;
   }
   .quick {
     display: flex;

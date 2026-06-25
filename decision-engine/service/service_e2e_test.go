@@ -2350,6 +2350,70 @@ func TestBacktestComparesVersions(t *testing.T) {
 		map[string]any{"version": 1, "dataset": []map[string]any{}}, http.StatusBadRequest, nil)
 }
 
+// TestBacktestFromRecorded proves the "backtest against recorded decisions" claim is
+// real: with from_recorded the dataset is sourced from the flow's actual recorded
+// decision inputs in the event-sourced history, not a caller-supplied array.
+func TestBacktestFromRecorded(t *testing.T) {
+	api := startEngine(t)
+	var created struct {
+		FlowID string `json:"flow_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows",
+		map[string]string{"slug": "btrec", "name": "BTRec"}, http.StatusCreated, &created)
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/versions",
+		map[string]any{"graph": flowtest.ConstGraph("A")}, http.StatusCreated, nil)
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/deployments",
+		map[string]any{"environment": "sandbox", "version": 1}, http.StatusCreated, nil)
+
+	// Record decisions (distinct inputs) once the deploy is live; these become the
+	// backtest dataset.
+	if !testutil.Eventually(t, func() bool {
+		var dec struct {
+			Status string `json:"status"`
+		}
+		api.Request(t, http.MethodPost, "/v1/flows/btrec/sandbox/decide",
+			map[string]any{"data": map[string]any{"x": 0}}, http.StatusOK, &dec)
+		return dec.Status == "completed"
+	}) {
+		t.Fatal("decide never completed")
+	}
+	api.Request(t, http.MethodPost, "/v1/flows/btrec/sandbox/decide",
+		map[string]any{"data": map[string]any{"x": 1}}, http.StatusOK, nil)
+	api.Request(t, http.MethodPost, "/v1/flows/btrec/sandbox/decide",
+		map[string]any{"data": map[string]any{"x": 2}}, http.StatusOK, nil)
+
+	// from_recorded sources the dataset from those recorded decisions (no dataset given).
+	var rep struct {
+		Summary struct {
+			Total             int `json:"total"`
+			BaselineCompleted int `json:"baseline_completed"`
+		} `json:"summary"`
+	}
+	if !testutil.Eventually(t, func() bool {
+		rep.Summary.Total = 0
+		api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/backtest",
+			map[string]any{"version": 1, "from_recorded": true, "environment": "sandbox"},
+			http.StatusOK, &rep)
+		return rep.Summary.Total >= 3
+	}) {
+		t.Fatalf("from_recorded never reflected the recorded decisions: %+v", rep.Summary)
+	}
+	if rep.Summary.BaselineCompleted != rep.Summary.Total {
+		t.Fatalf("every recorded input should replay to completion: %+v", rep.Summary)
+	}
+
+	// A flow with no recorded decisions → from_recorded is a clean 400, not a crash.
+	var empty struct {
+		FlowID string `json:"flow_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows",
+		map[string]string{"slug": "btrec-empty", "name": "Empty"}, http.StatusCreated, &empty)
+	api.Request(t, http.MethodPost, "/v1/flows/"+empty.FlowID+"/versions",
+		map[string]any{"graph": flowtest.ConstGraph("A")}, http.StatusCreated, nil)
+	api.Request(t, http.MethodPost, "/v1/flows/"+empty.FlowID+"/backtest",
+		map[string]any{"version": 1, "from_recorded": true}, http.StatusBadRequest, nil)
+}
+
 func TestMakerCheckerDeploymentAPI(t *testing.T) {
 	api := startEngine(t)
 	var created struct {

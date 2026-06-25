@@ -13,6 +13,13 @@ It is written from the **user's** perspective (a risk/credit/ops team and the
 platform team that supports them), and it is deliberately honest about what is
 present, what is missing, and what matters most.
 
+> **Scope note.** intraktible is a *synchronous decision engine*, not a
+> process-orchestration engine — it does not do long-running instances, timers,
+> message/signal events, or human tasks that suspend and resume. Its data/feature and
+> connector layers are also thinner than commercial decisioning SaaS. See
+> [Honest gaps & scope](./gaps.html) for the candid competitive picture before relying
+> on any claim below.
+
 ## 1. What is already enterprise-grade
 
 These are real strengths, not placeholders:

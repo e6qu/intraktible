@@ -192,18 +192,41 @@ func (t *Tree) validate() error {
 // pure, deterministic function (no clock, no I/O), so a recorded prediction replays
 // identically. A coefficient/feature referenced but absent fails loudly.
 func Evaluate(s Spec, features map[string]any) (Prediction, error) {
+	var (
+		pred Prediction
+		err  error
+	)
 	switch s.Kind {
 	case KindLogistic:
-		return evalLogistic(s, features)
+		pred, err = evalLogistic(s, features)
 	case KindGBM:
-		return evalGBM(s, features)
+		pred, err = evalGBM(s, features)
 	case KindExpression:
-		return evalExpression(s, features)
+		pred, err = evalExpression(s, features)
 	case KindExternal:
 		return Prediction{}, fmt.Errorf("models: external models are served over HTTP and cannot be evaluated in the core")
 	default:
 		return Prediction{}, fmt.Errorf("models: unknown model kind %q", s.Kind)
 	}
+	if err != nil {
+		return Prediction{}, err
+	}
+	return pred, finitePrediction(pred)
+}
+
+// finitePrediction rejects a NaN/±Inf score or probability: a huge intercept,
+// overflowing tree sum, or a scoring expression like `x*1e308 + y*1e308` can produce
+// a non-finite result that, recorded, would poison downstream branching and the
+// drift histogram. The external path already guards this at its HTTP boundary; this
+// is the same guard for the in-core kinds.
+func finitePrediction(p Prediction) error {
+	if math.IsNaN(p.Score) || math.IsInf(p.Score, 0) {
+		return fmt.Errorf("models: model produced a non-finite score")
+	}
+	if p.Probability != nil && (math.IsNaN(*p.Probability) || math.IsInf(*p.Probability, 0)) {
+		return fmt.Errorf("models: model produced a non-finite probability")
+	}
+	return nil
 }
 
 func evalLogistic(s Spec, features map[string]any) (Prediction, error) {

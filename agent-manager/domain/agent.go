@@ -72,9 +72,7 @@ func (c EscalateRun) Validate() error {
 	if strings.TrimSpace(c.CompanyName) == "" {
 		return errors.New("agent-manager: company_name is required")
 	}
-	if strings.TrimSpace(c.CaseType) == "" {
-		return errors.New("agent-manager: case_type is required")
-	}
+	// case_type is optional: an unset type defaults to agent_review in the handler.
 	if c.SLADays < 0 {
 		return fmt.Errorf("agent-manager: sla_days must be >= 0, got %d", c.SLADays)
 	}

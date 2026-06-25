@@ -36,10 +36,13 @@ func TestEscalateRunValidate(t *testing.T) {
 	if err := (domain.EscalateRun{RunID: "r1", CompanyName: "Acme", CaseType: "aml", SLADays: 3}).Validate(); err != nil {
 		t.Fatalf("valid escalation rejected: %v", err)
 	}
+	// case_type is optional — an unset type defaults to agent_review in the handler.
+	if err := (domain.EscalateRun{RunID: "r1", CompanyName: "Acme", SLADays: 3}).Validate(); err != nil {
+		t.Fatalf("escalation without an explicit case_type rejected: %v", err)
+	}
 	bad := []domain.EscalateRun{
 		{CompanyName: "Acme", CaseType: "aml"},                           // no run
 		{RunID: "r1", CaseType: "aml"},                                   // no company
-		{RunID: "r1", CompanyName: "Acme"},                               // no type
 		{RunID: "r1", CompanyName: "Acme", CaseType: "aml", SLADays: -1}, // negative sla
 	}
 	for i, c := range bad {
