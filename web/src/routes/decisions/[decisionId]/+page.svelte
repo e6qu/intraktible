@@ -10,7 +10,9 @@
     getDecision,
     exportDecision,
     resumeDecision,
+    decisionCounterfactual,
     type Decision,
+    type Counterfactual,
     type RunExportFormat
   } from '$lib/api';
   import { toast } from '$lib/toast';
@@ -101,8 +103,27 @@
       toast.error(msg(e));
     }
   }
+  // Counterfactual: the smallest single-field input change that flips a non-favorable
+  // decision — searched on demand (it re-runs the flow many times).
+  let cf = $state<Counterfactual | null>(null);
+  let cfBusy = $state(false);
+  async function loadCf() {
+    if (cfBusy) return;
+    cfBusy = true;
+    try {
+      cf = await decisionCounterfactual(key, id);
+    } catch (e) {
+      toast.error(msg(e));
+    } finally {
+      cfBusy = false;
+    }
+  }
+  function fmtNum(n: number): string {
+    return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  }
   $effect(() => {
     void id; // reload on initial mount and sibling navigation
+    cf = null;
     void load();
   });
 </script>
@@ -193,6 +214,46 @@
       </ul>
     {:else}
       <p class="muted">No reason codes were emitted for this decision.</p>
+    {/if}
+
+    {#if d.disposition === 'decline' || d.disposition === 'refer'}
+      <h2>
+        What would change this?
+        <Hint label="Counterfactual"
+          >The smallest single-field change to the input that would flip this decision to a more
+          favorable outcome — a counterfactual that complements the adverse-action reason codes
+          ("you'd be approved if…").</Hint
+        >
+      </h2>
+      {#if !cf}
+        <button onclick={loadCf} disabled={cfBusy} data-testid="cf-run">
+          {cfBusy ? 'Searching…' : 'Find what would flip it'}
+        </button>
+      {:else if cf.flips.length}
+        <ul class="flips" data-testid="cf-flips">
+          {#each cf.flips as f (f.field)}
+            <li>
+              <span class="flip-field">{f.field}</span>
+              <span class="flip-change">
+                {fmtNum(f.from)}
+                <span class="arrow" aria-hidden="true"
+                  >{f.direction === 'increase' ? '↑' : '↓'}</span
+                >
+                <b>{fmtNum(f.to)}</b>
+              </span>
+              <Badge tone={dispositionTone(f.disposition)}>{f.disposition}</Badge>
+            </li>
+          {/each}
+        </ul>
+        <p class="muted">
+          Each row is the smallest change to one input that flips the outcome, all else held equal ({cf.searched}
+          re-runs).
+        </p>
+      {:else}
+        <p class="muted">
+          No single-field change flips this decision — the outcome held across {cf.searched} probes.
+        </p>
+      {/if}
     {/if}
 
     <h2>
@@ -371,6 +432,37 @@
     list-style: none;
     padding: 0;
     margin: 0.4rem 0 0.8rem;
+  }
+  ul.flips {
+    list-style: none;
+    padding: 0;
+    margin: 0.4rem 0 0.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+  ul.flips li {
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
+    padding: 0.35rem 0.6rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface-2);
+  }
+  .flip-field {
+    font-family: var(--font-mono);
+    font-weight: 600;
+    min-width: 8rem;
+  }
+  .flip-change {
+    font-variant-numeric: tabular-nums;
+    flex: 1;
+  }
+  .flip-change .arrow {
+    color: var(--accent-ink);
+    font-weight: 700;
+    margin: 0 0.15rem;
   }
   ul.reasons li {
     padding: 0.3rem 0;

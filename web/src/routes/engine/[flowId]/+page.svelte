@@ -13,6 +13,10 @@
   import {
     getFlow,
     getDecision,
+    listDecisions,
+    flowNodeStats,
+    flowCoverage,
+    type Coverage,
     publishVersion,
     copilotExplain,
     copilotSuggest,
@@ -202,6 +206,85 @@
     if (nodeTelemetry.size > 0) nodeTelemetry = new Map();
   }
 
+  // --- Decision intelligence: heatmap, replay, coverage (see lib/demo/intelligence) ---
+  // Heatmap: node id -> traversal stats over recorded decisions.
+  let nodeHeat = $state(new Map<string, { count: number; pct: number }>());
+  let heatOn = $state(false);
+  let heatBusy = $state(false);
+  let heatTotal = $state(0);
+  // Replay: node id -> its role on the decision path currently being stepped through.
+  let replayState = $state(new Map<string, 'head' | 'trail'>());
+  let replaying = $state(false);
+  // Coverage / red-team report for the published graph.
+  let coverageReport = $state<Coverage | null>(null);
+  let coverageBusy = $state(false);
+
+  async function toggleHeat() {
+    if (heatOn) {
+      heatOn = false;
+      syncCanvas();
+      return;
+    }
+    heatBusy = true;
+    try {
+      const s = await flowNodeStats(key, flowId);
+      nodeHeat = new Map(s.nodes.map((n) => [n.node_id, { count: n.count, pct: n.pct }]));
+      heatTotal = s.total;
+      heatOn = true;
+      syncCanvas();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      heatBusy = false;
+    }
+  }
+
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  // Replay the most recent recorded decision for this flow by lighting its node path,
+  // one step at a time, so the decision's route is visible on the canvas.
+  async function replayLatest() {
+    if (replaying) return;
+    replaying = true;
+    try {
+      const recent = (await listDecisions(key)).filter(
+        (d) => d.flow_id === flowId && (d.nodes?.length ?? 0) > 0
+      );
+      const d = recent[0];
+      if (!d) {
+        toast.error('No recorded decisions to replay for this flow yet.');
+        return;
+      }
+      const path = (d.nodes ?? []).map((n) => n.node_id);
+      for (let i = 0; i < path.length; i++) {
+        const m = new Map<string, 'head' | 'trail'>();
+        for (let j = 0; j < i; j++) m.set(path[j], 'trail');
+        m.set(path[i], 'head');
+        replayState = m;
+        syncCanvas();
+        await sleep(480);
+      }
+      await sleep(900);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      replayState = new Map();
+      replaying = false;
+      syncCanvas();
+    }
+  }
+
+  async function runCoverage() {
+    if (coverageBusy) return;
+    coverageBusy = true;
+    try {
+      coverageReport = await flowCoverage(key, flowId, { runs: 300 });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      coverageBusy = false;
+    }
+  }
+
   let newType = $state<NodeType>('input');
   let edgeFrom = $state('');
   let edgeTo = $state('');
@@ -321,7 +404,9 @@
         type: n.type,
         name: n.name || n.id,
         summary: cardSummary(n),
-        telemetry: nodeTelemetry.get(n.id)
+        telemetry: nodeTelemetry.get(n.id),
+        heat: heatOn ? (nodeHeat.get(n.id) ?? { count: 0, pct: 0 }) : undefined,
+        replay: replayState.get(n.id)
       }
     }));
     // Lane backdrops are drawn (behind the cards) only when more than one lane is
@@ -2399,6 +2484,31 @@
           <Icon name={panelOpen ? 'chevron-right' : 'plus'} size={14} />
           {panelOpen ? 'Hide panel' : 'Tools'}
         </button>
+        <button
+          class="relax-btn"
+          class:active={heatOn}
+          aria-pressed={heatOn}
+          onclick={toggleHeat}
+          disabled={heatBusy}
+          title="Tint each node by how often it's traversed across this flow's recorded decisions"
+          data-testid="heatmap-toggle"
+        >
+          <Icon name="gauge" size={14} />
+          {heatBusy ? 'Loading…' : 'Heatmap'}
+        </button>
+        <button
+          class="relax-btn"
+          onclick={replayLatest}
+          disabled={replaying}
+          title="Animate a recent decision's path through the canvas, node by node"
+          data-testid="replay-decision"
+        >
+          <Icon name="play" size={14} />
+          {replaying ? 'Replaying…' : 'Replay'}
+        </button>
+        {#if heatOn}<span class="heat-legend" data-testid="heat-legend"
+            >{heatTotal} decision{heatTotal === 1 ? '' : 's'} · count = traversals</span
+          >{/if}
       </div>
       <SvelteFlow
         bind:nodes
@@ -2904,6 +3014,56 @@
   </nav>
 
   {#if tab === 'test'}
+    <section data-testid="coverage-panel">
+      <h2>
+        Coverage / red-team
+        <Hint label="Coverage"
+          >Fuzzes hundreds of synthetic inputs through the published graph and reports which nodes
+          and branches were exercised — surfacing dead branches (unreachable logic) and the
+          disposition spread. A red-team for your policy.</Hint
+        >
+      </h2>
+      <button onclick={runCoverage} disabled={coverageBusy} data-testid="run-coverage">
+        {coverageBusy ? 'Fuzzing…' : 'Run coverage'}
+      </button>
+      {#if coverageReport}
+        <div class="coverage" data-testid="coverage-report">
+          <p class="muted">
+            {coverageReport.runs} synthetic runs over {coverageReport.fields.length} input field{coverageReport
+              .fields.length === 1
+              ? ''
+              : 's'}{coverageReport.fields.length ? ` (${coverageReport.fields.join(', ')})` : ''}.
+          </p>
+          <div class="cov-dispo">
+            <Badge tone={dispositionTone('approve')}
+              >{coverageReport.dispositions.approve} approve</Badge
+            >
+            <Badge tone={dispositionTone('refer')}>{coverageReport.dispositions.refer} refer</Badge>
+            <Badge tone={dispositionTone('decline')}
+              >{coverageReport.dispositions.decline} decline</Badge
+            >
+          </div>
+          {#if coverageReport.dead_nodes.length || coverageReport.dead_branches.length}
+            <div class="cov-dead">
+              {#if coverageReport.dead_nodes.length}
+                <p><b>Dead nodes</b> (never reached): {coverageReport.dead_nodes.join(', ')}</p>
+              {/if}
+              {#if coverageReport.dead_branches.length}
+                <p><b>Dead branches</b> (never taken):</p>
+                <ul>
+                  {#each coverageReport.dead_branches as b (b.from + b.to + b.branch)}
+                    <li><code>{b.from} → {b.to}</code> when <code>{b.branch}</code></li>
+                  {/each}
+                </ul>
+              {/if}
+            </div>
+          {:else}
+            <p class="cov-clean">Full coverage — every node and branch was exercised.</p>
+          {/if}
+        </div>
+      {/if}
+    </section>
+
     <section>
       <h2>
         Test run
@@ -3662,6 +3822,42 @@
   .view-toggle button.active {
     color: var(--fg);
     background: color-mix(in srgb, var(--accent) 14%, var(--surface-1));
+  }
+  .relax-btn.active {
+    color: var(--fg);
+    background: color-mix(in srgb, var(--accent) 16%, var(--surface-1));
+    border-color: var(--accent);
+  }
+  .heat-legend {
+    align-self: center;
+    margin-left: 0.2rem;
+    font-size: 0.72rem;
+    color: var(--fg-muted);
+  }
+  .coverage {
+    margin-top: 0.6rem;
+    font-size: 0.84rem;
+  }
+  .cov-dispo {
+    display: flex;
+    gap: 0.4rem;
+    margin: 0.4rem 0;
+  }
+  .cov-dead {
+    border-left: 3px solid var(--danger);
+    padding-left: 0.6rem;
+    margin-top: 0.4rem;
+  }
+  .cov-dead ul {
+    margin: 0.2rem 0;
+    padding-left: 1.1rem;
+  }
+  .cov-dead code {
+    font-size: 0.78rem;
+  }
+  .cov-clean {
+    color: var(--accent-ink);
+    font-weight: 600;
   }
   .relax-btn {
     border: 1px solid var(--border);

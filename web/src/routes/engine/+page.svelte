@@ -6,8 +6,16 @@
   import EmptyState from '$lib/EmptyState.svelte';
   import Skeleton from '$lib/Skeleton.svelte';
   import { toast } from '$lib/toast';
-  import { listFlows, createFlow, importFlow, importFlowBundle, type Flow } from '$lib/api';
+  import {
+    listFlows,
+    createFlow,
+    importFlow,
+    importFlowBundle,
+    copilotGenerate,
+    type Flow
+  } from '$lib/api';
   import { TEMPLATES, type FlowTemplate } from '$lib/templates';
+  import { nodeTypeLabel, isNodeType } from '$lib/nodevis';
   import { appHref } from '$lib/paths';
   import { roleAtLeast } from '$lib/roles';
   import { user } from '$lib/session';
@@ -97,6 +105,54 @@
       error = e instanceof Error ? e.message : String(e);
     } finally {
       templating = '';
+    }
+  }
+
+  // --- Draft a flow with AI: a natural-language requirement -> a real, editable graph ---
+  // (POST /v1/copilot/generate; the backend asks the configured LLM for a graph and runs
+  // it through ValidateGraph, so what comes back always imports.)
+  type DraftNode = { id: string; type: string; name?: string };
+  const COPILOT_EXAMPLES = [
+    'Approve loans under $50k when DTI is below 40% and there are no recent delinquencies; refer the rest to a human.',
+    'Screen a payment for fraud using transaction velocity and a new-device signal; block the high-risk ones.',
+    'Onboard a business customer: run sanctions and PEP screening, send any hit to manual review.'
+  ];
+  let copilotPrompt = $state('');
+  let drafting = $state(false);
+  let draftGraph = $state<{ nodes?: DraftNode[]; edges?: unknown[] } | null>(null);
+  const draftNodes = $derived(draftGraph?.nodes ?? []);
+  async function draft() {
+    if (drafting || !copilotPrompt.trim() || !roleAtLeast($user?.role, 'editor')) return;
+    drafting = true;
+    error = '';
+    draftGraph = null;
+    try {
+      const graph = (await copilotGenerate(key, copilotPrompt.trim())) as {
+        nodes?: DraftNode[];
+        edges?: unknown[];
+      };
+      draftGraph = graph;
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    } finally {
+      drafting = false;
+    }
+  }
+  async function openDraft() {
+    if (!draftGraph) return;
+    drafting = true;
+    try {
+      const res = await importFlow(key, {
+        slug: uniqueSlug('ai-draft'),
+        name: 'AI draft',
+        graph: draftGraph
+      });
+      toast.success(`Drafted ${res.slug} — opening in the builder`);
+      void goto(appHref(`/engine/${res.flow_id}`));
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    } finally {
+      drafting = false;
     }
   }
 
@@ -210,7 +266,55 @@
     >
   </form>
 
-  <details class="templates" data-testid="template-gallery" open>
+  <details class="copilot" data-testid="copilot-panel" open>
+    <summary><Icon name="ai" size={14} /> Draft a flow with AI</summary>
+    <p class="muted">
+      Describe the decision in plain English — the copilot drafts a real, editable flow you can
+      refine, publish, and deploy.
+    </p>
+    <div class="copilot-examples">
+      {#each COPILOT_EXAMPLES as ex (ex)}
+        <button type="button" class="ex" onclick={() => (copilotPrompt = ex)}>{ex}</button>
+      {/each}
+    </div>
+    <textarea
+      bind:value={copilotPrompt}
+      aria-label="describe the flow"
+      placeholder="Approve loans under $50k when DTI is below 40% and there are no recent delinquencies; refer the rest to a human."
+      rows="3"
+    ></textarea>
+    <div class="copilot-actions">
+      <button
+        class="primary"
+        onclick={draft}
+        disabled={drafting || !copilotPrompt.trim() || !roleAtLeast($user?.role, 'editor')}
+        title={!roleAtLeast($user?.role, 'editor') ? 'Requires the editor role' : undefined}
+      >
+        {drafting ? 'Drafting…' : 'Generate flow'}
+      </button>
+    </div>
+    {#if draftGraph}
+      <div class="draft" data-testid="copilot-draft">
+        <b>Drafted flow — {draftNodes.length} node{draftNodes.length === 1 ? '' : 's'}</b>
+        <ol class="draft-nodes">
+          {#each draftNodes as n (n.id)}
+            <li>
+              <span class="chip">{isNodeType(n.type) ? nodeTypeLabel(n.type) : n.type}</span>
+              {n.name ?? ''}
+            </li>
+          {/each}
+        </ol>
+        <div class="copilot-actions">
+          <button class="primary" onclick={openDraft} data-testid="open-draft"
+            >Open in builder →</button
+          >
+          <button onclick={() => (draftGraph = null)}>Discard</button>
+        </div>
+      </div>
+    {/if}
+  </details>
+
+  <details class="templates" data-testid="template-gallery">
     <summary><Icon name="plus" size={14} /> New from template</summary>
     <p class="muted">
       Start from a curated flow that already wires the right node types for a use case — it's
@@ -379,6 +483,81 @@
     gap: 0.5rem;
     flex-wrap: wrap;
     margin: 0.6rem 0;
+  }
+  .copilot {
+    border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+    border-radius: 10px;
+    padding: 0.6rem 0.9rem;
+    margin: 0.6rem 0;
+    background: color-mix(in srgb, var(--accent) 5%, transparent);
+  }
+  .copilot > summary {
+    cursor: pointer;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    list-style: none;
+  }
+  .copilot > summary::-webkit-details-marker {
+    display: none;
+  }
+  .copilot-examples {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin: 0.5rem 0;
+  }
+  .copilot-examples .ex {
+    text-align: left;
+    font-size: 0.78rem;
+    padding: 0.3rem 0.55rem;
+    border-radius: 8px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    color: var(--fg-muted);
+    cursor: pointer;
+    max-width: 22rem;
+  }
+  .copilot-examples .ex:hover {
+    color: var(--fg);
+    border-color: var(--accent);
+  }
+  .copilot textarea {
+    width: 100%;
+    box-sizing: border-box;
+    font: inherit;
+    font-size: 0.88rem;
+    padding: 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface);
+    color: inherit;
+    resize: vertical;
+  }
+  .copilot-actions {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+    align-items: center;
+  }
+  .draft {
+    margin-top: 0.7rem;
+    padding: 0.6rem 0.7rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface-2);
+  }
+  .draft-nodes {
+    margin: 0.4rem 0 0;
+    padding-left: 1.1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    font-size: 0.84rem;
+  }
+  .draft-nodes .chip {
+    margin-right: 0.3rem;
   }
   .templates {
     border: 1px solid var(--border);

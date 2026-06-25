@@ -38,6 +38,7 @@ import {
   evalExpr,
   pickVersion
 } from './engine';
+import { nodeStats, counterfactual, coverage } from './intelligence';
 import { agentReply } from './agent';
 
 export interface DemoResponse {
@@ -1500,6 +1501,30 @@ route('POST', '/v1/copilot/generate', (_m, body) => {
       ]
     }
   });
+});
+
+// --- Decision intelligence: heatmap node-stats, counterfactual, coverage ---------
+// The static demo computes these locally by re-running the pure demo engine, mirroring
+// the real GET /v1/flows/{id}/node-stats, POST /v1/decisions/{id}/counterfactual, and
+// POST /v1/flows/{id}/coverage endpoints.
+route('GET', '/v1/flows/:id/node-stats', (m) => {
+  const flow = findFlow(m[1]);
+  if (!flow) return notFound();
+  return ok(nodeStats(flow, state.decisions));
+});
+route('POST', '/v1/decisions/:id/counterfactual', (m) => {
+  const d = state.decisions.find((x) => x.decision_id === m[1]);
+  if (!d) return notFound();
+  const flow = findFlow(d.flow_id);
+  if (!flow) return notFound();
+  return ok(counterfactual(flow, d));
+});
+route('POST', '/v1/flows/:id/coverage', (m, body) => {
+  const flow = findFlow(m[1]);
+  if (!flow) return notFound();
+  const { graph } = pickVersion(flow, 'production');
+  const runs = Number((body as { runs?: unknown }).runs) || 200;
+  return ok(coverage(flow, graph, runs));
 });
 
 // Helper type alias for the Feature aggregation field (kept local to avoid an
