@@ -239,7 +239,11 @@
               <td class="muted">{p.flow_slug || 'any'}</td>
               <td><code class="terms">{termsPreview(p.terms)}</code></td>
               <td class="num">{p.honored_count}</td>
-              <td><RelativeTime value={p.valid_until} /></td>
+              <td
+                >{#if st === 'revoked'}<span class="muted" title="Revoked — no longer honored"
+                    >—</span
+                  >{:else}<RelativeTime value={p.valid_until} />{/if}</td
+              >
               <td><span class="status {st}">{st}</span></td>
               <td class="right">
                 {#if st === 'active' && revokingId !== p.preapproval_id}

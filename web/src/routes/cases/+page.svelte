@@ -1,6 +1,8 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { goto, afterNavigate } from '$app/navigation';
+  import { page } from '$app/stores';
+  import { get } from 'svelte/store';
   import { toast } from '$lib/toast';
   import EmptyState from '$lib/EmptyState.svelte';
   import Skeleton from '$lib/Skeleton.svelte';
@@ -26,12 +28,21 @@
   function msg(e: unknown): string {
     return e instanceof Error ? e.message : String(e);
   }
+  // A closed case has no live SLA clock — its days_left is a frozen leftover, so the
+  // queue and detail views show "—" rather than a stale countdown. (completed is the
+  // only terminal status today; resolved/cancelled are guarded for forward-compat.)
+  const TERMINAL = new Set(['completed', 'resolved', 'cancelled']);
+  function isClosed(status: string): boolean {
+    return TERMINAL.has(status);
+  }
 
   // API calls authenticate via the session cookie (empty key -> no X-Api-Key header).
   const key = '';
-  // The initial status filter is the persona's lens (an operator lands on the open
-  // review queue); other personas see the full list. Just the default focus — the
-  // filter control below lets the user widen or change it.
+  // The status filter is URL-driven so a filtered queue is deep-linkable and
+  // back/forward replays it (afterNavigate hydrates it, the control pushes to the URL).
+  // Its initial value is the persona's lens (an operator lands on the open review
+  // queue) only when the URL carries no status of its own; other personas see the full
+  // list. Just the default focus — the control below lets the user widen or change it.
   const casesLens = personaLens(resolvePersona()).cases ?? {};
   let statusFilter = $state<CaseStatus | ''>(casesLens.status ?? '');
   let list = $state<Case[]>([]);
@@ -177,7 +188,24 @@
     }
   }
 
-  onMount(load);
+  // Push the selected status into the URL; afterNavigate below re-fetches.
+  function pushURL() {
+    const status = statusFilter;
+    goto(status ? `?status=${status}` : get(page).url.pathname, {
+      keepFocus: true,
+      noScroll: true
+    });
+  }
+  // The URL drives the view: afterNavigate fires on mount, on filter change (goto),
+  // and on back/forward — hydrate the status from the query string, falling back to
+  // the persona lens default only when the URL is pristine, then fetch.
+  afterNavigate(() => {
+    const sp = get(page).url.searchParams;
+    statusFilter = sp.has('status')
+      ? ((sp.get('status') as CaseStatus | '') ?? '')
+      : (casesLens.status ?? '');
+    void load();
+  });
 </script>
 
 <main>
@@ -190,7 +218,7 @@
   <div class="row">
     <label
       >status
-      <select bind:value={statusFilter} onchange={load} aria-label="status filter">
+      <select bind:value={statusFilter} onchange={pushURL} aria-label="status filter">
         <option value="">all</option>
         <option value="needs_review">needs_review</option>
         <option value="in_progress">in_progress</option>
@@ -316,8 +344,10 @@
               <td class="status-cell"><Badge tone={caseStatusTone(c.status)}>{c.status}</Badge></td>
               <td>{c.assignee || '—'}</td>
               <td>{c.sla_days}d</td>
-              <td class={`sla-${c.sla_state ?? ''}`}>
-                {#if c.sla_state && c.sla_state !== 'on_track'}
+              <td class={isClosed(c.status) ? '' : `sla-${c.sla_state ?? ''}`}>
+                {#if isClosed(c.status)}
+                  <span class="muted">—</span>
+                {:else if c.sla_state && c.sla_state !== 'on_track'}
                   <Badge tone={slaTone(c.sla_state)}>{c.days_left}d</Badge>
                 {:else}
                   {c.days_left}d

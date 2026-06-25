@@ -53,6 +53,35 @@
   ]);
   let publishing = $state(false);
 
+  // Field names the selected policy's bands actually key on, read from the `when`
+  // expressions (e.g. `risk == "low"` / `fico_score >= 700` → risk, fico_score).
+  // Bands compare these against the FLOW's output, so they tell a tester which keys
+  // the backtest dataset must carry — `score` is not universal across policies.
+  const RESERVED = new Set(['and', 'or', 'not', 'in', 'true', 'false', 'null']);
+  const policyFields = $derived.by(() => {
+    const fields: string[] = [];
+    for (const r of rules) {
+      // Leading identifiers (skip quoted strings and bare numbers); a field is the
+      // first token of a comparison, so take identifiers not preceded by a dot.
+      for (const m of r.when.matchAll(/[A-Za-z_][A-Za-z0-9_]*/g)) {
+        const tok = m[0];
+        const before = r.when[m.index - 1];
+        if (before === '.' || before === '"' || before === "'") continue;
+        if (RESERVED.has(tok.toLowerCase()) || fields.includes(tok)) continue;
+        fields.push(tok);
+      }
+    }
+    return fields;
+  });
+  // A sample dataset row built from the policy's own fields, so the backtest example
+  // exercises the real bands instead of a documented-but-wrong `score`.
+  const sampleRow = $derived.by(() => {
+    if (policyFields.length === 0) return '{}';
+    const obj = Object.fromEntries(policyFields.slice(0, 4).map((f) => [f, 0]));
+    return JSON.stringify(obj);
+  });
+  const datasetPlaceholder = $derived(`[\n  ${sampleRow}\n]`);
+
   // disposition backtest (preview the draft over a dataset)
   let btDataset = $state('[\n  {}\n]');
   let btReport = $state<PolicyBacktestReport | null>(null);
@@ -322,9 +351,8 @@
     <section class="editor" data-testid="band-editor">
       <h2>Bands — {selected.name} <span class="mono muted">→ {selected.flow_slug}</span></h2>
       <p class="muted">
-        Each rule's condition is an expression over the flow's output (e.g. <code
-          >score &gt;= 0.85</code
-        >).
+        Each rule's condition is an expression over the flow's output — reference whatever fields it
+        emits (e.g. <code>risk == "low"</code> or <code>fico_score &gt;= 700</code>).
       </p>
       {#each rules as r, i (i)}
         <div class="band">
@@ -347,6 +375,7 @@
             value={r.code ?? ''}
             oninput={(e) => setRule(i, { code: e.currentTarget.value })}
             placeholder="code"
+            title={r.code || undefined}
             aria-label={`band ${i} code`}
           />
           <input
@@ -405,14 +434,21 @@
         bind:value={btDataset}
         aria-label="backtest dataset"
         rows="4"
-        placeholder={'[\n  {"score": 0.9},\n  {"score": 0.4}\n]'}
+        placeholder={datasetPlaceholder}
       ></textarea>
+      {#if policyFields.length > 0}
+        <p class="muted note">
+          These bands key on {#each policyFields.slice(0, 6) as f, i (f)}{i > 0 ? ', ' : ''}<code
+              >{f}</code
+            >{/each} — give each dataset row those fields (they're compared against the flow's output).
+        </p>
+      {/if}
       {#if btReport && selected.latest === 0 && btReport.summary.total <= 1}
         <p class="muted note" data-testid="preview-unpublished">
           This policy has never been published, so there is no prior version to diff against and the
           dataset above is empty. Add a row or two of representative inputs (e.g.
-          <code>{'{"score": 0.9}'}</code>) and run the preview again to see how these draft bands
-          would distribute dispositions.
+          <code>{sampleRow}</code>) and run the preview again to see how these draft bands would
+          distribute dispositions.
         </p>
       {:else if btReport}
         <div class="table-wrap">
@@ -586,7 +622,8 @@
     font-family: var(--font-mono);
   }
   .band .code {
-    width: 6rem;
+    width: 10rem;
+    font-family: var(--font-mono);
   }
   .band .desc {
     flex: 1.5;
