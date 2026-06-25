@@ -30,13 +30,17 @@ full process-orchestration engine (Camunda-class), and does not claim to be.
 | --- | --- | --- |
 | Durable wait states / human tasks that suspend & resume | yes | **yes** — a `manual_review` node with `suspend` pauses the decision (event-sourced `DecisionSuspended`) and resumes via `POST /v1/decisions/{id}/resume`, injecting the reviewer's outcome |
 | Long-running process instances | yes | **partial** — a suspended decision is a durable instance, but there is no separate process/instance model beyond the flow |
-| Timers, message/signal events, correlation | yes | **no** (roadmapped) — resume is reviewer-driven, not timer/event-driven |
+| Timer-driven resume (a paused decision auto-resumes after a delay) | yes | **no — deliberate non-goal** — a human task waits for the human; time pressure is handled by *reminders* (due-soon + overdue notifications and a webhook escalation), not by auto-advancing the decision |
+| Message/signal events, correlation | yes | **no** (possible, unbuilt) — resume is reviewer-driven today |
 | Parallel gateways / fork-join / multi-instance | yes | **no** — `split` is exclusive-only |
 | Compensation / sagas / sub-processes | yes | **no** |
 
 The durable suspend/resume is real and replayable (the resumed decision's trace spans
-the pre- and post-pause nodes). The remaining orchestration primitives — timer/message
-resumption, parallel fork-join, sagas — are honest roadmap, not present today.
+the pre- and post-pause nodes). **Timer-driven resume is a deliberate non-goal** — a
+suspended human task is meant to wait for a human, and the SLA reminder/notification
+system nudges the reviewer rather than auto-resolving the step. The other absent
+primitives — message/signal resumption, parallel fork-join, sagas — are not present
+today.
 
 **Scale-to-zero, by design.** A suspended decision is *not* a workflow held resident in a
 worker's memory (the actor/worker model of Temporal/Camunda, which keeps the instance
