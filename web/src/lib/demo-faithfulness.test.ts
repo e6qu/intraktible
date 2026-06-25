@@ -8,7 +8,7 @@ import { agentReply } from './demo/agent';
 import { evaluateModel } from './demo/engine';
 import type { Model } from './api';
 import { handleDemo } from './demo/router';
-import { setDemoUser, state, USERS, psi, modelDrift } from './demo/store';
+import { setDemoUser, state, USERS, psi } from './demo/store';
 
 const params = (): URLSearchParams => new URLSearchParams();
 
@@ -84,11 +84,22 @@ describe('PSI drift', () => {
     expect(psi([50, 50], [10, 90])).toBeGreaterThan(0);
   });
 
-  it('computes a real PSI for a model with a baseline (not a constant)', () => {
-    const d = modelDrift('credit_pd');
-    expect(d).toBeDefined();
-    expect(typeof d?.psi).toBe('number');
-    expect(modelDrift('no-such-model')).toBeUndefined();
+  it('computes drift from the model real predictions (bounded, not a constant)', () => {
+    // Capture a baseline, then the drift PSI is a real, finite, believable value derived
+    // from the model's predictions over recorded decisions — not a fixed constant.
+    handleDemo('POST', '/v1/models/credit_pd/baseline', params(), {});
+    const res = handleDemo('GET', '/v1/models/credit_pd/drift', params(), {}) as {
+      body: { psi?: number; has_baseline: boolean; count: number; hist: number[] };
+    };
+    expect(res.body.has_baseline).toBe(true);
+    expect(typeof res.body.psi).toBe('number');
+    expect(Number.isFinite(res.body.psi)).toBe(true);
+    expect(res.body.psi).toBeLessThan(5); // smoothed — never an absurd double-digit PSI
+    expect(res.body.hist.reduce((a, b) => a + b, 0)).toBe(res.body.count);
+    const missing = handleDemo('GET', '/v1/models/no-such-model/drift', params(), {}) as {
+      status: number;
+    };
+    expect(missing.status).toBe(404);
   });
 });
 

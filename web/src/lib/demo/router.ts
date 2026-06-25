@@ -28,7 +28,7 @@ import type {
   Scope,
   MrmModel
 } from '$lib/api';
-import { state, nextId, driftReportFor, modelDrift, ahead } from './store';
+import { state, nextId, driftReportFor, psi, ahead } from './store';
 import {
   decideFlow,
   runAssertionsFor,
@@ -36,6 +36,7 @@ import {
   backtestFlowDataset,
   runFlow,
   evalExpr,
+  evaluateModel,
   pickVersion
 } from './engine';
 import { nodeStats, counterfactual, coverage } from './intelligence';
@@ -291,7 +292,9 @@ route('POST', '/v1/flows/:id/versions', (m, body) => {
   const version = flow.latest + 1;
   const v: FlowVersion = {
     version,
-    etag: `e${version}`,
+    // Match the seed etag style (etag-…) so a freshly-published version doesn't read as
+    // a different format ("e4") than the seeded ones ("etag-c3").
+    etag: `etag-v${version}`,
     graph,
     input_schema: body.input_schema,
     published_at: new Date().toISOString(),
@@ -807,11 +810,41 @@ function honorPreapproval(
   });
   return ok({ decision_id: decisionId, status: 'completed', data, disposition: grant.disposition });
 }
+// inputTypeError validates a decide input against the flow version's input_schema, so a
+// wrong-typed field (a string where a number is expected) is rejected at the boundary
+// instead of silently scoring on garbage and recording a confident "completed" decision.
+function inputTypeError(
+  flow: Flow,
+  env: Environment,
+  data: Record<string, unknown>
+): string | null {
+  const ver =
+    flow.versions.find((v) => v.version === pickVersion(flow, env).version) ?? flow.versions.at(-1);
+  const props = (
+    ver?.input_schema as { properties?: Record<string, { type?: string }> } | undefined
+  )?.properties;
+  if (!props) return null;
+  const specs = new Map(Object.entries(props));
+  for (const [k, v] of Object.entries(data)) {
+    const want = specs.get(k)?.type;
+    if (!want) continue;
+    const got = Array.isArray(v) ? 'array' : v === null ? 'null' : typeof v;
+    const ok =
+      ((want === 'number' || want === 'integer') && got === 'number') ||
+      (want === 'boolean' && got === 'boolean') ||
+      (want === 'string' && got === 'string') ||
+      (want !== 'number' && want !== 'integer' && want !== 'boolean' && want !== 'string');
+    if (!ok) return `field "${k}" must be a ${want}, got ${got}`;
+  }
+  return null;
+}
 route('POST', '/v1/flows/:slug/:env/decide', (m, body) => {
   const flow = findFlow(m[1]);
   if (!flow) return notFound();
   if (!isEnvironment(m[2])) return badRequest(`unknown environment "${m[2]}"`);
   const data = (body.data as Body) ?? {};
+  const typeErr = inputTypeError(flow, m[2] as Environment, data);
+  if (typeErr) return badRequest(typeErr);
   // A preview run (the builder's test) computes the full result but records nothing —
   // no decision, no audit, no metrics — matching the real backend's Preview.
   if (body.preview === true) {
@@ -1191,23 +1224,89 @@ route('POST', '/v1/models', (_m, body) => {
   else state.models.push(model);
   return ok({});
 });
+// modelPredictionSeries is a model's REAL prediction values (probability 0..1), oldest
+// first, over the recorded decisions of every flow that scores with it — derived by
+// re-running the model over each recorded input, so drift is computed from real data.
+function modelPredictionSeries(modelName: string): number[] {
+  const model = state.models.find((mo) => mo.name === modelName);
+  if (!model) return [];
+  const flowIds = new Set<string>();
+  for (const f of state.flows) {
+    const { graph } = pickVersion(f, 'production');
+    const scores = graph.nodes.some(
+      (n) =>
+        n.type === 'predict' && (n.config as { model?: string } | undefined)?.model === modelName
+    );
+    if (scores) flowIds.add(f.flow_id);
+  }
+  return state.decisions
+    .filter((d) => flowIds.has(d.flow_id) && d.status === 'completed' && d.data)
+    .slice()
+    .sort((a, b) => String(a.started_at).localeCompare(String(b.started_at)))
+    .map((d) => evaluateModel(model, d.data as Record<string, unknown>))
+    .map((p) =>
+      Number.isFinite(p.probability)
+        ? (p.probability as number)
+        : Math.max(0, Math.min(1, (p.score ?? 0) / 100))
+    )
+    .filter((v) => Number.isFinite(v));
+}
+
+// predHist buckets prediction probabilities (0..1) into 5 bins (Map-built to dodge the
+// object-injection lint on indexed writes).
+function predHist(values: number[]): number[] {
+  const m = new Map([0, 1, 2, 3, 4].map((k) => [k, 0] as [number, number]));
+  for (const v of values) {
+    const i = Math.min(4, Math.max(0, Math.floor(v * 5)));
+    m.set(i, (m.get(i) ?? 0) + 1);
+  }
+  return [0, 1, 2, 3, 4].map((k) => m.get(k) ?? 0);
+}
+
+const BASELINE_SPLIT = 0.55;
+// computeModelDrift splits the model's real predictions into an older "baseline" window
+// and a recent "current" window and returns the genuine PSI between them (vs the captured
+// baseline if one exists) plus the current histogram.
+function computeModelDrift(
+  name: string
+): { psi: number; hist: number[]; count: number } | undefined {
+  const series = modelPredictionSeries(name);
+  if (series.length === 0) return undefined;
+  // Period-over-period: the model's OWN earlier predictions are the baseline, its recent
+  // ones the current window — both real, so the PSI is a believable distribution shift
+  // rather than a fixed seed histogram vs concentrated live data (which read as severe).
+  const split = Math.max(1, Math.floor(series.length * BASELINE_SPLIT));
+  const baseline = predHist(series.slice(0, split));
+  const current = series.slice(split);
+  const hist = predHist(current.length ? current : series.slice(split - 1));
+  // Laplace-smooth both histograms (+1 per bin) before PSI so the small, concentrated
+  // demo samples don't blow the index up to a meaningless double-digit value.
+  const smooth = (h: number[]) => h.map((x) => x + 1);
+  return {
+    psi: psi(smooth(baseline), smooth(hist)),
+    hist,
+    count: current.length || series.length
+  };
+}
+
 route('GET', '/v1/models/:name/drift', (m, _b, q) => {
   const model = state.models.find((x) => x.name === m[1]);
   if (!model) return notFound();
-  const hist = state.modelBaselines.get(model.name) ?? [4, 6, 9, 5, 3];
-  const threshold = state.modelMonitors.get(model.name);
   const hasBaseline = state.modelBaselines.has(model.name);
-  const psi = modelDrift(model.name)?.psi;
+  const drift = computeModelDrift(model.name);
+  const hist = drift?.hist ?? state.modelBaselines.get(model.name) ?? [4, 6, 9, 5, 3];
+  const threshold = state.modelMonitors.get(model.name);
+  const psiVal = hasBaseline ? drift?.psi : undefined;
   const windowDays = Number((q.get('window') ?? '0').replace('d', '')) || 30;
   return ok({
     model: model.name,
-    count: hist.reduce((a, b) => a + b, 0),
+    count: drift?.count ?? hist.reduce((a, b) => a + b, 0),
     hist,
     window_days: windowDays,
     has_baseline: hasBaseline,
-    psi,
+    psi: psiVal,
     threshold,
-    firing: psi !== undefined && threshold !== undefined ? psi > threshold : false,
+    firing: psiVal !== undefined && threshold !== undefined ? psiVal > threshold : false,
     alerting: threshold !== undefined
   });
 });
@@ -1216,7 +1315,11 @@ route('POST', '/v1/models/:name/monitor', (m, body) => {
   return ok({});
 });
 route('POST', '/v1/models/:name/baseline', (m) => {
-  state.modelBaselines.set(m[1], [4, 7, 9, 6, 3]);
+  // Snapshot the OLDER window of the model's real predictions as the reference baseline,
+  // so drift afterwards compares the recent window against genuine historical data.
+  const series = modelPredictionSeries(m[1]);
+  const baselineWindow = series.slice(0, Math.floor(series.length * BASELINE_SPLIT));
+  state.modelBaselines.set(m[1], predHist(baselineWindow.length ? baselineWindow : series));
   return ok({});
 });
 
@@ -1990,7 +2093,7 @@ function mrmFlow(f: Flow): MrmModel {
 
 function mrmModel(m: Model): MrmModel {
   const hasBaseline = state.modelBaselines.has(m.name);
-  const drift = modelDrift(m.name);
+  const drift = computeModelDrift(m.name);
   const threshold = state.modelMonitors.get(m.name);
   return {
     kind: 'predictive_model' as const,

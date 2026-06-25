@@ -3514,17 +3514,6 @@ export function psi(baseline: number[], current: number[]): number {
   return Math.round(total * 1000) / 1000;
 }
 
-// modelDrift returns a model's live PSI vs its captured baseline. The demo derives the
-// current distribution by shifting the baseline a deterministic per-model amount, so
-// the PSI is genuinely computed and varies across models (some firing, some not).
-export function modelDrift(name: string): { psi: number; current: number[] } | undefined {
-  const baseline = state.modelBaselines.get(name);
-  if (!baseline) return undefined;
-  const f = (name.length % 5) / 12; // 0..0.33, deterministic per model
-  const current = baseline.map((b, i) => b * (1 - f) + (i > 0 ? (baseline.at(i - 1) ?? 0) * f : 0));
-  return { psi: psi(baseline, current), current };
-}
-
 // driftReportFor computes a DriftReport from a flow's captured baseline vs the
 // current disposition distribution over its recorded decisions.
 export function driftReportFor(flowId: string): DriftReport {
