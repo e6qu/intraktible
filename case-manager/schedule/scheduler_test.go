@@ -90,3 +90,44 @@ func TestTickBreachesOverdueCasesPerTenant(t *testing.T) {
 		t.Fatalf("second tick breached = %d, want 0 (idempotent)", sum.Breached)
 	}
 }
+
+// TestTickDeliversBreachWebhook proves the SLA escalation reaches the webhook channel:
+// the WithNotify hook is called with each newly-overdue case, and not re-called on a
+// later tick (the breach is recorded once).
+func TestTickDeliversBreachWebhook(t *testing.T) {
+	ctx := context.Background()
+	log, err := eventlog.OpenWAL(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = log.Close() }()
+	h := command.NewHandler(log)
+	a := identity.Identity{Org: "demo", Workspace: "main", Actor: "adam"}
+	overdue, _, err := h.RequestReview(ctx, a, domain.RequestReview{CompanyName: "Acme", CaseType: "aml", SLADays: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := store.NewMemory()
+	if err := projection.New(log, st, cases.Projector{}).Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().AddDate(0, 0, 10)
+	var delivered []string
+	s := (&Scheduler{store: st, cmd: h, now: func() time.Time { return now }}).WithNotify(
+		func(_ context.Context, _ identity.Identity, caseIDs []string) {
+			delivered = append(delivered, caseIDs...)
+		})
+	if _, err := s.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(delivered) != 1 || delivered[0] != overdue {
+		t.Fatalf("breach webhook not delivered for the overdue case: %v (want [%s])", delivered, overdue)
+	}
+	delivered = nil
+	if _, err := s.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(delivered) != 0 {
+		t.Fatalf("second tick re-delivered: %v", delivered)
+	}
+}

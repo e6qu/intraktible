@@ -49,6 +49,15 @@ complexity. It is proven by a cold-rebuild test (`history.TestSuspendedDecisionS
 the entire read model is discarded and rebuilt from the log, and the suspended decision
 still resumes to completion.
 
+**Reminders, not auto-resume.** A human step *waits* for the human — nothing auto-resolves
+it. A reminder/notification layer instead pulls reviewers to their pending tasks: the
+notifications projector turns case lifecycle events into inbox items (assigned → the
+assignee; due-soon and overdue → the assignee, driven by the SLA sweep), and an
+*unassigned* task is addressed to a shared **reviewer queue** that every review-capable
+user sees. An overdue task also escalates to the operator-configured **webhook**
+(egress-guarded, the same channel as monitor alerts). This reuses the existing inbox +
+SLA sweep + webhook plumbing — no new subsystem.
+
 ## Deficiencies & shallow areas (prioritized)
 
 Sizes are rough effort to become competitively credible. **S** = days, **M** = ~1–2

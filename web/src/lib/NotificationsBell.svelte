@@ -63,9 +63,15 @@
         {#each items as n (n.notification_id)}
           <li>
             <button class="item" class:unread={!n.read} role="menuitem" onclick={() => markRead(n)}>
-              <span class="meta"
-                ><b>{n.author}</b> mentioned you on a {n.subject_type.replace(/_/g, ' ')} ·
-                <RelativeTime value={n.created_at} /></span
+              <span class="meta">
+                {#if n.kind === 'task'}<b>Review task</b>
+                {:else if n.kind === 'mention'}<b>{n.author}</b> mentioned you on a {n.subject_type.replace(
+                    /_/g,
+                    ' '
+                  )}
+                {:else}<b>{n.author}</b> · {n.kind.replace(/_/g, ' ')}
+                {/if}
+                · <RelativeTime value={n.created_at} /></span
               >
               <span class="snip">{n.snippet}</span>
             </button>

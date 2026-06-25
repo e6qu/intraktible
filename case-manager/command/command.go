@@ -127,6 +127,7 @@ type slaCaseState struct {
 	slaDays   int
 	status    domain.CaseStatus
 	breached  bool
+	reminded  bool
 }
 
 // SweepSLA finds the tenant's open cases whose SLA deadline has passed as of now
@@ -153,20 +154,35 @@ func (h *Handler) SweepSLA(ctx context.Context, id identity.Identity, now time.T
 	var breached []string
 	for _, cid := range ids {
 		st := states[cid]
-		if st.breached || st.status == domain.StatusCompleted {
+		if st.status == domain.StatusCompleted {
 			continue
 		}
-		if domain.SLAState(st.createdAt, st.slaDays, now) != domain.SLAOverdue {
-			continue
+		switch domain.SLAState(st.createdAt, st.slaDays, now) {
+		case domain.SLAOverdue:
+			if st.breached {
+				continue
+			}
+			b, err := json.Marshal(events.CaseSLABreached{CaseID: cid})
+			if err != nil {
+				return breached, fmt.Errorf("case-manager: marshal sla_breached: %w", err)
+			}
+			if _, err := h.append(ctx, id, events.TypeCaseSLABreached, b); err != nil {
+				return breached, err
+			}
+			breached = append(breached, cid)
+		case domain.SLADueSoon:
+			// Nudge once, before breach, so an assignee gets to the task in time.
+			if st.reminded {
+				continue
+			}
+			b, err := json.Marshal(events.CaseSLAReminder{CaseID: cid})
+			if err != nil {
+				return breached, fmt.Errorf("case-manager: marshal sla_reminder: %w", err)
+			}
+			if _, err := h.append(ctx, id, events.TypeCaseSLAReminder, b); err != nil {
+				return breached, err
+			}
 		}
-		b, err := json.Marshal(events.CaseSLABreached{CaseID: cid})
-		if err != nil {
-			return breached, fmt.Errorf("case-manager: marshal sla_breached: %w", err)
-		}
-		if _, err := h.append(ctx, id, events.TypeCaseSLABreached, b); err != nil {
-			return breached, err
-		}
-		breached = append(breached, cid)
 	}
 	return breached, nil
 }
@@ -215,6 +231,15 @@ func (h *Handler) caseStates(ctx context.Context, id identity.Identity) (map[str
 			}
 			if st, ok := states[p.CaseID]; ok {
 				st.breached = true
+				states[p.CaseID] = st
+			}
+		case events.TypeCaseSLAReminder:
+			var p events.CaseSLAReminder
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				return nil, fmt.Errorf("case-manager: decode reminder seq %d: %w", e.Seq, err)
+			}
+			if st, ok := states[p.CaseID]; ok {
+				st.reminded = true
 				states[p.CaseID] = st
 			}
 		}

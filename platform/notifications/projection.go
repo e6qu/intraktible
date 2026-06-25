@@ -9,6 +9,8 @@ import (
 	"sort"
 	"time"
 
+	cmevents "github.com/e6qu/intraktible/case-manager/events"
+	deevents "github.com/e6qu/intraktible/decision-engine/events"
 	"github.com/e6qu/intraktible/platform/comments"
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/identity"
@@ -56,7 +58,7 @@ func notificationID(recipient, source string) string { return recipient + ":" + 
 type Projector struct{}
 
 func (Projector) Name() string          { return Collection }
-func (Projector) Collections() []string { return []string{Collection} }
+func (Projector) Collections() []string { return []string{Collection, caseIndexCollection} }
 
 func (Projector) Apply(ctx context.Context, e eventlog.Envelope, s store.Store) error {
 	switch e.Type {
@@ -64,6 +66,16 @@ func (Projector) Apply(ctx context.Context, e eventlog.Envelope, s store.Store) 
 		return applyComment(ctx, e, s)
 	case TypeMarkedRead:
 		return applyRead(ctx, e, s)
+	case cmevents.TypeReviewRequested:
+		return applyReviewRequested(ctx, e, s)
+	case deevents.TypeManualReviewRequested:
+		return applyManualReviewRequested(ctx, e, s)
+	case cmevents.TypeCaseAssigned:
+		return applyCaseAssigned(ctx, e, s)
+	case cmevents.TypeCaseSLAReminder:
+		return applySLAReminder(ctx, e, s)
+	case cmevents.TypeCaseSLABreached:
+		return applySLABreached(ctx, e, s)
 	}
 	return nil
 }
@@ -111,11 +123,20 @@ func snippet(body string) string {
 }
 
 // List returns the caller's notifications, newest first (unread naturally surface
-// via the count; ordering is by time).
-func List(ctx context.Context, s store.Store, id identity.Identity) ([]View, error) {
+// via the count; ordering is by time). When includeReviewerQueue is set (the caller can
+// review), unassigned-task notifications addressed to the shared reviewer queue are
+// folded in too, so a task nobody owns reaches every reviewer.
+func List(ctx context.Context, s store.Store, id identity.Identity, includeReviewerQueue bool) ([]View, error) {
 	out, err := store.ListDocs[View](ctx, s, Collection, store.Key(id.Org, id.Workspace, id.Actor+":"))
 	if err != nil {
 		return nil, err
+	}
+	if includeReviewerQueue {
+		queue, err := store.ListDocs[View](ctx, s, Collection, store.Key(id.Org, id.Workspace, ReviewerQueue+":"))
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, queue...)
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		if out[i].CreatedAt.Equal(out[j].CreatedAt) {

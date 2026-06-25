@@ -17,6 +17,11 @@ const (
 	TypeCaseStatusChanged = "cases.status_changed"
 	TypeCaseNoteAdded     = "cases.note_added"
 	TypeCaseSLABreached   = "cases.sla_breached"
+	// TypeCaseSLAReminder is emitted once by the SLA sweep when an open case enters its
+	// "due soon" window (before breach), nudging an assignee toward a task before it
+	// goes overdue. Like the breach event it carries only the case id; the notifications
+	// projector enriches it with the assignee/label from its own case index.
+	TypeCaseSLAReminder = "cases.sla_reminder"
 )
 
 // ReviewRequested opens a case for human review.
@@ -51,5 +56,11 @@ type CaseNoteAdded struct {
 // the SLA sweep (an effect performed in the shell against the wall clock, then
 // recorded so replay is stable). The breach time is the envelope time.
 type CaseSLABreached struct {
+	CaseID string `json:"case_id"`
+}
+
+// CaseSLAReminder records that an open case entered its "due soon" window (emitted
+// once by the SLA sweep, before any breach). The reminder time is the envelope time.
+type CaseSLAReminder struct {
 	CaseID string `json:"case_id"`
 }

@@ -7,12 +7,14 @@ test.beforeEach(async ({ page }) => {
   await page.context().request.post('/v1/login', { data: { api_key: KEY } });
 });
 
-test('the notifications bell mounts and shows the inbox', async ({ page }) => {
+test('the notifications bell mounts and opens the inbox', async ({ page }) => {
   await page.goto('/');
   const bell = page.getByTestId('notifications-bell');
   await expect(bell).toBeVisible();
-  // No @-mentions for this user yet, so no unread badge.
-  await expect(page.getByTestId('notif-badge')).toHaveCount(0);
   await bell.locator('summary').click();
-  await expect(bell.getByText("You're all caught up.")).toBeVisible();
+  // The inbox panel opens. We don't assert it's empty: case events (human-review tasks)
+  // and @-mentions both feed it, so depending on what else this run created it may hold
+  // items or show the caught-up state — either is valid here. The per-source behaviour is
+  // covered by the Go unit tests (notifications.TestTaskNotificationsFromCaseLifecycle).
+  await expect(bell.getByText('Notifications')).toBeVisible();
 });

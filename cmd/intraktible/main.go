@@ -250,6 +250,10 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 	var driftScheduler *enginemodels.Scheduler
 	var deployScheduler *schedule.Scheduler
 	var caseScheduler *caseschedule.Scheduler
+	// Outbound webhook delivery (egress-guarded, retried, recorded) — shared by the
+	// monitor/drift pushes and the case SLA escalation, so both reach the same
+	// operator-configured webhooks.
+	notifier := notify.NewNotifier(log, st, egress.Client(15*time.Second))
 	if enabled(modules, "decision-engine") {
 		// A decision can fold in a Context Layer entity's features, call Context
 		// Layer connectors from Connect nodes, and run Agent Manager agents from AI
@@ -295,7 +299,6 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 		// Webhooks: outbound notification channel. Delivery reuses the connector
 		// egress guard (SSRF-safe) so a monitor check can push firing rules out.
 		notify.New(notify.NewHandler(log), st).Routes(api)
-		notifier := notify.NewNotifier(log, st, egress.Client(15*time.Second))
 		// Monitors: thresholds over a flow's metrics, evaluated live (failure/refer
 		// rate, automation rate, latency, volume); a check pushes firing rules to webhooks.
 		monCmd := monitor.NewHandler(log)
@@ -322,7 +325,13 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 		// SLA sweeper: records breaches for open cases past deadline on the same
 		// cadence as the monitor/drift/deploy sweeps (the /cases/sla-sweep endpoint
 		// is the on-demand alternative).
-		caseScheduler = caseschedule.NewScheduler(st, caseCmd)
+		// Push an overdue human task to the operator-configured webhooks (the in-app
+		// inbox is driven separately off the same events) so reviewers are pulled to it.
+		caseScheduler = caseschedule.NewScheduler(st, caseCmd).WithNotify(
+			func(ctx context.Context, id identity.Identity, caseIDs []string) {
+				_, _ = notifier.Deliver(ctx, id, "case.sla_breached",
+					map[string]any{"event": "case.overdue", "case_ids": caseIDs})
+			})
 	}
 	if enabled(modules, "context-layer") {
 		contextservice.New(contextcmd.NewHandler(log), st,

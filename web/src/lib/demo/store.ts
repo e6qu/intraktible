@@ -2583,6 +2583,41 @@ function seedWebhooks(): Webhook[] {
 
 function seedNotifications(): Notification[] {
   return [
+    // Human-task reminders: a flow escalates to a case, and the assignee is pulled to it
+    // (assigned -> due-soon -> overdue) without anything auto-resolving the human step.
+    {
+      notification_id: 'ntf_task_assigned',
+      recipient: ACTOR,
+      kind: 'task',
+      subject_type: 'case',
+      subject_id: 'case_1',
+      snippet: 'Review task assigned to you: credit_review',
+      author: 'system',
+      read: false,
+      created_at: ago(2)
+    },
+    {
+      notification_id: 'ntf_task_due',
+      recipient: ACTOR,
+      kind: 'task',
+      subject_type: 'case',
+      subject_id: 'case_2',
+      snippet: 'Review task due soon: aml_alert',
+      author: 'sla-sweeper',
+      read: false,
+      created_at: ago(3)
+    },
+    {
+      notification_id: 'ntf_task_overdue',
+      recipient: ACTOR,
+      kind: 'task',
+      subject_type: 'case',
+      subject_id: 'case_3',
+      snippet: 'Review task OVERDUE: kyc_review',
+      author: 'sla-sweeper',
+      read: false,
+      created_at: ago(4)
+    },
     {
       notification_id: 'ntf_1',
       recipient: ACTOR,
