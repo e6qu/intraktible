@@ -532,6 +532,89 @@ export function runFlow(
         reasonCodes.push({ code: 'MANUAL_REVIEW', description: 'Routed to manual review' });
         nodeOut = { case_opened: true };
         break;
+      case 'rule': {
+        // Each rule whose `when` holds applies its `then` assignments to the record.
+        const rules = Array.isArray(cfg.rules)
+          ? (cfg.rules as { when?: string; then?: { target?: string; expr?: string }[] }[])
+          : [];
+        const produced: Record<string, unknown> = {};
+        for (const r of rules) {
+          if (r.when && !isTruthy(evalExpr(r.when, rec))) continue;
+          for (const a of r.then ?? []) {
+            if (!a.target) continue;
+            const val = evalExpr(a.expr ?? 'null', rec);
+            const m = new Map(Object.entries(rec));
+            m.set(a.target, val);
+            Object.assign(rec, Object.fromEntries(m));
+            const pm = new Map(Object.entries(produced));
+            pm.set(a.target, val);
+            Object.assign(produced, Object.fromEntries(pm));
+          }
+        }
+        nodeOut = produced;
+        break;
+      }
+      case 'scorecard': {
+        // Additive weight-sum of the factors whose condition holds.
+        const outKey = String(cfg.output ?? 'score');
+        const factors = Array.isArray(cfg.factors)
+          ? (cfg.factors as { when?: string; weight?: number }[])
+          : [];
+        let score = 0;
+        for (const f of factors) {
+          if (!f.when || isTruthy(evalExpr(f.when, rec))) score += Number(f.weight ?? 0);
+        }
+        const m = new Map(Object.entries(rec));
+        m.set(outKey, score);
+        Object.assign(rec, Object.fromEntries(m));
+        nodeOut = Object.fromEntries([[outKey, score]]);
+        break;
+      }
+      case 'decision_table': {
+        // DMN-style: first matching row wins, unless hit="collect" which sums every
+        // matching row's outputs into the target (the demo's two common hit policies).
+        const rows = Array.isArray(cfg.rows)
+          ? (cfg.rows as { when?: string; outputs?: { target?: string; expr?: string }[] }[])
+          : [];
+        const collect = String(cfg.hit ?? 'first') === 'collect';
+        const produced: Record<string, unknown> = {};
+        for (const r of rows) {
+          if (r.when && !isTruthy(evalExpr(r.when, rec))) continue;
+          for (const o of r.outputs ?? []) {
+            if (!o.target) continue;
+            const v = evalExpr(o.expr ?? 'null', rec);
+            const val = collect
+              ? Number(new Map(Object.entries(rec)).get(o.target) ?? 0) + Number(v)
+              : v;
+            const m = new Map(Object.entries(rec));
+            m.set(o.target, val);
+            Object.assign(rec, Object.fromEntries(m));
+            const pm = new Map(Object.entries(produced));
+            pm.set(o.target, val);
+            Object.assign(produced, Object.fromEntries(pm));
+          }
+          if (!collect) break;
+        }
+        nodeOut = produced;
+        break;
+      }
+      case '2d_matrix': {
+        // Grid lookup: the first matching row index × the first matching col index
+        // selects a cell (e.g. risk × ticket-size → action).
+        const outKey = String(cfg.output ?? 'matrix');
+        const rows = Array.isArray(cfg.rows) ? (cfg.rows as { when?: string }[]) : [];
+        const cols = Array.isArray(cfg.cols) ? (cfg.cols as { when?: string }[]) : [];
+        const cells = Array.isArray(cfg.cells) ? (cfg.cells as unknown[][]) : [];
+        const ri = rows.findIndex((r) => !r.when || isTruthy(evalExpr(r.when, rec)));
+        const ci = cols.findIndex((c) => !c.when || isTruthy(evalExpr(c.when, rec)));
+        const row = ri >= 0 ? cells.at(ri) : undefined;
+        const cell = Array.isArray(row) && ci >= 0 ? (row as unknown[]).at(ci) : undefined;
+        const m = new Map(Object.entries(rec));
+        m.set(outKey, cell);
+        Object.assign(rec, Object.fromEntries(m));
+        nodeOut = Object.fromEntries([[outKey, cell]]);
+        break;
+      }
       default:
         nodeOut = {};
     }

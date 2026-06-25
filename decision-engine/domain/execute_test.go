@@ -334,3 +334,44 @@ func TestExecuteFailsLoudly(t *testing.T) {
 		})
 	}
 }
+
+// TestSuspendResumeHumanTask proves durable human-task orchestration: a manual_review
+// node configured to suspend pauses the decision (capturing the record + case), and
+// Resume injects the reviewer's outcome and runs the flow to completion.
+func TestSuspendResumeHumanTask(t *testing.T) {
+	g := linear(
+		cfgNode("review", events.NodeManualReview,
+			`{"company_name":"'Acme'","case_type":"'underwriting'","sla_days":3,"suspend":true,"output_key":"review"}`),
+		cfgNode("out", events.NodeOutput, `{"fields":["decision","review"]}`),
+	)
+	run := domain.Execute(g, map[string]any{"applicant": "a1"})
+	if run.Status != domain.StatusSuspended {
+		t.Fatalf("status=%s, want suspended (err=%s)", run.Status, run.Err)
+	}
+	if run.Suspend == nil || run.Suspend.NodeID != "review" || run.Suspend.Resume != "out" {
+		t.Fatalf("suspend state = %+v", run.Suspend)
+	}
+	if run.Suspend.Case.CompanyName != "Acme" || run.Suspend.Case.CaseType != "underwriting" || run.Suspend.Case.SLADays != 3 {
+		t.Fatalf("case = %+v", run.Suspend.Case)
+	}
+	if run.Suspend.Record["applicant"] != "a1" {
+		t.Fatalf("record did not capture the input: %+v", run.Suspend.Record)
+	}
+
+	resumed := domain.Resume(g, *run.Suspend, map[string]any{"decision": "approve"})
+	if resumed.Status != domain.StatusCompleted {
+		t.Fatalf("resumed status=%s err=%s", resumed.Status, resumed.Err)
+	}
+	if resumed.Output["decision"] != "approve" {
+		t.Fatalf("resumed output missing the injected outcome: %+v", resumed.Output)
+	}
+
+	// Backward compatible: a manual_review WITHOUT suspend still passes through.
+	g2 := linear(
+		cfgNode("review", events.NodeManualReview, `{"company_name":"'Acme'","case_type":"'aml'","sla_days":3}`),
+		cfgNode("out", events.NodeOutput, `{}`),
+	)
+	if r := domain.Execute(g2, map[string]any{}); r.Status != domain.StatusCompleted {
+		t.Fatalf("non-suspend manual_review status=%s, want completed", r.Status)
+	}
+}

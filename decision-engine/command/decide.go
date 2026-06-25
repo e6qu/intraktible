@@ -15,6 +15,7 @@ import (
 	"github.com/e6qu/intraktible/decision-engine/domain"
 	"github.com/e6qu/intraktible/decision-engine/events"
 	"github.com/e6qu/intraktible/decision-engine/flows"
+	"github.com/e6qu/intraktible/decision-engine/history"
 	"github.com/e6qu/intraktible/decision-engine/policy"
 	"github.com/e6qu/intraktible/decision-engine/preapproval"
 	"github.com/e6qu/intraktible/platform/entity"
@@ -318,14 +319,29 @@ func (h *DecideHandler) Decide(ctx context.Context, id identity.Identity, slug, 
 	var terminalType string
 	var terminalPayload any
 	var result DecideResult
-	if run.Status == domain.StatusFailed {
+	switch run.Status {
+	case domain.StatusFailed:
 		terminalType = events.TypeDecisionFailed
 		terminalPayload = events.DecisionFailed{
 			DecisionID: decisionID, FlowID: fv.FlowID, Version: version.Version, Variant: variant,
 			NodeID: run.FailedNode, Error: run.Err, DurationMS: dur,
 		}
 		result = DecideResult{DecisionID: decisionID, Status: domain.StatusFailed, Error: run.Err}
-	} else {
+	case domain.StatusSuspended:
+		// The flow paused at a durable human task. Persist the instance state so the
+		// decision resumes deterministically when a reviewer acts; the case is opened
+		// by emitEscalations below (the manual_review node is in run.Results).
+		stateJSON, err := json.Marshal(run.Suspend)
+		if err != nil {
+			return DecideResult{}, fmt.Errorf("decision-engine: marshal suspend state: %w", err)
+		}
+		terminalType = events.TypeDecisionSuspended
+		terminalPayload = events.DecisionSuspended{
+			DecisionID: decisionID, FlowID: fv.FlowID, Version: version.Version, Variant: variant,
+			NodeID: run.Suspend.NodeID, ResumeNode: run.Suspend.Resume, State: stateJSON, DurationMS: dur,
+		}
+		result = DecideResult{DecisionID: decisionID, Status: domain.StatusSuspended}
+	default:
 		outJSON, err := json.Marshal(run.Output)
 		if err != nil {
 			return DecideResult{}, fmt.Errorf("decision-engine: marshal output: %w", err)
@@ -362,10 +378,125 @@ func (h *DecideHandler) Decide(ctx context.Context, id identity.Identity, slug, 
 	}
 	// A shadow version, if configured for this environment, is evaluated over the
 	// same input for divergence analysis — its outcome never affects the result.
-	if err := h.runShadow(ctx, id, fv, env, decisionID, version.Version, data, run); err != nil {
-		return DecideResult{}, err
+	// A suspended decision has no terminal output yet, so there's nothing to compare.
+	if run.Status != domain.StatusSuspended {
+		if err := h.runShadow(ctx, id, fv, env, decisionID, version.Version, data, run); err != nil {
+			return DecideResult{}, err
+		}
 	}
 	return result, nil
+}
+
+// ResumeDecision un-pauses a decision suspended at a durable human task: it loads the
+// captured instance state, injects the reviewer's outcome into the record, and runs
+// the flow to a terminal (or another suspension). The recorded trace spans the pre-
+// and post-pause nodes, so the resumed decision stays a single replayable history.
+func (h *DecideHandler) ResumeDecision(ctx context.Context, id identity.Identity, decisionID string, outcome map[string]any) (DecideResult, error) {
+	rec, ok, err := history.Read(ctx, h.store, id, decisionID)
+	if err != nil {
+		return DecideResult{}, err
+	}
+	if !ok {
+		return DecideResult{}, fmt.Errorf("decision-engine: unknown decision %q", decisionID)
+	}
+	if rec.Status != "suspended" || len(rec.SuspendState) == 0 {
+		return DecideResult{}, fmt.Errorf("decision-engine: decision %q is not suspended", decisionID)
+	}
+	var suspend domain.SuspendState
+	if err := json.Unmarshal(rec.SuspendState, &suspend); err != nil {
+		return DecideResult{}, fmt.Errorf("decision-engine: decode suspend state: %w", err)
+	}
+	fv, found, err := flows.Read(ctx, h.store, id, rec.FlowID)
+	if err != nil {
+		return DecideResult{}, err
+	}
+	if !found {
+		return DecideResult{}, fmt.Errorf("decision-engine: flow %q not found", rec.FlowID)
+	}
+	graph, err := flows.GraphForVersion(fv, rec.Version)
+	if err != nil {
+		return DecideResult{}, err
+	}
+
+	if outcome == nil {
+		outcome = map[string]any{}
+	}
+	outcomeJSON, err := json.Marshal(outcome)
+	if err != nil {
+		return DecideResult{}, fmt.Errorf("decision-engine: marshal outcome: %w", err)
+	}
+	start := h.now()
+	if err := h.emit(ctx, id, events.TypeDecisionResumed, events.DecisionResumed{
+		DecisionID: decisionID, Actor: id.Actor, Outcome: outcomeJSON,
+	}); err != nil {
+		return DecideResult{}, err
+	}
+
+	run := domain.Resume(graph, suspend, outcome)
+	ref := EntityRef{Type: entity.Type(rec.EntityType), ID: entity.ID(rec.EntityID)}
+	for _, r := range run.Results {
+		nodeOut, err := h.sealPII(ctx, id, ref, r.Output)
+		if err != nil {
+			return DecideResult{}, err
+		}
+		if err := h.emit(ctx, id, events.TypeNodeEvaluated, events.NodeEvaluated{
+			DecisionID: decisionID, NodeID: r.NodeID, NodeType: r.Type, Output: nodeOut,
+		}); err != nil {
+			return DecideResult{}, err
+		}
+	}
+	dur := h.now().Sub(start).Milliseconds()
+
+	switch run.Status {
+	case domain.StatusFailed:
+		if err := h.emit(ctx, id, events.TypeDecisionFailed, events.DecisionFailed{
+			DecisionID: decisionID, FlowID: rec.FlowID, Version: rec.Version, Variant: rec.Variant,
+			NodeID: run.FailedNode, Error: run.Err, DurationMS: dur,
+		}); err != nil {
+			return DecideResult{}, err
+		}
+		return DecideResult{DecisionID: decisionID, Status: domain.StatusFailed, Error: run.Err}, nil
+	case domain.StatusSuspended:
+		stateJSON, err := json.Marshal(run.Suspend)
+		if err != nil {
+			return DecideResult{}, fmt.Errorf("decision-engine: marshal suspend state: %w", err)
+		}
+		if err := h.emit(ctx, id, events.TypeDecisionSuspended, events.DecisionSuspended{
+			DecisionID: decisionID, FlowID: rec.FlowID, Version: rec.Version, Variant: rec.Variant,
+			NodeID: run.Suspend.NodeID, ResumeNode: run.Suspend.Resume, State: stateJSON, DurationMS: dur,
+		}); err != nil {
+			return DecideResult{}, err
+		}
+		if err := h.emitEscalations(ctx, id, decisionID, ref, nil, run); err != nil {
+			return DecideResult{}, err
+		}
+		return DecideResult{DecisionID: decisionID, Status: domain.StatusSuspended}, nil
+	default:
+		outJSON, err := json.Marshal(run.Output)
+		if err != nil {
+			return DecideResult{}, fmt.Errorf("decision-engine: marshal output: %w", err)
+		}
+		outJSON, err = h.sealPII(ctx, id, ref, outJSON)
+		if err != nil {
+			return DecideResult{}, err
+		}
+		disp, err := h.applyPolicy(ctx, id, rec.Slug, run.Output)
+		if err != nil {
+			return DecideResult{}, err
+		}
+		if err := h.emit(ctx, id, events.TypeDecisionCompleted, events.DecisionCompleted{
+			DecisionID: decisionID, FlowID: rec.FlowID, Version: rec.Version, Variant: rec.Variant,
+			Output: outJSON, DurationMS: dur,
+			Disposition: string(disp.disposition), DispositionCode: disp.code, DispositionReason: disp.reason,
+			PolicyID: disp.policyID, PolicyVersion: disp.policyVersion,
+		}); err != nil {
+			return DecideResult{}, err
+		}
+		return DecideResult{
+			DecisionID: decisionID, Status: domain.StatusCompleted, Output: run.Output,
+			Disposition: disp.disposition, DispositionReason: disp.reason,
+		}, nil
+	}
 }
 
 // prepare validates the caller's input against the version contract, strips the

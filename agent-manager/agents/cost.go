@@ -4,6 +4,7 @@ package agents
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 )
@@ -57,16 +58,23 @@ func ParsePricing(s string) (Pricing, error) {
 			return nil, fmt.Errorf("ai pricing: rates %q must be input/output", rates)
 		}
 		inRate, err := strconv.ParseFloat(strings.TrimSpace(in), 64)
-		if err != nil || inRate < 0 {
+		if err != nil || !finiteNonNegative(inRate) {
 			return nil, fmt.Errorf("ai pricing: input rate %q for %q: want a non-negative number", in, model)
 		}
 		outRate, err := strconv.ParseFloat(strings.TrimSpace(out), 64)
-		if err != nil || outRate < 0 {
+		if err != nil || !finiteNonNegative(outRate) {
 			return nil, fmt.Errorf("ai pricing: output rate %q for %q: want a non-negative number", out, model)
 		}
 		p[strings.TrimSpace(model)] = ModelPrice{InputPerMTok: inRate, OutputPerMTok: outRate}
 	}
 	return p, nil
+}
+
+// finiteNonNegative rejects NaN and ±Inf in addition to negatives: strconv.ParseFloat
+// accepts "NaN"/"Inf" as valid floats, and a non-finite rate poisons cost arithmetic
+// (any product is NaN/Inf) and fails JSON marshaling of the cost report downstream.
+func finiteNonNegative(r float64) bool {
+	return r >= 0 && !math.IsInf(r, 0)
 }
 
 // CostReport is a run summary augmented with computed cost. It embeds RunSummary

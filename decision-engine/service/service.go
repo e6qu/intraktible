@@ -109,6 +109,7 @@ func (s *Service) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/decisions", s.listDecisions)
 	mux.HandleFunc("GET /v1/decisions/{decision_id}", s.getDecision)
 	mux.HandleFunc("GET /v1/decisions/{decision_id}/export", s.exportDecision)
+	mux.HandleFunc("POST /v1/decisions/{decision_id}/resume", s.resumeDecision)
 	mux.HandleFunc("POST /v1/models", s.defineModel)
 	mux.HandleFunc("GET /v1/models", s.listModels)
 	mux.HandleFunc("GET /v1/models/{name}", s.getModel)
@@ -1586,6 +1587,33 @@ func (s *Service) getDecision(w http.ResponseWriter, r *http.Request) {
 		rec, err = s.maskRecord(r.Context(), id, rec)
 	}
 	httpx.WriteOne(w, rec, found, err, "decision not found")
+}
+
+// resumeDecision un-pauses a decision suspended at a durable human task, injecting the
+// reviewer's outcome so the flow runs on to a terminal. POST /v1/decisions/{id}/resume
+// with {"outcome": {...}} — the outcome fields are merged into the decision's record.
+func (s *Service) resumeDecision(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		Outcome map[string]any `json:"outcome"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	res, err := s.decide.ResumeDecision(r.Context(), id, r.PathValue("decision_id"), req.Outcome)
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"decision_id": res.DecisionID,
+		"status":      res.Status,
+		"disposition": res.Disposition,
+	})
 }
 
 // maskRecord masks the configured sensitive fields in a decision record's input,

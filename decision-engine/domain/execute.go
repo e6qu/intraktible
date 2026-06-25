@@ -29,14 +29,19 @@ type evalContext struct {
 // decision core or its result family; it is JSON wire-compatible with a plain string.
 type RunStatus string
 
-// Decision run status values.
+// Decision run status values. Suspended is non-terminal: a flow that pauses at a
+// human-task (a manual_review node configured to suspend) records a suspended run
+// and resumes — to completion or failure — once a reviewer acts.
 const (
 	StatusCompleted RunStatus = "completed"
 	StatusFailed    RunStatus = "failed"
+	StatusSuspended RunStatus = "suspended"
 )
 
 // Valid reports whether s is a known run status.
-func (s RunStatus) Valid() bool { return s == StatusCompleted || s == StatusFailed }
+func (s RunStatus) Valid() bool {
+	return s == StatusCompleted || s == StatusFailed || s == StatusSuspended
+}
 
 // NodeResult is one node's evaluation output, captured in execution order.
 type NodeResult struct {
@@ -54,6 +59,28 @@ type Run struct {
 	Results    []NodeResult   `json:"results"`
 	FailedNode string         `json:"failed_node,omitempty"`
 	Err        string         `json:"error,omitempty"`
+	// Suspend is set only when Status is StatusSuspended: the durable instance state
+	// needed to resume the flow from where a human-task paused it.
+	Suspend *SuspendState `json:"suspend,omitempty"`
+}
+
+// SuspendState is the captured state of a flow paused at a human-task (a manual_review
+// node with suspend set). It is persisted as a DecisionSuspended event so the decision
+// resumes deterministically: the record (every computed field at the pause), the node
+// to resume into, where to inject the reviewer's outcome, and the case fields.
+type SuspendState struct {
+	NodeID    string           `json:"node_id"`
+	Resume    string           `json:"resume_node"`
+	OutputKey string           `json:"output_key"`
+	Record    map[string]any   `json:"record"`
+	Case      ManualReviewCase `json:"case"`
+}
+
+// ManualReviewCase is the case escalation a suspended human-task opens.
+type ManualReviewCase struct {
+	CompanyName string `json:"company_name"`
+	CaseType    string `json:"case_type"`
+	SLADays     int    `json:"sla_days"`
 }
 
 // NodeObserver is notified around each node's evaluation during ExecuteObserved.
@@ -91,7 +118,39 @@ func ExecuteObserved(g events.Graph, input map[string]any, obs NodeObserver) Run
 // off with a deadline error instead. The context only bounds wall-clock; the
 // result stays deterministic for any graph+input that completes within it.
 func ExecuteContext(runCtx context.Context, g events.Graph, input map[string]any, obs NodeObserver) Run {
-	ec := evalContext{ctx: runCtx}
+	nodes, outgoing := indexGraph(g)
+	cur := inputNode(g)
+	if cur == "" {
+		return Run{Status: StatusFailed, Err: "decision-engine: graph has no input node"}
+	}
+	return walk(evalContext{ctx: runCtx}, g, nodes, outgoing, cur, cloneContext(input), nil, obs)
+}
+
+// Resume continues a flow that paused at a human-task, from the saved instance state,
+// after injecting the reviewer's outcome into the record. It is the deterministic
+// counterpart of the suspend in walk: same graph + same captured record + same outcome
+// always yields the same completion, which is what keeps a resumed decision replayable.
+func Resume(g events.Graph, s SuspendState, outcome map[string]any) Run {
+	nodes, outgoing := indexGraph(g)
+	ctx := cloneContext(s.Record)
+	key := s.OutputKey
+	if key == "" {
+		key = "review"
+	}
+	// The outcome is injected under OutputKey (so a downstream split can branch on
+	// e.g. review.decision) and merged at the top level (so a bare `decision` works too).
+	ctx[key] = outcome
+	for k, v := range outcome {
+		ctx[k] = v
+	}
+	if s.Resume == "" {
+		// Paused at a terminal human-task: resuming completes with the merged record.
+		return Run{Status: StatusCompleted, Output: ctx}
+	}
+	return walk(evalContext{ctx: context.Background()}, g, nodes, outgoing, s.Resume, ctx, nil, nil)
+}
+
+func indexGraph(g events.Graph) (map[string]events.Node, map[string][]events.Edge) {
 	nodes := make(map[string]events.Node, len(g.Nodes))
 	for _, n := range g.Nodes {
 		nodes[n.ID] = n
@@ -100,14 +159,14 @@ func ExecuteContext(runCtx context.Context, g events.Graph, input map[string]any
 	for _, e := range g.Edges {
 		outgoing[e.From] = append(outgoing[e.From], e)
 	}
+	return nodes, outgoing
+}
 
-	cur := inputNode(g)
-	if cur == "" {
-		return Run{Status: StatusFailed, Err: "decision-engine: graph has no input node"}
-	}
-	ctx := cloneContext(input)
-	run := Run{Status: StatusCompleted}
-
+// walk runs the graph from `cur` with the given record, appending to prior trace
+// results (so a resumed run carries the full pre- and post-pause trace). It returns a
+// suspended run when a manual_review node is configured as a durable human task.
+func walk(ec evalContext, g events.Graph, nodes map[string]events.Node, outgoing map[string][]events.Edge, cur string, ctx map[string]any, prior []NodeResult, obs NodeObserver) Run {
+	run := Run{Status: StatusCompleted, Results: prior}
 	// The graph is acyclic (enforced at publish time); the step bound is a
 	// defensive backstop, not a correctness mechanism.
 	for step := 0; step <= len(g.Nodes); step++ {
@@ -131,6 +190,19 @@ func ExecuteContext(runCtx context.Context, g events.Graph, input map[string]any
 		if err != nil {
 			return fail(run, n.ID, err.Error())
 		}
+		// A manual_review configured to suspend pauses the decision here (a durable
+		// human task) rather than passing through; the rest of the flow runs on resume.
+		if n.Type == events.NodeManualReview {
+			var cfg manualReviewConfig
+			if derr := decodeConfig(n, &cfg); derr == nil && cfg.Suspend {
+				run.Status = StatusSuspended
+				run.Suspend = &SuspendState{
+					NodeID: n.ID, Resume: next, OutputKey: cfg.OutputKey,
+					Record: cloneContext(ctx), Case: caseFrom(output),
+				}
+				return run
+			}
+		}
 		if n.Type == events.NodeOutput {
 			run.Output = asMap(output)
 			return run
@@ -142,6 +214,25 @@ func ExecuteContext(runCtx context.Context, g events.Graph, input map[string]any
 		cur = next
 	}
 	return fail(run, cur, "decision-engine: execution exceeded the node bound")
+}
+
+// caseFrom extracts the case-escalation fields from a manual_review node's output.
+func caseFrom(output any) ManualReviewCase {
+	m := asMap(output)
+	c := ManualReviewCase{}
+	if s, ok := m["company_name"].(string); ok {
+		c.CompanyName = s
+	}
+	if s, ok := m["case_type"].(string); ok {
+		c.CaseType = s
+	}
+	switch v := m["sla_days"].(type) {
+	case int:
+		c.SLADays = v
+	case float64:
+		c.SLADays = int(v)
+	}
+	return c
 }
 
 func evalNode(ec evalContext, n events.Node, ctx map[string]any, edges []events.Edge) (any, string, error) {
