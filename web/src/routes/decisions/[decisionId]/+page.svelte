@@ -160,6 +160,14 @@
       <dd>{d.variant ?? '—'}</dd>
       <dt>duration</dt>
       <dd>{d.duration_ms != null ? `${d.duration_ms} ms` : '—'}</dd>
+      {#if d.policy_id}
+        <dt>policy</dt>
+        <dd>
+          <a href={appHref('/policies')}
+            >{d.policy_id}{d.policy_version ? ` v${d.policy_version}` : ''} →</a
+          >
+        </dd>
+      {/if}
       {#if d.case_id}
         <dt>opened case</dt>
         <dd><a href={appHref(`/cases/${d.case_id}`)}>{d.case_id} →</a></dd>

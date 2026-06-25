@@ -15,7 +15,7 @@
     {
       icon: 'engine',
       title: 'Design a decision flow',
-      desc: 'Open the visual builder and wire up rules, scorecards, decision tables, and AI nodes into a versioned flow.',
+      desc: 'Open the visual builder — start from a template to see rules, scorecards, decision tables, and AI nodes wired into a versioned flow.',
       href: '/engine',
       cta: 'Open the builder'
     },
