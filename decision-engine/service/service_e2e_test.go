@@ -2414,6 +2414,79 @@ func TestBacktestFromRecorded(t *testing.T) {
 		map[string]any{"version": 1, "from_recorded": true}, http.StatusBadRequest, nil)
 }
 
+// TestSuspendResumeDecisionAPI proves durable human-task orchestration over HTTP: a flow
+// with a suspending manual_review node pauses the decision, and POST .../resume injects
+// the reviewer's outcome so the same decision runs on to completion.
+func TestSuspendResumeDecisionAPI(t *testing.T) {
+	api := startEngine(t)
+	var created struct {
+		FlowID string `json:"flow_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows",
+		map[string]string{"slug": "htask", "name": "HumanTask"}, http.StatusCreated, &created)
+	graph := map[string]any{
+		"nodes": []map[string]any{
+			{"id": "in", "type": "input"},
+			{"id": "review", "type": "manual_review", "config": map[string]any{
+				"company_name": "'Acme'", "case_type": "'underwriting'", "sla_days": 3,
+				"suspend": true, "output_key": "review",
+			}},
+			{"id": "out", "type": "output", "config": map[string]any{"fields": []string{"decision", "review"}}},
+		},
+		"edges": []map[string]any{{"from": "in", "to": "review"}, {"from": "review", "to": "out"}},
+	}
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/versions",
+		map[string]any{"graph": graph}, http.StatusCreated, nil)
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/deployments",
+		map[string]any{"environment": "sandbox", "version": 1}, http.StatusCreated, nil)
+
+	var dec struct {
+		DecisionID string `json:"decision_id"`
+		Status     string `json:"status"`
+	}
+	if !testutil.Eventually(t, func() bool {
+		api.Request(t, http.MethodPost, "/v1/flows/htask/sandbox/decide",
+			map[string]any{"data": map[string]any{"applicant": "a1"}}, http.StatusOK, &dec)
+		return dec.Status == "suspended"
+	}) {
+		t.Fatalf("decide never suspended: %+v", dec)
+	}
+
+	var rec struct {
+		Status      string `json:"status"`
+		SuspendNode string `json:"suspend_node"`
+	}
+	if !testutil.Eventually(t, func() bool {
+		api.Request(t, http.MethodGet, "/v1/decisions/"+dec.DecisionID, nil, http.StatusOK, &rec)
+		return rec.Status == "suspended"
+	}) {
+		t.Fatalf("decision not recorded suspended: %+v", rec)
+	}
+	if rec.SuspendNode != "review" {
+		t.Fatalf("suspend node = %q, want review", rec.SuspendNode)
+	}
+
+	var res struct {
+		Status string `json:"status"`
+	}
+	api.Request(t, http.MethodPost, "/v1/decisions/"+dec.DecisionID+"/resume",
+		map[string]any{"outcome": map[string]any{"decision": "approve"}}, http.StatusOK, &res)
+	if res.Status != "completed" {
+		t.Fatalf("resume status = %q, want completed", res.Status)
+	}
+	if !testutil.Eventually(t, func() bool {
+		rec.Status = ""
+		api.Request(t, http.MethodGet, "/v1/decisions/"+dec.DecisionID, nil, http.StatusOK, &rec)
+		return rec.Status == "completed"
+	}) {
+		t.Fatalf("decision not completed after resume: %+v", rec)
+	}
+
+	// Resuming an already-completed decision is a clean 400, not a crash.
+	api.Request(t, http.MethodPost, "/v1/decisions/"+dec.DecisionID+"/resume",
+		map[string]any{"outcome": map[string]any{}}, http.StatusBadRequest, nil)
+}
+
 func TestMakerCheckerDeploymentAPI(t *testing.T) {
 	api := startEngine(t)
 	var created struct {

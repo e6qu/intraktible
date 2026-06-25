@@ -49,11 +49,15 @@ type Record struct {
 	Status      string `json:"status"`            // started | completed | failed
 	// EntityType/EntityID identify the decision's subject (when referenced) — the
 	// erasure subject under which the recorded PII is sealed.
-	EntityType  string          `json:"entity_type,omitempty"`
-	EntityID    string          `json:"entity_id,omitempty"`
-	Data        json.RawMessage `json:"data,omitempty"`
-	Output      json.RawMessage `json:"output,omitempty"`
-	ReasonCodes []ReasonCode    `json:"reason_codes,omitempty"`
+	EntityType string          `json:"entity_type,omitempty"`
+	EntityID   string          `json:"entity_id,omitempty"`
+	Data       json.RawMessage `json:"data,omitempty"`
+	Output     json.RawMessage `json:"output,omitempty"`
+	// Set while Status is "suspended": the human-task node it paused at and the
+	// captured instance state needed to resume (cleared on resume).
+	SuspendNode  string          `json:"suspend_node,omitempty"`
+	SuspendState json.RawMessage `json:"suspend_state,omitempty"`
+	ReasonCodes  []ReasonCode    `json:"reason_codes,omitempty"`
 	// Disposition is the operational policy's outcome (approve|decline|refer) +
 	// the policy that assigned it, lifted first-class onto the decision record.
 	Disposition       string `json:"disposition,omitempty"`
@@ -93,11 +97,39 @@ func (Projector) Apply(ctx context.Context, e eventlog.Envelope, s store.Store) 
 		return applyCompleted(ctx, e, s)
 	case events.TypeDecisionFailed:
 		return applyFailed(ctx, e, s)
+	case events.TypeDecisionSuspended:
+		return applySuspended(ctx, e, s)
+	case events.TypeDecisionResumed:
+		return applyResumed(ctx, e, s)
 	case events.TypeManualReviewRequested:
 		return applyManualReview(ctx, e, s)
 	default:
 		return nil
 	}
+}
+
+func applySuspended(ctx context.Context, e eventlog.Envelope, s store.Store) error {
+	p, err := decode[events.DecisionSuspended](e)
+	if err != nil {
+		return err
+	}
+	return update(ctx, s, e, p.DecisionID, func(r *Record) {
+		r.Status = "suspended"
+		r.SuspendNode = p.NodeID
+		r.SuspendState = p.State
+	})
+}
+
+func applyResumed(ctx context.Context, e eventlog.Envelope, s store.Store) error {
+	p, err := decode[events.DecisionResumed](e)
+	if err != nil {
+		return err
+	}
+	// Back to running; the following DecisionCompleted/Failed sets the terminal status.
+	return update(ctx, s, e, p.DecisionID, func(r *Record) {
+		r.Status = "started"
+		r.SuspendState = nil
+	})
 }
 
 // decode unmarshals an event payload into T, wrapping decode errors with the seq.

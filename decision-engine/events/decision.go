@@ -16,6 +16,12 @@ const (
 	TypeNodeEvaluated     = "decision.run.node_evaluated"
 	TypeDecisionCompleted = "decision.run.completed"
 	TypeDecisionFailed    = "decision.run.failed"
+	// TypeDecisionSuspended records a decision paused at a durable human task (a
+	// manual_review node with suspend set); it carries the instance state needed to
+	// resume. TypeDecisionResumed records the reviewer's outcome that un-pauses it
+	// (the run then ends with a DecisionCompleted/DecisionFailed as usual).
+	TypeDecisionSuspended = "decision.run.suspended"
+	TypeDecisionResumed   = "decision.run.resumed"
 	// TypeManualReviewRequested is emitted when a decision reaches a manual_review
 	// node; the Case Manager consumes it to open a case (escalation hook).
 	TypeManualReviewRequested = "decision.manual_review_requested"
@@ -97,6 +103,30 @@ type ManualReviewRequested struct {
 	CaseType    string          `json:"case_type"`
 	SLADays     int             `json:"sla_days"`
 	Context     json.RawMessage `json:"context,omitempty"`
+}
+
+// DecisionSuspended records a decision paused at a durable human task. State is the
+// captured instance (the record at the pause, the node to resume into, the inject
+// key, and the case) — enough to deterministically resume. CaseID links the case a
+// reviewer acts on. The decision is non-terminal until a DecisionResumed + terminal.
+type DecisionSuspended struct {
+	DecisionID string          `json:"decision_id"`
+	FlowID     string          `json:"flow_id"`
+	Version    int             `json:"version"`
+	Variant    string          `json:"variant,omitempty"`
+	NodeID     string          `json:"node_id"`
+	ResumeNode string          `json:"resume_node,omitempty"`
+	CaseID     string          `json:"case_id,omitempty"`
+	State      json.RawMessage `json:"state"`
+	DurationMS int64           `json:"duration_ms"`
+}
+
+// DecisionResumed records the reviewer's outcome that un-pauses a suspended decision.
+// The outcome is injected into the record and the flow runs on to a terminal event.
+type DecisionResumed struct {
+	DecisionID string          `json:"decision_id"`
+	Actor      string          `json:"actor"`
+	Outcome    json.RawMessage `json:"outcome"`
 }
 
 // DecisionFailed records a decision that errored during evaluation (fail loudly:

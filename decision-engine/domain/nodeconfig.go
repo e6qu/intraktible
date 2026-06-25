@@ -44,10 +44,17 @@ type outputConfig struct {
 // manualReviewConfig is the config of a manual_review node: the case fields to
 // open. CompanyName and CaseType are expressions evaluated against the context
 // (use quotes for a literal, e.g. "'aml'"); SLADays is a literal.
+//
+// Suspend makes the node a durable human task: instead of passing through (the
+// default, backward-compatible behaviour), the decision PAUSES here and resumes
+// only when a reviewer acts. OutputKey is where the reviewer's outcome is injected
+// into the record on resume (default "review"), so downstream nodes can branch on it.
 type manualReviewConfig struct {
 	CompanyName string `json:"company_name"`
 	CaseType    string `json:"case_type"`
 	SLADays     int    `json:"sla_days"`
+	Suspend     bool   `json:"suspend"`
+	OutputKey   string `json:"output_key"`
 }
 
 // connectConfig is the config of a Connect node: it names a Context Layer

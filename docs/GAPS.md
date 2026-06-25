@@ -19,24 +19,24 @@ inventory are all real and enforced. The decision table is DMN-grade (five hit
 policies + aggregation). **None of the gaps below are facades** — they are honestly
 missing or honestly shallow capabilities.
 
-## Positioning: a decision engine, not an orchestration engine
+## Positioning: a decision engine with light, durable orchestration
 
-The single most important scope statement: intraktible is a **synchronous decision
-engine**. A `/decide` call runs a flow as one deterministic DAG pass and returns a
-recorded outcome. It is **not** a process-orchestration engine and does not claim to
-be one.
+intraktible is a **decision engine** first: a `/decide` call runs a flow as a
+deterministic DAG pass and returns a recorded outcome. It now also does **durable
+human-task orchestration** — a flow can pause mid-graph and resume — but it is **not** a
+full process-orchestration engine (Camunda-class), and does not claim to be.
 
 | Capability | Orchestration engines (Camunda) | intraktible |
 | --- | --- | --- |
-| Long-running process instances | yes | **no** — decisions are one-shot |
-| Durable wait states / human tasks that suspend & resume | yes | **no** — `manual_review` opens a case and the decision *completes* |
-| Timers, message/signal events, correlation | yes | **no** |
+| Durable wait states / human tasks that suspend & resume | yes | **yes** — a `manual_review` node with `suspend` pauses the decision (event-sourced `DecisionSuspended`) and resumes via `POST /v1/decisions/{id}/resume`, injecting the reviewer's outcome |
+| Long-running process instances | yes | **partial** — a suspended decision is a durable instance, but there is no separate process/instance model beyond the flow |
+| Timers, message/signal events, correlation | yes | **no** (roadmapped) — resume is reviewer-driven, not timer/event-driven |
 | Parallel gateways / fork-join / multi-instance | yes | **no** — `split` is exclusive-only |
 | Compensation / sagas / sub-processes | yes | **no** |
 
-This is by design — the architecture (deterministic, recorded, one-shot decisions) is
-the opposite of a durable workflow runtime, and the two are complementary (orchestrate
-elsewhere, decide here). The docs should not imply Camunda-style orchestration.
+The durable suspend/resume is real and replayable (the resumed decision's trace spans
+the pre- and post-pause nodes). The remaining orchestration primitives — timer/message
+resumption, parallel fork-join, sagas — are honest roadmap, not present today.
 
 ## Deficiencies & shallow areas (prioritized)
 
