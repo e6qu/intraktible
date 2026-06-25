@@ -41,10 +41,18 @@ describe('counterfactual', () => {
     const cf = counterfactual(flow, declined);
     expect(cf.searched).toBeGreaterThan(0);
     expect(cf.disposition).toBe(declined.disposition);
+    const targets = new Set<string>();
+    for (const n of flow.versions.at(-1)?.graph.nodes ?? []) {
+      for (const m of JSON.stringify(n.config ?? {}).matchAll(/"(?:target|output)":"([^"]*)"/g))
+        targets.add(m[1]);
+    }
     for (const f of cf.flips) {
       expect(typeof f.field).toBe('string');
       expect(['increase', 'decrease']).toContain(f.direction);
-      expect(f.to).not.toBe(f.from);
+      expect(f.to).not.toBe(f.from); // no degenerate from→from flip
+      expect(f.to).toBeGreaterThanOrEqual(0); // no negative income/balance suggestions
+      expect(f.direction === 'increase' ? f.to > f.from : f.to < f.from).toBe(true);
+      expect(targets.has(f.field)).toBe(false); // no derived field offered as a lever
     }
   });
 });

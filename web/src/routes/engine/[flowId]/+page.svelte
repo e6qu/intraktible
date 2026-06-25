@@ -3019,7 +3019,7 @@
         Coverage / red-team
         <Hint label="Coverage"
           >Fuzzes hundreds of synthetic inputs through the published graph and reports which nodes
-          and branches were exercised — surfacing dead branches (unreachable logic) and the
+          and branches were exercised — surfacing branches the fuzz never reached and the
           disposition spread. A red-team for your policy.</Hint
         >
       </h2>
@@ -3034,22 +3034,38 @@
               ? ''
               : 's'}{coverageReport.fields.length ? ` (${coverageReport.fields.join(', ')})` : ''}.
           </p>
-          <div class="cov-dispo">
-            <Badge tone={dispositionTone('approve')}
-              >{coverageReport.dispositions.approve} approve</Badge
-            >
-            <Badge tone={dispositionTone('refer')}>{coverageReport.dispositions.refer} refer</Badge>
-            <Badge tone={dispositionTone('decline')}
-              >{coverageReport.dispositions.decline} decline</Badge
-            >
-          </div>
+          {#if coverageReport.dispositions.approve + coverageReport.dispositions.refer + coverageReport.dispositions.decline > 0}
+            <div class="cov-dispo">
+              <Badge tone={dispositionTone('approve')}
+                >{coverageReport.dispositions.approve} approve</Badge
+              >
+              <Badge tone={dispositionTone('refer')}
+                >{coverageReport.dispositions.refer} refer</Badge
+              >
+              <Badge tone={dispositionTone('decline')}
+                >{coverageReport.dispositions.decline} decline</Badge
+              >
+            </div>
+          {:else}
+            <p class="muted">
+              No policy is bound to this flow, so the fuzzed inputs produce no disposition spread —
+              the node/branch coverage below still applies.
+            </p>
+          {/if}
           {#if coverageReport.dead_nodes.length || coverageReport.dead_branches.length}
             <div class="cov-dead">
               {#if coverageReport.dead_nodes.length}
-                <p><b>Dead nodes</b> (never reached): {coverageReport.dead_nodes.join(', ')}</p>
+                <p>
+                  <b>Not reached</b> in {coverageReport.runs} runs: {coverageReport.dead_nodes.join(
+                    ', '
+                  )}
+                </p>
               {/if}
               {#if coverageReport.dead_branches.length}
-                <p><b>Dead branches</b> (never taken):</p>
+                <p>
+                  <b>Uncovered branches</b> — not taken in {coverageReport.runs} runs (a branch behind
+                  a model score or a narrow input band may need targeted inputs to reach):
+                </p>
                 <ul>
                   {#each coverageReport.dead_branches as b (b.from + b.to + b.branch)}
                     <li><code>{b.from} → {b.to}</code> when <code>{b.branch}</code></li>
@@ -3788,8 +3804,10 @@
     position: absolute;
     top: 0.6rem;
     left: 0.6rem;
+    right: 0.6rem;
     z-index: 7;
-    display: inline-flex;
+    display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 0.4rem;
   }

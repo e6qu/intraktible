@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"regexp"
 	"sort"
 
 	"github.com/e6qu/intraktible/decision-engine/domain"
@@ -110,9 +111,19 @@ func (s *Service) nodeStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	httpx.JSON(w, http.StatusOK, aggregateNodeStats(graph, page.Records))
+}
+
+// aggregateNodeStats tallies node hits and the disposition distribution across a set
+// of completed-decision records, attributing hits to the nodes of the current
+// published graph. A record's node list may reference ids no longer in the graph
+// (graph evolved since the decision ran) — those are counted internally but only the
+// current graph's nodes are reported, so the per-node pct stays in [0,1]. Pure and
+// bounded by the record/graph sizes the caller already capped.
+func aggregateNodeStats(graph events.Graph, records []history.Record) nodeStatsResponse {
 	counts := make(map[string]int, len(graph.Nodes))
 	dispositions := map[string]int{"approve": 0, "decline": 0, "refer": 0}
-	for _, rec := range page.Records {
+	for _, rec := range records {
 		seen := make(map[string]bool, len(rec.Nodes))
 		for _, n := range rec.Nodes {
 			if seen[n.NodeID] {
@@ -126,17 +137,19 @@ func (s *Service) nodeStats(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	total := len(page.Records)
+	total := len(records)
 	nodes := make([]nodeStat, 0, len(graph.Nodes))
 	for _, n := range graph.Nodes {
 		c := counts[n.ID]
+		// A node can be hit at most once per record (deduped above), so c <= total and
+		// pct stays in [0,1]; total>0 guards the division.
 		var pct float64
 		if total > 0 {
 			pct = float64(c) / float64(total)
 		}
 		nodes = append(nodes, nodeStat{NodeID: n.ID, Type: n.Type, Count: c, Pct: pct})
 	}
-	httpx.JSON(w, http.StatusOK, nodeStatsResponse{Total: total, Dispositions: dispositions, Nodes: nodes})
+	return nodeStatsResponse{Total: total, Dispositions: dispositions, Nodes: nodes}
 }
 
 // dispositionRank orders dispositions by favorability (higher is more favorable),
@@ -235,7 +248,13 @@ func (s *Service) counterfactual(w http.ResponseWriter, r *http.Request) {
 
 	searched := 0
 	var flips []flip
+	// A field the graph recomputes (an assignment/scorecard/model target) is not a lever
+	// the applicant controls, so it must not be offered as a counterfactual.
+	derived := graphTargets(graph)
 	for _, field := range numericFields(data) {
+		if derived[field] {
+			continue
+		}
 		if searched >= cfMaxEvals {
 			break
 		}
@@ -272,6 +291,30 @@ func relChange(f flip) float64 {
 	return math.Abs(f.To-f.From) / denom
 }
 
+// roundCF rounds a counterfactual target for display + degenerate detection: whole
+// numbers for large magnitudes, two decimals otherwise.
+func roundCF(v float64) float64 {
+	if math.Abs(v) >= 100 {
+		return math.Round(v)
+	}
+	return math.Round(v*100) / 100
+}
+
+var cfTargetRe = regexp.MustCompile(`"(?:target|output)"\s*:\s*"([^"]*)"`)
+
+// graphTargets is the set of fields the graph assigns/derives (assignment/scorecard/model
+// outputs); they must not be counterfactual levers since the graph recomputes them
+// regardless of the supplied input.
+func graphTargets(graph events.Graph) map[string]bool {
+	out := map[string]bool{}
+	for _, n := range graph.Nodes {
+		for _, m := range cfTargetRe.FindAllStringSubmatch(string(n.Config), -1) {
+			out[m[1]] = true
+		}
+	}
+	return out
+}
+
 // searchFlip looks for the smallest single-field change to `field` that re-runs to
 // a strictly more favorable disposition than `original`. It binary-searches both
 // directions over [value/8 .. value*8] (with a small absolute floor so a near-zero
@@ -279,6 +322,11 @@ func relChange(f flip) float64 {
 // the number of evaluations used (bounded by budget).
 func (s *Service) searchFlip(ctx context.Context, id identity.Identity, slug string, graph events.Graph, data map[string]any, field string, original policy.Disposition, budget int) (*flip, int) {
 	val := data[field].(float64)
+	// A non-finite field value has no meaningful threshold to search toward and would
+	// poison the span/direction math (NaN comparisons, Inf±Inf), so it is not a lever.
+	if math.IsNaN(val) || math.IsInf(val, 0) {
+		return nil, 0
+	}
 	used := 0
 	eval := func(x float64) (policy.Disposition, bool) {
 		if used >= budget {
@@ -304,28 +352,42 @@ func (s *Service) searchFlip(ctx context.Context, id identity.Identity, slug str
 	originalRank := dispositionRank(original)
 	better := func(d policy.Disposition) bool { return dispositionRank(d) > originalRank }
 
-	floor := math.Abs(val) / 8
-	if floor < 1 {
-		floor = 1
+	// Bound the search to a sensible window — [val/4, val*4] for a positive field — so it
+	// never suggests a negative income, a zero denominator, or a wild change. hi stays
+	// finite for an extreme magnitude (val near MaxFloat64 would otherwise overflow).
+	var lo, hi float64
+	if val > 0 {
+		lo = val * 0.125
+		hi = val * 8
+	} else {
+		pad := math.Abs(val) * 8
+		if pad < 25 {
+			pad = 25
+		}
+		lo = math.Max(0, val-pad)
+		hi = val + pad
 	}
-	span := math.Abs(val) * 8
-	if span < floor*2 {
-		span = floor * 2
+	if hi > math.MaxFloat64/2 {
+		hi = math.MaxFloat64 / 2
 	}
 
-	up := boundFlip(eval, val, val+span, better)
-	down := boundFlip(eval, val, val-span, better)
+	up := boundFlip(eval, val, hi, better)
+	down := boundFlip(eval, val, lo, better)
 
 	best := closestFlip(val, up, down)
 	if best == nil {
 		return nil, used
 	}
+	to := roundCF(best.to)
+	if to == roundCF(val) { // boundary sits on the current value — not a useful lever
+		return nil, used
+	}
 	dir := "increase"
-	if best.to < val {
+	if to < val {
 		dir = "decrease"
 	}
 	return &flip{
-		Field: field, From: val, To: best.to, Direction: dir, Disposition: string(best.disp),
+		Field: field, From: val, To: to, Direction: dir, Disposition: string(best.disp),
 	}, used
 }
 
