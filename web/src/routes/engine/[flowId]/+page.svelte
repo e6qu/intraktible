@@ -92,7 +92,13 @@
   import FlowNode from '$lib/FlowNode.svelte';
   import BpmnNode from '$lib/BpmnNode.svelte';
   import LaneBand from '$lib/LaneBand.svelte';
-  import { nodeSummary, telemetrySummary, NODE_TYPES, type NodeType } from '$lib/nodevis';
+  import {
+    nodeSummary,
+    telemetrySummary,
+    nodeTypeLabel,
+    NODE_TYPES,
+    type NodeType
+  } from '$lib/nodevis';
   import {
     asText,
     asNum,
@@ -2414,10 +2420,16 @@
         <h2>Add node</h2>
         <div class="row">
           <select bind:value={newType} aria-label="new node type">
-            {#each NODE_TYPES as t (t)}<option value={t}>{t}</option>{/each}
+            {#each NODE_TYPES as t (t)}<option value={t}>{nodeTypeLabel(t)}</option>{/each}
           </select>
           <button onclick={addNode}>Add</button>
         </div>
+        {#if editNodes.length <= 1}
+          <p class="blank-hint">
+            New flow: pick a node (e.g. a <b>Scorecard</b> or <b>Decision table</b>) and <b>Add</b>
+            it, then connect it from <code>input</code> on the canvas. <b>Auto-layout</b> arranges them.
+          </p>
+        {/if}
 
         <h2>Nodes</h2>
         <ul class="nodes">
@@ -2451,7 +2463,7 @@
               onchange={(e) => updateSelected({ type: e.currentTarget.value as NodeType })}
               aria-label="selected node type"
             >
-              {#each NODE_TYPES as t (t)}<option value={t}>{t}</option>{/each}
+              {#each NODE_TYPES as t (t)}<option value={t}>{nodeTypeLabel(t)}</option>{/each}
             </select>
           </label>
           <label
@@ -2557,6 +2569,25 @@
                 aria-label="sla_days"
               /></label
             >
+            <label class="check"
+              ><input
+                type="checkbox"
+                checked={Boolean(nodeCfg().suspend)}
+                onchange={(e) => patchCfg({ suspend: e.currentTarget.checked })}
+                aria-label="suspend as a durable human task"
+              /> Suspend — pause the decision here until a reviewer acts (a durable human task; it resumes
+              from the decision's Resume control)</label
+            >
+            {#if nodeCfg().suspend}
+              <label
+                >output_key (where the reviewer's outcome is injected on resume) <input
+                  value={asText(nodeCfg().output_key)}
+                  oninput={(e) => patchCfg({ output_key: e.currentTarget.value })}
+                  placeholder="review"
+                  aria-label="output_key"
+                /></label
+              >
+            {/if}
           {:else if selected.type === 'output'}
             <label
               >fields (comma-separated; empty = whole context) <input
@@ -3527,6 +3558,26 @@
     gap: 0.25rem;
     font-size: 0.85rem;
     color: var(--fg-muted);
+  }
+  .check {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.4rem;
+    font-size: 0.82rem;
+    color: var(--fg-muted);
+  }
+  .check input {
+    width: auto;
+    margin-top: 0.15rem;
+    flex: none;
+  }
+  .blank-hint {
+    margin: 0.5rem 0 0.2rem;
+    padding: 0.5rem 0.7rem;
+    font-size: 0.82rem;
+    color: var(--fg-muted);
+    background: var(--surface-2);
+    border-radius: 0.4rem;
   }
   .pa-controls label {
     display: flex;

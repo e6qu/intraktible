@@ -33,6 +33,44 @@ export const NODE_TYPES: NodeType[] = [
   'output'
 ];
 
+// nodeTypeLabel is a human-readable label for the node-type pickers — the raw ids
+// (2d_matrix, manual_review, …) are opaque to a first-time author. Exhaustive: a new
+// node type fails the build here until it's labelled, like nodeSummary below.
+export function nodeTypeLabel(type: NodeType): string {
+  switch (type) {
+    case 'input':
+      return 'Input';
+    case 'assignment':
+      return 'Assignment — set fields';
+    case 'rule':
+      return 'Rule — if/then';
+    case 'split':
+      return 'Split — branch on a condition';
+    case 'scorecard':
+      return 'Scorecard — weighted score';
+    case 'decision_table':
+      return 'Decision table — DMN rules';
+    case '2d_matrix':
+      return '2D matrix — grid lookup';
+    case 'code':
+      return 'Code — Starlark';
+    case 'connect':
+      return 'Connect — external data';
+    case 'ai':
+      return 'AI — LLM agent';
+    case 'predict':
+      return 'Predict — ML model';
+    case 'reason':
+      return 'Reason — adverse-action codes';
+    case 'manual_review':
+      return 'Manual review — human task';
+    case 'output':
+      return 'Output — final result';
+    default:
+      return assertNever(type);
+  }
+}
+
 const NODE_TYPE_SET: ReadonlySet<string> = new Set<string>(NODE_TYPES);
 
 // isNodeType narrows an arbitrary string (a node being edited may carry a partial or
