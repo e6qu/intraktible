@@ -228,7 +228,9 @@
     margin: 1.25rem 0 0.6rem;
     border: 1px solid var(--border);
     border-radius: 0.5rem;
-    background: var(--surface-2);
+    /* --surface (not --surface-2): the accent-ink summary clears WCAG AA on it (the
+       tinted surface-2 left it at 4.44:1, a hair under). */
+    background: var(--surface);
   }
   .define-disclosure > summary {
     cursor: pointer;

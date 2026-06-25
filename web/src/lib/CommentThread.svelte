@@ -164,7 +164,7 @@
     padding: 0;
     font: inherit;
     font-size: 0.78rem;
-    color: var(--accent);
+    color: var(--accent-ink);
     cursor: pointer;
   }
   .reply {
@@ -210,7 +210,7 @@
     border: none;
     padding: 0;
     font: inherit;
-    color: var(--accent);
+    color: var(--accent-ink);
     cursor: pointer;
   }
   .err {

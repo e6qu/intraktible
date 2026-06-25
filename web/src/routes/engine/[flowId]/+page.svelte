@@ -3435,7 +3435,9 @@
   }
   button.primary {
     background: var(--accent);
-    color: var(--accent-fg, #fff);
+    /* --on-accent is the per-persona contrast-safe ink on the accent fill; --accent-fg
+       was never defined, so this fell back to white (2.15:1 on the builder's amber). */
+    color: var(--on-accent);
     border: 1px solid var(--accent);
     font-weight: 600;
   }
@@ -3612,6 +3614,15 @@
     min-height: 480px;
     border: 1px solid var(--border-strong);
     border-radius: 0.5rem;
+  }
+  /* svelte-flow paints edge labels on its default white background; in dark theme that
+     left the light-token label text near-invisible (1.22:1). Bind both to theme tokens
+     so branch conditions read in either theme. */
+  :global(.svelte-flow__edge-label) {
+    background: var(--surface);
+    color: var(--fg);
+    padding: 1px 5px;
+    border-radius: 4px;
   }
   .canvas-tools {
     position: absolute;

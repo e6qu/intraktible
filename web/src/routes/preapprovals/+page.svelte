@@ -466,6 +466,9 @@
     color: var(--accent);
   }
   button.link.danger {
+    /* A text-link variant — keep the transparent background so the .danger fill rule
+       (same specificity, later in source) can't win and paint red text on a red fill. */
+    background: none;
     color: var(--danger);
   }
   .revoke {

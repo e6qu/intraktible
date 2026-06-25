@@ -131,8 +131,8 @@ Spans: **Models** (`/models`), referenced from a flow's **predict** node.
 1. Define a model from a spec. Supported kinds: **logistic**, **GBM**, **expression**,
    or an **external** endpoint. Outcome: a model hosted as data, with an owner, ready
    to be called from a Predict node.
-2. Open the model and **capture a baseline**. Outcome: the current score distribution
-   is recorded as the reference for drift.
+2. Expand the model's **Drift** readout on the Models page and **capture a baseline**.
+   Outcome: the current score distribution is recorded as the reference for drift.
 3. Set a drift monitor: alert when **PSI** (Population Stability Index) exceeds a
    threshold. Outcome: the model's drift status shows the current PSI versus the
    baseline and whether the monitor is firing; the drift state surfaces on the model
