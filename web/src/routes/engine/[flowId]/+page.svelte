@@ -3121,7 +3121,11 @@
                 {/if}
               </div>
             {:else}
-              <p class="cov-clean">Full coverage — every node and branch was exercised.</p>
+              <p class="cov-clean">
+                {coverageReport.branches.length
+                  ? 'Full coverage — every node and branch was exercised.'
+                  : 'Every node was exercised — this flow has no branches to cover.'}
+              </p>
             {/if}
           </div>
         {/if}
