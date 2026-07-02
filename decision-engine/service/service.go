@@ -1030,7 +1030,12 @@ type decideResponse struct {
 	Status      string         `json:"status"`
 	Data        map[string]any `json:"data,omitempty"`
 	Disposition string         `json:"disposition,omitempty"`
-	Error       string         `json:"error,omitempty"`
+	// DispositionReason names what assigned the disposition (a policy band, or
+	// "pre-approval honored"); PreApprovalID links the grant when a decision was
+	// served from one — the caller-visible evidence that the flow never ran.
+	DispositionReason string `json:"disposition_reason,omitempty"`
+	PreApprovalID     string `json:"preapproval_id,omitempty"`
+	Error             string `json:"error,omitempty"`
 }
 
 // runDecide executes a published flow. A flow whose logic errors is a recorded
@@ -1181,7 +1186,8 @@ func (s *Service) runDecide(w http.ResponseWriter, r *http.Request) {
 	}
 	httpx.JSON(w, http.StatusOK, decideResponse{
 		DecisionID: result.DecisionID, Status: string(result.Status), Data: result.Output,
-		Disposition: string(result.Disposition), Error: result.Error,
+		Disposition: string(result.Disposition), DispositionReason: result.DispositionReason,
+		PreApprovalID: result.PreApprovalID, Error: result.Error,
 	})
 }
 

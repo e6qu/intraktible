@@ -60,7 +60,16 @@ describe('pre-approval honoring', () => {
       entity_id: 'APP-1001'
     });
     expect(res.status).toBe(200);
-    expect((res.body as { disposition: string }).disposition).toBe('approve');
+    const body = res.body as {
+      disposition: string;
+      disposition_reason: string;
+      preapproval_id: string;
+    };
+    expect(body.disposition).toBe('approve');
+    // The honored fast path mirrors the real decide response: the grant id plus the
+    // literal disposition_reason the backend uses.
+    expect(body.preapproval_id).toBe('pa_1');
+    expect(body.disposition_reason).toBe('pre-approval honored');
     expect(grant?.honored_count).toBe(before + 1);
     // a decision is recorded, referencing the grant
     expect(state.decisions.length).toBe(decisionsBefore + 1);
@@ -290,7 +299,7 @@ describe('admin-only surfaces gate on role', () => {
 
 describe('audit filter: resource and time bounds', () => {
   interface AuditBody {
-    entries: { time: string; stream: string }[];
+    entries: { time: string; stream: string; type: string; payload?: unknown }[];
     total: number;
   }
 
@@ -298,11 +307,14 @@ describe('audit filter: resource and time bounds', () => {
     setDemoUser(USERS[0].actor); // admin
     const created = handleDemo('POST', '/v1/flows', params(), { slug: 'audit-scope-flow' });
     const flowId = (created.body as { flow_id: string }).flow_id;
-    // By id: the demo's stream carries the resource id.
+    // By id: streams are keyed by name (decision.flows), the flow id lives in the payload.
     const byId = handleDemo('GET', '/v1/audit', new URLSearchParams({ resource: flowId }), {})
       .body as AuditBody;
     expect(byId.total).toBeGreaterThan(0);
-    for (const e of byId.entries) expect(e.stream).toBe(flowId);
+    for (const e of byId.entries) {
+      expect(e.stream).toBe('decision.flows');
+      expect(JSON.stringify(e.payload)).toContain(flowId);
+    }
     // By a payload value (the slug), matching the real payloadReferences semantics.
     const bySlug = handleDemo(
       'GET',
@@ -338,6 +350,87 @@ describe('audit filter: resource and time bounds', () => {
     expect(
       handleDemo('GET', '/v1/audit', new URLSearchParams({ since: 'not-a-time' }), {}).status
     ).toBe(400);
+  });
+});
+
+describe('audit log speaks the real event taxonomy', () => {
+  interface AuditBody {
+    entries: { stream: string; type: string; payload?: unknown }[];
+    total: number;
+  }
+
+  it('a decide journals started + one node_evaluated per trace node + completed on decision.runs', () => {
+    setDemoUser(USERS[0].actor); // admin — the audit endpoint gates on it
+    const res = handleDemo('POST', '/v1/flows/card-fraud/sandbox/decide', params(), {
+      data: { amount: 120 }
+    });
+    const decisionId = (res.body as { decision_id: string }).decision_id;
+    const decision = state.decisions.find((d) => d.decision_id === decisionId);
+    if (!decision) throw new Error('decision not recorded');
+    const trail = handleDemo('GET', '/v1/audit', new URLSearchParams({ resource: decisionId }), {})
+      .body as AuditBody;
+    for (const e of trail.entries) expect(e.stream).toBe('decision.runs');
+    const types = trail.entries.map((e) => e.type);
+    expect(types.filter((t) => t === 'decision.run.started')).toHaveLength(1);
+    expect(types.filter((t) => t === 'decision.run.completed')).toHaveLength(1);
+    expect(decision.nodes?.length).toBeGreaterThan(0);
+    expect(types.filter((t) => t === 'decision.run.node_evaluated')).toHaveLength(
+      decision.nodes?.length ?? 0
+    );
+  });
+
+  it('exclude_type=decision.run.node_evaluated actually removes rows (the Hide-node-steps toggle)', () => {
+    setDemoUser(USERS[0].actor);
+    const all = handleDemo('GET', '/v1/audit', params(), {}).body as AuditBody;
+    const hidden = handleDemo(
+      'GET',
+      '/v1/audit',
+      new URLSearchParams({ exclude_type: 'decision.run.node_evaluated' }),
+      {}
+    ).body as AuditBody;
+    expect(hidden.total).toBeLessThan(all.total);
+    expect(hidden.entries.some((e) => e.type === 'decision.run.node_evaluated')).toBe(false);
+  });
+
+  it('the seed already journals node steps for recent decisions (visible on first load)', () => {
+    setDemoUser(USERS[0].actor);
+    const trail = handleDemo('GET', '/v1/audit', new URLSearchParams({ resource: 'dec_1' }), {})
+      .body as AuditBody;
+    expect(trail.entries.some((e) => e.type === 'decision.run.node_evaluated')).toBe(true);
+    expect(trail.entries.some((e) => e.type === 'decision.run.started')).toBe(true);
+  });
+});
+
+describe('agent run summary carries computed AI cost', () => {
+  it('prices the seeded token usage like a deployment with INTRAKTIBLE_AI_PRICES set', () => {
+    const res = handleDemo('GET', '/v1/agent-runs/summary', params(), {});
+    const body = res.body as {
+      priced: boolean;
+      total_cost_usd: number;
+      cost_by_model: Record<string, number>;
+      by_model: Record<string, { prompt_tokens: number; completion_tokens: number }>;
+    };
+    expect(body.priced).toBe(true);
+    expect(body.total_cost_usd).toBeGreaterThan(0);
+    // Recompute from the summary's own token counts × the demo price table — the
+    // exact formula Pricing.Cost applies (USD per million tokens, input/output split).
+    const rates = new Map([
+      ['claude-sonnet', { input: 3, output: 15 }],
+      ['claude-haiku', { input: 0.8, output: 4 }]
+    ]);
+    let expected = 0;
+    for (const [model, usage] of Object.entries(body.by_model)) {
+      const rate = rates.get(model);
+      if (!rate) {
+        expect(new Map(Object.entries(body.cost_by_model)).has(model)).toBe(false);
+        continue;
+      }
+      const cost =
+        (usage.prompt_tokens / 1e6) * rate.input + (usage.completion_tokens / 1e6) * rate.output;
+      expect(new Map(Object.entries(body.cost_by_model)).get(model)).toBeCloseTo(cost, 10);
+      expected += cost;
+    }
+    expect(body.total_cost_usd).toBeCloseTo(expected, 10);
   });
 });
 

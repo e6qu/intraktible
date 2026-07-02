@@ -28,7 +28,17 @@ import type {
   Scope,
   MrmModel
 } from '$lib/api';
-import { state, nextId, driftReportFor, psi, ahead } from './store';
+import {
+  state,
+  nextId,
+  driftReportFor,
+  psi,
+  ahead,
+  pushAudit,
+  auditDecisionRun,
+  auditRunSteps,
+  auditRunEnd
+} from './store';
 import {
   decideFlow,
   runAssertionsFor,
@@ -136,19 +146,6 @@ function sameSchema(a: unknown, b: unknown): boolean {
   return normJson(a ?? null) === normJson(b ?? null);
 }
 
-function pushAudit(type: string, stream: string, payload?: unknown): void {
-  state.seq += 1;
-  state.audit.unshift({
-    seq: state.seq,
-    id: `aud_${state.seq}`,
-    time: new Date().toISOString(),
-    actor: state.identity.actor,
-    stream,
-    type,
-    payload
-  });
-}
-
 // --- Route table ----------------------------------------------------------------
 // Each entry is [method, RegExp over the pathname, handler]. The first match wins;
 // patterns capture path params as numbered groups.
@@ -226,7 +223,7 @@ route('POST', '/v1/flows', (_m, body) => {
     ],
     deployments: {}
   });
-  pushAudit('flow.created', flowId, { slug, name });
+  pushAudit('decision.flow.created', 'decision.flows', { flow_id: flowId, slug, name });
   return ok({ flow_id: flowId });
 });
 // importFlowDoc upserts one exported flow document, mirroring the real backend's
@@ -276,7 +273,11 @@ function importFlowDoc(doc: Body): FlowImportOutcome {
     };
     existing.versions.push(v);
     existing.latest = version;
-    pushAudit('flow.published', existing.flow_id, { version, imported: true });
+    pushAudit('decision.flow.version_published', 'decision.flows', {
+      flow_id: existing.flow_id,
+      version,
+      imported: true
+    });
     return {
       flow_id: existing.flow_id,
       slug,
@@ -304,7 +305,12 @@ function importFlowDoc(doc: Body): FlowImportOutcome {
     ],
     deployments: {}
   });
-  pushAudit('flow.created', flowId, { slug, name, imported: true });
+  pushAudit('decision.flow.created', 'decision.flows', {
+    flow_id: flowId,
+    slug,
+    name,
+    imported: true
+  });
   return { flow_id: flowId, slug, version: 1, etag: 'e1', created: true, published: true };
 }
 route('POST', '/v1/flows/import', (_m, body) => {
@@ -369,7 +375,10 @@ route('POST', '/v1/flows/:id/versions', (m, body) => {
   };
   flow.versions.push(v);
   flow.latest = version;
-  pushAudit('flow.published', flow.flow_id, { version });
+  pushAudit('decision.flow.version_published', 'decision.flows', {
+    flow_id: flow.flow_id,
+    version
+  });
   return ok({ version, etag: v.etag, published: true });
 });
 route('GET', '/v1/flows/:id/metrics', (m) => {
@@ -574,7 +583,11 @@ route('POST', '/v1/flows/:id/deployments', (m, body) => {
     body.challenger_version as number | undefined,
     body.challenger_pct as number | undefined
   );
-  pushAudit('deployment.created', flow.flow_id, { environment: env, version: body.version });
+  pushAudit('decision.flow.version_deployed', 'decision.flows', {
+    flow_id: flow.flow_id,
+    environment: env,
+    version: body.version
+  });
   return ok({});
 });
 route('POST', '/v1/flows/:id/deployments/rollback', (m, body) => {
@@ -587,7 +600,11 @@ route('POST', '/v1/flows/:id/deployments/rollback', (m, body) => {
   // fall back to current-1.
   const prev = dep.previous_version ?? Math.max(1, dep.version - 1);
   setDeployment(flow, env as Environment, prev);
-  pushAudit('deployment.rolledback', flow.flow_id, { environment: env, version: prev });
+  pushAudit('decision.flow.version_rolled_back', 'decision.flows', {
+    flow_id: flow.flow_id,
+    environment: env,
+    version: prev
+  });
   return ok({ version: prev });
 });
 route('POST', '/v1/flows/:id/deployments/schedule', (m, body) => {
@@ -767,7 +784,11 @@ route('POST', '/v1/flows/:id/deployment-requests/:rid/approve', (m, body) => {
   req.decided_at = new Date().toISOString();
   req.reason = String(body.reason ?? '');
   setDeployment(flow, req.environment, req.version, req.challenger_version, req.challenger_pct);
-  pushAudit('deployment.approved', flow.flow_id, { version: req.version });
+  pushAudit('decision.flow.deployment_approved', 'decision.flows', {
+    flow_id: flow.flow_id,
+    environment: req.environment,
+    version: req.version
+  });
   return ok({});
 });
 route('POST', '/v1/flows/:id/deployment-requests/:rid/reject', (m, body) => {
@@ -782,7 +803,11 @@ route('POST', '/v1/flows/:id/deployment-requests/:rid/reject', (m, body) => {
   req.decided_by = state.identity.actor;
   req.decided_at = new Date().toISOString();
   req.reason = String(body.reason ?? '');
-  pushAudit('deployment.rejected', flow.flow_id, { version: req.version });
+  pushAudit('decision.flow.deployment_rejected', 'decision.flows', {
+    flow_id: flow.flow_id,
+    environment: req.environment,
+    version: req.version
+  });
   return ok({});
 });
 route('POST', '/v1/flows/:id/backtest', (m, body) => {
@@ -845,6 +870,13 @@ function honorPreapproval(
   grant.updated_at = new Date().toISOString();
   const decisionId = nextId('dec');
   const now = new Date().toISOString();
+  // The grant's terms (limit/apr/…) ARE the decision output on honor — the grant form
+  // labels them exactly that. They used to be dropped (output = the input echo).
+  const output =
+    grant.terms && typeof grant.terms === 'object' ? { ...data, ...grant.terms } : data;
+  const reasonCodes = [
+    { code: 'PRE_APPROVED', description: `Served from pre-approval ${grant.preapproval_id}` }
+  ];
   const decision: Decision = {
     decision_id: decisionId,
     flow_id: flow.flow_id,
@@ -854,13 +886,10 @@ function honorPreapproval(
     variant: 'champion',
     status: 'completed',
     data,
-    // The grant's terms (limit/apr/…) ARE the decision output on honor — the grant form
-    // labels them exactly that. They used to be dropped (output = the input echo).
-    output: grant.terms && typeof grant.terms === 'object' ? { ...data, ...grant.terms } : data,
-    reason_codes: [
-      { code: 'PRE_APPROVED', description: `Served from pre-approval ${grant.preapproval_id}` }
-    ],
+    output,
+    reason_codes: reasonCodes,
     disposition: grant.disposition,
+    disposition_reason: 'pre-approval honored',
     preapproval_id: grant.preapproval_id,
     nodes: [],
     started_at: now,
@@ -868,14 +897,15 @@ function honorPreapproval(
     duration_ms: 1
   };
   state.decisions.unshift(decision);
-  pushAudit('decision.created', flow.flow_id, {
-    environment: env,
+  auditDecisionRun(decision);
+  return ok({
     decision_id: decisionId,
     status: 'completed',
+    data: { ...output, reason_codes: reasonCodes },
     disposition: grant.disposition,
+    disposition_reason: 'pre-approval honored',
     preapproval_id: grant.preapproval_id
   });
-  return ok({ decision_id: decisionId, status: 'completed', data, disposition: grant.disposition });
 }
 // inputTypeError validates a decide input against the flow version's input_schema, so a
 // wrong-typed field (a string where a number is expected) is rejected at the boundary
@@ -923,15 +953,8 @@ route('POST', '/v1/flows/:slug/:env/decide', (m, body) => {
   // incrementing its honored count, rather than walking the graph.
   const honored = honorPreapproval(flow, m[2] as Environment, body, data);
   if (honored) return honored;
+  // decideFlow journals the run (started / node steps / terminal) into the audit log.
   const { result } = decideFlow(flow, m[2] as Environment, data);
-  // Surface the run in the global audit trail so the build→decide→case→resolve
-  // journey actually shows up on the Audit page.
-  pushAudit('decision.created', flow.flow_id, {
-    environment: m[2],
-    decision_id: result.decision_id,
-    status: result.status,
-    disposition: result.disposition
-  });
   return ok(result);
 });
 route('POST', '/v1/flows/:slug/:env/decide/batch', (m, body) => {
@@ -960,6 +983,7 @@ route('POST', '/v1/flows/:slug/:env/decide/batch', (m, body) => {
       status: result.status,
       data: result.data,
       disposition: result.disposition,
+      disposition_reason: result.disposition_reason,
       error: result.error
     };
   });
@@ -1017,6 +1041,7 @@ route('POST', '/v1/flows/:slug/:env/preapprove/batch', (m, body) => {
         decision_id: result.decision_id,
         status: result.status as 'completed',
         disposition: result.disposition,
+        disposition_reason: result.disposition_reason,
         granted: true,
         preapproval_id: preapprovalId
       };
@@ -1028,6 +1053,7 @@ route('POST', '/v1/flows/:slug/:env/preapprove/batch', (m, body) => {
       decision_id: result.decision_id,
       status: result.status as 'completed',
       disposition: result.disposition,
+      disposition_reason: result.disposition_reason,
       granted: false
     };
   });
@@ -1057,6 +1083,9 @@ route('POST', '/v1/decisions/:id/resume', (m, body) => {
   const version = flow.versions.find((v) => v.version === d.version) ?? flow.versions.at(-1);
   const graph = version?.graph ?? { nodes: [], edges: [] };
   const outcome = ((body as Body).outcome as Record<string, unknown>) ?? {};
+  // The trace recorded at suspension ends at the manual-review node; everything the
+  // re-run walks beyond that point is the post-resume portion of the journal.
+  const stepsBeforeResume = (d.nodes ?? []).length;
   const run = runFlow(flow, graph, (d.data as Record<string, unknown>) ?? {}, { outcome });
   // The reviewer's decision is AUTHORITATIVE — it becomes the disposition. The re-run
   // re-derives the same machine outcome, so without this the three Resume buttons
@@ -1079,6 +1108,14 @@ route('POST', '/v1/decisions/:id/resume', (m, body) => {
   // Resolve the case the suspension opened.
   const c = state.cases.find((x) => x.source_decision_id === d.decision_id);
   if (c) c.status = 'completed';
+  // Journal the resumption like the real engine: resumed, then the node steps the
+  // re-run walked past the suspension point, then the terminal event.
+  pushAudit('decision.run.resumed', 'decision.runs', {
+    decision_id: d.decision_id,
+    flow_id: d.flow_id
+  });
+  auditRunSteps(d.decision_id, run.nodes.slice(stepsBeforeResume));
+  auditRunEnd(d);
   return ok({ decision_id: d.decision_id, status: d.status, disposition: d.disposition });
 });
 
@@ -1098,6 +1135,7 @@ route('POST', '/v1/cases/sla-sweep', () => {
       breached += 1;
       c.updated_at = now;
       c.audit.push({ type: 'case.sla_breached', actor: 'system', at: now });
+      pushAudit('cases.sla_breached', 'cases', { case_id: c.case_id });
     }
   }
   return ok({ count: breached });
@@ -1120,7 +1158,7 @@ route('POST', '/v1/cases', (_m, body) => {
     created_at: now,
     updated_at: now
   });
-  pushAudit('case.opened', caseId, { case_type: body.case_type });
+  pushAudit('cases.review_requested', 'cases', { case_id: caseId, case_type: body.case_type });
   return ok({ case_id: caseId });
 });
 route('GET', '/v1/cases/:id', (m) => {
@@ -1138,7 +1176,7 @@ route('POST', '/v1/cases/:id/assign', (m, body) => {
     at: c.updated_at,
     detail: c.assignee
   });
-  pushAudit('case.assigned', c.case_id, { assignee: c.assignee });
+  pushAudit('cases.assigned', 'cases', { case_id: c.case_id, assignee: c.assignee });
   return ok({});
 });
 const CASE_STATUSES = new Set<string>(['needs_review', 'in_progress', 'completed']);
@@ -1155,7 +1193,7 @@ route('POST', '/v1/cases/:id/status', (m, body) => {
     at: c.updated_at,
     detail: c.status
   });
-  pushAudit('case.status', c.case_id, { status: c.status });
+  pushAudit('cases.status_changed', 'cases', { case_id: c.case_id, status: c.status });
   return ok({});
 });
 route('POST', '/v1/cases/:id/notes', (m, body) => {
@@ -1165,7 +1203,7 @@ route('POST', '/v1/cases/:id/notes', (m, body) => {
   c.notes.push({ author: state.identity.actor, text: String(body.text ?? ''), at });
   c.audit.push({ type: 'case.note', actor: state.identity.actor, at });
   c.updated_at = at;
-  pushAudit('case.note', c.case_id, {});
+  pushAudit('cases.note_added', 'cases', { case_id: c.case_id });
   return ok({});
 });
 
@@ -1281,7 +1319,11 @@ route('POST', '/v1/agents/:name/runs/:rid/escalate', (m, body) => {
     created_at: now,
     updated_at: now
   });
-  pushAudit('case.opened', caseId, { from_agent: m[1], run: m[2] });
+  pushAudit('cases.review_requested', 'cases', {
+    case_id: caseId,
+    from_agent: m[1],
+    run_id: m[2]
+  });
   return ok({ case_id: caseId });
 });
 
@@ -1604,7 +1646,12 @@ route('POST', '/v1/api-keys', (_m, body) => {
     expires_at: body.expires_at ? String(body.expires_at) : undefined
   };
   state.apiKeys.push(key);
-  pushAudit('apikey.created', key.id, { name: key.name });
+  pushAudit('auth.managed_key.created', 'auth', {
+    key_id: key.id,
+    name: key.name,
+    role: key.role,
+    scope: key.scope
+  });
   return ok({ api_key: key, secret: `sk-demo-${Math.random().toString(36).slice(2, 18)}` });
 });
 route('POST', '/v1/api-keys/:id/rotate', (m, body) => {
@@ -1618,6 +1665,7 @@ route('POST', '/v1/api-keys/:id/rotate', (m, body) => {
   // note). It used to be dropped, so the grace note never appeared.
   const grace = Number((body as { grace_seconds?: unknown }).grace_seconds) || 3600;
   key.prev_hash_expires_at = new Date(now + grace * 1000).toISOString();
+  pushAudit('auth.managed_key.rotated', 'auth', { key_id: key.id, name: key.name });
   return ok({ api_key: key, secret: `sk-demo-${Math.random().toString(36).slice(2, 18)}` });
 });
 route('DELETE', '/v1/api-keys/:id', (m) => {
@@ -1625,6 +1673,7 @@ route('DELETE', '/v1/api-keys/:id', (m) => {
   const key = state.apiKeys.find((k) => k.id === decodeURIComponent(m[1]));
   if (!key) return notFound();
   key.revoked_at = new Date().toISOString();
+  pushAudit('auth.managed_key.revoked', 'auth', { key_id: key.id, name: key.name });
   return ok({ api_key: key });
 });
 
@@ -1834,25 +1883,10 @@ export function handleDemo(method: string, path: string, query: Query, body: Bod
     const m = path.match(r.re);
     if (m) return r.fn(m, body, query);
   }
-  return defaultFor(path);
-}
-
-// defaultFor returns a safe, caller-shaped default for an unmatched route so no
-// page hard-errors. Lists return their wrapped empty array; everything else {}.
-function defaultFor(path: string): DemoResponse {
-  const map = new Map<string, unknown>([
-    ['/v1/flows', { flows: [] }],
-    ['/v1/decisions', { decisions: [], total: 0, limit: 0, offset: 0 }],
-    ['/v1/cases', { cases: [] }],
-    ['/v1/agents', { agents: [] }],
-    ['/v1/models', { models: [] }],
-    ['/v1/policies', { policies: [] }],
-    ['/v1/preapprovals', { preapprovals: [] }],
-    ['/v1/webhooks', { webhooks: [] }],
-    ['/v1/notifications', { notifications: [] }]
-  ]);
-  const hit = map.get(path);
-  return ok(hit ?? {});
+  // An unmatched /v1 route is a demo COVERAGE BUG, not a state to paper over: a
+  // silent {} here previously made missing endpoints render as empty-but-working
+  // pages. Fail exactly like the real mux so the gap is visible and testable.
+  return { status: 404, body: { error: `demo backend has no route for ${method} ${path}` } };
 }
 
 // --- Computation helpers --------------------------------------------------------
@@ -1898,7 +1932,11 @@ function addRequest(
     requested_at: new Date().toISOString()
   });
   flow.deployment_requests = reqs;
-  pushAudit('deployment.requested', flow.flow_id, { environment, version });
+  pushAudit('decision.flow.deployment_requested', 'decision.flows', {
+    flow_id: flow.flow_id,
+    environment,
+    version
+  });
 }
 
 function flowMetrics(flow: Flow) {
@@ -1994,6 +2032,14 @@ function caseSummary(q: Query) {
   };
 }
 
+// The demo plays a deployment WITH INTRAKTIBLE_AI_PRICES configured: USD per million
+// tokens (input/output), applied exactly like the real Pricing.Cost — a model without
+// a price still reports usage but gets no cost row.
+const AI_PRICES = new Map<string, { inputPerMTok: number; outputPerMTok: number }>([
+  ['claude-sonnet', { inputPerMTok: 3, outputPerMTok: 15 }],
+  ['claude-haiku', { inputPerMTok: 0.8, outputPerMTok: 4 }]
+]);
+
 function runSummary() {
   const runs = state.agentRuns;
   const byAgent: Record<string, number> = {};
@@ -2020,6 +2066,19 @@ function runSummary() {
     mm.set(model, cur);
     Object.assign(byModel, Object.fromEntries(mm));
   }
+  const costByModel: Record<string, number> = {};
+  let totalCost = 0;
+  for (const [model, usage] of Object.entries(byModel)) {
+    const price = AI_PRICES.get(model);
+    if (!price) continue;
+    const cost =
+      (usage.prompt_tokens / 1e6) * price.inputPerMTok +
+      (usage.completion_tokens / 1e6) * price.outputPerMTok;
+    const cm = new Map(Object.entries(costByModel));
+    cm.set(model, cost);
+    Object.assign(costByModel, Object.fromEntries(cm));
+    totalCost += cost;
+  }
   return {
     total: runs.length,
     completed: runs.filter((r) => r.status === 'completed').length,
@@ -2028,8 +2087,9 @@ function runSummary() {
     prompt_tokens: promptTokens,
     completion_tokens: completionTokens,
     by_model: byModel,
-    priced: false,
-    total_cost_usd: 0
+    priced: true,
+    total_cost_usd: totalCost,
+    cost_by_model: costByModel
   };
 }
 
@@ -2103,10 +2163,9 @@ function filterAudit(q: Query): AuditEntry[] {
   if (actor) list = list.filter((e) => e.actor === actor);
   if (type) list = list.filter((e) => e.type === type);
   if (excludeType) list = list.filter((e) => e.type !== excludeType);
-  // The demo's stream field carries the resource id itself (the real backend keys
-  // streams by name and puts ids in the payload), so a stream match counts too.
-  if (resource)
-    list = list.filter((e) => e.stream === resource || payloadReferences(e.payload, resource));
+  // Streams are keyed by name and resource ids live in the payload (the real
+  // backend's model), so the resource filter matches payload string values.
+  if (resource) list = list.filter((e) => payloadReferences(e.payload, resource));
   // Inclusive RFC3339 time bounds, like the real backend's Since/Until (validated
   // at the route boundary, so Date.parse here is always finite).
   if (since) list = list.filter((e) => Date.parse(e.time) >= Date.parse(since));

@@ -188,10 +188,12 @@
     }
   }
 
-  // Push the selected status into the URL; afterNavigate below re-fetches.
+  // Push the selected status into the URL; afterNavigate below re-fetches. "All"
+  // serializes as an explicit empty param (?status=) — dropping the param entirely
+  // made the URL pristine again, so the persona-lens default instantly overrode the
+  // user's "all" and an operator could never see the whole queue.
   function pushURL() {
-    const status = statusFilter;
-    goto(status ? `?status=${status}` : get(page).url.pathname, {
+    goto(`?status=${statusFilter}`, {
       keepFocus: true,
       noScroll: true
     });
