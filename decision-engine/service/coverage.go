@@ -4,6 +4,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"hash/fnv"
 	"net/http"
@@ -114,19 +115,28 @@ func (s *Service) runCoverage(ctx context.Context, id identity.Identity, slug st
 		input := syntheticInput(fields, i)
 		run := domain.Execute(graph, input)
 		hit := make(map[string]bool, len(run.Results))
+		// A branching node records its chosen branch in its output — that, not
+		// "both endpoints ran", decides which edge was taken: in a converging
+		// topology the untaken branch's target usually executes anyway via the
+		// taken path, which would credit dead branches as covered.
+		chosen := make(map[string]string)
 		for _, res := range run.Results {
 			if !hit[res.NodeID] {
 				hit[res.NodeID] = true
 				nodeHits[res.NodeID]++
 			}
-		}
-		for _, e := range graph.Edges {
-			if e.Branch == "" {
-				continue
+			var out struct {
+				Branch string `json:"branch"`
 			}
-			// A branch is taken when both endpoints ran (the trace records every node
-			// that evaluated; an edge between two hit nodes is on the executed path).
-			if hit[e.From] && hit[e.To] {
+			if json.Unmarshal(res.Output, &out) == nil && out.Branch != "" {
+				chosen[res.NodeID] = out.Branch
+			}
+		}
+		// A branch edge is taken iff its source recorded choosing that branch —
+		// an unhit or non-branching source yields "" and matches nothing, so a
+		// mislabeled edge reads as dead instead of being credited by a heuristic.
+		for _, e := range graph.Edges {
+			if e.Branch != "" && chosen[e.From] == e.Branch {
 				branchHits[branchKey(e)]++
 			}
 		}

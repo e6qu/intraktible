@@ -4,6 +4,7 @@ package auth
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"time"
@@ -81,6 +82,7 @@ func (s *StoreSessions) IssueSSO(id identity.Identity, role Role, scope Scope) (
 }
 
 func (s *StoreSessions) issue(id identity.Identity, role Role, scope Scope, sso bool) (string, error) {
+	s.sweepExpired()
 	tok := newToken()
 	rec := storedSession{Identity: id, Role: role, Scope: scope, Expires: s.now().Add(s.ttl), SSO: sso}
 	if err := store.PutDoc(context.Background(), s.store, sessionCollection, hash(tok), rec); err != nil {
@@ -101,13 +103,51 @@ func (s *StoreSessions) Resolve(tok string) (identity.Identity, Role, Scope, boo
 		slog.Error("auth: resolve session failed", "err", err)
 		return identity.Identity{}, "", "", false
 	}
-	if !ok || s.now().After(rec.Expires) {
+	if !ok {
+		return identity.Identity{}, "", "", false
+	}
+	if s.now().After(rec.Expires) {
+		// Best-effort cleanup: an expired row can never resolve again, and only
+		// Revoke otherwise deletes rows — leaving it would grow the collection
+		// unboundedly. A delete failure only defers the cleanup to the next sweep.
+		if err := s.store.Delete(context.Background(), sessionCollection, hash(tok)); err != nil {
+			slog.Error("auth: delete expired session failed", "err", err)
+		}
 		return identity.Identity{}, "", "", false
 	}
 	if rec.SSO && s.validate != nil && !s.validate(rec.Identity) {
 		return identity.Identity{}, "", "", false
 	}
 	return rec.Identity, rec.Role, rec.Scope, true
+}
+
+// sweepExpired deletes expired session rows on each Issue, bounding the growth
+// of auth_sessions (an expired row is otherwise only removed if its exact token
+// is resolved or revoked). The store API offers no expiry index — only a full
+// collection list — so this scans every session per login; the accepted
+// tradeoff is that builder-UI sessions are low-volume and the sweep itself
+// keeps the collection near the live-session count. Failures are logged, not
+// returned: a login must not fail because cleanup did.
+func (s *StoreSessions) sweepExpired() {
+	ctx := context.Background()
+	recs, err := s.store.List(ctx, sessionCollection, "")
+	if err != nil {
+		slog.Error("auth: sweep expired sessions failed", "err", err)
+		return
+	}
+	now := s.now()
+	for _, r := range recs {
+		var rec storedSession
+		if err := json.Unmarshal(r.Doc, &rec); err != nil {
+			slog.Error("auth: corrupt session row", "err", err, "key", r.Key)
+			continue
+		}
+		if now.After(rec.Expires) {
+			if err := s.store.Delete(ctx, sessionCollection, r.Key); err != nil {
+				slog.Error("auth: sweep expired session failed", "err", err, "key", r.Key)
+			}
+		}
+	}
 }
 
 // Revoke invalidates a session token (logout); unknown tokens are a no-op.

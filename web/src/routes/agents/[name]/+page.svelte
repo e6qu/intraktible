@@ -275,6 +275,11 @@
     closeStream();
     streaming = false;
     streamText = '';
+    // Per-agent run output and eval report belong to the previous agent — reset
+    // them so sibling navigation doesn't show them under the new name.
+    lastResult = null;
+    lastRunID = '';
+    evalReport = null;
     void load();
   });
 

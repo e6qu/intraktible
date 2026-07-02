@@ -123,12 +123,5 @@ func (h *Handler) fold(ctx context.Context, id identity.Identity, policyID strin
 }
 
 func (h *Handler) append(ctx context.Context, id identity.Identity, typ string, payload any) (eventlog.Envelope, error) {
-	b, err := json.Marshal(payload)
-	if err != nil {
-		return eventlog.Envelope{}, fmt.Errorf("policy: marshal %s: %w", typ, err)
-	}
-	return h.log.Append(ctx, eventlog.Envelope{
-		Org: id.Org, Workspace: id.Workspace, Actor: id.Actor,
-		Stream: StreamPolicies, Type: typ, Time: h.now(), Payload: b,
-	})
+	return eventlog.AppendJSON(ctx, h.log, id.Org, id.Workspace, id.Actor, StreamPolicies, typ, h.now(), payload)
 }

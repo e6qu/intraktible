@@ -41,7 +41,7 @@ func TestPreviewReturnsResultRecordsNothing(t *testing.T) {
 	}
 
 	dh := command.NewDecideHandler(log, st)
-	res, err := dh.Preview(ctx, id, "escalate", "production", map[string]any{}, command.EntityRef{})
+	res, err := dh.Preview(ctx, id, "escalate", "sandbox", map[string]any{}, command.EntityRef{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,11 +98,11 @@ func TestPreviewAndDecideAgree(t *testing.T) {
 	dh := command.NewDecideHandler(log, st)
 	input := map[string]any{"fico": 680, "bonus": 40}
 
-	prev, err := dh.Preview(ctx, id, "scoring", "production", cloneMap(input), command.EntityRef{})
+	prev, err := dh.Preview(ctx, id, "scoring", "sandbox", cloneMap(input), command.EntityRef{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	live, err := dh.Decide(ctx, id, "scoring", "production", cloneMap(input), command.EntityRef{})
+	live, err := dh.Decide(ctx, id, "scoring", "sandbox", cloneMap(input), command.EntityRef{})
 	if err != nil {
 		t.Fatal(err)
 	}

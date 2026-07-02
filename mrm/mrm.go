@@ -268,6 +268,16 @@ func buildAgents(ctx context.Context, s store.Store, id identity.Identity, rep *
 			m.Owner = av.Versions[n-1].PublishedBy
 		}
 		m.Monitoring.Decisions = av.Runs
+		// Success is completed over terminal runs — an agent whose runs all
+		// completed must not read as 0% in the inventory.
+		runs, err := agents.ListRuns(ctx, s, id, av.Name)
+		if err != nil {
+			return err
+		}
+		sum := agents.SummarizeRuns(runs)
+		if terminal := sum.Completed + sum.Failed; terminal > 0 {
+			m.Monitoring.SuccessRate = float64(sum.Completed) / float64(terminal)
+		}
 		if ev, ok, _ := eval.Read(ctx, s, id, av.Name); ok && len(ev.Cases) > 0 {
 			m.Validation.HasEvalCases = true
 			m.Validation.EvalCases = len(ev.Cases)

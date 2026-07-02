@@ -73,7 +73,7 @@ func TestFeaturesDriveDecision(t *testing.T) {
 	// The composition-root wiring: the engine's feature provider IS the Context
 	// Layer's adapter over the shared store.
 	dh := enginecmd.NewDecideHandler(log, st, enginecmd.WithFeatures(features.Provider{Store: st}))
-	res, err := dh.Decide(ctx, id, "risk", "production", nil, enginecmd.EntityRef{Type: "customer", ID: "c1"})
+	res, err := dh.Decide(ctx, id, "risk", "sandbox", nil, enginecmd.EntityRef{Type: "customer", ID: "c1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +115,7 @@ func TestConnectorDrivesDecision(t *testing.T) {
 	}
 
 	dh := enginecmd.NewDecideHandler(log, st, enginecmd.WithConnectors(connectors.Provider{Store: st}))
-	res, err := dh.Decide(ctx, id, "screen", "production", map[string]any{"subject": "Acme Corp"}, enginecmd.EntityRef{})
+	res, err := dh.Decide(ctx, id, "screen", "sandbox", map[string]any{"subject": "Acme Corp"}, enginecmd.EntityRef{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,7 +178,7 @@ func TestAgentDrivesDecision(t *testing.T) {
 	}
 
 	dh := enginecmd.NewDecideHandler(log, st, enginecmd.WithAgents(agents.Provider{Store: st, Registry: reg}))
-	res, err := dh.Decide(ctx, id, "assess", "production", map[string]any{"q": "why flagged?"}, enginecmd.EntityRef{})
+	res, err := dh.Decide(ctx, id, "assess", "sandbox", map[string]any{"q": "why flagged?"}, enginecmd.EntityRef{})
 	if err != nil {
 		t.Fatal(err)
 	}

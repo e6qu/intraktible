@@ -38,7 +38,7 @@ test('a decision run shows in the history and its detail has the node trace', as
   // Decide (retry until the flow projection is live), capturing the decision id.
   let decisionId = '';
   await expect(async () => {
-    const r = await request.post(`/v1/flows/${slug}/production/decide`, {
+    const r = await request.post(`/v1/flows/${slug}/sandbox/decide`, {
       headers: { 'X-Api-Key': KEY },
       data: { data: {} }
     });
@@ -108,7 +108,7 @@ test('the decision trace surfaces the split branch it routed through', async ({
 
   let decisionId = '';
   await expect(async () => {
-    const r = await request.post(`/v1/flows/${slug}/production/decide`, {
+    const r = await request.post(`/v1/flows/${slug}/sandbox/decide`, {
       headers: { 'X-Api-Key': KEY },
       data: { data: { score: 800 } }
     });
@@ -169,7 +169,7 @@ test('a bound policy assigns a disposition shown on the decision detail', async 
   // Decide a high score; retry until both the flow and policy projections are live.
   let decisionId = '';
   await expect(async () => {
-    const r = await request.post(`/v1/flows/${slug}/production/decide`, {
+    const r = await request.post(`/v1/flows/${slug}/sandbox/decide`, {
       headers: H,
       data: { data: { score: 0.9 } }
     });
@@ -221,7 +221,7 @@ test('a reason node yields adverse-action reason codes on the decision detail', 
 
   let decisionId = '';
   await expect(async () => {
-    const r = await request.post(`/v1/flows/${slug}/production/decide`, {
+    const r = await request.post(`/v1/flows/${slug}/sandbox/decide`, {
       headers: { 'X-Api-Key': KEY },
       data: { data: { fico: 500, income: 50000 } }
     });
@@ -237,4 +237,65 @@ test('a reason node yields adverse-action reason codes on the decision detail', 
   await expect(reasons.locator('li')).toHaveCount(1);
   await expect(reasons).toContainText('R01');
   await expect(reasons).toContainText('Insufficient credit score');
+});
+
+test('Reload keeps the applied filter and long JSON stays contained on the detail', async ({
+  page,
+  request
+}) => {
+  const slug = uniqueSlug();
+  const created = await request.post('/v1/flows', {
+    headers: { 'X-Api-Key': KEY },
+    data: { slug, name: 'Pager Flow' }
+  });
+  const { flow_id } = await created.json();
+  await request.post(`/v1/flows/${flow_id}/versions`, {
+    headers: { 'X-Api-Key': KEY },
+    data: {
+      graph: {
+        nodes: [
+          { id: 'in', type: 'input' },
+          { id: 'out', type: 'output' }
+        ],
+        edges: [{ from: 'in', to: 'out' }]
+      }
+    }
+  });
+  // The input carries a long unbroken string — the exact shape that used to blow
+  // the detail page out to ~2700px wide.
+  let decisionId = '';
+  await expect(async () => {
+    const r = await request.post(`/v1/flows/${slug}/sandbox/decide`, {
+      headers: { 'X-Api-Key': KEY },
+      data: { data: { blob: 'x'.repeat(2500) } }
+    });
+    const body = await r.json();
+    expect(body.status).toBe('completed');
+    decisionId = body.decision_id;
+  }).toPass({ timeout: 5000 });
+
+  await page.goto('/decisions');
+  const row = page.locator('tr', { hasText: slug }).first();
+  await expect(row).toBeVisible();
+
+  // A draft (un-applied) filter must not leak into Reload — the row stays.
+  await page.getByLabel('filter by decision id substring').fill('zzz-no-such-decision');
+  await Promise.all([
+    page.waitForResponse((r) => r.url().includes('/v1/decisions')),
+    page.getByRole('button', { name: 'Reload' }).click()
+  ]);
+  await expect(row).toBeVisible();
+
+  // Apply does take effect (and resets to page one of the new filter).
+  await page.getByRole('button', { name: 'Apply' }).click();
+  await expect(row).toBeHidden();
+
+  // The detail page keeps the long JSON scrolling inside its panel — the page
+  // itself must not overflow the viewport horizontally.
+  await page.goto(`/decisions/${decisionId}`);
+  await expect(page.getByRole('heading', { name: slug })).toBeVisible();
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth - document.documentElement.clientWidth
+  );
+  expect(overflow).toBeLessThanOrEqual(0);
 });

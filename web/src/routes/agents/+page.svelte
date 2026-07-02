@@ -61,6 +61,11 @@
         schema?: unknown;
         tools?: string[];
       } = { name: name.trim() };
+      // A redefine silently replaces an existing agent's config on the backend —
+      // reject duplicates client-side (matching the demo router's behavior).
+      if (list.some((a) => a.name === body.name)) {
+        throw new Error(`an agent named "${body.name}" already exists`);
+      }
       if (provider.trim()) body.provider = provider.trim();
       if (model.trim()) body.model = model.trim();
       if (system.trim()) body.system = system.trim();

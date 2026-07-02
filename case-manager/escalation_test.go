@@ -55,7 +55,7 @@ func TestEscalationFromFlowOpensCase(t *testing.T) {
 	if err := projection.New(log, rm, decisionflows.Projector{}).Start(ctx); err != nil {
 		t.Fatal(err)
 	}
-	res, err := decisioncmd.NewDecideHandler(log, rm).Decide(ctx, id, "escalate", "production", map[string]any{"company": "Acme Corp"}, decisioncmd.EntityRef{})
+	res, err := decisioncmd.NewDecideHandler(log, rm).Decide(ctx, id, "escalate", "sandbox", map[string]any{"company": "Acme Corp"}, decisioncmd.EntityRef{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func TestEscalationLinksDecisionDefaultsSLAAndReasonCode(t *testing.T) {
 	if err := projection.New(log, rm, decisionflows.Projector{}).Start(ctx); err != nil {
 		t.Fatal(err)
 	}
-	res, err := decisioncmd.NewDecideHandler(log, rm).Decide(ctx, id, "escalate", "production", map[string]any{}, decisioncmd.EntityRef{})
+	res, err := decisioncmd.NewDecideHandler(log, rm).Decide(ctx, id, "escalate", "sandbox", map[string]any{}, decisioncmd.EntityRef{})
 	if err != nil {
 		t.Fatal(err)
 	}

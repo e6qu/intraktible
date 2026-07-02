@@ -42,7 +42,7 @@ func TestDecidePreResolvesConnectNode(t *testing.T) {
 
 	// score 80 >= 50 -> high.
 	dh := command.NewDecideHandler(log, st, command.WithConnectors(stubConnector{"bureau": `{"score":80}`}))
-	res, err := dh.Decide(ctx, id, "screen", "production", nil, command.EntityRef{})
+	res, err := dh.Decide(ctx, id, "screen", "sandbox", nil, command.EntityRef{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func decideFailsWithoutProvider(t *testing.T, slug string, graph events.Graph) {
 	st := store.NewMemory()
 	publishFlow(t, ctx, log, st, id, slug, slug, graph)
 
-	res, err := command.NewDecideHandler(log, st).Decide(ctx, id, slug, "production", nil, command.EntityRef{})
+	res, err := command.NewDecideHandler(log, st).Decide(ctx, id, slug, "sandbox", nil, command.EntityRef{})
 	if err != nil {
 		t.Fatal(err)
 	}

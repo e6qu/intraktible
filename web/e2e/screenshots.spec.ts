@@ -117,7 +117,7 @@ test.beforeAll(async ({ request }) => {
     }
   });
   await expect(async () => {
-    const r = await request.post(`/v1/flows/${simpleSlug}/production/decide`, {
+    const r = await request.post(`/v1/flows/${simpleSlug}/sandbox/decide`, {
       headers: { 'X-Api-Key': KEY },
       data: { data: {} }
     });

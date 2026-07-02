@@ -186,7 +186,10 @@
       queueMicrotask(() => inputEl?.focus());
       if ($user) void loadDynamic();
     } else {
-      dynamic = []; // drop the stale index so a reopen never flashes old/other-tenant entities
+      // Drop the stale index so a reopen never flashes old/other-tenant entities,
+      // and bump the token so an in-flight loadDynamic can't repopulate it.
+      loadSeq++;
+      dynamic = [];
       restoreFocusEl?.focus();
       restoreFocusEl = null;
     }

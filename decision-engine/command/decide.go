@@ -5,6 +5,8 @@ package command
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -253,6 +255,13 @@ func (h *DecideHandler) Decide(ctx context.Context, id identity.Identity, slug, 
 	if len(fv.Versions) == 0 {
 		return DecideResult{}, fmt.Errorf("%w: flow %q has no published version", ErrNotFound, slug)
 	}
+	// Outside the sandbox a decision only runs what change control made live: the
+	// latest-published fallback would let an un-deployed (production: un-reviewed)
+	// version decide real traffic. The sandbox keeps the fallback so a freshly
+	// published flow is immediately test-runnable.
+	if dep, deployed := fv.Deployments[env]; (!deployed || dep.Version == 0) && env != string(domain.EnvSandbox) {
+		return DecideResult{}, fmt.Errorf("%w: flow %q has no %s deployment — deploy a version there first", ErrNotFound, slug, env)
+	}
 	versionNo, variantKind := h.resolveVersion(fv, env)
 	variant := string(variantKind) // recorded on the wire as a plain string
 	version, ok := versionByNumber(fv, versionNo)
@@ -421,14 +430,27 @@ func (h *DecideHandler) ResumeDecision(ctx context.Context, id identity.Identity
 	if outcome == nil {
 		outcome = map[string]any{}
 	}
+	// The reviewer's outcome merges into the decision context, so it carries the
+	// same forgery surface as caller input: strip the engine-owned namespaces
+	// (features/connect/ai/predict) and the accumulated compliance trail.
+	stripReservedNamespaces(outcome)
+	delete(outcome, "reason_codes")
 	outcomeJSON, err := json.Marshal(outcome)
 	if err != nil {
 		return DecideResult{}, fmt.Errorf("decision-engine: marshal outcome: %w", err)
 	}
 	start := h.now()
-	if err := h.emit(ctx, id, events.TypeDecisionResumed, events.DecisionResumed{
+	// The resume claim is keyed on the exact suspension being resumed (decision id +
+	// suspend-state digest), so two concurrent resumes of one suspension contend and
+	// exactly one commits, while a later re-suspension (new state) resumes freely.
+	// The projection-status check above alone is TOCTOU: both racers can read
+	// "suspended" before either's events apply.
+	if err := h.emitUnique(ctx, id, events.TypeDecisionResumed, events.DecisionResumed{
 		DecisionID: decisionID, Actor: id.Actor, Outcome: outcomeJSON,
-	}); err != nil {
+	}, resumeClaim(decisionID, rec.SuspendState)); err != nil {
+		if errors.Is(err, eventlog.ErrConflict) {
+			return DecideResult{}, fmt.Errorf("decision-engine: decision %q is already being resumed", decisionID)
+		}
 		return DecideResult{}, err
 	}
 
@@ -455,6 +477,9 @@ func (h *DecideHandler) ResumeDecision(ctx context.Context, id identity.Identity
 		}); err != nil {
 			return DecideResult{}, err
 		}
+		if err := h.emitEscalations(ctx, id, decisionID, ref, rec.Data, run); err != nil {
+			return DecideResult{}, err
+		}
 		return DecideResult{DecisionID: decisionID, Status: domain.StatusFailed, Error: run.Err}, nil
 	case domain.StatusSuspended:
 		stateJSON, err := json.Marshal(run.Suspend)
@@ -467,7 +492,7 @@ func (h *DecideHandler) ResumeDecision(ctx context.Context, id identity.Identity
 		}); err != nil {
 			return DecideResult{}, err
 		}
-		if err := h.emitEscalations(ctx, id, decisionID, ref, nil, run); err != nil {
+		if err := h.emitEscalations(ctx, id, decisionID, ref, rec.Data, run); err != nil {
 			return DecideResult{}, err
 		}
 		return DecideResult{DecisionID: decisionID, Status: domain.StatusSuspended}, nil
@@ -492,11 +517,21 @@ func (h *DecideHandler) ResumeDecision(ctx context.Context, id identity.Identity
 		}); err != nil {
 			return DecideResult{}, err
 		}
+		if err := h.emitEscalations(ctx, id, decisionID, ref, rec.Data, run); err != nil {
+			return DecideResult{}, err
+		}
 		return DecideResult{
 			DecisionID: decisionID, Status: domain.StatusCompleted, Output: run.Output,
 			Disposition: disp.disposition, DispositionReason: disp.reason,
 		}, nil
 	}
+}
+
+// resumeClaim is the per-suspension unique key a resume's DecisionResumed event is
+// appended under: the suspend-state digest pins it to one specific suspension.
+func resumeClaim(decisionID string, state json.RawMessage) string {
+	sum := sha256.Sum256(state)
+	return "decision.resume\x00" + decisionID + "\x00" + hex.EncodeToString(sum[:8])
 }
 
 // prepare validates the caller's input against the version contract, strips the
@@ -899,6 +934,11 @@ func (h *DecideHandler) honorPreApproval(ctx context.Context, id identity.Identi
 	if err != nil || !ok {
 		return DecideResult{}, false, err
 	}
+	// A grant bound to a flow is honored only when that flow is the one deciding —
+	// a credit-line pre-approval must not short-circuit an unrelated fraud screen.
+	if pa.FlowSlug != "" && pa.FlowSlug != slug {
+		return DecideResult{}, false, nil
+	}
 	terms := map[string]any{}
 	if len(pa.Terms) > 0 {
 		if err := json.Unmarshal(pa.Terms, &terms); err != nil {
@@ -1008,6 +1048,26 @@ func versionByNumber(fv flows.FlowView, n int) (flows.VersionView, bool) {
 
 func (h *DecideHandler) emit(ctx context.Context, id identity.Identity, typ string, payload any) error {
 	return h.appendStream(ctx, id, events.StreamDecisions, typ, payload)
+}
+
+// emitUnique is emit with a tenant-global uniqueness claim (eventlog.Envelope.Unique):
+// a second append under the same key fails with eventlog.ErrConflict.
+func (h *DecideHandler) emitUnique(ctx context.Context, id identity.Identity, typ string, payload any, unique string) error {
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("decision-engine: marshal %s: %w", typ, err)
+	}
+	_, err = h.log.Append(ctx, eventlog.Envelope{
+		Org:       id.Org,
+		Workspace: id.Workspace,
+		Actor:     id.Actor,
+		Stream:    events.StreamDecisions,
+		Type:      typ,
+		Time:      h.now(),
+		Payload:   b,
+		Unique:    unique,
+	})
+	return err
 }
 
 // appendStream marshals and appends a payload to a named stream (decision events

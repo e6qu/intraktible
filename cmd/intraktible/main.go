@@ -397,28 +397,27 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 			slog.Info("agent-manager: re-enqueued interrupted runs", "count", n)
 		}
 	}
-	// Monitor scheduler: if INTRAKTIBLE_MONITOR_INTERVAL is set (e.g. "1m"), sweep
-	// monitors on that cadence and push firing-edge transitions to webhooks. Off by
-	// default — the /monitors/check endpoint is the on-demand alternative.
+	// Timed sweeps: if INTRAKTIBLE_MONITOR_INTERVAL is set (e.g. "1m"), every
+	// enabled scheduler sweeps on that shared cadence — monitor alerts, model
+	// drift, scheduled deploys, case SLAs. Off by default — the /monitors/check
+	// endpoint is the on-demand alternative. Each scheduler is gated only on its
+	// own module, so a split-services profile (e.g. --modules=case-manager) still
+	// runs its SLA sweeps without the decision-engine module.
+	var sweeps []timedSweeper
 	if monitorScheduler != nil {
-		if iv := os.Getenv("INTRAKTIBLE_MONITOR_INTERVAL"); iv != "" {
-			d, err := time.ParseDuration(iv)
-			if err != nil || d <= 0 {
-				return fmt.Errorf("INTRAKTIBLE_MONITOR_INTERVAL %q: must be a positive duration", iv)
-			}
-			go monitorScheduler.Run(ctx, d)
-			// Model-drift push and the deploy scheduler share the cadence: one
-			// interval drives all the timed sweeps.
-			if driftScheduler != nil {
-				go driftScheduler.Run(ctx, d)
-			}
-			if deployScheduler != nil {
-				go deployScheduler.Run(ctx, d)
-			}
-			if caseScheduler != nil {
-				go caseScheduler.Run(ctx, d)
-			}
-		}
+		sweeps = append(sweeps, monitorScheduler)
+	}
+	if driftScheduler != nil {
+		sweeps = append(sweeps, driftScheduler)
+	}
+	if deployScheduler != nil {
+		sweeps = append(sweeps, deployScheduler)
+	}
+	if caseScheduler != nil {
+		sweeps = append(sweeps, caseScheduler)
+	}
+	if err := startTimedSweeps(ctx, os.Getenv("INTRAKTIBLE_MONITOR_INTERVAL"), sweeps); err != nil {
+		return err
 	}
 
 	// The API contract (OpenAPI 3.1) + a reference page, served publicly so
@@ -506,6 +505,30 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 	shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	return srv.Shutdown(shutCtx)
+}
+
+// timedSweeper is the shared shape of the module schedulers (monitor, drift,
+// deploy, case SLA): a loop that sweeps on a fixed cadence until ctx is done.
+type timedSweeper interface {
+	Run(ctx context.Context, interval time.Duration)
+}
+
+// startTimedSweeps starts each scheduler on the interval given by
+// INTRAKTIBLE_MONITOR_INTERVAL (a no-op when unset). The schedulers start
+// independently of one another, so enabling only one module still gets its
+// timed sweeps.
+func startTimedSweeps(ctx context.Context, interval string, sweeps []timedSweeper) error {
+	if interval == "" {
+		return nil
+	}
+	d, err := time.ParseDuration(interval)
+	if err != nil || d <= 0 {
+		return fmt.Errorf("INTRAKTIBLE_MONITOR_INTERVAL %q: must be a positive duration", interval)
+	}
+	for _, s := range sweeps {
+		go s.Run(ctx, d)
+	}
+	return nil
 }
 
 // aiGuardrailsFromEnv reads the AI guardrail config: per-provider rate limit

@@ -78,13 +78,19 @@ sast:
 deadcode:
 	$(GO) run golang.org/x/tools/cmd/deadcode@latest -test $(GO_PKGS)
 
-## dupl: copy-paste detection (Go)
+## dupl: copy-paste detection (Go) — a real gate: any production clone fails
 # Threshold 90 (tokens): at 48 it flagged idiomatic minimal code — HTTP handler
 # preambles, sibling event-appliers, typed read-model delegators — as clones,
 # pushing toward harmful over-abstraction. 90 still catches substantial copy-paste
-# (golangci-lint's own dupl default is 150).
+# (golangci-lint's own dupl default is 150). Test files are excluded: e2e setup
+# preambles are idiomatic repetition, and gating them would push tests toward
+# indirection that hides what each case exercises.
 dupl:
-	$(GO) run github.com/mibk/dupl@latest -threshold 90 $(GO_DIRS)
+	@out=$$(find . -name '*.go' -not -name '*_test.go' -not -path './node_modules/*' -not -path './bin/*' \
+		| $(GO) run github.com/mibk/dupl@latest -threshold 90 -files); \
+	echo "$$out"; \
+	echo "$$out" | grep -q '^Found total 0 clone groups' \
+		|| { echo "dupl: production clones found — deduplicate (or consciously raise the threshold)"; exit 1; }
 
 ## vuln: known-vulnerability scan
 vuln:

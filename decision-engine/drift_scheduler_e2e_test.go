@@ -53,7 +53,7 @@ func TestDriftSchedulerPushesToWebhook(t *testing.T) {
 	// Three decisions at fico=700 (probability ≈ 0.62) form the baseline; three at
 	// fico=400 (probability ≈ 0.27) then shift the distribution well past threshold.
 	for i := 0; i < 3; i++ {
-		if _, err := dh.Decide(ctx, id, "score", "production", map[string]any{"fico": 700}, command.EntityRef{}); err != nil {
+		if _, err := dh.Decide(ctx, id, "score", "sandbox", map[string]any{"fico": 700}, command.EntityRef{}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -61,7 +61,7 @@ func TestDriftSchedulerPushesToWebhook(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := 0; i < 3; i++ {
-		if _, err := dh.Decide(ctx, id, "score", "production", map[string]any{"fico": 400}, command.EntityRef{}); err != nil {
+		if _, err := dh.Decide(ctx, id, "score", "sandbox", map[string]any{"fico": 400}, command.EntityRef{}); err != nil {
 			t.Fatal(err)
 		}
 	}

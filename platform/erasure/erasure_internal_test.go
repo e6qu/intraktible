@@ -6,7 +6,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -161,6 +163,47 @@ func TestSealFieldsNestedAndCaseInsensitive(t *testing.T) {
 	}
 	if m["contacts"].([]any)[0].(map[string]any)["email"] != "[erased]" {
 		t.Fatalf("array erase mismatch: %s", opened)
+	}
+}
+
+// TestVaultSealConcurrentFirstUse guards the first-use key creation race: many
+// concurrent first seals of one subject must agree on a single key, or the
+// losers' envelopes would be permanently undecryptable. Covers both the
+// mutex-serialized in-memory path and the transactional (SQLite) path.
+func TestVaultSealConcurrentFirstUse(t *testing.T) {
+	sqlite, err := store.NewSQLite(filepath.Join(t.TempDir(), "erasure.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = sqlite.Close() }()
+	backends := map[string]store.Store{"memory": store.NewMemory(), "sqlite": sqlite}
+	for name, st := range backends {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			v := NewVault(st)
+			id := identity.Identity{Org: "o", Workspace: "w", Actor: "admin"}
+			const n = 32
+			sealed := make([][]byte, n)
+			errs := make([]error, n)
+			var wg sync.WaitGroup
+			for i := 0; i < n; i++ {
+				wg.Add(1)
+				go func(i int) {
+					defer wg.Done()
+					sealed[i], errs[i] = v.Seal(ctx, id, "fresh", []byte("ada's pii"))
+				}(i)
+			}
+			wg.Wait()
+			for i := 0; i < n; i++ {
+				if errs[i] != nil {
+					t.Fatalf("seal %d: %v", i, errs[i])
+				}
+				plain, err := v.Open(ctx, id, "fresh", sealed[i])
+				if err != nil || string(plain) != "ada's pii" {
+					t.Fatalf("open envelope %d = %q err=%v — sealed under a losing key", i, plain, err)
+				}
+			}
+		})
 	}
 }
 

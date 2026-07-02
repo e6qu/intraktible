@@ -13,7 +13,12 @@ reimplementation of a commercial Agentic Decision Platform.
 **MVP roadmap complete — Phases 0–5 all DONE** (shared core, Decision Engine, Case Manager, Context
 Layer, Agent Manager, and Harden: replay/rollback tooling + split-services profile + a worked example).
 See a full end-to-end walkthrough in [docs/EXAMPLE.md](docs/EXAMPLE.md) (runnable: [examples/demo.sh](examples/demo.sh)).
-Post-MVP backlog is tracked in [BUGS.md](BUGS.md).
+Post-MVP backlog is tracked in [BUGS.md](BUGS.md). **Audit round 11 landed** (comprehensive code +
+architecture + live-UI review): pre-approval flow binding enforced, approve/reject + resume carry the
+environment-scope gate, decide refuses un-deployed versions outside the sandbox (the four-eyes bypass),
+resume hardened (namespace strip, single-shot claim, downstream escalations), erasure keygen race and
+WAL fsync divergence closed, and a swept set of frontend stale-state/pager/demo-faithfulness fixes —
+see the R11 block in BUGS.md. The `dupl` gate now actually fails on production clones.
 Roadmap & exit criteria: [PLAN.md §8](PLAN.md#8-phased-roadmap); deferrals tracked in [BUGS.md](BUGS.md).
 Working today: `platform/{eventlog,store,projection,identity,auth,httpx,ai,web,mo}` (`mo` = the
 `Option[T]`/`Result[T]` types used instead of none/null sentinels where they're easy to mishandle;
@@ -184,4 +189,5 @@ store contract, and the items deliberately left undone so they aren't "finished"
 
 ## Git / identity (this repo)
 Author **Adrian Mârza**, committer email `2966430+e6qu@users.noreply.github.com`, pushes use the
-**e6qu** SSH key (`core.sshCommand` is pinned to `~/.ssh/id_ed25519_e6qu`). No remote set yet.
+**e6qu** SSH key (`core.sshCommand` is pinned to `~/.ssh/id_ed25519_e6qu`). Remote: `origin`
+→ github.com/e6qu/intraktible; work lands via PRs to `main` (one open PR at a time).

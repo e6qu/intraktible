@@ -3,6 +3,7 @@
      kept as a live, minimal demo of the backbone. Moved off the landing page so
      the home view can be a real, persona-aware dashboard. -->
 <script lang="ts">
+  import { onMount } from 'svelte';
   import Icon from '$lib/Icon.svelte';
   import { getStats, sayHello } from '$lib/api';
   import { appHref } from '$lib/paths';
@@ -10,7 +11,7 @@
   // API calls authenticate via the session cookie (empty key → no X-Api-Key).
   const key = '';
   let name = $state('world');
-  let out = $state('stats will appear here…');
+  let out = $state('loading stats…');
 
   async function stats() {
     try {
@@ -28,6 +29,7 @@
       out = `Error: ${err instanceof Error ? err.message : String(err)}`;
     }
   }
+  onMount(stats);
 </script>
 
 <main>

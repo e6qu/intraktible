@@ -56,3 +56,11 @@ test('an unauthenticated request surfaces an error, not silent success', async (
   await expect(output).toContainText('401');
   await expect(output).not.toContainText('"count"');
 });
+
+test('stats load on page open without a click', async ({ page }) => {
+  await signIn(page);
+  await page.goto('/hello');
+  // No Refresh click: the page fetches stats on mount instead of sitting on a
+  // "stats will appear here…" placeholder.
+  await expect(page.locator('pre')).toContainText('"count"');
+});

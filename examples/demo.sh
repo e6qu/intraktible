@@ -57,7 +57,7 @@ GRAPH='{"graph":{"nodes":[
 curl "${H[@]}" -d "$GRAPH" "$BASE/v1/flows/$FID/versions" >/dev/null
 sleep 0.3
 echo "decide for subject 'Acme Corp' (bureau risk_score >= 50 -> manual review):"
-curl "${H[@]}" -d '{"data":{"subject":"Acme Corp"}}' "$BASE/v1/flows/onboard/production/decide"; echo
+curl "${H[@]}" -d '{"data":{"subject":"Acme Corp"}}' "$BASE/v1/flows/onboard/sandbox/decide"; echo
 
 say "Case Manager — the decision's manual_review node opened a case"
 sleep 0.3

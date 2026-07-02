@@ -99,3 +99,30 @@ test('configures PII masking fields (admin)', async ({ page }) => {
   await page.getByTestId('masking-config').getByText('PII masking').click();
   await expect(page.getByTestId('masking-config').getByLabel('masked fields')).toHaveValue(/ssn/);
 });
+
+test('Reload fetches the applied filter, not draft inputs', async ({ page, request }) => {
+  // Ensure at least one event exists (creating a flow appends one).
+  const created = await request.post('/v1/flows', {
+    headers: { 'X-Api-Key': KEY },
+    data: { slug: uniqueSlug(), name: 'Audit Draft' }
+  });
+  expect(created.ok()).toBeTruthy();
+
+  await page.goto('/audit');
+  const rows = page.locator('tbody tr');
+  const flowRow = rows.filter({ hasText: 'decision.flow.created' }).first();
+  await expect(flowRow).toBeVisible();
+
+  // Edit a filter input WITHOUT applying it — Reload must keep showing the
+  // applied (URL) filter's rows, which are what the CSV export covers.
+  await page.getByLabel('actor filter').fill('actor-that-matches-nothing');
+  await Promise.all([
+    page.waitForResponse((r) => r.url().includes('/v1/audit')),
+    page.getByRole('button', { name: 'Reload' }).click()
+  ]);
+  await expect(flowRow).toBeVisible();
+
+  // Apply does take effect.
+  await page.getByRole('button', { name: 'Apply' }).click();
+  await expect(page.getByText('No matching audit events')).toBeVisible();
+});

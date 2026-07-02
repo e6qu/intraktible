@@ -69,6 +69,115 @@ func TestWALRecoversTornFinalWrite(t *testing.T) {
 	}
 }
 
+// faultFile wraps the WAL's file to inject failures at the durability boundary.
+type faultFile struct {
+	walFile
+	syncErr     error
+	truncateErr error
+}
+
+func (f *faultFile) Sync() error {
+	if f.syncErr != nil {
+		return f.syncErr
+	}
+	return f.walFile.Sync()
+}
+
+func (f *faultFile) Truncate(size int64) error {
+	if f.truncateErr != nil {
+		return f.truncateErr
+	}
+	return f.walFile.Truncate(size)
+}
+
+// TestWALAppendFsyncFailureLeavesNoGhost guards the fsync-failure invariant: a
+// record whose Append the caller saw fail must not linger in the file — it would
+// mis-index the next successful append (all later reads "corrupt record") and
+// replay as a ghost after reopen.
+func TestWALAppendFsyncFailureLeavesNoGhost(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	w, err := OpenWAL(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Append(ctx, Envelope{Org: "o", Workspace: "w", Type: "a"}); err != nil {
+		t.Fatal(err)
+	}
+	ff := &faultFile{walFile: w.f, syncErr: errors.New("injected fsync failure")}
+	w.f = ff
+	if _, err := w.Append(ctx, Envelope{Org: "o", Workspace: "w", Type: "ghost"}); err == nil {
+		t.Fatal("append must fail when fsync fails")
+	}
+	if w.Head() != 1 {
+		t.Fatalf("head after failed append = %d, want 1", w.Head())
+	}
+
+	ff.syncErr = nil
+	e, err := w.Append(ctx, Envelope{Org: "o", Workspace: "w", Type: "b"})
+	if err != nil {
+		t.Fatalf("append after recovered fsync: %v", err)
+	}
+	if e.Seq != 2 {
+		t.Fatalf("seq after recovered append = %d, want 2", e.Seq)
+	}
+	evs, err := w.Read(ctx, 0)
+	if err != nil {
+		t.Fatalf("read after recovered append: %v", err)
+	}
+	if len(evs) != 2 || evs[0].Type != "a" || evs[1].Type != "b" {
+		t.Fatalf("after recovered append: %+v", evs)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Reopen: the ghost must not replay.
+	w2, err := OpenWAL(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = w2.Close() }()
+	if w2.Head() != 2 {
+		t.Fatalf("head after reopen = %d, want 2", w2.Head())
+	}
+	evs, err = w2.Read(ctx, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evs) != 2 || evs[0].Type != "a" || evs[1].Type != "b" {
+		t.Fatalf("after reopen: %+v", evs)
+	}
+}
+
+// TestWALPoisonedWhenRollbackFails: if the post-failure rollback itself fails,
+// the file still holds unacknowledged bytes, so further appends must fail loudly
+// (until a reopen re-indexes) instead of writing after the ghost.
+func TestWALPoisonedWhenRollbackFails(t *testing.T) {
+	ctx := context.Background()
+	w, err := OpenWAL(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = w.Close() }()
+	ff := &faultFile{
+		walFile:     w.f,
+		syncErr:     errors.New("injected fsync failure"),
+		truncateErr: errors.New("injected truncate failure"),
+	}
+	w.f = ff
+	if _, err := w.Append(ctx, Envelope{Org: "o", Workspace: "w", Type: "a"}); err == nil {
+		t.Fatal("append must fail when fsync fails")
+	}
+	ff.syncErr, ff.truncateErr = nil, nil
+	if _, err := w.Append(ctx, Envelope{Org: "o", Workspace: "w", Type: "b"}); err == nil {
+		t.Fatal("append after a failed rollback must stay failed until reopen")
+	}
+	if w.Head() != 0 {
+		t.Fatalf("head = %d, want 0", w.Head())
+	}
+}
+
 // TestWALFailsOnMidFileCorruption confirms a corrupt complete record (not a torn
 // tail) still fails loudly rather than being silently skipped. Records are now
 // validated lazily, so the failure surfaces on Read — which the projection

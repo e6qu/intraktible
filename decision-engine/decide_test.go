@@ -37,7 +37,7 @@ func TestDecideAndHistoryReplay(t *testing.T) {
 	publishDecisionFlow(t, ctx, log, st, id)
 
 	dh := command.NewDecideHandler(log, st)
-	res, err := dh.Decide(ctx, id, "scoring", "production", map[string]any{"fico": 680, "bonus": 40}, command.EntityRef{})
+	res, err := dh.Decide(ctx, id, "scoring", "sandbox", map[string]any{"fico": 680, "bonus": 40}, command.EntityRef{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func TestDecideStripsReservedNamespaces(t *testing.T) {
 	publishDecisionFlow(t, ctx, log, st, id)
 
 	dh := command.NewDecideHandler(log, st)
-	res, err := dh.Decide(ctx, id, "scoring", "production", map[string]any{
+	res, err := dh.Decide(ctx, id, "scoring", "sandbox", map[string]any{
 		"fico": 680, "bonus": 40,
 		"features": map[string]any{"x": 999}, // forged engine namespaces
 		"predict":  map[string]any{"y": map[string]any{"score": 1}},

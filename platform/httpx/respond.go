@@ -145,6 +145,23 @@ func Emit(w http.ResponseWriter, r *http.Request, req any, run func(identity.Ide
 	JSON(w, http.StatusAccepted, map[string]any{"event_id": e.ID, "seq": e.Seq})
 }
 
+// Act is the shared path-parameterized write shape: authenticate, run the
+// command, and respond 200 with the resulting event id + seq (400 on a command
+// error). The body-less sibling of Emit, for deletes/revokes/acks addressed
+// entirely by path parameters.
+func Act(w http.ResponseWriter, r *http.Request, run func(identity.Identity) (eventlog.Envelope, error)) {
+	id, ok := Caller(w, r)
+	if !ok {
+		return
+	}
+	e, err := run(id)
+	if err != nil {
+		Error(w, http.StatusBadRequest, err)
+		return
+	}
+	JSON(w, http.StatusOK, map[string]any{"event_id": e.ID, "seq": e.Seq})
+}
+
 // Download writes body as a file attachment with the given content type and
 // filename — the shared writer for the diagram-export and audit-export endpoints.
 func Download(w http.ResponseWriter, contentType, filename, body string) {

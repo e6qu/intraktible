@@ -6,7 +6,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/url"
@@ -72,12 +71,5 @@ func (h *Handler) Unsubscribe(ctx context.Context, id identity.Identity, webhook
 }
 
 func (h *Handler) append(ctx context.Context, id identity.Identity, typ string, payload any) (eventlog.Envelope, error) {
-	b, err := json.Marshal(payload)
-	if err != nil {
-		return eventlog.Envelope{}, fmt.Errorf("notify: marshal %s: %w", typ, err)
-	}
-	return h.log.Append(ctx, eventlog.Envelope{
-		Org: id.Org, Workspace: id.Workspace, Actor: id.Actor,
-		Stream: StreamWebhooks, Type: typ, Time: h.now(), Payload: b,
-	})
+	return eventlog.AppendJSON(ctx, h.log, id.Org, id.Workspace, id.Actor, StreamWebhooks, typ, h.now(), payload)
 }

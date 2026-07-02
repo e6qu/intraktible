@@ -48,18 +48,50 @@
       void goto(href);
     }
   }
-  // Escape closes the dropdown and returns focus to the bell, matching the persona
-  // menu — a keyboard/screen-reader user isn't trapped in an open <details>.
+  // Escape closes the dropdown and returns focus to the bell (a window listener,
+  // so it works while focus is still on the summary), and arrow keys rove focus
+  // across the items — the ARIA menu pattern the persona menu uses. The handler
+  // acts only while the dropdown is open and the event originates inside it.
   function onKeydown(e: KeyboardEvent) {
-    if (e.key === 'Escape' && el?.open) {
+    if (!el?.open || !el.contains(e.target as Node)) return;
+    if (e.key === 'Escape') {
+      e.preventDefault();
       el.open = false;
       summaryEl?.focus();
+      return;
+    }
+    const opts = Array.from(el.querySelectorAll<HTMLButtonElement>('.item'));
+    if (opts.length === 0) return;
+    const i = opts.indexOf(document.activeElement as HTMLButtonElement);
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      opts[(i + 1) % opts.length]?.focus();
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      (i <= 0 ? opts.at(-1) : opts[i - 1])?.focus();
+    } else if (e.key === 'Home') {
+      e.preventDefault();
+      opts[0]?.focus();
+    } else if (e.key === 'End') {
+      e.preventDefault();
+      opts.at(-1)?.focus();
     }
   }
   let el = $state<HTMLDetailsElement | null>(null);
   let summaryEl = $state<HTMLElement | null>(null);
+  // Close on an outside click (details has no native dismiss), matching the
+  // persona menu in +layout.
+  $effect(() => {
+    function onDocClick(e: MouseEvent): void {
+      if (el?.open && !el.contains(e.target as Node)) el.open = false;
+    }
+    document.addEventListener('click', onDocClick);
+    return () => document.removeEventListener('click', onDocClick);
+  });
   onMount(load);
 </script>
+
+<svelte:window onkeydown={onKeydown} />
 
 <details
   bind:this={el}
@@ -69,20 +101,23 @@
 >
   <summary
     bind:this={summaryEl}
+    aria-haspopup="menu"
     aria-label={`Notifications${unread ? ` (${unread} unread)` : ''}`}
     title="Notifications"
   >
     <Icon name="bell" size={16} />
     {#if unread > 0}<span class="badge" data-testid="notif-badge">{unread}</span>{/if}
   </summary>
-  <div class="panel" role="menu" tabindex="-1" onkeydown={onKeydown}>
+  <div class="panel" role="menu" tabindex="-1">
     <p class="head">Notifications</p>
     {#if items.length === 0}
       <p class="empty">You're all caught up.</p>
     {:else}
-      <ul>
+      <!-- role="none" strips the list semantics so the menu's accessibility tree
+           goes straight menu → menuitem, as the ARIA menu pattern requires. -->
+      <ul role="none">
         {#each items as n (n.notification_id)}
-          <li>
+          <li role="none">
             <button class="item" class:unread={!n.read} role="menuitem" onclick={() => open(n)}>
               <span class="meta">
                 {#if n.kind === 'task'}<b>Review task</b>

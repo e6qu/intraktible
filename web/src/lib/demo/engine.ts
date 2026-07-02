@@ -387,13 +387,36 @@ function findNode(graph: FlowGraph, id: string): GraphNode | undefined {
   return graph.nodes.find((n) => n.id === id);
 }
 
-// pickVersion resolves the graph for a flow in an environment (deployed version,
-// else latest), and the version number used for the recorded decision.
-export function pickVersion(flow: Flow, env: string): { graph: FlowGraph; version: number } {
-  const deployed = Object.entries(flow.deployments ?? {}).find(([e]) => e === env)?.[1]?.version;
+// pickVersion resolves the graph for a flow in an environment (the deployed champion —
+// or, for the challenger variant, the deployed challenger version — else latest), and
+// the version number used for the recorded decision.
+export function pickVersion(
+  flow: Flow,
+  env: string,
+  variant: 'champion' | 'challenger' = 'champion'
+): { graph: FlowGraph; version: number } {
+  const dep = Object.entries(flow.deployments ?? {}).find(([e]) => e === env)?.[1];
+  const deployed =
+    variant === 'challenger' && dep?.challenger_version ? dep.challenger_version : dep?.version;
   const version = deployed ?? flow.latest;
   const v = flow.versions.find((x) => x.version === version) ?? flow.versions.at(-1);
   return { graph: v?.graph ?? { nodes: [], edges: [] }, version: v?.version ?? 1 };
+}
+
+// The A/B routing draw in [0,100), mirroring the real engine's rollPercent. Tests pin
+// it via setRollPercent so champion/challenger routing is deterministic.
+const defaultRoll = (): number => Math.floor(Math.random() * 100);
+let roll = defaultRoll;
+export function setRollPercent(fn: (() => number) | null): void {
+  roll = fn ?? defaultRoll;
+}
+
+// resolveVariant mirrors the real engine's resolveVersion draw: when the environment's
+// deployment carries a challenger, challenger_pct percent of traffic runs it; everything
+// else runs the champion.
+export function resolveVariant(flow: Flow, env: string): 'champion' | 'challenger' {
+  const dep = Object.entries(flow.deployments ?? {}).find(([e]) => e === env)?.[1];
+  return dep?.challenger_version && roll() < (dep.challenger_pct ?? 0) ? 'challenger' : 'champion';
 }
 
 export interface DecideOptions {
@@ -684,8 +707,25 @@ export function runFlow(
         suspend: { node_id: node.id }
       };
     }
-    if (node.type === 'output' || !nextId) break;
+    if (node.type === 'output' || !nextId) {
+      current = undefined;
+      break;
+    }
     current = findNode(graph, nextId);
+  }
+
+  // The step bound is a defensive backstop (the real engine fails with "execution
+  // exceeded the node bound"): exhausting it with a node still pending is a cycle,
+  // not a completed decision.
+  if (current) {
+    return {
+      status: 'failed',
+      data: rec,
+      output: {},
+      reasonCodes,
+      nodes,
+      error: `exceeded step bound (cycle?) at "${current.id}"`
+    };
   }
 
   // Bind the flow's policy (by flow_slug) to derive a disposition over the output.
@@ -724,7 +764,11 @@ export function decideFlow(
   input: Record<string, unknown>,
   opts: DecideOptions = {}
 ): { result: DecideResult; decision?: Decision } {
-  const { graph, version } = pickVersion(flow, env);
+  // A/B routing: a deployed challenger receives challenger_pct percent of the
+  // environment's traffic (the real engine's resolveVersion) unless the caller
+  // forces a variant.
+  const variant = opts.variant ?? resolveVariant(flow, env);
+  const { graph, version } = pickVersion(flow, env, variant);
   const startedAt = new Date().toISOString();
   const run = runFlow(flow, graph, input);
   const decisionId = nextId('dec');
@@ -747,7 +791,7 @@ export function decideFlow(
     slug: flow.slug,
     version,
     environment: env,
-    variant: opts.variant ?? 'champion',
+    variant,
     status: run.status,
     data: run.data,
     output: run.output,

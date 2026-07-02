@@ -71,9 +71,21 @@ func TestVersionPinningAndABRouting(t *testing.T) {
 		}
 	}
 
-	// No deployment -> falls back to the latest published version (v2).
-	if got := decide(readModel(), 50); got != "v2" {
-		t.Fatalf("no deployment: got %q, want v2 (latest)", got)
+	// No deployment -> production refuses to decide (no latest-published fallback
+	// outside the sandbox; an un-deployed version must never take real traffic).
+	{
+		dh := command.NewDecideHandler(log, readModel())
+		if _, err := dh.Decide(ctx, id, "router", "production", nil, command.EntityRef{}); err == nil {
+			t.Fatal("expected decide without a production deployment to be refused")
+		}
+	}
+	// The sandbox keeps the fallback: a freshly published flow is test-runnable there.
+	{
+		dh := command.NewDecideHandler(log, readModel())
+		res, err := dh.Decide(ctx, id, "router", "sandbox", nil, command.EntityRef{})
+		if err != nil || res.Output["decision"] != "v2" {
+			t.Fatalf("sandbox fallback: got %v err=%v, want v2 (latest)", res.Output, err)
+		}
 	}
 
 	// Pin production to v1 even though v2 is the latest.

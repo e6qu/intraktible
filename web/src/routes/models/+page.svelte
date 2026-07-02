@@ -75,7 +75,11 @@
   }
   // Fetch every model's all-time drift status concurrently; a single failure must
   // not blank the table, so each is settled independently and only successes land.
+  // A token drops an older sweep entirely, and successes merge per model, so a
+  // slow sweep can't clobber newer statuses (e.g. the per-row loadDrift updates).
+  let driftStatusSeq = 0;
   async function loadDriftStatuses(ms: Model[]) {
+    const seq = ++driftStatusSeq;
     const settled = await Promise.allSettled(
       ms.map(
         async (m): Promise<[string, DriftStatus]> => [
@@ -84,7 +88,8 @@
         ]
       )
     );
-    const next = new Map<string, DriftStatus>();
+    if (seq !== driftStatusSeq) return; // a newer sweep superseded this one
+    const next = new Map(driftStatus);
     for (const res of settled) {
       if (res.status === 'fulfilled') next.set(res.value[0], res.value[1]);
     }
@@ -107,9 +112,13 @@
     if (psi < 0.25) return 'moderate shift';
     return 'significant drift';
   }
+  // The open drift row's own failure text, so a failed fetch shows an inline
+  // error + Retry instead of the row saying "Loading drift…" forever.
+  let driftError = $state('');
   async function loadDrift(m: string) {
     drift = null;
     driftLoading = true;
+    driftError = '';
     error = '';
     // Switching the window/model fires concurrent requests; capture what THIS call is
     // for and drop its result if either changed before it resolved (last-requested
@@ -124,7 +133,7 @@
       // Keep the at-a-glance row badge in sync with what the open row shows.
       driftStatus = new Map(driftStatus).set(m, statusFromDrift(got));
     } catch (e) {
-      if (driftOpen === reqModel && driftWindow === reqWindow) error = msg(e);
+      if (driftOpen === reqModel && driftWindow === reqWindow) driftError = msg(e);
     } finally {
       if (driftOpen === reqModel && driftWindow === reqWindow) driftLoading = false;
     }
@@ -133,6 +142,7 @@
     if (driftOpen === m) {
       driftOpen = '';
       drift = null;
+      driftError = '';
       return;
     }
     driftOpen = m;
@@ -298,7 +308,12 @@
             {#if driftOpen === m.name}
               <tr class="drift-row" data-testid="model-drift">
                 <td colspan="6">
-                  {#if driftLoading || !drift}
+                  {#if driftError}
+                    <p class="err">
+                      Couldn't load drift: {driftError}
+                      <button class="link" onclick={() => loadDrift(m.name)}>Retry</button>
+                    </p>
+                  {:else if driftLoading || !drift}
                     <p class="muted" aria-busy="true">Loading drift…</p>
                   {:else if drift.count === 0}
                     <p class="muted">

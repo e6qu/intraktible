@@ -36,7 +36,7 @@ func TestDecidePreResolvesAINode(t *testing.T) {
 
 	// score 80 >= 50 -> high.
 	dh := command.NewDecideHandler(log, st, command.WithAgents(stubAgent(`{"score":80}`)))
-	res, err := dh.Decide(ctx, id, "assess", "production", nil, command.EntityRef{})
+	res, err := dh.Decide(ctx, id, "assess", "sandbox", nil, command.EntityRef{})
 	if err != nil {
 		t.Fatal(err)
 	}

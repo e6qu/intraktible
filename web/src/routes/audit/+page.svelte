@@ -12,6 +12,7 @@
   import { onMount } from 'svelte';
   import { toast } from '$lib/toast';
   import { appHref } from '$lib/paths';
+  import { withOffset } from '$lib/paging';
   import { user } from '$lib/session';
   import {
     listAuditPage,
@@ -115,7 +116,10 @@
   }
   function pageBy(delta: number) {
     offset = Math.max(0, offset + delta * PAGE);
-    pushURL();
+    // Page within the applied (URL) filter: rewrite only the offset param, so
+    // draft filter edits stay un-applied until Apply is pressed.
+    const qs = withOffset(get(page).url.searchParams, offset);
+    goto(qs ? `?${qs}` : get(page).url.pathname, { keepFocus: true, noScroll: true });
   }
 
   // A generation token so overlapping loads (afterNavigate + Apply + paging) can't
@@ -127,7 +131,9 @@
     forbidden = false;
     loading = true;
     try {
-      const page = await listAuditPage(key, filter());
+      // Fetch through the applied (URL) filter — never the draft inputs — so
+      // Reload and paging show exactly the rows the CSV export covers.
+      const page = await listAuditPage(key, { ...applied, limit: PAGE, offset });
       if (seq !== loadSeq) return; // a newer load superseded this one
       list = page.entries;
       total = page.total;
@@ -234,7 +240,13 @@
       kCreating = false;
     }
   }
+  // The key currently being rotated/revoked. A double-click on Rotate would
+  // otherwise mint TWO real secrets — the second overwrites `newSecret`, so the
+  // first (valid, server-side) secret is shown to no one and is unrecoverable.
+  let mutating = $state<string | null>(null);
   async function rotateKey(id: string) {
+    if (mutating) return;
+    mutating = id;
     try {
       const { api_key, secret } = await rotateApiKey(key, id, ROTATE_GRACE_SECONDS);
       newSecret = secret;
@@ -245,15 +257,21 @@
       await loadKeys();
     } catch (e) {
       toast.error(msg(e));
+    } finally {
+      mutating = null;
     }
   }
   async function revokeKey(id: string) {
+    if (mutating) return;
+    mutating = id;
     try {
       await revokeApiKey(key, id);
       toast.success('Token revoked');
       await loadKeys();
     } catch (e) {
       toast.error(msg(e));
+    } finally {
+      mutating = null;
     }
   }
   function keyStatus(k: ManagedApiKey): string {
@@ -406,8 +424,16 @@
                       href={appHref(`/audit?resource=${encodeURIComponent(k.id)}`)}>Audit</a
                     >
                     {#if keyStatus(k) === 'active'}
-                      <button class="rotate" onclick={() => rotateKey(k.id)}>Rotate</button>
-                      <button class="revoke" onclick={() => revokeKey(k.id)}>Revoke</button>
+                      <button
+                        class="rotate"
+                        onclick={() => rotateKey(k.id)}
+                        disabled={mutating !== null}>Rotate</button
+                      >
+                      <button
+                        class="revoke"
+                        onclick={() => revokeKey(k.id)}
+                        disabled={mutating !== null}>Revoke</button
+                      >
                     {/if}
                   </div>
                 </td>

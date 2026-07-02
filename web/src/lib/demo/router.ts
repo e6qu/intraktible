@@ -112,6 +112,30 @@ function sameGraph(a: FlowGraph, b: FlowGraph): boolean {
   return norm(a) === norm(b);
 }
 
+// normJson canonicalizes a JSON value (recursively sorting object keys) so two
+// input schemas that differ only in key order compare equal — mirroring the
+// canonical JSON the real backend's etag hashes.
+function normJson(v: unknown): string {
+  if (Array.isArray(v)) return '[' + v.map(normJson).join(',') + ']';
+  if (v && typeof v === 'object') {
+    return (
+      '{' +
+      Object.entries(v as Record<string, unknown>)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([k, val]) => JSON.stringify(k) + ':' + normJson(val))
+        .join(',') +
+      '}'
+    );
+  }
+  return JSON.stringify(v) ?? 'null';
+}
+
+// sameSchema compares two input schemas by content. The real backend's etag covers
+// graph AND input_schema, so a schema-only change must publish a new version.
+function sameSchema(a: unknown, b: unknown): boolean {
+  return normJson(a ?? null) === normJson(b ?? null);
+}
+
 function pushAudit(type: string, stream: string, payload?: unknown): void {
   state.seq += 1;
   state.audit.unshift({
@@ -205,16 +229,63 @@ route('POST', '/v1/flows', (_m, body) => {
   pushAudit('flow.created', flowId, { slug, name });
   return ok({ flow_id: flowId });
 });
-route('POST', '/v1/flows/import', (_m, body) => {
-  const slug = String((body as Body).slug ?? '').trim();
-  if (!slug) return badRequest('slug is required');
-  if (state.flows.some((f) => f.slug === slug))
-    return badRequest(`a flow with slug "${slug}" already exists`);
-  const name = String((body as Body).name ?? slug);
-  const graph = ((body as Body).graph as FlowGraph | undefined) ?? {
-    nodes: [{ id: 'in', type: 'input', name: 'Input' }],
-    edges: []
-  };
+// importFlowDoc upserts one exported flow document, mirroring the real backend's
+// ImportFlow command: a new slug creates the flow and publishes v1; an existing slug
+// publishes the imported graph + input_schema as a new version — unless the latest
+// version already carries that exact content ("already at vN — no change"), which
+// makes a re-import a no-op. So export→edit→re-import round-trips.
+interface FlowImportOutcome {
+  flow_id?: string;
+  slug: string;
+  version?: number;
+  etag?: string;
+  created: boolean;
+  published: boolean;
+  error?: string;
+}
+function importFlowDoc(doc: Body): FlowImportOutcome {
+  const slug = String(doc.slug ?? '').trim();
+  if (!slug) return { slug, created: false, published: false, error: 'slug is required' };
+  const name = String(doc.name ?? slug);
+  // The real ImportFlow validates the graph up front — an absent graph is a bad
+  // document, not something to paper over with a default.
+  if (!doc.graph) return { slug, created: false, published: false, error: 'graph is required' };
+  const graph = doc.graph as FlowGraph;
+  const existing = state.flows.find((f) => f.slug === slug);
+  if (existing) {
+    const latest = existing.versions.find((v) => v.version === existing.latest);
+    if (!latest) throw new Error(`flow ${slug} has no version ${existing.latest}`);
+    if (sameGraph(latest.graph, graph) && sameSchema(latest.input_schema, doc.input_schema)) {
+      return {
+        flow_id: existing.flow_id,
+        slug,
+        version: latest.version,
+        etag: latest.etag,
+        created: false,
+        published: false
+      };
+    }
+    const version = existing.latest + 1;
+    const v: FlowVersion = {
+      version,
+      etag: `etag-v${version}`,
+      graph,
+      input_schema: doc.input_schema,
+      published_at: new Date().toISOString(),
+      published_by: state.identity.actor
+    };
+    existing.versions.push(v);
+    existing.latest = version;
+    pushAudit('flow.published', existing.flow_id, { version, imported: true });
+    return {
+      flow_id: existing.flow_id,
+      slug,
+      version,
+      etag: v.etag,
+      created: false,
+      published: true
+    };
+  }
   const flowId = nextId('flow');
   state.flows.push({
     flow_id: flowId,
@@ -226,6 +297,7 @@ route('POST', '/v1/flows/import', (_m, body) => {
         version: 1,
         etag: 'e1',
         graph,
+        input_schema: doc.input_schema,
         published_at: new Date().toISOString(),
         published_by: state.identity.actor
       }
@@ -233,40 +305,30 @@ route('POST', '/v1/flows/import', (_m, body) => {
     deployments: {}
   });
   pushAudit('flow.created', flowId, { slug, name, imported: true });
-  return ok({ flow_id: flowId, slug, version: 1, etag: 'e1', created: true, published: true });
+  return { flow_id: flowId, slug, version: 1, etag: 'e1', created: true, published: true };
+}
+route('POST', '/v1/flows/import', (_m, body) => {
+  const out = importFlowDoc(body);
+  if (out.error) return badRequest(out.error);
+  return ok(out);
 });
 route('POST', '/v1/flows/import-bundle', (_m, body) => {
-  // Import each flow in the bundle that doesn't already exist (real, not a no-op).
+  // Import each flow in the bundle with the same upsert semantics as /import: an
+  // existing slug with a DIFFERENT graph/schema is updated (published), an identical
+  // one is unchanged, and a bad document fails only its own row.
   const flows = Array.isArray((body as Body).flows) ? ((body as Body).flows as Body[]) : [];
+  const results: FlowImportOutcome[] = [];
   let published = 0;
+  let failed = 0;
   let unchanged = 0;
   for (const f of flows) {
-    const slug = String(f.slug ?? '').trim();
-    if (!slug || state.flows.some((x) => x.slug === slug)) {
-      unchanged += 1;
-      continue;
-    }
-    const flowId = nextId('flow');
-    state.flows.push({
-      flow_id: flowId,
-      slug,
-      name: String(f.name ?? slug),
-      latest: 1,
-      versions: [
-        {
-          version: 1,
-          etag: 'e1',
-          graph: (f.graph as FlowGraph | undefined) ?? { nodes: [], edges: [] },
-          published_at: new Date().toISOString(),
-          published_by: state.identity.actor
-        }
-      ],
-      deployments: {}
-    });
-    pushAudit('flow.created', flowId, { slug, imported: true });
-    published += 1;
+    const out = importFlowDoc(f);
+    results.push(out);
+    if (out.error) failed += 1;
+    else if (out.published) published += 1;
+    else unchanged += 1;
   }
-  return ok({ results: [], published, failed: 0, unchanged });
+  return ok({ results, published, failed, unchanged });
 });
 route('GET', '/v1/flows/:id', (m) => {
   const flow = findFlow(m[1]);
@@ -285,8 +347,13 @@ route('POST', '/v1/flows/:id/versions', (m, body) => {
   const latest = flow.versions.find((vv) => vv.version === flow.latest);
   // A no-op publish (logic identical to the latest version, ignoring canvas positions)
   // returns the current version instead of stacking duplicate versions — matching the
-  // /engine import path, which already says "already at vN — no change".
-  if (latest && sameGraph(latest.graph, graph)) {
+  // /engine import path, which already says "already at vN — no change". The real
+  // backend's etag hashes the input_schema too, so a schema-only change publishes.
+  if (
+    latest &&
+    sameGraph(latest.graph, graph) &&
+    sameSchema(latest.input_schema, body.input_schema)
+  ) {
     return ok({ version: latest.version, etag: latest.etag, published: false });
   }
   const version = flow.latest + 1;
@@ -874,7 +941,16 @@ route('POST', '/v1/flows/:slug/:env/decide/batch', (m, body) => {
   const dataset = (body.dataset as Body[]) ?? [];
   let completed = 0;
   let failed = 0;
+  let rejected = 0;
   const results = dataset.map((row, index) => {
+    // The same input-contract validation the single decide applies, per row: a
+    // wrong-typed field rejects the row (no decision recorded), matching the real
+    // batch's "rejected" status alongside completed/failed.
+    const typeErr = inputTypeError(flow, m[2] as Environment, row);
+    if (typeErr) {
+      rejected += 1;
+      return { index, status: 'rejected' as const, error: typeErr };
+    }
     const { result } = decideFlow(flow, m[2] as Environment, row);
     if (result.status === 'completed') completed += 1;
     else failed += 1;
@@ -887,7 +963,7 @@ route('POST', '/v1/flows/:slug/:env/decide/batch', (m, body) => {
       error: result.error
     };
   });
-  return ok({ total: dataset.length, completed, failed, rejected: 0, results });
+  return ok({ total: dataset.length, completed, failed, rejected, results });
 });
 route('POST', '/v1/flows/:slug/:env/preapprove/batch', (m, body) => {
   const flow = findFlow(m[1]);
@@ -901,7 +977,15 @@ route('POST', '/v1/flows/:slug/:env/preapprove/batch', (m, body) => {
   let granted = 0;
   let skipped = 0;
   let failed = 0;
+  let rejected = 0;
   const results = dataset.map((row, index) => {
+    // Same per-row input-contract validation as decide/batch: a wrong-typed field
+    // rejects the row without recording a decision or granting anything.
+    const typeErr = inputTypeError(flow, m[2] as Environment, row);
+    if (typeErr) {
+      rejected += 1;
+      return { index, status: 'rejected' as const, granted: false, error: typeErr };
+    }
     const { result } = decideFlow(flow, m[2] as Environment, row);
     if (result.status !== 'completed') {
       failed += 1;
@@ -947,7 +1031,7 @@ route('POST', '/v1/flows/:slug/:env/preapprove/batch', (m, body) => {
       granted: false
     };
   });
-  return ok({ total: dataset.length, granted, skipped, failed, rejected: 0, results });
+  return ok({ total: dataset.length, granted, skipped, failed, rejected, results });
 });
 
 // --- Decisions ------------------------------------------------------------------
@@ -1568,6 +1652,12 @@ route('POST', '/v1/comments/:type/:id', (m, body) => {
 // --- Audit ----------------------------------------------------------------------
 route('GET', '/v1/audit', (_m, _b, q) => {
   if (!roleAtLeast('admin')) return forbidden('the audit log requires the admin role');
+  // An unparseable time bound is a bad request (the real backend 400s it), not a
+  // filter that silently matches nothing.
+  for (const key of ['since', 'until']) {
+    const v = q.get(key);
+    if (v && Number.isNaN(Date.parse(v))) return badRequest(`invalid ${key} (want RFC3339)`);
+  }
   const filtered = filterAudit(q);
   if (q.get('format') === 'csv') return text(auditCsv(filtered));
   const limit = Number(q.get('limit') ?? 0);
@@ -1831,8 +1921,10 @@ function flowMetrics(flow: Flow) {
     const vm = new Map(Object.entries(byVariant));
     const cur = vm.get(variant) ?? { started: 0, completed: 0, failed: 0 };
     cur.started += 1;
+    // A suspended decision is neither a completion nor a failure — only a genuinely
+    // failed run counts as failed (the real by_variant semantics).
     if (d.status === 'completed') cur.completed += 1;
-    else cur.failed += 1;
+    else if (d.status === 'failed') cur.failed += 1;
     vm.set(variant, cur);
     Object.assign(byVariant, Object.fromEntries(vm));
     if (d.disposition) {
@@ -1987,16 +2079,38 @@ function policyBacktest(policy: Policy, body: Body) {
     : { summary: { total: dataset.length, evaluated } };
 }
 
+// payloadReferences reports whether the payload references id as any JSON string
+// value (a flow_id / case_id / decision_id / …) — the real backend's generic way to
+// scope the trail to one resource without knowing each event type's schema.
+function payloadReferences(v: unknown, id: string): boolean {
+  if (typeof v === 'string') return v === id;
+  if (Array.isArray(v)) return v.some((e) => payloadReferences(e, id));
+  if (v && typeof v === 'object')
+    return Object.values(v as Record<string, unknown>).some((e) => payloadReferences(e, id));
+  return false;
+}
+
 function filterAudit(q: Query): AuditEntry[] {
   let list = state.audit;
   const stream = q.get('stream');
   const actor = q.get('actor');
   const type = q.get('type');
   const excludeType = q.get('exclude_type');
+  const resource = q.get('resource');
+  const since = q.get('since');
+  const until = q.get('until');
   if (stream) list = list.filter((e) => e.stream === stream);
   if (actor) list = list.filter((e) => e.actor === actor);
   if (type) list = list.filter((e) => e.type === type);
   if (excludeType) list = list.filter((e) => e.type !== excludeType);
+  // The demo's stream field carries the resource id itself (the real backend keys
+  // streams by name and puts ids in the payload), so a stream match counts too.
+  if (resource)
+    list = list.filter((e) => e.stream === resource || payloadReferences(e.payload, resource));
+  // Inclusive RFC3339 time bounds, like the real backend's Since/Until (validated
+  // at the route boundary, so Date.parse here is always finite).
+  if (since) list = list.filter((e) => Date.parse(e.time) >= Date.parse(since));
+  if (until) list = list.filter((e) => Date.parse(e.time) <= Date.parse(until));
   return list;
 }
 

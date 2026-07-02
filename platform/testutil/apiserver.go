@@ -30,8 +30,19 @@ type API struct {
 	// log + rt let a request wait for the read model to reflect every event
 	// appended so far, so HTTP-level read-after-write is deterministic in tests
 	// (production reads are eventually consistent — see settle).
-	log eventlog.Log
-	rt  *projection.Runtime
+	log     eventlog.Log
+	rt      *projection.Runtime
+	keyring *auth.Keyring
+}
+
+// AddKey registers another API key on the server's keyring and returns a view of
+// the same server that authenticates with it — for cross-actor or cross-scope
+// interactions (four-eyes approvals, environment-scope enforcement).
+func (a *API) AddKey(key string, k auth.APIKey) *API {
+	a.keyring.Add(key, k)
+	c := *a
+	c.Key = key
+	return &c
 }
 
 // NewLogStore opens a per-test WAL (closed on cleanup) and a fresh in-memory
@@ -80,7 +91,7 @@ func StartAPIScoped(t *testing.T, log eventlog.Log, st store.Store, key string, 
 
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
-	return &API{Server: srv, Key: key, Identity: id, log: log, rt: rt}
+	return &API{Server: srv, Key: key, Identity: id, log: log, rt: rt, keyring: keyring}
 }
 
 // settle blocks until the projection has applied every event appended so far, so

@@ -87,9 +87,11 @@ export function deployStats(flows: Flow[]): { live: number; pending: number } {
 }
 
 // decisionsByDay buckets decisions by calendar day (the RFC3339 date prefix of
-// started_at), returning the most recent maxDays active days in ascending order —
-// the series behind the Executive volume trend. Clock-free (derived from the data),
-// so it is deterministic and testable; days with no decisions are simply absent.
+// started_at), returning a dense maxDays window ending at the most recent active
+// day, zero-filled — the series behind the Executive volume trend. A sparse
+// series (skipping empty days) rendered one busy day as a full-width slab.
+// Clock-free (the window is anchored to the data, not the wall clock), so it is
+// deterministic and testable.
 export function decisionsByDay(
   decisions: Decision[],
   maxDays = 14
@@ -100,10 +102,13 @@ export function decisionsByDay(
     const day = d.started_at.slice(0, 10);
     counts.set(day, (counts.get(day) ?? 0) + 1);
   }
-  return [...counts.keys()]
-    .sort()
-    .slice(-maxDays)
-    .map((day) => ({ day, count: counts.get(day) ?? 0 }));
+  if (counts.size === 0) return [];
+  const last = [...counts.keys()].reduce((a, b) => (a > b ? a : b));
+  const end = new Date(`${last}T00:00:00Z`).getTime();
+  return Array.from({ length: maxDays }, (_, i) => {
+    const day = new Date(end - (maxDays - 1 - i) * 86_400_000).toISOString().slice(0, 10);
+    return { day, count: counts.get(day) ?? 0 };
+  });
 }
 
 export function pct(n: number): string {

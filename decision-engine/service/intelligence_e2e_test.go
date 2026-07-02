@@ -75,7 +75,7 @@ func decideOnce(t *testing.T, api *testutil.API, slug string, data map[string]an
 			Status      string `json:"status"`
 			Disposition string `json:"disposition"`
 		}{}
-		api.Request(t, http.MethodPost, "/v1/flows/"+slug+"/production/decide",
+		api.Request(t, http.MethodPost, "/v1/flows/"+slug+"/sandbox/decide",
 			map[string]any{"data": data}, http.StatusOK, &dec)
 		return dec.Status == "completed" && dec.Disposition == wantDisp
 	}) {
@@ -255,6 +255,31 @@ func TestCounterfactualFindsFlip(t *testing.T) {
 	}
 }
 
+// TestCounterfactualHonorsPrivacyMasking pins the counterfactual to the same
+// read boundary as every other decision read: a privacy-masked field must not be
+// offered as a lever nor have its recorded value echoed in flip from/to.
+func TestCounterfactualHonorsPrivacyMasking(t *testing.T) {
+	api := startEngine(t)
+	scorecardFlow(t, api, "cfmask")
+
+	decID := decideOnce(t, api, "cfmask", map[string]any{"income": 10000.0}, string(policy.Decline))
+	api.Request(t, http.MethodPut, "/v1/privacy", map[string]any{"fields": []string{"income"}}, http.StatusOK, nil)
+
+	var cf counterfactualResp
+	if !testutil.Eventually(t, func() bool {
+		cf = counterfactualResp{}
+		return api.RequestStatus(t, http.MethodPost, "/v1/decisions/"+decID+"/counterfactual", map[string]any{}, &cf) == http.StatusOK &&
+			cf.Disposition == string(policy.Decline)
+	}) {
+		t.Fatalf("counterfactual never answered: %+v", cf)
+	}
+	for _, f := range cf.Flips {
+		if f.Field == "income" {
+			t.Fatalf("masked field offered as a lever (echoes its recorded value): %+v", f)
+		}
+	}
+}
+
 func TestCounterfactualEmptyForApproved(t *testing.T) {
 	api := startEngine(t)
 	scorecardFlow(t, api, "cfok")
@@ -338,6 +363,64 @@ func TestCoverageReportsDeadBranch(t *testing.T) {
 		if b.From == "gate" && b.To == "always" {
 			t.Fatalf("gate->always wrongly reported dead: %+v", cov.DeadBranches)
 		}
+	}
+}
+
+// TestCoverageDeadBranchWithLiveTarget pins branch attribution to the split's
+// recorded choice: in a converging topology the untaken branch's target executes
+// anyway (via the taken path), so an endpoints-both-ran heuristic would credit
+// the dead branch as covered — false assurance from the red-team report.
+func TestCoverageDeadBranchWithLiveTarget(t *testing.T) {
+	api := startEngine(t)
+	var created struct {
+		FlowID string `json:"flow_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows", map[string]any{"slug": "covconv", "name": "Converging"}, http.StatusCreated, &created)
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/versions", map[string]any{
+		"graph": map[string]any{
+			"nodes": []map[string]any{
+				{"id": "in", "type": "input"},
+				{"id": "gate", "type": "split", "config": map[string]any{"condition": "false"}},
+				{"id": "score", "type": "assignment", "config": map[string]any{
+					"assignments": []map[string]any{{"target": "decision", "expr": "'SCORED'"}},
+				}},
+				{"id": "out", "type": "output", "config": map[string]any{"fields": []string{"decision"}}},
+			},
+			"edges": []map[string]any{
+				{"from": "in", "to": "gate"},
+				{"from": "gate", "to": "out", "branch": "yes"},
+				{"from": "gate", "to": "score", "branch": "no"},
+				{"from": "score", "to": "out"},
+			},
+		},
+	}, http.StatusCreated, nil)
+
+	var cov coverageResp
+	if !testutil.Eventually(t, func() bool {
+		cov = coverageResp{}
+		return api.RequestStatus(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/coverage",
+			map[string]any{"runs": 50}, &cov) == http.StatusOK && cov.Runs == 50
+	}) {
+		t.Fatalf("coverage never ran: %+v", cov)
+	}
+	// Every run takes "no", so out is hit on every run — yet the yes branch into
+	// it was never taken and must be reported dead.
+	for _, n := range cov.DeadNodes {
+		if n == "out" {
+			t.Fatalf("out should be live: %+v", cov.DeadNodes)
+		}
+	}
+	deadYes := false
+	for _, b := range cov.DeadBranches {
+		if b.From == "gate" && b.To == "out" && b.Branch == "yes" {
+			deadYes = true
+		}
+		if b.From == "gate" && b.To == "score" {
+			t.Fatalf("taken no-branch wrongly reported dead: %+v", cov.DeadBranches)
+		}
+	}
+	if !deadYes {
+		t.Fatalf("untaken yes-branch into a live target must be dead, got %+v", cov.DeadBranches)
 	}
 }
 

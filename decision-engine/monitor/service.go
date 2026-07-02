@@ -10,6 +10,7 @@ import (
 
 	"github.com/e6qu/intraktible/decision-engine/analytics"
 	"github.com/e6qu/intraktible/decision-engine/notify"
+	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/httpx"
 	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/store"
@@ -75,16 +76,9 @@ func (s *Service) define(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) delete(w http.ResponseWriter, r *http.Request) {
-	id, ok := httpx.Caller(w, r)
-	if !ok {
-		return
-	}
-	e, err := s.cmd.Delete(r.Context(), id, r.PathValue("flow_id"), r.PathValue("monitor_id"))
-	if err != nil {
-		httpx.Error(w, http.StatusBadRequest, err)
-		return
-	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"event_id": e.ID, "seq": e.Seq})
+	httpx.Act(w, r, func(id identity.Identity) (eventlog.Envelope, error) {
+		return s.cmd.Delete(r.Context(), id, r.PathValue("flow_id"), r.PathValue("monitor_id"))
+	})
 }
 
 // monitorStatus is a stored rule joined with its live evaluation.

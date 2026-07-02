@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sync"
 	"time"
 
 	"github.com/e6qu/intraktible/platform/identity"
@@ -40,6 +41,10 @@ type subject struct {
 type Vault struct {
 	store store.Store
 	now   func() time.Time
+	// mu serializes the subject-record writes that must not interleave: first-use
+	// key creation (two racing creators must agree on ONE key) and erasure (a key
+	// put landing after the tombstone would silently un-erase the subject).
+	mu sync.Mutex
 }
 
 // NewVault builds a store-backed erasure vault.
@@ -53,20 +58,59 @@ func (v *Vault) Seal(ctx context.Context, id identity.Identity, subj string, pla
 	if err != nil {
 		return nil, err
 	}
-	if ok && rec.Erased != nil {
-		return nil, ErrErased
-	}
 	if !ok {
-		key := make([]byte, 32)
-		if _, err := io.ReadFull(rand.Reader, key); err != nil {
-			return nil, fmt.Errorf("erasure: key gen: %w", err)
-		}
-		rec = subject{Subject: subj, Key: key, Created: v.now().UTC()}
-		if err := v.put(ctx, id, rec); err != nil {
+		if rec, err = v.createKey(ctx, id, subj); err != nil {
 			return nil, err
 		}
 	}
+	// Re-checked after createKey too: a lost creation race may have surfaced a
+	// concurrently-written tombstone, which must refuse new data, not un-erase.
+	if rec.Erased != nil {
+		return nil, ErrErased
+	}
 	return seal(rec.Key, plain)
+}
+
+// createKey mints a subject's key on first use. The naive read-miss → keygen →
+// put is racy: two concurrent first seals would each persist a different key,
+// making the loser's envelopes permanently undecryptable. v.mu serializes
+// creators in this process, and on a transactional store the re-check + put
+// also run in one transaction, so a record committed by another writer wins
+// and is returned instead of being overwritten.
+func (v *Vault) createKey(ctx context.Context, id identity.Identity, subj string) (subject, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	key := make([]byte, 32)
+	if _, err := io.ReadFull(rand.Reader, key); err != nil {
+		return subject{}, fmt.Errorf("erasure: key gen: %w", err)
+	}
+	rec := subject{Subject: subj, Key: key, Created: v.now().UTC()}
+	txs, transactional := v.store.(store.TxStore)
+	if !transactional {
+		existing, ok, err := v.load(ctx, id, subj)
+		if err != nil || ok {
+			return existing, err
+		}
+		return rec, v.put(ctx, id, rec)
+	}
+	tx, err := txs.Begin(ctx)
+	if err != nil {
+		return subject{}, fmt.Errorf("erasure: create key for %q: begin: %w", subj, err)
+	}
+	k := store.Key(id.Org, id.Workspace, subj)
+	existing, ok, err := store.GetDoc[subject](ctx, tx, collection, k)
+	if err != nil || ok {
+		_ = tx.Rollback()
+		return existing, err
+	}
+	if err := store.PutDoc(ctx, tx, collection, k, rec); err != nil {
+		_ = tx.Rollback()
+		return subject{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return subject{}, fmt.Errorf("erasure: create key for %q: commit: %w", subj, err)
+	}
+	return rec, nil
 }
 
 // Open decrypts a value sealed by Seal. A missing key or an erased subject is
@@ -86,6 +130,10 @@ func (v *Vault) Open(ctx context.Context, id identity.Identity, subj string, sea
 // never sealed is recorded as an (already) erased tombstone, so a pre-emptive
 // erasure still blocks any later Seal.
 func (v *Vault) Erase(ctx context.Context, id identity.Identity, subj string) error {
+	// Hold the creation lock so the shred can't interleave with a first-use Seal
+	// (whose key put would otherwise overwrite the tombstone written here).
+	v.mu.Lock()
+	defer v.mu.Unlock()
 	rec, ok, err := v.load(ctx, id, subj)
 	if err != nil {
 		return err
