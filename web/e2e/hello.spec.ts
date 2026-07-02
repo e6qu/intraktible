@@ -53,7 +53,8 @@ test('an unauthenticated request surfaces an error, not silent success', async (
   await page.getByRole('button', { name: 'Refresh' }).click();
   const output = page.locator('pre');
   await expect(output).toContainText('Error:');
-  await expect(output).toContainText('401');
+  // The client surfaces the server's explanation, not a bare status code.
+  await expect(output).toContainText('authentication required');
   await expect(output).not.toContainText('"count"');
 });
 
