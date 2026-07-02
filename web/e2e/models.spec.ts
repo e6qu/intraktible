@@ -36,6 +36,7 @@ test('a predict node panel edits model + output without raw JSON', async ({ page
   const { flow_id } = await created.json();
 
   await page.goto(`/engine/${flow_id}`);
+  await page.getByTestId('toggle-panel').click(); // the tools panel starts closed
   await expect(page.getByLabel('new node type')).toBeVisible();
   await page.getByLabel('new node type').selectOption('predict');
   await page.getByRole('button', { name: 'Add', exact: true }).click();

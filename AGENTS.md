@@ -22,6 +22,10 @@ see the R11 block in BUGS.md. The `dupl` gate now actually fails on production c
 follow-up demo-realism round made the Pages demo behave like a real deployment (loud 404s for
 unrouted calls, the real audit taxonomy with per-node run journals, AI cost attribution, honored
 pre-approval evidence on the builder verdict card, inline four-eyes reasons) — DR block in BUGS.md.
+A **design-window round** then rebuilt the builder around the canvas (click-a-node → floating
+inspector, a left insert rail, board/focus/collapsed sizes, compact header) and fixed what the
+journey walk surfaced (decide 400-not-500 on undefined provider refs, visible test-run errors,
+api.ts surfacing server error bodies, template input schemas) — DW block in BUGS.md.
 Roadmap & exit criteria: [PLAN.md §8](PLAN.md#8-phased-roadmap); deferrals tracked in [BUGS.md](BUGS.md).
 Working today: `platform/{eventlog,store,projection,identity,auth,httpx,ai,web,mo}` (`mo` = the
 `Option[T]`/`Result[T]` types used instead of none/null sentinels where they're easy to mishandle;

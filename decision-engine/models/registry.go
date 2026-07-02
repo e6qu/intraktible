@@ -103,13 +103,22 @@ type Provider struct {
 // Predict resolves the named model from the registry and returns its prediction as
 // JSON (the decision records it for replay). In-process kinds are evaluated purely;
 // an "external" model is served over the egress-guarded HTTP client.
+
+// unknownRefError marks a lookup of a name this tenant never defined. The decide
+// path recognises it structurally (BadProviderRef) and maps it to a caller error
+// — a flow referencing a missing definition is fixable config, not a server fault.
+type unknownRefError struct{ msg string }
+
+func (e unknownRefError) Error() string        { return e.msg }
+func (e unknownRefError) BadProviderRef() bool { return true }
+
 func (p Provider) Predict(ctx context.Context, id identity.Identity, model string, features map[string]any) (json.RawMessage, error) {
 	mv, ok, err := Read(ctx, p.Store, id, model)
 	if err != nil {
 		return nil, err
 	}
 	if !ok {
-		return nil, fmt.Errorf("models: unknown model %q", model)
+		return nil, unknownRefError{msg: fmt.Sprintf("models: unknown model %q", model)}
 	}
 	spec, err := ParseSpec(mv.Spec)
 	if err != nil {

@@ -302,13 +302,22 @@ func InvokeWith(ctx context.Context, s store.Store, id identity.Identity, name s
 // InvokeWithSecrets is Invoke with explicit egress and connector-secret
 // decryption. It is used by the HTTP service and composition root when connector
 // configs are stored with encrypted credential fields.
+
+// unknownRefError marks a lookup of a name this tenant never defined. The decide
+// path recognises it structurally (BadProviderRef) and maps it to a caller error
+// — a flow referencing a missing definition is fixable config, not a server fault.
+type unknownRefError struct{ msg string }
+
+func (e unknownRefError) Error() string        { return e.msg }
+func (e unknownRefError) BadProviderRef() bool { return true }
+
 func InvokeWithSecrets(ctx context.Context, s store.Store, id identity.Identity, name string, params json.RawMessage, egress EgressPolicy, secrets *Keyring) (json.RawMessage, error) {
 	def, ok, err := Read(ctx, s, id, name)
 	if err != nil {
 		return nil, err
 	}
 	if !ok {
-		return nil, fmt.Errorf("context-layer: unknown connector %q", name)
+		return nil, unknownRefError{msg: fmt.Sprintf("context-layer: unknown connector %q", name)}
 	}
 	def.Config, err = DecryptSecrets(def.Config, secrets, SecretLocation{
 		Org: def.Org, Workspace: def.Workspace, Connector: def.Name,

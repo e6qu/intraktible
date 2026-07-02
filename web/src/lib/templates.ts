@@ -11,7 +11,20 @@ export interface FlowTemplate {
   name: string;
   purpose: string;
   nodeTypes: string[];
-  doc: { slug: string; name: string; graph: { nodes: TemplateNode[]; edges: TemplateEdge[] } };
+  doc: {
+    slug: string;
+    name: string;
+    graph: { nodes: TemplateNode[]; edges: TemplateEdge[] };
+    input_schema?: TemplateInputSchema;
+  };
+}
+// The caller-input contract of each template: the fields its expressions read that no
+// upstream node produces. It powers the builder's "Sample input" (examples land the run
+// on a real branch) and the decide-time type/required validation on both backends.
+interface TemplateInputSchema {
+  type: 'object';
+  required: string[];
+  properties: Record<string, { type: string; example?: unknown }>;
 }
 interface TemplateNode {
   id: string;
@@ -35,6 +48,16 @@ export const TEMPLATES: FlowTemplate[] = [
     doc: {
       slug: 'credit-stp',
       name: 'Consumer Credit STP',
+      input_schema: {
+        type: 'object',
+        required: ['income', 'debt', 'revolving_balance', 'credit_limit'],
+        properties: {
+          income: { type: 'number', example: 52000 },
+          debt: { type: 'number', example: 14000 },
+          revolving_balance: { type: 'number', example: 4200 },
+          credit_limit: { type: 'number', example: 12000 }
+        }
+      },
       graph: {
         nodes: [
           { id: 'in', type: 'input', name: 'Application' },
@@ -148,6 +171,13 @@ export const TEMPLATES: FlowTemplate[] = [
     doc: {
       slug: 'fraud-screen',
       name: 'Card-Not-Present Fraud Screen',
+      input_schema: {
+        type: 'object',
+        required: ['amount'],
+        properties: {
+          amount: { type: 'number', example: 250 }
+        }
+      },
       graph: {
         nodes: [
           { id: 'in', type: 'input', name: 'Authorization' },
@@ -213,6 +243,15 @@ export const TEMPLATES: FlowTemplate[] = [
     doc: {
       slug: 'sanctions-screen',
       name: 'Sanctions & PEP Screening',
+      input_schema: {
+        type: 'object',
+        required: ['origin_country', 'dest_country', 'amount'],
+        properties: {
+          origin_country: { type: 'string', example: 'US' },
+          dest_country: { type: 'string', example: 'DE' },
+          amount: { type: 'number', example: 12500 }
+        }
+      },
       graph: {
         nodes: [
           { id: 'in', type: 'input', name: 'Wire' },
@@ -305,6 +344,19 @@ export const TEMPLATES: FlowTemplate[] = [
     doc: {
       slug: 'kyb-onboarding',
       name: 'Business (KYB) Onboarding',
+      // Both fields are read via data.get(..., default) in the UBO code node, so the
+      // flow completes without them — nothing is required.
+      input_schema: {
+        type: 'object',
+        required: [],
+        properties: {
+          beneficial_owners: {
+            type: 'array',
+            example: [{ name: 'Ana Ionescu', ownership_pct: 60 }]
+          },
+          max_ubo_risk: { type: 'number', example: 35 }
+        }
+      },
       graph: {
         nodes: [
           { id: 'in', type: 'input', name: 'Business application' },
@@ -376,6 +428,13 @@ export const TEMPLATES: FlowTemplate[] = [
     doc: {
       slug: 'bnpl-affordability',
       name: 'BNPL Affordability',
+      input_schema: {
+        type: 'object',
+        required: ['amount'],
+        properties: {
+          amount: { type: 'number', example: 300 }
+        }
+      },
       graph: {
         nodes: [
           { id: 'in', type: 'input', name: 'Checkout' },
@@ -440,6 +499,14 @@ export const TEMPLATES: FlowTemplate[] = [
     doc: {
       slug: 'chargeback-triage',
       name: 'Chargeback Triage',
+      input_schema: {
+        type: 'object',
+        required: ['amount', 'reason_code'],
+        properties: {
+          amount: { type: 'number', example: 725 },
+          reason_code: { type: 'string', example: 'fraud' }
+        }
+      },
       graph: {
         nodes: [
           { id: 'in', type: 'input', name: 'Dispute' },

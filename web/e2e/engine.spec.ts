@@ -9,6 +9,14 @@ test.beforeEach(async ({ page }) => {
   await page.context().request.post('/v1/login', { data: { api_key: KEY } });
 });
 
+// The tools panel starts closed (the icon rail is the primary add path on the
+// board); these tests drive the typed add/edge flow, so open it explicitly and
+// use its select as the hydration marker.
+async function openTools(page: import('@playwright/test').Page) {
+  await page.getByTestId('toggle-panel').click();
+  await expect(page.getByLabel('new node type')).toBeVisible();
+}
+
 test('lists and creates a flow', async ({ page }) => {
   const slug = uniqueSlug();
   await page.goto('/engine');
@@ -610,6 +618,7 @@ test('exports the flow as DOT and JSON', async ({ page, request }) => {
   await page.goto(`/engine/${flow_id}`);
   // The published version loads (2 nodes on the canvas) before we export it.
   await expect(page.locator('.svelte-flow__node')).toHaveCount(2);
+  await page.getByTestId('share-menu').locator('> summary').click(); // Export / Import
 
   for (const [name, ext] of [
     ['DOT', 'dot'],
@@ -660,7 +669,8 @@ test('imports a flow JSON onto the canvas and publishes it (round-trip)', async 
   const { flow_id: bId } = await b.json();
 
   await page.goto(`/engine/${bId}`);
-  await expect(page.getByLabel('new node type')).toBeVisible(); // hydrated
+  await openTools(page);
+  await page.getByTestId('share-menu').locator('> summary').click(); // Export / Import
   await page.getByText('Import JSON', { exact: true }).click(); // open the disclosure
   await page.getByLabel('import flow json').fill(exported);
   await page.getByTestId('import-load').click();
@@ -688,7 +698,7 @@ test('builds a flow in the editor and publishes it', async ({ page, request }) =
   await page.goto(`/engine/${flow_id}`);
   // Wait for the editor to be interactive before driving it (the page loads the
   // flow on mount; under parallel load the dev server can be slow to hydrate).
-  await expect(page.getByLabel('new node type')).toBeVisible();
+  await openTools(page);
 
   // Add input (n1), assignment (n2), output (n3) via the palette.
   for (const type of ['input', 'assignment', 'output']) {
@@ -741,7 +751,7 @@ test('adding a node does not move already-placed nodes (stable layout)', async (
   const { flow_id } = await created.json();
 
   await page.goto(`/engine/${flow_id}`);
-  await expect(page.getByLabel('new node type')).toBeVisible();
+  await openTools(page);
 
   // Place input (n1) + output (n2), wire and publish v1.
   for (const type of ['input', 'output']) {
@@ -791,7 +801,7 @@ test('assigns nodes to swimlanes that render and persist', async ({ page, reques
   const { flow_id } = await created.json();
 
   await page.goto(`/engine/${flow_id}`);
-  await expect(page.getByLabel('new node type')).toBeVisible();
+  await openTools(page);
   for (const type of ['input', 'output']) {
     await page.getByLabel('new node type').selectOption(type);
     await page.getByRole('button', { name: 'Add', exact: true }).click();
@@ -828,7 +838,7 @@ test('a structured config panel edits a node without raw JSON', async ({ page, r
   const { flow_id } = await created.json();
 
   await page.goto(`/engine/${flow_id}`);
-  await expect(page.getByLabel('new node type')).toBeVisible();
+  await openTools(page);
 
   // Add a split node (auto-selected) and set its condition via the structured
   // field — no JSON typing. The advanced JSON view reflects the same config.
@@ -847,7 +857,7 @@ test('the assignment panel edits target/expr rows without raw JSON', async ({ pa
   const { flow_id } = await created.json();
 
   await page.goto(`/engine/${flow_id}`);
-  await expect(page.getByLabel('new node type')).toBeVisible();
+  await openTools(page);
 
   await page.getByLabel('new node type').selectOption('assignment');
   await page.getByRole('button', { name: 'Add', exact: true }).click();
@@ -868,7 +878,7 @@ test('a scorecard panel edits factors and output without raw JSON', async ({ pag
   const { flow_id } = await created.json();
 
   await page.goto(`/engine/${flow_id}`);
-  await expect(page.getByLabel('new node type')).toBeVisible();
+  await openTools(page);
 
   await page.getByLabel('new node type').selectOption('scorecard');
   await page.getByRole('button', { name: 'Add', exact: true }).click();
@@ -895,7 +905,7 @@ test('a decision-table panel sets a hit policy + aggregate without raw JSON', as
   const { flow_id } = await created.json();
 
   await page.goto(`/engine/${flow_id}`);
-  await expect(page.getByLabel('new node type')).toBeVisible();
+  await openTools(page);
 
   await page.getByLabel('new node type').selectOption('decision_table');
   await page.getByRole('button', { name: 'Add', exact: true }).click();
@@ -923,7 +933,7 @@ test('the authoring copilot explains a flow and suggests logic', async ({ page, 
   const { flow_id } = await created.json();
 
   await page.goto(`/engine/${flow_id}`);
-  await expect(page.getByLabel('new node type')).toBeVisible();
+  await openTools(page);
   await page.getByTestId('tab-copilot').click();
 
   // Suggest from a description (the dev server's Stub provider echoes deterministically).
@@ -951,7 +961,7 @@ test('a rule panel edits when/then clauses without raw JSON', async ({ page, req
   const { flow_id } = await created.json();
 
   await page.goto(`/engine/${flow_id}`);
-  await expect(page.getByLabel('new node type')).toBeVisible();
+  await openTools(page);
 
   await page.getByLabel('new node type').selectOption('rule');
   await page.getByRole('button', { name: 'Add', exact: true }).click();
@@ -975,7 +985,7 @@ test('a reason panel edits adverse-action codes without raw JSON', async ({ page
   const { flow_id } = await created.json();
 
   await page.goto(`/engine/${flow_id}`);
-  await expect(page.getByLabel('new node type')).toBeVisible();
+  await openTools(page);
 
   await page.getByLabel('new node type').selectOption('reason');
   await page.getByRole('button', { name: 'Add', exact: true }).click();
@@ -1047,8 +1057,100 @@ test('shows the backend validation error when publishing an invalid graph', asyn
 
   await page.goto(`/engine/${flow_id}`);
   // A single rule node (no input/output) must be rejected loudly by the backend.
+  await openTools(page);
   await page.getByLabel('new node type').selectOption('rule');
   await page.getByRole('button', { name: 'Add', exact: true }).click();
   await page.getByRole('button', { name: 'Publish version' }).click();
   await expect(page.locator('.err')).toContainText('input');
+});
+
+// --- Design window (Miro-style board) ---------------------------------------------
+
+test('clicking a canvas node opens its inspector; pane click closes it', async ({
+  page,
+  request
+}) => {
+  const slug = uniqueSlug();
+  const created = await request.post('/v1/flows', {
+    headers: { 'X-Api-Key': KEY },
+    data: { slug, name: 'Inspect' }
+  });
+  const { flow_id } = await created.json();
+  await request.post(`/v1/flows/${flow_id}/versions`, {
+    headers: { 'X-Api-Key': KEY },
+    data: {
+      graph: {
+        nodes: [
+          { id: 'in', type: 'input' },
+          { id: 'gate', type: 'split', config: { condition: 'x > 1' } },
+          { id: 'out', type: 'output' }
+        ],
+        edges: [
+          { from: 'in', to: 'gate' },
+          { from: 'gate', to: 'out', branch: 'yes' }
+        ]
+      }
+    }
+  });
+
+  await page.goto(`/engine/${flow_id}`);
+  await expect(page.locator('.svelte-flow__node')).toHaveCount(3);
+  await page.locator('.svelte-flow__node', { hasText: 'gate' }).click();
+
+  const inspector = page.getByTestId('node-inspector');
+  await expect(inspector).toBeVisible();
+  await expect(inspector.getByLabel('condition')).toHaveValue('x > 1');
+
+  // Edit through the inspector — the config JSON follows.
+  await inspector.getByLabel('condition').fill('x > 5');
+  await expect(inspector.getByLabel('node config')).toHaveValue(/x > 5/);
+
+  // Clicking empty canvas deselects and closes the inspector.
+  await page.locator('.svelte-flow__pane').click({ position: { x: 620, y: 420 } });
+  await expect(inspector).toHaveCount(0);
+});
+
+test('the node rail inserts a node and opens its inspector', async ({ page, request }) => {
+  const slug = uniqueSlug();
+  const created = await request.post('/v1/flows', {
+    headers: { 'X-Api-Key': KEY },
+    data: { slug, name: 'Rail' }
+  });
+  const { flow_id } = await created.json();
+
+  await page.goto(`/engine/${flow_id}`);
+  await expect(page.getByTestId('node-rail')).toBeVisible();
+  await page.getByRole('button', { name: 'insert split node' }).click();
+
+  const inspector = page.getByTestId('node-inspector');
+  await expect(inspector).toBeVisible();
+  await expect(inspector.getByLabel('selected node type')).toHaveValue('split');
+});
+
+test('the design window focuses, exits on Escape, and collapses', async ({ page, request }) => {
+  const slug = uniqueSlug();
+  const created = await request.post('/v1/flows', {
+    headers: { 'X-Api-Key': KEY },
+    data: { slug, name: 'Modes' }
+  });
+  const { flow_id } = await created.json();
+
+  await page.goto(`/engine/${flow_id}`);
+  const canvas = page.getByTestId('flow-canvas');
+
+  await page.getByTestId('canvas-mode-focus').click();
+  await expect(canvas).toHaveClass(/focus/);
+  // Focus takes the whole viewport.
+  const box = await canvas.boundingBox();
+  expect(box?.width).toBe(page.viewportSize()?.width);
+
+  await page.keyboard.press('Escape');
+  await expect(canvas).not.toHaveClass(/focus/);
+
+  await page.getByTestId('canvas-mode-collapsed').click();
+  await expect(canvas).toHaveClass(/collapsed/);
+  await expect(page.locator('.svelte-flow')).toHaveCount(0);
+  // The collapsed strip names the graph size and expands back to the board.
+  await page.getByTestId('canvas-mode-board').click();
+  await expect(page.locator('.svelte-flow')).toBeVisible();
 });
