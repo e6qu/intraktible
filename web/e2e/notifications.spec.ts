@@ -18,3 +18,21 @@ test('the notifications bell mounts and opens the inbox', async ({ page }) => {
   // covered by the Go unit tests (notifications.TestTaskNotificationsFromCaseLifecycle).
   await expect(bell.getByText('Notifications')).toBeVisible();
 });
+
+test('Escape and outside clicks dismiss the dropdown', async ({ page }) => {
+  await page.goto('/');
+  const bell = page.getByTestId('notifications-bell');
+  const panel = bell.locator('.panel');
+  await bell.locator('summary').click();
+  await expect(panel).toBeVisible();
+
+  // Escape closes while focus is still on the summary (the click leaves it there).
+  await page.keyboard.press('Escape');
+  await expect(panel).toBeHidden();
+
+  // Reopen, then a click outside the dropdown dismisses it.
+  await bell.locator('summary').click();
+  await expect(panel).toBeVisible();
+  await page.locator('body').click({ position: { x: 5, y: 400 } });
+  await expect(panel).toBeHidden();
+});

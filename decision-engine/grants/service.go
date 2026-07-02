@@ -5,7 +5,9 @@ package grants
 import (
 	"net/http"
 
+	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/httpx"
+	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/store"
 )
 
@@ -55,16 +57,9 @@ func (s *Service) add(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) revoke(w http.ResponseWriter, r *http.Request) {
-	id, ok := httpx.Caller(w, r)
-	if !ok {
-		return
-	}
-	e, err := s.cmd.Revoke(r.Context(), id, r.PathValue("flow_id"), r.PathValue("grant_id"))
-	if err != nil {
-		httpx.Error(w, http.StatusBadRequest, err)
-		return
-	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"event_id": e.ID, "seq": e.Seq})
+	httpx.Act(w, r, func(id identity.Identity) (eventlog.Envelope, error) {
+		return s.cmd.Revoke(r.Context(), id, r.PathValue("flow_id"), r.PathValue("grant_id"))
+	})
 }
 
 func (s *Service) list(w http.ResponseWriter, r *http.Request) {

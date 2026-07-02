@@ -64,7 +64,7 @@ func TestDecideInjectsFeatures(t *testing.T) {
 
 	// 5 >= 3 -> high.
 	dhHigh := command.NewDecideHandler(log, st, command.WithFeatures(stubFeatures{"txn_count_24h": 5}))
-	res, err := dhHigh.Decide(ctx, id, "risk", "production", nil, ref)
+	res, err := dhHigh.Decide(ctx, id, "risk", "sandbox", nil, ref)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func TestDecideInjectsFeatures(t *testing.T) {
 
 	// 1 >= 3 is false -> low.
 	dhLow := command.NewDecideHandler(log, st, command.WithFeatures(stubFeatures{"txn_count_24h": 1}))
-	res, err = dhLow.Decide(ctx, id, "risk", "production", nil, ref)
+	res, err = dhLow.Decide(ctx, id, "risk", "sandbox", nil, ref)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +129,7 @@ func TestDecideWithoutEntityRefSkipsFeatures(t *testing.T) {
 	publishFeatureFlow(t, ctx, log, st, id)
 
 	dh := command.NewDecideHandler(log, st, command.WithFeatures(stubFeatures{"txn_count_24h": 5}))
-	res, err := dh.Decide(ctx, id, "risk", "production", nil, command.EntityRef{})
+	res, err := dh.Decide(ctx, id, "risk", "sandbox", nil, command.EntityRef{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -67,7 +67,9 @@ test('case detail shows computed days-left', async ({ page, request }) => {
 
   await page.goto(`/cases/${case_id}`);
   const daysLeft = page.getByTestId('days-left');
-  await expect(daysLeft).toContainText('on_track');
+  // The SLA state renders as a human label ("on track"), not the wire enum.
+  await expect(daysLeft).toContainText('on track');
+  await expect(daysLeft).not.toContainText('on_track');
   await expect(daysLeft).toContainText(/[45]/);
 });
 

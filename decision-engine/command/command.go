@@ -581,34 +581,26 @@ func (h *Handler) RevertSchedule(ctx context.Context, id identity.Identity, sche
 // SetSLO records a flow's service-level objectives (success-rate + latency
 // targets). A zeroed SLO clears them.
 func (h *Handler) SetSLO(ctx context.Context, id identity.Identity, cmd domain.SetSLO) (eventlog.Envelope, error) {
-	if err := id.Valid(); err != nil {
-		return eventlog.Envelope{}, err
-	}
 	if err := cmd.Validate(); err != nil {
 		return eventlog.Envelope{}, err
 	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	byID, _, err := h.foldTenant(ctx, id)
-	if err != nil {
-		return eventlog.Envelope{}, err
-	}
-	if _, ok := byID[cmd.FlowID]; !ok {
-		return eventlog.Envelope{}, fmt.Errorf("decision-engine: unknown flow %q", cmd.FlowID)
-	}
-	payload, err := json.Marshal(events.SLOSet{FlowID: cmd.FlowID, SLO: cmd.SLO})
-	if err != nil {
-		return eventlog.Envelope{}, fmt.Errorf("decision-engine: marshal slo: %w", err)
-	}
-	return h.appendFlowEvent(ctx, id, events.TypeSLOSet, payload)
+	return h.setFlowAttribute(ctx, id, cmd.FlowID, events.TypeSLOSet, "slo", events.SLOSet{FlowID: cmd.FlowID, SLO: cmd.SLO})
 }
 
 // SetPromotionPolicy records a flow's per-stage promotion gate policy.
 func (h *Handler) SetPromotionPolicy(ctx context.Context, id identity.Identity, cmd domain.SetPromotionPolicy) (eventlog.Envelope, error) {
-	if err := id.Valid(); err != nil {
+	if err := cmd.Validate(); err != nil {
 		return eventlog.Envelope{}, err
 	}
-	if err := cmd.Validate(); err != nil {
+	return h.setFlowAttribute(ctx, id, cmd.FlowID, events.TypePromotionPolicySet, "promotion policy",
+		events.PromotionPolicySet{FlowID: cmd.FlowID, Policy: cmd.Policy})
+}
+
+// setFlowAttribute validates the identity, asserts the flow exists (under the
+// handler lock), and appends the attribute event — the shared spine of the
+// flow-scoped Set* commands.
+func (h *Handler) setFlowAttribute(ctx context.Context, id identity.Identity, flowID, typ, what string, payload any) (eventlog.Envelope, error) {
+	if err := id.Valid(); err != nil {
 		return eventlog.Envelope{}, err
 	}
 	h.mu.Lock()
@@ -617,14 +609,14 @@ func (h *Handler) SetPromotionPolicy(ctx context.Context, id identity.Identity, 
 	if err != nil {
 		return eventlog.Envelope{}, err
 	}
-	if _, ok := byID[cmd.FlowID]; !ok {
-		return eventlog.Envelope{}, fmt.Errorf("decision-engine: unknown flow %q", cmd.FlowID)
+	if _, ok := byID[flowID]; !ok {
+		return eventlog.Envelope{}, fmt.Errorf("decision-engine: unknown flow %q", flowID)
 	}
-	payload, err := json.Marshal(events.PromotionPolicySet{FlowID: cmd.FlowID, Policy: cmd.Policy})
+	b, err := json.Marshal(payload)
 	if err != nil {
-		return eventlog.Envelope{}, fmt.Errorf("decision-engine: marshal promotion policy: %w", err)
+		return eventlog.Envelope{}, fmt.Errorf("decision-engine: marshal %s: %w", what, err)
 	}
-	return h.appendFlowEvent(ctx, id, events.TypePromotionPolicySet, payload)
+	return h.appendFlowEvent(ctx, id, typ, b)
 }
 
 // SetShadow assigns (or clears, with version 0) the shadow version for an
@@ -662,6 +654,20 @@ type deployReq struct {
 	version, challengerVersion, challengerPct int
 	requestedBy                               string
 	status                                    flows.RequestStatus
+}
+
+// RequestEnv reports the environment a pending deployment request targets, so the
+// HTTP layer can enforce the caller's environment scope before approve/reject —
+// the request's environment is immutable, so a pre-check cannot go stale.
+func (h *Handler) RequestEnv(ctx context.Context, id identity.Identity, flowID, reqID string) (string, bool, error) {
+	if err := id.Valid(); err != nil {
+		return "", false, err
+	}
+	req, ok, err := h.foldRequest(ctx, id, flowID, reqID)
+	if err != nil || !ok {
+		return "", ok, err
+	}
+	return req.env, true, nil
 }
 
 // foldRequest reconstructs one deployment request from the flow stream.

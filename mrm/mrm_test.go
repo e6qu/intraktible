@@ -5,11 +5,13 @@ package mrm_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/e6qu/intraktible/agent-manager/agents"
+	"github.com/e6qu/intraktible/agent-manager/domain"
 	"github.com/e6qu/intraktible/agent-manager/eval"
 	"github.com/e6qu/intraktible/decision-engine/flows"
 	"github.com/e6qu/intraktible/decision-engine/models"
@@ -65,6 +67,31 @@ func TestBuildInventoryAndIssues(t *testing.T) {
 	}
 	if !hasIssue(agent.Issues, "no eval cases defined") {
 		t.Fatalf("agent should flag missing eval cases: %v", agent.Issues)
+	}
+}
+
+// TestAgentSuccessRateFromRuns pins the inventory's agent success rate to
+// completed-over-terminal runs — an agent whose runs all completed must not
+// read as 0%, and a still-running run must not count against it.
+func TestAgentSuccessRateFromRuns(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemory()
+	id := identity.Identity{Org: "demo", Workspace: "main"}
+	put(t, st, agents.CollectionAgents, store.Key("demo", "main", "triage"), agents.AgentView{
+		Org: "demo", Workspace: "main", Name: "triage", Latest: 1, Runs: 4,
+	})
+	for i, status := range []domain.RunStatus{domain.RunCompleted, domain.RunCompleted, domain.RunCompleted, domain.RunFailed, domain.RunRunning} {
+		runID := fmt.Sprintf("r%d", i)
+		put(t, st, agents.CollectionRuns, store.Key("demo", "main", runID), agents.RunView{
+			Org: "demo", Workspace: "main", RunID: runID, Agent: "triage", Status: status,
+		})
+	}
+	rep, err := mrm.Build(ctx, st, id, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := rep.Models[0].Monitoring.SuccessRate; got != 0.75 {
+		t.Fatalf("success rate = %v, want 0.75 (3 completed / 4 terminal)", got)
 	}
 }
 

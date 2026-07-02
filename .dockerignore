@@ -1,0 +1,13 @@
+.git
+.github
+node_modules
+web/node_modules
+web/.svelte-kit
+web/build
+bin
+temp
+data
+.env
+.env.*
+*.log
+.claude

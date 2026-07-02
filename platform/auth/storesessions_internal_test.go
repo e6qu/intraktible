@@ -3,6 +3,7 @@
 package auth
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -55,6 +56,57 @@ func TestStoreSessions(t *testing.T) {
 	s.Revoke(tok2)
 	if _, _, _, ok := s.Resolve(tok2); ok {
 		t.Fatal("revoked session should not resolve")
+	}
+}
+
+// TestResolveDeletesExpiredSession: an expired row can never resolve again, so
+// Resolve deletes it instead of leaving it to accumulate (previously only
+// Revoke deleted rows, so auth_sessions grew without bound).
+func TestResolveDeletesExpiredSession(t *testing.T) {
+	st := store.NewMemory()
+	clock := time.Now()
+	s := NewStoreSessions(st)
+	s.now = func() time.Time { return clock }
+	s.ttl = time.Hour
+	id := identity.Identity{Org: "o", Workspace: "w", Actor: "a"}
+
+	tok, _ := s.Issue(id, RoleEditor, Production)
+	clock = clock.Add(2 * time.Hour)
+	if _, _, _, ok := s.Resolve(tok); ok {
+		t.Fatal("expired session should not resolve")
+	}
+	if _, ok, _ := st.Get(context.Background(), sessionCollection, hash(tok)); ok {
+		t.Fatal("resolving an expired session should delete its row")
+	}
+}
+
+// TestIssueSweepsExpiredSessions: issuing a session opportunistically prunes
+// previously-expired rows, so tokens that are never presented again still get
+// cleaned up.
+func TestIssueSweepsExpiredSessions(t *testing.T) {
+	st := store.NewMemory()
+	clock := time.Now()
+	s := NewStoreSessions(st)
+	s.now = func() time.Time { return clock }
+	s.ttl = time.Hour
+	id := identity.Identity{Org: "o", Workspace: "w", Actor: "a"}
+
+	old1, _ := s.Issue(id, RoleEditor, Production)
+	old2, _ := s.IssueSSO(id, RoleEditor, ScopeAll)
+	clock = clock.Add(2 * time.Hour)
+
+	fresh, _ := s.Issue(id, RoleEditor, Production)
+	for _, tok := range []string{old1, old2} {
+		if _, ok, _ := st.Get(context.Background(), sessionCollection, hash(tok)); ok {
+			t.Fatal("issue should sweep previously-expired session rows")
+		}
+	}
+	if _, _, _, ok := s.Resolve(fresh); !ok {
+		t.Fatal("the freshly issued session must survive the sweep")
+	}
+	recs, _ := st.List(context.Background(), sessionCollection, "")
+	if len(recs) != 1 {
+		t.Fatalf("auth_sessions rows = %d, want 1 (the fresh session)", len(recs))
 	}
 }
 

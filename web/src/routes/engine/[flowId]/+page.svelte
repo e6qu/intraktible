@@ -244,11 +244,13 @@
   // one step at a time, so the decision's route is visible on the canvas.
   async function replayLatest() {
     if (replaying) return;
+    const requested = flowId; // abandon the animation if sibling navigation swaps the flow
     replaying = true;
     try {
       const recent = (await listDecisions(key)).filter(
-        (d) => d.flow_id === flowId && (d.nodes?.length ?? 0) > 0
+        (d) => d.flow_id === requested && (d.nodes?.length ?? 0) > 0
       );
+      if (flowId !== requested) return;
       const d = recent[0];
       if (!d) {
         toast.error('No recorded decisions to replay for this flow yet.');
@@ -256,6 +258,7 @@
       }
       const path = (d.nodes ?? []).map((n) => n.node_id);
       for (let i = 0; i < path.length; i++) {
+        if (flowId !== requested) return;
         const m = new Map<string, 'head' | 'trail'>();
         for (let j = 0; j < i; j++) m.set(path[j], 'trail');
         m.set(path[i], 'head');
@@ -1319,10 +1322,13 @@
   let schUntil = $state('');
   let schBusy = $state(false);
   async function loadSchedules() {
+    const requested = flowId;
     try {
-      schedules = await listSchedules(key, flowId);
+      const s = await listSchedules(key, flowId);
+      if (flowId !== requested) return; // dropped: a newer flow loaded mid-request
+      schedules = s;
     } catch {
-      schedules = [];
+      if (flowId === requested) schedules = [];
     }
   }
   async function addSchedule() {
@@ -1362,10 +1368,13 @@
   let grantEnv = $state('*');
   let grantBusy = $state(false);
   async function loadGrants() {
+    const requested = flowId;
     try {
-      grants = await listGrants(key, flowId);
+      const g = await listGrants(key, flowId);
+      if (flowId !== requested) return; // dropped: a newer flow loaded mid-request
+      grants = g;
     } catch {
-      grants = []; // non-admins can't list — leave empty
+      if (flowId === requested) grants = []; // non-admins can't list — leave empty
     }
   }
   async function grant() {
@@ -1681,9 +1690,9 @@
     return `${Math.round(n * 100)}%`;
   }
 
-  let assertText = $state(
-    '[\n  {\n    "name": "example",\n    "input": {},\n    "expect": {}\n  }\n]'
-  );
+  const ASSERT_PLACEHOLDER =
+    '[\n  {\n    "name": "example",\n    "input": {},\n    "expect": {}\n  }\n]';
+  let assertText = $state(ASSERT_PLACEHOLDER);
   let assertReport = $state<AssertionReport | null>(null);
   let assertBusy = $state(false);
   async function loadAssertions() {
@@ -1691,9 +1700,15 @@
     try {
       const cases = await getAssertions(key, flowId);
       if (flowId !== requested) return; // dropped: a newer flow loaded mid-request
-      if (cases.length) assertText = JSON.stringify(cases, null, 2);
-    } catch {
-      /* leave the placeholder */
+      // A flow with no cases resets to the placeholder — otherwise the previous
+      // flow's assertions would stay editable (and saveable) onto this flow.
+      assertText = cases.length ? JSON.stringify(cases, null, 2) : ASSERT_PLACEHOLDER;
+    } catch (e) {
+      if (flowId !== requested) return;
+      // Reset the editor (the previous flow's cases must not be saveable here)
+      // and surface the failure rather than quietly showing the placeholder.
+      assertText = ASSERT_PLACEHOLDER;
+      error = msg(e);
     }
   }
   async function saveAssertions() {
@@ -1723,8 +1738,32 @@
     }
   }
 
+  // All per-flow UI state that must not leak across sibling navigation: run
+  // output, node overlays and one-shot reports all describe the previous flow.
+  function resetFlowScopedState() {
+    nodeTelemetry = new Map();
+    heatOn = false;
+    nodeHeat = new Map();
+    heatTotal = 0;
+    coverageReport = null;
+    btReport = null;
+    wiReport = null;
+    batchReport = null;
+    paReport = null;
+    lastCheck = null;
+    assertReport = null;
+    // Synchronously, not just when loadAssertions settles — the previous flow's
+    // cases must not be editable/saveable onto this flow even mid-fetch.
+    assertText = ASSERT_PLACEHOLDER;
+    result = '';
+    runResult = null;
+    runMs = null;
+    lastDecisionId = '';
+  }
+
   $effect(() => {
     void flowId; // reload every panel when the route flow changes (covers mount + sibling nav)
+    resetFlowScopedState();
     void load();
     void loadMetrics();
     void loadMonitors();
@@ -1847,7 +1886,7 @@
     {#if metrics && metrics.total > 0}
       <div class="metrics">
         <span class="exportlabel"><Icon name="diagram" size={15} /> Analytics</span>
-        <span><b>{metrics.total}</b> decisions</span>
+        <span><b>{metrics.total}</b> decision{metrics.total === 1 ? '' : 's'}</span>
         <span class="ok">{metrics.completed} completed</span>
         <span class="err">{metrics.failed} failed</span>
         <span class="muted">avg {metrics.avg_duration_ms} ms</span>

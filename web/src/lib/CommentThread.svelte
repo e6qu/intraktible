@@ -32,21 +32,22 @@
   function msg(e: unknown): string {
     return e instanceof Error ? e.message : String(e);
   }
+  // A monotonically increasing token so only the newest load may write state:
+  // subject identity alone can't order two loads for the SAME subject (e.g. the
+  // pre-post list resolving after the post-inclusive reload and dropping the new
+  // comment), and it still covers a subject swap mid-flight.
+  let loadSeq = 0;
   async function load() {
+    const seq = ++loadSeq;
     error = '';
-    // Drop a stale response when the subject changes mid-flight (the component is
-    // sometimes reused without a keyed remount), so an older thread can't clobber
-    // the current one.
-    const reqType = subjectType;
-    const reqId = subjectId;
     try {
       const got = await listComments(key, subjectType, subjectId);
-      if (subjectType !== reqType || subjectId !== reqId) return;
+      if (seq !== loadSeq) return; // a newer load superseded this one
       comments = got;
     } catch (e) {
-      if (subjectType === reqType && subjectId === reqId) error = msg(e);
+      if (seq === loadSeq) error = msg(e);
     } finally {
-      if (subjectType === reqType && subjectId === reqId) loading = false;
+      if (seq === loadSeq) loading = false;
     }
   }
   async function post() {

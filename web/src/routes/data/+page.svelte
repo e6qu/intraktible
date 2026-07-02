@@ -326,7 +326,9 @@
 
   <section>
     <h2>Entities</h2>
-    {#if entities.length === 0}
+    {#if loadingData && entities.length === 0}
+      <Skeleton rows={3} />
+    {:else if entities.length === 0}
       <EmptyState
         icon="database"
         title="No entities yet"

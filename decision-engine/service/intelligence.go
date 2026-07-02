@@ -210,6 +210,15 @@ func (s *Service) counterfactual(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusNotFound, fmt.Errorf("decision not found"))
 		return
 	}
+	// The counterfactual echoes recorded field values (flip from/to), so it sits
+	// at the same read boundary as every other decision read: unseal + mask first.
+	// A masked field's value is no longer numeric, so field discovery below
+	// excludes it as a lever without special-casing.
+	rec, err = s.maskRecord(r.Context(), id, rec)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, err)
+		return
+	}
 	original := policy.Disposition(rec.Disposition)
 	if original == policy.Approve {
 		// Already favorable: nothing to flip.

@@ -110,10 +110,14 @@
   async function loadCf() {
     if (cfBusy) return;
     cfBusy = true;
+    // The search re-runs the flow many times; drop a late result (or error) if
+    // sibling navigation swapped the decision mid-flight.
+    const reqId = id;
     try {
-      cf = await decisionCounterfactual(key, id);
+      const got = await decisionCounterfactual(key, reqId);
+      if (id === reqId) cf = got;
     } catch (e) {
-      toast.error(msg(e));
+      if (id === reqId) toast.error(msg(e));
     } finally {
       cfBusy = false;
     }
@@ -124,6 +128,9 @@
   $effect(() => {
     void id; // reload on initial mount and sibling navigation
     cf = null;
+    // Reset the rendered decision too — otherwise a failed sibling load keeps
+    // showing the previous decision (including its Resume panel) under the new id.
+    d = null;
     void load();
   });
 </script>
@@ -573,6 +580,12 @@
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 1rem;
+  }
+  /* min-width: 0 lets each panel's <pre> scroll within its box (the global
+     pre { overflow: auto }) instead of an unbroken JSON string widening the
+     grid column — and the whole page — past the viewport. */
+  .cols > div {
+    min-width: 0;
   }
   @media (max-width: 640px) {
     .cols {

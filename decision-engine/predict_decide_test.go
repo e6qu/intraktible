@@ -44,7 +44,7 @@ func TestDecidePreResolvesPredictNode(t *testing.T) {
 	dh := command.NewDecideHandler(log, st, command.WithModels(models.Provider{Store: st}))
 
 	// fico=700: z = -3 + 0.005*700 = 0.5; sigmoid(0.5) ≈ 0.62 >= 0.5 -> high.
-	res, err := dh.Decide(ctx, id, "score", "production", map[string]any{"fico": 700}, command.EntityRef{})
+	res, err := dh.Decide(ctx, id, "score", "sandbox", map[string]any{"fico": 700}, command.EntityRef{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +53,7 @@ func TestDecidePreResolvesPredictNode(t *testing.T) {
 	}
 
 	// fico=400: z = -3 + 2 = -1; sigmoid(-1) ≈ 0.27 < 0.5 -> low.
-	low, err := dh.Decide(ctx, id, "score", "production", map[string]any{"fico": 400}, command.EntityRef{})
+	low, err := dh.Decide(ctx, id, "score", "sandbox", map[string]any{"fico": 400}, command.EntityRef{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,7 +155,7 @@ func TestModelDriftMonitoring(t *testing.T) {
 	// Three decisions at fico=700 (probability ≈ 0.62), then capture the baseline,
 	// then two at fico=400 (probability ≈ 0.27) — a real shift in the distribution.
 	for i := 0; i < 3; i++ {
-		if _, err := dh.Decide(ctx, id, "score", "production", map[string]any{"fico": 700}, command.EntityRef{}); err != nil {
+		if _, err := dh.Decide(ctx, id, "score", "sandbox", map[string]any{"fico": 700}, command.EntityRef{}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -163,7 +163,7 @@ func TestModelDriftMonitoring(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := 0; i < 2; i++ {
-		if _, err := dh.Decide(ctx, id, "score", "production", map[string]any{"fico": 400}, command.EntityRef{}); err != nil {
+		if _, err := dh.Decide(ctx, id, "score", "sandbox", map[string]any{"fico": 400}, command.EntityRef{}); err != nil {
 			t.Fatal(err)
 		}
 	}

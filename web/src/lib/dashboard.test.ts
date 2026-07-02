@@ -18,19 +18,27 @@ function dec(started_at: string, status = 'completed', duration_ms = 10): Decisi
 }
 
 describe('decisionsByDay', () => {
-  it('buckets by calendar day in ascending order', () => {
-    const series = decisionsByDay([
-      dec('2026-06-15T10:00:00Z'),
-      dec('2026-06-15T23:59:00Z'),
-      dec('2026-06-17T01:00:00Z')
-    ]);
+  it('buckets by calendar day into a dense zero-filled window ending at the last active day', () => {
+    const series = decisionsByDay(
+      [dec('2026-06-15T10:00:00Z'), dec('2026-06-15T23:59:00Z'), dec('2026-06-17T01:00:00Z')],
+      4
+    );
     expect(series).toEqual([
+      { day: '2026-06-14', count: 0 },
       { day: '2026-06-15', count: 2 },
+      { day: '2026-06-16', count: 0 },
       { day: '2026-06-17', count: 1 }
     ]);
   });
 
-  it('keeps only the most recent maxDays active days', () => {
+  it('always renders the full window — one busy day is one bar among maxDays, not a slab', () => {
+    const series = decisionsByDay([dec('2026-06-15T10:00:00Z')], 14);
+    expect(series).toHaveLength(14);
+    expect(series.at(-1)).toEqual({ day: '2026-06-15', count: 1 });
+    expect(series.slice(0, -1).every((s) => s.count === 0)).toBe(true);
+  });
+
+  it('keeps only the most recent maxDays days', () => {
     const days = ['2026-06-10', '2026-06-11', '2026-06-12', '2026-06-13'];
     const series = decisionsByDay(
       days.map((d) => dec(`${d}T00:00:00Z`)),

@@ -6,7 +6,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"io"
 	"math"
@@ -111,12 +110,5 @@ func (h *Handler) Delete(ctx context.Context, id identity.Identity, flowID, moni
 }
 
 func (h *Handler) append(ctx context.Context, id identity.Identity, typ string, payload any) (eventlog.Envelope, error) {
-	b, err := json.Marshal(payload)
-	if err != nil {
-		return eventlog.Envelope{}, fmt.Errorf("monitor: marshal %s: %w", typ, err)
-	}
-	return h.log.Append(ctx, eventlog.Envelope{
-		Org: id.Org, Workspace: id.Workspace, Actor: id.Actor,
-		Stream: StreamMonitors, Type: typ, Time: h.now(), Payload: b,
-	})
+	return eventlog.AppendJSON(ctx, h.log, id.Org, id.Workspace, id.Actor, StreamMonitors, typ, h.now(), payload)
 }

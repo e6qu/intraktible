@@ -48,6 +48,12 @@
   const TERMINAL = new Set(['completed', 'resolved', 'cancelled']);
   const closed = $derived(c != null && TERMINAL.has(c.status));
 
+  // The SLA state is a wire enum (on_track/due_soon/overdue) — render it as a
+  // human label, not the raw underscored value.
+  function slaLabel(s: string): string {
+    return s.replace(/_/g, ' ');
+  }
+
   async function load() {
     error = '';
     // Drop a stale response when sibling navigation changes caseID mid-flight.
@@ -101,6 +107,10 @@
 
   $effect(() => {
     void caseID; // reload on initial mount and sibling navigation
+    // Reset the rendered case and the status seed — otherwise a failed sibling
+    // load keeps showing the previous case (and its status in the select).
+    c = null;
+    statusSeeded = false;
     void load();
   });
 </script>
@@ -129,7 +139,7 @@
       <dt>days left</dt>
       <dd class={closed ? '' : `sla-${c.sla_state ?? ''}`} data-testid="days-left">
         {#if closed}<span class="muted">—</span>{:else}{c.days_left}{#if c.sla_state}<span
-              class="muted">{' ('}{c.sla_state})</span
+              class="muted">{' ('}{slaLabel(c.sla_state)})</span
             >{/if}{/if}
       </dd>
       {#if c.source_decision_id}<dt>source decision</dt>

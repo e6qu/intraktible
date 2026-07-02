@@ -203,6 +203,9 @@
     error = '';
     btReport = null;
     btRunning = true;
+    // Drop the result if another policy is selected mid-flight — its impact table
+    // and errors describe the previously selected policy's draft.
+    const requested = selectedId;
     try {
       const parsed = JSON.parse(btDataset);
       if (!Array.isArray(parsed)) {
@@ -210,13 +213,14 @@
       }
       const dataset = parsed as Record<string, unknown>[];
       const compare = selected && selected.latest > 0 ? selected.latest : undefined;
-      btReport = await policyBacktest(key, selectedId, {
+      const report = await policyBacktest(key, requested, {
         spec: draftSpec(),
         compare_version: compare,
         dataset
       });
+      if (selectedId === requested) btReport = report;
     } catch (e) {
-      error = msg(e);
+      if (selectedId === requested) error = msg(e);
     } finally {
       btRunning = false;
     }

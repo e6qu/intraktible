@@ -33,6 +33,7 @@ import (
 	"github.com/e6qu/intraktible/platform/auth"
 	"github.com/e6qu/intraktible/platform/entity"
 	"github.com/e6qu/intraktible/platform/erasure"
+	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/httpx"
 	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/openapi"
@@ -971,27 +972,19 @@ func (s *Service) requestDeployment(w http.ResponseWriter, r *http.Request) {
 
 // approveDeployment is the checker side: approve a pending request (four-eyes), deploying it.
 func (s *Service) approveDeployment(w http.ResponseWriter, r *http.Request) {
-	id, ok := httpx.Caller(w, r)
-	if !ok {
-		return
-	}
-	var req struct {
-		Reason string `json:"reason,omitempty"`
-	}
-	_ = httpx.DecodeJSON(r, &req)
-	if !s.allowFlowAny(w, r, id, r.PathValue("flow_id")) {
-		return
-	}
-	e, err := s.cmd.ApproveDeployment(r.Context(), id, r.PathValue("flow_id"), r.PathValue("req_id"), req.Reason)
-	if err != nil {
-		httpx.Error(w, http.StatusBadRequest, err)
-		return
-	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"status": "approved", "event_id": e.ID, "seq": e.Seq})
+	s.decideDeploymentRequest(w, r, "approved", s.cmd.ApproveDeployment)
 }
 
 // rejectDeployment rejects a pending request.
 func (s *Service) rejectDeployment(w http.ResponseWriter, r *http.Request) {
+	s.decideDeploymentRequest(w, r, "rejected", s.cmd.RejectDeployment)
+}
+
+// decideDeploymentRequest is the shared checker shape: an optional reason body,
+// the per-flow grant gate, the environment-scope gate against the request's
+// target, then the verdict command. A malformed body is a loud 400, never ignored.
+func (s *Service) decideDeploymentRequest(w http.ResponseWriter, r *http.Request, verdict string,
+	decide func(context.Context, identity.Identity, string, string, string) (eventlog.Envelope, error)) {
 	id, ok := httpx.Caller(w, r)
 	if !ok {
 		return
@@ -999,16 +992,24 @@ func (s *Service) rejectDeployment(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Reason string `json:"reason,omitempty"`
 	}
-	_ = httpx.DecodeJSON(r, &req)
+	if r.ContentLength != 0 {
+		if err := httpx.DecodeJSON(r, &req); err != nil {
+			httpx.Error(w, http.StatusBadRequest, err)
+			return
+		}
+	}
 	if !s.allowFlowAny(w, r, id, r.PathValue("flow_id")) {
 		return
 	}
-	e, err := s.cmd.RejectDeployment(r.Context(), id, r.PathValue("flow_id"), r.PathValue("req_id"), req.Reason)
+	if !s.allowRequestEnv(w, r, id) {
+		return
+	}
+	e, err := decide(r.Context(), id, r.PathValue("flow_id"), r.PathValue("req_id"), req.Reason)
 	if err != nil {
 		httpx.Error(w, http.StatusBadRequest, err)
 		return
 	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"status": "rejected", "event_id": e.ID, "seq": e.Seq})
+	httpx.JSON(w, http.StatusOK, map[string]any{"status": verdict, "event_id": e.ID, "seq": e.Seq})
 }
 
 type decideRequest struct {
@@ -1066,6 +1067,22 @@ func (s *Service) flowOpenAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write(doc)
+}
+
+// allowRequestEnv enforces the caller's environment scope against the environment a
+// pending deployment request targets — approve/reject are the writes that actually
+// make (or kill) a deployment, so they carry the same scope gate as deploy itself.
+func (s *Service) allowRequestEnv(w http.ResponseWriter, r *http.Request, id identity.Identity) bool {
+	env, ok, err := s.cmd.RequestEnv(r.Context(), id, r.PathValue("flow_id"), r.PathValue("req_id"))
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, err)
+		return false
+	}
+	if !ok {
+		httpx.Error(w, http.StatusBadRequest, fmt.Errorf("decision-engine: unknown deployment request %q", r.PathValue("req_id")))
+		return false
+	}
+	return allowEnv(w, r, env)
 }
 
 // allowEnv enforces the caller's scope against the path environment. Every
@@ -1605,6 +1622,20 @@ func (s *Service) resumeDecision(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	// Resuming completes a real decision in the suspended decision's environment,
+	// so it carries the same scope gate as the decide path itself.
+	rec, found, err := history.Read(r.Context(), s.store, id, r.PathValue("decision_id"))
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	if !found {
+		httpx.Error(w, http.StatusBadRequest, fmt.Errorf("decision-engine: unknown decision %q", r.PathValue("decision_id")))
+		return
+	}
+	if !allowEnv(w, r, rec.Environment) {
 		return
 	}
 	res, err := s.decide.ResumeDecision(r.Context(), id, r.PathValue("decision_id"), req.Outcome)

@@ -610,7 +610,7 @@ func TestExportDecisionTraceOverHTTP(t *testing.T) {
 			DecisionID string `json:"decision_id"`
 			Status     string `json:"status"`
 		}{}
-		api.Request(t, http.MethodPost, "/v1/flows/trace/production/decide", map[string]any{"data": map[string]any{}}, http.StatusOK, &dec)
+		api.Request(t, http.MethodPost, "/v1/flows/trace/sandbox/decide", map[string]any{"data": map[string]any{}}, http.StatusOK, &dec)
 		return dec.Status == "completed" && dec.DecisionID != ""
 	}) {
 		t.Fatal("decide never completed")
@@ -689,7 +689,7 @@ func TestDecideBatchOverHTTP(t *testing.T) {
 			Total, Completed, Failed, Rejected int
 			Results                            []result `json:"results"`
 		}{}
-		api.Request(t, http.MethodPost, "/v1/flows/batch/production/decide/batch", map[string]any{
+		api.Request(t, http.MethodPost, "/v1/flows/batch/sandbox/decide/batch", map[string]any{
 			"dataset": []map[string]any{{"x": 1}, {"x": 2}, {}},
 		}, http.StatusOK, &resp)
 		return resp.Total == 3 && resp.Completed == 2
@@ -715,7 +715,7 @@ func TestDecideBatchOverHTTP(t *testing.T) {
 	}
 
 	// An empty dataset is a 400.
-	api.Request(t, http.MethodPost, "/v1/flows/batch/production/decide/batch", map[string]any{"dataset": []any{}}, http.StatusBadRequest, nil)
+	api.Request(t, http.MethodPost, "/v1/flows/batch/sandbox/decide/batch", map[string]any{"dataset": []any{}}, http.StatusBadRequest, nil)
 }
 
 type fakeCompleter struct{ graph string }
@@ -815,7 +815,7 @@ func TestDecideStreamOverHTTP(t *testing.T) {
 	ndjson := "{\"x\":1}\n{\"x\":2}\n{}\n"
 	var body string
 	if !testutil.Eventually(t, func() bool {
-		req, err := http.NewRequest(http.MethodPost, api.Server.URL+"/v1/flows/stream/production/decide/stream", strings.NewReader(ndjson))
+		req, err := http.NewRequest(http.MethodPost, api.Server.URL+"/v1/flows/stream/sandbox/decide/stream", strings.NewReader(ndjson))
 		if err != nil {
 			return false
 		}
@@ -882,7 +882,7 @@ func TestDecideAppliesPolicyOverHTTP(t *testing.T) {
 	var dec decideResp
 	if !testutil.Eventually(t, func() bool {
 		dec = decideResp{}
-		api.Request(t, http.MethodPost, "/v1/flows/scored/production/decide", map[string]any{"data": map[string]any{"score": 0.9}}, http.StatusOK, &dec)
+		api.Request(t, http.MethodPost, "/v1/flows/scored/sandbox/decide", map[string]any{"data": map[string]any{"score": 0.9}}, http.StatusOK, &dec)
 		return dec.Status == "completed" && dec.Disposition == string(policy.Approve)
 	}) {
 		t.Fatalf("policy never auto-approved: %+v", dec)
@@ -904,7 +904,7 @@ func TestDecideAppliesPolicyOverHTTP(t *testing.T) {
 
 	// A low score refers (the residual that needs a human).
 	var low decideResp
-	api.Request(t, http.MethodPost, "/v1/flows/scored/production/decide", map[string]any{"data": map[string]any{"score": 0.2}}, http.StatusOK, &low)
+	api.Request(t, http.MethodPost, "/v1/flows/scored/sandbox/decide", map[string]any{"data": map[string]any{"score": 0.2}}, http.StatusOK, &low)
 	if low.Disposition != string(policy.Refer) {
 		t.Fatalf("low score should refer, got %q", low.Disposition)
 	}
@@ -991,7 +991,7 @@ func TestDecideHonorsPreApprovalOverHTTP(t *testing.T) {
 	var d decResp
 	if !testutil.Eventually(t, func() bool {
 		d = decResp{}
-		api.Request(t, http.MethodPost, "/v1/flows/honored/production/decide", map[string]any{
+		api.Request(t, http.MethodPost, "/v1/flows/honored/sandbox/decide", map[string]any{
 			"data": map[string]any{}, "entity_type": "applicant", "entity_id": "acme",
 		}, http.StatusOK, &d)
 		return d.Status == "completed" && d.Disposition == "approve"
@@ -1013,6 +1013,54 @@ func TestDecideHonorsPreApprovalOverHTTP(t *testing.T) {
 		return rec.PreApprovalID != "" && len(rec.Nodes) == 0
 	}) {
 		t.Fatalf("expected a honored record with no node trace: %+v", rec)
+	}
+}
+
+// TestPreApprovalBoundToFlowNotHonoredElsewhere proves a grant carrying a flow
+// binding short-circuits only that flow: an unrelated flow deciding the same
+// entity must run its graph, not serve the stored terms.
+func TestPreApprovalBoundToFlowNotHonoredElsewhere(t *testing.T) {
+	api := startEngine(t)
+	passthrough := map[string]any{
+		"nodes": []map[string]any{{"id": "in", "type": "input"}, {"id": "out", "type": "output"}},
+		"edges": []map[string]any{{"from": "in", "to": "out"}},
+	}
+	for _, slug := range []string{"credit", "fraud"} {
+		var flow struct {
+			FlowID string `json:"flow_id"`
+		}
+		api.Request(t, http.MethodPost, "/v1/flows", map[string]any{"slug": slug, "name": slug}, http.StatusCreated, &flow)
+		api.Request(t, http.MethodPost, "/v1/flows/"+flow.FlowID+"/versions",
+			map[string]any{"graph": passthrough}, http.StatusCreated, nil)
+	}
+	api.Request(t, http.MethodPost, "/v1/preapprovals", map[string]any{
+		"entity_type": "applicant", "entity_id": "acme", "disposition": "approve",
+		"terms": map[string]any{"limit": 5000}, "valid_days": 30, "flow_slug": "credit",
+	}, http.StatusCreated, nil)
+
+	type decResp struct {
+		Status      string         `json:"status"`
+		Disposition string         `json:"disposition"`
+		Data        map[string]any `json:"data"`
+	}
+	// The bound flow is honored (instant approve with the stored terms).
+	var honored decResp
+	if !testutil.Eventually(t, func() bool {
+		honored = decResp{}
+		api.Request(t, http.MethodPost, "/v1/flows/credit/sandbox/decide", map[string]any{
+			"data": map[string]any{}, "entity_type": "applicant", "entity_id": "acme",
+		}, http.StatusOK, &honored)
+		return honored.Status == "completed" && honored.Disposition == "approve"
+	}) {
+		t.Fatalf("bound flow never honored the grant: %+v", honored)
+	}
+	// The unrelated flow runs its graph: no approve disposition, no stored terms.
+	var other decResp
+	api.Request(t, http.MethodPost, "/v1/flows/fraud/sandbox/decide", map[string]any{
+		"data": map[string]any{}, "entity_type": "applicant", "entity_id": "acme",
+	}, http.StatusOK, &other)
+	if other.Disposition == "approve" || other.Data["limit"] != nil {
+		t.Fatalf("cross-flow decide must not honor a bound grant: %+v", other)
 	}
 }
 
@@ -1067,7 +1115,7 @@ func TestPreApproveBatchOverHTTP(t *testing.T) {
 	}
 	if !testutil.Eventually(t, func() bool {
 		resp.Granted, resp.Skipped, resp.Rejected = 0, 0, 0
-		api.Request(t, http.MethodPost, "/v1/flows/bulk/production/preapprove/batch", map[string]any{
+		api.Request(t, http.MethodPost, "/v1/flows/bulk/sandbox/preapprove/batch", map[string]any{
 			"dataset": dataset, "entity_type": "applicant", "entity_key": "applicant_id", "valid_days": 30,
 		}, http.StatusOK, &resp)
 		return resp.Granted == 2 // wait until the policy projection resolves
@@ -1084,7 +1132,7 @@ func TestPreApproveBatchOverHTTP(t *testing.T) {
 		Disposition string         `json:"disposition"`
 		Data        map[string]any `json:"data"`
 	}
-	api.Request(t, http.MethodPost, "/v1/flows/bulk/production/decide", map[string]any{
+	api.Request(t, http.MethodPost, "/v1/flows/bulk/sandbox/decide", map[string]any{
 		"data": map[string]any{}, "entity_type": "applicant", "entity_id": "a1",
 	}, http.StatusOK, &d)
 	if d.Status != "completed" || d.Disposition != "approve" || d.Data["score"] != 0.95 {
@@ -1135,7 +1183,7 @@ func TestMonitorsOverHTTP(t *testing.T) {
 
 	// Run three decisions; the volume monitor then fires (3 > 2).
 	for range 3 {
-		api.Request(t, http.MethodPost, "/v1/flows/watched/production/decide", map[string]any{"data": map[string]any{}}, http.StatusOK, nil)
+		api.Request(t, http.MethodPost, "/v1/flows/watched/sandbox/decide", map[string]any{"data": map[string]any{}}, http.StatusOK, nil)
 	}
 	if !testutil.Eventually(t, func() bool {
 		listed.Monitors = nil
@@ -1191,7 +1239,7 @@ func TestMonitorCheckDeliversToWebhookOverHTTP(t *testing.T) {
 	api.Request(t, http.MethodPost, "/v1/flows/"+flow.FlowID+"/monitors", map[string]any{
 		"metric": "volume", "op": "gt", "threshold": 0, "description": "any traffic",
 	}, http.StatusCreated, nil)
-	api.Request(t, http.MethodPost, "/v1/flows/alerted/production/decide", map[string]any{"data": map[string]any{}}, http.StatusOK, nil)
+	api.Request(t, http.MethodPost, "/v1/flows/alerted/sandbox/decide", map[string]any{"data": map[string]any{}}, http.StatusOK, nil)
 
 	// Checking the flow fires the monitor and delivers it to the webhook.
 	type delivery struct {
@@ -1259,7 +1307,7 @@ func TestPrivacyMaskingOverHTTP(t *testing.T) {
 	var dec struct {
 		DecisionID string `json:"decision_id"`
 	}
-	api.Request(t, http.MethodPost, "/v1/flows/pii/production/decide",
+	api.Request(t, http.MethodPost, "/v1/flows/pii/sandbox/decide",
 		map[string]any{"data": map[string]any{"ssn": "123-45-6789", "amount": 100}}, http.StatusOK, &dec)
 
 	// The decision detail masks ssn but leaves amount intact, in both input and output.
@@ -1319,7 +1367,7 @@ func TestDistributionDriftOverHTTP(t *testing.T) {
 	}, http.StatusCreated, nil)
 
 	decide := func(score float64) {
-		api.Request(t, http.MethodPost, "/v1/flows/drifty/production/decide",
+		api.Request(t, http.MethodPost, "/v1/flows/drifty/sandbox/decide",
 			map[string]any{"data": map[string]any{"score": score}}, http.StatusOK, nil)
 	}
 	// Baseline mix: one approve, one refer → 50/50.
@@ -1499,6 +1547,96 @@ func TestWriteEnvironmentScopeEnforced(t *testing.T) {
 		map[string]any{"environment": "sandbox", "version": 2}, http.StatusCreated, nil)
 }
 
+// TestApproveRejectEnvironmentScopeEnforced proves the checker side of
+// maker-checker carries the environment scope too: approving (or rejecting) a
+// production deployment request is the write that makes production live, so a
+// sandbox-scoped key must be refused even with an admin role and four-eyes met.
+func TestApproveRejectEnvironmentScopeEnforced(t *testing.T) {
+	api := startEngine(t)
+	var created struct {
+		FlowID string `json:"flow_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows", map[string]any{"slug": "scoped", "name": "Scoped"}, http.StatusCreated, &created)
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/versions",
+		map[string]any{"graph": flowtest.ConstGraph("v1")}, http.StatusCreated, nil)
+	var req struct {
+		RequestID string `json:"request_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/deployment-requests",
+		map[string]any{"environment": "production", "version": 1}, http.StatusCreated, &req)
+
+	// A different actor (four-eyes satisfied) whose key is sandbox-scoped: 403.
+	sandboxed := api.AddKey("sandbox-checker", auth.APIKey{
+		ID: "sbx", Identity: identity.Identity{Org: api.Identity.Org, Workspace: api.Identity.Workspace, Actor: "checker"},
+		Scope: auth.Sandbox, Role: auth.RoleAdmin,
+	})
+	sandboxed.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/deployment-requests/"+req.RequestID+"/approve",
+		map[string]any{}, http.StatusForbidden, nil)
+	sandboxed.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/deployment-requests/"+req.RequestID+"/reject",
+		map[string]any{}, http.StatusForbidden, nil)
+
+	// The same actor with an unrestricted key approves fine — only scope blocked it.
+	checker := api.AddKey("all-checker", auth.APIKey{
+		ID: "chk", Identity: identity.Identity{Org: api.Identity.Org, Workspace: api.Identity.Workspace, Actor: "checker"},
+		Scope: auth.ScopeAll, Role: auth.RoleAdmin,
+	})
+	checker.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/deployment-requests/"+req.RequestID+"/approve",
+		map[string]any{}, http.StatusOK, nil)
+}
+
+// TestResumeEnvironmentScopeEnforced proves resuming a suspended decision is
+// gated by the caller's environment scope: it completes a real decision in the
+// decision's environment, exactly like the decide path.
+func TestResumeEnvironmentScopeEnforced(t *testing.T) {
+	api := startEngine(t)
+	var created struct {
+		FlowID string `json:"flow_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows",
+		map[string]string{"slug": "htask", "name": "HumanTask"}, http.StatusCreated, &created)
+	graph := map[string]any{
+		"nodes": []map[string]any{
+			{"id": "in", "type": "input"},
+			{"id": "review", "type": "manual_review", "config": map[string]any{
+				"company_name": "'Acme'", "case_type": "'aml'", "suspend": true,
+			}},
+			{"id": "out", "type": "output", "config": map[string]any{"fields": []string{"decision"}}},
+		},
+		"edges": []map[string]any{{"from": "in", "to": "review"}, {"from": "review", "to": "out"}},
+	}
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/versions",
+		map[string]any{"graph": graph}, http.StatusCreated, nil)
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/deployments",
+		map[string]any{"environment": "staging", "version": 1}, http.StatusCreated, nil)
+
+	var dec struct {
+		DecisionID string `json:"decision_id"`
+		Status     string `json:"status"`
+	}
+	if !testutil.Eventually(t, func() bool {
+		api.Request(t, http.MethodPost, "/v1/flows/htask/staging/decide",
+			map[string]any{"data": map[string]any{}}, http.StatusOK, &dec)
+		return dec.Status == "suspended"
+	}) {
+		t.Fatalf("decide never suspended: %+v", dec)
+	}
+
+	// A sandbox-scoped reviewer cannot complete a staging decision.
+	sandboxed := api.AddKey("sandbox-reviewer", auth.APIKey{
+		ID: "sbx", Identity: identity.Identity{Org: api.Identity.Org, Workspace: api.Identity.Workspace, Actor: "reviewer"},
+		Scope: auth.Sandbox, Role: auth.RoleAdmin,
+	})
+	if !testutil.Eventually(t, func() bool {
+		return sandboxed.RequestStatus(t, http.MethodPost, "/v1/decisions/"+dec.DecisionID+"/resume",
+			map[string]any{"outcome": map[string]any{"decision": "approve"}}, nil) == http.StatusForbidden
+	}) {
+		t.Fatal("sandbox-scoped resume of a staging decision must be 403")
+	}
+	// The unrestricted key resumes fine.
+	api.Request(t, http.MethodPost, "/v1/decisions/"+dec.DecisionID+"/resume",
+		map[string]any{"outcome": map[string]any{"decision": "approve"}}, http.StatusOK, nil)
+}
+
 // TestFlowOpenAPIEndpoint proves the per-flow generated contract carries the flow's
 // decide endpoints and embeds its published input schema.
 func TestFlowOpenAPIEndpoint(t *testing.T) {
@@ -1569,7 +1707,7 @@ func TestFlowSLOOverHTTP(t *testing.T) {
 		var res struct {
 			Status string `json:"status"`
 		}
-		api.Request(t, http.MethodPost, "/v1/flows/sloflow/production/decide",
+		api.Request(t, http.MethodPost, "/v1/flows/sloflow/sandbox/decide",
 			map[string]any{"data": map[string]any{}}, http.StatusOK, &res)
 		return res.Status == "completed"
 	}) {
@@ -1782,7 +1920,7 @@ func TestDecideValidatesInputSchema(t *testing.T) {
 		var res struct {
 			Status string `json:"status"`
 		}
-		api.Request(t, http.MethodPost, "/v1/flows/scored/production/decide",
+		api.Request(t, http.MethodPost, "/v1/flows/scored/sandbox/decide",
 			map[string]any{"data": map[string]any{"customer": "acme"}}, http.StatusOK, &res)
 		return res.Status == "completed"
 	}) {
@@ -1790,10 +1928,10 @@ func TestDecideValidatesInputSchema(t *testing.T) {
 	}
 
 	// Missing the required field is a bad request (not a recorded decision).
-	api.Request(t, http.MethodPost, "/v1/flows/scored/production/decide",
+	api.Request(t, http.MethodPost, "/v1/flows/scored/sandbox/decide",
 		map[string]any{"data": map[string]any{}}, http.StatusBadRequest, nil)
 	// Wrong type is also rejected.
-	api.Request(t, http.MethodPost, "/v1/flows/scored/production/decide",
+	api.Request(t, http.MethodPost, "/v1/flows/scored/sandbox/decide",
 		map[string]any{"data": map[string]any{"customer": 42}}, http.StatusBadRequest, nil)
 }
 
@@ -1814,7 +1952,7 @@ func TestDecideWithEntityFeaturesOverHTTP(t *testing.T) {
 			Status string         `json:"status"`
 			Data   map[string]any `json:"data"`
 		}
-		api.Request(t, http.MethodPost, "/v1/flows/risk/production/decide",
+		api.Request(t, http.MethodPost, "/v1/flows/risk/sandbox/decide",
 			map[string]any{"entity_type": "customer", "entity_id": "c1"}, http.StatusOK, &res)
 		return res.Status == "completed" && res.Data["tier"] == "high"
 	}) {
@@ -1848,7 +1986,7 @@ func TestDecideWithConnectorOverHTTP(t *testing.T) {
 			Status string         `json:"status"`
 			Data   map[string]any `json:"data"`
 		}
-		api.Request(t, http.MethodPost, "/v1/flows/screen/production/decide", map[string]any{}, http.StatusOK, &res)
+		api.Request(t, http.MethodPost, "/v1/flows/screen/sandbox/decide", map[string]any{}, http.StatusOK, &res)
 		return res.Status == "completed" && res.Data["tier"] == "high"
 	}) {
 		t.Fatal("decide never reflected the connector response (tier=high)")
@@ -1877,7 +2015,7 @@ func TestDecideWithAINodeOverHTTP(t *testing.T) {
 			Status string         `json:"status"`
 			Data   map[string]any `json:"data"`
 		}
-		api.Request(t, http.MethodPost, "/v1/flows/assess/production/decide", map[string]any{}, http.StatusOK, &res)
+		api.Request(t, http.MethodPost, "/v1/flows/assess/sandbox/decide", map[string]any{}, http.StatusOK, &res)
 		return res.Status == "completed" && res.Data["tier"] == "high"
 	}) {
 		t.Fatal("decide never reflected the AI node output (tier=high)")
@@ -1978,7 +2116,7 @@ func TestDecideAPIEndToEnd(t *testing.T) {
 		Status     string         `json:"status"`
 		Data       map[string]any `json:"data"`
 	}
-	api.Request(t, http.MethodPost, "/v1/flows/scoring/production/decide",
+	api.Request(t, http.MethodPost, "/v1/flows/scoring/sandbox/decide",
 		map[string]any{"data": map[string]any{"fico": 680, "bonus": 40}}, http.StatusOK, &decision)
 	if decision.Status != "completed" || decision.Data["decision"] != "APPROVE" {
 		t.Fatalf("decide result: %+v", decision)
@@ -2573,7 +2711,7 @@ func TestDecideRecordsReasonCodes(t *testing.T) {
 		DecisionID string `json:"decision_id"`
 		Status     string `json:"status"`
 	}
-	api.Request(t, http.MethodPost, "/v1/flows/adverse/production/decide",
+	api.Request(t, http.MethodPost, "/v1/flows/adverse/sandbox/decide",
 		map[string]any{"data": map[string]any{"fico": 500, "income": 50000}}, http.StatusOK, &decision)
 	if decision.Status != "completed" {
 		t.Fatalf("decide status=%s", decision.Status)

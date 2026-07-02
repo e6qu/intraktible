@@ -846,6 +846,32 @@ provider captures token usage (`usage` object + `stream_options.include_usage` f
 set/clear-objective editor (`SloCard.svelte`). Honest scope: SLO attainment is over the cumulative
 metrics (all-time), not a rolling window (windowed SLOs need time-bucketed metrics — follow-up).
 
+**Comprehensive multi-agent audit round 11 (R11 in BUGS.md).** A full review — four parallel code
+reviewers (core infra, domain, frontend, architecture/docs) plus a live screenshot sweep of every page
+× persona × theme — landed as one fat PR. Governance/security: pre-approval **flow binding enforced**
+on the decide fast path (a bound grant no longer short-circuits unrelated flows); the **environment
+scope gate extended to approve/reject deployment requests and to resume** (the two writes that could
+still reach production from a sandbox-scoped key); and the decide **latest-published fallback confined
+to the sandbox** — staging/production now refuse when nothing is deployed, closing the "never deploy,
+never get reviewed" four-eyes bypass (demo.sh/EXAMPLE.md decide in sandbox). Resume hardened three
+ways (reserved-namespace + reason_codes strip on the reviewer outcome, a per-suspension unique claim
+against TOCTOU double-resume, escalations emitted on all terminal branches with the recorded context).
+Core infra: the erasure vault's first-use **keygen race** (permanently undecryptable envelopes) made
+atomic; the case-SLA scheduler **decoupled from the decision-engine module guard** (the split profile
+ran no sweeps); a WAL **fsync-failure rollback** (no more ghost-record index divergence); expired
+session rows pruned. Read-boundary: the counterfactual endpoint now masks/unseals like every other
+decision read; coverage attributes branch hits by the split's recorded choice (dead branches with live
+targets no longer read as covered); MRM agent success rate computed (was always 0%). Frontend: a sweep
+of stale-state-on-sibling-navigation fixes (engine builder, agents, cases, decisions, policies,
+models), applied-vs-draft pager/filter/CSV coherence on decisions + audit, the audit-page rotate/revoke
+in-flight guard, a11y fixes on the notifications bell, the decision-detail horizontal overflow, a dense
+zero-filled Executive volume trend, and seven demo-router faithfulness divergences aligned with the Go
+backend (12 new faithfulness tests). Hygiene: the `dupl` gate now **fails on any production clone**
+(the six existing groups were deduplicated via shared `httpx.Act`/`eventlog.AppendJSON`/
+`setFlowAttribute`/a generic `nodeSpecs`), `.dockerignore` added, README's `--log` row documents
+postgres/nats, and per the review philosophy the new code adds **no fallbacks and no catch-all error
+handling** — unknown states fail loudly at the earliest boundary.
+
 **Transposition-prevention refactors (TS40–TS42).** The three follow-ups left from round 10 landed as
 one PR: the decision-subject (entity type, id) is now the shared branded `platform/entity.Ref` threaded
 through the feature/pre-approval ports (a swapped pair fails to compile rather than silently keying the

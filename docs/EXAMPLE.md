@@ -65,9 +65,13 @@ The shell pre-resolves the connector and agent before execution (so the pure cor
 does no I/O) and records the results in the decision; `decide` returns the trace:
 
 ```sh
-curl ... -d '{"data":{"subject":"Acme Corp"}}' localhost:8080/v1/flows/onboard/production/decide
+curl ... -d '{"data":{"subject":"Acme Corp"}}' localhost:8080/v1/flows/onboard/sandbox/decide
 # status "completed"; data carries connect.bureau.* and ai.assessment.*
 ```
+
+The sandbox runs the latest published version straight away; `staging` and
+`production` only decide what change control deployed there (production via a
+four-eyes deployment request), so an un-reviewed version can never take real traffic.
 
 ## 5. Case Manager — the escalation lands
 

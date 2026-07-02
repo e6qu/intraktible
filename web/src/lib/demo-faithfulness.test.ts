@@ -3,10 +3,10 @@
 // (never the "stub: <prompt>" echo), a preview decide records nothing, and the
 // admin-only surfaces gate on the switched user's role (matching the real backend).
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { agentReply } from './demo/agent';
-import { evaluateModel } from './demo/engine';
-import type { Model } from './api';
+import { evaluateModel, runFlow, setRollPercent } from './demo/engine';
+import type { Decision, FlowGraph, Model } from './api';
 import { handleDemo } from './demo/router';
 import { setDemoUser, state, USERS, psi } from './demo/store';
 
@@ -285,5 +285,288 @@ describe('admin-only surfaces gate on role', () => {
     setDemoUser(USERS[0].actor); // Ava — admin
     expect(handleDemo('GET', '/v1/mrm/report', params(), {}).status).toBe(200);
     expect(handleDemo('GET', '/v1/audit', params(), {}).status).toBe(200);
+  });
+});
+
+describe('audit filter: resource and time bounds', () => {
+  interface AuditBody {
+    entries: { time: string; stream: string }[];
+    total: number;
+  }
+
+  it('scopes the trail (and its CSV export) to one resource id', () => {
+    setDemoUser(USERS[0].actor); // admin
+    const created = handleDemo('POST', '/v1/flows', params(), { slug: 'audit-scope-flow' });
+    const flowId = (created.body as { flow_id: string }).flow_id;
+    // By id: the demo's stream carries the resource id.
+    const byId = handleDemo('GET', '/v1/audit', new URLSearchParams({ resource: flowId }), {})
+      .body as AuditBody;
+    expect(byId.total).toBeGreaterThan(0);
+    for (const e of byId.entries) expect(e.stream).toBe(flowId);
+    // By a payload value (the slug), matching the real payloadReferences semantics.
+    const bySlug = handleDemo(
+      'GET',
+      '/v1/audit',
+      new URLSearchParams({ resource: 'audit-scope-flow' }),
+      {}
+    ).body as AuditBody;
+    expect(bySlug.total).toBeGreaterThan(0);
+    // The CSV export applies the same filter: header + one row per matched entry.
+    const csv = handleDemo(
+      'GET',
+      '/v1/audit',
+      new URLSearchParams({ resource: flowId, format: 'csv' }),
+      {}
+    );
+    expect(csv.text?.split('\n').length).toBe(1 + byId.total);
+  });
+
+  it('applies inclusive since/until bounds and 400s an unparseable one', () => {
+    setDemoUser(USERS[0].actor);
+    const all = handleDemo('GET', '/v1/audit', params(), {}).body as AuditBody;
+    const cutoff = new Date(Date.now() - 3600_000).toISOString(); // one hour ago
+    const recent = handleDemo('GET', '/v1/audit', new URLSearchParams({ since: cutoff }), {})
+      .body as AuditBody;
+    expect(recent.total).toBeGreaterThan(0); // entries this test file just produced
+    expect(recent.total).toBeLessThan(all.total); // the seeded hours-old history drops out
+    for (const e of recent.entries) {
+      expect(Date.parse(e.time)).toBeGreaterThanOrEqual(Date.parse(cutoff));
+    }
+    const old = handleDemo('GET', '/v1/audit', new URLSearchParams({ until: cutoff }), {})
+      .body as AuditBody;
+    expect(old.total).toBe(all.total - recent.total);
+    expect(
+      handleDemo('GET', '/v1/audit', new URLSearchParams({ since: 'not-a-time' }), {}).status
+    ).toBe(400);
+  });
+});
+
+describe('flow import upsert', () => {
+  it('re-importing an identical export is a no-op (created:false, published:false)', () => {
+    const flow = state.flows.find((f) => f.slug === 'credit-decision');
+    const latest = flow?.versions.find((v) => v.version === flow.latest);
+    const before = flow?.versions.length ?? 0;
+    const res = handleDemo('POST', '/v1/flows/import', params(), {
+      slug: 'credit-decision',
+      graph: latest?.graph,
+      input_schema: latest?.input_schema
+    });
+    expect(res.status).toBe(200);
+    const body = res.body as { created: boolean; published: boolean; version: number };
+    expect(body.created).toBe(false);
+    expect(body.published).toBe(false);
+    expect(body.version).toBe(latest?.version);
+    expect(flow?.versions.length).toBe(before);
+  });
+
+  it('publishes an edited graph onto the existing slug, carrying input_schema through', () => {
+    const flow = state.flows.find((f) => f.slug === 'credit-decision');
+    if (!flow) throw new Error('seed flow missing');
+    const latest = flow.versions.find((v) => v.version === flow.latest);
+    if (!latest) throw new Error('latest version missing');
+    const edited: FlowGraph = {
+      nodes: [
+        ...latest.graph.nodes,
+        {
+          id: 'extra',
+          type: 'assignment',
+          name: 'Extra',
+          config: { assignments: [{ target: 'x', expr: '1' }] }
+        }
+      ],
+      edges: latest.graph.edges
+    };
+    const res = handleDemo('POST', '/v1/flows/import', params(), {
+      slug: 'credit-decision',
+      graph: edited,
+      input_schema: latest.input_schema
+    });
+    const body = res.body as { created: boolean; published: boolean; version: number };
+    expect(body.created).toBe(false);
+    expect(body.published).toBe(true);
+    expect(body.version).toBe(flow.latest);
+    expect(flow.versions.at(-1)?.input_schema).toEqual(latest.input_schema);
+  });
+
+  it('bundle: an existing slug with a different graph counts as updated, not unchanged', () => {
+    const flow = state.flows.find((f) => f.slug === 'credit-decision');
+    if (!flow) throw new Error('seed flow missing');
+    const latest = flow.versions.find((v) => v.version === flow.latest);
+    if (!latest) throw new Error('latest version missing');
+    const changed: FlowGraph = {
+      nodes: [
+        { id: 'in', type: 'input', name: 'Input' },
+        {
+          id: 'out',
+          type: 'output',
+          name: 'Out',
+          config: { assignments: [{ target: 'ok', expr: 'true' }] }
+        }
+      ],
+      edges: [{ from: 'in', to: 'out' }]
+    };
+    const res = handleDemo('POST', '/v1/flows/import-bundle', params(), {
+      flows: [
+        { slug: 'credit-decision', graph: latest.graph, input_schema: latest.input_schema },
+        { slug: 'credit-decision', graph: changed },
+        { slug: '' }
+      ]
+    });
+    const body = res.body as {
+      published: number;
+      unchanged: number;
+      failed: number;
+      results: { published: boolean; error?: string }[];
+    };
+    expect(body.unchanged).toBe(1);
+    expect(body.published).toBe(1);
+    expect(body.failed).toBe(1);
+    expect(body.results).toHaveLength(3);
+    expect(body.results[2].error).toBeTruthy();
+  });
+});
+
+describe('publish etag covers input_schema', () => {
+  it('a schema-only change publishes a new version; identical graph+schema no-ops', () => {
+    const flow = state.flows.find((f) => f.slug === 'kyc-onboarding');
+    if (!flow) throw new Error('seed flow missing');
+    const latest = flow.versions.find((v) => v.version === flow.latest);
+    if (!latest) throw new Error('latest version missing');
+    const noop = handleDemo('POST', `/v1/flows/${flow.slug}/versions`, params(), {
+      graph: latest.graph,
+      input_schema: latest.input_schema
+    });
+    expect((noop.body as { published: boolean }).published).toBe(false);
+    const bumped = handleDemo('POST', `/v1/flows/${flow.slug}/versions`, params(), {
+      graph: latest.graph,
+      input_schema: { type: 'object', properties: { extra_flag: { type: 'boolean' } } }
+    });
+    const body = bumped.body as { published: boolean; version: number };
+    expect(body.published).toBe(true);
+    expect(body.version).toBe(latest.version + 1);
+  });
+});
+
+describe('batch per-row input validation', () => {
+  afterEach(() => setRollPercent(null));
+
+  it('rejects a wrong-typed row with {index, status, error} and a real rejected count', () => {
+    setRollPercent(() => 99); // pin the champion so the valid row is deterministic
+    const before = state.decisions.length;
+    const res = handleDemo('POST', '/v1/flows/credit-decision/sandbox/decide/batch', params(), {
+      dataset: [
+        { income: 52000, debt: 14000 },
+        { income: 'lots', debt: 14000 }
+      ]
+    });
+    const body = res.body as {
+      total: number;
+      rejected: number;
+      results: { index: number; status: string; error?: string; decision_id?: string }[];
+    };
+    expect(body.total).toBe(2);
+    expect(body.rejected).toBe(1);
+    expect(body.results[1].status).toBe('rejected');
+    expect(body.results[1].error).toContain('income');
+    expect(body.results[1].decision_id).toBeUndefined();
+    expect(state.decisions.length).toBe(before + 1); // only the valid row records
+  });
+
+  it('preapprove/batch rejects wrong-typed rows the same way, granting nothing', () => {
+    setRollPercent(() => 99);
+    const before = state.preapprovals.length;
+    const res = handleDemo('POST', '/v1/flows/credit-decision/sandbox/preapprove/batch', params(), {
+      dataset: [{ id: 'X-1', income: 'lots' }],
+      entity_type: 'applicant',
+      entity_key: 'id'
+    });
+    const body = res.body as {
+      rejected: number;
+      granted: number;
+      results: { status: string; granted: boolean }[];
+    };
+    expect(body.rejected).toBe(1);
+    expect(body.granted).toBe(0);
+    expect(body.results[0].status).toBe('rejected');
+    expect(body.results[0].granted).toBe(false);
+    expect(state.preapprovals.length).toBe(before);
+  });
+});
+
+describe('champion/challenger traffic split', () => {
+  // credit-decision's sandbox deployment: champion v3, challenger v2 at 20%.
+  afterEach(() => setRollPercent(null));
+
+  it('routes a roll under challenger_pct to the challenger version', () => {
+    setRollPercent(() => 0);
+    handleDemo('POST', '/v1/flows/credit-decision/sandbox/decide', params(), {
+      data: { income: 52000, debt: 14000 }
+    });
+    expect(state.decisions[0].variant).toBe('challenger');
+    expect(state.decisions[0].version).toBe(2);
+  });
+
+  it('routes a roll at/above challenger_pct to the champion', () => {
+    setRollPercent(() => 20);
+    handleDemo('POST', '/v1/flows/credit-decision/sandbox/decide', params(), {
+      data: { income: 52000, debt: 14000 }
+    });
+    expect(state.decisions[0].variant).toBe('champion');
+    expect(state.decisions[0].version).toBe(3);
+  });
+});
+
+describe('runFlow step bound', () => {
+  it('fails loudly when a cyclic graph exhausts the bound (never silent completion)', () => {
+    const graph: FlowGraph = {
+      nodes: [
+        { id: 'in', type: 'input', name: 'In' },
+        { id: 'a', type: 'assignment', name: 'A', config: { assignments: [] } }
+      ],
+      edges: [
+        { from: 'in', to: 'a' },
+        { from: 'a', to: 'in' }
+      ]
+    };
+    const run = runFlow(state.flows[0], graph, {});
+    expect(run.status).toBe('failed');
+    expect(run.error).toContain('step bound');
+  });
+});
+
+describe('flow metrics by_variant', () => {
+  it('does not count a suspended decision as a variant failure', () => {
+    const flow = state.flows.find((f) => f.slug === 'credit-decision');
+    if (!flow) throw new Error('seed flow missing');
+    const read = () =>
+      (
+        handleDemo('GET', `/v1/flows/${flow.slug}/metrics`, params(), {}).body as {
+          by_variant: Record<string, { started: number; completed: number; failed: number }>;
+        }
+      ).by_variant.champion;
+    const before = read();
+    state.decisions.unshift({
+      decision_id: 'dec_suspended_metrics',
+      flow_id: flow.flow_id,
+      slug: flow.slug,
+      version: flow.latest,
+      environment: 'sandbox',
+      variant: 'champion',
+      status: 'suspended',
+      started_at: new Date().toISOString()
+    } as Decision);
+    const after = read();
+    expect(after.started).toBe(before.started + 1);
+    expect(after.completed).toBe(before.completed);
+    expect(after.failed).toBe(before.failed);
+  });
+});
+
+describe('define-agent duplicate name', () => {
+  it('400s with a clear message naming the agent', () => {
+    const name = state.agents[0].name;
+    const res = handleDemo('POST', '/v1/agents', params(), { name });
+    expect(res.status).toBe(400);
+    expect((res.body as { error: string }).error).toBe(`an agent named "${name}" already exists`);
   });
 });

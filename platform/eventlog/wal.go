@@ -9,6 +9,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -32,18 +33,34 @@ import (
 // large scale, the SQLite-backed Log (SQLiteLog) is the alternative backend.
 type WAL struct {
 	mu      sync.Mutex
-	f       *os.File
+	f       walFile
 	w       *bufio.Writer
 	offsets []int64 // byte offset where each record (seq = index+1) begins
 	size    int64   // total bytes of complete records (= the append position)
 	bus     *bus
 	closed  bool
+	// failed poisons Append after a failed write could not be rolled back: the
+	// file then holds bytes past w.size, so appending more would corrupt the log.
+	// Reads stay available (they never look past w.size); reopening recovers.
+	failed error
 	// claimed holds the Unique keys appended in THIS process, for ErrConflict
 	// detection. The WAL is single-process (the embedded binary), and the writer
 	// folds the log before computing a claim, so a cross-restart duplicate can't
 	// arise; this only needs to catch a within-process double-claim, honoring the
 	// Append contract uniformly with the shared SQL backends.
 	claimed map[string]bool
+}
+
+// walFile is the slice of *os.File the WAL uses, an interface so tests can
+// inject write/fsync failures; OpenWAL always passes the real file.
+type walFile interface {
+	io.Reader
+	io.Writer
+	io.ReaderAt
+	io.Closer
+	Truncate(size int64) error
+	Seek(offset int64, whence int) (int64, error)
+	Sync() error
 }
 
 // OpenWAL opens (or creates) the log file at dir/events.log and indexes it.
@@ -116,6 +133,9 @@ func (w *WAL) Append(_ context.Context, e Envelope) (Envelope, error) {
 	if w.closed {
 		return Envelope{}, ErrClosed
 	}
+	if w.failed != nil {
+		return Envelope{}, w.failed
+	}
 	if e.Org == "" || e.Workspace == "" {
 		return Envelope{}, fmt.Errorf("eventlog: event %q missing org/workspace", e.Type)
 	}
@@ -130,17 +150,25 @@ func (w *WAL) Append(_ context.Context, e Envelope) (Envelope, error) {
 	if err != nil {
 		return Envelope{}, fmt.Errorf("eventlog: marshal: %w", err)
 	}
-	// One record = the JSON line + a newline terminator.
+	// One record = the JSON line + a newline terminator. Any failure past this
+	// point may have left partial (or complete-but-not-durable) record bytes in
+	// the file while the in-memory index has NOT advanced — roll the file back to
+	// w.size so the ghost can't mis-index the next append or, worst for the fsync
+	// case, replay after a reopen an event whose Append the caller saw fail.
 	if _, err := w.w.Write(b); err != nil {
+		w.rollback()
 		return Envelope{}, fmt.Errorf("eventlog: write: %w", err)
 	}
 	if err := w.w.WriteByte('\n'); err != nil {
+		w.rollback()
 		return Envelope{}, fmt.Errorf("eventlog: write: %w", err)
 	}
 	if err := w.w.Flush(); err != nil {
+		w.rollback()
 		return Envelope{}, fmt.Errorf("eventlog: flush: %w", err)
 	}
 	if err := w.f.Sync(); err != nil {
+		w.rollback()
 		return Envelope{}, fmt.Errorf("eventlog: fsync: %w", err)
 	}
 	w.offsets = append(w.offsets, w.size)
@@ -150,6 +178,23 @@ func (w *WAL) Append(_ context.Context, e Envelope) (Envelope, error) {
 	}
 	w.bus.publish(e)
 	return e, nil
+}
+
+// rollback restores the append invariant after a mid-Append failure: the file is
+// truncated back to the last acknowledged record (w.size), the write head is
+// re-seeked there, and the bufio writer's buffered bytes and sticky error are
+// discarded. If the rollback itself fails, the WAL is poisoned for appends —
+// failing loudly beats writing after unacknowledged bytes.
+func (w *WAL) rollback() {
+	if err := w.f.Truncate(w.size); err != nil {
+		w.failed = fmt.Errorf("eventlog: rollback truncate after failed append (reopen the log): %w", err)
+		return
+	}
+	if _, err := w.f.Seek(w.size, io.SeekStart); err != nil {
+		w.failed = fmt.Errorf("eventlog: rollback seek after failed append (reopen the log): %w", err)
+		return
+	}
+	w.w.Reset(w.f)
 }
 
 // Read returns all events with Seq >= fromSeq, in order, decoding them from disk
@@ -173,7 +218,7 @@ func (w *WAL) Read(_ context.Context, fromSeq uint64) ([]Envelope, error) {
 	// means the file was truncated under us since the offset index was built — fail
 	// loudly rather than json.Unmarshal a partly-zero buffer or silently return fewer
 	// events than Head() reports.
-	if nRead, err := w.f.ReadAt(buf, start); err != nil && (err != io.EOF || nRead != len(buf)) {
+	if nRead, err := w.f.ReadAt(buf, start); err != nil && (!errors.Is(err, io.EOF) || nRead != len(buf)) {
 		return nil, fmt.Errorf("eventlog: read from seq %d (%d/%d bytes): %w", fromSeq, nRead, len(buf), err)
 	}
 	out := make([]Envelope, 0, n-fromSeq+1)

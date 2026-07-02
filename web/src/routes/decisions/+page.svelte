@@ -16,6 +16,7 @@
   } from '$lib/api';
   import { resolvePersona, personaConfig, personaLens, type DecisionColumn } from '$lib/persona';
   import { appHref } from '$lib/paths';
+  import { withOffset } from '$lib/paging';
   import Badge from '$lib/Badge.svelte';
   import { statusTone, dispositionTone } from '$lib/badge';
 
@@ -73,6 +74,16 @@
   function msg(e: unknown): string {
     return e instanceof Error ? e.message : String(e);
   }
+  // The last-applied (URL-driven) filter. Reload and the pager fetch through this —
+  // never the draft inputs — so edits that haven't been Applied can't leak into a
+  // fetch (and the rows always match what the URL says).
+  let applied = $state<{
+    flow?: string;
+    env?: Environment;
+    status?: DecisionStatus;
+    variant?: Variant;
+    q?: string;
+  }>({});
   // A generation token so overlapping loads (rapid Apply / pager) don't clobber: only
   // the latest request's response is allowed to write the list.
   let loadSeq = 0;
@@ -81,15 +92,7 @@
     loading = true;
     error = '';
     try {
-      const page = await listDecisionsPage(key, {
-        flow: fFlow.trim() || undefined,
-        env: fEnv || undefined,
-        status: fStatus || undefined,
-        variant: fVariant || undefined,
-        q: fQuery.trim() || undefined,
-        limit: PAGE,
-        offset
-      });
+      const page = await listDecisionsPage(key, { ...applied, limit: PAGE, offset });
       if (seq !== loadSeq) return; // a newer load superseded this one
       list = page.decisions;
       total = page.total;
@@ -120,7 +123,10 @@
     const next = offset + delta * PAGE;
     if (next < 0 || next >= total) return; // out of range (no empty page past the end)
     offset = next;
-    pushURL();
+    // Page within the applied (URL) filter: rewrite only the offset param, so
+    // draft filter edits stay un-applied until Apply is pressed.
+    const qs = withOffset(get(page).url.searchParams, offset);
+    goto(qs ? `?${qs}` : get(page).url.pathname, { keepFocus: true, noScroll: true });
   }
   function absTime(iso: string): string {
     const d = new Date(iso);
@@ -154,6 +160,13 @@
     fVariant = (sp.get('variant') as Variant | '') || (pristine ? (lens.variant ?? '') : '');
     fQuery = sp.get('q') ?? '';
     offset = Number(sp.get('offset') ?? '0') || 0;
+    applied = {
+      flow: fFlow.trim() || undefined,
+      env: fEnv || undefined,
+      status: fStatus || undefined,
+      variant: fVariant || undefined,
+      q: fQuery.trim() || undefined
+    };
     void load();
   });
 </script>

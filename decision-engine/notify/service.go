@@ -5,7 +5,9 @@ package notify
 import (
 	"net/http"
 
+	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/httpx"
+	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/store"
 )
 
@@ -53,16 +55,9 @@ func (s *Service) subscribe(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) unsubscribe(w http.ResponseWriter, r *http.Request) {
-	id, ok := httpx.Caller(w, r)
-	if !ok {
-		return
-	}
-	e, err := s.cmd.Unsubscribe(r.Context(), id, r.PathValue("webhook_id"))
-	if err != nil {
-		httpx.Error(w, http.StatusBadRequest, err)
-		return
-	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"event_id": e.ID, "seq": e.Seq})
+	httpx.Act(w, r, func(id identity.Identity) (eventlog.Envelope, error) {
+		return s.cmd.Unsubscribe(r.Context(), id, r.PathValue("webhook_id"))
+	})
 }
 
 func (s *Service) list(w http.ResponseWriter, r *http.Request) {
