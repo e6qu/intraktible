@@ -888,6 +888,25 @@ never see the whole queue) — the selection now serializes explicitly. New cove
 e2e spec (lens override, suspended filter, honored verdict, inline four-eyes), demo-faithfulness
 tests for the run journal/cost/honored response, and a real-suite lens regression test.
 
+**Design-window round (DW in BUGS.md).** The flow builder was rebuilt around the canvas as a
+Miro-style design tool: clicking a canvas node opens a floating **inspector** (the structured
+per-type panels, raw JSON, delete) instead of selection living inside the tools panel; a left icon
+**rail** inserts nodes (click a type → it lands by the selection → its inspector opens); the fuller
+tools panel docks left behind the toolbar toggle, closed by default; and the design window has three
+sizes — a viewport-filling **board**, a full-viewport **focus** takeover (Esc exits, window-level),
+and a **collapsed** strip that hands the page to the workflow tab panels (persisted). The page
+header compressed to one row with Export/Import behind a single disclosure, and switching a workflow
+tab scrolls the panel into view. Journey-walking the result surfaced and fixed: decide against a
+flow referencing an undefined connector/agent/model was a 500 (now a 400 via a structural
+BadProviderRef marker on the three providers' unknown-name errors — no cross-component imports);
+a failed test run rendered NO visible error (only a collapsed raw view); 19 api.ts sites threw bare
+HTTP statuses, swallowing the server's explanation (all now surface the body error); and the six
+flow templates carried no input_schema, so Sample input silently emitted {} and template flows never
+got decide-time type validation (each template gained a derived, example-carrying schema; Sample
+input is disabled-with-why on schema-less versions). New e2e: inspector open/edit/close on canvas
+click, rail insertion, focus/Escape/collapse round-trip, the 400 taxonomy, and per-template
+sample-and-run coverage.
+
 **Transposition-prevention refactors (TS40–TS42).** The three follow-ups left from round 10 landed as
 one PR: the decision-subject (entity type, id) is now the shared branded `platform/entity.Ref` threaded
 through the feature/pre-approval ports (a swapped pair fails to compile rather than silently keying the

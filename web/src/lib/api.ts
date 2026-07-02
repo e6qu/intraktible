@@ -91,7 +91,7 @@ function authHeaders(key: string): Record<string, string> {
 export async function getStats(key: string, fetcher: typeof fetch = fetch): Promise<HelloStats> {
   const res = await fetcher('/v1/hello/stats', { headers: authHeaders(key) });
   if (!res.ok) {
-    throw new Error(`GET /v1/hello/stats failed: ${res.status}`);
+    return errorOrStatus(res, `GET /v1/hello/stats failed`);
   }
   return (await res.json()) as HelloStats;
 }
@@ -107,7 +107,7 @@ export async function sayHello(
     body: JSON.stringify({ name })
   });
   if (!res.ok) {
-    throw new Error(`POST /v1/hello failed: ${res.status}`);
+    return errorOrStatus(res, `POST /v1/hello failed`);
   }
   return (await res.json()) as SayHelloResult;
 }
@@ -197,7 +197,7 @@ function jsonHeaders(key: string): Record<string, string> {
 export async function listFlows(key: string, fetcher: typeof fetch = fetch): Promise<Flow[]> {
   const res = await fetcher('/v1/flows', { headers: authHeaders(key) });
   if (!res.ok) {
-    throw new Error(`GET /v1/flows failed: ${res.status}`);
+    return errorOrStatus(res, `GET /v1/flows failed`);
   }
   const body = (await res.json()) as { flows: Flow[] };
   return body.flows ?? [];
@@ -215,7 +215,7 @@ export async function createFlow(
     body: JSON.stringify({ slug, name })
   });
   if (!res.ok) {
-    throw new Error(`POST /v1/flows failed: ${res.status}`);
+    return errorOrStatus(res, `POST /v1/flows failed`);
   }
   return (await res.json()) as { flow_id: string };
 }
@@ -227,7 +227,7 @@ export async function getFlow(
 ): Promise<Flow> {
   const res = await fetcher(`/v1/flows/${flowId}`, { headers: authHeaders(key) });
   if (!res.ok) {
-    throw new Error(`GET /v1/flows/${flowId} failed: ${res.status}`);
+    return errorOrStatus(res, `GET /v1/flows/${flowId} failed`);
   }
   return (await res.json()) as Flow;
 }
@@ -246,7 +246,7 @@ export async function exportFlow(
     headers: authHeaders(key)
   });
   if (!res.ok) {
-    throw new Error(`export (${format}) failed: ${res.status}`);
+    return errorOrStatus(res, `export (${format}) failed`);
   }
   return res.text();
 }
@@ -329,7 +329,7 @@ export async function exportDecision(
     headers: authHeaders(key)
   });
   if (!res.ok) {
-    throw new Error(`export decision (${format}) failed: ${res.status}`);
+    return errorOrStatus(res, `export decision (${format}) failed`);
   }
   return res.text();
 }
@@ -375,7 +375,7 @@ export async function listDecisions(
 ): Promise<Decision[]> {
   const res = await fetcher('/v1/decisions', { headers: authHeaders(key) });
   if (!res.ok) {
-    throw new Error(`GET /v1/decisions failed: ${res.status}`);
+    return errorOrStatus(res, `GET /v1/decisions failed`);
   }
   return ((await res.json()) as { decisions: Decision[] }).decisions ?? [];
 }
@@ -414,7 +414,7 @@ export async function listDecisionsPage(
   const url = `/v1/decisions${qs.toString() ? `?${qs}` : ''}`;
   const res = await fetcher(url, { headers: authHeaders(key) });
   if (!res.ok) {
-    throw new Error(`GET /v1/decisions failed: ${res.status}`);
+    return errorOrStatus(res, `GET /v1/decisions failed`);
   }
   const d = (await res.json()) as Partial<DecisionPage>;
   return {
@@ -432,7 +432,7 @@ export async function getDecision(
 ): Promise<Decision> {
   const res = await fetcher(`/v1/decisions/${id}`, { headers: authHeaders(key) });
   if (!res.ok) {
-    throw new Error(`GET /v1/decisions/${id} failed: ${res.status}`);
+    return errorOrStatus(res, `GET /v1/decisions/${id} failed`);
   }
   return (await res.json()) as Decision;
 }
@@ -451,7 +451,7 @@ export async function resumeDecision(
     body: JSON.stringify({ outcome })
   });
   if (!res.ok) {
-    throw new Error(`POST /v1/decisions/${id}/resume failed: ${res.status}`);
+    return errorOrStatus(res, `POST /v1/decisions/${id}/resume failed`);
   }
   return (await res.json()) as {
     decision_id: string;
@@ -486,7 +486,7 @@ export async function getFlowMetrics(
 ): Promise<FlowMetrics> {
   const res = await fetcher(`/v1/flows/${flowId}/metrics`, { headers: authHeaders(key) });
   if (!res.ok) {
-    throw new Error(`GET /v1/flows/${flowId}/metrics failed: ${res.status}`);
+    return errorOrStatus(res, `GET /v1/flows/${flowId}/metrics failed`);
   }
   return (await res.json()) as FlowMetrics;
 }
@@ -520,7 +520,7 @@ export async function getFlowSLO(
 ): Promise<SLOResponse> {
   const res = await fetcher(`/v1/flows/${flowId}/slo`, { headers: authHeaders(key) });
   if (!res.ok) {
-    throw new Error(`GET /v1/flows/${flowId}/slo failed: ${res.status}`);
+    return errorOrStatus(res, `GET /v1/flows/${flowId}/slo failed`);
   }
   return (await res.json()) as SLOResponse;
 }
@@ -1430,7 +1430,7 @@ export async function decide(
     body: JSON.stringify(body)
   });
   if (!res.ok) {
-    throw new Error(`POST decide failed: ${res.status}`);
+    return errorOrStatus(res, `POST decide failed`);
   }
   return (await res.json()) as DecideResult;
 }
@@ -1673,7 +1673,7 @@ export async function auditCsvText(
 ): Promise<string> {
   const res = await fetcher(auditExportUrl(filter), { headers: authHeaders(key) });
   if (!res.ok) {
-    throw new Error(`export audit csv failed: ${res.status}`);
+    return errorOrStatus(res, `export audit csv failed`);
   }
   return res.text();
 }
@@ -2070,7 +2070,7 @@ export async function flowNodeStats(
   const q = environment ? `?environment=${encodeURIComponent(environment)}` : '';
   const res = await fetcher(`/v1/flows/${flowId}/node-stats${q}`, { headers: authHeaders(key) });
   if (!res.ok) {
-    throw new Error(`GET /v1/flows/${flowId}/node-stats failed: ${res.status}`);
+    return errorOrStatus(res, `GET /v1/flows/${flowId}/node-stats failed`);
   }
   return (await res.json()) as FlowNodeStats;
 }
@@ -2100,7 +2100,7 @@ export async function decisionCounterfactual(
     body: '{}'
   });
   if (!res.ok) {
-    throw new Error(`POST /v1/decisions/${decisionId}/counterfactual failed: ${res.status}`);
+    return errorOrStatus(res, `POST /v1/decisions/${decisionId}/counterfactual failed`);
   }
   return (await res.json()) as Counterfactual;
 }
@@ -2133,7 +2133,7 @@ export async function flowCoverage(
     body: JSON.stringify(opts)
   });
   if (!res.ok) {
-    throw new Error(`POST /v1/flows/${flowId}/coverage failed: ${res.status}`);
+    return errorOrStatus(res, `POST /v1/flows/${flowId}/coverage failed`);
   }
   return (await res.json()) as Coverage;
 }
@@ -2673,7 +2673,7 @@ export async function mrmReportText(
 ): Promise<string> {
   const res = await fetcher(`/v1/mrm/report?format=${format}`, { headers: authHeaders(key) });
   if (!res.ok) {
-    throw new Error(`export mrm report (${format}) failed: ${res.status}`);
+    return errorOrStatus(res, `export mrm report (${format}) failed`);
   }
   return res.text();
 }

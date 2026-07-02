@@ -168,9 +168,35 @@
   let nodes = $state.raw<Node[]>([]);
   let edges = $state.raw<Edge[]>([]);
   let canvasView = $state<'cards' | 'bpmn'>('cards');
-  // The canvas is the center stage; the node palette/inspector floats over it as a
-  // collapsible overlay (a Miro-style board), so it can be dismissed for a full canvas.
-  let panelOpen = $state(true);
+  // The canvas is the center stage: the node RAIL (left, always visible) is the
+  // primary add path — click a type, the node lands by the selection and its
+  // inspector opens. The fuller tools panel (typed add, node list, edge editor)
+  // stays behind the toolbar toggle so the board starts unobstructed.
+  let panelOpen = $state(false);
+  // The design window has three sizes: board (the default, most of the viewport),
+  // focus (a full-viewport takeover for pure design work, Esc exits), and collapsed
+  // (a slim bar, so the workflow panels below get the whole page). Persisted so a
+  // configure-heavy session stays collapsed across flows.
+  type CanvasMode = 'board' | 'focus' | 'collapsed';
+  const CANVAS_MODE_KEY = 'intraktible-canvas-mode';
+  function storedCanvasMode(): CanvasMode {
+    if (typeof localStorage === 'undefined') return 'board';
+    const m = localStorage.getItem(CANVAS_MODE_KEY);
+    return m === 'collapsed' ? 'collapsed' : 'board'; // focus is per-visit, never restored
+  }
+  let canvasMode = $state<CanvasMode>(storedCanvasMode());
+  function setCanvasMode(m: CanvasMode) {
+    canvasMode = m;
+    if (typeof localStorage !== 'undefined') localStorage.setItem(CANVAS_MODE_KEY, m);
+  }
+  // Esc leaves focus mode from anywhere on the page (window-level: the canvas div
+  // only sees keys when focus sits inside it).
+  function onCanvasKeydown(e: KeyboardEvent) {
+    if (e.key === 'Escape' && canvasMode === 'focus') {
+      e.preventDefault();
+      setCanvasMode('board');
+    }
+  }
   // The canvas is the always-visible primary surface (floated to the top via CSS
   // order); the operational panels live behind tabs so the page is no longer one
   // endless scroll. Default to Test — the most common post-edit action.
@@ -183,6 +209,14 @@
     return t && TAB_IDS.includes(t) ? t : 'test';
   }
   let tab = $state<Tab>(tabFromUrl());
+  let tabbarEl = $state<HTMLElement | null>(null);
+  // Switching panels scrolls the tabbar to the top of the view: with a tall board
+  // above, the freshly opened panel was otherwise below the fold and a click
+  // appeared to do nothing.
+  function selectTab(t: Tab) {
+    tab = t;
+    tabbarEl?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
   const TABS: { id: Tab; label: string }[] = [
     { id: 'test', label: 'Test & analyze' },
     { id: 'deploy', label: 'Deploy & versions' },
@@ -329,13 +363,13 @@
         return '';
     }
   }
+  const hasInputSchema = $derived(
+    Boolean((inputSchema as { properties?: Record<string, SchemaProp> } | undefined)?.properties)
+  );
   function sampleFromSchema() {
     const props = (inputSchema as { properties?: Record<string, SchemaProp> } | undefined)
       ?.properties;
-    if (!props) {
-      dataText = '{}';
-      return;
-    }
+    if (!props) return; // unreachable: the button is disabled without a schema
     // Build via fromEntries (no dynamic-key writes — keeps eslint-security clean).
     const obj = Object.fromEntries(Object.entries(props).map(([k, p]) => [k, sampleValue(p)]));
     dataText = JSON.stringify(obj, null, 2);
@@ -530,6 +564,10 @@
     return a && b ? diffGraphs(a, b) : null;
   });
 
+  function addNodeOfType(t: NodeType) {
+    newType = t;
+    addNode();
+  }
   function addNode() {
     foldPositions(); // capture any drags so they survive the rebuild
     const id = `n${++counter}`;
@@ -997,6 +1035,7 @@
   // alongside the raw `result` JSON (which still backs the data-testid="run-result"
   // <pre> behind the details). null until the first run / cleared on an error.
   let runResult = $state<DecideResult | null>(null);
+  let runError = $state('');
   let runMs = $state<number | null>(null);
   // Preview = a dry run that records nothing (no decision/audit/metrics); off by
   // default, so an ordinary test records a sandbox decision you can inspect.
@@ -1030,6 +1069,7 @@
   async function run() {
     result = '';
     runResult = null;
+    runError = '';
     runMs = null;
     lastDecisionId = '';
     if (!flow) return;
@@ -1049,6 +1089,7 @@
         void loadTelemetry(lastDecisionId);
       }
     } catch (e) {
+      runError = msg(e);
       result = `Error: ${msg(e)}`;
     } finally {
       running = false;
@@ -1794,112 +1835,121 @@
   });
 </script>
 
+<svelte:window onkeydown={onCanvasKeydown} />
+
 <main>
-  <p><a href={appHref('/engine')}>← all flows</a></p>
-  <h1>{flow?.name ?? flowId}</h1>
   {#if !flow}
+    <p><a href={appHref('/engine')}>← all flows</a></p>
+    <h1>{flowId}</h1>
     <p class="err">
       {error || "This flow couldn't be loaded — it may not exist or the link is stale."}
     </p>
     <p><button onclick={load}><Icon name="reload" size={15} /> Retry</button></p>
   {:else}
-    <div class="row">
-      <button onclick={load}><Icon name="reload" size={15} /> Reload</button>
-      <button
-        class="primary"
-        onclick={publish}
-        disabled={publishing || !roleAtLeast($user?.role, 'editor')}
-        title={!roleAtLeast($user?.role, 'editor') ? 'Requires the editor role' : undefined}
-        ><Icon name="check" size={15} /> {publishing ? 'Publishing…' : 'Publish version'}</button
-      >
-    </div>
-    <div class="row export">
-      <span class="exportlabel"><Icon name="diagram" size={15} /> Export</span>
-      <div class="grp">
-        <button onclick={() => downloadExport('mermaid')} title="Download Mermaid flowchart">
-          <Icon name="download" size={14} /> Mermaid
-        </button>
+    <div class="flowhead">
+      <a href={appHref('/engine')} class="backlink" title="All flows">←</a>
+      <h1>{flow.name}</h1>
+      <div class="head-actions">
+        <button onclick={load}><Icon name="reload" size={15} /> Reload</button>
         <button
-          class="icon"
-          aria-label="Copy Mermaid"
-          title="Copy Mermaid"
-          onclick={() => copyExport('mermaid')}
+          class="primary"
+          onclick={publish}
+          disabled={publishing || !roleAtLeast($user?.role, 'editor')}
+          title={!roleAtLeast($user?.role, 'editor') ? 'Requires the editor role' : undefined}
+          ><Icon name="check" size={15} /> {publishing ? 'Publishing…' : 'Publish version'}</button
         >
-          <Icon name="copy" size={14} />
-        </button>
-      </div>
-      <button
-        onclick={() => downloadExport('mermaid-state')}
-        title="Download Mermaid state diagram"
-      >
-        <Icon name="download" size={14} /> State
-      </button>
-      <div class="grp">
-        <button onclick={() => downloadExport('bpmn')} title="Download BPMN 2.0 XML">
-          <Icon name="download" size={14} /> BPMN XML
-        </button>
-        <button
-          class="icon"
-          aria-label="Copy BPMN"
-          title="Copy BPMN"
-          onclick={() => copyExport('bpmn')}
-        >
-          <Icon name="copy" size={14} />
-        </button>
-      </div>
-      <div class="grp">
-        <button onclick={() => downloadExport('dot')} title="Download Graphviz DOT">
-          <Icon name="download" size={14} /> DOT
-        </button>
-        <button
-          class="icon"
-          aria-label="Copy DOT"
-          title="Copy DOT"
-          onclick={() => copyExport('dot')}
-        >
-          <Icon name="copy" size={14} />
-        </button>
-      </div>
-      <div class="grp">
-        <button onclick={() => downloadExport('json')} title="Download flow JSON (re-importable)">
-          <Icon name="download" size={14} /> JSON
-        </button>
-        <button
-          class="icon"
-          aria-label="Copy JSON"
-          title="Copy JSON"
-          onclick={() => copyExport('json')}
-        >
-          <Icon name="copy" size={14} />
-        </button>
       </div>
     </div>
-    <details class="importflow">
-      <summary><Icon name="download" size={15} /> Import JSON</summary>
-      <p class="importhint">
-        Load a flow export (or a bare <code>graph</code> / <code>{'{nodes, edges}'}</code> object)
-        onto the canvas, then <b>Publish</b> to save it as a new version — the inverse of JSON export.
-      </p>
-      <div class="row">
-        <input
-          type="file"
-          accept="application/json,.json"
-          aria-label="import flow file"
-          onchange={importFile}
-        />
-      </div>
-      <textarea
-        class="importbox"
-        bind:value={importText}
-        placeholder={'{"graph":{"nodes":[…],"edges":[…]}}'}
-        aria-label="import flow json"
-        rows="4"
-      ></textarea>
-      <div class="row">
-        <button onclick={() => importJSON(importText)} data-testid="import-load">
-          <Icon name="download" size={14} /> Load into editor
+    <details class="sharebar" data-testid="share-menu">
+      <summary><Icon name="diagram" size={14} /> Export / Import</summary>
+      <div class="row export">
+        <span class="exportlabel"><Icon name="diagram" size={15} /> Export</span>
+        <div class="grp">
+          <button onclick={() => downloadExport('mermaid')} title="Download Mermaid flowchart">
+            <Icon name="download" size={14} /> Mermaid
+          </button>
+          <button
+            class="icon"
+            aria-label="Copy Mermaid"
+            title="Copy Mermaid"
+            onclick={() => copyExport('mermaid')}
+          >
+            <Icon name="copy" size={14} />
+          </button>
+        </div>
+        <button
+          onclick={() => downloadExport('mermaid-state')}
+          title="Download Mermaid state diagram"
+        >
+          <Icon name="download" size={14} /> State
         </button>
+        <div class="grp">
+          <button onclick={() => downloadExport('bpmn')} title="Download BPMN 2.0 XML">
+            <Icon name="download" size={14} /> BPMN XML
+          </button>
+          <button
+            class="icon"
+            aria-label="Copy BPMN"
+            title="Copy BPMN"
+            onclick={() => copyExport('bpmn')}
+          >
+            <Icon name="copy" size={14} />
+          </button>
+        </div>
+        <div class="grp">
+          <button onclick={() => downloadExport('dot')} title="Download Graphviz DOT">
+            <Icon name="download" size={14} /> DOT
+          </button>
+          <button
+            class="icon"
+            aria-label="Copy DOT"
+            title="Copy DOT"
+            onclick={() => copyExport('dot')}
+          >
+            <Icon name="copy" size={14} />
+          </button>
+        </div>
+        <div class="grp">
+          <button onclick={() => downloadExport('json')} title="Download flow JSON (re-importable)">
+            <Icon name="download" size={14} /> JSON
+          </button>
+          <button
+            class="icon"
+            aria-label="Copy JSON"
+            title="Copy JSON"
+            onclick={() => copyExport('json')}
+          >
+            <Icon name="copy" size={14} />
+          </button>
+        </div>
       </div>
+      <details class="importflow">
+        <summary><Icon name="download" size={15} /> Import JSON</summary>
+        <p class="importhint">
+          Load a flow export (or a bare <code>graph</code> / <code>{'{nodes, edges}'}</code> object)
+          onto the canvas, then <b>Publish</b> to save it as a new version — the inverse of JSON export.
+        </p>
+        <div class="row">
+          <input
+            type="file"
+            accept="application/json,.json"
+            aria-label="import flow file"
+            onchange={importFile}
+          />
+        </div>
+        <textarea
+          class="importbox"
+          bind:value={importText}
+          placeholder={'{"graph":{"nodes":[…],"edges":[…]}}'}
+          aria-label="import flow json"
+          rows="4"
+        ></textarea>
+        <div class="row">
+          <button onclick={() => importJSON(importText)} data-testid="import-load">
+            <Icon name="download" size={14} /> Load into editor
+          </button>
+        </div>
+      </details>
     </details>
     {#if metrics && metrics.total > 0}
       <div class="metrics">
@@ -2550,578 +2600,672 @@
     {#if error}<p class="err">{error}</p>{/if}
 
     <div class="grid">
-      <div class="canvas" data-testid="flow-canvas">
-        <div class="canvas-tools">
-          <div class="view-toggle" aria-label="canvas view">
+      <div
+        class="canvas"
+        class:focus={canvasMode === 'focus'}
+        class:collapsed={canvasMode === 'collapsed'}
+        data-testid="flow-canvas"
+        aria-label="design window"
+      >
+        {#if canvasMode === 'collapsed'}
+          <button
+            class="canvas-expand"
+            onclick={() => setCanvasMode('board')}
+            data-testid="canvas-mode-board"
+            title="Show the design window"
+          >
+            <Icon name="diagram" size={15} /> Design window — {editNodes.length} node{editNodes.length ===
+            1
+              ? ''
+              : 's'}, {editEdges.length} edge{editEdges.length === 1 ? '' : 's'} · click to expand
+          </button>
+        {:else}
+          <div class="canvas-tools">
+            <div class="view-toggle" aria-label="canvas view">
+              <button
+                class:active={canvasView === 'cards'}
+                aria-pressed={canvasView === 'cards'}
+                onclick={() => setCanvasView('cards')}
+                title="Show detailed node cards"
+                data-testid="canvas-view-cards"
+              >
+                <Icon name="clipboard" size={14} /> Cards
+              </button>
+              <button
+                class:active={canvasView === 'bpmn'}
+                aria-pressed={canvasView === 'bpmn'}
+                onclick={() => setCanvasView('bpmn')}
+                title="Render the canvas in BPMN process notation"
+                aria-label="Process view (BPMN notation)"
+                data-testid="canvas-view-bpmn"
+              >
+                <Icon name="diagram" size={14} /> Process
+              </button>
+            </div>
             <button
-              class:active={canvasView === 'cards'}
-              aria-pressed={canvasView === 'cards'}
-              onclick={() => setCanvasView('cards')}
-              title="Show detailed node cards"
-              data-testid="canvas-view-cards"
+              class="relax-btn"
+              onclick={relax}
+              title="Auto-arrange every node by flow order (the only thing that moves nodes you've placed)"
+              data-testid="relax-layout"
             >
-              <Icon name="clipboard" size={14} /> Cards
+              <Icon name="diagram" size={14} /> Auto-layout
             </button>
             <button
-              class:active={canvasView === 'bpmn'}
-              aria-pressed={canvasView === 'bpmn'}
-              onclick={() => setCanvasView('bpmn')}
-              title="Render the canvas in BPMN process notation"
-              aria-label="Process view (BPMN notation)"
-              data-testid="canvas-view-bpmn"
+              class="relax-btn"
+              onclick={() => (panelOpen = !panelOpen)}
+              aria-pressed={panelOpen}
+              title={panelOpen ? 'Hide the tools panel for a full canvas' : 'Show the tools panel'}
+              data-testid="toggle-panel"
             >
-              <Icon name="diagram" size={14} /> Process
+              <Icon name={panelOpen ? 'chevron-right' : 'plus'} size={14} />
+              {panelOpen ? 'Hide panel' : 'Tools'}
             </button>
-          </div>
-          <button
-            class="relax-btn"
-            onclick={relax}
-            title="Auto-arrange every node by flow order (the only thing that moves nodes you've placed)"
-            data-testid="relax-layout"
-          >
-            <Icon name="diagram" size={14} /> Auto-layout
-          </button>
-          <button
-            class="relax-btn"
-            onclick={() => (panelOpen = !panelOpen)}
-            aria-pressed={panelOpen}
-            title={panelOpen ? 'Hide the tools panel for a full canvas' : 'Show the tools panel'}
-            data-testid="toggle-panel"
-          >
-            <Icon name={panelOpen ? 'chevron-right' : 'plus'} size={14} />
-            {panelOpen ? 'Hide panel' : 'Tools'}
-          </button>
-          <button
-            class="relax-btn"
-            class:active={heatOn}
-            aria-pressed={heatOn}
-            onclick={toggleHeat}
-            disabled={heatBusy}
-            title="Tint each node by how often it's traversed across this flow's recorded decisions"
-            data-testid="heatmap-toggle"
-          >
-            <Icon name="gauge" size={14} />
-            {heatBusy ? 'Loading…' : 'Heatmap'}
-          </button>
-          <button
-            class="relax-btn"
-            onclick={replayLatest}
-            disabled={replaying}
-            title="Animate a recent decision's path through the canvas, node by node"
-            data-testid="replay-decision"
-          >
-            <Icon name="play" size={14} />
-            {replaying ? 'Replaying…' : 'Replay'}
-          </button>
-          {#if heatOn}<span class="heat-legend" data-testid="heat-legend"
-              >{heatTotal} decision{heatTotal === 1 ? '' : 's'} · count = traversals</span
-            >{/if}
-        </div>
-        <SvelteFlow
-          bind:nodes
-          bind:edges
-          {nodeTypes}
-          onconnect={onConnect}
-          ondelete={onCanvasDelete}
-          colorMode={$theme}
-          proOptions={{ hideAttribution: true }}
-          fitView
-        >
-          <Background />
-          <Controls />
-        </SvelteFlow>
-      </div>
-
-      {#if panelOpen}
-        <aside>
-          <h2>Add node</h2>
-          <div class="row">
-            <select bind:value={newType} aria-label="new node type">
-              {#each NODE_TYPES as t (t)}<option value={t}>{nodeTypeLabel(t)}</option>{/each}
-            </select>
-            <button onclick={addNode}>Add</button>
-          </div>
-          {#if editNodes.length <= 1}
-            <p class="blank-hint">
-              New flow: pick a node (e.g. a <b>Scorecard</b> or <b>Decision table</b>) and
-              <b>Add</b>
-              it, then connect it from <code>input</code> on the canvas. <b>Auto-layout</b> arranges them.
-            </p>
-          {/if}
-
-          <h2>Nodes</h2>
-          <ul class="nodes">
-            {#each editNodes as n (n.id)}
-              <li class:sel={n.id === selectedId}>
-                <button class="link" onclick={() => (selectedId = n.id)}>
-                  <span class="nodeicon" title={n.type}><Icon name={n.type} size={15} /></span>
-                  <span>{n.name || n.id}</span>
-                  <span class="nodetype">{n.type}</span>
-                </button>
-                <button class="x" aria-label={`delete ${n.id}`} onclick={() => deleteNode(n.id)}>
-                  <Icon name="trash" size={14} />
-                </button>
-              </li>
-            {/each}
-          </ul>
-
-          {#if selected}
-            <h2>Node: {selected.id}</h2>
-            <label
-              >name <input
-                value={selected.name}
-                oninput={(e) => updateSelected({ name: e.currentTarget.value })}
-                aria-label="node name"
-              /></label
+            <button
+              class="relax-btn"
+              class:active={heatOn}
+              aria-pressed={heatOn}
+              onclick={toggleHeat}
+              disabled={heatBusy}
+              title="Tint each node by how often it's traversed across this flow's recorded decisions"
+              data-testid="heatmap-toggle"
             >
-            <label
-              >type
-              <select
-                value={selected.type}
-                onchange={(e) => updateSelected({ type: e.currentTarget.value as NodeType })}
-                aria-label="selected node type"
-              >
-                {#each NODE_TYPES as t (t)}<option value={t}>{nodeTypeLabel(t)}</option>{/each}
-              </select>
-            </label>
-            <label
-              >lane <input
-                value={selected.lane ?? ''}
-                oninput={(e) => updateSelected({ lane: e.currentTarget.value || undefined })}
-                placeholder="Main"
-                aria-label="node lane"
-                list="lane-suggestions"
-              /></label
+              <Icon name="gauge" size={14} />
+              {heatBusy ? 'Loading…' : 'Heatmap'}
+            </button>
+            <button
+              class="relax-btn"
+              onclick={replayLatest}
+              disabled={replaying}
+              title="Animate a recent decision's path through the canvas, node by node"
+              data-testid="replay-decision"
             >
-            <datalist id="lane-suggestions">
-              {#each laneNames as l (l)}<option value={l}></option>{/each}
-            </datalist>
-            {#if selected.type === 'split'}
-              <label
-                >condition <input
-                  value={asText(nodeCfg().condition)}
-                  oninput={(e) => patchCfg({ condition: e.currentTarget.value })}
-                  aria-label="condition"
-                /></label
-              >
-            {:else if selected.type === 'connect'}
-              <label
-                >connector <input
-                  value={asText(nodeCfg().connector)}
-                  oninput={(e) => patchCfg({ connector: e.currentTarget.value })}
-                  aria-label="connector"
-                /></label
-              >
-              <label
-                >output key <input
-                  value={asText(nodeCfg().output)}
-                  oninput={(e) => patchCfg({ output: e.currentTarget.value })}
-                  aria-label="connect output"
-                /></label
-              >
-            {:else if selected.type === 'ai'}
-              <label
-                >agent <input
-                  value={asText(nodeCfg().agent)}
-                  oninput={(e) => patchCfg({ agent: e.currentTarget.value })}
-                  aria-label="agent"
-                /></label
-              >
-              <label
-                >output key <input
-                  value={asText(nodeCfg().output)}
-                  oninput={(e) => patchCfg({ output: e.currentTarget.value })}
-                  aria-label="ai output"
-                /></label
-              >
-              <label
-                >prompt <input
-                  value={asText(nodeCfg().prompt)}
-                  oninput={(e) => patchCfg({ prompt: e.currentTarget.value })}
-                  aria-label="ai prompt"
-                /></label
-              >
-            {:else if selected.type === 'predict'}
-              <label
-                >model <input
-                  value={asText(nodeCfg().model)}
-                  oninput={(e) => patchCfg({ model: e.currentTarget.value })}
-                  aria-label="predict model"
-                  placeholder="risk"
-                /></label
-              >
-              <label
-                >output key <input
-                  value={asText(nodeCfg().output)}
-                  oninput={(e) => patchCfg({ output: e.currentTarget.value })}
-                  aria-label="predict output"
-                  placeholder="risk"
-                /></label
-              >
-              <p class="muted">
-                Reads <code>predict.&lt;output&gt;.probability</code> / <code>.score</code> downstream.
-              </p>
-            {:else if selected.type === 'manual_review'}
-              <label
-                >company_name expr <input
-                  value={asText(nodeCfg().company_name)}
-                  oninput={(e) => patchCfg({ company_name: e.currentTarget.value })}
-                  aria-label="company_name expr"
-                /></label
-              >
-              <label
-                >case_type expr <input
-                  value={asText(nodeCfg().case_type)}
-                  oninput={(e) => patchCfg({ case_type: e.currentTarget.value })}
-                  aria-label="case_type expr"
-                /></label
-              >
-              <label
-                >sla_days <input
-                  type="number"
-                  value={asText(nodeCfg().sla_days)}
-                  oninput={(e) =>
-                    patchCfg({
-                      sla_days: e.currentTarget.value === '' ? '' : Number(e.currentTarget.value)
-                    })}
-                  aria-label="sla_days"
-                /></label
-              >
-              <label class="check"
-                ><input
-                  type="checkbox"
-                  checked={Boolean(nodeCfg().suspend)}
-                  onchange={(e) => patchCfg({ suspend: e.currentTarget.checked })}
-                  aria-label="suspend as a durable human task"
-                /> Suspend — pause the decision here until a reviewer acts (a durable human task; it resumes
-                from the decision's Resume control)</label
-              >
-              {#if nodeCfg().suspend}
-                <label
-                  >output_key (where the reviewer's outcome is injected on resume) <input
-                    value={asText(nodeCfg().output_key)}
-                    oninput={(e) => patchCfg({ output_key: e.currentTarget.value })}
-                    placeholder="review"
-                    aria-label="output_key"
-                  /></label
+              <Icon name="play" size={14} />
+              {replaying ? 'Replaying…' : 'Replay'}
+            </button>
+            {#if heatOn}<span class="heat-legend" data-testid="heat-legend"
+                >{heatTotal} decision{heatTotal === 1 ? '' : 's'} · count = traversals</span
+              >{/if}
+            <div class="view-toggle mode-toggle" aria-label="design window size">
+              {#if canvasMode === 'focus'}
+                <button
+                  onclick={() => setCanvasMode('board')}
+                  data-testid="canvas-mode-board"
+                  title="Exit focus (Esc)"
                 >
+                  <Icon name="chevron-down" size={14} /> Exit focus
+                </button>
+              {:else}
+                <button
+                  onclick={() => setCanvasMode('focus')}
+                  data-testid="canvas-mode-focus"
+                  title="Take over the whole viewport for design work (Esc exits)"
+                >
+                  <Icon name="diagram" size={14} /> Focus
+                </button>
+                <button
+                  onclick={() => setCanvasMode('collapsed')}
+                  data-testid="canvas-mode-collapsed"
+                  title="Collapse the design window to configure the workflow panels below"
+                >
+                  <Icon name="chevron-down" size={14} /> Collapse
+                </button>
               {/if}
-            {:else if selected.type === 'output'}
-              <label
-                >fields (comma-separated; empty = whole context) <input
-                  value={asCsv(nodeCfg().fields)}
-                  oninput={(e) => patchCfg({ fields: fromCsv(e.currentTarget.value) })}
-                  aria-label="output fields"
-                /></label
+            </div>
+          </div>
+          <div class="node-rail" role="toolbar" aria-label="add node" data-testid="node-rail">
+            {#each NODE_TYPES as t (t)}
+              <button
+                title={`Insert ${nodeTypeLabel(t)} node`}
+                aria-label={`insert ${t} node`}
+                onclick={() => addNodeOfType(t)}
               >
-            {:else if selected.type === 'code'}
-              <label
-                >code (Starlark)
-                <textarea
-                  value={asText(nodeCfg().code)}
-                  oninput={(e) => patchCfg({ code: e.currentTarget.value })}
-                  aria-label="code"
-                  rows="4"
-                ></textarea>
-              </label>
-            {:else if selected.type === 'assignment'}
-              <p class="muted">assignments</p>
-              {#each assignmentRows() as row, i (i)}
-                <div class="row">
-                  <input
-                    value={asText(row.target)}
-                    oninput={(e) => setAssignment(i, { target: e.currentTarget.value })}
-                    aria-label={`assignment ${i} target`}
-                    placeholder="target"
-                  />
-                  <input
-                    value={asText(row.expr)}
-                    oninput={(e) => setAssignment(i, { expr: e.currentTarget.value })}
-                    aria-label={`assignment ${i} expr`}
-                    placeholder="expr"
-                  />
-                  <button
-                    class="x"
-                    aria-label={`remove assignment ${i}`}
-                    onclick={() => removeAssignment(i)}>✕</button
-                  >
-                </div>
-              {/each}
-              <button onclick={addAssignment}>Add assignment</button>
-            {:else if selected.type === 'rule'}
-              <p class="muted">rules (when → then assignments)</p>
-              {#each ruleClauses() as clause, i (i)}
-                <div class="clause">
-                  <div class="row">
-                    <input
-                      value={asText(clause.when)}
-                      oninput={(e) => setRuleWhen(i, e.currentTarget.value)}
-                      aria-label={`rule ${i} when`}
-                      placeholder="when"
-                    />
-                    <button class="x" aria-label={`remove rule ${i}`} onclick={() => removeRule(i)}
+                <Icon name={t} size={17} />
+              </button>
+            {/each}
+          </div>
+          <SvelteFlow
+            bind:nodes
+            bind:edges
+            {nodeTypes}
+            onconnect={onConnect}
+            ondelete={onCanvasDelete}
+            onnodeclick={({ node }) => (selectedId = node.id)}
+            onpaneclick={() => (selectedId = null)}
+            colorMode={$theme}
+            proOptions={{ hideAttribution: true }}
+            fitView
+            fitViewOptions={{ padding: 0.15, maxZoom: 1 }}
+          >
+            <Background />
+            <Controls />
+          </SvelteFlow>
+          {#if panelOpen}
+            <aside class="tools" aria-label="canvas tools">
+              <h2>Add node</h2>
+              <div class="row">
+                <select bind:value={newType} aria-label="new node type">
+                  {#each NODE_TYPES as t (t)}<option value={t}>{nodeTypeLabel(t)}</option>{/each}
+                </select>
+                <button onclick={addNode}>Add</button>
+              </div>
+              {#if editNodes.length <= 1}
+                <p class="blank-hint">
+                  New flow: pick a node (e.g. a <b>Scorecard</b> or <b>Decision table</b>) and
+                  <b>Add</b>
+                  it, then connect it from <code>input</code> on the canvas. <b>Auto-layout</b> arranges
+                  them.
+                </p>
+              {/if}
+
+              <h2>Nodes</h2>
+              <ul class="nodes">
+                {#each editNodes as n (n.id)}
+                  <li class:sel={n.id === selectedId}>
+                    <button class="link" onclick={() => (selectedId = n.id)}>
+                      <span class="nodeicon" title={n.type}><Icon name={n.type} size={15} /></span>
+                      <span>{n.name || n.id}</span>
+                      <span class="nodetype">{n.type}</span>
+                    </button>
+                    <button
+                      class="x"
+                      aria-label={`delete ${n.id}`}
+                      onclick={() => deleteNode(n.id)}
+                    >
+                      <Icon name="trash" size={14} />
+                    </button>
+                  </li>
+                {/each}
+              </ul>
+
+              <h2>Add edge</h2>
+              <div class="row">
+                <select bind:value={edgeFrom} aria-label="edge from">
+                  <option value="">from…</option>
+                  {#each editNodes as n (n.id)}<option value={n.id}>{n.id}</option>{/each}
+                </select>
+                <select bind:value={edgeTo} aria-label="edge to">
+                  <option value="">to…</option>
+                  {#each editNodes as n (n.id)}<option value={n.id}>{n.id}</option>{/each}
+                </select>
+                <input
+                  bind:value={edgeBranch}
+                  placeholder="branch"
+                  aria-label="edge branch"
+                  size="6"
+                />
+                <button onclick={addEdge}>Add edge</button>
+              </div>
+              <ul class="edges">
+                {#each editEdges as e, i (i)}
+                  <li>
+                    {e.from} → {e.to}{e.branch ? ` (${e.branch})` : ''}
+                    <button class="x" aria-label={`delete edge ${i}`} onclick={() => deleteEdge(i)}
                       >✕</button
                     >
-                  </div>
-                  {#each ruleThen(i) as t, k (k)}
-                    <div class="row indent">
-                      <input
-                        value={asText(t.target)}
-                        oninput={(e) => setRuleThen(i, k, { target: e.currentTarget.value })}
-                        aria-label={`rule ${i} then ${k} target`}
-                        placeholder="target"
-                      />
-                      <input
-                        value={asText(t.expr)}
-                        oninput={(e) => setRuleThen(i, k, { expr: e.currentTarget.value })}
-                        aria-label={`rule ${i} then ${k} expr`}
-                        placeholder="expr"
-                      />
-                      <button
-                        class="x"
-                        aria-label={`remove rule ${i} then ${k}`}
-                        onclick={() => removeRuleThen(i, k)}>✕</button
-                      >
-                    </div>
-                  {/each}
-                  <button onclick={() => addRuleThen(i)}>Add then</button>
-                </div>
-              {/each}
-              <button onclick={addRule}>Add rule</button>
-            {:else if selected.type === 'scorecard'}
+                  </li>
+                {/each}
+              </ul>
+            </aside>
+          {/if}
+
+          {#if selected}
+            <aside class="inspector" data-testid="node-inspector" aria-label="node inspector">
+              <div class="insp-head">
+                <span class="nodeicon" title={selected.type}
+                  ><Icon name={selected.type} size={16} /></span
+                >
+                <b class="insp-title">{selected.name || selected.id}</b>
+                <span class="nodetype">{selected.type}</span>
+                <button
+                  class="x"
+                  aria-label="close inspector"
+                  onclick={() => (selectedId = null)}
+                  title="Close (the node stays)">✕</button
+                >
+              </div>
               <label
-                >output key <input
-                  value={asText(nodeCfg().output)}
-                  oninput={(e) => patchCfg({ output: e.currentTarget.value })}
-                  aria-label="scorecard output"
+                >name <input
+                  value={selected.name}
+                  oninput={(e) => updateSelected({ name: e.currentTarget.value })}
+                  aria-label="node name"
                 /></label
               >
-              <p class="muted">factors (when → weight)</p>
-              {#each factors() as f, i (i)}
-                <div class="row">
-                  <input
-                    value={asText(f.when)}
-                    oninput={(e) => setFactor(i, { when: e.currentTarget.value })}
-                    aria-label={`factor ${i} when`}
-                    placeholder="when"
-                  />
-                  <input
-                    type="number"
-                    step="any"
-                    value={asNum(f.weight)}
-                    oninput={(e) =>
-                      setFactor(i, {
-                        weight: e.currentTarget.value === '' ? 0 : Number(e.currentTarget.value)
-                      })}
-                    aria-label={`factor ${i} weight`}
-                    placeholder="weight"
-                    size="6"
-                  />
-                  <button
-                    class="x"
-                    aria-label={`remove factor ${i}`}
-                    onclick={() => removeFactor(i)}>✕</button
-                  >
-                </div>
-              {/each}
-              <button onclick={addFactor}>Add factor</button>
-            {:else if selected.type === 'reason'}
-              <p class="muted">reason codes (when → code + description)</p>
-              {#each reasons() as r, i (i)}
-                <div class="row">
-                  <input
-                    value={asText(r.when)}
-                    oninput={(e) => setReason(i, { when: e.currentTarget.value })}
-                    aria-label={`reason ${i} when`}
-                    placeholder="when"
-                  />
-                  <input
-                    value={asText(r.code)}
-                    oninput={(e) => setReason(i, { code: e.currentTarget.value })}
-                    aria-label={`reason ${i} code`}
-                    placeholder="code"
-                    size="8"
-                  />
-                  <input
-                    value={asText(r.description)}
-                    oninput={(e) => setReason(i, { description: e.currentTarget.value })}
-                    aria-label={`reason ${i} description`}
-                    placeholder="description"
-                  />
-                  <button
-                    class="x"
-                    aria-label={`remove reason ${i}`}
-                    onclick={() => removeReason(i)}>✕</button
-                  >
-                </div>
-              {/each}
-              <button onclick={addReason}>Add reason</button>
-            {:else if selected.type === 'decision_table'}
               <label
-                >hit policy
+                >type
                 <select
-                  value={asText(nodeCfg().hit) || 'first'}
-                  onchange={(e) => patchCfg({ hit: e.currentTarget.value, mode: undefined })}
-                  aria-label="decision table hit policy"
+                  value={selected.type}
+                  onchange={(e) => updateSelected({ type: e.currentTarget.value as NodeType })}
+                  aria-label="selected node type"
                 >
-                  <option value="first">first match</option>
-                  <option value="unique">unique (one match, else conflict)</option>
-                  <option value="any">any (matches must agree)</option>
-                  <option value="rule_order">rule order (collect, ordered)</option>
-                  <option value="collect">collect (aggregate)</option>
+                  {#each NODE_TYPES as t (t)}<option value={t}>{nodeTypeLabel(t)}</option>{/each}
                 </select>
               </label>
-              {#if (asText(nodeCfg().hit) || 'first') === 'collect'}
+              <label
+                >lane <input
+                  value={selected.lane ?? ''}
+                  oninput={(e) => updateSelected({ lane: e.currentTarget.value || undefined })}
+                  placeholder="Main"
+                  aria-label="node lane"
+                  list="lane-suggestions"
+                /></label
+              >
+              <datalist id="lane-suggestions">
+                {#each laneNames as l (l)}<option value={l}></option>{/each}
+              </datalist>
+              {#if selected.type === 'split'}
                 <label
-                  >aggregate
-                  <select
-                    value={asText(nodeCfg().aggregate) || ''}
-                    onchange={(e) => patchCfg({ aggregate: e.currentTarget.value })}
-                    aria-label="decision table aggregate"
+                  >condition <input
+                    value={asText(nodeCfg().condition)}
+                    oninput={(e) => patchCfg({ condition: e.currentTarget.value })}
+                    aria-label="condition"
+                  /></label
+                >
+              {:else if selected.type === 'connect'}
+                <label
+                  >connector <input
+                    value={asText(nodeCfg().connector)}
+                    oninput={(e) => patchCfg({ connector: e.currentTarget.value })}
+                    aria-label="connector"
+                  /></label
+                >
+                <label
+                  >output key <input
+                    value={asText(nodeCfg().output)}
+                    oninput={(e) => patchCfg({ output: e.currentTarget.value })}
+                    aria-label="connect output"
+                  /></label
+                >
+              {:else if selected.type === 'ai'}
+                <label
+                  >agent <input
+                    value={asText(nodeCfg().agent)}
+                    oninput={(e) => patchCfg({ agent: e.currentTarget.value })}
+                    aria-label="agent"
+                  /></label
+                >
+                <label
+                  >output key <input
+                    value={asText(nodeCfg().output)}
+                    oninput={(e) => patchCfg({ output: e.currentTarget.value })}
+                    aria-label="ai output"
+                  /></label
+                >
+                <label
+                  >prompt <input
+                    value={asText(nodeCfg().prompt)}
+                    oninput={(e) => patchCfg({ prompt: e.currentTarget.value })}
+                    aria-label="ai prompt"
+                  /></label
+                >
+              {:else if selected.type === 'predict'}
+                <label
+                  >model <input
+                    value={asText(nodeCfg().model)}
+                    oninput={(e) => patchCfg({ model: e.currentTarget.value })}
+                    aria-label="predict model"
+                    placeholder="risk"
+                  /></label
+                >
+                <label
+                  >output key <input
+                    value={asText(nodeCfg().output)}
+                    oninput={(e) => patchCfg({ output: e.currentTarget.value })}
+                    aria-label="predict output"
+                    placeholder="risk"
+                  /></label
+                >
+                <p class="muted">
+                  Reads <code>predict.&lt;output&gt;.probability</code> / <code>.score</code> downstream.
+                </p>
+              {:else if selected.type === 'manual_review'}
+                <label
+                  >company_name expr <input
+                    value={asText(nodeCfg().company_name)}
+                    oninput={(e) => patchCfg({ company_name: e.currentTarget.value })}
+                    aria-label="company_name expr"
+                  /></label
+                >
+                <label
+                  >case_type expr <input
+                    value={asText(nodeCfg().case_type)}
+                    oninput={(e) => patchCfg({ case_type: e.currentTarget.value })}
+                    aria-label="case_type expr"
+                  /></label
+                >
+                <label
+                  >sla_days <input
+                    type="number"
+                    value={asText(nodeCfg().sla_days)}
+                    oninput={(e) =>
+                      patchCfg({
+                        sla_days: e.currentTarget.value === '' ? '' : Number(e.currentTarget.value)
+                      })}
+                    aria-label="sla_days"
+                  /></label
+                >
+                <label class="check"
+                  ><input
+                    type="checkbox"
+                    checked={Boolean(nodeCfg().suspend)}
+                    onchange={(e) => patchCfg({ suspend: e.currentTarget.checked })}
+                    aria-label="suspend as a durable human task"
+                  /> Suspend — pause the decision here until a reviewer acts (a durable human task; it
+                  resumes from the decision's Resume control)</label
+                >
+                {#if nodeCfg().suspend}
+                  <label
+                    >output_key (where the reviewer's outcome is injected on resume) <input
+                      value={asText(nodeCfg().output_key)}
+                      oninput={(e) => patchCfg({ output_key: e.currentTarget.value })}
+                      placeholder="review"
+                      aria-label="output_key"
+                    /></label
                   >
-                    <option value="">list (all values)</option>
-                    <option value="sum">sum</option>
-                    <option value="min">min</option>
-                    <option value="max">max</option>
-                    <option value="count">count</option>
-                  </select>
+                {/if}
+              {:else if selected.type === 'output'}
+                <label
+                  >fields (comma-separated; empty = whole context) <input
+                    value={asCsv(nodeCfg().fields)}
+                    oninput={(e) => patchCfg({ fields: fromCsv(e.currentTarget.value) })}
+                    aria-label="output fields"
+                  /></label
+                >
+              {:else if selected.type === 'code'}
+                <label
+                  >code (Starlark)
+                  <textarea
+                    value={asText(nodeCfg().code)}
+                    oninput={(e) => patchCfg({ code: e.currentTarget.value })}
+                    aria-label="code"
+                    rows="4"
+                  ></textarea>
                 </label>
-              {/if}
-              <p class="muted">rows (when → outputs)</p>
-              {#each tableRows() as row, i (i)}
-                <div class="clause">
+              {:else if selected.type === 'assignment'}
+                <p class="muted">assignments</p>
+                {#each assignmentRows() as row, i (i)}
                   <div class="row">
                     <input
-                      value={asText(row.when)}
-                      oninput={(e) => setRowWhen(i, e.currentTarget.value)}
-                      aria-label={`row ${i} when`}
-                      placeholder="when"
+                      value={asText(row.target)}
+                      oninput={(e) => setAssignment(i, { target: e.currentTarget.value })}
+                      aria-label={`assignment ${i} target`}
+                      placeholder="target"
+                    />
+                    <input
+                      value={asText(row.expr)}
+                      oninput={(e) => setAssignment(i, { expr: e.currentTarget.value })}
+                      aria-label={`assignment ${i} expr`}
+                      placeholder="expr"
                     />
                     <button
                       class="x"
-                      aria-label={`remove row ${i}`}
-                      onclick={() => removeTableRow(i)}>✕</button
+                      aria-label={`remove assignment ${i}`}
+                      onclick={() => removeAssignment(i)}>✕</button
                     >
                   </div>
-                  {#each rowOutputs(i) as o, k (k)}
-                    <div class="row indent">
+                {/each}
+                <button onclick={addAssignment}>Add assignment</button>
+              {:else if selected.type === 'rule'}
+                <p class="muted">rules (when → then assignments)</p>
+                {#each ruleClauses() as clause, i (i)}
+                  <div class="clause">
+                    <div class="row">
                       <input
-                        value={asText(o.target)}
-                        oninput={(e) => setRowOutput(i, k, { target: e.currentTarget.value })}
-                        aria-label={`row ${i} output ${k} target`}
-                        placeholder="target"
-                      />
-                      <input
-                        value={asText(o.expr)}
-                        oninput={(e) => setRowOutput(i, k, { expr: e.currentTarget.value })}
-                        aria-label={`row ${i} output ${k} expr`}
-                        placeholder="expr"
+                        value={asText(clause.when)}
+                        oninput={(e) => setRuleWhen(i, e.currentTarget.value)}
+                        aria-label={`rule ${i} when`}
+                        placeholder="when"
                       />
                       <button
                         class="x"
-                        aria-label={`remove row ${i} output ${k}`}
-                        onclick={() => removeRowOutput(i, k)}>✕</button
+                        aria-label={`remove rule ${i}`}
+                        onclick={() => removeRule(i)}>✕</button
                       >
                     </div>
-                  {/each}
-                  <button onclick={() => addRowOutput(i)}>Add output</button>
-                </div>
-              {/each}
-              <button onclick={addTableRow}>Add row</button>
-            {:else if selected.type === '2d_matrix'}
-              <label
-                >output key <input
-                  value={asText(nodeCfg().output)}
-                  oninput={(e) => patchCfg({ output: e.currentTarget.value })}
-                  aria-label="matrix output"
-                /></label
-              >
-              <p class="muted">row conditions</p>
-              {#each matrixRows() as r, i (i)}
-                <div class="row">
-                  <input
-                    value={asText(r.when)}
-                    oninput={(e) => setMatrixRowWhen(i, e.currentTarget.value)}
-                    aria-label={`matrix row ${i} when`}
-                    placeholder="row when"
-                  />
-                </div>
-              {/each}
-              <button onclick={addMatrixRow}>Add row</button>
-              <p class="muted">column conditions</p>
-              {#each matrixCols() as c, i (i)}
-                <div class="row">
-                  <input
-                    value={asText(c.when)}
-                    oninput={(e) => setMatrixColWhen(i, e.currentTarget.value)}
-                    aria-label={`matrix col ${i} when`}
-                    placeholder="col when"
-                  />
-                </div>
-              {/each}
-              <button onclick={addMatrixCol}>Add column</button>
-              {#if matrixRows().length && matrixCols().length}
-                <p class="muted">cells [row][col] (literal values)</p>
-                {#each matrixRows() as r, i (i)}
-                  <div class="row">
-                    <span class="cellrow">{asText(r.when) || `row ${i}`}</span>
-                    {#each matrixCols() as c, j (j)}
-                      <input
-                        value={cellText(i, j)}
-                        oninput={(e) => setCell(i, j, e.currentTarget.value)}
-                        aria-label={`matrix cell ${i} ${j}`}
-                        title={asText(c.when)}
-                        size="6"
-                      />
+                    {#each ruleThen(i) as t, k (k)}
+                      <div class="row indent">
+                        <input
+                          value={asText(t.target)}
+                          oninput={(e) => setRuleThen(i, k, { target: e.currentTarget.value })}
+                          aria-label={`rule ${i} then ${k} target`}
+                          placeholder="target"
+                        />
+                        <input
+                          value={asText(t.expr)}
+                          oninput={(e) => setRuleThen(i, k, { expr: e.currentTarget.value })}
+                          aria-label={`rule ${i} then ${k} expr`}
+                          placeholder="expr"
+                        />
+                        <button
+                          class="x"
+                          aria-label={`remove rule ${i} then ${k}`}
+                          onclick={() => removeRuleThen(i, k)}>✕</button
+                        >
+                      </div>
                     {/each}
+                    <button onclick={() => addRuleThen(i)}>Add then</button>
                   </div>
                 {/each}
-              {/if}
-            {/if}
-            <label
-              >{STRUCTURED.includes(selected.type) ? 'config (JSON, advanced)' : 'config (JSON)'}
-              <textarea
-                value={selected.config}
-                oninput={(e) => updateSelected({ config: e.currentTarget.value })}
-                aria-label="node config"
-                rows="4"
-              ></textarea>
-            </label>
-          {/if}
-
-          <h2>Add edge</h2>
-          <div class="row">
-            <select bind:value={edgeFrom} aria-label="edge from">
-              <option value="">from…</option>
-              {#each editNodes as n (n.id)}<option value={n.id}>{n.id}</option>{/each}
-            </select>
-            <select bind:value={edgeTo} aria-label="edge to">
-              <option value="">to…</option>
-              {#each editNodes as n (n.id)}<option value={n.id}>{n.id}</option>{/each}
-            </select>
-            <input bind:value={edgeBranch} placeholder="branch" aria-label="edge branch" size="6" />
-            <button onclick={addEdge}>Add edge</button>
-          </div>
-          <ul class="edges">
-            {#each editEdges as e, i (i)}
-              <li>
-                {e.from} → {e.to}{e.branch ? ` (${e.branch})` : ''}
-                <button class="x" aria-label={`delete edge ${i}`} onclick={() => deleteEdge(i)}
-                  >✕</button
+                <button onclick={addRule}>Add rule</button>
+              {:else if selected.type === 'scorecard'}
+                <label
+                  >output key <input
+                    value={asText(nodeCfg().output)}
+                    oninput={(e) => patchCfg({ output: e.currentTarget.value })}
+                    aria-label="scorecard output"
+                  /></label
                 >
-              </li>
-            {/each}
-          </ul>
-        </aside>
-      {/if}
+                <p class="muted">factors (when → weight)</p>
+                {#each factors() as f, i (i)}
+                  <div class="row">
+                    <input
+                      value={asText(f.when)}
+                      oninput={(e) => setFactor(i, { when: e.currentTarget.value })}
+                      aria-label={`factor ${i} when`}
+                      placeholder="when"
+                    />
+                    <input
+                      type="number"
+                      step="any"
+                      value={asNum(f.weight)}
+                      oninput={(e) =>
+                        setFactor(i, {
+                          weight: e.currentTarget.value === '' ? 0 : Number(e.currentTarget.value)
+                        })}
+                      aria-label={`factor ${i} weight`}
+                      placeholder="weight"
+                      size="6"
+                    />
+                    <button
+                      class="x"
+                      aria-label={`remove factor ${i}`}
+                      onclick={() => removeFactor(i)}>✕</button
+                    >
+                  </div>
+                {/each}
+                <button onclick={addFactor}>Add factor</button>
+              {:else if selected.type === 'reason'}
+                <p class="muted">reason codes (when → code + description)</p>
+                {#each reasons() as r, i (i)}
+                  <div class="row">
+                    <input
+                      value={asText(r.when)}
+                      oninput={(e) => setReason(i, { when: e.currentTarget.value })}
+                      aria-label={`reason ${i} when`}
+                      placeholder="when"
+                    />
+                    <input
+                      value={asText(r.code)}
+                      oninput={(e) => setReason(i, { code: e.currentTarget.value })}
+                      aria-label={`reason ${i} code`}
+                      placeholder="code"
+                      size="8"
+                    />
+                    <input
+                      value={asText(r.description)}
+                      oninput={(e) => setReason(i, { description: e.currentTarget.value })}
+                      aria-label={`reason ${i} description`}
+                      placeholder="description"
+                    />
+                    <button
+                      class="x"
+                      aria-label={`remove reason ${i}`}
+                      onclick={() => removeReason(i)}>✕</button
+                    >
+                  </div>
+                {/each}
+                <button onclick={addReason}>Add reason</button>
+              {:else if selected.type === 'decision_table'}
+                <label
+                  >hit policy
+                  <select
+                    value={asText(nodeCfg().hit) || 'first'}
+                    onchange={(e) => patchCfg({ hit: e.currentTarget.value, mode: undefined })}
+                    aria-label="decision table hit policy"
+                  >
+                    <option value="first">first match</option>
+                    <option value="unique">unique (one match, else conflict)</option>
+                    <option value="any">any (matches must agree)</option>
+                    <option value="rule_order">rule order (collect, ordered)</option>
+                    <option value="collect">collect (aggregate)</option>
+                  </select>
+                </label>
+                {#if (asText(nodeCfg().hit) || 'first') === 'collect'}
+                  <label
+                    >aggregate
+                    <select
+                      value={asText(nodeCfg().aggregate) || ''}
+                      onchange={(e) => patchCfg({ aggregate: e.currentTarget.value })}
+                      aria-label="decision table aggregate"
+                    >
+                      <option value="">list (all values)</option>
+                      <option value="sum">sum</option>
+                      <option value="min">min</option>
+                      <option value="max">max</option>
+                      <option value="count">count</option>
+                    </select>
+                  </label>
+                {/if}
+                <p class="muted">rows (when → outputs)</p>
+                {#each tableRows() as row, i (i)}
+                  <div class="clause">
+                    <div class="row">
+                      <input
+                        value={asText(row.when)}
+                        oninput={(e) => setRowWhen(i, e.currentTarget.value)}
+                        aria-label={`row ${i} when`}
+                        placeholder="when"
+                      />
+                      <button
+                        class="x"
+                        aria-label={`remove row ${i}`}
+                        onclick={() => removeTableRow(i)}>✕</button
+                      >
+                    </div>
+                    {#each rowOutputs(i) as o, k (k)}
+                      <div class="row indent">
+                        <input
+                          value={asText(o.target)}
+                          oninput={(e) => setRowOutput(i, k, { target: e.currentTarget.value })}
+                          aria-label={`row ${i} output ${k} target`}
+                          placeholder="target"
+                        />
+                        <input
+                          value={asText(o.expr)}
+                          oninput={(e) => setRowOutput(i, k, { expr: e.currentTarget.value })}
+                          aria-label={`row ${i} output ${k} expr`}
+                          placeholder="expr"
+                        />
+                        <button
+                          class="x"
+                          aria-label={`remove row ${i} output ${k}`}
+                          onclick={() => removeRowOutput(i, k)}>✕</button
+                        >
+                      </div>
+                    {/each}
+                    <button onclick={() => addRowOutput(i)}>Add output</button>
+                  </div>
+                {/each}
+                <button onclick={addTableRow}>Add row</button>
+              {:else if selected.type === '2d_matrix'}
+                <label
+                  >output key <input
+                    value={asText(nodeCfg().output)}
+                    oninput={(e) => patchCfg({ output: e.currentTarget.value })}
+                    aria-label="matrix output"
+                  /></label
+                >
+                <p class="muted">row conditions</p>
+                {#each matrixRows() as r, i (i)}
+                  <div class="row">
+                    <input
+                      value={asText(r.when)}
+                      oninput={(e) => setMatrixRowWhen(i, e.currentTarget.value)}
+                      aria-label={`matrix row ${i} when`}
+                      placeholder="row when"
+                    />
+                  </div>
+                {/each}
+                <button onclick={addMatrixRow}>Add row</button>
+                <p class="muted">column conditions</p>
+                {#each matrixCols() as c, i (i)}
+                  <div class="row">
+                    <input
+                      value={asText(c.when)}
+                      oninput={(e) => setMatrixColWhen(i, e.currentTarget.value)}
+                      aria-label={`matrix col ${i} when`}
+                      placeholder="col when"
+                    />
+                  </div>
+                {/each}
+                <button onclick={addMatrixCol}>Add column</button>
+                {#if matrixRows().length && matrixCols().length}
+                  <p class="muted">cells [row][col] (literal values)</p>
+                  {#each matrixRows() as r, i (i)}
+                    <div class="row">
+                      <span class="cellrow">{asText(r.when) || `row ${i}`}</span>
+                      {#each matrixCols() as c, j (j)}
+                        <input
+                          value={cellText(i, j)}
+                          oninput={(e) => setCell(i, j, e.currentTarget.value)}
+                          aria-label={`matrix cell ${i} ${j}`}
+                          title={asText(c.when)}
+                          size="6"
+                        />
+                      {/each}
+                    </div>
+                  {/each}
+                {/if}
+              {/if}
+              <label
+                >{STRUCTURED.includes(selected.type) ? 'config (JSON, advanced)' : 'config (JSON)'}
+                <textarea
+                  value={selected.config}
+                  oninput={(e) => updateSelected({ config: e.currentTarget.value })}
+                  aria-label="node config"
+                  rows="4"
+                ></textarea>
+              </label>
+              <div class="row insp-foot">
+                <button
+                  class="insp-delete"
+                  onclick={() => selectedId && deleteNode(selectedId)}
+                  title="Remove this node and its edges from the draft"
+                >
+                  <Icon name="trash" size={14} /> Delete node</button
+                >
+              </div>
+            </aside>
+          {/if}
+        {/if}
+      </div>
     </div>
 
-    <nav class="tabbar" aria-label="builder panels">
+    <nav class="tabbar" aria-label="builder panels" bind:this={tabbarEl}>
       {#each TABS as t (t.id)}
         <button
           class:active={tab === t.id}
           aria-pressed={tab === t.id}
-          onclick={() => (tab = t.id)}
+          onclick={() => selectTab(t.id)}
           data-testid={`tab-${t.id}`}>{t.label}</button
         >
       {/each}
@@ -3217,7 +3361,16 @@
           <button onclick={run} disabled={!flow || running || !dataValid}
             >{running ? 'Running…' : 'Run'}</button
           >
-          <button type="button" class="link" onclick={sampleFromSchema}>Sample input</button>
+          <button
+            type="button"
+            class="link"
+            onclick={sampleFromSchema}
+            disabled={!hasInputSchema}
+            title={hasInputSchema
+              ? 'Prefill the input from the published input schema'
+              : 'This version has no input schema — publish one to generate a sample'}
+            >Sample input</button
+          >
           <label class="preview-toggle" title="Run the flow without recording a decision">
             <input type="checkbox" bind:checked={preview} aria-label="preview (don't record)" />
             Preview (don't record)
@@ -3240,6 +3393,7 @@
         <textarea bind:value={dataText} aria-label="input data" rows="3" class:invalid={!dataValid}
         ></textarea>
         {#if !dataValid}<p class="json-err">Not valid JSON — fix it before running.</p>{/if}
+        {#if runError}<p class="err" data-testid="run-error">{runError}</p>{/if}
         {#if runResult}
           <div
             class="verdict-card {dispositionTone(runResult.disposition)}"
@@ -3934,10 +4088,48 @@
   }
   .canvas {
     position: relative;
-    height: 72vh;
-    min-height: 480px;
+    /* Board: the design window is the page's center of gravity — take the viewport
+       minus the compact header + tab strip, never less than the old fixed height. */
+    height: calc(100vh - 15rem);
+    min-height: 520px;
     border: 1px solid var(--border-strong);
     border-radius: 0.5rem;
+    background: var(--surface);
+  }
+  /* Focus: a full-viewport takeover for pure design work (Esc or Exit focus). */
+  .canvas.focus {
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    height: 100vh;
+    min-height: 0;
+    border: none;
+    border-radius: 0;
+  }
+  /* Collapsed: a slim strip that hands the page to the workflow panels below. */
+  .canvas.collapsed {
+    height: auto;
+    min-height: 0;
+    border-style: dashed;
+  }
+  .canvas-expand {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    width: 100%;
+    padding: 0.65rem 0.9rem;
+    border: none;
+    background: transparent;
+    color: var(--fg-muted);
+    font-size: 0.9rem;
+    cursor: pointer;
+  }
+  .canvas-expand:hover {
+    color: var(--fg);
+    background: var(--surface-2);
+  }
+  .mode-toggle {
+    margin-left: auto;
   }
   /* svelte-flow paints edge labels on its default white background; in dark theme that
      left the light-token label text near-invisible (1.22:1). Bind both to theme tokens
@@ -4032,18 +4224,139 @@
   }
   aside {
     position: absolute;
-    top: 0.6rem;
-    right: 0.6rem;
-    width: 21rem;
-    max-height: calc(100% - 1.2rem);
+    top: 3.1rem;
+    max-height: calc(100% - 3.7rem);
     overflow-y: auto;
     padding: 0.2rem 0.9rem 0.9rem;
-    background: var(--surface);
+    background: color-mix(in srgb, var(--surface) 92%, transparent);
+    backdrop-filter: blur(6px);
     border: 1px solid var(--border);
     border-radius: 0.7rem;
     box-shadow: 0 10px 30px rgb(0 0 0 / 0.18);
     z-index: 6;
     font-size: 0.92rem;
+  }
+  /* The build palette docks left; the inspector opens right where properties live
+     in every design tool — selecting a node never covers what you're wiring. */
+  aside.tools {
+    left: 3.8rem;
+    width: 16rem;
+  }
+  .node-rail {
+    position: absolute;
+    top: 3.1rem;
+    left: 0.6rem;
+    z-index: 6;
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    padding: 0.35rem;
+    background: color-mix(in srgb, var(--surface) 92%, transparent);
+    backdrop-filter: blur(6px);
+    border: 1px solid var(--border);
+    border-radius: 0.7rem;
+    box-shadow: 0 10px 30px rgb(0 0 0 / 0.18);
+  }
+  .node-rail button {
+    display: grid;
+    place-items: center;
+    width: 2.1rem;
+    height: 2.1rem;
+    padding: 0;
+    border: none;
+    border-radius: 0.5rem;
+    background: transparent;
+    color: var(--fg-muted);
+    cursor: pointer;
+  }
+  .node-rail button:hover {
+    background: var(--surface-2);
+    color: var(--fg);
+  }
+  aside.inspector {
+    right: 0.6rem;
+    width: 22rem;
+  }
+  .insp-head {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    position: sticky;
+    top: 0;
+    padding: 0.65rem 0 0.5rem;
+    background: inherit;
+    border-bottom: 1px solid var(--border);
+    z-index: 1;
+  }
+  .insp-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .insp-head .x {
+    margin-left: auto;
+  }
+  .insp-foot {
+    margin-top: 0.8rem;
+    padding-top: 0.6rem;
+    border-top: 1px solid var(--border);
+  }
+  .insp-delete {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    color: var(--danger);
+  }
+  .flowhead {
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
+    margin: 0.4rem 0 0.5rem;
+  }
+  .flowhead h1 {
+    margin: 0;
+    font-size: 1.45rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .backlink {
+    font-size: 1.2rem;
+    text-decoration: none;
+    padding: 0.1rem 0.4rem;
+    border-radius: 0.4rem;
+  }
+  .backlink:hover {
+    background: var(--surface-2);
+  }
+  .head-actions {
+    margin-left: auto;
+    display: flex;
+    gap: 0.5rem;
+    flex: none;
+  }
+  .sharebar {
+    margin: 0 0 0.5rem;
+  }
+  .sharebar > summary {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    cursor: pointer;
+    font-size: 0.85rem;
+    color: var(--fg-muted);
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.4rem;
+  }
+  .sharebar > summary:hover {
+    background: var(--surface-2);
+    color: var(--fg);
+  }
+  .sharebar[open] {
+    padding: 0.4rem 0.7rem 0.6rem;
+    border: 1px solid var(--border);
+    border-radius: 0.6rem;
+    background: var(--surface-2);
   }
   @media (max-width: 720px) {
     /* Narrow screens can't fit the floating toolbar and the floating tools panel
@@ -4067,6 +4380,12 @@
     .canvas :global(.svelte-flow) {
       height: 60vh;
       min-height: 360px;
+    }
+    .node-rail {
+      position: static;
+      order: -1;
+      flex-direction: row;
+      flex-wrap: wrap;
     }
     aside {
       position: static;

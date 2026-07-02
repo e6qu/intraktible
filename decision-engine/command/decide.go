@@ -286,6 +286,9 @@ func (h *DecideHandler) Decide(ctx context.Context, id identity.Identity, slug, 
 
 	data, err = h.prepare(ctx, id, version, ref, data)
 	if err != nil {
+		if badProviderRef(err) {
+			return DecideResult{}, fmt.Errorf("%w: %w", ErrBadRequest, err)
+		}
 		return DecideResult{}, err
 	}
 
@@ -537,6 +540,14 @@ func resumeClaim(decisionID string, state json.RawMessage) string {
 	return "decision.resume\x00" + decisionID + "\x00" + hex.EncodeToString(sum[:8])
 }
 
+// badProviderRef matches — structurally, the providers never import this package —
+// a pre-resolve failure caused by the flow referencing a connector, agent, or
+// model the tenant never defined: fixable flow configuration, not a server fault.
+func badProviderRef(err error) bool {
+	var ref interface{ BadProviderRef() bool }
+	return errors.As(err, &ref) && ref.BadProviderRef()
+}
+
 // prepare validates the caller's input against the version contract, strips the
 // engine-owned namespaces, and resolves the feature/connector/AI/model injectors
 // into the input — the augmented input the pure core executes. Shared by the
@@ -622,6 +633,9 @@ func (h *DecideHandler) Preview(ctx context.Context, id identity.Identity, slug,
 
 	data, err = h.prepare(ctx, id, version, ref, data)
 	if err != nil {
+		if badProviderRef(err) {
+			return DecideResult{}, fmt.Errorf("%w: %w", ErrBadRequest, err)
+		}
 		return DecideResult{}, err
 	}
 

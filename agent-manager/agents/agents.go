@@ -367,13 +367,22 @@ func Invoke(ctx context.Context, s store.Store, reg *ai.Registry, id identity.Id
 // returns a final answer or maxToolSteps is exceeded. A provider failure is
 // captured as a failed Outcome (not an error); only an unknown agent or a
 // misconfigured provider/tool returns an error... save where noted.
+
+// unknownRefError marks a lookup of a name this tenant never defined. The decide
+// path recognises it structurally (BadProviderRef) and maps it to a caller error
+// — a flow referencing a missing definition is fixable config, not a server fault.
+type unknownRefError struct{ msg string }
+
+func (e unknownRefError) Error() string        { return e.msg }
+func (e unknownRefError) BadProviderRef() bool { return true }
+
 func InvokeWithTools(ctx context.Context, s store.Store, reg *ai.Registry, tb Toolbox, id identity.Identity, agent, prompt string) (Outcome, error) {
 	def, ok, err := Read(ctx, s, id, agent)
 	if err != nil {
 		return Outcome{}, err
 	}
 	if !ok {
-		return Outcome{}, fmt.Errorf("agent-manager: unknown agent %q", agent)
+		return Outcome{}, unknownRefError{msg: fmt.Sprintf("agent-manager: unknown agent %q", agent)}
 	}
 	return InvokeConfig(ctx, reg, tb, id, def.config(), prompt)
 }
@@ -472,7 +481,7 @@ func InvokeStream(ctx context.Context, s store.Store, reg *ai.Registry, tb Toolb
 		return Outcome{}, err
 	}
 	if !ok {
-		return Outcome{}, fmt.Errorf("agent-manager: unknown agent %q", agent)
+		return Outcome{}, unknownRefError{msg: fmt.Sprintf("agent-manager: unknown agent %q", agent)}
 	}
 	p, err := reg.Get(def.Provider)
 	if err != nil {

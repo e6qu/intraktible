@@ -2734,3 +2734,44 @@ func TestDecideRecordsReasonCodes(t *testing.T) {
 		t.Fatal("reason codes never recorded on the decision")
 	}
 }
+
+// TestDecideUnknownProviderRefIsBadRequest pins the decide error taxonomy for a
+// flow that references a connector nobody defined: fixable flow configuration is
+// a 400, not a 500 (the builder's test panel shows the message as the user's
+// mistake, and ops dashboards don't page for it).
+type unknownRefStub struct{}
+
+func (unknownRefStub) Error() string        { return "context-layer: unknown connector \"ghost\"" }
+func (unknownRefStub) BadProviderRef() bool { return true }
+
+type stubConnectorProvider struct{}
+
+func (stubConnectorProvider) Fetch(context.Context, identity.Identity, string, json.RawMessage) (json.RawMessage, error) {
+	return nil, unknownRefStub{}
+}
+
+func TestDecideUnknownProviderRefIsBadRequest(t *testing.T) {
+	api := startEngine(t, command.WithConnectors(stubConnectorProvider{}))
+	var created struct {
+		FlowID string `json:"flow_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows",
+		map[string]string{"slug": "misref", "name": "MisRef"}, http.StatusCreated, &created)
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/versions", map[string]any{
+		"graph": map[string]any{
+			"nodes": []map[string]any{
+				{"id": "in", "type": "input"},
+				{"id": "c", "type": "connect", "config": map[string]any{"connector": "ghost", "output": "bureau"}},
+				{"id": "out", "type": "output"},
+			},
+			"edges": []map[string]any{{"from": "in", "to": "c"}, {"from": "c", "to": "out"}},
+		},
+	}, http.StatusCreated, nil)
+
+	if !testutil.Eventually(t, func() bool {
+		return api.RequestStatus(t, http.MethodPost, "/v1/flows/misref/sandbox/decide",
+			map[string]any{"data": map[string]any{}}, nil) == http.StatusBadRequest
+	}) {
+		t.Fatal("decide against an undefined connector must be a 400, not a 500")
+	}
+}
