@@ -567,7 +567,7 @@ test('defines an outcome monitor and sees it fire', async ({ page, request }) =>
   // Run three decisions, then check & notify — the monitor fires (no webhooks, so
   // nothing is delivered; real delivery is covered by the Go e2e).
   for (let i = 0; i < 3; i++) {
-    await request.post(`/v1/flows/${slug}/production/decide`, {
+    await request.post(`/v1/flows/${slug}/sandbox/decide`, {
       headers: { 'X-Api-Key': KEY },
       data: { data: {} }
     });

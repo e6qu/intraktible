@@ -38,7 +38,7 @@ test('a decision run shows in the history and its detail has the node trace', as
   // Decide (retry until the flow projection is live), capturing the decision id.
   let decisionId = '';
   await expect(async () => {
-    const r = await request.post(`/v1/flows/${slug}/production/decide`, {
+    const r = await request.post(`/v1/flows/${slug}/sandbox/decide`, {
       headers: { 'X-Api-Key': KEY },
       data: { data: {} }
     });
@@ -108,7 +108,7 @@ test('the decision trace surfaces the split branch it routed through', async ({
 
   let decisionId = '';
   await expect(async () => {
-    const r = await request.post(`/v1/flows/${slug}/production/decide`, {
+    const r = await request.post(`/v1/flows/${slug}/sandbox/decide`, {
       headers: { 'X-Api-Key': KEY },
       data: { data: { score: 800 } }
     });
@@ -169,7 +169,7 @@ test('a bound policy assigns a disposition shown on the decision detail', async 
   // Decide a high score; retry until both the flow and policy projections are live.
   let decisionId = '';
   await expect(async () => {
-    const r = await request.post(`/v1/flows/${slug}/production/decide`, {
+    const r = await request.post(`/v1/flows/${slug}/sandbox/decide`, {
       headers: H,
       data: { data: { score: 0.9 } }
     });
@@ -221,7 +221,7 @@ test('a reason node yields adverse-action reason codes on the decision detail', 
 
   let decisionId = '';
   await expect(async () => {
-    const r = await request.post(`/v1/flows/${slug}/production/decide`, {
+    const r = await request.post(`/v1/flows/${slug}/sandbox/decide`, {
       headers: { 'X-Api-Key': KEY },
       data: { data: { fico: 500, income: 50000 } }
     });
@@ -265,7 +265,7 @@ test('Reload keeps the applied filter and long JSON stays contained on the detai
   // the detail page out to ~2700px wide.
   let decisionId = '';
   await expect(async () => {
-    const r = await request.post(`/v1/flows/${slug}/production/decide`, {
+    const r = await request.post(`/v1/flows/${slug}/sandbox/decide`, {
       headers: { 'X-Api-Key': KEY },
       data: { data: { blob: 'x'.repeat(2500) } }
     });
