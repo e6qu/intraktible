@@ -983,10 +983,12 @@ func TestDecideHonorsPreApprovalOverHTTP(t *testing.T) {
 	// Deciding for that entity is served instantly from the pre-approval: approved,
 	// with the stored terms as the output, and no flow run.
 	type decResp struct {
-		DecisionID  string         `json:"decision_id"`
-		Status      string         `json:"status"`
-		Disposition string         `json:"disposition"`
-		Data        map[string]any `json:"data"`
+		DecisionID        string         `json:"decision_id"`
+		Status            string         `json:"status"`
+		Disposition       string         `json:"disposition"`
+		DispositionReason string         `json:"disposition_reason"`
+		PreApprovalID     string         `json:"preapproval_id"`
+		Data              map[string]any `json:"data"`
 	}
 	var d decResp
 	if !testutil.Eventually(t, func() bool {
@@ -1000,6 +1002,11 @@ func TestDecideHonorsPreApprovalOverHTTP(t *testing.T) {
 	}
 	if d.Data["limit"] != float64(5000) {
 		t.Fatalf("honored decision should carry the pre-approval terms: %+v", d.Data)
+	}
+	// The response itself names the evidence — a caller (and the builder verdict
+	// card) can tell the flow never ran without fetching the record.
+	if d.PreApprovalID == "" || d.DispositionReason != "pre-approval honored" {
+		t.Fatalf("honored response should link the grant: %+v", d)
 	}
 
 	// The decision record links the pre-approval and has no node trace (flow

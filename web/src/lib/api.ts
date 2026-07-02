@@ -185,6 +185,8 @@ export interface DecideResult {
   status: RunStatus;
   data?: Record<string, unknown>;
   disposition?: Disposition; // when a policy is bound
+  disposition_reason?: string; // the matched band, or "pre-approval honored"
+  preapproval_id?: string; // set when served instantly from a pre-approval (flow skipped)
   error?: string;
 }
 

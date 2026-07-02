@@ -26,7 +26,7 @@ import type {
   Disposition,
   RunStatus
 } from '$lib/api';
-import { state, nextId } from './store';
+import { state, nextId, auditDecisionRun } from './store';
 import { agentReply, type AgentSchema } from './agent';
 
 // --- Expression evaluator -------------------------------------------------------
@@ -454,6 +454,7 @@ export function runFlow(
   data: Record<string, unknown>;
   output: Record<string, unknown>;
   disposition?: Disposition;
+  dispositionReason?: string;
   reasonCodes: ReasonCode[];
   nodes: NodeRecord[];
   caseOpened?: { case_type: string; sla_days: number };
@@ -729,30 +730,40 @@ export function runFlow(
   }
 
   // Bind the flow's policy (by flow_slug) to derive a disposition over the output.
-  const disposition = dispositionFor(flow.slug, rec, reasonCodes);
-  return { status: 'completed', data: rec, output, disposition, reasonCodes, nodes, caseOpened };
+  const banded = dispositionFor(flow.slug, rec, reasonCodes);
+  return {
+    status: 'completed',
+    data: rec,
+    output,
+    disposition: banded.disposition,
+    dispositionReason: banded.reason,
+    reasonCodes,
+    nodes,
+    caseOpened
+  };
 }
 
 // dispositionFor evaluates the flow's bound policy (matched by flow_slug) over the
-// record, appending the matched rule's reason code. Returns undefined when no
-// policy is bound (the flow's own output stands).
+// record, appending the matched rule's reason code. The matched band's description
+// becomes the disposition_reason the real decide response carries. Returns empty
+// when no policy is bound (the flow's own output stands).
 function dispositionFor(
   slug: string,
   rec: Record<string, unknown>,
   reasonCodes: ReasonCode[]
-): Disposition | undefined {
+): { disposition?: Disposition; reason?: string } {
   const policy = state.policies.find((p) => p.flow_slug === slug);
-  if (!policy) return undefined;
+  if (!policy) return {};
   const spec =
     policy.versions.find((v) => v.version === policy.latest)?.spec ?? policy.versions.at(-1)?.spec;
-  if (!spec) return undefined;
+  if (!spec) return {};
   for (const rule of spec.rules) {
     if (isTruthy(evalExpr(rule.when, rec))) {
       if (rule.code) reasonCodes.push({ code: rule.code, description: rule.description ?? '' });
-      return rule.disposition;
+      return { disposition: rule.disposition, reason: rule.description };
     }
   }
-  return (spec.default as Disposition) ?? 'refer';
+  return { disposition: (spec.default as Disposition) ?? 'refer' };
 }
 
 // decide runs a flow for an environment, records a Decision (unless record:false)
@@ -776,8 +787,11 @@ export function decideFlow(
   const result: DecideResult = {
     decision_id: decisionId,
     status: run.status,
-    data: run.output,
+    // The real engine's record accumulates the compliance trail under reason_codes,
+    // so the decide response's data carries it (the verdict UI renders it as badges).
+    data: { ...run.output, reason_codes: run.reasonCodes },
     disposition: run.disposition,
+    disposition_reason: run.dispositionReason,
     error: run.error
   };
 
@@ -797,6 +811,7 @@ export function decideFlow(
     output: run.output,
     reason_codes: run.reasonCodes,
     disposition: run.disposition,
+    disposition_reason: run.dispositionReason,
     policy_id: state.policies.find((p) => p.flow_slug === flow.slug)?.policy_id,
     nodes: run.nodes,
     started_at: startedAt,
@@ -832,6 +847,10 @@ export function decideFlow(
     // Link the decision back to the case it opened, so the trace can navigate to it.
     decision.case_id = caseId;
   }
+
+  // Journal the run into the event log the way the real engine does: started, one
+  // node_evaluated per trace node, then the terminal event.
+  auditDecisionRun(decision);
 
   return { result, decision };
 }

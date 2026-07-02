@@ -872,6 +872,22 @@ backend (12 new faithfulness tests). Hygiene: the `dupl` gate now **fails on any
 postgres/nats, and per the review philosophy the new code adds **no fallbacks and no catch-all error
 handling** — unknown states fail loudly at the earliest boundary.
 
+**Demo-realism round (DR in BUGS.md, same PR as round 11).** The public Pages demo was driven
+end-to-end (every page, form, tab, export, filter, and persona against the built bundle) and made
+to behave like a real deployment: unmatched /v1 routes now fail loudly instead of returning a
+silent `{}` (which had been masking coverage gaps — none existed once visible); the demo audit log
+was realigned to the real event taxonomy with full per-decision run journals (started → one
+node_evaluated per trace node → terminal, resume included), making "Hide node steps" real; AI
+usage now attributes cost with the real pricing formula; and the honored-pre-approval story became
+visible end-to-end — the REAL decide response now serializes `disposition_reason` +
+`preapproval_id` (it computed but dropped both), the builder verdict card shows the grant badge +
+reason-code chips with produced fields sorted before echoed input, and the four-eyes approve/reject
+reason is collected inline instead of a native prompt(). One real bug fell out of the drive: a
+persona-lens default re-overrode the cases "all" filter on every navigation (an operator could
+never see the whole queue) — the selection now serializes explicitly. New coverage: a demo realism
+e2e spec (lens override, suspended filter, honored verdict, inline four-eyes), demo-faithfulness
+tests for the run journal/cost/honored response, and a real-suite lens regression test.
+
 **Transposition-prevention refactors (TS40–TS42).** The three follow-ups left from round 10 landed as
 one PR: the decision-subject (entity type, id) is now the shared branded `platform/entity.Ref` threaded
 through the feature/pre-approval ports (a swapped pair fails to compile rather than silently keying the

@@ -211,6 +211,9 @@ type DecideResult struct {
 	// three string-ish result fields can't be transposed at a construction site.
 	Disposition       policy.Disposition
 	DispositionReason string
+	// PreApprovalID links the grant when the decision was served instantly from a
+	// pre-approval (the flow never ran); empty on an ordinary run.
+	PreApprovalID string
 }
 
 // Decide runs the latest published version of the flow with the given slug in
@@ -986,6 +989,7 @@ func (h *DecideHandler) honorPreApproval(ctx context.Context, id identity.Identi
 	return DecideResult{
 		DecisionID: decisionID, Status: domain.StatusCompleted, Output: terms,
 		Disposition: policy.Disposition(pa.Disposition), DispositionReason: "pre-approval honored",
+		PreApprovalID: pa.PreApprovalID,
 	}, true, nil
 }
 

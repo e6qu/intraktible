@@ -167,6 +167,71 @@ export function nextId(prefix: string): string {
   return `${prefix}_${idCounter.toString(36)}${Date.now().toString(36).slice(-4)}`;
 }
 
+// pushAudit appends one entry to the workspace event log (newest first), attributed
+// to the signed-in actor — the demo's eventlog.AppendJSON. Streams and types follow
+// the real taxonomy (decision.flows / decision.runs / cases / auth / …); resource
+// ids live in the payload, matched by the audit page's resource filter.
+export function pushAudit(type: string, stream: string, payload?: unknown): void {
+  state.seq += 1;
+  state.audit.unshift({
+    seq: state.seq,
+    id: `aud_${state.seq}`,
+    time: new Date().toISOString(),
+    actor: state.identity.actor,
+    stream,
+    type,
+    payload
+  });
+}
+
+// auditRunSteps journals one decision.run.node_evaluated per trace node, the way
+// the real engine appends a step event for every node it walks.
+export function auditRunSteps(decisionId: string, nodes: NodeRecord[]): void {
+  for (const n of nodes) {
+    pushAudit('decision.run.node_evaluated', 'decision.runs', {
+      decision_id: decisionId,
+      node_id: n.node_id,
+      node_type: n.type
+    });
+  }
+}
+
+// auditRunEnd journals a run's terminal event from its recorded status.
+export function auditRunEnd(d: Decision): void {
+  if (d.status === 'completed') {
+    pushAudit('decision.run.completed', 'decision.runs', {
+      decision_id: d.decision_id,
+      disposition: d.disposition
+    });
+  } else if (d.status === 'failed') {
+    pushAudit('decision.run.failed', 'decision.runs', {
+      decision_id: d.decision_id,
+      error: d.error
+    });
+  } else {
+    pushAudit('decision.run.suspended', 'decision.runs', { decision_id: d.decision_id });
+  }
+}
+
+// auditDecisionRun mirrors a freshly recorded run into the event log exactly as the
+// real engine journals it: started, node_evaluated per step, manual_review_requested
+// when the run opened a case, then the terminal event.
+export function auditDecisionRun(d: Decision): void {
+  pushAudit('decision.run.started', 'decision.runs', {
+    decision_id: d.decision_id,
+    flow_id: d.flow_id,
+    environment: d.environment
+  });
+  auditRunSteps(d.decision_id, d.nodes ?? []);
+  if (d.case_id) {
+    pushAudit('decision.manual_review_requested', 'decision.runs', {
+      decision_id: d.decision_id,
+      case_id: d.case_id
+    });
+  }
+  auditRunEnd(d);
+}
+
 // --- Seed builders --------------------------------------------------------------
 
 // Roster actor shortcuts so the seed reads like a real team (admin..viewer).
@@ -2816,112 +2881,203 @@ function seedNotifications(): Notification[] {
   ];
 }
 
-function seedAudit(): AuditEntry[] {
-  // A believable workspace timeline across the roster and a few weeks. Each entry
-  // names a real actor + a coherent stream/type so the Audit UI filters meaningfully.
-  const tmpl: { actor: string; stream: string; type: string; detail: string }[] = [
-    { actor: AVA, stream: 'global', type: 'user.login', detail: 'Ava Chen signed in' },
-    {
-      actor: PRIYA,
-      stream: 'flow_credit',
-      type: 'flow.published',
-      detail: 'credit-decision v3 published'
-    },
-    {
-      actor: PRIYA,
-      stream: 'flow_credit',
-      type: 'deployment.requested',
-      detail: 'credit v3 → production'
-    },
-    {
-      actor: AVA,
-      stream: 'flow_credit',
-      type: 'deployment.deployed',
-      detail: 'credit v3 → staging'
-    },
-    {
-      actor: MARCUS,
-      stream: 'pol_credit',
-      type: 'policy.published',
-      detail: 'Credit Disposition v2'
-    },
-    {
-      actor: PRIYA,
-      stream: 'flow_aml',
-      type: 'flow.published',
-      detail: 'aml-screening v3 published'
-    },
-    {
-      actor: DIEGO,
-      stream: 'flow_aml',
-      type: 'deployment.requested',
-      detail: 'aml v3 → production'
-    },
-    {
-      actor: 'system',
-      stream: 'flow_aml',
-      type: 'monitor.fired',
-      detail: 'SAR referral rate above threshold'
-    },
-    { actor: DIEGO, stream: 'case_2', type: 'case.note', detail: 'note added to AML alert' },
-    { actor: AVA, stream: 'case_2', type: 'case.assigned', detail: 'assigned to Diego Santos' },
-    { actor: 'system', stream: 'case_3', type: 'case.breached', detail: 'KYC review SLA exceeded' },
-    {
-      actor: PRIYA,
-      stream: 'flow_fraud',
-      type: 'flow.published',
-      detail: 'card-fraud v4 published'
-    },
-    {
-      actor: AVA,
-      stream: 'flow_fraud',
-      type: 'shadow.assigned',
-      detail: 'fraud v4 shadow on production'
-    },
-    {
-      actor: MARCUS,
-      stream: 'global',
-      type: 'preapproval.granted',
-      detail: 'APP-1007 pre-approved'
-    },
-    { actor: AVA, stream: 'global', type: 'apikey.created', detail: 'Production server key' },
-    {
-      actor: AVA,
-      stream: 'flow_credit',
-      type: 'grant.added',
-      detail: 'granted Diego deploy on sandbox'
-    },
-    {
-      actor: 'system',
-      stream: 'flow_credit',
-      type: 'monitor.fired',
-      detail: 'failure rate above 5%'
-    },
-    {
-      actor: DIEGO,
-      stream: 'flow_dispute',
-      type: 'flow.published',
-      detail: 'dispute-triage v2 published'
-    },
-    { actor: LENA, stream: 'global', type: 'user.login', detail: 'Lena Hoff signed in' },
-    { actor: LENA, stream: 'dec_2', type: 'comment.posted', detail: 'compliance note on decision' }
-  ];
-  const out: AuditEntry[] = [];
+function seedAudit(decisions: Decision[]): AuditEntry[] {
+  // A believable workspace timeline across the roster and a few weeks, on the real
+  // event taxonomy (stream → type) with resource ids in the payload — exactly how a
+  // real deployment's log reads, so the Audit UI's filters work the same way.
+  const tmpl: { actor: string; stream: string; type: string; payload: Record<string, unknown> }[] =
+    [
+      {
+        actor: AVA,
+        stream: 'auth',
+        type: 'auth.managed_key.created',
+        payload: { key_id: 'key_1', name: 'Production server' }
+      },
+      {
+        actor: PRIYA,
+        stream: 'decision.flows',
+        type: 'decision.flow.version_published',
+        payload: { flow_id: 'flow_credit', version: 3 }
+      },
+      {
+        actor: PRIYA,
+        stream: 'decision.flows',
+        type: 'decision.flow.deployment_requested',
+        payload: { flow_id: 'flow_credit', environment: 'production', version: 3 }
+      },
+      {
+        actor: MARCUS,
+        stream: 'decision.flows',
+        type: 'decision.flow.deployment_approved',
+        payload: { flow_id: 'flow_credit', environment: 'production', version: 3 }
+      },
+      {
+        actor: AVA,
+        stream: 'decision.flows',
+        type: 'decision.flow.version_deployed',
+        payload: { flow_id: 'flow_credit', environment: 'staging', version: 3 }
+      },
+      {
+        actor: MARCUS,
+        stream: 'decision.policies',
+        type: 'decision.policy.version_published',
+        payload: { policy_id: 'pol_credit', version: 2 }
+      },
+      {
+        actor: PRIYA,
+        stream: 'decision.flows',
+        type: 'decision.flow.version_published',
+        payload: { flow_id: 'flow_aml', version: 3 }
+      },
+      {
+        actor: DIEGO,
+        stream: 'decision.flows',
+        type: 'decision.flow.deployment_requested',
+        payload: { flow_id: 'flow_aml', environment: 'production', version: 3 }
+      },
+      {
+        actor: 'system',
+        stream: 'decision.monitors',
+        type: 'decision.monitor_alerted',
+        payload: { monitor_id: 'mon_a2', flow_id: 'flow_aml', metric: 'refer_rate' }
+      },
+      { actor: DIEGO, stream: 'cases', type: 'cases.note_added', payload: { case_id: 'case_2' } },
+      {
+        actor: AVA,
+        stream: 'cases',
+        type: 'cases.assigned',
+        payload: { case_id: 'case_2', assignee: DIEGO }
+      },
+      {
+        actor: 'system',
+        stream: 'cases',
+        type: 'cases.sla_breached',
+        payload: { case_id: 'case_3' }
+      },
+      {
+        actor: PRIYA,
+        stream: 'decision.flows',
+        type: 'decision.flow.version_published',
+        payload: { flow_id: 'flow_fraud', version: 4 }
+      },
+      {
+        actor: AVA,
+        stream: 'decision.flows',
+        type: 'decision.flow.shadow_set',
+        payload: { flow_id: 'flow_fraud', environment: 'staging', version: 4 }
+      },
+      {
+        actor: MARCUS,
+        stream: 'decision.models',
+        type: 'decision.model.baseline_captured',
+        payload: { model: 'credit_pd' }
+      },
+      {
+        actor: AVA,
+        stream: 'decision.models',
+        type: 'decision.model.monitor_set',
+        payload: { model: 'fraud_score', threshold: 0.25 }
+      },
+      {
+        actor: 'system',
+        stream: 'decision.monitors',
+        type: 'decision.monitor_alerted',
+        payload: { monitor_id: 'mon_c1', flow_id: 'flow_credit', metric: 'failure_rate' }
+      },
+      {
+        actor: DIEGO,
+        stream: 'decision.flows',
+        type: 'decision.flow.version_published',
+        payload: { flow_id: 'flow_dispute', version: 2 }
+      },
+      {
+        actor: AVA,
+        stream: 'auth',
+        type: 'auth.managed_key.rotated',
+        payload: { key_id: 'key_3', name: 'Analytics read-only' }
+      },
+      {
+        actor: AVA,
+        stream: 'auth',
+        type: 'auth.managed_key.revoked',
+        payload: { key_id: 'key_4', name: 'Decommissioned partner' }
+      }
+    ];
+  const events: {
+    time: string;
+    actor: string;
+    stream: string;
+    type: string;
+    payload: unknown;
+  }[] = [];
   const total = 60;
   for (let i = 0; i < total; i++) {
-    const t = tmpl[i % tmpl.length];
-    const seq = total - i;
-    out.push({
-      seq,
-      id: `aud_${seq}`,
-      time: ago(i * 4 + (i % 3)),
-      actor: t.actor,
-      stream: t.stream,
-      type: t.type,
-      payload: { detail: t.detail }
-    });
+    events.push({ time: ago(i * 4 + (i % 3)), ...tmpl[i % tmpl.length] });
   }
-  return out;
+  // Mirror the run journal (started / node_evaluated per step / terminal) for the most
+  // recent seeded decisions, so the raw log opens dominated by node steps — the real
+  // event-log noise the audit page's "Hide node steps" toggle exists for.
+  const recent = [...decisions]
+    .sort((a, b) => b.started_at.localeCompare(a.started_at))
+    .slice(0, 5);
+  for (const d of recent) {
+    const actor =
+      d.environment === 'production' ? 'svc-prod@intraktible.dev' : 'svc-ci@intraktible.dev';
+    events.push({
+      time: d.started_at,
+      actor,
+      stream: 'decision.runs',
+      type: 'decision.run.started',
+      payload: { decision_id: d.decision_id, flow_id: d.flow_id, environment: d.environment }
+    });
+    for (const n of d.nodes ?? []) {
+      events.push({
+        time: d.started_at,
+        actor,
+        stream: 'decision.runs',
+        type: 'decision.run.node_evaluated',
+        payload: { decision_id: d.decision_id, node_id: n.node_id, node_type: n.type }
+      });
+    }
+    if (d.case_id) {
+      events.push({
+        time: d.started_at,
+        actor: 'system',
+        stream: 'decision.runs',
+        type: 'decision.manual_review_requested',
+        payload: { decision_id: d.decision_id, case_id: d.case_id }
+      });
+    }
+    const ended = d.ended_at ?? d.started_at;
+    if (d.status === 'completed') {
+      events.push({
+        time: ended,
+        actor,
+        stream: 'decision.runs',
+        type: 'decision.run.completed',
+        payload: { decision_id: d.decision_id, disposition: d.disposition }
+      });
+    } else if (d.status === 'failed') {
+      events.push({
+        time: ended,
+        actor,
+        stream: 'decision.runs',
+        type: 'decision.run.failed',
+        payload: { decision_id: d.decision_id, error: d.error }
+      });
+    } else {
+      events.push({
+        time: ended,
+        actor,
+        stream: 'decision.runs',
+        type: 'decision.run.suspended',
+        payload: { decision_id: d.decision_id }
+      });
+    }
+  }
+  // Chronological seq numbering, stored newest-first like the live log.
+  events.sort((a, b) => a.time.localeCompare(b.time));
+  return events.map((e, i) => ({ seq: i + 1, id: `aud_${i + 1}`, ...e })).reverse();
 }
 
 function seedApiKeys(): ManagedApiKey[] {
@@ -3356,6 +3512,7 @@ export function createState(): DemoState {
     const dec = decisionById.get(c.source_decision_id);
     if (dec && !dec.case_id) dec.case_id = c.case_id;
   }
+  const audit = seedAudit(decisions);
   return {
     identity: identityFor(USERS[0]),
     flows: seedFlows(),
@@ -3403,11 +3560,11 @@ export function createState(): DemoState {
     ]),
     webhooks: seedWebhooks(),
     notifications: seedNotifications(),
-    audit: seedAudit(),
+    audit,
     apiKeys: seedApiKeys(),
     privacy: { fields: ['ssn', 'dob', 'pan'], updated_at: ago(500), updated_by: AVA },
     comments: seedComments(),
-    seq: 61
+    seq: audit.length + 1
   };
 }
 
@@ -3416,7 +3573,7 @@ export function createState(): DemoState {
 // reloads (build → publish → deploy → decide → triage → resolve), not just within a
 // single page view. Bump SCHEMA_VERSION whenever the seed/state shape changes so an
 // older persisted blob is discarded (re-seeded) instead of hydrating a stale shape.
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 const PERSIST_KEY = 'intraktible-demo-state';
 
 // Map values can't survive JSON, so tag them on write and rebuild on read. The

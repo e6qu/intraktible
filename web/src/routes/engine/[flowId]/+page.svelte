@@ -1002,11 +1002,26 @@
   // default, so an ordinary test records a sandbox decision you can inspect.
   let preview = $state(false);
   // The decide result's primary output fields (the `data` map) for the card — at
-  // most a handful, the rest collapse into the raw JSON.
+  // most a handful, the rest collapse into the raw JSON. Fields the flow PRODUCED
+  // sort before fields that merely echo the submitted input, so the run's actual
+  // contribution (a derived score, granted terms) isn't pushed out of the visible
+  // slots by the echo; reason_codes render as badges above, not as a field.
   const runOutputFields = $derived.by(() => {
     const d = runResult?.data;
-    return d && typeof d === 'object' && !Array.isArray(d)
-      ? Object.entries(d as Record<string, unknown>)
+    if (!d || typeof d !== 'object' || Array.isArray(d)) return [];
+    const echoed = new Set(dataValid ? Object.keys(JSON.parse(dataText)) : []);
+    return Object.entries(d as Record<string, unknown>)
+      .filter(([k]) => k !== 'reason_codes')
+      .sort(([a], [b]) => Number(echoed.has(a)) - Number(echoed.has(b)));
+  });
+  // The run's reason codes ({code, description}[]) for the verdict badges.
+  const runReasonCodes = $derived.by(() => {
+    const d = runResult?.data;
+    const codes = d && typeof d === 'object' ? (d as Record<string, unknown>).reason_codes : null;
+    return Array.isArray(codes)
+      ? codes.filter((c): c is { code: string; description?: string } =>
+          Boolean(c && typeof c === 'object' && 'code' in c)
+        )
       : [];
   });
   function fieldText(v: unknown): string {
@@ -1508,26 +1523,28 @@
   // the approval/rejection explanation persists with the request.
   let allRequests = $derived([...(flow?.deployment_requests ?? [])].reverse());
 
-  async function approve(reqId: string) {
-    const reason = prompt('Approval note (the explanation recorded with this decision):', '');
-    if (reason === null) return; // cancelled
-    error = '';
-    try {
-      await approveDeployment(key, flowId, reqId, reason.trim());
-      toast.success('Deployment approved and live');
-      await load();
-    } catch (e) {
-      error = msg(e);
-    }
+  // The reason is collected inline in the request row (not a native prompt()):
+  // the four-eyes decision is the governance showcase moment, so it reads like
+  // product. `deciding` names the one request whose row is in reason-entry mode.
+  let deciding = $state<{ reqId: string; verb: 'approve' | 'reject' } | null>(null);
+  let decideReason = $state('');
+  function startDecide(reqId: string, verb: 'approve' | 'reject') {
+    deciding = { reqId, verb };
+    decideReason = '';
   }
-
-  async function reject(reqId: string) {
-    const reason = prompt('Reason for rejecting this deployment:', '');
-    if (reason === null) return; // cancelled
+  async function confirmDecide() {
+    if (!deciding) return;
+    const { reqId, verb } = deciding;
     error = '';
     try {
-      await rejectDeployment(key, flowId, reqId, reason.trim());
-      toast.success('Deployment request rejected');
+      if (verb === 'approve') {
+        await approveDeployment(key, flowId, reqId, decideReason.trim());
+        toast.success('Deployment approved and live');
+      } else {
+        await rejectDeployment(key, flowId, reqId, decideReason.trim());
+        toast.success('Deployment request rejected');
+      }
+      deciding = null;
       await load();
     } catch (e) {
       error = msg(e);
@@ -1759,6 +1776,7 @@
     runResult = null;
     runMs = null;
     lastDecisionId = '';
+    deciding = null;
   }
 
   $effect(() => {
@@ -2314,10 +2332,22 @@
                       <td><span class="reqstatus {r.status}">{r.status}</span></td>
                       <td>{r.requested_by}</td>
                       <td class="reqactions">
-                        {#if r.status === 'pending'}
+                        {#if r.status === 'pending' && deciding?.reqId === r.request_id}
+                          <input
+                            bind:value={decideReason}
+                            aria-label="decision reason"
+                            placeholder={deciding.verb === 'approve'
+                              ? 'approval note (recorded with this decision)'
+                              : 'reason for rejecting'}
+                          />
+                          <button class="primary" onclick={confirmDecide}
+                            >Confirm {deciding.verb}</button
+                          >
+                          <button onclick={() => (deciding = null)}>Cancel</button>
+                        {:else if r.status === 'pending'}
                           <button
                             class="primary"
-                            onclick={() => approve(r.request_id)}
+                            onclick={() => startDecide(r.request_id, 'approve')}
                             disabled={!roleAtLeast($user?.role, 'approver') ||
                               r.requested_by === $user?.actor}
                             title={!roleAtLeast($user?.role, 'approver')
@@ -2327,7 +2357,7 @@
                                 : undefined}>Approve</button
                           >
                           <button
-                            onclick={() => reject(r.request_id)}
+                            onclick={() => startDecide(r.request_id, 'reject')}
                             disabled={!roleAtLeast($user?.role, 'approver')}
                             title={!roleAtLeast($user?.role, 'approver')
                               ? 'Requires the approver role'
@@ -3220,6 +3250,17 @@
                 <Badge tone={dispositionTone(runResult.disposition)}>{runResult.disposition}</Badge>
               {/if}
               <Badge tone={statusTone(runResult.status)}>{runResult.status}</Badge>
+              {#if runResult.preapproval_id}
+                <Badge tone="ok">pre-approved</Badge>
+                <span
+                  class="dur"
+                  title="Served instantly from grant {runResult.preapproval_id} — the flow did not run"
+                  >honored · flow skipped</span
+                >
+              {/if}
+              {#each runReasonCodes as rc (rc.code)}
+                <span class="rcode" title={rc.description}>{rc.code}</span>
+              {/each}
               {#if runMs != null}<span class="dur">{runMs} ms</span>{/if}
               {#if !lastDecisionId}
                 <span class="dur" title="Preview run — no decision was recorded"
@@ -3725,6 +3766,15 @@
     margin: 0.2rem 0;
     color: var(--danger);
     font-size: 0.8rem;
+  }
+  .rcode {
+    font-family: var(--font-mono);
+    font-weight: 600;
+    font-size: 0.78rem;
+    color: var(--accent-ink);
+    background: var(--surface-2);
+    padding: 0.05rem 0.4rem;
+    border-radius: 0.3rem;
   }
   .verdict-card {
     --tone: var(--fg-muted);

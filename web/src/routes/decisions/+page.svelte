@@ -210,6 +210,7 @@
         <option value="">any</option>
         <option value="completed">completed</option>
         <option value="failed">failed</option>
+        <option value="suspended">suspended</option>
         <option value="started">started</option>
       </select></label
     >

@@ -18,7 +18,10 @@ architecture + live-UI review): pre-approval flow binding enforced, approve/reje
 environment-scope gate, decide refuses un-deployed versions outside the sandbox (the four-eyes bypass),
 resume hardened (namespace strip, single-shot claim, downstream escalations), erasure keygen race and
 WAL fsync divergence closed, and a swept set of frontend stale-state/pager/demo-faithfulness fixes —
-see the R11 block in BUGS.md. The `dupl` gate now actually fails on production clones.
+see the R11 block in BUGS.md. The `dupl` gate now actually fails on production clones. A
+follow-up demo-realism round made the Pages demo behave like a real deployment (loud 404s for
+unrouted calls, the real audit taxonomy with per-node run journals, AI cost attribution, honored
+pre-approval evidence on the builder verdict card, inline four-eyes reasons) — DR block in BUGS.md.
 Roadmap & exit criteria: [PLAN.md §8](PLAN.md#8-phased-roadmap); deferrals tracked in [BUGS.md](BUGS.md).
 Working today: `platform/{eventlog,store,projection,identity,auth,httpx,ai,web,mo}` (`mo` = the
 `Option[T]`/`Result[T]` types used instead of none/null sentinels where they're easy to mishandle;

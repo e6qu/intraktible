@@ -121,3 +121,32 @@ test('case detail renders the context as a key-value view', async ({ page, reque
   await expect(ctx).toContainText('Acme Corp');
   await expect(ctx).toContainText('fico');
 });
+
+// The persona lens presets the operator's queue to needs_review, but choosing
+// "all" must actually widen the view — the lens default only applies to a
+// pristine URL, never over an explicit selection.
+test("operator persona: the 'all' status filter overrides the lens preset", async ({
+  page,
+  request
+}) => {
+  const tag = 'lens-' + Math.random().toString(36).slice(2, 7);
+  const created = await request.post('/v1/cases', {
+    headers: { 'X-Api-Key': KEY },
+    data: { company_name: `${tag}-done`, case_type: 'aml', sla_days: 5 }
+  });
+  const { case_id } = (await created.json()) as { case_id: string };
+  await request.post(`/v1/cases/${case_id}/status`, {
+    headers: { 'X-Api-Key': KEY },
+    data: { status: 'completed' }
+  });
+
+  await page.addInitScript(() => localStorage.setItem('intraktible-persona', 'operator'));
+  await page.goto('/cases');
+  const filter = page.getByLabel('status filter');
+  await expect(filter).toHaveValue('needs_review');
+  await expect(page.getByRole('link', { name: `${tag}-done` })).toHaveCount(0);
+
+  await filter.selectOption('');
+  await expect(filter).toHaveValue('');
+  await expect(page.getByRole('link', { name: `${tag}-done` }).first()).toBeVisible();
+});
