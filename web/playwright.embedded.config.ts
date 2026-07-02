@@ -21,7 +21,10 @@ export default defineConfig({
   webServer: {
     command: 'cd .. && ./bin/intraktible serve --addr=:8080 --data-dir=web/.pw-data-embedded',
     url: 'http://localhost:8080/healthz',
-    reuseExistingServer: !process.env.CI,
+    // Never reuse: a stale dev server on :8080 (e.g. a go-run orphan built with
+    // the placeholder assets) would silently stand in for the artifact under
+    // test — the same E1 gotcha fixed for the main config.
+    reuseExistingServer: false,
     stdout: 'ignore',
     stderr: 'pipe',
     timeout: 120_000
