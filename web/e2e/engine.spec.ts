@@ -1154,3 +1154,137 @@ test('the design window focuses, exits on Escape, and collapses', async ({ page,
   await page.getByTestId('canvas-mode-board').click();
   await expect(page.locator('.svelte-flow')).toBeVisible();
 });
+
+test('clicking an edge opens its inspector; the branch label edits live', async ({
+  page,
+  request
+}) => {
+  const slug = uniqueSlug();
+  const created = await request.post('/v1/flows', {
+    headers: { 'X-Api-Key': KEY },
+    data: { slug, name: 'Edges' }
+  });
+  const { flow_id } = await created.json();
+  await request.post(`/v1/flows/${flow_id}/versions`, {
+    headers: { 'X-Api-Key': KEY },
+    data: {
+      graph: {
+        nodes: [
+          { id: 'in', type: 'input' },
+          { id: 'gate', type: 'split', config: { condition: 'x > 1' } },
+          { id: 'out', type: 'output' }
+        ],
+        edges: [
+          { from: 'in', to: 'gate' },
+          { from: 'gate', to: 'out', branch: 'yes' }
+        ]
+      }
+    }
+  });
+
+  await page.goto(`/engine/${flow_id}`);
+  await expect(page.locator('.svelte-flow__node')).toHaveCount(3);
+  // Click a point ON the edge's interaction path — a curve's bounding-box
+  // center (what a plain click targets) usually misses the path itself.
+  const pt = await page
+    .locator('.svelte-flow__edge-interaction')
+    .nth(1)
+    .evaluate((el) => {
+      const path = el as SVGPathElement;
+      const mid = path.getPointAtLength(path.getTotalLength() / 2);
+      const ctm = path.getScreenCTM();
+      if (!ctm) throw new Error('edge path has no CTM');
+      const sp = new DOMPoint(mid.x, mid.y).matrixTransform(ctm);
+      return { x: sp.x, y: sp.y };
+    });
+  await page.mouse.click(pt.x, pt.y);
+
+  const inspector = page.getByTestId('edge-inspector');
+  await expect(inspector).toBeVisible();
+  await expect(inspector.getByLabel('edge branch label')).toHaveValue('yes');
+  await inspector.getByLabel('edge branch label').fill('approved');
+  await expect(page.locator('.svelte-flow__edge-label').getByText('approved')).toBeVisible();
+
+  await inspector.getByRole('button', { name: 'Delete edge' }).click();
+  await expect(inspector).toHaveCount(0);
+  await expect(page.locator('.svelte-flow__edge')).toHaveCount(1);
+});
+
+test('dragging a rail type onto the board places the node at the drop point', async ({
+  page,
+  request
+}) => {
+  const slug = uniqueSlug();
+  const created = await request.post('/v1/flows', {
+    headers: { 'X-Api-Key': KEY },
+    data: { slug, name: 'DnD' }
+  });
+  const { flow_id } = await created.json();
+
+  await page.goto(`/engine/${flow_id}`);
+  const pane = page.locator('.svelte-flow__pane');
+  await expect(pane).toBeVisible();
+  const pb = await pane.boundingBox();
+  if (!pb) throw new Error('pane has no box');
+  await page.getByRole('button', { name: 'insert split node' }).dragTo(pane, {
+    targetPosition: { x: Math.round(pb.width * 0.6), y: Math.round(pb.height * 0.6) }
+  });
+
+  const inspector = page.getByTestId('node-inspector');
+  await expect(inspector).toBeVisible();
+  await expect(inspector.getByLabel('selected node type')).toHaveValue('split');
+
+  // Duplicate stamps a configured copy and moves selection to it (a fresh
+  // unpublished flow has no other canvas nodes: dropped split + its copy = 2).
+  await inspector.getByLabel('condition').fill('x > 9');
+  await inspector.getByRole('button', { name: 'Duplicate' }).click();
+  await expect(inspector.getByLabel('condition')).toHaveValue('x > 9');
+  await expect(page.locator('.svelte-flow__node-flow')).toHaveCount(2);
+});
+
+test('keyboard toggles: f focuses the board, t opens the tools panel', async ({
+  page,
+  request
+}) => {
+  const slug = uniqueSlug();
+  const created = await request.post('/v1/flows', {
+    headers: { 'X-Api-Key': KEY },
+    data: { slug, name: 'Keys' }
+  });
+  const { flow_id } = await created.json();
+
+  await page.goto(`/engine/${flow_id}`);
+  const canvas = page.getByTestId('flow-canvas');
+  await expect(canvas).toBeVisible();
+
+  await page.keyboard.press('f');
+  await expect(canvas).toHaveClass(/focus/);
+  await page.keyboard.press('Escape');
+  await expect(canvas).not.toHaveClass(/focus/);
+
+  await page.keyboard.press('t');
+  await expect(page.getByLabel('new node type')).toBeVisible();
+  // Typing "t" in a field must NOT toggle the panel.
+  await page.getByLabel('new node type').focus();
+  await page.keyboard.press('t');
+  await expect(page.getByLabel('new node type')).toBeVisible();
+
+  // The tools-panel choice persists across a reload.
+  await page.reload();
+  await expect(page.getByLabel('new node type')).toBeVisible();
+});
+
+test('a brand-new flow opens to a guided blank board, error-free', async ({ page, request }) => {
+  const slug = uniqueSlug();
+  const created = await request.post('/v1/flows', {
+    headers: { 'X-Api-Key': KEY },
+    data: { slug, name: 'Blank' }
+  });
+  const { flow_id } = await created.json();
+
+  await page.goto(`/engine/${flow_id}`);
+  await expect(page.getByTestId('board-empty')).toBeVisible();
+  // The unpublished flow's omitted `versions` must not surface as an error
+  // ("versions is not iterable" regression).
+  await expect(page.locator('p.err')).toHaveCount(0);
+});
