@@ -377,6 +377,100 @@ export function evaluateModel(model: Model, features: Record<string, unknown>): 
   }
 }
 
+// --- Graph validation (mirrors decision-engine/domain/flow.go ValidateGraph) -----
+
+const NODE_TYPES = new Set([
+  'input',
+  'rule',
+  'split',
+  'assignment',
+  'scorecard',
+  'decision_table',
+  '2d_matrix',
+  'code',
+  'ai',
+  'connect',
+  'predict',
+  'manual_review',
+  'reason',
+  'output'
+]);
+
+// q renders an id the way Go's %q does, so the demo's 400 bodies read byte-for-byte
+// like the real service's.
+function q(s: string): string {
+  return JSON.stringify(s);
+}
+
+// validateGraph is the demo's publish gate, mirroring the real ValidateGraph check
+// for check — and message for message: unique non-empty node ids of known types,
+// exactly one input, at least one output, edges between existing distinct nodes,
+// acyclicity (Kahn's), every non-output node with an outgoing edge, and every node
+// reachable from the input. Returns the exact error string the real 400 body
+// carries, or null for a publishable graph.
+export function validateGraph(graph: FlowGraph): string | null {
+  const nodes = graph.nodes ?? [];
+  const edges = graph.edges ?? [];
+  if (nodes.length === 0) return 'decision-engine: graph has no nodes';
+  const ids = new Set<string>();
+  let inputs = 0;
+  let outputs = 0;
+  for (const n of nodes) {
+    const id = String(n.id ?? '');
+    if (id.trim() === '') return 'decision-engine: node with empty id';
+    if (ids.has(id)) return `decision-engine: duplicate node id ${q(id)}`;
+    const type = String(n.type ?? '');
+    if (!NODE_TYPES.has(type)) return `decision-engine: node ${q(id)} has unknown type ${q(type)}`;
+    ids.add(id);
+    if (type === 'input') inputs += 1;
+    if (type === 'output') outputs += 1;
+  }
+  if (inputs !== 1) return `decision-engine: graph needs exactly one input node, got ${inputs}`;
+  if (outputs < 1) return 'decision-engine: graph needs at least one output node';
+
+  const indeg = new Map<string, number>();
+  for (const id of ids) indeg.set(id, 0);
+  const adj = new Map<string, string[]>();
+  for (const e of edges) {
+    if (!ids.has(e.from)) return `decision-engine: edge from unknown node ${q(e.from)}`;
+    if (!ids.has(e.to)) return `decision-engine: edge to unknown node ${q(e.to)}`;
+    if (e.from === e.to) return `decision-engine: self-loop on node ${q(e.from)}`;
+    adj.set(e.from, [...(adj.get(e.from) ?? []), e.to]);
+    indeg.set(e.to, (indeg.get(e.to) ?? 0) + 1);
+  }
+  const queue = nodes.filter((n) => indeg.get(n.id) === 0).map((n) => n.id);
+  for (let i = 0; i < queue.length; i += 1) {
+    for (const to of adj.get(queue.at(i) ?? '') ?? []) {
+      const d = (indeg.get(to) ?? 0) - 1;
+      indeg.set(to, d);
+      if (d === 0) queue.push(to);
+    }
+  }
+  if (queue.length !== nodes.length) return 'decision-engine: graph has a cycle';
+
+  let start = '';
+  for (const n of nodes) {
+    if (n.type === 'input') start = n.id;
+    if (n.type !== 'output' && !adj.has(n.id))
+      return `decision-engine: node ${q(n.id)} dead-ends — every non-output node needs an outgoing edge`;
+  }
+  const reached = new Set([start]);
+  const frontier = [start];
+  for (let i = 0; i < frontier.length; i += 1) {
+    for (const next of adj.get(frontier.at(i) ?? '') ?? []) {
+      if (!reached.has(next)) {
+        reached.add(next);
+        frontier.push(next);
+      }
+    }
+  }
+  for (const n of nodes) {
+    if (!reached.has(n.id))
+      return `decision-engine: node ${q(n.id)} is unreachable from the input — connect it or delete it`;
+  }
+  return null;
+}
+
 // --- Flow walker ----------------------------------------------------------------
 
 function nodeConfig(n: GraphNode): Record<string, unknown> {
@@ -708,9 +802,21 @@ export function runFlow(
         suspend: { node_id: node.id }
       };
     }
-    if (node.type === 'output' || !nextId) {
+    if (node.type === 'output') {
       current = undefined;
       break;
+    }
+    if (!nextId) {
+      // Only an output node completes a run: any other node with nowhere to go is
+      // a wiring bug, failed with the real engine's exact runtime message.
+      return {
+        status: 'failed',
+        data: rec,
+        output: {},
+        reasonCodes,
+        nodes,
+        error: `decision-engine: flow dead-ends at non-output node ${q(node.id)}`
+      };
     }
     current = findNode(graph, nextId);
   }

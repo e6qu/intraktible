@@ -5,7 +5,8 @@
 
 import { describe, it, expect, afterEach } from 'vitest';
 import { agentReply } from './demo/agent';
-import { evaluateModel, runFlow, setRollPercent } from './demo/engine';
+import { evaluateModel, runFlow, setRollPercent, validateGraph } from './demo/engine';
+import { TEMPLATES } from './templates';
 import type { Decision, FlowGraph, Model } from './api';
 import { handleDemo } from './demo/router';
 import { setDemoUser, state, USERS, psi } from './demo/store';
@@ -457,6 +458,10 @@ describe('flow import upsert', () => {
     if (!flow) throw new Error('seed flow missing');
     const latest = flow.versions.find((v) => v.version === flow.latest);
     if (!latest) throw new Error('latest version missing');
+    // Splice the new node into the path (publish now validates connectivity, so a
+    // dangling node would be rejected, exactly like the real backend).
+    const first = latest.graph.edges.find((e) => e.from === 'in');
+    if (!first) throw new Error('input edge missing');
     const edited: FlowGraph = {
       nodes: [
         ...latest.graph.nodes,
@@ -467,7 +472,11 @@ describe('flow import upsert', () => {
           config: { assignments: [{ target: 'x', expr: '1' }] }
         }
       ],
-      edges: latest.graph.edges
+      edges: [
+        ...latest.graph.edges.filter((e) => e !== first),
+        { from: 'in', to: 'extra' },
+        { from: 'extra', to: first.to }
+      ]
     };
     const res = handleDemo('POST', '/v1/flows/import', params(), {
       slug: 'credit-decision',
@@ -661,5 +670,185 @@ describe('define-agent duplicate name', () => {
     const res = handleDemo('POST', '/v1/agents', params(), { name });
     expect(res.status).toBe(400);
     expect((res.body as { error: string }).error).toBe(`an agent named "${name}" already exists`);
+  });
+});
+
+describe('publish validates the graph with the real backend messages', () => {
+  const publish = (body: Record<string, unknown>) =>
+    handleDemo('POST', '/v1/flows/credit-decision/versions', params(), body);
+  const errorOf = (res: { status: number; body: unknown }) => (res.body as { error: string }).error;
+
+  it('rejects a non-output dead-end node', () => {
+    const res = publish({
+      graph: {
+        nodes: [
+          { id: 'in', type: 'input', name: 'In' },
+          { id: 'stray', type: 'assignment', name: 'Stray', config: { assignments: [] } },
+          { id: 'out', type: 'output', name: 'Out' }
+        ],
+        edges: [
+          { from: 'in', to: 'out' },
+          { from: 'in', to: 'stray' }
+        ]
+      }
+    });
+    expect(res.status).toBe(400);
+    expect(errorOf(res)).toBe(
+      'decision-engine: node "stray" dead-ends — every non-output node needs an outgoing edge'
+    );
+  });
+
+  it('rejects a node unreachable from the input', () => {
+    const res = publish({
+      graph: {
+        nodes: [
+          { id: 'in', type: 'input', name: 'In' },
+          { id: 'stray', type: 'assignment', name: 'Stray', config: { assignments: [] } },
+          { id: 'out', type: 'output', name: 'Out' }
+        ],
+        edges: [
+          { from: 'in', to: 'out' },
+          { from: 'stray', to: 'out' }
+        ]
+      }
+    });
+    expect(res.status).toBe(400);
+    expect(errorOf(res)).toBe(
+      'decision-engine: node "stray" is unreachable from the input — connect it or delete it'
+    );
+  });
+
+  it('rejects a cyclic graph', () => {
+    const res = publish({
+      graph: {
+        nodes: [
+          { id: 'in', type: 'input', name: 'In' },
+          { id: 'a', type: 'assignment', name: 'A', config: { assignments: [] } },
+          { id: 'b', type: 'assignment', name: 'B', config: { assignments: [] } },
+          { id: 'out', type: 'output', name: 'Out' }
+        ],
+        edges: [
+          { from: 'in', to: 'a' },
+          { from: 'a', to: 'b' },
+          { from: 'b', to: 'a' },
+          { from: 'a', to: 'out' }
+        ]
+      }
+    });
+    expect(res.status).toBe(400);
+    expect(errorOf(res)).toBe('decision-engine: graph has a cycle');
+  });
+
+  it('rejects a graph with two input nodes', () => {
+    const res = publish({
+      graph: {
+        nodes: [
+          { id: 'in1', type: 'input', name: 'In 1' },
+          { id: 'in2', type: 'input', name: 'In 2' },
+          { id: 'out', type: 'output', name: 'Out' }
+        ],
+        edges: [
+          { from: 'in1', to: 'out' },
+          { from: 'in2', to: 'out' }
+        ]
+      }
+    });
+    expect(res.status).toBe(400);
+    expect(errorOf(res)).toBe('decision-engine: graph needs exactly one input node, got 2');
+  });
+
+  it('rejects a missing graph as the zero graph, like the real decode', () => {
+    const res = publish({});
+    expect(res.status).toBe(400);
+    expect(errorOf(res)).toBe('decision-engine: graph has no nodes');
+  });
+
+  it('still publishes a valid graph', () => {
+    handleDemo('POST', '/v1/flows', params(), { slug: 'publish-gate-flow' });
+    const res = handleDemo('POST', '/v1/flows/publish-gate-flow/versions', params(), {
+      graph: {
+        nodes: [
+          { id: 'in', type: 'input', name: 'In' },
+          { id: 'out', type: 'output', name: 'Out' }
+        ],
+        edges: [{ from: 'in', to: 'out' }]
+      }
+    });
+    expect(res.status).toBe(200);
+    const body = res.body as { published: boolean; version: number };
+    expect(body.published).toBe(true);
+    expect(body.version).toBe(2);
+  });
+
+  it('the import path rejects the same violations, creating nothing', () => {
+    const before = state.flows.length;
+    const deadEnd = handleDemo('POST', '/v1/flows/import', params(), {
+      slug: 'import-invalid-flow',
+      graph: {
+        nodes: [
+          { id: 'in', type: 'input', name: 'In' },
+          { id: 'stray', type: 'assignment', name: 'Stray', config: { assignments: [] } },
+          { id: 'out', type: 'output', name: 'Out' }
+        ],
+        edges: [
+          { from: 'in', to: 'out' },
+          { from: 'in', to: 'stray' }
+        ]
+      }
+    });
+    expect(deadEnd.status).toBe(400);
+    expect(errorOf(deadEnd)).toBe(
+      'decision-engine: node "stray" dead-ends — every non-output node needs an outgoing edge'
+    );
+    const missing = handleDemo('POST', '/v1/flows/import', params(), {
+      slug: 'import-invalid-flow'
+    });
+    expect(missing.status).toBe(400);
+    expect(errorOf(missing)).toBe('decision-engine: graph has no nodes');
+    expect(state.flows.length).toBe(before);
+  });
+});
+
+describe('seeded and template graphs pass the publish gate', () => {
+  const SEED_SLUGS = [
+    'credit-decision',
+    'aml-screening',
+    'kyc-onboarding',
+    'card-fraud',
+    'dispute-triage',
+    'merchant-onboarding'
+  ];
+
+  it('every seeded flow version is structurally valid', () => {
+    for (const slug of SEED_SLUGS) {
+      const flow = state.flows.find((f) => f.slug === slug);
+      if (!flow) throw new Error(`seed flow ${slug} missing`);
+      for (const v of flow.versions) {
+        expect(validateGraph(v.graph), `${slug} v${v.version}`).toBeNull();
+      }
+    }
+  });
+
+  it('every flow template is structurally valid', () => {
+    for (const t of TEMPLATES) {
+      expect(validateGraph(t.doc.graph as FlowGraph), t.id).toBeNull();
+    }
+  });
+});
+
+describe('runFlow non-output dead end', () => {
+  it('fails mid-run with the real engine message', () => {
+    const graph: FlowGraph = {
+      nodes: [
+        { id: 'in', type: 'input', name: 'In' },
+        { id: 'a', type: 'assignment', name: 'A', config: { assignments: [] } },
+        { id: 'out', type: 'output', name: 'Out' }
+      ],
+      edges: [{ from: 'in', to: 'a' }]
+    };
+    const run = runFlow(state.flows[0], graph, {});
+    expect(run.status).toBe('failed');
+    expect(run.error).toBe('decision-engine: flow dead-ends at non-output node "a"');
+    expect(run.nodes.map((n) => n.node_id)).toEqual(['in', 'a']);
   });
 });

@@ -6,6 +6,7 @@
     Background,
     Controls,
     MiniMap,
+    SelectionMode,
     type Node,
     type Edge,
     type Connection
@@ -232,8 +233,17 @@
     } else if (e.key === 't' && canvasMode !== 'collapsed') {
       e.preventDefault();
       togglePanel();
+    } else if (e.key === 'v') {
+      e.preventDefault();
+      tool = 'select';
+    } else if (e.key === 'h') {
+      e.preventDefault();
+      tool = 'pan';
     }
   }
+  // The active pointer tool, Miro-style: SELECT (left-drag marquee-selects;
+  // middle/right-drag pans) or PAN (left-drag moves the board). v / h switch.
+  let tool = $state<'select' | 'pan'>('select');
   // The SvelteFlow instance API, registered by the FlowBridge child — the drop
   // handler needs screenToFlowPosition to land a dragged type under the cursor.
   let flowApi = $state<{
@@ -275,12 +285,24 @@
     tab = t;
     tabbarEl?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
-  const TABS: { id: Tab; label: string }[] = [
-    { id: 'test', label: 'Test & analyze' },
-    { id: 'deploy', label: 'Deploy & versions' },
-    { id: 'monitor', label: 'Monitors' },
-    { id: 'discuss', label: 'Discussion' },
-    { id: 'copilot', label: 'Copilot' }
+  const TABS: { id: Tab; label: string; hint: string }[] = [
+    {
+      id: 'test',
+      label: 'Test & analyze',
+      hint: 'Test runs, backtests, what-if, assertions, coverage, batch decide'
+    },
+    {
+      id: 'deploy',
+      label: 'Deploy & versions',
+      hint: 'Deployments per environment, four-eyes requests, schedules, version diff, grants'
+    },
+    {
+      id: 'monitor',
+      label: 'Monitors',
+      hint: 'Thresholds over live metrics + drift, with webhook alerts'
+    },
+    { id: 'discuss', label: 'Discussion', hint: 'Comment thread on this flow' },
+    { id: 'copilot', label: 'Copilot', hint: 'Explain, improve, or generate the flow with AI' }
   ];
   // Typed cards and BPMN notation are alternate skins over the same flow model;
   // labelled backdrops still render as swimlanes.
@@ -1940,7 +1962,9 @@
       <a href={appHref('/engine')} class="backlink" title="All flows">←</a>
       <h1>{flow.name}</h1>
       <div class="head-actions">
-        <button onclick={load}><Icon name="reload" size={15} /> Reload</button>
+        <button onclick={load} title="Re-fetch this flow and its versions"
+          ><Icon name="reload" size={15} /> Reload</button
+        >
         <button
           class="primary"
           onclick={publish}
@@ -2735,6 +2759,26 @@
                 <Icon name="diagram" size={14} /> Process
               </button>
             </div>
+            <div class="view-toggle" role="group" aria-label="pointer tool">
+              <button
+                class:active={tool === 'select'}
+                aria-pressed={tool === 'select'}
+                onclick={() => (tool = 'select')}
+                title="Select (V) — drag to marquee-select nodes and edges; middle/right-drag pans"
+                data-testid="tool-select"
+              >
+                <Icon name="cursor" size={14} /> Select
+              </button>
+              <button
+                class:active={tool === 'pan'}
+                aria-pressed={tool === 'pan'}
+                onclick={() => (tool = 'pan')}
+                title="Pan (H) — drag anywhere to move the board"
+                data-testid="tool-pan"
+              >
+                <Icon name="hand" size={14} /> Pan
+              </button>
+            </div>
             <button
               class="relax-btn"
               onclick={relax}
@@ -2827,14 +2871,17 @@
             onnodeclick={({ node }) => selectNode(node.id)}
             onedgeclick={({ edge }) => selectEdge(Number(edge.id.slice(1)))}
             onpaneclick={() => selectNode(null)}
+            panOnDrag={tool === 'pan' ? true : [1, 2]}
+            selectionOnDrag={tool === 'select'}
+            selectionMode={SelectionMode.Partial}
             colorMode={$theme}
             proOptions={{ hideAttribution: true }}
             fitView
             fitViewOptions={{ padding: 0.15, maxZoom: 1 }}
           >
             <Background />
-            <Controls />
-            <MiniMap zoomable pannable />
+            <Controls position="bottom-right" />
+            <MiniMap position="bottom-right" zoomable pannable ariaLabel="board overview map" />
             <FlowBridge register={(api) => (flowApi = api)} />
           </SvelteFlow>
           {#if editNodes.length === 0}
@@ -3416,6 +3463,7 @@
           class:active={tab === t.id}
           aria-pressed={tab === t.id}
           onclick={() => selectTab(t.id)}
+          title={t.hint}
           data-testid={`tab-${t.id}`}>{t.label}</button
         >
       {/each}
@@ -4298,6 +4346,11 @@
   /* svelte-flow paints edge labels on its default white background; in dark theme that
      left the light-token label text near-invisible (1.22:1). Bind both to theme tokens
      so branch conditions read in either theme. */
+  /* Zoom (+/-/fit/lock) sits at the bottom-right corner, Miro-style; nudge it
+     left of the overview map that shares the corner. */
+  .canvas :global(.svelte-flow__controls.bottom.right) {
+    margin-right: 14.5rem;
+  }
   :global(.svelte-flow__edge-label) {
     background: var(--surface);
     color: var(--fg);
@@ -4415,6 +4468,8 @@
     position: absolute;
     top: 3.1rem;
     left: 0.6rem;
+    max-height: calc(100% - 3.7rem);
+    overflow-y: auto;
     z-index: 6;
     display: flex;
     flex-direction: column;

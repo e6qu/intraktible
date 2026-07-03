@@ -25,7 +25,9 @@ export default defineConfig({
     command:
       'BASE_PATH=/intraktible/demo VITE_DEMO=true vite build && BASE_PATH=/intraktible/demo vite preview --port 4173 --strictPort',
     url: 'http://localhost:4173/intraktible/demo/',
-    reuseExistingServer: !process.env.CI,
+    // Never reuse: a stale preview on :4173 (from an earlier build) silently
+    // stands in for the bundle under test — the E1 gotcha, third surface.
+    reuseExistingServer: false,
     stdout: 'ignore',
     stderr: 'pipe',
     timeout: 180_000

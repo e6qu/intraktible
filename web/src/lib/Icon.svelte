@@ -106,13 +106,24 @@
       '<circle cx="12" cy="7.5" r="3"/><path d="M5.5 20a6.5 6.5 0 0 1 13 0"/><path d="M8 8.5a4 4 0 0 1 8 0M7.5 8.5v2M16.5 8.5v2"/>'
     ],
     [
+      'predict',
+      '<path d="M4 4v16h16"/><path d="M7.5 16l4-4 3-1.5 4.5-4"/><circle cx="11.5" cy="12" r="1.1"/><circle cx="14.5" cy="10.5" r="1.1"/><circle cx="19" cy="6.5" r="1.1"/>'
+    ],
+    ['cursor', '<path d="M5.5 3.5l14.5 8.5-6.8 1.6-3.2 6.4z"/>'],
+    [
+      'hand',
+      '<path d="M8.5 11.5V5.8a1.4 1.4 0 0 1 2.8 0v4.7m0-5.7v-1a1.4 1.4 0 0 1 2.8 0v6.7m0-5.2a1.4 1.4 0 0 1 2.8 0v7.2m-8.4-.5l-1.6-1.7a1.5 1.5 0 0 0-2.3 1.9l3.4 5.3A5 5 0 0 0 12.1 21h.9a4 4 0 0 0 4-4v-4"/>'
+    ],
+    [
       'showcase',
       '<circle cx="12" cy="7.5" r="3"/><path d="M5.5 20a6.5 6.5 0 0 1 13 0"/><path d="M12 1.6l.8 1.7 1.8.2-1.3 1.3.3 1.8-1.6-.9-1.6.9.3-1.8-1.3-1.3 1.8-.2z"/>'
     ]
   ]);
 
   function pathFor(name: string): string {
-    return ICONS.get(name) ?? '<circle cx="12" cy="12" r="2"/>';
+    const p = ICONS.get(name);
+    if (!p) throw new Error(`Icon: unknown name "${name}"`);
+    return p;
   }
 </script>
 

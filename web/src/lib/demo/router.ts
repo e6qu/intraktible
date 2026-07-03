@@ -47,7 +47,8 @@ import {
   runFlow,
   evalExpr,
   evaluateModel,
-  pickVersion
+  pickVersion,
+  validateGraph
 } from './engine';
 import { nodeStats, counterfactual, coverage } from './intelligence';
 import { agentReply } from './agent';
@@ -244,10 +245,12 @@ function importFlowDoc(doc: Body): FlowImportOutcome {
   const slug = String(doc.slug ?? '').trim();
   if (!slug) return { slug, created: false, published: false, error: 'slug is required' };
   const name = String(doc.name ?? slug);
-  // The real ImportFlow validates the graph up front — an absent graph is a bad
-  // document, not something to paper over with a default.
-  if (!doc.graph) return { slug, created: false, published: false, error: 'graph is required' };
-  const graph = doc.graph as FlowGraph;
+  // The real ImportFlow publishes through the same graph validation as a direct
+  // publish. An absent graph decodes to the zero graph (as Go's json decode does),
+  // which validation rejects loudly with "graph has no nodes".
+  const graph = (doc.graph as FlowGraph | undefined) ?? { nodes: [], edges: [] };
+  const invalid = validateGraph(graph);
+  if (invalid) return { slug, created: false, published: false, error: invalid };
   const existing = state.flows.find((f) => f.slug === slug);
   if (existing) {
     const latest = existing.versions.find((v) => v.version === existing.latest);
@@ -349,7 +352,12 @@ route('GET', '/v1/flows/:id/export', (m, _b, q) => {
 route('POST', '/v1/flows/:id/versions', (m, body) => {
   const flow = findFlow(m[1]);
   if (!flow) return notFound();
+  // A missing graph decodes to the zero graph (as Go's json decode does), which the
+  // publish gate then rejects with the real backend's "graph has no nodes" — the demo
+  // never silently publishes an empty version.
   const graph = (body.graph as FlowVersion['graph']) ?? { nodes: [], edges: [] };
+  const invalid = validateGraph(graph);
+  if (invalid) return badRequest(invalid);
   const latest = flow.versions.find((vv) => vv.version === flow.latest);
   // A no-op publish (logic identical to the latest version, ignoring canvas positions)
   // returns the current version instead of stacking duplicate versions — matching the
