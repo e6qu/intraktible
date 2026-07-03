@@ -194,13 +194,20 @@ function jsonHeaders(key: string): Record<string, string> {
   return { ...authHeaders(key), 'Content-Type': 'application/json' };
 }
 
+// normalizeFlow makes the wire shape honest against the Flow type: the Go API
+// omits empty collections (omitempty), so an unpublished flow arrives WITHOUT
+// `versions` — normalize once here so no consumer needs a null guard to iterate.
+function normalizeFlow(f: Flow): Flow {
+  return { ...f, versions: f.versions ?? [] };
+}
+
 export async function listFlows(key: string, fetcher: typeof fetch = fetch): Promise<Flow[]> {
   const res = await fetcher('/v1/flows', { headers: authHeaders(key) });
   if (!res.ok) {
     return errorOrStatus(res, `GET /v1/flows failed`);
   }
   const body = (await res.json()) as { flows: Flow[] };
-  return body.flows ?? [];
+  return (body.flows ?? []).map(normalizeFlow);
 }
 
 export async function createFlow(
@@ -229,7 +236,7 @@ export async function getFlow(
   if (!res.ok) {
     return errorOrStatus(res, `GET /v1/flows/${flowId} failed`);
   }
-  return (await res.json()) as Flow;
+  return normalizeFlow((await res.json()) as Flow);
 }
 
 // ExportFormat is a flow export the builder offers (diagrams + portable data).

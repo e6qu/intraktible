@@ -907,6 +907,19 @@ input is disabled-with-why on schema-less versions). New e2e: inspector open/edi
 click, rail insertion, focus/Escape/collapse round-trip, the 400 taxonomy, and per-template
 sample-and-run coverage.
 
+**Design-window round 2 (DW2 in BUGS.md).** Direct manipulation completed: clicking an edge — or
+its branch label, which svelte-flow had left dead (inline pointer-events:all with no click wiring;
+labels are now pointer-transparent so the click reaches the selectable path) — opens an edge
+inspector with a live branch-label editor and delete; rail types drag onto the board and land at
+the drop point (a FlowBridge child exposes screenToFlowPosition to page handlers); a zoomable
+minimap anchors the board; the node inspector gained Duplicate; the tools-panel choice persists;
+and f/t toggle focus/tools from the keyboard (inert while typing). The journey re-walk caught a
+real wire bug: a brand-new flow rendered "versions is not iterable" because Go's omitempty drops
+the empty collection while the TS type promised it — normalized once at the API boundary — and a
+fresh flow, whose only guidance had lived in the now-default-closed tools panel, gained an
+on-canvas empty state. New e2e: edge inspector round-trip, drag-to-place + duplicate, keyboard
+toggles + panel persistence, and the error-free fresh-flow pin.
+
 **Transposition-prevention refactors (TS40–TS42).** The three follow-ups left from round 10 landed as
 one PR: the decision-subject (entity type, id) is now the shared branded `platform/entity.Ref` threaded
 through the feature/pre-approval ports (a swapped pair fails to compile rather than silently keying the

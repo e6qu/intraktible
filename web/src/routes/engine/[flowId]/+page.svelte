@@ -5,6 +5,7 @@
     SvelteFlow,
     Background,
     Controls,
+    MiniMap,
     type Node,
     type Edge,
     type Connection
@@ -88,6 +89,7 @@
   import { layoutLanes, type XY } from '$lib/layout';
   import { theme } from '$lib/theme';
   import Icon from '$lib/Icon.svelte';
+  import FlowBridge from '$lib/FlowBridge.svelte';
   import Badge from '$lib/Badge.svelte';
   import Hint from '$lib/Hint.svelte';
   import CodeSnippet from '$lib/CodeSnippet.svelte';
@@ -165,6 +167,17 @@
   let importText = $state('');
   let counter = $state(0);
   let selectedId = $state<string | null>(null);
+  // The selected EDGE, as its index into editEdges (canvas edge ids are `e<i>`).
+  // Node and edge selection are mutually exclusive — one inspector at a time.
+  let selectedEdgeIdx = $state<number | null>(null);
+  function selectNode(id: string | null) {
+    selectedId = id;
+    selectedEdgeIdx = null;
+  }
+  function selectEdge(i: number) {
+    selectedEdgeIdx = i;
+    selectedId = null;
+  }
   let nodes = $state.raw<Node[]>([]);
   let edges = $state.raw<Edge[]>([]);
   let canvasView = $state<'cards' | 'bpmn'>('cards');
@@ -172,7 +185,15 @@
   // primary add path — click a type, the node lands by the selection and its
   // inspector opens. The fuller tools panel (typed add, node list, edge editor)
   // stays behind the toolbar toggle so the board starts unobstructed.
-  let panelOpen = $state(false);
+  const TOOLS_OPEN_KEY = 'intraktible-tools-open';
+  let panelOpen = $state(
+    typeof localStorage !== 'undefined' && localStorage.getItem(TOOLS_OPEN_KEY) === '1'
+  );
+  function togglePanel() {
+    panelOpen = !panelOpen;
+    if (typeof localStorage !== 'undefined')
+      localStorage.setItem(TOOLS_OPEN_KEY, panelOpen ? '1' : '0');
+  }
   // The design window has three sizes: board (the default, most of the viewport),
   // focus (a full-viewport takeover for pure design work, Esc exits), and collapsed
   // (a slim bar, so the workflow panels below get the whole page). Persisted so a
@@ -189,13 +210,50 @@
     canvasMode = m;
     if (typeof localStorage !== 'undefined') localStorage.setItem(CANVAS_MODE_KEY, m);
   }
-  // Esc leaves focus mode from anywhere on the page (window-level: the canvas div
-  // only sees keys when focus sits inside it).
+  // Keyboard: Esc leaves focus mode; f toggles focus; t toggles the tools panel.
+  // Window-level (the canvas div only sees keys when focus sits inside it), and
+  // inert while the user is typing in any field.
+  function typingIn(e: KeyboardEvent): boolean {
+    const el = e.target as HTMLElement | null;
+    return Boolean(
+      el && (el.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName))
+    );
+  }
   function onCanvasKeydown(e: KeyboardEvent) {
     if (e.key === 'Escape' && canvasMode === 'focus') {
       e.preventDefault();
       setCanvasMode('board');
+      return;
     }
+    if (typingIn(e) || e.metaKey || e.ctrlKey || e.altKey || !flow) return;
+    if (e.key === 'f') {
+      e.preventDefault();
+      setCanvasMode(canvasMode === 'focus' ? 'board' : 'focus');
+    } else if (e.key === 't' && canvasMode !== 'collapsed') {
+      e.preventDefault();
+      togglePanel();
+    }
+  }
+  // The SvelteFlow instance API, registered by the FlowBridge child — the drop
+  // handler needs screenToFlowPosition to land a dragged type under the cursor.
+  let flowApi = $state<{
+    screenToFlowPosition: (p: { x: number; y: number }) => { x: number; y: number };
+  } | null>(null);
+  function onRailDragStart(e: DragEvent, t: NodeType) {
+    e.dataTransfer?.setData('application/x-intraktible-node-type', t);
+    if (e.dataTransfer) e.dataTransfer.effectAllowed = 'copy';
+  }
+  function onCanvasDrop(e: DragEvent) {
+    const t = e.dataTransfer?.getData('application/x-intraktible-node-type') as NodeType | '';
+    if (!t || !flowApi) return;
+    e.preventDefault();
+    foldPositions();
+    const id = `n${++counter}`;
+    const pos = flowApi.screenToFlowPosition({ x: e.clientX, y: e.clientY });
+    editNodes = [...editNodes, { id, type: t, name: '', config: '', pos }];
+    selectNode(id);
+    clearTelemetry();
+    syncCanvas();
   }
   // The canvas is the always-visible primary surface (floated to the top via CSS
   // order); the operational panels live behind tabs so the page is no longer one
@@ -867,6 +925,38 @@
   }
   function deleteEdge(i: number) {
     editEdges = editEdges.filter((_, j) => j !== i);
+    if (selectedEdgeIdx !== null) selectedEdgeIdx = null; // indices shifted
+    clearTelemetry();
+    syncCanvas();
+  }
+  const selectedEdge = $derived(
+    selectedEdgeIdx !== null ? (editEdges[selectedEdgeIdx] ?? null) : null
+  );
+  function updateSelectedEdgeBranch(branch: string) {
+    const i = selectedEdgeIdx;
+    if (i === null) return;
+    editEdges = editEdges.map((e, j) => (j === i ? { ...e, branch: branch || undefined } : e));
+    clearTelemetry();
+    syncCanvas();
+  }
+  // duplicateSelected clones the selected node (config, lane, name) next to the
+  // original and moves selection to the copy — the fastest way to stamp out a
+  // variant of an already-configured node.
+  function duplicateSelected() {
+    const src = editNodes.find((n) => n.id === selectedId);
+    if (!src) throw new Error(`duplicate: selected node ${selectedId} is not in the draft`);
+    foldPositions();
+    const id = `n${++counter}`;
+    editNodes = [
+      ...editNodes,
+      {
+        ...src,
+        id,
+        name: src.name ? `${src.name} copy` : '',
+        pos: src.pos ? { x: src.pos.x + 40, y: src.pos.y + 90 } : undefined
+      }
+    ];
+    selectNode(id);
     clearTelemetry();
     syncCanvas();
   }
@@ -2600,12 +2690,15 @@
     {#if error}<p class="err">{error}</p>{/if}
 
     <div class="grid">
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
         class="canvas"
         class:focus={canvasMode === 'focus'}
         class:collapsed={canvasMode === 'collapsed'}
         data-testid="flow-canvas"
         aria-label="design window"
+        ondragover={(e) => e.preventDefault()}
+        ondrop={onCanvasDrop}
       >
         {#if canvasMode === 'collapsed'}
           <button
@@ -2652,7 +2745,7 @@
             </button>
             <button
               class="relax-btn"
-              onclick={() => (panelOpen = !panelOpen)}
+              onclick={togglePanel}
               aria-pressed={panelOpen}
               title={panelOpen ? 'Hide the tools panel for a full canvas' : 'Show the tools panel'}
               data-testid="toggle-panel"
@@ -2715,8 +2808,10 @@
           <div class="node-rail" role="toolbar" aria-label="add node" data-testid="node-rail">
             {#each NODE_TYPES as t (t)}
               <button
-                title={`Insert ${nodeTypeLabel(t)} node`}
+                title={`Insert ${nodeTypeLabel(t)} node — click, or drag onto the board`}
                 aria-label={`insert ${t} node`}
+                draggable="true"
+                ondragstart={(e) => onRailDragStart(e, t)}
                 onclick={() => addNodeOfType(t)}
               >
                 <Icon name={t} size={17} />
@@ -2729,8 +2824,9 @@
             {nodeTypes}
             onconnect={onConnect}
             ondelete={onCanvasDelete}
-            onnodeclick={({ node }) => (selectedId = node.id)}
-            onpaneclick={() => (selectedId = null)}
+            onnodeclick={({ node }) => selectNode(node.id)}
+            onedgeclick={({ edge }) => selectEdge(Number(edge.id.slice(1)))}
+            onpaneclick={() => selectNode(null)}
             colorMode={$theme}
             proOptions={{ hideAttribution: true }}
             fitView
@@ -2738,7 +2834,18 @@
           >
             <Background />
             <Controls />
+            <MiniMap zoomable pannable />
+            <FlowBridge register={(api) => (flowApi = api)} />
           </SvelteFlow>
+          {#if editNodes.length === 0}
+            <div class="board-empty" data-testid="board-empty">
+              <p>
+                <b>Blank board.</b> Click a type on the left rail — or drag one here — to place your first
+                node, then wire nodes by dragging between their handles.
+              </p>
+              <p class="muted">Start from <b>input</b>; every flow ends at an <b>output</b>.</p>
+            </div>
+          {/if}
           {#if panelOpen}
             <aside class="tools" aria-label="canvas tools">
               <h2>Add node</h2>
@@ -2805,6 +2912,43 @@
                   </li>
                 {/each}
               </ul>
+            </aside>
+          {/if}
+
+          {#if selectedEdge && selectedEdgeIdx !== null}
+            <aside class="inspector" data-testid="edge-inspector" aria-label="edge inspector">
+              <div class="insp-head">
+                <span class="nodeicon"><Icon name="split" size={16} /></span>
+                <b class="insp-title">{selectedEdge.from} → {selectedEdge.to}</b>
+                <span class="nodetype">edge</span>
+                <button
+                  class="x"
+                  aria-label="close inspector"
+                  onclick={() => (selectedEdgeIdx = null)}
+                  title="Close (the edge stays)">✕</button
+                >
+              </div>
+              <label
+                >branch <input
+                  value={selectedEdge.branch ?? ''}
+                  oninput={(e) => updateSelectedEdgeBranch(e.currentTarget.value)}
+                  placeholder="e.g. yes / no — empty for an unconditional edge"
+                  aria-label="edge branch label"
+                /></label
+              >
+              <p class="muted">
+                A split takes the edge whose branch matches its recorded choice; other node types
+                follow their single unlabelled edge.
+              </p>
+              <div class="row insp-foot">
+                <button
+                  class="insp-delete"
+                  onclick={() => selectedEdgeIdx !== null && deleteEdge(selectedEdgeIdx)}
+                  title="Remove this edge from the draft"
+                >
+                  <Icon name="trash" size={14} /> Delete edge</button
+                >
+              </div>
             </aside>
           {/if}
 
@@ -3246,6 +3390,12 @@
                 ></textarea>
               </label>
               <div class="row insp-foot">
+                <button
+                  onclick={duplicateSelected}
+                  title="Clone this node (config and lane) next to it"
+                >
+                  <Icon name="copy" size={14} /> Duplicate
+                </button>
                 <button
                   class="insp-delete"
                   onclick={() => selectedId && deleteNode(selectedId)}
@@ -4131,6 +4281,20 @@
   .mode-toggle {
     margin-left: auto;
   }
+  .board-empty {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-content: center;
+    text-align: center;
+    pointer-events: none;
+    color: var(--fg-muted);
+    padding: 0 4rem;
+  }
+  .board-empty p {
+    margin: 0.2rem 0;
+    max-width: 34rem;
+  }
   /* svelte-flow paints edge labels on its default white background; in dark theme that
      left the light-token label text near-invisible (1.22:1). Bind both to theme tokens
      so branch conditions read in either theme. */
@@ -4139,6 +4303,11 @@
     color: var(--fg);
     padding: 1px 5px;
     border-radius: 4px;
+    /* The label sits on the edge midpoint — the natural click target for
+       selecting a branch edge. svelte-flow pins pointer-events: all inline on
+       it without wiring label clicks to onedgeclick, so clicks there died;
+       force them through to the interaction path beneath instead. */
+    pointer-events: none !important;
   }
   .canvas-tools {
     position: absolute;
