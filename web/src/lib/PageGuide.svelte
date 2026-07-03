@@ -87,10 +87,13 @@
       </ul>
 
       {#if help.journeys && help.journeys.length > 0}
-        <h3>Key flows</h3>
-        {#each help.journeys as j (j.name)}
-          <details class="g-journey">
-            <summary>{j.name}</summary>
+        <h3>Flows, step by step</h3>
+        {#each help.journeys as j, i (j.name)}
+          <details class="g-journey" open={i === 0}>
+            <summary>
+              <span class="g-journey-name">{j.name}</span>
+              <span class="g-journey-count">{j.steps.length} steps</span>
+            </summary>
             <ol>
               {#each j.steps as s (s)}<li>{s}</li>{/each}
             </ol>
@@ -197,15 +200,48 @@
     cursor: pointer;
     font-weight: 550;
     font-size: 0.9rem;
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.6rem;
+  }
+  .g-journey-count {
+    flex-shrink: 0;
+    font-weight: 400;
+    font-size: 0.75rem;
+    color: var(--fg-subtle);
   }
   .g-journey ol {
-    margin: 0.5rem 0 0.2rem;
-    padding-left: 1.1rem;
+    list-style: none;
+    counter-reset: step;
+    margin: 0.6rem 0 0.3rem;
+    padding: 0;
     display: flex;
     flex-direction: column;
-    gap: 0.3rem;
+    gap: 0.45rem;
     color: var(--fg-muted);
     line-height: 1.4;
+  }
+  .g-journey li {
+    counter-increment: step;
+    display: flex;
+    gap: 0.55rem;
+  }
+  .g-journey li::before {
+    content: counter(step);
+    flex-shrink: 0;
+    width: 1.25rem;
+    height: 1.25rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--border);
+    border-radius: 50%;
+    background: var(--surface);
+    color: var(--fg-subtle);
+    font-size: 0.7rem;
+    font-weight: 600;
+    margin-top: 0.1rem;
   }
   .g-links {
     display: flex;

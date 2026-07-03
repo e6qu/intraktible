@@ -7,8 +7,9 @@ import { readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { HELP, helpFor } from './registry';
 
-// Routes that intentionally have no guide (minimal/!authenticated chrome).
-const NO_GUIDE = new Set(['/login', '/hello']);
+// Routes whose guide has no journeys. Only /login qualifies: it is a single
+// form with nothing to walk step by step. Every other page documents each flow.
+const NO_JOURNEYS = new Set(['/login']);
 
 // Discover every route that has a +page.svelte, mapped to its route id, by walking
 // src/routes (so a new page without a guide entry fails CI).
@@ -25,9 +26,25 @@ function routeIds(dir = 'src/routes', base = ''): string[] {
 }
 
 describe('in-app page guide', () => {
-  it('every authenticated page has a guide entry', () => {
-    const missing = routeIds().filter((id) => !NO_GUIDE.has(id) && !helpFor(id));
+  it('every page has a guide entry', () => {
+    const missing = routeIds().filter((id) => !helpFor(id));
     expect(missing, `routes missing a HELP entry: ${missing.join(', ')}`).toEqual([]);
+  });
+
+  it('has no stale entries for routes that no longer exist', () => {
+    const routes = new Set(routeIds());
+    const stale = [...HELP.keys()].filter((id) => !routes.has(id));
+    expect(stale, `HELP entries without a route: ${stale.join(', ')}`).toEqual([]);
+  });
+
+  it('every page explains each flow step by step (≥1 journey of ≥3 steps)', () => {
+    for (const [id, h] of HELP) {
+      if (NO_JOURNEYS.has(id)) continue;
+      const journeys = h.journeys ?? [];
+      expect(journeys.length, `${id} journeys`).toBeGreaterThanOrEqual(1);
+      const walkable = journeys.filter((j) => j.steps.length >= 3);
+      expect(walkable.length, `${id} needs a journey with ≥3 steps`).toBeGreaterThanOrEqual(1);
+    }
   });
 
   it('keeps guide content within the style-guide bounds (scannable, not verbose)', () => {
@@ -37,10 +54,10 @@ describe('in-app page guide', () => {
       expect(h.capabilities.length, `${id} capabilities`).toBeGreaterThanOrEqual(2);
       expect(h.capabilities.length, `${id} capabilities`).toBeLessThanOrEqual(6);
       for (const j of h.journeys ?? []) {
-        expect(j.steps.length, `${id} journey "${j.name}" steps`).toBeGreaterThanOrEqual(2);
-        expect(j.steps.length, `${id} journey "${j.name}" steps`).toBeLessThanOrEqual(6);
+        expect(j.steps.length, `${id} journey "${j.name}" steps`).toBeGreaterThanOrEqual(3);
+        expect(j.steps.length, `${id} journey "${j.name}" steps`).toBeLessThanOrEqual(7);
       }
-      expect((h.journeys ?? []).length, `${id} journeys`).toBeLessThanOrEqual(3);
+      expect((h.journeys ?? []).length, `${id} journeys`).toBeLessThanOrEqual(10);
     }
   });
 });

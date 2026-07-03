@@ -118,18 +118,25 @@ function ratio(a: number[], b: number[]): number {
 
 for (const theme of ['light', 'dark']) {
   test(`text meets WCAG AA contrast in ${theme} mode`, async ({ page }) => {
+    test.setTimeout(180_000); // 8 personas × 10 routes, each a themed fresh render
     const failures: string[] = [];
     for (const persona of PERSONAS) {
       for (const route of ROUTES) {
+        // Persist the theme+persona and reload: the no-flash boot script then
+        // paints the page in the right theme from the FIRST frame. Flipping the
+        // attribute on a live page raced the CSS color transitions — the sampler
+        // read half-blended colors and reported phantom contrast failures.
         await page.goto(route);
         await page.evaluate(
           ([t, p]) => {
-            document.documentElement.setAttribute('data-theme', t);
-            document.documentElement.setAttribute('data-persona', p);
+            localStorage.setItem('intraktible-theme', t);
+            localStorage.setItem('intraktible-persona', p);
           },
           [theme, persona]
         );
-        await page.waitForTimeout(120);
+        await page.reload({ waitUntil: 'domcontentloaded' });
+        // One frame is enough: the boot script applies the theme before paint.
+        await page.evaluate(() => new Promise(requestAnimationFrame));
         const pairs = await page.evaluate(collectPairs);
         for (const p of pairs) {
           const cr = ratio(p.fg, p.bg);

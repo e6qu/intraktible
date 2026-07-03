@@ -87,6 +87,35 @@ Spans: **Flow builder** test panel or the decision API → **Decisions** (`/deci
    payloads at each step. You can export the trace, and if the flow routed to manual
    review, open the **case** it opened.
 
+### Explain and challenge a decision
+
+Spans: **Decision trace** (`/decisions/[decisionId]`) → **Flow builder** analysis tab.
+
+1. On a declined or referred decision's trace, run **"What would change this?"**
+   (the counterfactual). Outcome: the smallest input changes that flip the outcome
+   (e.g. "income 52,000 → 61,500 ⇒ approve"), ordered by how little they move —
+   adverse-action explainability beyond the recorded reason codes.
+2. On the flow's builder, **Replay** animates a recent decision's path across the
+   canvas node by node, and **Heatmap** tints each node by how often recorded
+   decisions traverse it. Outcome: where traffic actually flows, at a glance.
+3. Run **Coverage / red-team** on the builder's Test tab. Outcome: a synthetic fan of
+   inputs sweeps the graph and reports dead branches and unreached nodes — the paths
+   your traffic and your tests never exercise.
+
+### Resume a suspended decision (durable human task)
+
+Spans: a manual-review node with **suspend** on → **Case queue** → **Decision trace**.
+
+1. A decision reaches a manual-review node configured to **suspend**. Outcome: the
+   run pauses durably (status `suspended`), records its state, and opens a case
+   carrying the decision context — it survives restarts and waits for a human.
+2. Find it: the case links the decision, or filter Decisions by status `suspended`.
+3. On the decision's trace, use the **Resume** panel to record the reviewer outcome
+   (e.g. approve/decline and any fields the flow reads downstream). Outcome: the run
+   continues from the pause point through the remaining nodes to a terminal status,
+   with the post-pause trace appended to the same decision — and any later
+   manual-review node still opens its own case.
+
 ### Manual review: a case from escalation to resolution
 
 Spans: a flow's manual-review node → **Case queue** (`/cases`) → **Case**
@@ -137,6 +166,51 @@ Spans: **Models** (`/models`), referenced from a flow's **predict** node.
    threshold. Outcome: the model's drift status shows the current PSI versus the
    baseline and whether the monitor is firing; the drift state surfaces on the model
    list and in the model-risk inventory.
+
+### Watch a flow with monitors and get alerted
+
+Spans: **Flow builder** Monitors tab → **Notifications** (the bell) / webhooks.
+
+1. On the flow's Monitors tab, add a rule over the flow's live metrics — failure
+   rate, refer rate, automation rate, latency, volume, or distribution drift against
+   a captured baseline — with an operator and threshold. Outcome: a monitor evaluated
+   `ok`/`firing` at read time.
+2. Subscribe a **webhook** (or rely on the in-app bell). Run a **check**. Outcome:
+   monitors that crossed their threshold on the ok→firing edge deliver to active
+   webhooks and the notifications inbox; each delivery is recorded.
+3. Investigate from the alert: the flow's metrics strip, heatmap, and recent
+   decisions show what moved. Fix the flow or its policy, republish, and watch the
+   monitor return to `ok`.
+
+### Run a champion/challenger experiment
+
+Spans: **Flow builder** Deploy tab → **Decisions** → flow metrics.
+
+1. Deploy a champion version and a **challenger** version with a traffic percentage
+   (e.g. v3 champion, v4 challenger at 20%). Outcome: the decide path routes that
+   share of traffic to the challenger; every decision records which **variant**
+   served it.
+2. On Decisions, filter by variant to compare arms; the flow's metrics break down
+   completed/failed and dispositions per variant. Outcome: an evidence-based read on
+   the challenger.
+3. Promote the winner (deploy it as champion — production via four-eyes) or drop the
+   challenger. Outcome: one version serves 100% again, and the experiment's decisions
+   remain in history, tagged by variant.
+
+### Batch decide a dataset, then promote it to pre-approvals
+
+Spans: **Flow builder** Test tab → **Pre-approvals**.
+
+1. On the builder's Test tab, paste a dataset (up to 500 rows) into **Batch decide**
+   and run it against the sandbox. Outcome: each row is a REAL recorded decision
+   (history, metrics, audit), with a per-row status report — unlike a backtest, which
+   records nothing.
+2. Use **Promote to pre-approvals**: the rows run through the flow's bound policy,
+   and every row the policy approves becomes a **grant** keyed by an id field in the
+   row, with the decision output stored as the grant's terms. Outcome: a population
+   of standing approvals.
+3. Subsequent decide calls for those entities are honored instantly from their
+   grants (each grant counts its honors) until expiry or revocation.
 
 ### Author a policy, backtest it, publish
 
