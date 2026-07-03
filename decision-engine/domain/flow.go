@@ -68,7 +68,50 @@ func ValidateGraph(g events.Graph) error {
 	if outputs < 1 {
 		return errors.New("decision-engine: graph needs at least one output node")
 	}
-	return validateEdgesAcyclic(g, types)
+	if err := validateEdgesAcyclic(g, types); err != nil {
+		return err
+	}
+	return validateConnected(g, types)
+}
+
+// validateConnected is the rest of the dry-compile: every node must be reachable
+// from the input, and every non-output node must lead somewhere. Without this a
+// dangling draft published fine and a decision could dead-end mid-graph — the
+// exact "broken graph deployed" the publish gate exists to prevent.
+func validateConnected(g events.Graph, types map[string]events.NodeType) error {
+	outgoing := make(map[string]bool, len(g.Nodes))
+	adj := make(map[string][]string, len(g.Nodes))
+	for _, e := range g.Edges {
+		outgoing[e.From] = true
+		adj[e.From] = append(adj[e.From], e.To)
+	}
+	var start string
+	for _, n := range g.Nodes {
+		if n.Type == events.NodeInput {
+			start = n.ID
+		}
+		if n.Type != events.NodeOutput && !outgoing[n.ID] {
+			return fmt.Errorf("decision-engine: node %q dead-ends — every non-output node needs an outgoing edge", n.ID)
+		}
+	}
+	reached := map[string]bool{start: true}
+	queue := []string{start}
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		for _, next := range adj[cur] {
+			if !reached[next] {
+				reached[next] = true
+				queue = append(queue, next)
+			}
+		}
+	}
+	for _, n := range g.Nodes {
+		if !reached[n.ID] {
+			return fmt.Errorf("decision-engine: node %q is unreachable from the input — connect it or delete it", n.ID)
+		}
+	}
+	return nil
 }
 
 // validateEdgesAcyclic checks edge endpoints and rejects cycles via Kahn's

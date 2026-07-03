@@ -920,6 +920,19 @@ fresh flow, whose only guidance had lived in the now-default-closed tools panel,
 on-canvas empty state. New e2e: edge inspector round-trip, drag-to-place + duplicate, keyboard
 toggles + panel persistence, and the error-free fresh-flow pin.
 
+**Design-window round 3 (DW3 in BUGS.md).** The Miro toolset landed — SELECT/PAN pointer tools
+(drag marquee-selects nodes and edges, middle/right-drag pans; v/h switch), zoom controls moved to
+the bottom-right corner beside the overview map (also resolving a user-reported overlap with the
+node rail, which now scrolls at short heights), and a tooltip sweep. Walking the COMPLETE authoring
+loop purely through the UI (blank flow → rail drops → handle wiring → inspector config → publish →
+deploy → run) exposed a real engine hole: a decision that walked into a non-output dead end
+recorded a quiet "completed" whose output was the raw context, and the publish dry-compile accepted
+disconnected graphs (dangling nodes, unreachable outputs) despite the "broken graph can't deploy"
+claim. ValidateGraph now rejects dead-end and unreachable nodes with pointed messages, the runtime
+fails loudly if a run ever dead-ends anyway, and the demo mirrors both. A bonus from the
+no-fallbacks rule: making the Icon component throw on unknown names revealed the predict node type
+NEVER had an icon — the mystery dot in the rail was the silent fallback.
+
 **Transposition-prevention refactors (TS40–TS42).** The three follow-ups left from round 10 landed as
 one PR: the decision-subject (entity type, id) is now the shared branded `platform/entity.Ref` threaded
 through the feature/pre-approval ports (a swapped pair fails to compile rather than silently keying the

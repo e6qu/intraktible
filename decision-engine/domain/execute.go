@@ -208,8 +208,9 @@ func walk(ec evalContext, g events.Graph, nodes map[string]events.Node, outgoing
 			return run
 		}
 		if next == "" {
-			run.Output = ctx
-			return run
+			// Only an output node completes a run (handled above): any other node
+			// with nowhere to go is a wiring bug, not a quiet success.
+			return fail(run, n.ID, fmt.Sprintf("decision-engine: flow dead-ends at non-output node %q", n.ID))
 		}
 		cur = next
 	}

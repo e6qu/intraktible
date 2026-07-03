@@ -781,10 +781,17 @@ test('adding a node does not move already-placed nodes (stable layout)', async (
   const before = await posIn(1);
   expect(before, 'n1 position is persisted').toBeTruthy();
 
-  // Add a third node and republish — n1 must not have moved.
+  // Add a third node, wire it in (the dry-compile rejects dangling nodes),
+  // and republish — n1 must not have moved.
   await page.getByLabel('new node type').selectOption('assignment');
   await page.getByRole('button', { name: 'Add', exact: true }).click();
   await expect(page.locator('aside ul.nodes li')).toHaveCount(3);
+  await page.getByLabel('edge from', { exact: true }).selectOption('n1');
+  await page.getByLabel('edge to', { exact: true }).selectOption('n3');
+  await page.getByRole('button', { name: 'Add edge' }).click();
+  await page.getByLabel('edge from', { exact: true }).selectOption('n3');
+  await page.getByLabel('edge to', { exact: true }).selectOption('n2');
+  await page.getByRole('button', { name: 'Add edge' }).click();
   await page.getByRole('button', { name: 'Publish version' }).click();
   await expect(page.getByText('Published v2')).toBeVisible();
 
@@ -819,7 +826,11 @@ test('assigns nodes to swimlanes that render and persist', async ({ page, reques
   await expect(canvas).toContainText('Intake');
   await expect(canvas).toContainText('Decision');
 
-  // Lanes persist with the published version.
+  // Lanes persist with the published version (wired: the dry-compile rejects
+  // a dangling input).
+  await page.getByLabel('edge from', { exact: true }).selectOption('n1');
+  await page.getByLabel('edge to', { exact: true }).selectOption('n2');
+  await page.getByRole('button', { name: 'Add edge' }).click();
   await page.getByRole('button', { name: 'Publish version' }).click();
   await expect(page.getByText('Published v1')).toBeVisible();
   const flow = (await (
@@ -1287,4 +1298,70 @@ test('a brand-new flow opens to a guided blank board, error-free', async ({ page
   // The unpublished flow's omitted `versions` must not surface as an error
   // ("versions is not iterable" regression).
   await expect(page.locator('p.err')).toHaveCount(0);
+});
+
+test('select and pan tools: marquee selects, pan does not, v/h switch', async ({
+  page,
+  request
+}) => {
+  const slug = uniqueSlug();
+  const created = await request.post('/v1/flows', {
+    headers: { 'X-Api-Key': KEY },
+    data: { slug, name: 'Tools' }
+  });
+  const { flow_id } = await created.json();
+  await request.post(`/v1/flows/${flow_id}/versions`, {
+    headers: { 'X-Api-Key': KEY },
+    data: {
+      graph: {
+        nodes: [
+          { id: 'in', type: 'input', position: { x: 0, y: 0 } },
+          { id: 'a', type: 'assignment', position: { x: 240, y: 0 } },
+          { id: 'out', type: 'output', position: { x: 480, y: 0 } }
+        ],
+        edges: [
+          { from: 'in', to: 'a' },
+          { from: 'a', to: 'out' }
+        ]
+      }
+    }
+  });
+
+  await page.goto(`/engine/${flow_id}`);
+  await expect(page.locator('.svelte-flow__node')).toHaveCount(3);
+
+  // Select (default): dragging over nodes marquee-selects them.
+  const first = await page.locator('.svelte-flow__node').first().boundingBox();
+  const last = await page.locator('.svelte-flow__node').last().boundingBox();
+  if (!first || !last) throw new Error('nodes have no boxes');
+  await page.mouse.move(first.x - 20, first.y - 20);
+  await page.mouse.down();
+  await page.mouse.move(last.x + last.width + 20, last.y + last.height + 20, { steps: 6 });
+  await page.mouse.up();
+  await expect(page.locator('.svelte-flow__node.selected')).toHaveCount(3);
+
+  // h → pan tool: the same drag selects nothing (it pans the board). A plain
+  // click on empty canvas clears the marquee selection first.
+  await page.mouse.click(first.x - 40, first.y + 200);
+  await expect(page.locator('.svelte-flow__node.selected')).toHaveCount(0);
+  await page.keyboard.press('h');
+  await expect(page.getByTestId('tool-pan')).toHaveAttribute('aria-pressed', 'true');
+  await page.mouse.move(first.x - 20, first.y - 20);
+  await page.mouse.down();
+  await page.mouse.move(first.x + 60, first.y + 60, { steps: 4 });
+  await page.mouse.up();
+  await expect(page.locator('.svelte-flow__node.selected')).toHaveCount(0);
+
+  // v → back to select.
+  await page.keyboard.press('v');
+  await expect(page.getByTestId('tool-select')).toHaveAttribute('aria-pressed', 'true');
+
+  // Zoom controls live at the bottom-right, clear of the node rail.
+  const controls = await page.locator('.svelte-flow__controls').boundingBox();
+  const rail = await page.getByTestId('node-rail').boundingBox();
+  const pane = await page.locator('.svelte-flow__pane').boundingBox();
+  if (!controls || !rail || !pane) throw new Error('missing boxes');
+  expect(controls.x).toBeGreaterThan(pane.x + pane.width / 2);
+  // No overlap between the rail and the controls.
+  expect(rail.x + rail.width).toBeLessThan(controls.x);
 });
