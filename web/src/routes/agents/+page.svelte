@@ -1,6 +1,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   import { onMount } from 'svelte';
+  import Icon from '$lib/Icon.svelte';
   import EmptyState from '$lib/EmptyState.svelte';
   import Skeleton from '$lib/Skeleton.svelte';
   import { listAgents, defineAgent, getRunSummary, type Agent, type RunSummary } from '$lib/api';
@@ -102,14 +103,18 @@
 </script>
 
 <main>
-  <h1>Agents</h1>
-  <p class="lede">
-    LLM task-agents — each a prompt, a model, optional tools, and a structured-output schema. A
-    flow's AI node references one by name; here you author, version, run, and monitor them (latency,
-    token cost, guardrail blocks).
-  </p>
-  <div class="row">
-    <button onclick={load}>Reload</button>
+  <div class="head">
+    <div>
+      <h1>Agents</h1>
+      <p class="lede">
+        LLM task-agents — each a prompt, a model, optional tools, and a structured-output schema. A
+        flow's AI node references one by name; here you author, version, run, and monitor them
+        (latency, token cost, guardrail blocks).
+      </p>
+    </div>
+    <button onclick={load} title="Re-fetch agents and the run summary"
+      ><Icon name="reload" size={15} /> Reload</button
+    >
   </div>
 
   {#if error}<p class="err">{error}</p>{/if}
@@ -224,6 +229,16 @@
 </main>
 
 <style>
+  .head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+  .head button {
+    flex: none;
+    margin-top: 0.4rem;
+  }
   main {
     max-width: 52rem;
     margin: 2rem auto;

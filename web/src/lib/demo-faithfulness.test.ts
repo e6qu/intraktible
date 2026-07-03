@@ -123,18 +123,25 @@ describe('seeded cases reference a coherent source decision', () => {
     ['fraud_review', 'card-fraud'],
     ['kyc_review', 'kyc-onboarding'],
     ['dispute', 'dispute-triage'],
-    ['merchant_review', 'merchant-onboarding']
+    ['merchant_review', 'merchant-onboarding'],
+    ['hardship_review', 'collections-hardship'],
+    ['claim_review', 'claim-triage'],
+    ['payout_review', 'payout-risk'],
+    ['limit_review', 'limit-increase']
   ]);
 
-  it('every case src is a same-flow, refer, non-failed decision', () => {
+  it('every case src is a same-flow referred (or suspended-at-review) decision', () => {
     const byId = new Map(state.decisions.map((d) => [d.decision_id, d]));
     for (const c of state.cases) {
       expect(c.source_decision_id, `${c.case_id} should have a source decision`).toBeTruthy();
       const dec = byId.get(c.source_decision_id ?? '');
       expect(dec, `${c.case_id} → ${c.source_decision_id} should resolve`).toBeDefined();
       expect(dec?.slug).toBe(caseTypeToFlow.get(c.case_type));
-      expect(dec?.disposition).toBe('refer');
       expect(dec?.status).not.toBe('failed');
+      // A suspended decision is paused AT its manual-review node — no disposition
+      // yet; every other source decision must be a genuine referral.
+      if (dec?.status === 'suspended') expect(dec.disposition).toBeUndefined();
+      else expect(dec?.disposition).toBe('refer');
     }
   });
 
@@ -816,7 +823,11 @@ describe('seeded and template graphs pass the publish gate', () => {
     'kyc-onboarding',
     'card-fraud',
     'dispute-triage',
-    'merchant-onboarding'
+    'merchant-onboarding',
+    'collections-hardship',
+    'claim-triage',
+    'payout-risk',
+    'limit-increase'
   ];
 
   it('every seeded flow version is structurally valid', () => {
@@ -833,6 +844,107 @@ describe('seeded and template graphs pass the publish gate', () => {
     for (const t of TEMPLATES) {
       expect(validateGraph(t.doc.graph as FlowGraph), t.id).toBeNull();
     }
+  });
+});
+
+describe('seed depth and internal consistency', () => {
+  const seeded = state.decisions.filter((d) => /^dec_\d+$/.test(d.decision_id));
+  // Snapshot the fleet at collection time: earlier suites in this file publish
+  // throwaway versions onto the seed flows, and this suite audits the SEED.
+  const fleet = state.flows.map((f) => ({
+    slug: f.slug,
+    latestNodes: f.versions.find((v) => v.version === f.latest)?.graph.nodes ?? [],
+    graphs: f.versions.map((v) => v.graph)
+  }));
+
+  it('carries a month-scale decision history with a real status mix', () => {
+    expect(seeded.length).toBeGreaterThanOrEqual(350);
+    const failed = seeded.filter((d) => d.status === 'failed');
+    const suspended = seeded.filter((d) => d.status === 'suspended');
+    expect(failed.length).toBeGreaterThanOrEqual(5);
+    expect(failed.length).toBeLessThanOrEqual(40);
+    expect(suspended.length).toBeGreaterThanOrEqual(2);
+    for (const d of failed) expect(d.error, `${d.decision_id} needs a node error`).toBeTruthy();
+    // Spread over ~30 days.
+    const oldest = Math.min(...seeded.map((d) => Date.parse(d.started_at)));
+    expect(Date.now() - oldest).toBeGreaterThan(25 * 86400_000);
+  });
+
+  it('every trace walks nodes that exist in the graph version it recorded', () => {
+    const flowsById = new Map(state.flows.map((f) => [f.flow_id, f]));
+    for (const d of seeded) {
+      const flow = flowsById.get(d.flow_id);
+      const version = flow?.versions.find((v) => v.version === d.version);
+      expect(version, `${d.decision_id} → ${d.slug} v${d.version}`).toBeDefined();
+      const ids = new Set(version?.graph.nodes.map((n) => n.id));
+      for (const n of d.nodes ?? []) {
+        expect(ids.has(n.node_id), `${d.decision_id} trace node ${n.node_id}`).toBe(true);
+      }
+    }
+  });
+
+  it('challenger decisions run their environment’s deployed challenger version', () => {
+    const flowsById = new Map(state.flows.map((f) => [f.flow_id, f]));
+    const challengers = seeded.filter((d) => d.variant === 'challenger');
+    expect(challengers.length).toBeGreaterThan(10);
+    // More than one flow experiments.
+    expect(new Set(challengers.map((d) => d.slug)).size).toBeGreaterThanOrEqual(3);
+    for (const d of challengers) {
+      const dep = flowsById.get(d.flow_id)?.deployments?.[d.environment];
+      expect(d.version, `${d.decision_id} should run the challenger arm`).toBe(
+        dep?.challenger_version
+      );
+    }
+  });
+
+  it('the fleet exercises all 14 node types with deep latest graphs', () => {
+    const types = new Set<string>();
+    for (const f of fleet) {
+      expect(f.latestNodes.length, `${f.slug} latest graph depth`).toBeGreaterThanOrEqual(8);
+      expect(f.latestNodes.length, `${f.slug} latest graph depth`).toBeLessThanOrEqual(14);
+      const lanes = new Set(f.latestNodes.map((n) => n.lane).filter(Boolean));
+      expect(lanes.size, `${f.slug} swimlanes`).toBeGreaterThanOrEqual(2);
+      for (const g of f.graphs) for (const n of g.nodes) types.add(n.type);
+    }
+    for (const t of [
+      'input',
+      'rule',
+      'split',
+      'assignment',
+      'scorecard',
+      'decision_table',
+      '2d_matrix',
+      'code',
+      'ai',
+      'connect',
+      'predict',
+      'manual_review',
+      'reason',
+      'output'
+    ]) {
+      expect(types.has(t), `node type ${t} should appear in the fleet`).toBe(true);
+    }
+  });
+
+  it('cases span statuses and SLA states with a populated roster', () => {
+    expect(state.cases.length).toBeGreaterThanOrEqual(25);
+    const statuses = new Set(state.cases.map((c) => c.status));
+    expect(statuses).toEqual(new Set(['needs_review', 'in_progress', 'completed']));
+    const slaStates = new Set(state.cases.map((c) => c.sla_state));
+    expect(slaStates).toEqual(new Set(['on_track', 'due_soon', 'overdue']));
+    expect(state.cases.filter((c) => c.assignee).length).toBeGreaterThanOrEqual(10);
+    expect(new Set(state.cases.map((c) => c.case_type)).size).toBeGreaterThanOrEqual(8);
+  });
+
+  it('agents, runs, entities and notifications are populated to workspace scale', () => {
+    expect(state.agents.length).toBeGreaterThanOrEqual(6);
+    expect(state.agentRuns.length).toBeGreaterThanOrEqual(30);
+    expect(state.agentRuns.filter((r) => r.status === 'failed').length).toBeGreaterThanOrEqual(3);
+    expect(state.entities.length).toBeGreaterThanOrEqual(18);
+    expect(state.models.length).toBeGreaterThanOrEqual(5);
+    expect(state.notifications.length).toBeGreaterThanOrEqual(10);
+    expect(state.notifications.some((n) => n.read)).toBe(true);
+    expect(state.notifications.some((n) => !n.read)).toBe(true);
   });
 });
 

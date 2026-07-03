@@ -31,7 +31,10 @@ minimap, duplicate, persistent panel, f/t/Esc keys) and fixed the unpublished-fl
 "versions is not iterable" wire bug — DW2 block in BUGS.md. Round 3 added the Miro toolset
 (select/pan tools with marquee, bottom-right zoom, tooltips) and closed a real engine hole: a
 non-output dead end recorded a quiet "completed" and publish accepted disconnected graphs — both
-now fail loudly (DW3 block).
+now fail loudly (DW3 block). A depth round then made the demo a realistically complex workspace
+(420 walked-graph decisions, 10 deep flows, full governance surfaces — DP block), added
+step-by-step in-page guides for every route (59 journeys, coverage-tested), and grew
+docs/JOURNEYS.md to 15 journeys.
 Roadmap & exit criteria: [PLAN.md §8](PLAN.md#8-phased-roadmap); deferrals tracked in [BUGS.md](BUGS.md).
 Working today: `platform/{eventlog,store,projection,identity,auth,httpx,ai,web,mo}` (`mo` = the
 `Option[T]`/`Result[T]` types used instead of none/null sentinels where they're easy to mishandle;
