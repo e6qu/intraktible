@@ -86,21 +86,35 @@ type AgentSchema = { properties?: Record<string, unknown> };
 function streamSchema(name: string): AgentSchema | undefined {
   return state.agents.find((a) => a.name === name)?.schema as AgentSchema | undefined;
 }
-function chunksOf(text: string): string[] {
+// chunksOf cuts the reply into ~4 contiguous word-boundary slices whose concatenation
+// reproduces the text EXACTLY — what the stream displays is byte-for-byte what the
+// run records (the separator leads each following chunk; nothing is appended).
+// Exported for the unit tests that pin that reassembly guarantee.
+export function chunksOf(text: string): string[] {
   const words = text.split(' ');
   const size = Math.max(1, Math.ceil(words.length / 4));
   const out: string[] = [];
-  for (let i = 0; i < words.length; i += size) out.push(words.slice(i, i + size).join(' ') + ' ');
+  for (let i = 0; i < words.length; i += size) {
+    out.push((i > 0 ? ' ' : '') + words.slice(i, i + size).join(' '));
+  }
   return out;
 }
-function recordStreamRun(name: string, prompt: string, text: string): void {
+// recordStreamRun records a streamed run exactly like the non-streaming POST run
+// route does — same text AND structured output — so the run list shows precisely
+// what the stream produced. Exported for the fidelity unit tests.
+export function recordStreamRun(
+  name: string,
+  prompt: string,
+  reply: { text: string; structured?: Record<string, unknown> }
+): void {
   state.agentRuns.unshift({
     run_id: nextId('run'),
     agent: name,
     model: state.agents.find((a) => a.name === name)?.model,
     prompt,
     status: 'completed',
-    text,
+    text: reply.text,
+    structured: reply.structured,
     at: new Date().toISOString()
   });
   const agent = state.agents.find((a) => a.name === name);
@@ -138,7 +152,7 @@ function installStreamMock(): void {
       this.timers.push(
         setTimeout(
           () => {
-            recordStreamRun(name, prompt, reply.text);
+            recordStreamRun(name, prompt, reply);
             this.dispatchEvent(new Event('done'));
           },
           40 * (pieces.length + 1)
@@ -187,7 +201,7 @@ function installStreamMock(): void {
       this.timers.push(
         setTimeout(
           () => {
-            recordStreamRun(this.name, prompt, reply.text);
+            recordStreamRun(this.name, prompt, reply);
             this.onmessage?.(
               new MessageEvent('message', { data: JSON.stringify({ type: 'done' }) })
             );

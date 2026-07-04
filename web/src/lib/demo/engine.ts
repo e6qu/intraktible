@@ -153,7 +153,9 @@ export function decideFlow(
     const caseId = nextId('case');
     state.cases.unshift({
       case_id: caseId,
-      company_name: String(input.company_name ?? input.applicant_id ?? 'Applicant'),
+      company_name: String(
+        run.caseOpened.company_name ?? input.company_name ?? input.applicant_id ?? 'Applicant'
+      ),
       case_type: run.caseOpened.case_type,
       status: 'needs_review',
       sla_days: run.caseOpened.sla_days,

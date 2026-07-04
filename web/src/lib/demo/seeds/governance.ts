@@ -737,19 +737,40 @@ export function seedAssertions(): Map<string, AssertionCase[]> {
   m.set('flow_aml', [
     {
       name: 'small domestic clears',
-      input: { amount: 2000, origin_country: 'US', dest_country: 'US', watchlist_score: 5 },
+      input: {
+        amount: 2000,
+        origin_country: 'US',
+        dest_country: 'US',
+        watchlist_score: 5,
+        deposits_30d: 1,
+        outflow_ratio: 0.2
+      },
       expect: { cleared: true }
     },
     {
       name: 'large cross-border refers',
-      input: { amount: 60000, origin_country: 'US', dest_country: 'KY', watchlist_score: 10 },
+      input: {
+        amount: 60000,
+        origin_country: 'US',
+        dest_country: 'KY',
+        watchlist_score: 10,
+        deposits_30d: 2,
+        outflow_ratio: 0.5
+      },
       expect: { cleared: false }
     },
     {
       // A confirmed sanctions/watchlist hit hard-stops: even a small domestic wire
       // that would otherwise clear can never auto-clear once watchlist_score >= 80.
       name: 'sanctions hit cannot clear',
-      input: { amount: 1000, origin_country: 'US', dest_country: 'US', watchlist_score: 90 },
+      input: {
+        amount: 1000,
+        origin_country: 'US',
+        dest_country: 'US',
+        watchlist_score: 90,
+        deposits_30d: 0,
+        outflow_ratio: 0.1
+      },
       expect: { cleared: false }
     },
     {
@@ -770,12 +791,26 @@ export function seedAssertions(): Map<string, AssertionCase[]> {
   m.set('flow_fraud', [
     {
       name: 'low velocity allows',
-      input: { amount: 80, tx_count_1h: 1, device_score: 10, avg_ticket: 120 },
+      input: {
+        amount: 80,
+        tx_count_1h: 1,
+        device_score: 10,
+        avg_ticket: 120,
+        card_present: 1,
+        new_device: 0
+      },
       expect: { blocked: false }
     },
     {
       name: 'high velocity blocks',
-      input: { amount: 1500, tx_count_1h: 9, device_score: 95, avg_ticket: 120 },
+      input: {
+        amount: 1500,
+        tx_count_1h: 9,
+        device_score: 95,
+        avg_ticket: 120,
+        card_present: 0,
+        new_device: 1
+      },
       expect: { blocked: true }
     }
   ]);
