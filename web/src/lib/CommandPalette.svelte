@@ -11,7 +11,14 @@
   import { user, signOut } from '$lib/session';
   import { paletteOpen, closePalette, togglePalette } from '$lib/palette';
   import { openShortcuts } from '$lib/shortcuts';
-  import { listFlows, listAgents, listCases } from '$lib/api';
+  import {
+    listFlows,
+    listAgents,
+    listCases,
+    listPolicies,
+    listModels,
+    listEntities
+  } from '$lib/api';
   import { appHref } from '$lib/paths';
 
   type Cmd = {
@@ -129,16 +136,26 @@
     c.run();
   }
 
-  // Load tenant entities into searchable commands (best-effort; a failed source
-  // is simply omitted so the palette never breaks).
   let loadSeq = 0;
+  let loadError = $state('');
   async function loadDynamic(): Promise<void> {
     const seq = ++loadSeq;
-    const [flows, agents, cases] = await Promise.all([
-      listFlows('').catch(() => []),
-      listAgents('').catch(() => []),
-      listCases('', {}).catch(() => [])
-    ]);
+    loadError = '';
+    let flows, agents, cases, policies, models, entities;
+    try {
+      [flows, agents, cases, policies, models, entities] = await Promise.all([
+        listFlows(''),
+        listAgents(''),
+        listCases('', {}),
+        listPolicies(''),
+        listModels(''),
+        listEntities('')
+      ]);
+    } catch (e) {
+      if (seq !== loadSeq) return;
+      loadError = e instanceof Error ? e.message : String(e);
+      return;
+    }
     if (seq !== loadSeq) return; // a newer open superseded this load — drop the stale result
     dynamic = [
       ...flows.map(
@@ -171,6 +188,43 @@
           icon: 'cases',
           keywords: `case ${c.company_name} ${c.status}`,
           run: () => goto(appHref(`/cases/${c.case_id}`))
+        })
+      ),
+      ...policies.map(
+        (p): Cmd => ({
+          id: `policy:${p.policy_id}`,
+          section: 'Policies',
+          label: p.name,
+          hint: p.flow_slug,
+          icon: 'clipboard',
+          keywords: `policy ${p.name} ${p.flow_slug}`,
+          run: () => goto(appHref('/policies'))
+        })
+      ),
+      ...models.map(
+        (m): Cmd => ({
+          id: `model:${m.name}`,
+          section: 'Models',
+          label: m.name,
+          hint: m.kind,
+          icon: 'gauge',
+          keywords: `model ${m.name} ${m.kind}`,
+          run: () => goto(appHref('/models'))
+        })
+      ),
+      ...entities.map(
+        (en): Cmd => ({
+          id: `entity:${en.entity_type}/${en.entity_id}`,
+          section: 'Context',
+          label: `${en.entity_type} / ${en.entity_id}`,
+          icon: 'database',
+          keywords: `entity ${en.entity_type} ${en.entity_id}`,
+          run: () =>
+            goto(
+              appHref(
+                `/data/${encodeURIComponent(en.entity_type)}/${encodeURIComponent(en.entity_id)}`
+              )
+            )
         })
       )
     ];
@@ -274,6 +328,9 @@
         {:else}
           <p class="cp-empty">No matches for “{query}”.</p>
         {/each}
+        {#if loadError}
+          <p class="cp-empty err" role="alert">Search index failed to load: {loadError}</p>
+        {/if}
       </div>
       <div class="cp-foot">
         <span><kbd>↑</kbd><kbd>↓</kbd> navigate</span>

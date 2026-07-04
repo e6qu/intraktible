@@ -956,6 +956,14 @@ dataset/sweep button so nobody stares at "[{}]" — the policy one generates row
 band. Detail-page Reload buttons joined the standard header treatment; the four-eyes journey now
 narrates the approval discussion.
 
+**Depth round 3 (DP3 in BUGS.md).** This round PERFORMED the journeys instead of viewing them:
+resume-suspended, four-eyes approval, case work, copilot, evals, coverage, replay, heatmap — all
+pass in the browser demo with zero console errors. The walk surfaced that ⌘K search indexed only
+flows/agents/cases (policies, models, and entities were unsearchable) behind catch-all fallbacks
+that would have read a broken index as an empty workspace — the index now spans six collections and
+fails loudly. The first narrow-viewport sweep found exactly one defect (the builder's unclipped
+edge SVGs widening the body 21px at 390px — fixed); everything else already adapted well.
+
 **Transposition-prevention refactors (TS40–TS42).** The three follow-ups left from round 10 landed as
 one PR: the decision-subject (entity type, id) is now the shared branded `platform/entity.Ref` threaded
 through the feature/pre-approval ports (a swapped pair fails to compile rather than silently keying the
