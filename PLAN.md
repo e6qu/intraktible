@@ -964,6 +964,17 @@ that would have read a broken index as an empty workspace — the index now span
 fails loudly. The first narrow-viewport sweep found exactly one defect (the builder's unclipped
 edge SVGs widening the body 21px at 390px — fixed); everything else already adapted well.
 
+**Execution-authenticity audit (EA in BUGS.md).** Answering "are the workflows actually executed?
+check for fakes": traced every run-shaped action to its execution path. ONE true fake found in the
+served platform — with no AI provider configured the canned Stub was registered unconditionally, so
+agent runs, AI nodes inside decision flows, and the copilot served canned text as if a model had
+answered, with decisions influenced by it recorded as authentic. The Stub is opt-in now
+(INTRAKTIBLE_AI_STUB=1, plumbed into every dev/test entry point); without a provider AI operations
+fail loudly, pinned by registry tests. Everything else verified genuine: demo runs/backtests/
+coverage/counterfactuals/heatmaps all walk the pure engine; connectors and models are honest by
+construction (explicit mock types, loud unknowns, real egress-guarded HTTP). Boyscout: the ⌘K index
+now settles per-source, naming failed collections instead of blanking on one error.
+
 **Transposition-prevention refactors (TS40–TS42).** The three follow-ups left from round 10 landed as
 one PR: the decision-subject (entity type, id) is now the shared branded `platform/entity.Ref` threaded
 through the feature/pre-approval ports (a swapped pair fails to compile rather than silently keying the
