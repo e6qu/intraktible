@@ -141,21 +141,33 @@
   async function loadDynamic(): Promise<void> {
     const seq = ++loadSeq;
     loadError = '';
-    let flows, agents, cases, policies, models, entities;
-    try {
-      [flows, agents, cases, policies, models, entities] = await Promise.all([
-        listFlows(''),
-        listAgents(''),
-        listCases('', {}),
-        listPolicies(''),
-        listModels(''),
-        listEntities('')
-      ]);
-    } catch (e) {
-      if (seq !== loadSeq) return;
-      loadError = e instanceof Error ? e.message : String(e);
-      return;
-    }
+    // Per-source settle: a role-forbidden collection (e.g. policies for a viewer)
+    // must not blank the whole index — but it isn't swallowed either: every failed
+    // source is NAMED in a visible error row under the results.
+    const sources = [
+      ['flows', listFlows('')],
+      ['agents', listAgents('')],
+      ['cases', listCases('', {})],
+      ['policies', listPolicies('')],
+      ['models', listModels('')],
+      ['entities', listEntities('')]
+    ] as const;
+    const settled = await Promise.allSettled(sources.map(([, p]) => p));
+    if (seq !== loadSeq) return;
+    const failures = settled
+      .map((r, i) => (r.status === 'rejected' ? `${sources[i][0]}: ${r.reason}` : ''))
+      .filter(Boolean);
+    loadError = failures.join(' · ');
+    const val = <T,>(i: number): T =>
+      settled[i].status === 'fulfilled'
+        ? ((settled[i] as PromiseFulfilledResult<T>).value as T)
+        : ([] as T);
+    const flows = val<Awaited<ReturnType<typeof listFlows>>>(0);
+    const agents = val<Awaited<ReturnType<typeof listAgents>>>(1);
+    const cases = val<Awaited<ReturnType<typeof listCases>>>(2);
+    const policies = val<Awaited<ReturnType<typeof listPolicies>>>(3);
+    const models = val<Awaited<ReturnType<typeof listModels>>>(4);
+    const entities = val<Awaited<ReturnType<typeof listEntities>>>(5);
     if (seq !== loadSeq) return; // a newer open superseded this load — drop the stale result
     dynamic = [
       ...flows.map(
@@ -329,7 +341,7 @@
           <p class="cp-empty">No matches for “{query}”.</p>
         {/each}
         {#if loadError}
-          <p class="cp-empty err" role="alert">Search index failed to load: {loadError}</p>
+          <p class="cp-empty err" role="alert">Some sources failed to index — {loadError}</p>
         {/if}
       </div>
       <div class="cp-foot">

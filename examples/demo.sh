@@ -4,7 +4,7 @@
 # End-to-end demo: exercises all four intraktible components through the public
 # API, then the operator tooling. Start the server first, e.g.:
 #
-#     go run ./cmd/intraktible serve            # in another terminal
+#     INTRAKTIBLE_AI_STUB=1 go run ./cmd/intraktible serve   # in another terminal (stub AI for the demo agent)
 #     ./examples/demo.sh
 #
 # Override the target with BASE / KEY env vars.

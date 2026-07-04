@@ -93,7 +93,8 @@ docker compose --profile pg up        # add a Postgres projection store
 
 | Variable | Purpose |
 | --- | --- |
-| `INTRAKTIBLE_AI_BASE_URL` · `_API_KEY` · `_MODEL` · `_PROVIDER` | Use a real OpenAI-compatible AI provider (otherwise a deterministic Stub) |
+| `INTRAKTIBLE_AI_BASE_URL` · `_API_KEY` · `_MODEL` · `_PROVIDER` | Use a real OpenAI-compatible AI provider. Without one, AI nodes/agents/copilot **fail loudly** |
+| `INTRAKTIBLE_AI_STUB` | Opt in to the deterministic canned Stub provider (dev/tests only — never silently substituted) |
 | `INTRAKTIBLE_AI_PRICES` | Per-model token prices (e.g. `gpt-4o=2.5/10`, USD per million input/output tokens) to derive AI run cost on the Observability page |
 | `INTRAKTIBLE_POSTGRES_DSN` | Postgres DSN for `--store=postgres` / `--log=postgres` |
 | `INTRAKTIBLE_NATS_URL` | NATS server URL for `--log=nats` (JetStream) |

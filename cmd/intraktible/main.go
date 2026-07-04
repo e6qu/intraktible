@@ -209,21 +209,7 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 		slog.Warn("connectors: egress to private/loopback targets is ALLOWED (INTRAKTIBLE_CONNECTOR_ALLOW_PRIVATE)")
 	}
 
-	aiRegistry := ai.NewRegistry()
-	if base := os.Getenv("INTRAKTIBLE_AI_BASE_URL"); base != "" {
-		name := os.Getenv("INTRAKTIBLE_AI_PROVIDER")
-		if name == "" {
-			name = "openai"
-		}
-		provider := ai.NewHTTP(name, base, os.Getenv("INTRAKTIBLE_AI_API_KEY"), os.Getenv("INTRAKTIBLE_AI_MODEL"),
-			ai.WithHTTPClient(egress.Client(ai.HTTPTimeout)))
-		aiRegistry.Register(ai.Guard(provider, guardrails))
-		slog.Info("ai: registered HTTP provider", "name", name, "model", os.Getenv("INTRAKTIBLE_AI_MODEL"))
-	} else {
-		slog.Warn("ai: no provider configured; AI nodes/agents/copilot use a deterministic stub",
-			"set", "INTRAKTIBLE_AI_BASE_URL")
-	}
-	aiRegistry.Register(ai.Guard(ai.Stub{}, guardrails))
+	aiRegistry := buildAIRegistry(guardrails, egress)
 
 	connectorSecrets, err := connectorSecretBoxFromEnv(ctx)
 	if err != nil {
@@ -1172,6 +1158,35 @@ func driftWindowDays() int {
 		return 0
 	}
 	return n
+}
+
+// buildAIRegistry wires the AI providers from the environment. The canned Stub
+// is OPT-IN only (dev/tests set INTRAKTIBLE_AI_STUB=1). It used to be registered
+// unconditionally, so a server with no provider configured silently served
+// canned text as if a model had answered — agent runs, AI nodes, and the
+// copilot all recorded fake output as authentic. Without a provider those
+// operations now fail loudly instead.
+func buildAIRegistry(guardrails ai.Guardrails, egress connectors.EgressPolicy) *ai.Registry {
+	reg := ai.NewRegistry()
+	if base := os.Getenv("INTRAKTIBLE_AI_BASE_URL"); base != "" {
+		name := os.Getenv("INTRAKTIBLE_AI_PROVIDER")
+		if name == "" {
+			name = "openai"
+		}
+		provider := ai.NewHTTP(name, base, os.Getenv("INTRAKTIBLE_AI_API_KEY"), os.Getenv("INTRAKTIBLE_AI_MODEL"),
+			ai.WithHTTPClient(egress.Client(ai.HTTPTimeout)))
+		reg.Register(ai.Guard(provider, guardrails))
+		slog.Info("ai: registered HTTP provider", "name", name, "model", os.Getenv("INTRAKTIBLE_AI_MODEL"))
+	}
+	if truthy(os.Getenv("INTRAKTIBLE_AI_STUB")) {
+		slog.Warn("ai: deterministic STUB registered (INTRAKTIBLE_AI_STUB) — canned responses, dev/tests only")
+		reg.Register(ai.Guard(ai.Stub{}, guardrails))
+	}
+	if _, err := reg.Get(""); err != nil {
+		slog.Warn("ai: no provider configured — AI nodes, agent runs, and the copilot will fail until one is set",
+			"set", "INTRAKTIBLE_AI_BASE_URL (or INTRAKTIBLE_AI_STUB=1 for dev)")
+	}
+	return reg
 }
 
 func truthy(v string) bool {
