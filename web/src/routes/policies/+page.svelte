@@ -58,6 +58,39 @@
   // Bands compare these against the FLOW's output, so they tell a tester which keys
   // the backtest dataset must carry — `score` is not universal across policies.
   const RESERVED = new Set(['and', 'or', 'not', 'in', 'true', 'false', 'null']);
+  // Rows that exercise every band: for each field, values just below / at /
+  // above every numeric threshold its rules compare against (plus quoted string
+  // literals verbatim) — so a preview shows the full disposition mix.
+  function sampleImpactDataset(): string {
+    const perField = new Map<string, Set<number | string>>();
+    for (const r of rules) {
+      for (const m of r.when.matchAll(
+        /([A-Za-z_][A-Za-z0-9_]*)\s*(?:[<>]=?|[!=]=)\s*(-?\d+(?:\.\d+)?|"[^"]*"|'[^']*')/g
+      )) {
+        const set = perField.get(m[1]) ?? new Set();
+        const lit = m[2];
+        if (lit.startsWith('"') || lit.startsWith("'")) set.add(lit.slice(1, -1));
+        else {
+          const n = Number(lit);
+          set.add(Math.round((n - Math.max(1, Math.abs(n) * 0.15)) * 100) / 100);
+          set.add(n);
+          set.add(Math.round((n + Math.max(1, Math.abs(n) * 0.15)) * 100) / 100);
+        }
+        perField.set(m[1], set);
+      }
+    }
+    if (perField.size === 0) throw new Error('sample dataset requires bands with comparisons');
+    const width = Math.max(...[...perField.values()].map((v) => v.size));
+    const rows = Array.from({ length: width }, (_, i) =>
+      Object.fromEntries(
+        [...perField.entries()].map(([f, vals]) => {
+          const arr = [...vals];
+          return [f, arr[i % arr.length]];
+        })
+      )
+    );
+    return JSON.stringify(rows, null, 2);
+  }
   const policyFields = $derived.by(() => {
     const fields: string[] = [];
     for (const r of rules) {
@@ -432,6 +465,16 @@
         <button onclick={preview} disabled={btRunning} data-testid="backtest-policy">
           {btRunning ? 'Running…' : 'Preview impact'}
         </button>
+        <button
+          type="button"
+          class="link"
+          onclick={() => (btDataset = sampleImpactDataset())}
+          disabled={policyFields.length === 0}
+          title={policyFields.length
+            ? 'Prefill rows that exercise every band (below / at / above each threshold)'
+            : 'Add bands with comparisons first'}
+          data-testid="sample-impact">Sample dataset</button
+        >
       </div>
       <textarea
         class="when"

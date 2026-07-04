@@ -65,8 +65,11 @@ import {
   seedAudit,
   seedFlowSlos,
   seedFlowBaselines,
-  type CommentRec
+  type CommentRec,
+  type FlowBaseline
 } from './seeds/governance';
+
+export type { FlowBaseline };
 
 export { USERS, ACTOR, ago, ahead };
 export type { DemoUser };
@@ -94,7 +97,7 @@ export interface DemoState {
   assertions: Map<string, AssertionCase[]>;
   grants: Map<string, FlowGrant[]>;
   schedules: Map<string, ScheduledDeploy[]>;
-  flowBaselines: Map<string, Record<string, number>>;
+  flowBaselines: Map<string, FlowBaseline>;
   flowSlos: Map<string, { success_target: number; latency_target_ms: number }>;
   shadows: Map<string, Map<string, number>>;
   webhooks: Webhook[];
@@ -266,7 +269,7 @@ export function createState(): DemoState {
     audit,
     apiKeys: seedApiKeys(),
     privacy: { fields: ['ssn', 'dob', 'pan'], updated_at: ago(500), updated_by: AVA },
-    comments: seedComments(),
+    comments: seedComments(decisions),
     seq: audit.length + 1
   };
 }
@@ -276,7 +279,7 @@ export function createState(): DemoState {
 // reloads (build → publish → deploy → decide → triage → resolve), not just within a
 // single page view. Bump SCHEMA_VERSION whenever the seed/state shape changes so an
 // older persisted blob is discarded (re-seeded) instead of hydrating a stale shape.
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 const PERSIST_KEY = 'intraktible-demo-state';
 
 // Map values can't survive JSON, so tag them on write and rebuild on read. The
@@ -402,35 +405,46 @@ export function driftReportFor(flowId: string): DriftReport {
       current_total: current
     };
   }
-  const baseMap = new Map(Object.entries(baseline));
-  const baseTotal = [...baseMap.values()].reduce((a, b) => a + b, 0) || 1;
+  // Buckets carry SHARES (baseline share vs current share, delta = difference),
+  // exactly like the real engine's ComputeDrift — the UI multiplies by 100. PSI/KL
+  // floor each share at driftEps so an empty bucket contributes a bounded term, and
+  // like the real engine they stay 0 without current data.
+  const baseShares = new Map<string, number>([
+    ['approve', baseline.approve],
+    ['decline', baseline.decline],
+    ['refer', baseline.refer]
+  ]);
+  const hasCurrent = current > 0;
   const curTotal = current || 1;
+  const driftEps = 1e-4;
   const dispoKeys: ('approve' | 'decline' | 'refer')[] = ['approve', 'decline', 'refer'];
   let psi = 0;
   let kl = 0;
   let maxDrift = 0;
   const buckets = dispoKeys.map((k) => {
-    const baseCount = baseMap.get(k) ?? 0;
-    const curCount = counts.get(k) ?? 0;
-    const b = baseCount / baseTotal || 0.0001;
-    const c = curCount / curTotal || 0.0001;
-    psi += (c - b) * Math.log(c / b);
-    kl += c * Math.log(c / b);
-    maxDrift = Math.max(maxDrift, Math.abs(c - b));
+    const b = baseShares.get(k) ?? 0;
+    const c = (counts.get(k) ?? 0) / curTotal;
+    if (hasCurrent) {
+      const bf = Math.max(b, driftEps);
+      const cf = Math.max(c, driftEps);
+      psi += (cf - bf) * Math.log(cf / bf);
+      kl += cf * Math.log(cf / bf);
+      maxDrift = Math.max(maxDrift, Math.abs(c - b));
+    }
     return {
       disposition: k,
-      baseline: baseCount,
-      current: curCount,
+      baseline: Math.round(b * 1000) / 1000,
+      current: Math.round(c * 1000) / 1000,
       delta: Math.round((c - b) * 1000) / 1000
     };
   });
   return {
     has_baseline: true,
-    has_current: current > 0,
+    has_current: hasCurrent,
     max_drift: Math.round(maxDrift * 1000) / 1000,
     psi: Math.round(psi * 1000) / 1000,
     kl: Math.round(kl * 1000) / 1000,
-    baseline_total: baseTotal,
+    baseline_total: baseline.total,
     current_total: current,
     buckets
   };

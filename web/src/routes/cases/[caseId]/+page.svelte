@@ -1,6 +1,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   import { page } from '$app/stores';
+  import Icon from '$lib/Icon.svelte';
   import {
     getCase,
     assignCase,
@@ -117,6 +118,13 @@
 
 <main>
   <Breadcrumb sectionHref="/cases" sectionLabel="Cases" current={caseID} />
+  {#if !notFound}
+    <div class="row reload-row">
+      <button onclick={load} title="Re-fetch this case and its activity"
+        ><Icon name="reload" size={15} /> Reload</button
+      >
+    </div>
+  {/if}
   {#if c}
     <div class="head">
       <h1>{c.company_name}</h1>
@@ -177,12 +185,6 @@
     <h1>{caseID}</h1>
   {/if}
   {#if error && !notFound}<p class="err">{error}</p>{/if}
-
-  {#if !notFound}
-    <div class="row">
-      <button onclick={load}>Reload</button>
-    </div>
-  {/if}
 
   {#if c && c.status !== 'completed'}
     <div class="resolve-bar">
@@ -273,6 +275,10 @@
 </main>
 
 <style>
+  .reload-row {
+    justify-content: flex-end;
+    margin-top: -2.4rem;
+  }
   main {
     max-width: 52rem;
     margin: 2rem auto;

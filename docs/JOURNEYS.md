@@ -58,7 +58,11 @@ Spans: **Flow builder** (`/engine/[flowId]`), Deploy & versions tab.
 2. Request a **production** deployment. Production cannot be deployed directly; the
    request becomes a **pending** deployment request recorded in the audit trail.
    Outcome: a pending request awaiting approval.
-3. A *different* user with the **approver** role (or higher) approves it. The platform
+3. Argue it where it will be audited: each request carries an **approval
+   discussion** — the requester explains the change, the approver asks questions,
+   and the eventual approve/reject reason lands on the request itself. Outcome: the
+   reasoning is part of the governance record, not a side channel.
+4. A *different* user with the **approver** role (or higher) approves it. The platform
    enforces four-eyes: the requester cannot approve their own request, and a
    non-approver is refused. Outcome: on approval the version goes live in production;
    on rejection it stays pending-rejected with the recorded reason.

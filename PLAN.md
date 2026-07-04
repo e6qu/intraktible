@@ -945,6 +945,17 @@ ship guideless), and docs/JOURNEYS.md grew to 15 journeys. Boyscout: the long-st
 e2e flake was root-caused (sampling mid-theme-transition on a live flip) and made deterministic by
 reloading with the theme persisted; the Agents page header joined the standard layout.
 
+**Depth round 2 (DP2 in BUGS.md).** Driving every DETAIL surface of the populated demo (flow tabs,
+decision/case/agent/entity/policy pages, personas, dark) surfaced a real unit bug — the drift strip
+rendered "approve: 3000%" because the demo emitted raw counts where the engine emits fractional
+shares — plus systematic shallowness now fixed: threaded flow discussions, argued approval
+discussions on deployment requests, per-prompt agent run outputs, rich hero entities whose computed
+features verify against their events, and reviewer comments on suspended decisions. Product gap
+closed: every dataset editor (Backtest, What-if, Batch, policy Preview impact) now has a Sample
+dataset/sweep button so nobody stares at "[{}]" — the policy one generates rows that exercise every
+band. Detail-page Reload buttons joined the standard header treatment; the four-eyes journey now
+narrates the approval discussion.
+
 **Transposition-prevention refactors (TS40–TS42).** The three follow-ups left from round 10 landed as
 one PR: the decision-subject (entity type, id) is now the shared branded `platform/entity.Ref` threaded
 through the feature/pre-approval ports (a swapped pair fails to compile rather than silently keying the

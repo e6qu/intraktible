@@ -454,6 +454,48 @@
     const obj = Object.fromEntries(Object.entries(props).map(([k, p]) => [k, sampleValue(p)]));
     dataText = JSON.stringify(obj, null, 2);
   }
+  // A varied N-row dataset derived from the same schema: numbers spread ±40%
+  // deterministically, enums cycle, booleans alternate — enough dispersion for a
+  // backtest/what-if/batch to show real outcome mix instead of N identical rows.
+  function sampleRow(i: number): Record<string, unknown> {
+    const props = (inputSchema as { properties?: Record<string, SchemaProp> } | undefined)
+      ?.properties;
+    if (!props) throw new Error('sample dataset requires a published input schema');
+    return Object.fromEntries(
+      Object.entries(props).map(([k, p]) => {
+        if (Array.isArray(p?.enum) && p.enum.length) return [k, p.enum[i % p.enum.length]];
+        const v = sampleValue(p);
+        if (typeof v === 'number') {
+          const spread = v * (0.6 + (0.8 * ((i * 7) % 10)) / 9);
+          return [k, p?.type === 'integer' ? Math.round(spread) : Math.round(spread * 100) / 100];
+        }
+        if (typeof v === 'boolean') return [k, i % 2 === 0];
+        return [k, v];
+      })
+    );
+  }
+  const sampleDatasetJson = () =>
+    JSON.stringify(
+      Array.from({ length: 8 }, (_, i) => sampleRow(i)),
+      null,
+      2
+    );
+  const firstNumericField = $derived.by(() => {
+    const props = (inputSchema as { properties?: Record<string, SchemaProp> } | undefined)
+      ?.properties;
+    if (!props) return null;
+    const hit = Object.entries(props).find(
+      ([, p]) => p?.type === 'number' || p?.type === 'integer'
+    );
+    return hit ? { name: hit[0], base: Number(sampleValue(hit[1])) } : null;
+  });
+  function sampleWhatIf() {
+    const f = firstNumericField;
+    if (!f) throw new Error('what-if sample requires a numeric schema field');
+    wiField = f.name;
+    wiValues = [0.5, 0.75, 1, 1.25, 1.5].map((m) => Math.round(f.base * m * 100) / 100).join(', ');
+    wiBase = JSON.stringify(sampleRow(0), null, 2);
+  }
   let entityType = $state('');
   let entityID = $state('');
   // The exact API call this test run is — so a developer can copy/paste the same
@@ -3688,6 +3730,16 @@
           <button onclick={runBacktest} disabled={!flow || btRunning} data-testid="run-backtest">
             {btRunning ? 'Running…' : 'Run backtest'}
           </button>
+          <button
+            type="button"
+            class="link"
+            onclick={() => (btDataset = sampleDatasetJson())}
+            disabled={!hasInputSchema}
+            title={hasInputSchema
+              ? 'Prefill a varied 8-row dataset from the input schema'
+              : 'This version has no input schema — publish one to generate a sample'}
+            data-testid="sample-backtest">Sample dataset</button
+          >
         </div>
         <textarea
           bind:value={btDataset}
@@ -3750,6 +3802,16 @@
           <button onclick={runWhatif} disabled={!flow || wiRunning} data-testid="run-whatif">
             {wiRunning ? 'Running…' : 'Run what-if'}
           </button>
+          <button
+            type="button"
+            class="link"
+            onclick={sampleWhatIf}
+            disabled={!firstNumericField}
+            title={firstNumericField
+              ? 'Prefill a sweep over the schema’s first numeric field'
+              : 'Needs a numeric field in the published input schema'}
+            data-testid="sample-whatif">Sample sweep</button
+          >
         </div>
         <textarea
           bind:value={wiBase}
@@ -3845,6 +3907,16 @@
           <button onclick={runBatch} disabled={!flow || batchRunning} data-testid="run-batch">
             {batchRunning ? 'Deciding…' : 'Run batch'}
           </button>
+          <button
+            type="button"
+            class="link"
+            onclick={() => (batchDataset = sampleDatasetJson())}
+            disabled={!hasInputSchema}
+            title={hasInputSchema
+              ? 'Prefill a varied 8-row dataset from the input schema'
+              : 'This version has no input schema — publish one to generate a sample'}
+            data-testid="sample-batch">Sample dataset</button
+          >
         </div>
         <textarea
           bind:value={batchDataset}

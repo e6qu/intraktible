@@ -1365,3 +1365,64 @@ test('select and pan tools: marquee selects, pan does not, v/h switch', async ({
   // No overlap between the rail and the controls.
   expect(rail.x + rail.width).toBeLessThan(controls.x);
 });
+
+test('sample dataset and sweep buttons prefill runnable inputs', async ({ page, request }) => {
+  const slug = uniqueSlug();
+  const created = await request.post('/v1/flows', {
+    headers: { 'X-Api-Key': KEY },
+    data: { slug, name: 'Samples' }
+  });
+  const { flow_id } = await created.json();
+  await request.post(`/v1/flows/${flow_id}/versions`, {
+    headers: { 'X-Api-Key': KEY },
+    data: {
+      graph: {
+        nodes: [
+          { id: 'in', type: 'input', position: { x: 0, y: 0 } },
+          {
+            id: 'a',
+            type: 'assignment',
+            config: { assignments: [{ target: 'ok', expr: 'score > 600' }] },
+            position: { x: 200, y: 0 }
+          },
+          { id: 'out', type: 'output', position: { x: 400, y: 0 } }
+        ],
+        edges: [
+          { from: 'in', to: 'a' },
+          { from: 'a', to: 'out' }
+        ]
+      },
+      input_schema: {
+        type: 'object',
+        properties: {
+          score: { type: 'integer', example: 680 },
+          segment: { type: 'string', enum: ['retail', 'smb'] }
+        }
+      }
+    }
+  });
+
+  await page.goto(`/engine/${flow_id}`);
+  await page.getByTestId('tab-test').click();
+
+  // Backtest: 8 varied rows; integers stay whole; enums cycle.
+  await page.getByTestId('sample-backtest').click();
+  const rows = JSON.parse(await page.getByLabel('backtest dataset').inputValue());
+  expect(rows).toHaveLength(8);
+  expect(new Set(rows.map((r: { score: number }) => r.score)).size).toBeGreaterThan(3);
+  for (const r of rows) expect(Number.isInteger(r.score)).toBe(true);
+  expect(new Set(rows.map((r: { segment: string }) => r.segment))).toEqual(
+    new Set(['retail', 'smb'])
+  );
+
+  // What-if: prefills the numeric field, a 5-value sweep, and a base row — and runs.
+  await page.getByTestId('sample-whatif').click();
+  await expect(page.getByLabel('whatif field')).toHaveValue('score');
+  expect((await page.getByLabel('whatif values').inputValue()).split(',')).toHaveLength(5);
+  await page.getByTestId('run-whatif').click();
+  await expect(page.getByTestId('whatif-summary')).toBeVisible();
+
+  // Batch: same dataset shape.
+  await page.getByTestId('sample-batch').click();
+  expect(JSON.parse(await page.getByLabel('batch dataset').inputValue())).toHaveLength(8);
+});
