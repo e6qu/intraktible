@@ -975,6 +975,18 @@ coverage/counterfactuals/heatmaps all walk the pure engine; connectors and model
 construction (explicit mock types, loud unknowns, real egress-guarded HTTP). Boyscout: the ⌘K index
 now settles per-source, naming failed collections instead of blanking on one error.
 
+**Engine-parity round (EP in BUGS.md).** The strongest possible answer to "check for fakes": the
+demo's in-browser engine is now DIFFERENTIALLY PROVEN against the real one. A Go test generates 81
+golden fixtures by calling the actual domain.Execute (regeneration gated; stale fixtures fail CI),
+and a vitest replays every case through the demo walk asserting byte-identical status, outputs,
+traces, reason codes, and error wording. Eleven divergence families were fixed — a strict typed
+expression evaluator with expr-lang's exact messages, the full DMN hit-policy set, Go semantics for
+every node type, the engine's pre-resolved provider seam, and real structural bugs (an edge to an
+unknown node silently completed; fallbacks masked missing inputs). A parallel derivation audit
+verified every dashboard/observability/MRM number derives from seeded data and fixed six canned
+displays (MRM now actually RUNS assertions; streaming reassembles byte-exact). Boyscout: notification
+snippet overflow; audit node steps hidden by default.
+
 **Transposition-prevention refactors (TS40–TS42).** The three follow-ups left from round 10 landed as
 one PR: the decision-subject (entity type, id) is now the shared branded `platform/entity.Ref` threaded
 through the feature/pre-approval ports (a swapped pair fails to compile rather than silently keying the

@@ -46,7 +46,9 @@
   let fResource = $state('');
   let fSince = $state('');
   let fUntil = $state('');
-  let hideNodeSteps = $state(false);
+  // Node steps default HIDDEN: one run journals ~10 node_evaluated rows, burying
+  // the event variety on page one. The URL encodes the non-default ('0' = show).
+  let hideNodeSteps = $state(true);
   let offset = $state(0);
   let total = $state(0);
   const PAGE = 100;
@@ -109,7 +111,7 @@
     if (f.resource) p.set('resource', f.resource);
     if (fSince) p.set('since', fSince);
     if (fUntil) p.set('until', fUntil);
-    if (hideNodeSteps) p.set('hide_node_steps', '1');
+    if (!hideNodeSteps) p.set('hide_node_steps', '0');
     if (offset) p.set('offset', String(offset));
     const qs = p.toString();
     goto(qs ? `?${qs}` : $page.url.pathname, { keepFocus: true, noScroll: true });
@@ -291,7 +293,7 @@
     fResource = sp.get('resource') ?? '';
     fSince = sp.get('since') ?? '';
     fUntil = sp.get('until') ?? '';
-    hideNodeSteps = sp.get('hide_node_steps') === '1';
+    hideNodeSteps = sp.get('hide_node_steps') !== '0';
     offset = Number(sp.get('offset') ?? '0') || 0;
     // CSV export tracks the applied filter (rows on screen) but not the page window.
     applied = { ...filter(), limit: undefined, offset: undefined };

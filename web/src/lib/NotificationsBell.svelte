@@ -231,6 +231,10 @@
     color: var(--fg-subtle);
   }
   .snip {
+    /* Block-level, or the nowrap/ellipsis pair is inert on an inline span and a
+       long snippet overflows BOTH panel edges (leading words clipped). */
+    display: block;
+    max-width: 100%;
     font-size: 0.88rem;
     overflow: hidden;
     text-overflow: ellipsis;

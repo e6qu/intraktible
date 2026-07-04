@@ -700,6 +700,9 @@ const fraudGraphV4 = {
       lane: 'Enrich',
       config: {
         rules: [
+          // Baseline first so trust_adj is ALWAYS defined — the real engine's
+          // expression checker rejects a read of a never-assigned name.
+          { when: 'true', then: [{ target: 'trust_adj', expr: '0' }] },
           {
             when: 'card_present == 1 && tx_count_1h <= 1',
             then: [{ target: 'trust_adj', expr: '-8' }]
@@ -830,6 +833,7 @@ const disputeGraphV2 = {
             ]
           },
           {
+            when: 'true',
             outputs: [
               { target: 'liability', expr: '0' },
               { target: 'evidence', expr: '"merchant response"' }
@@ -914,7 +918,7 @@ const merchantGraphV1 = {
         assignments: [
           { target: 'high_risk_mcc', expr: 'mcc_risk >= 70 ? 1 : 0' },
           { target: 'amount', expr: 'monthly_volume' },
-          { target: 'cross_border', expr: 'international ? 1 : 0' }
+          { target: 'cross_border', expr: 'international == 1 ? 1 : 0' }
         ]
       }
     },
@@ -977,7 +981,7 @@ const merchantGraphV2 = {
         assignments: [
           { target: 'amount', expr: 'monthly_volume' },
           { target: 'high_value', expr: 'monthly_volume > 100000 ? 1 : 0' },
-          { target: 'cross_border', expr: 'international ? 1 : 0' }
+          { target: 'cross_border', expr: 'international == 1 ? 1 : 0' }
         ]
       }
     },
@@ -991,7 +995,7 @@ const merchantGraphV2 = {
         rows: [
           { when: 'mcc_risk >= 70', outputs: [{ target: 'mcc_adder', expr: '30' }] },
           { when: 'mcc_risk >= 40', outputs: [{ target: 'mcc_adder', expr: '15' }] },
-          { outputs: [{ target: 'mcc_adder', expr: '0' }] }
+          { when: 'true', outputs: [{ target: 'mcc_adder', expr: '0' }] }
         ]
       }
     },
@@ -1074,7 +1078,10 @@ function collectionsCoreNodes() {
       config: {
         assignments: [
           { target: 'income_drop', expr: '1 - current_income / prior_income' },
-          { target: 'missed', expr: 'missed_payments_6m' }
+          { target: 'missed', expr: 'missed_payments_6m' },
+          // Baseline so the output expression reads a defined flag on the review
+          // path too — the real engine rejects a read of a never-assigned name.
+          { target: 'enrolled', expr: 'false' }
         ]
       }
     },
@@ -1179,6 +1186,7 @@ const collectionsGraphV2 = {
             ]
           },
           {
+            when: 'true',
             outputs: [
               { target: 'plan_months', expr: '0' },
               { target: 'rate_relief', expr: '0' }
@@ -1321,6 +1329,15 @@ const claimGraphV2 = {
       lane: 'Intake',
       config: {
         rules: [
+          // Baselines first so both flags are ALWAYS defined — the real engine's
+          // expression checker rejects a read of a never-assigned name.
+          {
+            when: 'true',
+            then: [
+              { target: 'fast_track', expr: '0' },
+              { target: 'lapsed', expr: '0' }
+            ]
+          },
           {
             when: 'amount <= 200 && policy_active == 1 && prior_claims_24m == 0',
             then: [{ target: 'fast_track', expr: '1' }]

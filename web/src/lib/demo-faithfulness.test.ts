@@ -370,7 +370,14 @@ describe('audit log speaks the real event taxonomy', () => {
   it('a decide journals started + one node_evaluated per trace node + completed on decision.runs', () => {
     setDemoUser(USERS[0].actor); // admin — the audit endpoint gates on it
     const res = handleDemo('POST', '/v1/flows/card-fraud/sandbox/decide', params(), {
-      data: { amount: 120 }
+      data: {
+        amount: 120,
+        tx_count_1h: 1,
+        device_score: 15,
+        avg_ticket: 120,
+        card_present: 1,
+        new_device: 0
+      }
     });
     const decisionId = (res.body as { decision_id: string }).decision_id;
     const decision = state.decisions.find((d) => d.decision_id === decisionId);
@@ -639,7 +646,7 @@ describe('runFlow step bound', () => {
     };
     const run = runFlow(state.flows[0], graph, {});
     expect(run.status).toBe('failed');
-    expect(run.error).toContain('step bound');
+    expect(run.error).toBe('decision-engine: execution exceeded the node bound');
   });
 });
 

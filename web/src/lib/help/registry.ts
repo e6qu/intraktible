@@ -750,7 +750,7 @@ export const HELP = new Map<string, PageHelp>([
           name: 'Filter the trail',
           steps: [
             'Set any of stream, actor, event type, resource id, and a from / to time.',
-            'Tick Hide node steps to drop per-node decision.run.node_evaluated events.',
+            'Node steps are hidden by default; untick Hide node steps to include per-node decision.run.node_evaluated events.',
             'Click Apply — the filter is written to the URL, so the view is shareable and bookmarkable.',
             'Page through the matches with ← Prev / Next →.'
           ]
@@ -760,7 +760,7 @@ export const HELP = new Map<string, PageHelp>([
           steps: [
             'Find the row: When, Actor, Stream, Event.',
             'Click view under Details to expand the JSON payload.',
-            'Untick Hide node steps to see a decision’s node-by-node evaluation as individual events.'
+            'Untick Hide node steps (hidden by default) to see a decision’s node-by-node evaluation as individual events.'
           ]
         },
         {

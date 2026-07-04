@@ -26,7 +26,8 @@ import type {
   MonitorOp,
   Role,
   Scope,
-  MrmModel
+  MrmModel,
+  AssertionCase
 } from '$lib/api';
 import {
   state,
@@ -48,7 +49,8 @@ import {
   evalExpr,
   evaluateModel,
   pickVersion,
-  validateGraph
+  validateGraph,
+  resolvePath
 } from './engine';
 import { nodeStats, counterfactual, coverage } from './intelligence';
 import { agentReply } from './agent';
@@ -184,19 +186,28 @@ route('POST', '/v1/logout', () => {
 route('GET', '/v1/auth/oidc/providers', () => ok({ providers: [] }));
 route('GET', '/v1/auth/saml/providers', () => ok({ providers: [] }));
 
-// --- Hello (legacy demo endpoint) -----------------------------------------------
-route('GET', '/v1/hello/stats', () =>
-  ok({
+// --- Hello (the Phase-0 vertical slice) -------------------------------------------
+// The stats are a real projection folded over the hellos actually said this session
+// (command → event log → projection), not a canned count — a fresh workspace reads
+// zero and every POST moves it. Module-scoped like the auth flag: the slice demos
+// the backbone, it isn't part of the persisted workspace seed.
+const hellos: { name: string; at: string }[] = [];
+route('GET', '/v1/hello/stats', () => {
+  const last = hellos.at(-1);
+  return ok({
     org: 'demo',
     workspace: 'main',
-    count: 3,
-    last_name: 'Ada',
-    last_at: new Date().toISOString()
-  })
-);
-route('POST', '/v1/hello', (_m, body) =>
-  ok({ event_id: nextId('evt'), seq: state.seq++, name: body.name })
-);
+    count: hellos.length,
+    last_name: last?.name ?? '',
+    last_at: last?.at ?? ''
+  });
+});
+route('POST', '/v1/hello', (_m, body) => {
+  const name = String(body.name ?? '');
+  hellos.push({ name, at: new Date().toISOString() });
+  pushAudit('hello.said', 'hello', { name });
+  return ok({ event_id: nextId('evt'), seq: state.seq, name });
+});
 
 // --- Flows ----------------------------------------------------------------------
 route('GET', '/v1/flows', () => ok({ flows: state.flows }));
@@ -533,12 +544,17 @@ route('POST', '/v1/flows/:id/monitors/check', (m) => {
       actual: s.computable ? s.actual : x.status.actual,
       description: x.description
     }));
+  // A firing check delivers to the active webhooks actually subscribed to
+  // monitor.fired — the workspace's real routing, not a fixed first-hook stub.
+  const hooks = state.webhooks.filter(
+    (w) => w.active && (w.events ?? []).includes('monitor.fired')
+  );
   return ok({
     flow_id: flow.flow_id,
     checked: (state.monitors.get(flow.flow_id) ?? []).length,
     fired,
     deliveries: fired.length
-      ? [{ webhook_id: 'wh_1', url: state.webhooks[0]?.url ?? '', ok: true, status: 200 }]
+      ? hooks.map((w) => ({ webhook_id: w.webhook_id, url: w.url, ok: true, status: 200 }))
       : []
   });
 });
@@ -1439,13 +1455,16 @@ route('GET', '/v1/models/:name/drift', (m, _b, q) => {
   if (!model) return notFound();
   const hasBaseline = state.modelBaselines.has(model.name);
   const drift = computeModelDrift(model.name);
-  const hist = drift?.hist ?? state.modelBaselines.get(model.name) ?? [4, 6, 9, 5, 3];
+  // The histogram is ALWAYS the model's real predictions over recorded decisions;
+  // a model no flow scores with honestly reports an empty distribution (all-zero
+  // bins, count 0) rather than an invented one.
+  const hist = drift?.hist ?? [0, 0, 0, 0, 0];
   const threshold = state.modelMonitors.get(model.name);
   const psiVal = hasBaseline ? drift?.psi : undefined;
   const windowDays = Number((q.get('window') ?? '0').replace('d', '')) || 30;
   return ok({
     model: model.name,
-    count: drift?.count ?? hist.reduce((a, b) => a + b, 0),
+    count: drift?.count ?? 0,
     hist,
     window_days: windowDays,
     has_baseline: hasBaseline,
@@ -2233,12 +2252,37 @@ function mrmReport() {
   };
 }
 
+// assertionsPassedOnLatest actually RUNS the flow's assertion suite against its
+// latest published version (the real MRM report's assertions.RunForFlow at
+// fv.Latest) and counts the passes — the inventory's validation column is evidence,
+// not a claim. Deterministic: the latest graph directly, no champion/challenger roll.
+function assertionsPassedOnLatest(f: Flow, cases: AssertionCase[]): number {
+  const latest = f.versions.find((v) => v.version === f.latest);
+  if (!latest) throw new Error(`flow ${f.slug} has no version ${f.latest}`);
+  let passed = 0;
+  for (const c of cases) {
+    const run = runFlow(f, latest.graph, c.input as Record<string, unknown>);
+    if (run.status !== 'completed') continue;
+    const got = (run.data ?? {}) as Record<string, unknown>;
+    const ok = Object.entries(c.expect ?? {}).every(
+      ([k, want]) => JSON.stringify(resolvePath(got, k)) === JSON.stringify(want)
+    );
+    if (ok) passed += 1;
+  }
+  return passed;
+}
+
 function mrmFlow(f: Flow): MrmModel {
   const metrics = flowMetrics(f);
   const assertions = state.assertions.get(f.flow_id) ?? [];
+  const assertionsPassed = assertionsPassedOnLatest(f, assertions);
+  // Evaluate monitors against the flow's LIVE analytics (the same computation the
+  // /monitors endpoints run), not the stored seed status — so the MRM firing column
+  // can never disagree with the flow's own monitors tab.
   const monitors = (state.monitors.get(f.flow_id) ?? [])
-    .filter((m) => m.status.firing)
-    .map((m) => m.metric);
+    .map((m) => ({ m, s: monitorStatus(f, m.metric, m.op, m.threshold) }))
+    .filter(({ m, s }) => (s.computable ? s.firing : m.status.firing))
+    .map(({ m }) => m.metric);
   const deployments: Record<string, number> = {};
   for (const [env, dep] of Object.entries(f.deployments ?? {})) {
     const m = new Map(Object.entries(deployments));
@@ -2255,20 +2299,26 @@ function mrmFlow(f: Flow): MrmModel {
     : true;
   const issues: string[] = [];
   if (assertions.length === 0) issues.push('No assertions defined');
+  else if (assertionsPassed < assertions.length) issues.push('Assertions failing');
   if (monitors.length > 0) issues.push(`${monitors.length} monitor(s) firing`);
   if (slo && !sloMet) issues.push('SLO not met');
+  // Coverage classifies the ACTUAL assertion outcome (the real report's semantics):
+  // evidence that passes is tested, evidence that fails is failing, none is none.
+  const assertionCoverage: 'tested' | 'failing' | 'none' =
+    assertions.length === 0 ? 'none' : assertionsPassed < assertions.length ? 'failing' : 'tested';
   return {
     kind: 'flow' as const,
     id: f.flow_id,
     name: f.name,
     version: f.latest,
-    owner: 'risk@intraktible.dev',
+    // The real report attributes ownership to the latest version's publisher.
+    owner: f.versions.at(-1)?.published_by,
     deployments,
     validation: {
-      coverage: (assertions.length ? 'tested' : 'none') as 'tested' | 'failing' | 'none',
+      coverage: assertionCoverage,
       has_assertions: assertions.length > 0,
       assertions_total: assertions.length,
-      assertions_passed: assertions.length
+      assertions_passed: assertionsPassed
     },
     monitoring: {
       decisions: metrics.total,
@@ -2310,6 +2360,11 @@ function mrmModel(m: Model): MrmModel {
 
 function mrmAgent(a: Agent): MrmModel {
   const evals = state.agentEvals.get(a.name) ?? [];
+  // Success is completed over terminal runs, computed from the agent's actual run
+  // records (the real report's SummarizeRuns) — never a pinned 100%.
+  const runs = state.agentRuns.filter((r) => r.agent === a.name);
+  const completed = runs.filter((r) => r.status === 'completed').length;
+  const terminal = completed + runs.filter((r) => r.status === 'failed').length;
   return {
     kind: 'agent' as const,
     id: a.name,
@@ -2320,7 +2375,7 @@ function mrmAgent(a: Agent): MrmModel {
       has_eval_cases: evals.length > 0,
       eval_cases: evals.length
     },
-    monitoring: { decisions: a.runs, success_rate: 1 },
+    monitoring: { decisions: a.runs, success_rate: terminal ? completed / terminal : 1 },
     issues: evals.length ? undefined : ['No eval cases defined'],
     updated_at: a.updated_at
   };
