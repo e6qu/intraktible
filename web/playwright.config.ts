@@ -46,6 +46,9 @@ export default defineConfig({
       command:
         'rm -rf web/.pw-data && go build -o bin/intraktible-e2e ./cmd/intraktible && ./bin/intraktible-e2e serve --addr=:8080 --data-dir=web/.pw-data --modules=all',
       cwd: '..',
+      // The AI stub is opt-in now (a server without it fails AI operations loudly
+      // instead of serving canned text); tests opt in explicitly.
+      env: { INTRAKTIBLE_AI_STUB: '1' },
       url: 'http://localhost:8080/healthz',
       reuseExistingServer: false,
       // The backend logs a line per request at INFO on stdout. Piping that to the

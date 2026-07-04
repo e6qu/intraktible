@@ -42,7 +42,8 @@ store always full-rebuilds from the log.
 - **Request bodies** are capped at 8 MiB (JSON endpoints); the large-job path is
   `POST …/decide/stream` (NDJSON, unbounded, streamed).
 - **AI provider** — `INTRAKTIBLE_AI_BASE_URL` / `_API_KEY` / `_MODEL` enable a real LLM for
-  AI nodes and the copilot; the Stub is the offline fallback.
+  AI nodes and the copilot. Without one, AI operations fail loudly; the canned Stub is
+  opt-in only (`INTRAKTIBLE_AI_STUB=1`, dev/tests) — never silently substituted.
 
 ## Health & introspection
 

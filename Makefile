@@ -32,7 +32,7 @@ dev:
 	@[ -d web/node_modules ] || (cd web && npm install)
 	@echo "▶ API http://localhost:8080  ·  UI http://localhost:5173  (dev key: dev-sandbox-key) — Ctrl-C to stop"
 	@trap 'kill 0' INT TERM EXIT; \
-		$(GO) run ./cmd/intraktible serve --addr=:8080 & \
+		INTRAKTIBLE_AI_STUB=1 $(GO) run ./cmd/intraktible serve --addr=:8080 & \
 		(cd web && npm run dev -- --port 5173 --strictPort) & \
 		wait
 

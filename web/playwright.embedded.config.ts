@@ -20,6 +20,7 @@ export default defineConfig({
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
   webServer: {
     command: 'cd .. && ./bin/intraktible serve --addr=:8080 --data-dir=web/.pw-data-embedded',
+    env: { INTRAKTIBLE_AI_STUB: '1' },
     url: 'http://localhost:8080/healthz',
     // Never reuse: a stale dev server on :8080 (e.g. a go-run orphan built with
     // the placeholder assets) would silently stand in for the artifact under
