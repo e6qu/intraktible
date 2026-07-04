@@ -70,3 +70,50 @@ test('switches the view persona', async ({ page }) => {
   await page.keyboard.press('Enter');
   await expect(page.locator('html')).toHaveAttribute('data-persona', 'operator');
 });
+
+test('the index spans policies, models, and context entities', async ({ page, request }) => {
+  const KEY = { 'X-Api-Key': 'dev-sandbox-key' };
+  const slug = 'pal-' + Math.random().toString(36).slice(2, 8);
+  const created = await request.post('/v1/flows', {
+    headers: KEY,
+    data: { slug, name: 'PaletteCorpus' }
+  });
+  const { flow_id } = await created.json();
+  await request.post(`/v1/flows/${flow_id}/versions`, {
+    headers: KEY,
+    data: {
+      graph: {
+        nodes: [
+          { id: 'in', type: 'input', position: { x: 0, y: 0 } },
+          { id: 'out', type: 'output', position: { x: 200, y: 0 } }
+        ],
+        edges: [{ from: 'in', to: 'out' }]
+      }
+    }
+  });
+  await request.post('/v1/policies', {
+    headers: KEY,
+    data: { name: `Corpus Policy ${slug}`, flow_slug: slug }
+  });
+  await request.post('/v1/models', {
+    headers: KEY,
+    data: { name: `corpus-${slug}`, spec: { kind: 'expression', expr: '1' } }
+  });
+  await request.post('/v1/context/events', {
+    headers: KEY,
+    data: { entity_type: 'applicant', entity_id: `PAL-${slug}`, event_name: 'login', data: {} }
+  });
+
+  await page.goto('/');
+  await expect(page.getByTestId('cmdk-trigger')).toBeVisible();
+  await page.keyboard.press('ControlOrMeta+k');
+  const box = page.getByRole('combobox', { name: 'Search commands' });
+  await box.fill(`Corpus Policy ${slug}`);
+  await expect(page.getByRole('option', { name: `Corpus Policy ${slug}` })).toBeVisible();
+  await box.fill(`corpus-${slug}`);
+  await expect(page.getByRole('option', { name: `corpus-${slug}` })).toBeVisible();
+  await box.fill(`PAL-${slug}`);
+  await expect(page.getByRole('option', { name: `PAL-${slug}` })).toBeVisible();
+  await page.keyboard.press('Enter');
+  await expect(page).toHaveURL(/\/data\/applicant\/PAL-/);
+});

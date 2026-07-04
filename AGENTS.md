@@ -36,7 +36,9 @@ now fail loudly (DW3 block). A depth round then made the demo a realistically co
 step-by-step in-page guides for every route (59 journeys, coverage-tested), and grew
 docs/JOURNEYS.md to 15 journeys. Depth round 2 drove every DETAIL surface: fixed the drift-strip
 unit bug (demo counts vs the engine's fractional shares), added Sample dataset/sweep buttons to all
-four dataset editors, and deepened discussions/agent outputs/entities (DP2 block).
+four dataset editors, and deepened discussions/agent outputs/entities (DP2 block). Round 3 PERFORMED every journey
+in-browser (all pass), widened the ⌘K index to six collections (removing catch-all fallbacks), and
+ran the first narrow-viewport sweep (DP3 block).
 Roadmap & exit criteria: [PLAN.md §8](PLAN.md#8-phased-roadmap); deferrals tracked in [BUGS.md](BUGS.md).
 Working today: `platform/{eventlog,store,projection,identity,auth,httpx,ai,web,mo}` (`mo` = the
 `Option[T]`/`Result[T]` types used instead of none/null sentinels where they're easy to mishandle;

@@ -4358,6 +4358,9 @@
   }
   .canvas {
     position: relative;
+    /* Clip everything to the board: svelte-flow's edge SVGs extend past the pane
+       and were widening the page at narrow viewports (21px body h-scroll @390px). */
+    overflow: hidden;
     /* Board: the design window is the page's center of gravity — take the viewport
        minus the compact header + tab strip, never less than the old fixed height. */
     height: calc(100vh - 15rem);
