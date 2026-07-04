@@ -141,10 +141,10 @@ export const HELP = new Map<string, PageHelp>([
         {
           name: 'Backtest and what-if a change',
           steps: [
-            'In Backtest, paste a JSON array of inputs into the backtest dataset.',
+            'In Backtest, click Sample dataset for a varied 8-row set from the input schema, or paste your own JSON array.',
             'Optionally set compare version to diff the draft against a published version.',
             'Click Run backtest — read the completed, failed, and changed counts and the per-row Baseline vs Candidate table; nothing is recorded.',
-            'For one input, use What-if: name a field, list the values to try, and click Run what-if to see where the outcome flips.'
+            'For one input, use What-if: click Sample sweep (or name a field and list values yourself), then Run what-if to see where the outcome flips.'
           ]
         },
         {
@@ -158,7 +158,7 @@ export const HELP = new Map<string, PageHelp>([
         {
           name: 'Decide a batch',
           steps: [
-            'In Batch decide, paste a JSON array of input rows (up to 500).',
+            'In Batch decide, click Sample dataset or paste a JSON array of input rows (up to 500).',
             'Click Run batch — every row records a real decision on the environment chosen in Test run.',
             'Read the decided, completed, failed, and rejected counts; open any row’s view link for its trace.',
             'Optionally promote outcomes to standing grants: set Entity type, Key field, and Grant on under Promote to pre-approvals, then click Promote.'
@@ -318,7 +318,7 @@ export const HELP = new Map<string, PageHelp>([
           steps: [
             'Click Add band and fill each rule: a when expression over the flow’s output, a disposition (approve, decline, or refer), and a code + description.',
             'Order matters — the first matching band wins; set the default disposition for when nothing matches.',
-            'Paste a JSON array of input rows into backtest dataset and click Preview impact — nothing is recorded.',
+            'Click Sample dataset (rows that exercise every band) or paste your own JSON array, then Preview impact — nothing is recorded.',
             'Read the draft vs published table: the approve / decline / refer / failed mix and how many rows would change disposition.'
           ]
         },

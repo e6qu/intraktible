@@ -561,16 +561,27 @@ route('POST', '/v1/flows/:id/assertions/run', (m) => {
 route('POST', '/v1/flows/:id/baseline', (m) => {
   const flow = findFlow(m[1]);
   if (!flow) return notFound();
-  const dist: Record<string, number> = { approve: 0, decline: 0, refer: 0 };
+  // Capture SHARES plus the count at capture time, like the real engine's
+  // DistributionOf (Baseline{Approve, Decline, Refer, Total}).
+  const counts = new Map<string, number>([
+    ['approve', 0],
+    ['decline', 0],
+    ['refer', 0]
+  ]);
+  let total = 0;
   for (const d of state.decisions) {
     if (d.flow_id === flow.flow_id && d.disposition) {
-      const cur = Object.entries(dist).find(([k]) => k === d.disposition)?.[1] ?? 0;
-      const mp = new Map(Object.entries(dist));
-      mp.set(d.disposition, cur + 1);
-      Object.assign(dist, Object.fromEntries(mp));
+      counts.set(d.disposition, (counts.get(d.disposition) ?? 0) + 1);
+      total += 1;
     }
   }
-  state.flowBaselines.set(flow.flow_id, dist);
+  const t = total || 1;
+  state.flowBaselines.set(flow.flow_id, {
+    approve: (counts.get('approve') ?? 0) / t,
+    decline: (counts.get('decline') ?? 0) / t,
+    refer: (counts.get('refer') ?? 0) / t,
+    total
+  });
   return ok({});
 });
 route('GET', '/v1/flows/:id/drift', (m) => {

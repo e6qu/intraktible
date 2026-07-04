@@ -288,6 +288,11 @@
 
 <main>
   <p><a href={appHref('/agents')}>← agents</a></p>
+  <div class="row reload-row">
+    <button onclick={load} title="Re-fetch this agent, its runs, and evals"
+      ><Icon name="reload" size={15} /> Reload</button
+    >
+  </div>
   {#if agent}
     <h1>{agent.name}</h1>
     <dl>
@@ -302,10 +307,6 @@
     <h1>{name}</h1>
   {/if}
   {#if error}<p class="err">{error}</p>{/if}
-
-  <div class="row">
-    <button onclick={load}>Reload</button>
-  </div>
 
   {#if agent}
     <section class="actions">
@@ -470,6 +471,10 @@
 </main>
 
 <style>
+  .reload-row {
+    justify-content: flex-end;
+    margin-top: -2.4rem;
+  }
   main {
     max-width: 52rem;
     margin: 2rem auto;

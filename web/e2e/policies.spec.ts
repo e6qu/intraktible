@@ -136,3 +136,49 @@ test('switching policies reloads the discussion thread (not the prior policy)', 
     .click();
   await expect(thread).toContainText('Only-on-alpha note.');
 });
+
+test('policy sample dataset exercises every band', async ({ page, request }) => {
+  const slug = 'pol3-' + Math.random().toString(36).slice(2, 8);
+  const created = await request.post('/v1/flows', {
+    headers: { 'X-Api-Key': KEY },
+    data: { slug, name: 'PolicySamples' }
+  });
+  const { flow_id } = await created.json();
+  await request.post(`/v1/flows/${flow_id}/versions`, {
+    headers: { 'X-Api-Key': KEY },
+    data: {
+      graph: {
+        nodes: [
+          { id: 'in', type: 'input', position: { x: 0, y: 0 } },
+          {
+            id: 'a',
+            type: 'assignment',
+            config: { assignments: [{ target: 'risk', expr: 'score / 10' }] },
+            position: { x: 200, y: 0 }
+          },
+          { id: 'out', type: 'output', position: { x: 400, y: 0 } }
+        ],
+        edges: [
+          { from: 'in', to: 'a' },
+          { from: 'a', to: 'out' }
+        ]
+      }
+    }
+  });
+
+  await page.goto('/policies');
+  await page.getByPlaceholder('policy name').fill('Sample Policy');
+  await page.getByLabel('flow', { exact: true }).selectOption({ label: `PolicySamples (${slug})` });
+  await page.getByRole('button', { name: 'Create policy' }).click();
+  await page.getByRole('button', { name: 'Edit bands' }).first().click();
+  await page.getByRole('button', { name: 'Add band' }).click();
+  await page.getByPlaceholder('when (expr over output)').first().fill('risk < 35');
+
+  await page.getByTestId('sample-impact').click();
+  const rows = JSON.parse(await page.getByLabel('backtest dataset').inputValue());
+  // risk < 35 → rows below, at, and above the 35 threshold.
+  const risks = rows.map((r: { risk: number }) => r.risk);
+  expect(risks.some((v: number) => v < 35)).toBe(true);
+  expect(risks).toContain(35);
+  expect(risks.some((v: number) => v > 35)).toBe(true);
+});

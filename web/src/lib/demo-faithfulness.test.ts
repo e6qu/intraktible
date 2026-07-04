@@ -9,7 +9,7 @@ import { evaluateModel, runFlow, setRollPercent, validateGraph } from './demo/en
 import { TEMPLATES } from './templates';
 import type { Decision, FlowGraph, Model } from './api';
 import { handleDemo } from './demo/router';
-import { setDemoUser, state, USERS, psi } from './demo/store';
+import { driftReportFor, setDemoUser, state, USERS, psi } from './demo/store';
 
 const params = (): URLSearchParams => new URLSearchParams();
 
@@ -945,6 +945,193 @@ describe('seed depth and internal consistency', () => {
     expect(state.notifications.length).toBeGreaterThanOrEqual(10);
     expect(state.notifications.some((n) => n.read)).toBe(true);
     expect(state.notifications.some((n) => !n.read)).toBe(true);
+  });
+});
+
+describe('flow drift speaks in fractional shares, like the real engine', () => {
+  const BASELINED = ['flow_credit', 'flow_aml', 'flow_fraud', 'flow_dispute', 'flow_payout'];
+
+  it('every seeded baseline is shares summing to ~1 with a capture count', () => {
+    for (const id of BASELINED) {
+      const b = state.flowBaselines.get(id);
+      expect(b, `${id} should carry a baseline`).toBeDefined();
+      if (!b) continue;
+      expect(b.approve + b.decline + b.refer, id).toBeCloseTo(1, 2);
+      expect(b.total, id).toBeGreaterThan(0);
+    }
+  });
+
+  it('every bucket share, delta and max_drift is a fraction (|x| ≤ 1)', () => {
+    for (const id of BASELINED) {
+      const rep = driftReportFor(id);
+      expect(rep.has_baseline, id).toBe(true);
+      expect(Math.abs(rep.max_drift), `${id} max_drift`).toBeLessThanOrEqual(1);
+      const buckets = rep.buckets ?? [];
+      expect(buckets.length, id).toBe(3);
+      let baseSum = 0;
+      for (const bk of buckets) {
+        expect(Math.abs(bk.baseline), `${id} ${bk.disposition} baseline`).toBeLessThanOrEqual(1);
+        expect(Math.abs(bk.current), `${id} ${bk.disposition} current`).toBeLessThanOrEqual(1);
+        expect(Math.abs(bk.delta), `${id} ${bk.disposition} delta`).toBeLessThanOrEqual(1);
+        baseSum += bk.baseline;
+      }
+      expect(baseSum, `${id} baseline shares`).toBeCloseTo(1, 2);
+    }
+  });
+
+  it('a captured baseline round-trips as shares with the capture count as total', () => {
+    expect(handleDemo('POST', '/v1/flows/card-fraud/baseline', params(), {}).status).toBe(200);
+    const dispositioned = state.decisions.filter(
+      (d) => d.flow_id === 'flow_fraud' && d.disposition
+    ).length;
+    const rep = driftReportFor('flow_fraud');
+    expect(rep.baseline_total).toBe(dispositioned);
+    const baseSum = (rep.buckets ?? []).reduce((s, bk) => s + bk.baseline, 0);
+    expect(baseSum).toBeCloseTo(1, 2);
+    // A just-captured baseline matches the current distribution: no drift.
+    expect(rep.max_drift).toBeLessThanOrEqual(0.001);
+  });
+});
+
+describe('seeded discussions', () => {
+  it('each suspended decision carries the reviewer note on what the resume waits on', () => {
+    const suspended = state.decisions.filter(
+      (d) => /^dec_\d+$/.test(d.decision_id) && d.status === 'suspended'
+    );
+    expect(suspended.length).toBeGreaterThanOrEqual(3);
+    for (const d of suspended) {
+      const thread = state.comments.get(`decision/${d.decision_id}`) ?? [];
+      expect(thread.length, `${d.decision_id} should carry a comment`).toBeGreaterThanOrEqual(1);
+      expect(thread[0].body.toLowerCase(), d.decision_id).toContain('waiting');
+      expect(
+        USERS.some((u) => u.actor === thread[0].author),
+        `${d.decision_id} author on the roster`
+      ).toBe(true);
+    }
+  });
+
+  it('at least five flows carry multi-participant threads with a reply', () => {
+    const flowThreads = [...state.comments.entries()].filter(([k]) => k.startsWith('flow/'));
+    expect(flowThreads.length).toBeGreaterThanOrEqual(5);
+    for (const [key, thread] of flowThreads) {
+      expect(thread.length, key).toBeGreaterThanOrEqual(2);
+      expect(thread.length, key).toBeLessThanOrEqual(5);
+      expect(new Set(thread.map((c) => c.author)).size, key).toBeGreaterThanOrEqual(2);
+      expect(
+        thread.some((c) => c.parent_id),
+        `${key} should nest a reply`
+      ).toBe(true);
+      const ids = new Set(thread.map((c) => c.comment_id));
+      for (const c of thread) {
+        if (c.parent_id) expect(ids.has(c.parent_id), `${key} reply target`).toBe(true);
+      }
+    }
+  });
+
+  it('decided deployment requests carry exchanges; the rejection is argued', () => {
+    for (const id of ['req_c0', 'req_f0', 'req_cl1']) {
+      const t = state.comments.get(`deployment_request/${id}`) ?? [];
+      expect(t.length, id).toBeGreaterThanOrEqual(2);
+      expect(new Set(t.map((c) => c.author)).size, id).toBeGreaterThanOrEqual(2);
+    }
+    const rejected = state.comments.get('deployment_request/req_cl0') ?? [];
+    expect(rejected.length).toBeGreaterThanOrEqual(3);
+    expect(rejected.some((c) => c.parent_id)).toBe(true);
+  });
+
+  it('one pending request holds an open question awaiting an answer', () => {
+    const t = state.comments.get('deployment_request/req_c1') ?? [];
+    expect(t.length).toBe(1);
+    expect(t[0].body).toContain('?');
+  });
+});
+
+describe('seeded agent run outputs are prompt-specific', () => {
+  it('no two completed seeded runs share the same output text', () => {
+    const seeded = state.agentRuns.filter(
+      (r) => /^run_\d+$/.test(r.run_id) && r.status === 'completed'
+    );
+    expect(seeded.length).toBeGreaterThanOrEqual(25);
+    for (const r of seeded) {
+      expect((r.text ?? '').length, `${r.run_id} output depth`).toBeGreaterThan(40);
+    }
+    const texts = seeded.map((r) => r.text ?? '');
+    expect(new Set(texts).size).toBe(texts.length);
+  });
+
+  it('schema-bearing agents carry structured output shaped like their schema', () => {
+    const schemas = new Map(
+      state.agents
+        .filter((a) => a.schema)
+        .map((a) => [a.name, a.schema as { properties?: Record<string, unknown> }])
+    );
+    const seeded = state.agentRuns.filter(
+      (r) => /^run_\d+$/.test(r.run_id) && r.status === 'completed' && schemas.has(r.agent)
+    );
+    expect(seeded.length).toBeGreaterThanOrEqual(15);
+    for (const r of seeded) {
+      const fields = Object.keys(schemas.get(r.agent)?.properties ?? {});
+      const structured = r.structured as Record<string, unknown> | undefined;
+      expect(structured, `${r.run_id} structured`).toBeDefined();
+      for (const f of fields) {
+        expect(f in (structured ?? {}), `${r.run_id} field ${f}`).toBe(true);
+      }
+    }
+  });
+});
+
+describe('entity store depth and feature consistency', () => {
+  const HEROES: [string, string][] = [
+    ['applicant', 'APP-1001'],
+    ['applicant', 'APP-1007'],
+    ['merchant', 'MER-4400'],
+    ['merchant', 'MER-4515'],
+    ['transaction', 'TXN-9920'],
+    ['customer', 'CUST-7804']
+  ];
+
+  it('hero entities carry rich profiles and 8+ fully-payloaded events', () => {
+    for (const [type, id] of HEROES) {
+      const ent = state.entities.find((e) => e.entity_type === type && e.entity_id === id);
+      expect(ent, id).toBeDefined();
+      expect(Object.keys(ent?.attributes ?? {}).length, `${id} attributes`).toBeGreaterThanOrEqual(
+        6
+      );
+      const events = state.entityEvents.get(`${type}/${id}`) ?? [];
+      expect(events.length, `${id} events`).toBeGreaterThanOrEqual(8);
+      expect(ent?.event_count, `${id} derived count`).toBe(events.length);
+      for (const e of events) {
+        expect(
+          Object.keys(e.data ?? {}).length,
+          `${id} ${e.event_name} payload`
+        ).toBeGreaterThanOrEqual(2);
+      }
+    }
+  });
+
+  it('computed features aggregate the seeded events within their windows', () => {
+    const res = handleDemo('GET', '/v1/context/entities/applicant/APP-1001/features', params(), {});
+    const features = new Map(
+      (res.body as { features: { name: string; value: number }[] }).features.map((f) => [
+        f.name,
+        f.value
+      ])
+    );
+    const events = state.entityEvents.get('applicant/APP-1001') ?? [];
+    const txWithin = (hours: number) =>
+      events.filter(
+        (e) =>
+          e.event_name === 'transaction' &&
+          Date.parse(e.occurred_at) >= Date.now() - hours * 3600_000
+      );
+    expect(features.get('tx_count_30d')).toBe(txWithin(720).length);
+    expect(features.get('tx_count_30d')).toBeGreaterThan(0);
+    const sum7d = txWithin(168).reduce(
+      (s, e) => s + Number((e.data as { amount?: number }).amount ?? 0),
+      0
+    );
+    expect(features.get('tx_sum_7d')).toBe(sum7d);
+    expect(features.get('tx_sum_7d')).toBeGreaterThan(0);
   });
 });
 

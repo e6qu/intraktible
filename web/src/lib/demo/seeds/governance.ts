@@ -1203,104 +1203,259 @@ export interface CommentRec {
   at: string;
 }
 
-export function seedComments(): Map<string, CommentRec[]> {
+export function seedComments(decisions: Decision[]): Map<string, CommentRec[]> {
   const m = new Map<string, CommentRec[]>();
-  const c = (
-    id: string,
+  let n = 0;
+  const thread = (
     type: string,
     subject: string,
-    body: string,
-    author: string,
-    hrs: number,
-    parent?: string
-  ): CommentRec => ({
-    comment_id: id,
-    subject_type: type,
-    subject_id: subject,
-    body,
-    parent_id: parent,
-    author,
-    at: ago(hrs)
-  });
-  m.set('decision/dec_2', [
-    c(
-      'cmt_1',
-      'decision',
-      'dec_2',
-      'Counterparty KYC is stale — flagging for compliance.',
-      LENA,
-      18
-    ),
-    c('cmt_2', 'decision', 'dec_2', 'Agreed, holding the wire pending refresh.', DIEGO, 16, 'cmt_1')
+    comments: { body: string; author: string; hrs: number; reply?: boolean }[]
+  ): void => {
+    const list: CommentRec[] = [];
+    // Replies thread under the latest TOP-LEVEL comment — the single nesting level
+    // the comment UI itself produces (it only offers Reply on top-level comments).
+    let lastTop: string | undefined;
+    for (const cm of comments) {
+      n += 1;
+      const id = `cmt_${n}`;
+      list.push({
+        comment_id: id,
+        subject_type: type,
+        subject_id: subject,
+        body: cm.body,
+        parent_id: cm.reply ? lastTop : undefined,
+        author: cm.author,
+        at: ago(cm.hrs)
+      });
+      if (!cm.reply) lastTop = id;
+    }
+    m.set(`${type}/${subject}`, list);
+  };
+  // The suspended decisions each carry the reviewer's note on what the resume is
+  // waiting on — located from the seeded decisions so the ids can never go stale.
+  const suspendedOf = (slug: string): string => {
+    const d = decisions.find((x) => x.slug === slug && x.status === 'suspended');
+    if (!d) throw new Error(`seed: no suspended decision for ${slug}`);
+    return d.decision_id;
+  };
+
+  thread('decision', 'dec_2', [
+    { body: 'Counterparty KYC is stale — flagging for compliance.', author: LENA, hrs: 18 },
+    { body: 'Agreed, holding the wire pending refresh.', author: DIEGO, hrs: 16, reply: true }
   ]);
-  m.set('case/case_2', [
-    c(
-      'cmt_3',
-      'case',
-      'case_2',
-      'SAR draft started; will attach the narrative agent output.',
-      DIEGO,
-      5
-    ),
-    c('cmt_4', 'case', 'case_2', 'Loop me in before filing.', MARCUS, 4, 'cmt_3')
+  thread('decision', suspendedOf('credit-decision'), [
+    {
+      body: 'Paused at the underwriter review step — waiting on income verification (two recent pay stubs) before I resume; risk sits in the 35–70 refer band.',
+      author: DIEGO,
+      hrs: 1
+    }
   ]);
-  m.set('flow/flow_credit', [
-    c(
-      'cmt_5',
-      'flow',
-      'flow_credit',
-      'v3 adds the live bureau pull + Reg B reason codes — please review before prod.',
-      PRIYA,
-      14
-    )
+  thread('decision', suspendedOf('kyc-onboarding'), [
+    {
+      body: 'Holding at the EDD review — waiting on the certified translation of the registry extract before resuming (identity confidence is below the 60 clearing bar without it).',
+      author: DIEGO,
+      hrs: 3
+    }
   ]);
-  m.set('policy/pol_credit', [
-    c(
-      'cmt_6',
-      'policy',
-      'pol_credit',
-      'Reg B requires specific reasons — LOW_SCORE alone is too generic when DTI drove the decline.',
-      LENA,
-      26
-    ),
-    c(
-      'cmt_7',
-      'policy',
-      'pol_credit',
-      'v2 orders DTI_TOO_HIGH ahead of the band label for exactly that.',
-      MARCUS,
-      24,
-      'cmt_6'
-    )
+  thread('decision', suspendedOf('payout-risk'), [
+    {
+      body: 'Paused at payout ops review — waiting on shipping manifests to reconcile the volume spike before releasing the funds.',
+      author: DIEGO,
+      hrs: 2
+    }
   ]);
-  m.set('policy/pol_claim', [
-    c(
-      'cmt_8',
-      'policy',
-      'pol_claim',
-      'Fast-track cap stays at $200 until the abuse model clears its drift review.',
-      MARCUS,
-      100
-    ),
-    c(
-      'cmt_9',
-      'policy',
-      'pol_claim',
-      'Drift review scheduled — see the MRM row.',
-      PRIYA,
-      96,
-      'cmt_8'
-    )
+  thread('case', 'case_2', [
+    { body: 'SAR draft started; will attach the narrative agent output.', author: DIEGO, hrs: 5 },
+    { body: 'Loop me in before filing.', author: MARCUS, hrs: 4, reply: true }
   ]);
-  m.set('flow/flow_payout', [
-    c(
-      'cmt_10',
-      'flow',
-      'flow_payout',
-      'Matrix auto-releases medium-risk small payouts now — watch the chargeback cohort for two weeks.',
-      PRIYA,
-      50
-    )
+  // Flow discussions: multi-participant threads grounded in each flow's actual
+  // mechanics (versions, reason codes, thresholds), so the Discussion tab reads
+  // like the team that shipped the graphs.
+  thread('flow', 'flow_credit', [
+    {
+      body: 'v3 adds the live bureau pull + Reg B reason codes — please review before prod.',
+      author: PRIYA,
+      hrs: 14
+    },
+    {
+      body: 'Reviewing. The experian connector timed out five times this week — what happens to the run when the pull fails mid-flow?',
+      author: MARCUS,
+      hrs: 11,
+      reply: true
+    },
+    {
+      body: 'The run fails loudly (no silent default score) and the failure-rate monitor catches it — that is the mon_c1 firing you see.',
+      author: PRIYA,
+      hrs: 10,
+      reply: true
+    },
+    {
+      body: 'Confirming the adverse-action wording: DTI_TOO_HIGH must cite the ratio, not the band label — Reg B wants the specific reason.',
+      author: LENA,
+      hrs: 8
+    }
+  ]);
+  thread('flow', 'flow_aml', [
+    {
+      body: 'v3 catches sub-threshold structuring (5+ deposits under $10k in 30 days) that v2 clears — the staging challenger exists to measure exactly that gap.',
+      author: PRIYA,
+      hrs: 19
+    },
+    {
+      body: 'Two of the referrals it added were payroll batches (Hooli again). Can the code node exempt whitelisted recurring corridors before we promote?',
+      author: DIEGO,
+      hrs: 16,
+      reply: true
+    },
+    {
+      body: 'That is what the TXN-9920 pre-approval is for — honored corridors skip the flow entirely, so the heuristic never sees them.',
+      author: PRIYA,
+      hrs: 15,
+      reply: true
+    },
+    {
+      body: 'SAR narrative node pushes p50 latency over the 200ms monitor — expected, the AI call dominates. Alert threshold stays as a forcing function.',
+      author: MARCUS,
+      hrs: 12
+    }
+  ]);
+  thread('flow', 'flow_fraud', [
+    {
+      body: 'v4 runs as a 15% production challenger — same graph, review band tightened to 35 (v3 kept 40 after the Q2 loss review only moved the policy).',
+      author: PRIYA,
+      hrs: 30
+    },
+    {
+      body: 'Block rate is holding under the 15% monitor so far; watching FRAUD_REVIEW referral volume before we widen the arm.',
+      author: DIEGO,
+      hrs: 22,
+      reply: true
+    }
+  ]);
+  thread('flow', 'flow_dispute', [
+    {
+      body: 'v2 adds the reason-code liability table: 10.4 card-absent fraud auto-assigns issuer liability, quality goes to representment scoring.',
+      author: DIEGO,
+      hrs: 36
+    },
+    {
+      body: 'Chargeback season has the refer rate way above the captured baseline — the drift panel is genuinely red, not noise. Baseline recapture after the season?',
+      author: PRIYA,
+      hrs: 28,
+      reply: true
+    },
+    {
+      body: 'Keep the old baseline until the season ends — recapturing now would normalize the anomaly away.',
+      author: LENA,
+      hrs: 24,
+      reply: true
+    }
+  ]);
+  thread('flow', 'flow_payout', [
+    {
+      body: 'Matrix auto-releases medium-risk small payouts now — watch the chargeback cohort for two weeks.',
+      author: PRIYA,
+      hrs: 50
+    },
+    {
+      body: 'Cohort is clean so far (hold rate under the 20% monitor). The 250ms latency breach is the core-banking ledger read, not the matrix.',
+      author: DIEGO,
+      hrs: 26,
+      reply: true
+    },
+    {
+      body: 'MER-4515 fast-lane pre-approval expired last quarter — renewal review is on me before we re-grant the $25k auto-release cap.',
+      author: MARCUS,
+      hrs: 20
+    }
+  ]);
+  thread('policy', 'pol_credit', [
+    {
+      body: 'Reg B requires specific reasons — LOW_SCORE alone is too generic when DTI drove the decline.',
+      author: LENA,
+      hrs: 26
+    },
+    {
+      body: 'v2 orders DTI_TOO_HIGH ahead of the band label for exactly that.',
+      author: MARCUS,
+      hrs: 24,
+      reply: true
+    }
+  ]);
+  thread('policy', 'pol_claim', [
+    {
+      body: 'Fast-track cap stays at $200 until the abuse model clears its drift review.',
+      author: MARCUS,
+      hrs: 100
+    },
+    { body: 'Drift review scheduled — see the MRM row.', author: PRIYA, hrs: 96, reply: true }
+  ]);
+  // Deployment-request approval discussions: the decided requests carry the
+  // exchange that led to the outcome; one pending request holds an open question.
+  thread('deployment_request', 'req_c0', [
+    {
+      body: 'Backtest replayed 400 production decisions through v2 — dispositions match v1 except the intended band shift at risk 30→35.',
+      author: PRIYA,
+      hrs: 199
+    },
+    {
+      body: 'Parity report looks right and the reason codes are Reg B-clean. Approving.',
+      author: MARCUS,
+      hrs: 196,
+      reply: true
+    }
+  ]);
+  thread('deployment_request', 'req_c1', [
+    {
+      body: 'Before I approve: the experian pull failed 5 times this week in staging. What is the blast radius in prod if the bureau has another bad day?',
+      author: MARCUS,
+      hrs: 10
+    }
+  ]);
+  thread('deployment_request', 'req_f0', [
+    {
+      body: 'Q2 losses concentrated in the 35–40 score band v2 was approving — tightening the review band to 35 catches them.',
+      author: PRIYA,
+      hrs: 78
+    },
+    {
+      body: 'Referral volume impact is within what the fraud queue can absorb. Approved.',
+      author: MARCUS,
+      hrs: 74,
+      reply: true
+    }
+  ]);
+  thread('deployment_request', 'req_cl0', [
+    {
+      body: 'Staging backtest: v2 refers 9% more claims than v1. That is the CLAIM_FRAUD_REVIEW band at 55 pulling in seasoned single-claim customers — adjusters cannot absorb it.',
+      author: MARCUS,
+      hrs: 158
+    },
+    {
+      body: 'The extra referrals are exactly the repeat-claimant cohort the abuse model flags — is the volume really the problem?',
+      author: PRIYA,
+      hrs: 157,
+      reply: true
+    },
+    {
+      body: 'Half of them are first claims on mature policies — false positives. Rejecting; re-tune the fraud band and resubmit.',
+      author: MARCUS,
+      hrs: 156,
+      reply: true
+    }
+  ]);
+  thread('deployment_request', 'req_cl1', [
+    {
+      body: 'Fraud band re-tuned to 60: the mature-policy first claims drop out, referral delta is +2% and it is the repeat-claimant cohort we want reviewed.',
+      author: PRIYA,
+      hrs: 125
+    },
+    {
+      body: 'That matches the abuse-model intent. Approved — keep the $200 fast-track cap until the drift review clears.',
+      author: MARCUS,
+      hrs: 121,
+      reply: true
+    }
   ]);
   return m;
 }
@@ -1600,15 +1755,24 @@ export function seedFlowSlos(): Map<string, { success_target: number; latency_ta
   ]);
 }
 
-// Captured disposition baselines: close to the seeded mixes (small PSI) except
-// dispute, whose refer-heavy chargeback season has genuinely drifted from the
-// captured baseline.
-export function seedFlowBaselines(): Map<string, Record<string, number>> {
+// FlowBaseline mirrors the real engine's monitor.Baseline: a captured disposition
+// distribution as SHARES summing to ~1, plus the decision count at capture time.
+export interface FlowBaseline {
+  approve: number;
+  decline: number;
+  refer: number;
+  total: number;
+}
+
+// Captured disposition baselines: shares close to the seeded mixes (small PSI)
+// except dispute, whose refer-heavy chargeback season has genuinely drifted from
+// the captured baseline.
+export function seedFlowBaselines(): Map<string, FlowBaseline> {
   return new Map([
-    ['flow_credit', { approve: 30, decline: 9, refer: 14 }],
-    ['flow_aml', { approve: 55, decline: 0, refer: 27 }],
-    ['flow_fraud', { approve: 78, decline: 11, refer: 22 }],
-    ['flow_dispute', { approve: 28, decline: 0, refer: 14 }],
-    ['flow_payout', { approve: 17, decline: 3, refer: 6 }]
+    ['flow_credit', { approve: 0.566, decline: 0.17, refer: 0.264, total: 53 }],
+    ['flow_aml', { approve: 0.671, decline: 0, refer: 0.329, total: 82 }],
+    ['flow_fraud', { approve: 0.703, decline: 0.099, refer: 0.198, total: 111 }],
+    ['flow_dispute', { approve: 0.667, decline: 0, refer: 0.333, total: 42 }],
+    ['flow_payout', { approve: 0.654, decline: 0.115, refer: 0.231, total: 26 }]
   ]);
 }
