@@ -78,6 +78,10 @@
       '<path d="M12 2a4 4 0 0 1 4 4 4 4 0 0 1 0 8 4 4 0 0 1-8 0 4 4 0 0 1 0-8 4 4 0 0 1 4-4z"/><circle cx="12" cy="10" r="1.5"/>'
     ],
     [
+      'robot',
+      '<rect x="6" y="9" width="12" height="9" rx="2.5"/><path d="M12 9V5.5"/><circle cx="12" cy="4" r="1.2"/><circle cx="9.5" cy="13.5" r="1"/><circle cx="14.5" cy="13.5" r="1"/>'
+    ],
+    [
       'connect',
       '<rect x="3" y="4" width="18" height="6" rx="2"/><rect x="3" y="14" width="18" height="6" rx="2"/><path d="M12 10v4"/>'
     ],

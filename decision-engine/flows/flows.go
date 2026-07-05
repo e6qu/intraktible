@@ -86,6 +86,7 @@ type FlowView struct {
 	FlowID             string                                 `json:"flow_id"`
 	Slug               string                                 `json:"slug"`
 	Name               string                                 `json:"name"`
+	Description        string                                 `json:"description,omitempty"`
 	Latest             int                                    `json:"latest"`
 	Versions           []VersionView                          `json:"versions"`
 	Deployments        map[string]DeploymentView              `json:"deployments,omitempty"`
@@ -114,6 +115,7 @@ func (Projector) Collections() []string { return []string{Collection, slugIndexC
 // dispatch flat — events of other types are simply absent and skipped).
 var flowAppliers = map[string]func(context.Context, eventlog.Envelope, store.Store) error{
 	events.TypeFlowCreated:           applyCreated,
+	events.TypeFlowDetailsSet:        applyDetailsSet,
 	events.TypeFlowVersionPublished:  applyPublished,
 	events.TypeFlowVersionDeployed:   applyDeployed,
 	events.TypeDeploymentRequested:   applyDeploymentRequested,
@@ -254,18 +256,32 @@ func applyCreated(ctx context.Context, e eventlog.Envelope, s store.Store) error
 		return fmt.Errorf("decision_flows: decode created seq %d: %w", e.Seq, err)
 	}
 	fv := FlowView{
-		Org:       e.Org,
-		Workspace: e.Workspace,
-		FlowID:    p.FlowID,
-		Slug:      p.Slug,
-		Name:      p.Name,
-		CreatedAt: e.Time,
-		UpdatedAt: e.Time,
+		Org:         e.Org,
+		Workspace:   e.Workspace,
+		FlowID:      p.FlowID,
+		Slug:        p.Slug,
+		Name:        p.Name,
+		Description: p.Description,
+		CreatedAt:   e.Time,
+		UpdatedAt:   e.Time,
 	}
 	if err := store.PutDoc(ctx, s, Collection, store.Key(e.Org, e.Workspace, p.FlowID), fv); err != nil {
 		return err
 	}
 	return store.PutDoc(ctx, s, slugIndexCollection, store.Key(e.Org, e.Workspace, p.Slug), slugRef{FlowID: p.FlowID})
+}
+
+// applyDetailsSet overwrites the flow's mutable details; the event carries the
+// full resolved values, so no per-field branching is needed here.
+func applyDetailsSet(ctx context.Context, e eventlog.Envelope, s store.Store) error {
+	var p events.FlowDetailsSet
+	if err := json.Unmarshal(e.Payload, &p); err != nil {
+		return fmt.Errorf("decision_flows: decode details_set seq %d: %w", e.Seq, err)
+	}
+	return mutateFlow(ctx, s, e, p.FlowID, func(fv *FlowView) {
+		fv.Name = p.Name
+		fv.Description = p.Description
+	})
 }
 
 func applyPublished(ctx context.Context, e eventlog.Envelope, s store.Store) error {

@@ -615,6 +615,49 @@
             "$ref": "#/components/responses/Error"
           }
         }
+      },
+      "patch": {
+        "tags": [
+          "flows"
+        ],
+        "summary": "Update a flow's details",
+        "description": "Sets a flow's mutable details (name and/or description). PATCH semantics: an absent field is left unchanged. Requires the editor role.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/FlowID"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateFlowRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The flow's resolved details after the update.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpdateFlowResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
       }
     },
     "/v1/flows/import": {
@@ -2004,6 +2047,10 @@
           "name": {
             "type": "string"
           },
+          "description": {
+            "type": "string",
+            "description": "Prose describing what the flow decides."
+          },
           "latest": {
             "type": "integer",
             "description": "The latest published version number."
@@ -2033,6 +2080,40 @@
           },
           "name": {
             "type": "string"
+          },
+          "description": {
+            "type": "string",
+            "description": "Optional prose describing what the flow decides (max 2000 chars)."
+          }
+        }
+      },
+      "UpdateFlowRequest": {
+        "type": "object",
+        "description": "A partial update: an absent field is left unchanged. The slug and version history are immutable.",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "New display name (must be non-empty when present)."
+          },
+          "description": {
+            "type": "string",
+            "description": "New description (max 2000 chars; an empty string clears it)."
+          }
+        }
+      },
+      "UpdateFlowResponse": {
+        "type": "object",
+        "properties": {
+          "flow_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "description": "The resolved display name after the update."
+          },
+          "description": {
+            "type": "string",
+            "description": "The resolved description after the update."
           }
         }
       },

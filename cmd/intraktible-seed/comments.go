@@ -8,6 +8,7 @@ package main
 
 import (
 	"net/http"
+	"net/url"
 	"time"
 )
 
@@ -25,6 +26,10 @@ type threadSeed struct {
 }
 
 func staticID(tag string) func(*seeder) string { return func(s *seeder) string { return s.id(tag) } }
+
+// literalID is for subjects addressed by a stable natural key rather than a
+// seeder-registered id: agent/model names and entity "<type>/<id>" keys.
+func literalID(v string) func(*seeder) string { return func(*seeder) string { return v } }
 
 func flowSubject(slug string) func(*seeder) string {
 	return func(s *seeder) string { return s.flowID(slug) }
@@ -52,6 +57,30 @@ func threadSeeds(bySeed map[string]*decideSlot) []threadSeed {
 			{actorDiego, "SAR draft started; will attach the narrative agent output.", 5, false},
 			{actorMarcus, "Loop me in before filing.", 4, true},
 		}},
+		{"case", staticID("case:globex"), []commentSeed{
+			{actorDiego, "Beneficial owner is a PEP match; the adverse-media sweep is clean so far. Keeping EDD open until the source-of-wealth letter lands.", 50, false},
+			{actorMarcus, "Agreed. If the letter is not in by end of week, escalate to decline per the KYC hard-stop — do not let this age past the SLA.", 46, true},
+		}},
+		{"case", staticID("case:soylent"), []commentSeed{
+			{actorMarcus, "Processing history shows a 1.8% chargeback ratio — above appetite for this MCC tier. Requested six months of statements before boarding.", 16, false},
+			{actorPriya, "The v2 MCC tier adder already prices this: uw_score lands right at the review gate, so this queue is the flow working as designed.", 13, true},
+		}},
+		{"case", staticID("case:wayne-dispute"), []commentSeed{
+			{actorDiego, "Compelling-evidence pack is complete: delivery confirmation plus device history. Filing representment ahead of the network deadline.", 22, false},
+			{actorMarcus, "@lena.hoff for the compliance record: liability stays with the issuer per the 10.4 table until representment resolves.", 20, true},
+		}},
+		{"case", staticID("case:vandelay"), []commentSeed{
+			{actorPriya, "Plan terms come out at 12 months with 0.5 rate relief — above my authority band, needs a supervisor countersign.", 20, false},
+			{actorMarcus, "Countersigned. The income-drop documentation is solid; keep the plan on the program-review watchlist.", 18, true},
+		}},
+		{"case", staticID("case:okafor"), []commentSeed{
+			{actorDiego, "Purchase date verifies against the policy start — outside the lapse window. Waiting on the retailer's serial-number match.", 7, false},
+			{actorMarcus, "The abuse model sits just over the 60 refer band, which is why this queued. Pay only after the serial match clears.", 5, true},
+		}},
+		{"case", staticID("case:hooli-payout"), []commentSeed{
+			{actorDiego, "Holiday-sale explanation checks out against the core-banking ledger: the inflow spike matches order volume and there is no NSF history.", 9, false},
+			{actorPriya, "The staging shadow arm shows v1 would have held this payout too — the matrix is not loosening anything here.", 8, true},
+		}},
 		{"flow", flowSubject("credit-decision"), []commentSeed{
 			{actorPriya, "v3 adds the live bureau pull + Reg B reason codes — please review before prod.", 14, false},
 			{actorMarcus, "Reviewing. What happens to the run when the bureau pull fails mid-flow?", 11, true},
@@ -77,6 +106,22 @@ func threadSeeds(bySeed map[string]*decideSlot) []threadSeed {
 			{actorPriya, "Matrix auto-releases medium-risk small payouts now — watch the chargeback cohort for two weeks.", 50, false},
 			{actorDiego, "Cohort is clean so far (hold rate under the 20% monitor), and the shadow arm shows exactly what v1 would have queued instead.", 26, true},
 			{actorMarcus, "MER-4515 fast-lane pre-approval expired last quarter — renewal review is on me before we re-grant the $25k auto-release cap.", 20, false},
+		}},
+		{"agent", literalID("aml-narrative"), []commentSeed{
+			{actorPriya, "Tightened the system prompt so narratives cite the structuring window (5+ sub-$10k deposits in 30 days) instead of a generic \"suspicious pattern\".", 40, false},
+			{actorMarcus, "The eval set agrees — both SAR drafts I sampled this week cite the exact deposit cadence. Keep the temperature where it is.", 36, true},
+		}},
+		{"agent", literalID("fraud-explainer"), []commentSeed{
+			{actorDiego, "Explanations now name the top drivers (velocity, then device risk) in the right order — the analysts have stopped re-deriving them by hand.", 30, false},
+			{actorPriya, "That came from pinning the driver list to the model's feature contributions, so it cannot editorialize beyond them.", 27, true},
+		}},
+		{"model", literalID("claim_fraud"), []commentSeed{
+			{actorMarcus, "PSI is hovering just under the 0.1 alert threshold — chargeback season again. The drift review stays scheduled; do not recapture the baseline early.", 44, false},
+			{actorPriya, "Agreed. The repeat-claimant cohort is what moved, and recapturing now would normalize exactly the signal the abuse band keys on.", 41, true},
+		}},
+		{"entity", literalID("applicant/APP-1002"), []commentSeed{
+			{actorMarcus, "Cyprus login two weeks after the GBP 50k Sotheby's purchase — the corridor does not match the profile. Holding the risk rating at high.", 28, false},
+			{actorDiego, "Device fingerprint matches his usual Chrome profile, so likely travel — but with that spend in the same window I would keep the rating until the next review.", 24, true},
 		}},
 		{"policy", staticID("policy:credit"), []commentSeed{
 			{actorMarcus, "Reg B requires specific reasons — LOW_SCORE alone is too generic when DTI drove the decline.", 26, false},
@@ -130,8 +175,10 @@ func (s *seeder) commentActions(bySeed map[string]*decideSlot, anchor time.Time)
 					var res struct {
 						CommentID string `json:"comment_id"`
 					}
+					// Escape the subject id: an entity subject is "<type>/<id>", one
+					// path segment on the wire (the web client escapes the same way).
 					s.call(c.author, http.MethodPost,
-						"/v1/comments/"+t.subjectType+"/"+t.subjectID(s), body, &res)
+						"/v1/comments/"+t.subjectType+"/"+url.PathEscape(t.subjectID(s)), body, &res)
 					if !c.reply {
 						*lastTop = res.CommentID
 					}

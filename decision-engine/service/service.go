@@ -82,6 +82,7 @@ func (s *Service) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/flows/import-bundle", s.importBundle)
 	mux.HandleFunc("GET /v1/flows", s.list)
 	mux.HandleFunc("GET /v1/flows/{flow_id}", s.get)
+	mux.HandleFunc("PATCH /v1/flows/{flow_id}", s.update)
 	mux.HandleFunc("GET /v1/flows/{slug}/openapi.json", s.flowOpenAPI)
 	mux.HandleFunc("GET /v1/flows/{flow_id}/metrics", s.metrics)
 	mux.HandleFunc("GET /v1/flows/{flow_id}/slo", s.getSLO)
@@ -338,8 +339,9 @@ func (s *Service) getModel(w http.ResponseWriter, r *http.Request) {
 }
 
 type createRequest struct {
-	Slug string `json:"slug"`
-	Name string `json:"name"`
+	Slug        string `json:"slug"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
 }
 
 func (s *Service) create(w http.ResponseWriter, r *http.Request) {
@@ -352,12 +354,51 @@ func (s *Service) create(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, err)
 		return
 	}
-	flowID, e, err := s.cmd.CreateFlow(r.Context(), id, domain.CreateFlow{Slug: req.Slug, Name: req.Name})
+	flowID, e, err := s.cmd.CreateFlow(r.Context(), id, domain.CreateFlow{Slug: req.Slug, Name: req.Name, Description: req.Description})
 	if err != nil {
 		httpx.Error(w, http.StatusBadRequest, err)
 		return
 	}
 	httpx.JSON(w, http.StatusCreated, map[string]any{"flow_id": flowID, "event_id": e.ID, "seq": e.Seq})
+}
+
+// updateRequest is a PATCH body: a nil field means "leave unchanged", so a
+// caller can set the description without knowing (or re-sending) the name.
+type updateRequest struct {
+	Name        *string `json:"name,omitempty"`
+	Description *string `json:"description,omitempty"`
+}
+
+// update changes a flow's mutable details (name/description). The slug and the
+// version history are immutable and not accepted here.
+func (s *Service) update(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	var req updateRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	// Editing flow details is change-control on the flow, not tied to one
+	// environment — gate it like publish (any grant when grant-restricted).
+	if !s.allowFlowAny(w, r, id, r.PathValue("flow_id")) {
+		return
+	}
+	name, description, e, err := s.cmd.UpdateFlow(r.Context(), id, domain.UpdateFlow{
+		FlowID:      r.PathValue("flow_id"),
+		Name:        req.Name,
+		Description: req.Description,
+	})
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"flow_id": r.PathValue("flow_id"), "name": name, "description": description,
+		"event_id": e.ID, "seq": e.Seq,
+	})
 }
 
 // importRequest is the flow-as-code document — the same shape `…/export`

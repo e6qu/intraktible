@@ -150,3 +150,26 @@ test("operator persona: the 'all' status filter overrides the lens preset", asyn
   await expect(filter).toHaveValue('');
   await expect(page.getByRole('link', { name: `${tag}-done` }).first()).toBeVisible();
 });
+
+test('posts a comment in the case discussion thread', async ({ page, request }) => {
+  const created = await request.post('/v1/cases', {
+    headers: { 'X-Api-Key': KEY },
+    data: { company_name: 'Discussed UI', case_type: 'aml', sla_days: 5 }
+  });
+  expect(created.ok()).toBeTruthy();
+  const { case_id } = await created.json();
+
+  await page.goto(`/cases/${case_id}`);
+  // The discussion sits below the activity trail, distinct from Notes.
+  await expect(page.getByRole('heading', { name: 'Discussion' })).toBeVisible();
+  const thread = page.getByTestId('comment-thread');
+  await thread.getByLabel('new comment').fill('Holding for the registry extract — thoughts?');
+  await thread.getByTestId('post-comment').click();
+  await expect(thread).toContainText('Holding for the registry extract — thoughts?');
+
+  // The comment persists (it is event-sourced, not local state).
+  await page.reload();
+  await expect(page.getByTestId('comment-thread')).toContainText(
+    'Holding for the registry extract — thoughts?'
+  );
+});

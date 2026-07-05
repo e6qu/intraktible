@@ -6,6 +6,7 @@ import {
   sayHello,
   listFlows,
   createFlow,
+  updateFlow,
   decide,
   publishVersion,
   exportFlow,
@@ -513,14 +514,39 @@ describe('flows', () => {
     expect(flows[0].slug).toBe('s');
   });
 
-  it('createFlow posts slug and name', async () => {
+  it('createFlow posts slug and name, omitting a blank description', async () => {
     const fetcher = fetcherReturning(201, { flow_id: 'f1' });
-    const res = await createFlow('k', 'my-flow', 'My Flow', fetcher);
+    const res = await createFlow('k', 'my-flow', 'My Flow', '', fetcher);
     expect(res.flow_id).toBe('f1');
     const [url, init] = fetcher.mock.calls[0];
     expect(url).toBe('/v1/flows');
     expect(init?.method).toBe('POST');
     expect(init?.body).toBe(JSON.stringify({ slug: 'my-flow', name: 'My Flow' }));
+  });
+
+  it('createFlow includes a non-blank description', async () => {
+    const fetcher = fetcherReturning(201, { flow_id: 'f1' });
+    await createFlow('k', 'my-flow', 'My Flow', ' Scores loans. ', fetcher);
+    const [, init] = fetcher.mock.calls[0];
+    expect(init?.body).toBe(
+      JSON.stringify({ slug: 'my-flow', name: 'My Flow', description: 'Scores loans.' })
+    );
+  });
+
+  it('updateFlow PATCHes the description', async () => {
+    const fetcher = fetcherReturning(200, {});
+    await updateFlow('k', 'f1', { description: 'Now with drift checks.' }, fetcher);
+    const [url, init] = fetcher.mock.calls[0];
+    expect(url).toBe('/v1/flows/f1');
+    expect(init?.method).toBe('PATCH');
+    expect(init?.body).toBe(JSON.stringify({ description: 'Now with drift checks.' }));
+  });
+
+  it('updateFlow surfaces the backend error loudly', async () => {
+    const fetcher = fetcherReturning(404, { error: 'flow not found' });
+    await expect(updateFlow('k', 'nope', { description: 'x' }, fetcher)).rejects.toThrow(
+      /flow not found/
+    );
   });
 
   it('publishVersion posts the graph and returns the version', async () => {

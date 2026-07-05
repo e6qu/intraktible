@@ -253,3 +253,16 @@ test('maker-checker four-eyes is enforced across users', async ({ page }) => {
   expect(result.checker).toBe(200); // a different, privileged user succeeds
   expect(result.editor).toBe(403); // below the approver role is refused
 });
+
+// "Export for AI" works against the in-browser backend too: the recorder sits
+// above transport, so the bridged wasm fetch records exactly like native HTTP.
+test('copies the page export for AI from the wasm-served /decisions', async ({ page, context }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await page.goto('decisions');
+  await expect(page.locator('h1, h2').first()).toBeVisible();
+  await page.getByTestId('ai-copy-trigger').click();
+  await expect(page.getByText('Copied for AI')).toBeVisible();
+  const doc = await page.evaluate(() => navigator.clipboard.readText());
+  expect(doc).toContain('## Underlying API calls');
+  expect(doc).toContain('GET /v1/decisions → 200');
+});

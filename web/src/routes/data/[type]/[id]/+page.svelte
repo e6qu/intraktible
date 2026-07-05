@@ -2,6 +2,7 @@
 <script lang="ts">
   import { page } from '$app/stores';
   import { displayEntries } from '$lib/kv';
+  import CommentThread from '$lib/CommentThread.svelte';
   import EmptyState from '$lib/EmptyState.svelte';
   import RelativeTime from '$lib/RelativeTime.svelte';
   import {
@@ -112,6 +113,16 @@
         </ul>
       {/if}
     </section>
+
+    <section>
+      <h2>Discussion</h2>
+      <p class="muted disc-hint">
+        Discuss this entity's data with the team — @mention a colleague to notify them.
+      </p>
+      <!-- Subject key matches the seeder's convention: "<type>/<id>", one escaped
+           path segment on the wire (encodeURIComponent in the API client). -->
+      <CommentThread subjectType="entity" subjectId={`${type}/${id}`} title="Entity discussion" />
+    </section>
   {:else}
     <EmptyState
       icon="database"
@@ -182,6 +193,10 @@
   }
   .muted {
     color: var(--fg-subtle);
+  }
+  .disc-hint {
+    margin: 0.2rem 0 0;
+    font-size: 0.85rem;
   }
   .err {
     color: var(--danger);

@@ -58,6 +58,17 @@ keys minted at boot and swapped via real `/v1/login`). `web/src/lib/demo/` (rout
 seeds/store, ~11k lines) and the Go parity-fixture generator were deleted — the engines are
 physically one, so differential parity tests are obsolete; the e2e-demo suite now drives the wasm
 backend.
+**Flow descriptions landed end-to-end**: `FlowCreated` carries an optional description (legacy events
+decode to ""), `PATCH /v1/flows/{flow_id}` sets name/description via a full-state `FlowDetailsSet`
+event (editor role, publish-style grant gate), the flows read model / create / list / get and the
+OpenAPI spec expose it, and the demo seed gives all 10 flows real descriptions plus discussion
+threads on worked cases, agents (`agent/<name>`), a model (`model/<name>`), and an entity
+(`entity/<type>/<id>` — subject id path-escaped as one segment).
+**Every page exports itself for AI**: the api.ts default fetcher records `{method, path, status}`
+into a per-navigation ring buffer, and "Copy for AI" (header button next to the "?", plus a Copy /
+Download row in the page guide) emits a semi-structured markdown export — the help-registry entry,
+the deduped API calls behind the visit (OpenAPI at `/openapi.json`), and a generic summary of the
+rendered content (outline, table samples, stat chips).
 Roadmap & exit criteria: [PLAN.md §8](PLAN.md#8-phased-roadmap); deferrals tracked in [BUGS.md](BUGS.md).
 Working today: `platform/{eventlog,store,projection,identity,auth,httpx,ai,web,mo}` (`mo` = the
 `Option[T]`/`Result[T]` types used instead of none/null sentinels where they're easy to mishandle;

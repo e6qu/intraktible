@@ -21,6 +21,11 @@ a seeded event log replays at boot) at
 **[e6qu.github.io/intraktible/demo/](https://e6qu.github.io/intraktible/demo/)** — explore every persona
 without signing up. Built and deployed from `web/` by the `pages` workflow.
 
+**AI-readable pages:** every page of the UI exports itself for an AI agent — **Copy for AI** in the
+header (or the page guide's export row) produces a semi-structured markdown document: what the page
+is, the exact REST calls it made this visit (the same `/v1` API serves self-hosted deployments;
+OpenAPI 3.1 at `/openapi.json`), and a summary of its current content.
+
 **Quick start:** `make dev`, then open **http://localhost:5173** and sign in with the dev key
 `dev-sandbox-key`. Everything else is below.
 

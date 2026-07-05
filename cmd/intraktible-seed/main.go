@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"time"
@@ -257,11 +258,31 @@ func spotCheck(srv *server.Server) string {
 	// reads are immediately consistent here.
 	var flows struct {
 		Flows []struct {
-			Slug string `json:"slug"`
+			Slug        string `json:"slug"`
+			Description string `json:"description"`
 		} `json:"flows"`
 	}
 	get("/v1/flows", &flows)
 	requireEq("flows", len(flows.Flows), 10)
+	for _, f := range flows.Flows {
+		if f.Description == "" {
+			fatalf("round trip: flow %s has no description", f.Slug)
+		}
+	}
+
+	// The fixed-key discussion threads (agents/model/entity are addressed by
+	// natural keys, so they are checkable without seed-run ids).
+	comments := func(subjectType, subjectID string) int {
+		var res struct {
+			Comments []json.RawMessage `json:"comments"`
+		}
+		get("/v1/comments/"+subjectType+"/"+url.PathEscape(subjectID), &res)
+		return len(res.Comments)
+	}
+	requireEq("aml-narrative agent comments", comments("agent", "aml-narrative"), 2)
+	requireEq("fraud-explainer agent comments", comments("agent", "fraud-explainer"), 2)
+	requireEq("claim_fraud model comments", comments("model", "claim_fraud"), 2)
+	requireEq("applicant/APP-1002 entity comments", comments("entity", "applicant/APP-1002"), 2)
 
 	var decisions struct {
 		Total int `json:"total"`

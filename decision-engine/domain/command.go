@@ -52,19 +52,58 @@ const (
 // Valid reports whether v is a known variant.
 func (v Variant) Valid() bool { return v == VariantChampion || v == VariantChallenger }
 
-// CreateFlow is the command to register a new flow.
+// maxDescription caps a flow description: it is prose for the flow list/detail
+// surfaces, not a document store.
+const maxDescription = 2000
+
+// CreateFlow is the command to register a new flow. Description is optional.
 type CreateFlow struct {
-	Slug string
-	Name string
+	Slug        string
+	Name        string
+	Description string
 }
 
-// Validate fails loudly on a malformed slug or empty name.
+// Validate fails loudly on a malformed slug, empty name, or oversized description.
 func (c CreateFlow) Validate() error {
 	if !slugPattern.MatchString(c.Slug) {
 		return fmt.Errorf("decision-engine: invalid slug %q (lowercase letters, digits, hyphens)", c.Slug)
 	}
 	if strings.TrimSpace(c.Name) == "" {
 		return errors.New("decision-engine: flow name is required")
+	}
+	return validDescription(c.Description)
+}
+
+// UpdateFlow is the command to change a flow's mutable details. Nil means
+// "leave unchanged" (PATCH semantics); the slug is immutable by design (it is
+// the decide-path identifier).
+type UpdateFlow struct {
+	FlowID      string
+	Name        *string
+	Description *string
+}
+
+// Validate requires a target flow, at least one field to change, a non-empty
+// name when one is supplied, and a bounded description.
+func (c UpdateFlow) Validate() error {
+	if strings.TrimSpace(c.FlowID) == "" {
+		return errors.New("decision-engine: flow_id is required")
+	}
+	if c.Name == nil && c.Description == nil {
+		return errors.New("decision-engine: nothing to update (set name and/or description)")
+	}
+	if c.Name != nil && strings.TrimSpace(*c.Name) == "" {
+		return errors.New("decision-engine: flow name is required")
+	}
+	if c.Description != nil {
+		return validDescription(*c.Description)
+	}
+	return nil
+}
+
+func validDescription(d string) error {
+	if len(d) > maxDescription {
+		return fmt.Errorf("decision-engine: description too long (%d > %d)", len(d), maxDescription)
 	}
 	return nil
 }

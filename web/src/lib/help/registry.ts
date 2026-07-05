@@ -10,6 +10,8 @@
 //    /login is the sole journey-less exception (a single form, nothing to walk).
 //  - present tense, second person, no praise adjectives or marketing.
 //  - name real on-screen controls/statuses so the guide maps 1:1 to the UI.
+//  - every page also exports itself for AI (Copy for AI in the header / guide
+//    panel): the entry here is the export's "what this page is" source of truth.
 // A coverage/caps test (help.test.ts) enforces these bounds.
 import type { PageHelp } from './types';
 
@@ -25,7 +27,8 @@ export const HELP = new Map<string, PageHelp>([
       capabilities: [
         'See at-a-glance health: decisions, cases needing review, agent runs, live flows.',
         'Jump to the surfaces that matter to your role.',
-        'Switch persona (the whole UI re-prioritises) from the account menu.'
+        'Switch persona (the whole UI re-prioritises) from the account menu.',
+        'Export any page for AI — Copy for AI in the header (or the page guide) produces a machine-readable summary: what the page is, its underlying API calls, and its current content.'
       ],
       journeys: [
         {
@@ -55,14 +58,15 @@ export const HELP = new Map<string, PageHelp>([
         'The catalogue of decision flows. Each flow is versioned and deployed per environment.',
       capabilities: [
         'Create a flow from scratch, from a template, from an AI draft, or import one as code.',
-        'See each flow’s latest version and what is deployed to sandbox and production.',
+        'See each flow’s latest version, its description, and what is deployed to sandbox and production.',
         'Open a flow to build, version, test, and deploy it.'
       ],
       journeys: [
         {
           name: 'Start a flow from scratch',
           steps: [
-            'Enter a Slug (for example loan-origination) and a Name, then click Create flow.',
+            'Enter a Slug (for example loan-origination), a Name, and an optional Description — it shows under the name in the list and in the builder.',
+            'Click Create flow.',
             'You land in the builder — add nodes from the left rail and wire them input → output.',
             'Click Publish version to create v1.'
           ]
@@ -114,7 +118,8 @@ export const HELP = new Map<string, PageHelp>([
         'Test-run, backtest, what-if, assert, and batch-decide from the Test & analyze tab.',
         'Publish the draft as a new immutable version; diff any two versions.',
         'Deploy per environment, promote to production with four-eyes review, or roll back.',
-        'Watch the flow with monitors and webhooks; draft logic with the copilot.'
+        'Watch the flow with monitors and webhooks; draft logic with the copilot.',
+        'Edit the flow description inline (the ✎ under the title); click the circled robot for Analyze this flow with AI.'
       ],
       journeys: [
         {
@@ -193,7 +198,8 @@ export const HELP = new Map<string, PageHelp>([
         {
           name: 'Draft logic with the copilot',
           steps: [
-            'Open the Copilot tab.',
+            'For a one-click readout, click the circled robot button by the flow title — Analyze this flow with AI — and read the panel that opens under the header.',
+            'For more, open the Copilot tab.',
             'Click Explain this flow for a plain-language readout, or describe the logic you want in the prompt.',
             'Click Suggest logic for advice, or Generate & apply a flow to load a server-validated graph onto the canvas.',
             'Review the generated draft, then click Publish version to keep it.'
@@ -421,7 +427,8 @@ export const HELP = new Map<string, PageHelp>([
       capabilities: [
         'See the entity’s attributes.',
         'Review its recorded events.',
-        'See the current value of each feature for this entity.'
+        'See the current value of each feature for this entity.',
+        'Discuss the entity’s data with the team — @mentions notify.'
       ],
       journeys: [
         {
@@ -429,7 +436,8 @@ export const HELP = new Map<string, PageHelp>([
           steps: [
             'Read Attributes — stored key/values that accrue as decisions and events reference the entity.',
             'Check Computed features — the current value of each defined feature for this entity.',
-            'Walk the Event timeline to see the raw events those features aggregate.'
+            'Walk the Event timeline to see the raw events those features aggregate.',
+            'Raise anything odd in Discussion — @mention a teammate to notify them.'
           ]
         }
       ]
@@ -494,7 +502,8 @@ export const HELP = new Map<string, PageHelp>([
       capabilities: [
         'Read the decision context and open the source decision.',
         'Assign the case and record notes.',
-        'Set the status; resolve it when the review is done.'
+        'Set the status; resolve it when the review is done.',
+        'Discuss the case with the team — @mentions notify; Notes stay the immutable work record.'
       ],
       journeys: [
         {
@@ -511,7 +520,8 @@ export const HELP = new Map<string, PageHelp>([
           steps: [
             'Read Notes for the reviewer commentary, with authors and times.',
             'Read Activity — an immutable timeline of every action on the case with its actor.',
-            'Follow source decision to replay the run that opened the case.'
+            'Follow source decision to replay the run that opened the case.',
+            'Use Discussion under Activity to collaborate — @mention a teammate to notify them.'
           ]
         }
       ]
@@ -558,7 +568,8 @@ export const HELP = new Map<string, PageHelp>([
       capabilities: [
         'Run the agent (request/response or streamed) and see the output.',
         'Review past runs and escalate one to a case for human review.',
-        'See the version history and the eval pass-rate.'
+        'See the version history and the eval pass-rate.',
+        'Discuss prompt, tool, and eval changes in the Discussion thread — @mentions notify.'
       ],
       journeys: [
         {
@@ -597,7 +608,8 @@ export const HELP = new Map<string, PageHelp>([
       capabilities: [
         'Define a model from a spec.',
         'See each model’s owner and drift status at a glance.',
-        'Capture a baseline and set a drift (PSI) monitor per model.'
+        'Capture a baseline and set a drift (PSI) monitor per model.',
+        'Open Discuss on a model’s row to coordinate changes — @mentions notify.'
       ],
       journeys: [
         {

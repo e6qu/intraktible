@@ -2,7 +2,9 @@
 
 // API client for the intraktible backend. Functions take an injectable fetcher
 // so they are unit-testable without a browser, and fail loudly on non-2xx
-// responses rather than returning partial/empty data.
+// responses rather than returning partial/empty data. The default fetcher is
+// recordingFetch below, which also logs {method, path, status} into the
+// per-navigation recorder that feeds each page's "Export for AI" document.
 
 // --- Domain enums (string-literal unions) ---------------------------------------
 // The closed enums that mirror Go one-to-one are GENERATED from the Go consts
@@ -48,6 +50,20 @@ export type {
   MonitorMetric
 } from './enums.generated';
 export { ENVIRONMENTS, MONITOR_METRICS, AGGREGATIONS, ROLES, SCOPES } from './enums.generated';
+import { record } from './recorder';
+
+// recordingFetch is the default fetcher for every function in this module: it
+// forwards to the global fetch (resolved at call time, so the wasm demo's
+// bridged fetch is included) and records the call for the page's "Export for
+// AI" document. Tests that inject their own fetcher bypass it, by design.
+export const recordingFetch: typeof fetch = async (input, init) => {
+  const res = await fetch(input, init);
+  const raw = input instanceof Request ? input.url : String(input);
+  const method = (init?.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase();
+  // The base is irrelevant — only the pathname is recorded (no host, no query).
+  record({ method, path: new URL(raw, 'http://api').pathname, status: res.status });
+  return res;
+};
 
 // Composite / UI-only unions that build on the generated ones (not a 1:1 Go enum):
 // a recorded decision is 'started' until its terminal event projects (the history
@@ -88,7 +104,10 @@ function authHeaders(key: string): Record<string, string> {
   return h;
 }
 
-export async function getStats(key: string, fetcher: typeof fetch = fetch): Promise<HelloStats> {
+export async function getStats(
+  key: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<HelloStats> {
   const res = await fetcher('/v1/hello/stats', { headers: authHeaders(key) });
   if (!res.ok) {
     return errorOrStatus(res, `GET /v1/hello/stats failed`);
@@ -99,7 +118,7 @@ export async function getStats(key: string, fetcher: typeof fetch = fetch): Prom
 export async function sayHello(
   key: string,
   name: string,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<SayHelloResult> {
   const res = await fetcher('/v1/hello', {
     method: 'POST',
@@ -173,6 +192,7 @@ export interface Flow {
   flow_id: string;
   slug: string;
   name: string;
+  description?: string;
   latest: number;
   versions: FlowVersion[];
   deployments?: Record<string, DeploymentView>;
@@ -201,7 +221,10 @@ function normalizeFlow(f: Flow): Flow {
   return { ...f, versions: f.versions ?? [] };
 }
 
-export async function listFlows(key: string, fetcher: typeof fetch = fetch): Promise<Flow[]> {
+export async function listFlows(
+  key: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<Flow[]> {
   const res = await fetcher('/v1/flows', { headers: authHeaders(key) });
   if (!res.ok) {
     return errorOrStatus(res, `GET /v1/flows failed`);
@@ -214,12 +237,18 @@ export async function createFlow(
   key: string,
   slug: string,
   name: string,
-  fetcher: typeof fetch = fetch
+  description = '',
+  fetcher: typeof fetch = recordingFetch
 ): Promise<{ flow_id: string }> {
+  // description is optional on the wire — omit it entirely when blank rather
+  // than sending an empty string.
+  const body = description.trim()
+    ? { slug, name, description: description.trim() }
+    : { slug, name };
   const res = await fetcher('/v1/flows', {
     method: 'POST',
     headers: jsonHeaders(key),
-    body: JSON.stringify({ slug, name })
+    body: JSON.stringify(body)
   });
   if (!res.ok) {
     return errorOrStatus(res, `POST /v1/flows failed`);
@@ -227,10 +256,27 @@ export async function createFlow(
   return (await res.json()) as { flow_id: string };
 }
 
+// updateFlow patches a flow's mutable metadata (today: the description).
+export async function updateFlow(
+  key: string,
+  flowId: string,
+  patch: { description: string },
+  fetcher: typeof fetch = recordingFetch
+): Promise<void> {
+  const res = await fetcher(`/v1/flows/${flowId}`, {
+    method: 'PATCH',
+    headers: jsonHeaders(key),
+    body: JSON.stringify(patch)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, `PATCH /v1/flows/${flowId} failed`);
+  }
+}
+
 export async function getFlow(
   key: string,
   flowId: string,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<Flow> {
   const res = await fetcher(`/v1/flows/${flowId}`, { headers: authHeaders(key) });
   if (!res.ok) {
@@ -247,7 +293,7 @@ export async function exportFlow(
   key: string,
   flowId: string,
   format: ExportFormat,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<string> {
   const res = await fetcher(`/v1/flows/${flowId}/export?format=${format}`, {
     headers: authHeaders(key)
@@ -274,7 +320,7 @@ export interface FlowImportResult {
 export async function importFlow(
   key: string,
   doc: unknown,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<FlowImportResult> {
   const res = await fetcher('/v1/flows/import', {
     method: 'POST',
@@ -309,7 +355,7 @@ export interface FlowBundleImport {
 export async function importFlowBundle(
   key: string,
   bundle: unknown,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<FlowBundleImport> {
   const res = await fetcher('/v1/flows/import-bundle', {
     method: 'POST',
@@ -330,7 +376,7 @@ export async function exportDecision(
   key: string,
   decisionId: string,
   format: RunExportFormat = 'mermaid',
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<string> {
   const res = await fetcher(`/v1/decisions/${decisionId}/export?format=${format}`, {
     headers: authHeaders(key)
@@ -378,7 +424,7 @@ export interface Decision {
 
 export async function listDecisions(
   key: string,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<Decision[]> {
   const res = await fetcher('/v1/decisions', { headers: authHeaders(key) });
   if (!res.ok) {
@@ -412,7 +458,7 @@ export interface DecisionPage {
 export async function listDecisionsPage(
   key: string,
   filter: DecisionFilter = {},
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<DecisionPage> {
   const qs = new URLSearchParams();
   for (const [k, v] of Object.entries(filter)) {
@@ -435,7 +481,7 @@ export async function listDecisionsPage(
 export async function getDecision(
   key: string,
   id: string,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<Decision> {
   const res = await fetcher(`/v1/decisions/${id}`, { headers: authHeaders(key) });
   if (!res.ok) {
@@ -450,7 +496,7 @@ export async function resumeDecision(
   key: string,
   id: string,
   outcome: Record<string, unknown>,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<{ decision_id: string; status: RunStatus; disposition?: Disposition }> {
   const res = await fetcher(`/v1/decisions/${id}/resume`, {
     method: 'POST',
@@ -489,7 +535,7 @@ export interface FlowMetrics {
 export async function getFlowMetrics(
   key: string,
   flowId: string,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<FlowMetrics> {
   const res = await fetcher(`/v1/flows/${flowId}/metrics`, { headers: authHeaders(key) });
   if (!res.ok) {
@@ -523,7 +569,7 @@ export interface SLOResponse {
 export async function getFlowSLO(
   key: string,
   flowId: string,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<SLOResponse> {
   const res = await fetcher(`/v1/flows/${flowId}/slo`, { headers: authHeaders(key) });
   if (!res.ok) {
@@ -536,7 +582,7 @@ export async function putFlowSLO(
   key: string,
   flowId: string,
   slo: SLOConfig,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<void> {
   const res = await fetcher(`/v1/flows/${flowId}/slo`, {
     method: 'PUT',
@@ -567,7 +613,7 @@ export interface Monitor {
 export async function listMonitors(
   key: string,
   flowId: string,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<Monitor[]> {
   const res = await fetcher(`/v1/flows/${flowId}/monitors`, { headers: authHeaders(key) });
   if (!res.ok) {
@@ -580,7 +626,7 @@ export async function defineMonitor(
   key: string,
   flowId: string,
   body: { metric: MonitorMetric; op: MonitorOp; threshold: number; description?: string },
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<{ monitor_id: string }> {
   const res = await fetcher(`/v1/flows/${flowId}/monitors`, {
     method: 'POST',
@@ -597,7 +643,7 @@ export async function deleteMonitor(
   key: string,
   flowId: string,
   monitorId: string,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<void> {
   const res = await fetcher(`/v1/flows/${flowId}/monitors/${monitorId}`, {
     method: 'DELETE',
@@ -637,7 +683,7 @@ export interface MonitorCheck {
 export async function checkMonitors(
   key: string,
   flowId: string,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<MonitorCheck> {
   const res = await fetcher(`/v1/flows/${flowId}/monitors/check`, {
     method: 'POST',
@@ -674,7 +720,7 @@ export interface AssertionReport {
 export async function getAssertions(
   key: string,
   flowId: string,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<AssertionCase[]> {
   const res = await fetcher(`/v1/flows/${flowId}/assertions`, { headers: authHeaders(key) });
   if (!res.ok) {
@@ -687,7 +733,7 @@ export async function setAssertions(
   key: string,
   flowId: string,
   cases: AssertionCase[],
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<void> {
   const res = await fetcher(`/v1/flows/${flowId}/assertions`, {
     method: 'PUT',
@@ -702,7 +748,7 @@ export async function setAssertions(
 export async function runAssertions(
   key: string,
   flowId: string,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<AssertionReport> {
   const res = await fetcher(`/v1/flows/${flowId}/assertions/run`, {
     method: 'POST',
@@ -737,7 +783,7 @@ export interface DriftReport {
 export async function captureBaseline(
   key: string,
   flowId: string,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<void> {
   const res = await fetcher(`/v1/flows/${flowId}/baseline`, {
     method: 'POST',
@@ -751,7 +797,7 @@ export async function captureBaseline(
 export async function getDrift(
   key: string,
   flowId: string,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<DriftReport> {
   const res = await fetcher(`/v1/flows/${flowId}/drift`, { headers: authHeaders(key) });
   if (!res.ok) {
@@ -775,7 +821,10 @@ export interface Webhook {
   created_at: string;
 }
 
-export async function listWebhooks(key: string, fetcher: typeof fetch = fetch): Promise<Webhook[]> {
+export async function listWebhooks(
+  key: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<Webhook[]> {
   const res = await fetcher('/v1/webhooks', { headers: authHeaders(key) });
   if (!res.ok) {
     return errorOrStatus(res, 'GET /v1/webhooks');
@@ -788,7 +837,7 @@ export async function subscribeWebhook(
   url: string,
   note: string,
   opts: { template?: string; events?: string[] } = {},
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<{ webhook_id: string }> {
   const res = await fetcher('/v1/webhooks', {
     method: 'POST',
@@ -809,7 +858,7 @@ export async function subscribeWebhook(
 export async function deleteWebhook(
   key: string,
   webhookId: string,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<void> {
   const res = await fetcher(`/v1/webhooks/${webhookId}`, {
     method: 'DELETE',
@@ -849,7 +898,10 @@ export interface Policy {
   updated_at?: string;
 }
 
-export async function listPolicies(key: string, fetcher: typeof fetch = fetch): Promise<Policy[]> {
+export async function listPolicies(
+  key: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<Policy[]> {
   const res = await fetcher('/v1/policies', { headers: authHeaders(key) });
   if (!res.ok) {
     return errorOrStatus(res, 'GET /v1/policies');
@@ -860,7 +912,7 @@ export async function listPolicies(key: string, fetcher: typeof fetch = fetch): 
 export async function createPolicy(
   key: string,
   body: { name: string; flow_slug: string },
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<{ policy_id: string }> {
   const res = await fetcher('/v1/policies', {
     method: 'POST',
@@ -877,7 +929,7 @@ export async function publishPolicy(
   key: string,
   policyId: string,
   spec: PolicySpec,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<{ version: number; etag: string }> {
   const res = await fetcher(`/v1/policies/${policyId}/versions`, {
     method: 'POST',
@@ -918,7 +970,7 @@ export async function policyBacktest(
     flow_version?: number;
     dataset: Record<string, unknown>[];
   },
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<PolicyBacktestReport> {
   const res = await fetcher(`/v1/policies/${policyId}/backtest`, {
     method: 'POST',
@@ -962,7 +1014,7 @@ export interface GrantPreApproval {
 
 export async function listPreApprovals(
   key: string,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<PreApproval[]> {
   const res = await fetcher('/v1/preapprovals', { headers: authHeaders(key) });
   if (!res.ok) {
@@ -974,7 +1026,7 @@ export async function listPreApprovals(
 export async function grantPreApproval(
   key: string,
   body: GrantPreApproval,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<{ preapproval_id: string }> {
   const res = await fetcher('/v1/preapprovals', {
     method: 'POST',
@@ -992,7 +1044,7 @@ export async function revokePreApproval(
   entityType: string,
   entityId: string,
   reason: string,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<void> {
   const res = await fetcher(
     `/v1/preapprovals/${encodeURIComponent(entityType)}/${encodeURIComponent(entityId)}/revoke`,
@@ -1037,7 +1089,7 @@ export async function backtestFlow(
   key: string,
   flowId: string,
   body: { version?: number; compare_version?: number; dataset: Record<string, unknown>[] },
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<BacktestReport> {
   const res = await fetcher(`/v1/flows/${flowId}/backtest`, {
     method: 'POST',
@@ -1071,7 +1123,7 @@ export async function whatif(
   key: string,
   flowId: string,
   body: { base: Record<string, unknown>; field: string; values: unknown[]; version?: number },
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<SweepReport> {
   const res = await fetcher(`/v1/flows/${flowId}/whatif`, {
     method: 'POST',
@@ -1089,7 +1141,7 @@ export async function publishVersion(
   flowId: string,
   graph: FlowGraph,
   inputSchema?: unknown,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<{ version: number; etag: string; published?: boolean }> {
   const body = inputSchema === undefined ? { graph } : { graph, input_schema: inputSchema };
   const res = await fetcher(`/v1/flows/${flowId}/versions`, {
@@ -1118,7 +1170,7 @@ export async function deployVersion(
   key: string,
   flowId: string,
   body: DeployInput,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<void> {
   const res = await fetcher(`/v1/flows/${flowId}/deployments`, {
     method: 'POST',
@@ -1136,7 +1188,7 @@ export async function rollbackDeploy(
   key: string,
   flowId: string,
   environment: string,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<void> {
   const res = await fetcher(`/v1/flows/${flowId}/deployments/rollback`, {
     method: 'POST',
@@ -1166,7 +1218,7 @@ export async function scheduleDeploy(
   key: string,
   flowId: string,
   body: { environment: string; version: number; at: string; until?: string },
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<{ schedule_id: string }> {
   const res = await fetcher(`/v1/flows/${flowId}/deployments/schedule`, {
     method: 'POST',
@@ -1182,7 +1234,7 @@ export async function scheduleDeploy(
 export async function listSchedules(
   key: string,
   flowId: string,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<ScheduledDeploy[]> {
   const res = await fetcher(`/v1/flows/${flowId}/deployments/schedules`, {
     headers: authHeaders(key)
@@ -1197,7 +1249,7 @@ export async function cancelSchedule(
   key: string,
   flowId: string,
   scheduleId: string,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<void> {
   const res = await fetcher(`/v1/flows/${flowId}/deployments/schedules/${scheduleId}`, {
     method: 'DELETE',
@@ -1220,7 +1272,7 @@ export interface FlowGrant {
 export async function listGrants(
   key: string,
   flowId: string,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<FlowGrant[]> {
   const res = await fetcher(`/v1/flows/${flowId}/grants`, { headers: authHeaders(key) });
   if (!res.ok) {
@@ -1234,7 +1286,7 @@ export async function addGrant(
   flowId: string,
   actor: string,
   environment: string,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<{ grant_id: string }> {
   const res = await fetcher(`/v1/flows/${flowId}/grants`, {
     method: 'POST',
@@ -1251,7 +1303,7 @@ export async function revokeGrant(
   key: string,
   flowId: string,
   grantId: string,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<void> {
   const res = await fetcher(`/v1/flows/${flowId}/grants/${grantId}`, {
     method: 'DELETE',
@@ -1270,7 +1322,7 @@ export async function promoteFlow(
   from: string,
   to: string,
   force = false,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<{ promoted: boolean; pending?: boolean; request_id?: string; version: number }> {
   const res = await fetcher(`/v1/flows/${flowId}/promote`, {
     method: 'POST',
@@ -1292,7 +1344,7 @@ export async function setPromotionPolicy(
   key: string,
   flowId: string,
   policy: Record<string, Partial<PromotionStagePolicy>>,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<Record<string, PromotionStagePolicy>> {
   const res = await fetcher(`/v1/flows/${flowId}/promotion-policy`, {
     method: 'PUT',
@@ -1324,7 +1376,7 @@ export interface ShadowState {
 export async function getShadow(
   key: string,
   flowId: string,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<ShadowState> {
   const res = await fetcher(`/v1/flows/${flowId}/shadow`, { headers: authHeaders(key) });
   if (!res.ok) {
@@ -1340,7 +1392,7 @@ export async function setShadow(
   flowId: string,
   environment: string,
   version: number,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<void> {
   const res = await fetcher(`/v1/flows/${flowId}/shadow`, {
     method: 'PUT',
@@ -1357,7 +1409,7 @@ export async function requestDeployment(
   key: string,
   flowId: string,
   body: DeployInput,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<{ request_id: string }> {
   const res = await fetcher(`/v1/flows/${flowId}/deployment-requests`, {
     method: 'POST',
@@ -1377,7 +1429,7 @@ export async function approveDeployment(
   flowId: string,
   reqId: string,
   reason = '',
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<void> {
   const res = await fetcher(`/v1/flows/${flowId}/deployment-requests/${reqId}/approve`, {
     method: 'POST',
@@ -1395,7 +1447,7 @@ export async function rejectDeployment(
   flowId: string,
   reqId: string,
   reason: string,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<void> {
   const res = await fetcher(`/v1/flows/${flowId}/deployment-requests/${reqId}/reject`, {
     method: 'POST',
@@ -1420,7 +1472,7 @@ export async function decide(
   env: string,
   data: Record<string, unknown>,
   entity?: EntityRef,
-  fetcher: typeof fetch = fetch,
+  fetcher: typeof fetch = recordingFetch,
   // preview runs the flow WITHOUT recording a decision (no history/metrics/audit) —
   // used by the builder's test run. The result then carries no decision_id.
   preview = false
@@ -1467,7 +1519,7 @@ export async function batchDecide(
   env: string,
   dataset: Record<string, unknown>[],
   entity?: EntityRef,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<BatchReport> {
   const body: Record<string, unknown> = { dataset };
   if (entity?.type && entity?.id) {
@@ -1522,7 +1574,7 @@ export async function preapproveBatch(
     valid_days: number;
     note?: string;
   },
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<PreApproveBatchReport> {
   const res = await fetcher(`/v1/flows/${slug}/${env}/preapprove/batch`, {
     method: 'POST',
@@ -1642,7 +1694,7 @@ export function auditQuery(filter: AuditFilter): string {
 export async function listAudit(
   key: string,
   filter: AuditFilter = {},
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<AuditEntry[]> {
   return (await listAuditPage(key, filter, fetcher)).entries;
 }
@@ -1651,7 +1703,7 @@ export async function listAudit(
 export async function listAuditPage(
   key: string,
   filter: AuditFilter = {},
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<AuditPage> {
   const res = await fetcher(`/v1/audit${auditQuery(filter)}`, { headers: authHeaders(key) });
   if (!res.ok) {
@@ -1676,7 +1728,7 @@ export function auditExportUrl(filter: AuditFilter = {}): string {
 export async function auditCsvText(
   key: string,
   filter: AuditFilter = {},
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<string> {
   const res = await fetcher(auditExportUrl(filter), { headers: authHeaders(key) });
   if (!res.ok) {
@@ -1699,7 +1751,7 @@ export async function listComments(
   key: string,
   subjectType: string,
   subjectId: string,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<Comment[]> {
   const res = await fetcher(`/v1/comments/${subjectType}/${encodeURIComponent(subjectId)}`, {
     headers: authHeaders(key)
@@ -1716,7 +1768,7 @@ export async function postComment(
   subjectId: string,
   body: string,
   parentId = '',
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<{ comment_id: string }> {
   const res = await fetcher(`/v1/comments/${subjectType}/${encodeURIComponent(subjectId)}`, {
     method: 'POST',
@@ -1743,7 +1795,7 @@ export interface Notification {
 
 export async function listNotifications(
   key: string,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<Notification[]> {
   const res = await fetcher('/v1/notifications', { headers: authHeaders(key) });
   if (!res.ok) {
@@ -1755,7 +1807,7 @@ export async function listNotifications(
 export async function markNotificationRead(
   key: string,
   notificationId: string,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<void> {
   const res = await fetcher(`/v1/notifications/${encodeURIComponent(notificationId)}/read`, {
     method: 'POST',
@@ -1774,7 +1826,7 @@ export interface PrivacyConfig {
 
 export async function getPrivacy(
   key: string,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<PrivacyConfig> {
   const res = await fetcher('/v1/privacy', { headers: authHeaders(key) });
   if (!res.ok) {
@@ -1786,7 +1838,7 @@ export async function getPrivacy(
 export async function setPrivacy(
   key: string,
   fields: string[],
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<void> {
   const res = await fetcher('/v1/privacy', {
     method: 'PUT',
@@ -1821,7 +1873,7 @@ export interface CreateApiKeyRequest {
 
 export async function listApiKeys(
   key: string,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<ManagedApiKey[]> {
   const res = await fetcher('/v1/api-keys', { headers: authHeaders(key) });
   if (!res.ok) {
@@ -1835,7 +1887,7 @@ export async function listApiKeys(
 export async function createApiKey(
   key: string,
   req: CreateApiKeyRequest,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<{ api_key: ManagedApiKey; secret: string }> {
   const res = await fetcher('/v1/api-keys', {
     method: 'POST',
@@ -1855,7 +1907,7 @@ export async function rotateApiKey(
   key: string,
   id: string,
   graceSeconds = 0,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<{ api_key: ManagedApiKey; secret: string }> {
   const res = await fetcher(`/v1/api-keys/${encodeURIComponent(id)}/rotate`, {
     method: 'POST',
@@ -1871,7 +1923,7 @@ export async function rotateApiKey(
 export async function revokeApiKey(
   key: string,
   id: string,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<ManagedApiKey> {
   const res = await fetcher(`/v1/api-keys/${encodeURIComponent(id)}`, {
     method: 'DELETE',
@@ -1901,7 +1953,7 @@ export interface ConnectorTemplate {
 
 export async function listConnectorCatalog(
   key: string,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<ConnectorTemplate[]> {
   const res = await fetcher('/v1/context/connectors/catalog', { headers: authHeaders(key) });
   if (!res.ok) {
@@ -1946,7 +1998,7 @@ export interface FeatureValue {
 
 export async function listConnectors(
   key: string,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<Connector[]> {
   const res = await fetcher('/v1/context/connectors', { headers: authHeaders(key) });
   if (!res.ok) {
@@ -1958,7 +2010,7 @@ export async function listConnectors(
 export async function defineConnector(
   key: string,
   body: { name: string; type: string; config?: unknown },
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<void> {
   const res = await fetcher('/v1/context/connectors', {
     method: 'POST',
@@ -1978,7 +2030,10 @@ export interface Model {
   updated_at: string;
 }
 
-export async function listModels(key: string, fetcher: typeof fetch = fetch): Promise<Model[]> {
+export async function listModels(
+  key: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<Model[]> {
   const res = await fetcher('/v1/models', { headers: authHeaders(key) });
   if (!res.ok) {
     return errorOrStatus(res, 'GET /v1/models');
@@ -1989,7 +2044,7 @@ export async function listModels(key: string, fetcher: typeof fetch = fetch): Pr
 export async function defineModel(
   key: string,
   body: { name: string; spec: unknown },
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<void> {
   const res = await fetcher('/v1/models', {
     method: 'POST',
@@ -2005,7 +2060,7 @@ export async function defineModel(
 export async function copilotExplain(
   key: string,
   graph: unknown,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<string> {
   const res = await fetcher('/v1/copilot/explain', {
     method: 'POST',
@@ -2022,7 +2077,7 @@ export async function copilotExplain(
 export async function copilotSuggest(
   key: string,
   prompt: string,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<string> {
   const res = await fetcher('/v1/copilot/suggest', {
     method: 'POST',
@@ -2040,7 +2095,7 @@ export async function copilotSuggest(
 export async function copilotGenerate(
   key: string,
   prompt: string,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<unknown> {
   const res = await fetcher('/v1/copilot/generate', {
     method: 'POST',
@@ -2072,7 +2127,7 @@ export async function flowNodeStats(
   key: string,
   flowId: string,
   environment?: string,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<FlowNodeStats> {
   const q = environment ? `?environment=${encodeURIComponent(environment)}` : '';
   const res = await fetcher(`/v1/flows/${flowId}/node-stats${q}`, { headers: authHeaders(key) });
@@ -2099,7 +2154,7 @@ export interface Counterfactual {
 export async function decisionCounterfactual(
   key: string,
   decisionId: string,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<Counterfactual> {
   const res = await fetcher(`/v1/decisions/${decisionId}/counterfactual`, {
     method: 'POST',
@@ -2132,7 +2187,7 @@ export async function flowCoverage(
   key: string,
   flowId: string,
   opts: { version?: number; runs?: number } = {},
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<Coverage> {
   const res = await fetcher(`/v1/flows/${flowId}/coverage`, {
     method: 'POST',
@@ -2161,7 +2216,7 @@ export async function modelDrift(
   key: string,
   name: string,
   windowDays = 0,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<ModelDrift> {
   const q = windowDays > 0 ? `?window=${windowDays}d` : '';
   const res = await fetcher(`/v1/models/${encodeURIComponent(name)}/drift${q}`, {
@@ -2177,7 +2232,7 @@ export async function setModelMonitor(
   key: string,
   name: string,
   threshold: number,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<void> {
   const res = await fetcher(`/v1/models/${encodeURIComponent(name)}/monitor`, {
     method: 'POST',
@@ -2192,7 +2247,7 @@ export async function setModelMonitor(
 export async function captureModelBaseline(
   key: string,
   name: string,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<void> {
   const res = await fetcher(`/v1/models/${encodeURIComponent(name)}/baseline`, {
     method: 'POST',
@@ -2203,7 +2258,10 @@ export async function captureModelBaseline(
   }
 }
 
-export async function listFeatures(key: string, fetcher: typeof fetch = fetch): Promise<Feature[]> {
+export async function listFeatures(
+  key: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<Feature[]> {
   const res = await fetcher('/v1/context/features', { headers: authHeaders(key) });
   if (!res.ok) {
     return errorOrStatus(res, 'GET /v1/context/features');
@@ -2221,7 +2279,7 @@ export async function defineFeature(
     field?: string;
     window_hours: number;
   },
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<void> {
   const res = await fetcher('/v1/context/features', {
     method: 'POST',
@@ -2236,7 +2294,7 @@ export async function defineFeature(
 export async function listEntities(
   key: string,
   type = '',
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<Entity[]> {
   const qs = type ? `?type=${encodeURIComponent(type)}` : '';
   const res = await fetcher(`/v1/context/entities${qs}`, { headers: authHeaders(key) });
@@ -2250,7 +2308,7 @@ export async function getEntity(
   key: string,
   type: string,
   id: string,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<Entity> {
   const res = await fetcher(
     `/v1/context/entities/${encodeURIComponent(type)}/${encodeURIComponent(id)}`,
@@ -2266,7 +2324,7 @@ export async function listEntityEvents(
   key: string,
   type: string,
   id: string,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<EntityEvent[]> {
   const res = await fetcher(
     `/v1/context/entities/${encodeURIComponent(type)}/${encodeURIComponent(id)}/events`,
@@ -2282,7 +2340,7 @@ export async function getEntityFeatures(
   key: string,
   type: string,
   id: string,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<FeatureValue[]> {
   const res = await fetcher(
     `/v1/context/entities/${encodeURIComponent(type)}/${encodeURIComponent(id)}/features`,
@@ -2297,7 +2355,7 @@ export async function getEntityFeatures(
 export async function listCases(
   key: string,
   filter: CaseFilter = {},
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<Case[]> {
   const res = await fetcher(`/v1/cases${caseQuery(filter)}`, { headers: authHeaders(key) });
   if (!res.ok) {
@@ -2309,7 +2367,7 @@ export async function listCases(
 export async function getCaseSummary(
   key: string,
   filter: CaseFilter = {},
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<CaseSummary> {
   const res = await fetcher(`/v1/cases/summary${caseQuery(filter)}`, { headers: authHeaders(key) });
   if (!res.ok) {
@@ -2322,7 +2380,7 @@ export async function getCaseSummary(
 // case (idempotent), returning how many were breached this sweep.
 export async function sweepSLA(
   key: string,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<{ count: number }> {
   const res = await fetcher('/v1/cases/sla-sweep', { method: 'POST', headers: authHeaders(key) });
   if (!res.ok) {
@@ -2334,7 +2392,7 @@ export async function sweepSLA(
 export async function getCase(
   key: string,
   caseID: string,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<Case> {
   const res = await fetcher(`/v1/cases/${caseID}`, { headers: authHeaders(key) });
   if (!res.ok) {
@@ -2346,7 +2404,7 @@ export async function getCase(
 export async function requestReview(
   key: string,
   body: { company_name: string; case_type: string; sla_days: number },
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<{ case_id: string }> {
   const res = await fetcher('/v1/cases', {
     method: 'POST',
@@ -2380,7 +2438,7 @@ export function assignCase(
   key: string,
   caseID: string,
   assignee: string,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<void> {
   return caseAction(key, caseID, 'assign', { assignee }, fetcher);
 }
@@ -2389,7 +2447,7 @@ export function setCaseStatus(
   key: string,
   caseID: string,
   status: CaseStatus,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<void> {
   return caseAction(key, caseID, 'status', { status }, fetcher);
 }
@@ -2398,7 +2456,7 @@ export function addCaseNote(
   key: string,
   caseID: string,
   text: string,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<void> {
   return caseAction(key, caseID, 'notes', { text }, fetcher);
 }
@@ -2455,7 +2513,10 @@ export interface RunSummary {
   cost_by_model?: Record<string, number>;
 }
 
-export async function listAgents(key: string, fetcher: typeof fetch = fetch): Promise<Agent[]> {
+export async function listAgents(
+  key: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<Agent[]> {
   const res = await fetcher('/v1/agents', { headers: authHeaders(key) });
   if (!res.ok) {
     return errorOrStatus(res, 'GET /v1/agents');
@@ -2466,7 +2527,7 @@ export async function listAgents(key: string, fetcher: typeof fetch = fetch): Pr
 export async function getAgent(
   key: string,
   name: string,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<Agent> {
   const res = await fetcher(`/v1/agents/${name}`, { headers: authHeaders(key) });
   if (!res.ok) {
@@ -2485,7 +2546,7 @@ export async function defineAgent(
     schema?: unknown;
     tools?: string[];
   },
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<void> {
   const res = await fetcher('/v1/agents', {
     method: 'POST',
@@ -2502,7 +2563,7 @@ export async function runAgent(
   name: string,
   prompt: string,
   version = 0, // 0 = latest; pin a published version
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<RunResult> {
   const res = await fetcher(`/v1/agents/${name}/run`, {
     method: 'POST',
@@ -2531,7 +2592,7 @@ export interface AgentVersion {
 export async function listAgentVersions(
   key: string,
   name: string,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<AgentVersion[]> {
   const res = await fetcher(`/v1/agents/${name}/versions`, { headers: authHeaders(key) });
   if (!res.ok) {
@@ -2569,7 +2630,7 @@ export interface EvalReport {
 export async function getAgentEvals(
   key: string,
   name: string,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<EvalCase[]> {
   const res = await fetcher(`/v1/agents/${name}/evals`, { headers: authHeaders(key) });
   if (!res.ok) {
@@ -2582,7 +2643,7 @@ export async function setAgentEvals(
   key: string,
   name: string,
   cases: EvalCase[],
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<void> {
   const res = await fetcher(`/v1/agents/${name}/evals`, {
     method: 'PUT',
@@ -2598,7 +2659,7 @@ export async function runAgentEval(
   key: string,
   name: string,
   version = 0,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<EvalReport> {
   const res = await fetcher(`/v1/agents/${name}/evals/run`, {
     method: 'POST',
@@ -2664,7 +2725,10 @@ export interface MrmReport {
 }
 
 // getMrmReport fetches the model-risk report (admin-gated).
-export async function getMrmReport(key: string, fetcher: typeof fetch = fetch): Promise<MrmReport> {
+export async function getMrmReport(
+  key: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<MrmReport> {
   const res = await fetcher('/v1/mrm/report', { headers: authHeaders(key) });
   if (!res.ok) {
     return errorOrStatus(res, 'GET /v1/mrm/report');
@@ -2676,7 +2740,7 @@ export async function getMrmReport(key: string, fetcher: typeof fetch = fetch): 
 export async function mrmReportText(
   key: string,
   format: 'csv' | 'md',
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<string> {
   const res = await fetcher(`/v1/mrm/report?format=${format}`, { headers: authHeaders(key) });
   if (!res.ok) {
@@ -2688,7 +2752,7 @@ export async function mrmReportText(
 export async function listAgentRuns(
   key: string,
   name: string,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<AgentRun[]> {
   const res = await fetcher(`/v1/agents/${name}/runs`, { headers: authHeaders(key) });
   if (!res.ok) {
@@ -2699,7 +2763,7 @@ export async function listAgentRuns(
 
 export async function getRunSummary(
   key: string,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<RunSummary> {
   const res = await fetcher('/v1/agent-runs/summary', { headers: authHeaders(key) });
   if (!res.ok) {
@@ -2713,7 +2777,7 @@ export async function escalateRun(
   name: string,
   runID: string,
   body: { company_name: string; case_type: string; sla_days: number },
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = recordingFetch
 ): Promise<{ case_id: string }> {
   const res = await fetcher(`/v1/agents/${name}/runs/${runID}/escalate`, {
     method: 'POST',
@@ -2735,7 +2799,10 @@ export interface Identity {
 }
 
 // login exchanges an API key for a session cookie (set by the server).
-export async function login(apiKey: string, fetcher: typeof fetch = fetch): Promise<Identity> {
+export async function login(
+  apiKey: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<Identity> {
   const res = await fetcher('/v1/login', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -2748,7 +2815,7 @@ export async function login(apiKey: string, fetcher: typeof fetch = fetch): Prom
 }
 
 // logout revokes the current session and clears the cookie.
-export async function logout(fetcher: typeof fetch = fetch): Promise<void> {
+export async function logout(fetcher: typeof fetch = recordingFetch): Promise<void> {
   const res = await fetcher('/v1/logout', { method: 'POST' });
   if (!res.ok && res.status !== 204) {
     return errorOrStatus(res, 'POST /v1/logout');
@@ -2758,7 +2825,7 @@ export async function logout(fetcher: typeof fetch = fetch): Promise<void> {
 // listSsoProviders returns the configured OIDC providers (e.g. ["google","aws"])
 // so the login page can offer a "Sign in with …" button for each. Returns an
 // empty list when SSO is not configured or the endpoint is unavailable.
-export async function listSsoProviders(fetcher: typeof fetch = fetch): Promise<string[]> {
+export async function listSsoProviders(fetcher: typeof fetch = recordingFetch): Promise<string[]> {
   try {
     const res = await fetcher('/v1/auth/oidc/providers');
     if (!res.ok) {
@@ -2772,7 +2839,7 @@ export async function listSsoProviders(fetcher: typeof fetch = fetch): Promise<s
 
 // listSamlProviders returns the configured SAML providers, mirroring
 // listSsoProviders. Empty when SAML is not configured.
-export async function listSamlProviders(fetcher: typeof fetch = fetch): Promise<string[]> {
+export async function listSamlProviders(fetcher: typeof fetch = recordingFetch): Promise<string[]> {
   try {
     const res = await fetcher('/v1/auth/saml/providers');
     if (!res.ok) {
@@ -2786,7 +2853,9 @@ export async function listSamlProviders(fetcher: typeof fetch = fetch): Promise<
 
 // currentUser returns the signed-in identity from the session cookie, or null
 // when there is no valid session.
-export async function currentUser(fetcher: typeof fetch = fetch): Promise<Identity | null> {
+export async function currentUser(
+  fetcher: typeof fetch = recordingFetch
+): Promise<Identity | null> {
   const res = await fetcher('/v1/me');
   if (res.status === 401) {
     return null;

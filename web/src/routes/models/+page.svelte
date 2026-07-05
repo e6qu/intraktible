@@ -20,6 +20,7 @@
   import { roleAtLeast } from '$lib/roles';
   import { user } from '$lib/session';
   import Badge from '$lib/Badge.svelte';
+  import CommentThread from '$lib/CommentThread.svelte';
   import Hint from '$lib/Hint.svelte';
   import type { Tone } from '$lib/badge';
 
@@ -138,6 +139,12 @@
       if (driftOpen === reqModel && driftWindow === reqWindow) driftLoading = false;
     }
   }
+  // The model whose discussion thread is open (one at a time, like drift).
+  let discussOpen = $state('');
+  function toggleDiscuss(m: string) {
+    discussOpen = discussOpen === m ? '' : m;
+  }
+
   async function toggleDrift(m: string) {
     if (driftOpen === m) {
       driftOpen = '';
@@ -299,12 +306,25 @@
                   <span class="muted">…</span>
                 {/if}
               </td>
-              <td
+              <td class="rowactions"
                 ><button class="link" onclick={() => toggleDrift(m.name)}
                   >{driftOpen === m.name ? 'Hide drift' : 'Drift'}</button
+                >
+                <button
+                  class="link"
+                  onclick={() => toggleDiscuss(m.name)}
+                  aria-label={`discuss ${m.name}`}
+                  >{discussOpen === m.name ? 'Hide discussion' : 'Discuss'}</button
                 ></td
               >
             </tr>
+            {#if discussOpen === m.name}
+              <tr class="drift-row" data-testid="model-discussion">
+                <td colspan="6">
+                  <CommentThread subjectType="model" subjectId={m.name} title="Model discussion" />
+                </td>
+              </tr>
+            {/if}
             {#if driftOpen === m.name}
               <tr class="drift-row" data-testid="model-drift">
                 <td colspan="6">
@@ -510,6 +530,12 @@
     padding: 0;
     color: var(--link, var(--accent-ink));
     cursor: pointer;
+  }
+  .rowactions {
+    white-space: nowrap;
+  }
+  .rowactions .link + .link {
+    margin-left: 0.6rem;
   }
   .drift-row td {
     background: var(--surface-2);

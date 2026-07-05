@@ -1863,6 +1863,74 @@ func TestScheduleDeployOverHTTP(t *testing.T) {
 	}
 }
 
+// TestFlowDescriptionOverHTTP covers the flow-details surface: create carries an
+// optional description into the read model, and PATCH /v1/flows/{id} updates
+// name/description with partial-update semantics.
+func TestFlowDescriptionOverHTTP(t *testing.T) {
+	api := startEngine(t)
+
+	var created struct {
+		FlowID string `json:"flow_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows", map[string]any{
+		"slug": "descd", "name": "Described", "description": "Screens wires for AML risk.",
+	}, http.StatusCreated, &created)
+
+	type flowView struct {
+		FlowID      string `json:"flow_id"`
+		Name        string `json:"name"`
+		Description string `json:"description"`
+	}
+	var got flowView
+	if !testutil.Eventually(t, func() bool {
+		if api.RequestStatus(t, http.MethodGet, "/v1/flows/"+created.FlowID, nil, &got) != http.StatusOK {
+			return false
+		}
+		return got.Description == "Screens wires for AML risk."
+	}) {
+		t.Fatalf("created description never projected: %+v", got)
+	}
+
+	// PATCH the description only: the name must survive.
+	var upd struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+	}
+	api.Request(t, http.MethodPatch, "/v1/flows/"+created.FlowID,
+		map[string]any{"description": "Screens wires for AML risk, with structuring heuristics."}, http.StatusOK, &upd)
+	if upd.Name != "Described" || upd.Description != "Screens wires for AML risk, with structuring heuristics." {
+		t.Fatalf("patch resolved to %+v", upd)
+	}
+	if !testutil.Eventually(t, func() bool {
+		api.Request(t, http.MethodGet, "/v1/flows/"+created.FlowID, nil, http.StatusOK, &got)
+		return got.Description == "Screens wires for AML risk, with structuring heuristics." && got.Name == "Described"
+	}) {
+		t.Fatalf("patched description never projected: %+v", got)
+	}
+
+	// PATCH the name too, and check the list surface carries both fields.
+	api.Request(t, http.MethodPatch, "/v1/flows/"+created.FlowID,
+		map[string]any{"name": "Described v2"}, http.StatusOK, nil)
+	var list struct {
+		Flows []flowView `json:"flows"`
+	}
+	if !testutil.Eventually(t, func() bool {
+		api.Request(t, http.MethodGet, "/v1/flows", nil, http.StatusOK, &list)
+		for _, f := range list.Flows {
+			if f.FlowID == created.FlowID {
+				return f.Name == "Described v2" && f.Description == "Screens wires for AML risk, with structuring heuristics."
+			}
+		}
+		return false
+	}) {
+		t.Fatalf("renamed flow never listed: %+v", list.Flows)
+	}
+
+	// An empty patch and an unknown flow are loud 400s.
+	api.Request(t, http.MethodPatch, "/v1/flows/"+created.FlowID, map[string]any{}, http.StatusBadRequest, nil)
+	api.Request(t, http.MethodPatch, "/v1/flows/nope", map[string]any{"name": "X"}, http.StatusBadRequest, nil)
+}
+
 // TestDecideErrorTaxonomy proves the decide endpoint maps cause to status: an
 // unknown flow is 404, an invalid environment is 400 (not all-400 as before).
 func TestDecideErrorTaxonomy(t *testing.T) {

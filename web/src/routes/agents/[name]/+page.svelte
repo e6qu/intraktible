@@ -5,6 +5,7 @@
   import Icon from '$lib/Icon.svelte';
   import RelativeTime from '$lib/RelativeTime.svelte';
   import Badge from '$lib/Badge.svelte';
+  import CommentThread from '$lib/CommentThread.svelte';
   import { statusTone } from '$lib/badge';
   import { toast } from '$lib/toast';
   import {
@@ -467,6 +468,12 @@
         </li>
       {/each}
     </ul>
+
+    <h2>Discussion</h2>
+    <p class="muted disc-hint">
+      Coordinate prompt, tool, and eval changes with the team — @mention a colleague to notify them.
+    </p>
+    <CommentThread subjectType="agent" subjectId={name} title="Agent discussion" />
   {/if}
 </main>
 
@@ -526,6 +533,10 @@
   }
   .muted {
     color: var(--fg-subtle);
+  }
+  .disc-hint {
+    margin: 0.2rem 0 0;
+    font-size: 0.85rem;
   }
   textarea {
     width: 100%;

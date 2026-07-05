@@ -174,6 +174,8 @@ func TestAuthorizeRBAC(t *testing.T) {
 		{"viewer-k", "POST", "/v1/flows", 403},                                   // authoring needs editor role
 		{"editor-k", "POST", "/v1/flows", 200},                                   // editor may author
 		{"editor-k", "POST", "/v1/flows/f1/versions", 200},                       // publish needs editor
+		{"operator-k", "PATCH", "/v1/flows/f1", 403},                             // editing flow details needs editor
+		{"editor-k", "PATCH", "/v1/flows/f1", 200},                               // editor may edit details
 		{"editor-k", "POST", "/v1/flows/f1/deployments", 403},                    // deploy needs approver role
 		{"approver-k", "POST", "/v1/flows/f1/deployments", 200},                  // approver may deploy
 		{"viewer-k", "POST", "/v1/flows/s/production/decide", 403},               // decide needs operator role

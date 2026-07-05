@@ -12,6 +12,7 @@
   } from '$lib/api';
   import { displayEntries } from '$lib/kv';
   import Breadcrumb from '$lib/Breadcrumb.svelte';
+  import CommentThread from '$lib/CommentThread.svelte';
   import RelativeTime from '$lib/RelativeTime.svelte';
   import Skeleton from '$lib/Skeleton.svelte';
   import EmptyState from '$lib/EmptyState.svelte';
@@ -271,6 +272,13 @@
         </li>
       {/each}
     </ol>
+
+    <h2>Discussion</h2>
+    <p class="muted disc-hint">
+      Talk the case through with the team — @mention a colleague to notify them. Notes above stay
+      the immutable work record; this thread is for collaboration.
+    </p>
+    <CommentThread subjectType="case" subjectId={caseID} title="Case discussion" />
   {/if}
 </main>
 
@@ -404,6 +412,10 @@
   }
   .muted {
     color: var(--fg-subtle);
+  }
+  .disc-hint {
+    margin: 0.2rem 0 0;
+    font-size: 0.85rem;
   }
   .sla-due_soon {
     color: var(--warn);

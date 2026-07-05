@@ -20,6 +20,7 @@
     flowCoverage,
     type Coverage,
     publishVersion,
+    updateFlow,
     copilotExplain,
     copilotSuggest,
     copilotGenerate,
@@ -1074,6 +1075,56 @@
     }
   }
 
+  // Inline description edit: pencil → textarea → save via PATCH. The save failure
+  // surfaces loudly in the edit block (the draft is kept so nothing is lost).
+  let descEditing = $state(false);
+  let descDraft = $state('');
+  let descSaving = $state(false);
+  let descError = $state('');
+  function startDescEdit() {
+    descDraft = flow?.description ?? '';
+    descError = '';
+    descEditing = true;
+  }
+  async function saveDescription() {
+    if (descSaving) return;
+    descSaving = true;
+    descError = '';
+    try {
+      await updateFlow(key, flowId, { description: descDraft.trim() });
+      descEditing = false;
+      toast.success('Description saved');
+      await load();
+    } catch (e) {
+      descError = msg(e);
+      toast.error(msg(e));
+    } finally {
+      descSaving = false;
+    }
+  }
+
+  // "Analyze with AI": the header robot button runs the same copilot explain the
+  // Copilot tab offers, but surfaces the readout in a panel right by the header —
+  // no tab switch needed. State is separate from the tab's so neither clobbers
+  // the other.
+  let analyzeOpen = $state(false);
+  let analyzeBusy = $state(false);
+  let analyzeOut = $state('');
+  let analyzeError = $state('');
+  async function analyzeFlow() {
+    analyzeOpen = true;
+    analyzeBusy = true;
+    analyzeOut = '';
+    analyzeError = '';
+    try {
+      analyzeOut = await copilotExplain(key, currentGraph());
+    } catch (e) {
+      analyzeError = msg(e);
+    } finally {
+      analyzeBusy = false;
+    }
+  }
+
   // Authoring copilot: explain the live graph, or suggest logic from a description.
   let copilotPrompt = $state('');
   let copilotOut = $state('');
@@ -2004,6 +2055,16 @@
       <a href={appHref('/engine')} class="backlink" title="All flows">←</a>
       <h1>{flow.name}</h1>
       <div class="head-actions">
+        <button
+          class="iconbtn"
+          onclick={analyzeFlow}
+          disabled={analyzeBusy}
+          title="Analyze this flow with AI"
+          aria-label="Analyze this flow with AI"
+          data-testid="analyze-flow"
+        >
+          <Icon name="robot" size={17} />
+        </button>
         <button onclick={load} title="Re-fetch this flow and its versions"
           ><Icon name="reload" size={15} /> Reload</button
         >
@@ -2016,6 +2077,52 @@
         >
       </div>
     </div>
+    {#if descEditing}
+      <div class="flow-desc" data-testid="flow-description">
+        <textarea
+          bind:value={descDraft}
+          rows="2"
+          aria-label="flow description"
+          placeholder="What this flow decides and for whom."
+        ></textarea>
+        <div class="desc-actions">
+          <button class="primary" onclick={saveDescription} disabled={descSaving}
+            >{descSaving ? 'Saving…' : 'Save description'}</button
+          >
+          <button onclick={() => (descEditing = false)} disabled={descSaving}>Cancel</button>
+        </div>
+        {#if descError}<p class="err">{descError}</p>{/if}
+      </div>
+    {:else if flow.description || roleAtLeast($user?.role, 'editor')}
+      <p class="flow-desc muted" data-testid="flow-description">
+        {flow.description || 'No description yet.'}
+        {#if roleAtLeast($user?.role, 'editor')}
+          <button
+            class="pencil"
+            onclick={startDescEdit}
+            title="Edit description"
+            aria-label="Edit description">✎</button
+          >
+        {/if}
+      </p>
+    {/if}
+    {#if analyzeOpen}
+      <section class="analyze" data-testid="analyze-panel">
+        <div class="analyze-head">
+          <b><Icon name="robot" size={15} /> AI analysis</b>
+          <button class="linkbtn" onclick={() => (analyzeOpen = false)} aria-label="Close analysis"
+            >Close</button
+          >
+        </div>
+        {#if analyzeBusy}
+          <p class="muted" aria-busy="true">Analyzing the flow…</p>
+        {:else if analyzeError}
+          <p class="err">{analyzeError}</p>
+        {:else}
+          <pre class="analyze-out" data-testid="analyze-output">{analyzeOut}</pre>
+        {/if}
+      </section>
+    {/if}
     <details class="sharebar" data-testid="share-menu">
       <summary><Icon name="diagram" size={14} /> Export / Import</summary>
       <div class="row export">
@@ -4633,6 +4740,92 @@
     display: flex;
     gap: 0.5rem;
     flex: none;
+    align-items: center;
+  }
+  /* The circled robot — same visual language as the circled "i"/"?" affordances. */
+  .iconbtn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.1rem;
+    height: 2.1rem;
+    padding: 0;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    color: var(--fg-muted);
+    cursor: pointer;
+  }
+  .iconbtn:hover {
+    color: var(--fg);
+    border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  }
+  .iconbtn:disabled {
+    opacity: 0.6;
+    cursor: default;
+  }
+  .flow-desc {
+    margin: -0.2rem 0 0.5rem;
+    font-size: 0.9rem;
+  }
+  p.flow-desc {
+    display: flex;
+    align-items: baseline;
+    gap: 0.4rem;
+  }
+  .flow-desc textarea {
+    width: 100%;
+    box-sizing: border-box;
+    font: inherit;
+    font-size: 0.9rem;
+    padding: 0.45rem 0.6rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface);
+    color: var(--fg);
+    resize: vertical;
+  }
+  .desc-actions {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.4rem;
+  }
+  .pencil {
+    background: none;
+    border: none;
+    padding: 0 0.2rem;
+    font: inherit;
+    color: var(--fg-subtle);
+    cursor: pointer;
+  }
+  .pencil:hover {
+    color: var(--fg);
+  }
+  .analyze {
+    border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+    border-radius: 10px;
+    padding: 0.6rem 0.9rem;
+    margin: 0 0 0.5rem;
+    background: color-mix(in srgb, var(--accent) 5%, transparent);
+    order: 0; /* stays with the header, above the canvas grid */
+  }
+  .analyze-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.6rem;
+  }
+  .analyze-head b {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+  .analyze-out {
+    white-space: pre-wrap;
+    word-break: break-word;
+    margin: 0.4rem 0 0;
+    font-family: var(--font-mono, monospace);
+    font-size: 0.85rem;
   }
   .sharebar {
     margin: 0 0 0.5rem;
