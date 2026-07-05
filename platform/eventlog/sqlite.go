@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+//go:build !js
+
 package eventlog
 
 import (
@@ -14,10 +16,6 @@ import (
 
 	_ "modernc.org/sqlite" // pure-Go SQLite driver (CGO-free); registers "sqlite"
 )
-
-// DefaultPollInterval is how often a SQLiteLog polls for events appended by other
-// processes (and itself) to deliver to in-process subscribers.
-const DefaultPollInterval = 200 * time.Millisecond
 
 // SQLiteLog is a durable, append-only event log backed by a single SQLite file
 // that MULTIPLE PROCESSES can share — the missing piece for the split-services

@@ -22,11 +22,19 @@ import (
 type Service struct {
 	cmd   *command.Handler
 	store store.Store
+	now   func() time.Time
 }
 
 // New builds the service.
 func New(cmd *command.Handler, st store.Store) *Service {
-	return &Service{cmd: cmd, store: st}
+	return &Service{cmd: cmd, store: st, now: func() time.Time { return time.Now().UTC() }}
+}
+
+// WithNow overrides the clock the SLA math reads (deterministic tests, the
+// demo seeder) and returns the service.
+func (s *Service) WithNow(now func() time.Time) *Service {
+	s.now = now
+	return s
 }
 
 // Routes registers the case-management endpoints.
@@ -48,7 +56,7 @@ func (s *Service) slaSweep(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	breached, err := s.cmd.SweepSLA(r.Context(), id, time.Now().UTC())
+	breached, err := s.cmd.SweepSLA(r.Context(), id, s.now())
 	if err != nil {
 		httpx.Error(w, http.StatusInternalServerError, err)
 		return
@@ -94,7 +102,7 @@ func (s *Service) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	recs, err := cases.List(r.Context(), s.store, id, filterFrom(r))
-	now := time.Now().UTC()
+	now := s.now()
 	for i := range recs {
 		cases.AnnotateSLA(&recs[i], now)
 	}
@@ -113,7 +121,7 @@ func (s *Service) summary(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusInternalServerError, err)
 		return
 	}
-	httpx.JSON(w, http.StatusOK, cases.Summarize(recs, time.Now().UTC()))
+	httpx.JSON(w, http.StatusOK, cases.Summarize(recs, s.now()))
 }
 
 func filterFrom(r *http.Request) cases.Filter {
@@ -132,7 +140,7 @@ func (s *Service) get(w http.ResponseWriter, r *http.Request) {
 	}
 	c, found, err := cases.Read(r.Context(), s.store, id, r.PathValue("case_id"))
 	if found {
-		cases.AnnotateSLA(&c, time.Now().UTC())
+		cases.AnnotateSLA(&c, s.now())
 	}
 	httpx.WriteOne(w, c, found, err, "case not found")
 }

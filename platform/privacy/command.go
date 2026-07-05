@@ -25,6 +25,13 @@ func NewHandler(log eventlog.Log) *Handler {
 	return &Handler{log: log, now: func() time.Time { return time.Now().UTC() }}
 }
 
+// WithNow overrides the clock used to stamp recorded events (deterministic
+// tests, the demo seeder) and returns the handler.
+func (h *Handler) WithNow(now func() time.Time) *Handler {
+	h.now = now
+	return h
+}
+
 // SetFields replaces the workspace's sensitive-field list (normalized: trimmed,
 // lowercased, de-duplicated, sorted). An empty list disables masking.
 func (h *Handler) SetFields(ctx context.Context, id identity.Identity, fields []string) (eventlog.Envelope, error) {

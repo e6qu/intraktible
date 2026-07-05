@@ -3,11 +3,12 @@
   A slim strip shown only in the public GitHub Pages demo. Rendered behind a static
   `import.meta.env.VITE_DEMO` guard, so the whole component is dead-code-eliminated
   from the embedded production build (the {#if false} block is dropped at build).
-  It tells the visitor the backend is an in-browser mock (interactive + persisted to
-  localStorage), offers an identity switcher so they can act AS different roles (the
-  role-gated nav/surfaces change live), and a Reset that clears local state.
+  It tells the visitor the real backend runs in their browser (interactive, with
+  changes persisted locally), offers an identity switcher so they can act AS
+  different roles (a real /v1/login as that user's minted key — the role-gated
+  nav/surfaces change live), and a Reset that clears the local event delta.
 
-  The controls read window.__demo (set by the demo install) rather than importing the
+  The controls read window.__demo (set by the demo shell) rather than importing the
   demo code, so this always-compiled component pulls no demo modules into the normal
   bundle. Colours use var(--on-accent) (not a hardcoded white) so the strip stays
   readable on every persona accent in both themes.
@@ -25,7 +26,7 @@
   type DemoControl = {
     users: DemoUser[];
     current(): string;
-    setUser(actor: string): void;
+    setUser(actor: string): Promise<void>;
     reset(): void;
   };
 
@@ -47,7 +48,8 @@
   async function switchUser(actor: string): Promise<void> {
     const c = control();
     if (!c) return;
-    c.setUser(actor);
+    // A real login as the chosen user's minted key (the session cookie swaps).
+    await c.setUser(actor);
     currentActor = actor;
     // Re-pull /v1/me so the app's $user store (and role-gated nav) updates live.
     await refreshUser();

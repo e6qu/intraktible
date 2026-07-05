@@ -24,6 +24,13 @@ func NewHandler(log eventlog.Log) *Handler {
 	return &Handler{log: log, now: func() time.Time { return time.Now().UTC() }, newID: NewID}
 }
 
+// WithNow overrides the clock used to stamp recorded events (deterministic
+// tests, the demo seeder) and returns the handler.
+func (h *Handler) WithNow(now func() time.Time) *Handler {
+	h.now = now
+	return h
+}
+
 // Add grants actor change-control access on a flow in an environment ("*" = all).
 func (h *Handler) Add(ctx context.Context, id identity.Identity, flowID, actor, env string) (string, eventlog.Envelope, error) {
 	if err := id.Valid(); err != nil {

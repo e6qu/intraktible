@@ -119,6 +119,10 @@ type DecideOption func(*DecideHandler)
 // WithRoll overrides the A/B routing draw (a value in [0,100)).
 func WithRoll(roll func() int) DecideOption { return func(h *DecideHandler) { h.roll = roll } }
 
+// WithNow overrides the clock used to stamp recorded decision events
+// (deterministic tests, the demo seeder).
+func WithNow(now func() time.Time) DecideOption { return func(h *DecideHandler) { h.now = now } }
+
 // WithFeatures supplies the feature provider that resolves an EntityRef's
 // features at decide time. Without it, EntityRef is ignored.
 func WithFeatures(p FeatureProvider) DecideOption { return func(h *DecideHandler) { h.features = p } }

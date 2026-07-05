@@ -30,6 +30,13 @@ func NewHandler(log eventlog.Log) *Handler {
 	return &Handler{log: log, now: func() time.Time { return time.Now().UTC() }}
 }
 
+// WithNow overrides the clock used to stamp recorded events (deterministic
+// tests, the demo seeder) and returns the handler.
+func (h *Handler) WithNow(now func() time.Time) *Handler {
+	h.now = now
+	return h
+}
+
 // validator is implemented by every domain command.
 type validator interface{ Validate() error }
 

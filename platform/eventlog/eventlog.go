@@ -42,6 +42,25 @@ var ErrClosed = errors.New("eventlog: closed")
 // retry (or report the duplicate, e.g. a taken slug).
 var ErrConflict = errors.New("eventlog: unique key conflict")
 
+// stampForAppend validates and stamps an envelope for the single-process log
+// backends (WAL, memory): tenancy must be set, a Unique key already claimed in
+// this process is ErrConflict, a missing ID is generated, and nextSeq is
+// assigned. The claimed map is NOT updated here — the caller records the claim
+// only once the append has succeeded.
+func stampForAppend(e Envelope, claimed map[string]bool, nextSeq uint64) (Envelope, error) {
+	if e.Org == "" || e.Workspace == "" {
+		return Envelope{}, fmt.Errorf("eventlog: event %q missing org/workspace", e.Type)
+	}
+	if e.Unique != "" && claimed[e.Unique] {
+		return Envelope{}, ErrConflict
+	}
+	if e.ID == "" {
+		e.ID = newID()
+	}
+	e.Seq = nextSeq
+	return e, nil
+}
+
 // nullableKey maps an empty claim key to SQL NULL so it is excluded from the
 // partial unique index (an empty string would otherwise collide with every other
 // unconstrained append). A non-empty key is stored verbatim.
@@ -54,6 +73,11 @@ func nullableKey(k string) any {
 
 // Log is the append-only, ordered, replayable event store + in-process bus.
 // Implementations must be safe for concurrent use.
+// DefaultPollInterval is how often polling log implementations (sqlite) check
+// for events appended by other processes (and themselves) to deliver to
+// in-process subscribers.
+const DefaultPollInterval = 200 * time.Millisecond
+
 type Log interface {
 	// Append assigns a monotonic Seq, persists the event durably, then
 	// publishes it to subscribers. The stored envelope (with Seq) is returned.

@@ -49,6 +49,13 @@ func NewHandler(log eventlog.Log) *Handler {
 	}
 }
 
+// WithNow overrides the clock used to stamp recorded events (deterministic
+// tests, the demo seeder) and returns the handler.
+func (h *Handler) WithNow(now func() time.Time) *Handler {
+	h.now = now
+	return h
+}
+
 // RequestReview opens a case and returns its id.
 func (h *Handler) RequestReview(ctx context.Context, id identity.Identity, cmd domain.RequestReview) (string, eventlog.Envelope, error) {
 	if err := id.Valid(); err != nil {

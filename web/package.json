@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite dev",
     "build": "vite build",
-    "build:demo": "BASE_PATH=/intraktible/demo VITE_DEMO=true vite build",
+    "build:demo": "cd .. && make wasm demo-seed && cd web && BASE_PATH=/intraktible/demo VITE_DEMO=true vite build",
     "build:docs": "node scripts/build-docs.mjs",
     "preview": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",

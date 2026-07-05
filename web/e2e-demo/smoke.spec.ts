@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { test, expect, type Page } from '@playwright/test';
 
-// Every top-level route renders (the seeded in-browser backend populates them) with
-// no uncaught page error and no visible error banner. Relative paths resolve under
-// the /demo base (baseURL ends in /demo/).
+// Every top-level route renders (populated by the REAL Go backend running as wasm
+// in a worker, booted from the seed event log) with no uncaught page error and no
+// visible error banner. Relative paths resolve under the /demo base (baseURL ends
+// in /demo/).
 const ROUTES = [
   '', // home dashboard
   'engine',
@@ -20,8 +21,8 @@ const ROUTES = [
   'audit'
 ];
 
-// Fail loudly on an uncaught exception — that means the mock returned a shape the
-// page could not consume (the failure mode this smoke exists to catch).
+// Fail loudly on an uncaught exception — that means the backend returned a shape
+// the page could not consume (the failure mode this smoke exists to catch).
 function trackPageErrors(page: Page): string[] {
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
@@ -32,9 +33,10 @@ for (const route of ROUTES) {
   test(`renders /${route} from the in-browser backend`, async ({ page }) => {
     const errors = trackPageErrors(page);
     await page.goto(route);
-    // The signed-in shell (/v1/me is mocked) shows a heading on every page.
+    // The signed-in shell (the boot logs in the default demo user) shows a
+    // heading on every page.
     await expect(page.locator('h1, h2').first()).toBeVisible();
-    // No error banner surfaced from a failed/odd mock response.
+    // No error banner surfaced from a failed/odd backend response.
     await expect(page.locator('p.err')).toHaveCount(0);
     expect(errors, `uncaught error(s) on /${route}: ${errors.join('; ')}`).toEqual([]);
   });
@@ -106,23 +108,33 @@ test('a non-admin reaching an admin-only page directly sees the restricted state
   page
 }) => {
   await page.goto('');
-  await page
-    .getByLabel('Demo user (switch acting identity)')
-    .selectOption({ label: 'Lena Hoff · viewer' });
+  const switcher = page.getByLabel('Demo user (switch acting identity)');
+  await switcher.selectOption({ label: 'Lena Hoff · viewer' });
+  // The switch is a real /v1/login; wait for the shell to commit it before
+  // navigating (the full reload re-authenticates as the stored actor).
+  await page.waitForFunction(
+    () =>
+      (window as unknown as { __demo?: { current(): string } }).__demo?.current() === 'lena.hoff'
+  );
   await page.goto('mrm');
   await expect(page.getByText('Restricted to the admin role')).toBeVisible();
 });
 
-// The switched identity persists across a reload (it's saved like every other write),
-// so a mid-flow refresh doesn't silently revert you to the default admin.
+// The switched identity persists across a reload (the shell re-logs-in the stored
+// actor at boot), so a mid-flow refresh doesn't silently revert you to the admin.
 test('the switched demo user survives a reload', async ({ page }) => {
   await page.goto('');
   const switcher = page.getByLabel('Demo user (switch acting identity)');
   await switcher.selectOption({ label: 'Diego Santos · operator' });
-  await page.reload();
-  await expect(page.getByLabel('Demo user (switch acting identity)')).toHaveValue(
-    'diego.santos@intraktible.dev'
+  // The switch is a real /v1/login; wait for the shell to COMMIT it (the select's
+  // own value flips optimistically the instant the option is picked, so it is not
+  // evidence the login landed) before reloading.
+  await page.waitForFunction(
+    () =>
+      (window as unknown as { __demo?: { current(): string } }).__demo?.current() === 'diego.santos'
   );
+  await page.reload();
+  await expect(page.getByLabel('Demo user (switch acting identity)')).toHaveValue('diego.santos');
 });
 
 // The demo is interactive, not a slideshow: a write mutates the in-memory store and
@@ -146,7 +158,10 @@ test('a created flow persists across a reload', async ({ page }) => {
   await page.getByLabel('slug', { exact: true }).fill(slug);
   await page.getByLabel('name', { exact: true }).fill('Persist Test');
   await page.getByRole('button', { name: 'Create flow' }).click();
-  // Create navigates into the new flow's builder; return to the list to see the row.
+  // Create navigates into the new flow's builder once the backend acknowledges the
+  // write — wait for that (as a user would see it) before leaving the page, then
+  // return to the list to see the row.
+  await expect(page).toHaveURL(/\/engine\/[^/]+$/);
   await page.goto('engine');
   await expect(page.getByRole('cell', { name: slug })).toBeVisible();
 
@@ -163,7 +178,9 @@ test('reset restores the seed', async ({ page }) => {
   await page.getByLabel('slug', { exact: true }).fill(slug);
   await page.getByLabel('name', { exact: true }).fill('Reset Test');
   await page.getByRole('button', { name: 'Create flow' }).click();
-  // Create navigates into the new flow's builder; return to the list to see the row.
+  // Create navigates into the new flow's builder once the backend acknowledges the
+  // write; wait for it before leaving, then return to the list to see the row.
+  await expect(page).toHaveURL(/\/engine\/[^/]+$/);
   await page.goto('engine');
   await expect(page.getByRole('cell', { name: slug })).toBeVisible();
 
@@ -174,52 +191,57 @@ test('reset restores the seed', async ({ page }) => {
 });
 
 // Maker-checker is real: a request created by one user can't be self-approved, and
-// an approver who is a different user can approve it. Driven through the in-browser
-// backend (window.fetch) so the four-eyes rule is exercised directly.
+// an approver who is a different user can approve it. Driven through the embedded
+// backend (window.fetch + window.__demo) so the four-eyes rule is exercised
+// directly against the Go RBAC. The flow is kyc-onboarding: unlike credit-decision
+// it has no per-flow grant list, so the roster's roles alone decide the outcome.
 test('maker-checker four-eyes is enforced across users', async ({ page }) => {
   await page.goto('');
-  // The mock backend (window.fetch + window.__demo) is installed during the layout
-  // load; wait for it before driving requests so they don't race onto the preview.
+  // The embedded backend (window.fetch + window.__demo) is installed during the
+  // layout load; wait for it before driving requests so they don't race onto the
+  // preview server's dead /v1.
   await page.waitForFunction(() => '__demo' in window);
   const result = await page.evaluate(async () => {
     const j = (r: Response) => r.json();
-    // Act as the editor (maker) and request a production deployment of credit-decision.
-    await fetch('/v1/login', { method: 'POST', body: JSON.stringify({ api_key: 'x' }) });
+    // Cookie-authenticated mutations need the CSRF header, exactly like api.ts.
+    const hdrs = { 'Content-Type': 'application/json', 'X-Requested-With': 'intraktible' };
     const flows = (await fetch('/v1/flows').then(j)).flows;
-    const flow = flows.find((f: { slug: string }) => f.slug === 'credit-decision');
+    const flow = flows.find((f: { slug: string }) => f.slug === 'kyc-onboarding');
     const w = window as unknown as {
-      __demo: { setUser(a: string): void; users: { actor: string; role: string }[] };
+      __demo: { setUser(a: string): Promise<void>; users: { actor: string; role: string }[] };
     };
     // Maker is the approver (so we test four-eyes, not the role gate); checker is the
     // admin (a different user who also outranks the approve gate).
     const maker = w.__demo.users.find((u) => u.role === 'approver')?.actor ?? '';
     const checker = w.__demo.users.find((u) => u.role === 'admin')?.actor ?? '';
-    w.__demo.setUser(maker);
+    await w.__demo.setUser(maker);
     const req = await fetch(`/v1/flows/${flow.flow_id}/deployment-requests`, {
       method: 'POST',
+      headers: hdrs,
       body: JSON.stringify({ environment: 'production', version: flow.latest })
     }).then(j);
     // The maker cannot approve their own request (four-eyes).
     const selfApprove = await fetch(
       `/v1/flows/${flow.flow_id}/deployment-requests/${req.request_id}/approve`,
-      { method: 'POST', body: '{}' }
+      { method: 'POST', headers: hdrs, body: '{}' }
     );
     // A different, sufficiently-privileged user can.
-    w.__demo.setUser(checker);
+    await w.__demo.setUser(checker);
     const checkerApprove = await fetch(
       `/v1/flows/${flow.flow_id}/deployment-requests/${req.request_id}/approve`,
-      { method: 'POST', body: '{}' }
+      { method: 'POST', headers: hdrs, body: '{}' }
     );
     // An editor (below approver) is refused outright by the role gate.
     const editor = w.__demo.users.find((u) => u.role === 'editor')?.actor ?? '';
-    w.__demo.setUser(editor);
+    await w.__demo.setUser(editor);
     const req2 = await fetch(`/v1/flows/${flow.flow_id}/deployment-requests`, {
       method: 'POST',
+      headers: hdrs,
       body: JSON.stringify({ environment: 'production', version: flow.latest })
     }).then(j);
     const editorApprove = await fetch(
       `/v1/flows/${flow.flow_id}/deployment-requests/${req2.request_id}/approve`,
-      { method: 'POST', body: '{}' }
+      { method: 'POST', headers: hdrs, body: '{}' }
     );
     return {
       self: selfApprove.status,

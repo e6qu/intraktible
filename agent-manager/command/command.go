@@ -61,6 +61,12 @@ func WithToolbox(tb agents.Toolbox) Option {
 	return func(h *Handler) { h.tools = tb }
 }
 
+// WithNow overrides the clock used to stamp recorded events (deterministic
+// tests, the demo seeder).
+func WithNow(now func() time.Time) Option {
+	return func(h *Handler) { h.now = now }
+}
+
 // NewHandler builds a Handler over the log, the read store (to resolve agent
 // definitions at run time), and the AI provider registry.
 func NewHandler(log eventlog.Log, st store.Store, reg *ai.Registry, opts ...Option) *Handler {
@@ -101,7 +107,7 @@ func (h *Handler) DefineAgent(ctx context.Context, id identity.Identity, cmd dom
 
 // SetEvalCases replaces an agent's offline-eval case set.
 func (h *Handler) SetEvalCases(ctx context.Context, id identity.Identity, agent string, cases []eval.Case) (eventlog.Envelope, error) {
-	return eval.NewHandler(h.log).SetCases(ctx, id, agent, cases)
+	return eval.NewHandler(h.log).WithNow(h.now).SetCases(ctx, id, agent, cases)
 }
 
 // RunEvals runs an agent's stored eval cases against a version (0 = latest) through

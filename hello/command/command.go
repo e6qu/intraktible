@@ -27,6 +27,13 @@ func NewHandler(log eventlog.Log) *Handler {
 	return &Handler{log: log, now: func() time.Time { return time.Now().UTC() }}
 }
 
+// WithNow overrides the clock used to stamp recorded events (deterministic
+// tests, the demo seeder) and returns the handler.
+func (h *Handler) WithNow(now func() time.Time) *Handler {
+	h.now = now
+	return h
+}
+
 // SayHello validates the command and appends a HelloRecorded event scoped to id.
 func (h *Handler) SayHello(ctx context.Context, id identity.Identity, cmd domain.SayHello) (eventlog.Envelope, error) {
 	if err := id.Valid(); err != nil {

@@ -12,7 +12,7 @@ PostgreSQL,LGPL-2.1,LGPL-3.0,GPL-2.0,GPL-3.0,AGPL-3.0
 GO_PKGS := $(shell $(GO) list ./... | grep -v /node_modules)
 GO_DIRS := $(shell $(GO) list -f '{{.Dir}}' ./... | grep -v /node_modules)
 
-.PHONY: all build run dev test test-short fmt fmtcheck vet typecheck tsenums lint sast deadcode dupl vuln licenses check ci precommit web dist e2e-embedded clean
+.PHONY: all build run dev test test-short fmt fmtcheck vet typecheck tsenums lint sast deadcode dupl vuln licenses check ci precommit web dist e2e-embedded demo-seed clean
 
 all: build
 
@@ -125,6 +125,22 @@ e2e-embedded:
 		rm -rf platform/web/assets && cp -r web/build platform/web/assets; \
 		$(GO) build -o $(BIN) ./cmd/intraktible; \
 		(cd web && npm run test:e2e:embedded)
+
+## demo-seed: regenerate the demo workspace event log (web/static/demo-seed.json)
+# by driving the REAL assembled backend in-process (see cmd/intraktible-seed).
+# Explicit, not part of any build: event ids are random, so regeneration rewrites
+# the (committed) asset even when the story is unchanged.
+demo-seed:
+	$(GO) run ./cmd/intraktible-seed -out web/static/demo-seed.json
+
+## wasm: the browser deployment target — the SAME backend, compiled to wasm.
+# Outputs the binary + Go's JS shim where the web build picks them up as assets.
+wasm:
+	GOOS=js GOARCH=wasm $(GO) build -ldflags="-s -w" -trimpath -o web/static/intraktible.wasm ./cmd/intraktible-wasm
+	# rm first: the GOROOT source is mode 444, so a straight cp cannot overwrite
+	# the previous copy on a re-run.
+	rm -f web/static/wasm_exec.js
+	cp "$$($(GO) env GOROOT)/lib/wasm/wasm_exec.js" web/static/wasm_exec.js
 
 ## check: fast local gate
 check: fmtcheck vet typecheck test

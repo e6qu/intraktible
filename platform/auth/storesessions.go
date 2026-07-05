@@ -63,6 +63,13 @@ func NewStoreSessions(s store.Store) *StoreSessions {
 	return &StoreSessions{store: s, ttl: DefaultSessionTTL, now: time.Now}
 }
 
+// WithNow overrides the clock session issue/expiry reads (deterministic tests,
+// the demo seeder) and returns the session store.
+func (s *StoreSessions) WithNow(now func() time.Time) *StoreSessions {
+	s.now = now
+	return s
+}
+
 // TTL returns the session lifetime.
 func (s *StoreSessions) TTL() time.Duration { return s.ttl }
 

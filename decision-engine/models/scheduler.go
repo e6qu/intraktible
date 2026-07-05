@@ -48,6 +48,13 @@ func NewScheduler(st store.Store, cmd AlertCmd, n Notifier, windowDays int) *Sch
 	return &Scheduler{store: st, cmd: cmd, notifier: n, windowDays: windowDays, now: func() time.Time { return time.Now().UTC() }}
 }
 
+// WithNow overrides the clock (deterministic tests, the demo seeder) and
+// returns the scheduler.
+func (s *Scheduler) WithNow(now func() time.Time) *Scheduler {
+	s.now = now
+	return s
+}
+
 // TickSummary reports what one sweep did (for logging and tests).
 type TickSummary struct {
 	Models           int
