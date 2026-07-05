@@ -320,7 +320,7 @@
     if (nodeTelemetry.size > 0) nodeTelemetry = new Map();
   }
 
-  // --- Decision intelligence: heatmap, replay, coverage (see lib/demo/intelligence) ---
+  // --- Decision intelligence: heatmap, replay, coverage ---
   // Heatmap: node id -> traversal stats over recorded decisions.
   let nodeHeat = $state(new Map<string, { count: number; pct: number }>());
   let heatOn = $state(false);

@@ -27,6 +27,13 @@ func NewHandler(log eventlog.Log) *Handler {
 	return &Handler{log: log, now: func() time.Time { return time.Now().UTC() }}
 }
 
+// WithNow overrides the clock used to stamp recorded events (deterministic
+// tests, the demo seeder) and returns the handler.
+func (h *Handler) WithNow(now func() time.Time) *Handler {
+	h.now = now
+	return h
+}
+
 // SetCases replaces a flow's assertion cases (each must have a non-empty name).
 func (h *Handler) SetCases(ctx context.Context, id identity.Identity, flowID string, cases []Case) (eventlog.Envelope, error) {
 	if err := id.Valid(); err != nil {

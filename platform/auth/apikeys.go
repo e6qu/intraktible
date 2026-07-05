@@ -118,6 +118,13 @@ func NewStoreAPIKeys(s store.Store) *StoreAPIKeys {
 	return &StoreAPIKeys{store: s, now: time.Now}
 }
 
+// WithNow overrides the clock key lifecycle timestamps read (deterministic
+// tests, the demo seeder) and returns the registry.
+func (s *StoreAPIKeys) WithNow(now func() time.Time) *StoreAPIKeys {
+	s.now = now
+	return s
+}
+
 // Create records a generated API key and returns its metadata plus the one-time
 // visible secret.
 func (s *StoreAPIKeys) Create(ctx context.Context, key ManagedAPIKey) (ManagedAPIKey, string, error) {

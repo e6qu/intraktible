@@ -987,6 +987,14 @@ verified every dashboard/observability/MRM number derives from seeded data and f
 displays (MRM now actually RUNS assertions; streaming reassembles byte-exact). Boyscout: notification
 snippet overflow; audit node steps hidden by default.
 
+**Engine convergence (WC in BUGS.md).** The endgame of the parity work: instead of proving two
+engines identical, there is now ONE. The whole Go backend compiles to wasm and serves the identical
+handler in a Web Worker (GitHub Pages, single user) that the native binary serves on TCP
+(production) — one composition root, DI on log+store, no demo code paths, no fallbacks, the TS mock
+backend deleted (22.6k lines). The seed is a real event log produced by driving the actual API under
+a scripted clock; visitor actions persist as a replayed delta; the demo e2e suite (28) passes
+against the wasm. UI works identically against either deployment.
+
 **Transposition-prevention refactors (TS40–TS42).** The three follow-ups left from round 10 landed as
 one PR: the decision-subject (entity type, id) is now the shared branded `platform/entity.Ref` threaded
 through the feature/pre-approval ports (a swapped pair fails to compile rather than silently keying the

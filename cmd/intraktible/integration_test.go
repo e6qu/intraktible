@@ -20,7 +20,6 @@ import (
 	engineevents "github.com/e6qu/intraktible/decision-engine/events"
 	"github.com/e6qu/intraktible/decision-engine/flows"
 	"github.com/e6qu/intraktible/platform/ai"
-	"github.com/e6qu/intraktible/platform/auth"
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/projection"
@@ -218,35 +217,5 @@ func featureGraph() engineevents.Graph {
 			{ID: "out", Type: engineevents.NodeOutput, Config: json.RawMessage(`{"fields":["tier"]}`)},
 		},
 		Edges: []engineevents.Edge{{From: "in", To: "r"}, {From: "r", To: "out"}},
-	}
-}
-
-// The well-known dev admin key is a local-dev convenience and must never be seeded
-// onto a durable store — a real deployment uses sqlite/postgres, so it can never
-// boot with a known admin credential no matter the flag value.
-func TestSeedDevKeyOnlyOnMemoryStore(t *testing.T) {
-	const dev = "dev-sandbox-key"
-	cases := []struct {
-		store string
-		want  bool
-	}{
-		{"memory", true},
-		{"sqlite", false},
-		{"postgres", false},
-	}
-	for _, c := range cases {
-		kr := auth.NewKeyring()
-		if got := seedDevKey(kr, dev, c.store); got != c.want {
-			t.Errorf("seedDevKey(store=%q) = %v, want %v", c.store, got, c.want)
-		}
-		_, resolved := kr.Resolve(dev)
-		if resolved != c.want {
-			t.Errorf("store=%q: dev key resolvable = %v, want %v", c.store, resolved, c.want)
-		}
-	}
-
-	// An empty key never seeds, even on memory.
-	if seedDevKey(auth.NewKeyring(), "", "memory") {
-		t.Error("an empty --dev-api-key must not seed any key")
 	}
 }

@@ -31,6 +31,13 @@ func NewNotifier(log eventlog.Log, st store.Store, client *http.Client) *Notifie
 	return &Notifier{log: log, store: st, client: client, now: func() time.Time { return time.Now().UTC() }}
 }
 
+// WithNow overrides the clock (deterministic tests, the demo seeder) and
+// returns the notifier.
+func (n *Notifier) WithNow(now func() time.Time) *Notifier {
+	n.now = now
+	return n
+}
+
 // Outcome classifies a single webhook delivery attempt. The distinction drives the
 // schedulers' dedup decision: a Retryable failure must NOT record the firing-edge
 // alert (so the next tick re-tries), whereas a Permanent failure is recorded like a

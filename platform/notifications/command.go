@@ -25,6 +25,13 @@ func NewHandler(log eventlog.Log) *Handler {
 	return &Handler{log: log, now: func() time.Time { return time.Now().UTC() }}
 }
 
+// WithNow overrides the clock used to stamp recorded events (deterministic
+// tests, the demo seeder) and returns the handler.
+func (h *Handler) WithNow(now func() time.Time) *Handler {
+	h.now = now
+	return h
+}
+
 // MarkRead marks one of the caller's notifications read. The recipient is the
 // caller, so a user can only touch their own inbox. notificationID is recipient-
 // scoped (recipient:source), so it must belong to the caller.

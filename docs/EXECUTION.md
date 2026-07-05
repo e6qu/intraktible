@@ -90,21 +90,22 @@ escalated to a case the same way.
 
 ## How the demo runs all of this
 
-The public demo at `/demo/` has **no backend** — yet every decision is really executed.
-The demo ships a faithful **client-side interpreter** of the same model:
+The public demo at `/demo/` has **no server** — yet every decision is really executed,
+because the demo runs the REAL backend, compiled to WebAssembly:
 
-- `web/src/lib/demo/engine.ts` walks a flow graph exactly as described above —
-  evaluating expressions, scoring models, taking the matching split branch, opening
-  cases on manual review, and producing a real disposition + reason-code trace.
-- `web/src/lib/demo/install.ts` overrides `window.fetch` (and `EventSource`/`WebSocket`)
-  so the app's normal `/v1` API calls are served from an in-memory store instead of a
-  server. The UI does not know it's talking to a mock.
-- State persists to `localStorage`, so a flow you build, deploy, and decide accumulates
-  across reloads (with a **Reset** control), and the switched demo user drives the audit
-  trail.
+- `cmd/intraktible-wasm` assembles the exact server the native binary runs
+  (`server.New` — every module, middleware, RBAC gate, and route) and hosts it in a
+  Web Worker. There is no interpreter and no mock: the engine that walks your flow in
+  the demo is the Go implementation under `decision-engine/`, byte-for-byte.
+- `web/src/lib/backend/` is the transport: the page routes its normal `/v1` calls
+  (plus the SSE/WebSocket agent streams) over the worker's message port instead of a
+  TCP socket. The application code is identical either way.
+- The workspace boots from a pre-recorded event log (`make demo-seed` drives the real
+  API to script a month of activity), and everything you do appends real events. Your
+  delta persists to `localStorage` and replays on top of the seed at the next boot —
+  with a **Reset** control to drop it — and the demo-user switcher performs a real
+  `/v1/login` as that user, so the audit trail attributes your actions faithfully.
 
 So when you run a test decision in the demo and read its trace, you are watching the
-real execution model run in your browser — the same nodes, the same branching, the same
-disposition logic — not a pre-recorded animation. The production engine is the Go
-implementation under `decision-engine/`; the demo interpreter mirrors its behavior so
-the demo faithfully represents the product.
+production execution model run in your browser — the same nodes, the same branching,
+the same disposition logic — not a pre-recorded animation or a re-implementation.

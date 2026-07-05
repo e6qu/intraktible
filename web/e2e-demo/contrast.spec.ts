@@ -5,20 +5,43 @@
 // actual contrast ratio for every text/background pair across representative routes in
 // BOTH themes and fails if any normal text is < 4.5:1 (large text < 3:1), so low
 // contrast can't silently regress.
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 
-const ROUTES = [
-  '/',
-  '/engine',
-  '/engine/flow_credit', // the builder canvas (svelte-flow edge labels live here)
-  '/decisions/dec_1',
-  '/cases/case_1',
-  '/mrm',
-  '/observability',
-  '/preapprovals', // the .link.danger Revoke button regressed here, unmeasured
-  '/agents',
-  '/policies'
+// Routes are RELATIVE so they resolve under the baseURL's /intraktible/demo/ base
+// ('' is the home dashboard) — a leading-slash route escapes the base and lands on
+// vite preview's "did you mean" hint page instead of the app.
+const LIST_ROUTES = [
+  '',
+  'engine',
+  'mrm',
+  'observability',
+  'preapprovals', // the .link.danger Revoke button regressed here, unmeasured
+  'agents',
+  'policies'
 ];
+
+// The detail routes (builder canvas — svelte-flow edge labels live there — plus a
+// decision trace and a case) carry ids the real backend minted for the seed, so
+// they are resolved through the API once per test rather than hardcoded.
+async function detailRoutes(page: Page): Promise<string[]> {
+  await page.goto('');
+  await page.waitForFunction(() => '__demo' in window);
+  return await page.evaluate(async () => {
+    const j = (r: Response) => r.json();
+    const flows = (await fetch('/v1/flows').then(j)).flows as { slug: string; flow_id: string }[];
+    const credit = flows.find((f) => f.slug === 'credit-decision');
+    if (!credit) throw new Error('credit-decision missing from the seed');
+    const decisions = (await fetch('/v1/decisions?limit=1').then(j)).decisions as {
+      decision_id: string;
+    }[];
+    const cases = (await fetch('/v1/cases').then(j)).cases as { case_id: string }[];
+    return [
+      `engine/${credit.flow_id}`,
+      `decisions/${decisions[0].decision_id}`,
+      `cases/${cases[0].case_id}`
+    ];
+  });
+}
 
 // Persona only swaps the accent tokens (--accent / --accent-ink / --link), which colour
 // the active nav + links — so persona-specific contrast bugs (e.g. an active nav item
@@ -118,36 +141,53 @@ function ratio(a: number[], b: number[]): number {
 
 for (const theme of ['light', 'dark']) {
   test(`text meets WCAG AA contrast in ${theme} mode`, async ({ page }) => {
-    test.setTimeout(180_000); // 8 personas × 10 routes, each a themed fresh render
+    // Every fresh render boots the embedded wasm backend, so the audit trims the
+    // persona×route cross-product without losing either dimension: persona only
+    // swaps the accent tokens (visible on every page's nav/links/chips), so each
+    // persona is audited on the home dashboard, and the full route sweep — where
+    // the route-specific surfaces live — runs under one persona per theme.
+    test.setTimeout(600_000);
+    const ROUTES = [...LIST_ROUTES, ...(await detailRoutes(page))];
     const failures: string[] = [];
-    for (const persona of PERSONAS) {
-      for (const route of ROUTES) {
-        // Persist the theme+persona and reload: the no-flash boot script then
-        // paints the page in the right theme from the FIRST frame. Flipping the
-        // attribute on a live page raced the CSS color transitions — the sampler
-        // read half-blended colors and reported phantom contrast failures.
-        await page.goto(route);
-        await page.evaluate(
-          ([t, p]) => {
-            localStorage.setItem('intraktible-theme', t);
-            localStorage.setItem('intraktible-persona', p);
-          },
-          [theme, persona]
-        );
-        await page.reload({ waitUntil: 'domcontentloaded' });
-        // One frame is enough: the boot script applies the theme before paint.
-        await page.evaluate(() => new Promise(requestAnimationFrame));
-        const pairs = await page.evaluate(collectPairs);
-        for (const p of pairs) {
-          const cr = ratio(p.fg, p.bg);
-          const min = p.large ? 3.0 : 4.5;
-          if (cr < min - 0.05) {
-            failures.push(
-              `[${persona}] ${route} [.${p.cls}] ${cr.toFixed(2)}:1 (need ${min}) fg(${p.fg}) bg(${p.bg}) "${p.txt}"`
-            );
-          }
+    const audit = async (persona: string, route: string): Promise<void> => {
+      await page.goto(route);
+      // Wait for the app to actually render: a fresh load boots the embedded
+      // backend behind a splash, so sampling at first paint would audit the
+      // splash, not the page.
+      await expect(page.locator('h1, h2').first()).toBeVisible();
+      await page.evaluate(() => new Promise(requestAnimationFrame));
+      const pairs = await page.evaluate(collectPairs);
+      for (const p of pairs) {
+        const cr = ratio(p.fg, p.bg);
+        const min = p.large ? 3.0 : 4.5;
+        if (cr < min - 0.05) {
+          failures.push(
+            `[${persona}] /${route} [.${p.cls}] ${cr.toFixed(2)}:1 (need ${min}) fg(${p.fg}) bg(${p.bg}) "${p.txt}"`
+          );
         }
       }
+    };
+    // Persist the theme+persona BEFORE each navigation (init scripts run ahead
+    // of the app), so the no-flash boot script paints the right theme from the
+    // FIRST frame. Flipping the attribute on a live page raced the CSS color
+    // transitions — the sampler read half-blended colors and reported phantom
+    // contrast failures. Scripts accumulate; the one added last wins.
+    const setChrome = (persona: string) =>
+      page.addInitScript(
+        ([t, p]) => {
+          localStorage.setItem('intraktible-theme', t);
+          localStorage.setItem('intraktible-persona', p);
+        },
+        [theme, persona]
+      );
+    for (const persona of PERSONAS) {
+      await setChrome(persona);
+      await audit(persona, '');
+    }
+    const sweeper = PERSONAS[0];
+    await setChrome(sweeper);
+    for (const route of ROUTES) {
+      if (route !== '') await audit(sweeper, route);
     }
     expect(failures, `WCAG AA contrast failures in ${theme}:\n${failures.join('\n')}`).toEqual([]);
   });

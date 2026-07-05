@@ -31,10 +31,17 @@ type Service struct {
 	// entity subject; piiFields is the set to seal.
 	eraser    *erasure.Vault
 	piiFields map[string]bool
+	now       func() time.Time
 }
 
 // Option configures a Service.
 type Option func(*Service)
+
+// WithNow overrides the clock feature computation reads (deterministic tests,
+// the demo seeder).
+func WithNow(now func() time.Time) Option {
+	return func(s *Service) { s.now = now }
+}
 
 // WithEgress sets the HTTP connector's egress policy (SSRF guard). The default
 // (zero value) blocks loopback/private targets.
@@ -68,7 +75,7 @@ func WithErasure(v *erasure.Vault, fields []string) Option {
 
 // New builds the service.
 func New(cmd *command.Handler, st store.Store, opts ...Option) *Service {
-	s := &Service{cmd: cmd, store: st}
+	s := &Service{cmd: cmd, store: st, now: func() time.Time { return time.Now().UTC() }}
 	for _, o := range opts {
 		o(s)
 	}
@@ -209,7 +216,7 @@ func (s *Service) computeFeatures(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	vals, err := features.Compute(r.Context(), s.store, id, r.PathValue("type"), r.PathValue("id"), time.Now().UTC())
+	vals, err := features.Compute(r.Context(), s.store, id, r.PathValue("type"), r.PathValue("id"), s.now())
 	httpx.WriteList(w, "features", vals, err)
 }
 

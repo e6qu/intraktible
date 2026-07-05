@@ -29,12 +29,20 @@ type Service struct {
 	cmd      *Handler
 	store    store.Store
 	notifier notifier // nil when no notification channel is wired
+	now      func() time.Time
 }
 
 // New wires the monitor write side and read model to HTTP. notify may be nil, in
 // which case a check evaluates but does not deliver.
 func New(cmd *Handler, st store.Store, notify notifier) *Service {
-	return &Service{cmd: cmd, store: st, notifier: notify}
+	return &Service{cmd: cmd, store: st, notifier: notify, now: func() time.Time { return time.Now().UTC() }}
+}
+
+// WithNow overrides the clock (deterministic tests, the demo seeder) and
+// returns the service.
+func (s *Service) WithNow(now func() time.Time) *Service {
+	s.now = now
+	return s
 }
 
 // Routes registers the monitor endpoints (under a flow).
@@ -154,7 +162,7 @@ func (s *Service) check(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := map[string]any{"flow_id": flowID, "checked": len(rules), "fired": fired}
 	if len(fired) > 0 && s.notifier != nil {
-		payload := map[string]any{"flow_id": flowID, "checked_at": time.Now().UTC(), "fired": fired}
+		payload := map[string]any{"flow_id": flowID, "checked_at": s.now(), "fired": fired}
 		// Evaluation succeeded, so report the delivery outcomes rather than 500-ing the
 		// check: surface the per-webhook results and flag delivery_failed when not every
 		// webhook accepted (any retryable/permanent failure, or a real Deliver error).

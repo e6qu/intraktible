@@ -37,6 +37,13 @@ func NewScheduler(st store.Store, cmd Cmd) *Scheduler {
 	return &Scheduler{store: st, cmd: cmd, now: func() time.Time { return time.Now().UTC() }}
 }
 
+// WithNow overrides the clock (deterministic tests, the demo seeder) and
+// returns the scheduler.
+func (s *Scheduler) WithNow(now func() time.Time) *Scheduler {
+	s.now = now
+	return s
+}
+
 // WithNotify registers a delivery hook called (in the shell) with the cases that just
 // breached their SLA, so an overdue human task can be pushed to an external channel
 // (a webhook) — the reviewer-facing escalation. The in-app inbox is driven separately

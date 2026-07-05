@@ -136,16 +136,10 @@ func (w *WAL) Append(_ context.Context, e Envelope) (Envelope, error) {
 	if w.failed != nil {
 		return Envelope{}, w.failed
 	}
-	if e.Org == "" || e.Workspace == "" {
-		return Envelope{}, fmt.Errorf("eventlog: event %q missing org/workspace", e.Type)
+	e, err := stampForAppend(e, w.claimed, uint64(len(w.offsets))+1)
+	if err != nil {
+		return Envelope{}, err
 	}
-	if e.Unique != "" && w.claimed[e.Unique] {
-		return Envelope{}, ErrConflict
-	}
-	if e.ID == "" {
-		e.ID = newID()
-	}
-	e.Seq = uint64(len(w.offsets)) + 1
 	b, err := json.Marshal(e)
 	if err != nil {
 		return Envelope{}, fmt.Errorf("eventlog: marshal: %w", err)

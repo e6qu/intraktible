@@ -121,6 +121,13 @@ func NewHandler(log eventlog.Log) *Handler {
 	return &Handler{log: log, now: func() time.Time { return time.Now().UTC() }}
 }
 
+// WithNow overrides the clock (deterministic tests, the demo seeder) and
+// returns the handler.
+func (h *Handler) WithNow(now func() time.Time) *Handler {
+	h.now = now
+	return h
+}
+
 // SetCases replaces an agent's eval cases (whole-set, like assertions).
 func (h *Handler) SetCases(ctx context.Context, id identity.Identity, agent string, cases []Case) (eventlog.Envelope, error) {
 	if err := id.Valid(); err != nil {

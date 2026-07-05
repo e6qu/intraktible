@@ -1,8 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 
 // Realism regressions from the demo deep-audit: interactions a prospect tries
 // must behave like the real product, not silently snap back or hide evidence.
+
+// The seed's ids are minted by the real backend (random per regeneration), so a
+// detail page is reached the way a user reaches it: from the flow list.
+async function openFlow(page: Page, slug: string): Promise<void> {
+  await page.goto('engine');
+  const row = page.locator('tbody tr').filter({ hasText: slug });
+  await row.first().locator('a[href*="/engine/"]').first().click();
+  await expect(page.locator('h1, h2').first()).toBeVisible();
+}
 
 // The operator lens presets the queue to needs_review; choosing "all" must widen
 // the view instead of being re-overridden by the lens on navigation.
@@ -22,8 +31,8 @@ test("operator: the 'all' cases filter overrides the persona lens", async ({ pag
   await expect(page.locator('tbody')).toContainText('completed');
 });
 
-// The seeded suspended decision is reachable through the status filter, not only
-// by knowing its id.
+// The seeded suspended decisions are reachable through the status filter, not only
+// by knowing their ids.
 test('decisions: the suspended status filter finds the paused decision', async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem('intraktible-persona', 'builder'));
   await page.goto('decisions');
@@ -35,19 +44,19 @@ test('decisions: the suspended status filter finds the paused decision', async (
 });
 
 // A pre-approval-honored test run announces itself on the builder verdict card:
-// the grant badge and the PRE_APPROVED reason code, not an indistinguishable
-// input echo.
+// the grant badge and the "honored · flow skipped" evidence, not an
+// indistinguishable input echo. (The real honored fast path returns the grant id
+// and disposition reason; it does not synthesize a reason code — that was an
+// embellishment of the retired TS mock.)
 test('builder verdict card surfaces a honored pre-approval', async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem('intraktible-persona', 'builder'));
-  await page.goto('engine/flow_credit');
-  // The in-browser backend installs during hydration; fetching before that races
-  // past the override into vite preview's dead /v1 proxy (a 502).
-  await page.waitForFunction(() => '__demo' in window);
-  // Grant through the page's own fetch so the in-browser backend records it.
+  await openFlow(page, 'credit-decision');
+  // Grant through the page's own fetch so the embedded backend records it (the
+  // session cookie authenticates; the CSRF header is required on mutations).
   await page.evaluate(async () => {
     const res = await fetch('/v1/preapprovals', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'intraktible' },
       body: JSON.stringify({
         entity_type: 'applicant',
         entity_id: 'e2e-honored',
@@ -68,7 +77,6 @@ test('builder verdict card surfaces a honored pre-approval', async ({ page }) =>
   const verdict = page.getByTestId('run-verdict');
   await expect(verdict).toBeVisible();
   await expect(verdict.getByText('pre-approved')).toBeVisible();
-  await expect(verdict.getByText('PRE_APPROVED')).toBeVisible();
   await expect(verdict.getByText('honored · flow skipped')).toBeVisible();
 });
 
@@ -76,7 +84,7 @@ test('builder verdict card surfaces a honored pre-approval', async ({ page }) =>
 // the request row (no native prompt()), and the decision + note persist on it.
 test('four-eyes approval collects its reason inline', async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem('intraktible-persona', 'builder'));
-  await page.goto('engine/flow_credit');
+  await openFlow(page, 'credit-decision');
   await page.getByRole('button', { name: 'Deploy & versions' }).click();
 
   const requests = page.getByTestId('deployment-requests');

@@ -490,7 +490,7 @@
   }
   button.danger {
     background: var(--danger);
-    color: white;
+    color: var(--on-danger);
     border: none;
     border-radius: 0.35rem;
     padding: 0.4rem 0.75rem;

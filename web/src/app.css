@@ -81,6 +81,10 @@
   --border: #e1e6ee;
   --border-strong: #cfd6e0;
   --danger: #c4122f;
+  /* Text painted ON a solid --danger fill (badge counts, danger buttons): white
+     clears AA on the deep light-theme red; the dark theme overrides it because
+     its lighter red needs a dark ink (measured by the contrast audit). */
+  --on-danger: #fff;
   --ok: #157f3c;
   --warn: #8a5200;
   --shadow: 0 1px 2px rgba(20, 25, 35, 0.06), 0 2px 8px rgba(20, 25, 35, 0.05);
@@ -121,6 +125,8 @@
   --border: #2a313b;
   --border-strong: #3a424e;
   --danger: #ff6b6b;
+  /* Dark ink on the light dark-theme red (~7.2:1); white on #ff6b6b was 2.78:1. */
+  --on-danger: #1a1d23;
   --ok: #4ade80;
   --warn: #e0a030;
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 2px 10px rgba(0, 0, 0, 0.3);

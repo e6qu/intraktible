@@ -167,7 +167,7 @@
     padding: 0 0.25rem;
     border-radius: 999px;
     background: var(--danger);
-    color: #fff;
+    color: var(--on-danger);
     font-size: 0.66rem;
     font-weight: 700;
     display: inline-flex;

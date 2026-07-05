@@ -64,3 +64,7 @@ web/.pw-data-embedded/
 
 # rendered docs site (build artifact)
 web/build-docs/
+web/static/intraktible.wasm
+web/static/wasm_exec.js
+web/static/demo-seed.json
+web/static/demo-users.json

@@ -17,7 +17,9 @@ export default defineConfig(
       'node_modules/',
       'playwright-report/',
       'test-results/',
-      '.pw-data/'
+      '.pw-data/',
+      // Go's vendored wasm runtime shim, copied in by `make wasm` (not our code).
+      'static/wasm_exec.js'
     ]
   },
   js.configs.recommended,
