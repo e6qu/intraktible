@@ -107,6 +107,6 @@ jobs:
           go-version-file: go.mod
       - name: build the wasm backend + seed history
         run: make wasm demo-seed
-        working-directory: ..
+        working-directory: .
       - name: demo smoke (Playwright — the real backend in wasm, no server)
         run: npx playwright test --config=playwright.demo.config.ts
