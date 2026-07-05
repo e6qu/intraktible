@@ -5,6 +5,7 @@
   import '../app.css';
   import { onMount } from 'svelte';
   import { page } from '$app/stores';
+  import { afterNavigate } from '$app/navigation';
   import Icon from '$lib/Icon.svelte';
   import { initTheme, toggleTheme, theme as themeStore } from '$lib/theme';
   import {
@@ -20,6 +21,9 @@
   import { openPalette } from '$lib/palette';
   import { openGuide } from '$lib/guide';
   import { helpFor } from '$lib/help/registry';
+  import { resetRecorder } from '$lib/recorder';
+  import { buildCurrentPageExport } from '$lib/aiexport';
+  import { copyText } from '$lib/clipboard';
   import Toasts from '$lib/Toasts.svelte';
   import CommandPalette from '$lib/CommandPalette.svelte';
   import ShortcutsOverlay from '$lib/ShortcutsOverlay.svelte';
@@ -42,6 +46,19 @@
       unsubPersona();
     };
   });
+
+  // The API-call recorder is per-navigation: reset it when the route changes so
+  // the "Export for AI" document only describes the current page's visit. Not on
+  // 'enter' (initial load) — the buffer is empty then and the first page's calls
+  // may already be in flight.
+  afterNavigate((nav) => {
+    if (nav.type !== 'enter') resetRecorder();
+  });
+
+  // One-click "copy this page for AI" — the same document the guide panel offers.
+  async function copyForAI(): Promise<void> {
+    await copyText(buildCurrentPageExport($page.route.id, $page.url.pathname), 'Copied for AI');
+  }
 
   // Navigation is the current persona's ordered (and optionally relabelled) subset
   // of the shared catalog. The signed-in role (from /v1/me) also drops admin-only
@@ -218,6 +235,16 @@
         {/if}
       </div>
     </details>
+    <button
+      class="guide-trigger"
+      onclick={copyForAI}
+      aria-label="Copy this page for AI"
+      title="Copy for AI — a machine-readable export of this page (what it is, its API calls, its content)"
+      data-testid="ai-copy-trigger"
+      disabled={!helpFor($page.route.id)}
+    >
+      <Icon name="copy" size={16} />
+    </button>
     <button
       class="guide-trigger"
       onclick={openGuide}

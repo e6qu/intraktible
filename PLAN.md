@@ -995,6 +995,13 @@ backend deleted (22.6k lines). The seed is a real event log produced by driving 
 a scripted clock; visitor actions persist as a replayed delta; the demo e2e suite (28) passes
 against the wasm. UI works identically against either deployment.
 
+**Descriptions, AI analysis, discussions, AI-readable pages (DX in BUGS.md).** Flows carry
+first-class descriptions (new details_set event, PATCH route, inline builder editing, seeded
+content); a circled robot button runs AI analysis of the open flow inline; discussions landed on
+case/agent/model/entity screens with seeded threads; and every page now exports a semi-structured
+AI-readable document — its purpose and flows from the help registry, the ACTUAL API calls recorded
+behind the view, and a content summary — one click beside the page guide.
+
 **Transposition-prevention refactors (TS40–TS42).** The three follow-ups left from round 10 landed as
 one PR: the decision-subject (entity type, id) is now the shared branded `platform/entity.Ref` threaded
 through the feature/pre-approval ports (a swapped pair fails to compile rather than silently keying the

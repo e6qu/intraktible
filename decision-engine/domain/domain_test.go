@@ -3,6 +3,7 @@
 package domain_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/e6qu/intraktible/decision-engine/domain"
@@ -113,6 +114,33 @@ func TestCommandValidate(t *testing.T) {
 	}
 	if err := (domain.PublishVersion{FlowID: "", Graph: events.Graph{Nodes: []events.Node{node("in", events.NodeInput), node("out", events.NodeOutput)}}}).Validate(); err == nil {
 		t.Fatal("empty flow id should be rejected")
+	}
+	if err := (domain.CreateFlow{Slug: "ok", Name: "Flow", Description: "What this flow decides."}).Validate(); err != nil {
+		t.Fatalf("valid create with description rejected: %v", err)
+	}
+	if err := (domain.CreateFlow{Slug: "ok", Name: "Flow", Description: strings.Repeat("x", 2001)}).Validate(); err == nil {
+		t.Fatal("oversized description should be rejected")
+	}
+}
+
+func TestUpdateFlowValidate(t *testing.T) {
+	str := func(s string) *string { return &s }
+	if err := (domain.UpdateFlow{FlowID: "f", Name: str("New Name")}).Validate(); err != nil {
+		t.Fatalf("valid rename rejected: %v", err)
+	}
+	if err := (domain.UpdateFlow{FlowID: "f", Description: str("")}).Validate(); err != nil {
+		t.Fatalf("clearing the description should be valid: %v", err)
+	}
+	bad := []domain.UpdateFlow{
+		{FlowID: "", Name: str("N")},   // no flow
+		{FlowID: "f"},                  // nothing to update
+		{FlowID: "f", Name: str("  ")}, // blank name
+		{FlowID: "f", Description: str(strings.Repeat("x", 2001))}, // oversized description
+	}
+	for i, c := range bad {
+		if err := c.Validate(); err == nil {
+			t.Fatalf("case %d: expected validation error for %+v", i, c)
+		}
 	}
 }
 

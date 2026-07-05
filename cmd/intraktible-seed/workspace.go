@@ -76,58 +76,79 @@ type versionSpec struct {
 }
 
 type flowSpec struct {
-	tag      string // "flow:<slug>"
-	slug     string
-	name     string
-	by       string // flow creator
-	versions []versionSpec
+	tag         string // "flow:<slug>"
+	slug        string
+	name        string
+	description string
+	by          string // flow creator
+	versions    []versionSpec
 }
 
 func flowSpecs() []flowSpec {
 	return []flowSpec{
-		{"flow:credit-decision", "credit-decision", "Consumer Credit Decision", actorAva, []versionSpec{
-			{creditGraphV1(), nil, actorAva},
-			{creditGraphV2(), creditSchema(), actorPriya},
-			{creditGraphV3(), creditSchema(), actorPriya},
-		}},
-		{"flow:aml-screening", "aml-screening", "AML Transaction Screening", actorAva, []versionSpec{
-			{amlGraphV1(), nil, actorAva},
-			{amlGraphV2(), amlSchema(), actorPriya},
-			{amlGraphV3(), amlSchema(), actorPriya},
-		}},
-		{"flow:kyc-onboarding", "kyc-onboarding", "KYC Onboarding", actorPriya, []versionSpec{
-			{kycGraphV1(), nil, actorPriya},
-			{kycGraphV2(), kycSchema(), actorPriya},
-		}},
-		{"flow:card-fraud", "card-fraud", "Card Fraud Scoring", actorAva, []versionSpec{
-			{fraudGraphV1(), nil, actorAva},
-			{fraudGraphV2(), nil, actorPriya},
-			{fraudGraphV3(), fraudSchema(), actorPriya},
-			{fraudGraphV4(), fraudSchema(), actorPriya},
-		}},
-		{"flow:dispute-triage", "dispute-triage", "Dispute / Chargeback Triage", actorPriya, []versionSpec{
-			{disputeGraphV1(), nil, actorPriya},
-			{disputeGraphV2(), disputeSchema(), actorPriya},
-		}},
-		{"flow:merchant-onboarding", "merchant-onboarding", "Merchant Onboarding", actorPriya, []versionSpec{
-			{merchantGraphV1(), nil, actorPriya},
-			{merchantGraphV2(), merchantSchema(), actorPriya},
-		}},
-		{"flow:collections-hardship", "collections-hardship", "Collections Hardship Program", actorPriya, []versionSpec{
-			{collectionsGraphV1(), nil, actorPriya},
-			{collectionsGraphV2(), collectionsSchema(), actorPriya},
-		}},
-		{"flow:claim-triage", "claim-triage", "Purchase Protection Claim Triage", actorPriya, []versionSpec{
-			{claimGraphV1(), nil, actorPriya},
-			{claimGraphV2(), claimSchema(), actorPriya},
-		}},
-		{"flow:payout-risk", "payout-risk", "Marketplace Payout Risk", actorPriya, []versionSpec{
-			{payoutGraphV1(), nil, actorPriya},
-			{payoutGraphV2(), payoutSchema(), actorPriya},
-		}},
-		{"flow:limit-increase", "limit-increase", "Card Limit Increase", actorPriya, []versionSpec{
-			{limitGraphV1(), limitSchema(), actorPriya},
-		}},
+		{"flow:credit-decision", "credit-decision", "Consumer Credit Decision",
+			"Scores loan applications with bureau enrichment and the PD/propensity models, banding risk into auto-approve, underwriter referral, or decline. v3 adds the live Experian pull and Reg B adverse-action reason codes.",
+			actorAva, []versionSpec{
+				{creditGraphV1(), nil, actorAva},
+				{creditGraphV2(), creditSchema(), actorPriya},
+				{creditGraphV3(), creditSchema(), actorPriya},
+			}},
+		{"flow:aml-screening", "aml-screening", "AML Transaction Screening",
+			"Screens wires and transfers against the sanctions hard-stop, sub-threshold structuring heuristics, and a composite AML risk score. Referrals reach the analyst queue with an AI-drafted SAR narrative attached.",
+			actorAva, []versionSpec{
+				{amlGraphV1(), nil, actorAva},
+				{amlGraphV2(), amlSchema(), actorPriya},
+				{amlGraphV3(), amlSchema(), actorPriya},
+			}},
+		{"flow:kyc-onboarding", "kyc-onboarding", "KYC Onboarding",
+			"Verifies onboarding packets via document extraction, PEP/adverse-media checks, and the vendor score, gating on identity confidence. Low confidence routes to EDD review; hard stops suspend into a durable EDD hold.",
+			actorPriya, []versionSpec{
+				{kycGraphV1(), nil, actorPriya},
+				{kycGraphV2(), kycSchema(), actorPriya},
+			}},
+		{"flow:card-fraud", "card-fraud", "Card Fraud Scoring",
+			"Scores card authorizations in real time from velocity, device, and amount-ratio features. High fraud probability blocks outright, the mid band refers to a fraud analyst, and the v4 challenger shades scores with trusted-customer rules.",
+			actorAva, []versionSpec{
+				{fraudGraphV1(), nil, actorAva},
+				{fraudGraphV2(), nil, actorPriya},
+				{fraudGraphV3(), fraudSchema(), actorPriya},
+				{fraudGraphV4(), fraudSchema(), actorPriya},
+			}},
+		{"flow:dispute-triage", "dispute-triage", "Dispute / Chargeback Triage",
+			"Triages chargebacks by reason-code liability and value tier: low-scoring disputes auto-refund, the rest route to disputes ops with an AI summary and the evidence checklist for representment.",
+			actorPriya, []versionSpec{
+				{disputeGraphV1(), nil, actorPriya},
+				{disputeGraphV2(), disputeSchema(), actorPriya},
+			}},
+		{"flow:merchant-onboarding", "merchant-onboarding", "Merchant Onboarding",
+			"Underwrites merchant applications from the MCC tier adder, volume features, and the merchant risk score. Scores above the gate go to underwriting review with an AI-drafted memo; the rest board automatically.",
+			actorPriya, []versionSpec{
+				{merchantGraphV1(), nil, actorPriya},
+				{merchantGraphV2(), merchantSchema(), actorPriya},
+			}},
+		{"flow:collections-hardship", "collections-hardship", "Collections Hardship Program",
+			"Assesses hardship applications on a weighted scorecard (income drop, missed payments, medical events, tenure). Qualifying cases get tiered plan terms; concessions above authority escalate to supervisor review.",
+			actorPriya, []versionSpec{
+				{collectionsGraphV1(), nil, actorPriya},
+				{collectionsGraphV2(), collectionsSchema(), actorPriya},
+			}},
+		{"flow:claim-triage", "claim-triage", "Purchase Protection Claim Triage",
+			"Triages purchase-protection claims: lapsed policies deny with reason codes, low-value first claims fast-track to payment, and abuse-model flags or high severity refer to an adjuster with an AI brief.",
+			actorPriya, []versionSpec{
+				{claimGraphV1(), nil, actorPriya},
+				{claimGraphV2(), claimSchema(), actorPriya},
+			}},
+		{"flow:payout-risk", "payout-risk", "Marketplace Payout Risk",
+			"Gates marketplace seller payouts through a risk × amount matrix over core-banking ledger history and the payout risk score — auto-release, ops review, or funds hold. Large flagged payouts suspend into a durable ops hold.",
+			actorPriya, []versionSpec{
+				{payoutGraphV1(), nil, actorPriya},
+				{payoutGraphV2(), payoutSchema(), actorPriya},
+			}},
+		{"flow:limit-increase", "limit-increase", "Card Limit Increase",
+			"Decides card limit-increase requests from utilization, DTI, and PD risk: low-risk requests auto-grant up to 1.5x the current limit, the mid band refers to credit ops, and the rest keep their limit.",
+			actorPriya, []versionSpec{
+				{limitGraphV1(), limitSchema(), actorPriya},
+			}},
 	}
 }
 
@@ -141,7 +162,8 @@ func (s *seeder) flowActions(cfg *timeCursor) []action {
 			var res struct {
 				FlowID string `json:"flow_id"`
 			}
-			s.call(f.by, http.MethodPost, "/v1/flows", map[string]any{"slug": f.slug, "name": f.name}, &res)
+			s.call(f.by, http.MethodPost, "/v1/flows",
+				map[string]any{"slug": f.slug, "name": f.name, "description": f.description}, &res)
 			s.setID(f.tag, res.FlowID)
 		}})
 		for vi, v := range f.versions {

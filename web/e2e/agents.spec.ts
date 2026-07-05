@@ -84,3 +84,19 @@ test('streams an agent run over SSE in the browser', async ({ page, request }) =
   // The output accumulates the streamed deltas (the stub echoes the prompt).
   await expect(page.getByTestId('stream-output')).toContainText('stub: hello there');
 });
+
+test('posts a comment in the agent discussion thread', async ({ page, request }) => {
+  const name = uniqueName();
+  const created = await request.post('/v1/agents', {
+    headers: { 'X-Api-Key': KEY },
+    data: { name, system: 'assess' }
+  });
+  expect(created.ok()).toBeTruthy();
+
+  await page.goto(`/agents/${name}`);
+  await expect(page.getByRole('heading', { name: 'Discussion' })).toBeVisible();
+  const thread = page.getByTestId('comment-thread');
+  await thread.getByLabel('new comment').fill('Tighten the system prompt before the next eval.');
+  await thread.getByTestId('post-comment').click();
+  await expect(thread).toContainText('Tighten the system prompt before the next eval.');
+});

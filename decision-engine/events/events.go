@@ -64,7 +64,10 @@ type ModelBaselineCaptured struct {
 
 // Flow lifecycle event types.
 const (
-	TypeFlowCreated          = "decision.flow.created"
+	TypeFlowCreated = "decision.flow.created"
+	// TypeFlowDetailsSet updates a flow's mutable details (name/description);
+	// the slug and version history are immutable and never travel on it.
+	TypeFlowDetailsSet       = "decision.flow.details_set"
 	TypeFlowVersionPublished = "decision.flow.version_published"
 	TypeFlowVersionDeployed  = "decision.flow.version_deployed"
 	// Maker-checker (four-eyes) change control on deployments.
@@ -169,10 +172,23 @@ type Graph struct {
 
 // FlowCreated records a new (empty, unversioned) flow. Slug is the stable,
 // URL-safe identifier used in the decide path; it is unique per tenant.
+// Description is optional prose about what the flow decides; events recorded
+// before the field existed simply decode it as "".
 type FlowCreated struct {
-	FlowID string `json:"flow_id"`
-	Slug   string `json:"slug"`
-	Name   string `json:"name"`
+	FlowID      string `json:"flow_id"`
+	Slug        string `json:"slug"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+}
+
+// FlowDetailsSet records a flow's mutable details (name + description) in full:
+// the command resolves the caller's partial update against the current values,
+// so the event — and therefore the projection — never has to branch on which
+// field changed.
+type FlowDetailsSet struct {
+	FlowID      string `json:"flow_id"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
 }
 
 // FlowVersionPublished records an immutable flow version. Version is monotonic

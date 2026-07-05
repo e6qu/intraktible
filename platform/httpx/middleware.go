@@ -366,7 +366,9 @@ func requiredRole(method, path string) auth.Role {
 		strings.HasSuffix(path, "/reject"):           // the checker rejecting a deployment
 		return auth.RoleApprover
 	case strings.HasSuffix(path, "/deployment-requests"), // proposing a deployment (maker)
-		isAuthoringPath(path):
+		isAuthoringPath(path),
+		// PATCHing a flow edits its details (name/description) — authoring, like create.
+		method == http.MethodPatch && strings.HasPrefix(path, "/v1/flows/"):
 		return auth.RoleEditor
 	default:
 		return auth.RoleOperator

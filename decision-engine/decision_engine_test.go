@@ -4,10 +4,13 @@ package decisionengine_test
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/e6qu/intraktible/decision-engine/command"
 	"github.com/e6qu/intraktible/decision-engine/domain"
+	"github.com/e6qu/intraktible/decision-engine/events"
 	"github.com/e6qu/intraktible/decision-engine/flows"
 	"github.com/e6qu/intraktible/decision-engine/internal/flowtest"
 	"github.com/e6qu/intraktible/platform/eventlog"
@@ -100,6 +103,73 @@ func TestSlugUniquenessAndTenantIsolation(t *testing.T) {
 	lb, _ := flows.List(ctx, st, b)
 	if len(la) != 1 || len(lb) != 1 {
 		t.Fatalf("tenant isolation: a=%d b=%d, want 1/1", len(la), len(lb))
+	}
+}
+
+// TestFlowDescriptionLifecycle covers the description end-to-end at this layer:
+// created with one, updated via UpdateFlow (PATCH semantics: name untouched),
+// and — schema evolution — a legacy FlowCreated event recorded before the field
+// existed replays with an empty description.
+func TestFlowDescriptionLifecycle(t *testing.T) {
+	ctx := context.Background()
+	log, err := eventlog.OpenWAL(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = log.Close() }()
+
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "author"}
+	h := command.NewHandler(log)
+	flowID, _, err := h.CreateFlow(ctx, id, domain.CreateFlow{
+		Slug: "described", Name: "Described", Description: "Scores loan applications into approve/refer bands.",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A legacy flow.created payload without the description field (recorded before
+	// the field existed) must decode and replay cleanly.
+	legacy, err := json.Marshal(map[string]string{"flow_id": "legacy-1", "slug": "legacy", "name": "Legacy"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := log.Append(ctx, eventlog.Envelope{
+		Org: id.Org, Workspace: id.Workspace, Actor: id.Actor,
+		Stream: events.StreamFlows, Type: events.TypeFlowCreated, Time: time.Now().UTC(), Payload: legacy,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// PATCH semantics: setting only the description leaves the name untouched.
+	desc := "Updated: adds the Reg B adverse-action codes."
+	name, gotDesc, _, err := h.UpdateFlow(ctx, id, domain.UpdateFlow{FlowID: flowID, Description: &desc})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name != "Described" || gotDesc != desc {
+		t.Fatalf("update resolved to %q/%q, want Described/%q", name, gotDesc, desc)
+	}
+	if _, _, _, err := h.UpdateFlow(ctx, id, domain.UpdateFlow{FlowID: "nope", Description: &desc}); err == nil {
+		t.Fatal("expected error updating unknown flow")
+	}
+
+	st := store.NewMemory()
+	if err := projection.New(log, st, flows.Projector{}).Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	fv, ok, err := flows.Read(ctx, st, id, flowID)
+	if err != nil || !ok {
+		t.Fatalf("read after replay: ok=%v err=%v", ok, err)
+	}
+	if fv.Name != "Described" || fv.Description != desc {
+		t.Fatalf("after replay: name=%q description=%q, want Described/%q", fv.Name, fv.Description, desc)
+	}
+	lv, ok, err := flows.Read(ctx, st, id, "legacy-1")
+	if err != nil || !ok {
+		t.Fatalf("legacy read after replay: ok=%v err=%v", ok, err)
+	}
+	if lv.Description != "" {
+		t.Fatalf("legacy event should replay with an empty description, got %q", lv.Description)
 	}
 }
 

@@ -12,8 +12,29 @@
   import { appHref } from '$lib/paths';
   import { guideOpen, closeGuide } from '$lib/guide';
   import { helpFor } from '$lib/help/registry';
+  import { buildCurrentPageExport, exportFilename } from '$lib/aiexport';
+  import { copyText } from '$lib/clipboard';
+  import { toast } from '$lib/toast';
 
   const help = $derived(helpFor($page.route.id));
+
+  // "Export for AI": the same guide content plus the page's recorded API calls
+  // and a summary of what it currently shows, as one markdown document.
+  async function copyForAI(): Promise<void> {
+    await copyText(buildCurrentPageExport($page.route.id, $page.url.pathname), 'Copied for AI');
+  }
+  function downloadForAI(): void {
+    const text = buildCurrentPageExport($page.route.id, $page.url.pathname);
+    const url = URL.createObjectURL(new Blob([text], { type: 'text/markdown' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = exportFilename($page.route.id ?? '');
+    a.click();
+    // Revoke on a later tick — a synchronous revoke can race the browser's blob
+    // fetch and abort the download.
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+    toast.success('Downloaded page export');
+  }
   let panelEl = $state<HTMLElement | null>(null);
   let closeEl = $state<HTMLButtonElement | null>(null);
   let restoreFocusEl: HTMLElement | null = null;
@@ -79,6 +100,18 @@
           <Icon name="plus" size={16} />
         </button>
       </header>
+      <div class="g-export" role="group" aria-label="Export this page for AI">
+        <button class="g-export-btn" onclick={copyForAI} data-testid="guide-copy-ai">
+          <Icon name="copy" size={14} /> Copy for AI
+        </button>
+        <button class="g-export-btn" onclick={downloadForAI} data-testid="guide-download-ai">
+          <Icon name="download" size={14} /> Download .md
+        </button>
+        <span class="g-export-hint">
+          A machine-readable export: what this page is, the API calls behind it, and what it
+          currently shows.
+        </span>
+      </div>
       <p class="g-summary">{help.summary}</p>
 
       <h3>What you can do here</h3>
@@ -168,6 +201,40 @@
     padding: 0.3rem;
     cursor: pointer;
     transform: rotate(45deg);
+  }
+  .g-export {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.45rem;
+    margin: 0.7rem 0 0.2rem;
+    padding: 0.55rem 0.6rem;
+    border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
+    border-radius: var(--radius, 8px);
+    background: color-mix(in srgb, var(--accent) 7%, var(--surface-2));
+  }
+  .g-export-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.35rem 0.65rem;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--surface);
+    color: var(--fg);
+    font: inherit;
+    font-size: 0.84rem;
+    font-weight: 550;
+    cursor: pointer;
+  }
+  .g-export-btn:hover {
+    border-color: var(--accent);
+  }
+  .g-export-hint {
+    flex-basis: 100%;
+    font-size: 0.74rem;
+    line-height: 1.35;
+    color: var(--fg-subtle);
   }
   .g-summary {
     color: var(--fg-muted);

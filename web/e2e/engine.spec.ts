@@ -1366,6 +1366,70 @@ test('select and pan tools: marquee selects, pan does not, v/h switch', async ({
   expect(rail.x + rail.width).toBeLessThan(controls.x);
 });
 
+test('creates a flow with a description, shows it in list + builder, and edits it inline', async ({
+  page
+}) => {
+  const slug = uniqueSlug();
+  await page.goto('/engine');
+  await page.getByLabel('slug').fill(slug);
+  await page.getByLabel('name').fill('Described Flow');
+  await page.getByLabel('description').fill('Scores small-business loans nightly.');
+  await page.getByRole('button', { name: 'Create flow' }).click();
+
+  // Creation lands in the builder, where the description shows under the title.
+  await expect(page).toHaveURL(/\/engine\/.+/);
+  const desc = page.getByTestId('flow-description');
+  await expect(desc).toContainText('Scores small-business loans nightly.');
+
+  // The list shows the description as a muted line under the name.
+  await page.goto('/engine');
+  const row = page.locator('tbody tr').filter({ hasText: slug });
+  await expect(row).toContainText('Scores small-business loans nightly.');
+
+  // Inline edit: pencil → textarea → save; the change survives a reload.
+  await row.getByRole('link').click();
+  await page.getByRole('button', { name: 'Edit description' }).click();
+  await page.getByLabel('flow description').fill('Scores loans and flags fraud.');
+  await page.getByRole('button', { name: 'Save description' }).click();
+  await expect(page.getByTestId('flow-description')).toContainText('Scores loans and flags fraud.');
+  await page.reload();
+  await expect(page.getByTestId('flow-description')).toContainText('Scores loans and flags fraud.');
+});
+
+test('the header robot button analyzes the flow with AI inline', async ({ page, request }) => {
+  const slug = uniqueSlug();
+  const created = await request.post('/v1/flows', {
+    headers: { 'X-Api-Key': KEY },
+    data: { slug, name: 'Analyzed' }
+  });
+  const { flow_id } = await created.json();
+  await request.post(`/v1/flows/${flow_id}/versions`, {
+    headers: { 'X-Api-Key': KEY },
+    data: {
+      graph: {
+        nodes: [
+          { id: 'in', type: 'input' },
+          { id: 'out', type: 'output' }
+        ],
+        edges: [{ from: 'in', to: 'out' }]
+      }
+    }
+  });
+
+  await page.goto(`/engine/${flow_id}`);
+  await expect(page.locator('.svelte-flow__node')).toHaveCount(2);
+  await page.getByTestId('analyze-flow').click();
+
+  // The analysis surfaces in a panel by the header (the AI stub returns
+  // deterministic text — assert something non-empty arrived, not exact wording).
+  await expect(page.getByTestId('analyze-panel')).toBeVisible();
+  const out = page.getByTestId('analyze-output');
+  await expect(out).toBeVisible();
+  await expect(out).toContainText(/\S/);
+  await page.getByRole('button', { name: 'Close analysis' }).click();
+  await expect(page.getByTestId('analyze-panel')).toHaveCount(0);
+});
+
 test('sample dataset and sweep buttons prefill runnable inputs', async ({ page, request }) => {
   const slug = uniqueSlug();
   const created = await request.post('/v1/flows', {

@@ -54,12 +54,14 @@ func (h *Handler) WithNow(now func() time.Time) *Handler {
 	return h
 }
 
-// flowAgg is the command-side aggregate of one flow: its slug and highest
-// published version, folded from the log.
+// flowAgg is the command-side aggregate of one flow: its slug, current details
+// (name/description), and highest published version, folded from the log.
 type flowAgg struct {
-	slug       string
-	latest     int
-	latestEtag string
+	slug        string
+	name        string
+	description string
+	latest      int
+	latestEtag  string
 }
 
 // CreateFlow validates the command, ensures the slug is unique for the tenant,
@@ -82,7 +84,7 @@ func (h *Handler) CreateFlow(ctx context.Context, id identity.Identity, cmd doma
 		return "", eventlog.Envelope{}, fmt.Errorf("decision-engine: flow slug %q already exists", cmd.Slug)
 	}
 	flowID := h.newID()
-	payload, err := json.Marshal(events.FlowCreated{FlowID: flowID, Slug: cmd.Slug, Name: cmd.Name})
+	payload, err := json.Marshal(events.FlowCreated{FlowID: flowID, Slug: cmd.Slug, Name: cmd.Name, Description: cmd.Description})
 	if err != nil {
 		return "", eventlog.Envelope{}, fmt.Errorf("decision-engine: marshal created: %w", err)
 	}
@@ -97,6 +99,46 @@ func (h *Handler) CreateFlow(ctx context.Context, id identity.Identity, cmd doma
 		return "", eventlog.Envelope{}, err
 	}
 	return flowID, e, nil
+}
+
+// UpdateFlow changes a flow's mutable details (name/description). It resolves
+// the caller's partial update against the current values folded from the log,
+// then appends a FlowDetailsSet carrying the FULL resulting details — so the
+// event stream and projection stay branch-free. It returns the resolved values.
+func (h *Handler) UpdateFlow(ctx context.Context, id identity.Identity, cmd domain.UpdateFlow) (string, string, eventlog.Envelope, error) {
+	if err := id.Valid(); err != nil {
+		return "", "", eventlog.Envelope{}, err
+	}
+	if err := cmd.Validate(); err != nil {
+		return "", "", eventlog.Envelope{}, err
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	byID, _, err := h.foldTenant(ctx, id)
+	if err != nil {
+		return "", "", eventlog.Envelope{}, err
+	}
+	agg, ok := byID[cmd.FlowID]
+	if !ok {
+		return "", "", eventlog.Envelope{}, fmt.Errorf("decision-engine: unknown flow %q", cmd.FlowID)
+	}
+	name, description := agg.name, agg.description
+	if cmd.Name != nil {
+		name = *cmd.Name
+	}
+	if cmd.Description != nil {
+		description = *cmd.Description
+	}
+	payload, err := json.Marshal(events.FlowDetailsSet{FlowID: cmd.FlowID, Name: name, Description: description})
+	if err != nil {
+		return "", "", eventlog.Envelope{}, fmt.Errorf("decision-engine: marshal details_set: %w", err)
+	}
+	e, err := h.appendFlowEvent(ctx, id, events.TypeFlowDetailsSet, payload)
+	if err != nil {
+		return "", "", eventlog.Envelope{}, err
+	}
+	return name, description, e, nil
 }
 
 // PublishVersion validates the command, computes the next version number and the
@@ -894,8 +936,17 @@ func (h *Handler) foldTenant(ctx context.Context, id identity.Identity) (map[str
 			if err := json.Unmarshal(e.Payload, &p); err != nil {
 				return nil, nil, fmt.Errorf("decision-engine: decode created seq %d: %w", e.Seq, err)
 			}
-			byID[p.FlowID] = &flowAgg{slug: p.Slug}
+			byID[p.FlowID] = &flowAgg{slug: p.Slug, name: p.Name, description: p.Description}
 			bySlug[p.Slug] = p.FlowID
+		case events.TypeFlowDetailsSet:
+			var p events.FlowDetailsSet
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				return nil, nil, fmt.Errorf("decision-engine: decode details_set seq %d: %w", e.Seq, err)
+			}
+			if a, ok := byID[p.FlowID]; ok {
+				a.name = p.Name
+				a.description = p.Description
+			}
 		case events.TypeFlowVersionPublished:
 			var p events.FlowVersionPublished
 			if err := json.Unmarshal(e.Payload, &p); err != nil {

@@ -25,6 +25,7 @@
   let flows = $state<Flow[]>([]);
   let slug = $state('');
   let name = $state('');
+  let description = $state('');
   let error = $state('');
   let busy = $state(false);
   let loading = $state(true);
@@ -66,10 +67,11 @@
     error = '';
     busy = true;
     try {
-      const created = await createFlow(key, slug, name);
+      const created = await createFlow(key, slug, name, description);
       const label = name.trim() || slug.trim();
       slug = '';
       name = '';
+      description = '';
       toast.success(`Created ${label}`);
       // Fire the navigation without awaiting: awaiting it can race the page's own reload
       // in this static SPA and leave the button stuck on "Creating…" if the goto promise
@@ -256,6 +258,15 @@
   >
     <label>Slug <input bind:value={slug} placeholder="loan-origination" aria-label="slug" /></label>
     <label>Name <input bind:value={name} placeholder="Loan Origination" aria-label="name" /></label>
+    <label class="desc-field"
+      >Description (optional)
+      <textarea
+        bind:value={description}
+        rows="2"
+        aria-label="description"
+        placeholder="What this flow decides and for whom — shown in the list and the builder."
+      ></textarea>
+    </label>
     <button
       type="submit"
       disabled={busy || !slug.trim() || !roleAtLeast($user?.role, 'editor')}
@@ -411,7 +422,10 @@
           <tbody>
             {#each visible as f (f.flow_id)}
               <tr>
-                <td><a href={appHref(`/engine/${f.flow_id}`)}>{f.name}</a></td>
+                <td>
+                  <a href={appHref(`/engine/${f.flow_id}`)}>{f.name}</a>
+                  {#if f.description}<span class="flow-desc">{f.description}</span>{/if}
+                </td>
                 <td><code>{f.slug}</code></td>
                 <td>v{f.latest}</td>
                 <td>
@@ -722,6 +736,30 @@
     margin: 0;
     color: var(--fg-subtle);
     font-size: 0.85rem;
+  }
+  .row label.desc-field {
+    flex: 1 1 100%;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.2rem;
+  }
+  .desc-field textarea {
+    width: 100%;
+    box-sizing: border-box;
+    font: inherit;
+    font-size: 0.88rem;
+    padding: 0.45rem 0.6rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface);
+    color: var(--fg);
+    resize: vertical;
+  }
+  .flow-desc {
+    display: block;
+    margin-top: 0.15rem;
+    font-size: 0.82rem;
+    color: var(--fg-subtle);
   }
   .err {
     color: var(--danger);
