@@ -1762,6 +1762,37 @@ func TestFlowSLOOverHTTP(t *testing.T) {
 	// An out-of-range success target is rejected.
 	api.Request(t, http.MethodPut, "/v1/flows/"+created.FlowID+"/slo",
 		map[string]any{"success_target": 1.5}, http.StatusBadRequest, nil)
+
+	// A rolling window round-trips and its attainment reports the window it covers.
+	// Today's clean decision falls in a 7-day window, so the window still meets target.
+	api.Request(t, http.MethodPut, "/v1/flows/"+created.FlowID+"/slo",
+		map[string]any{"success_target": 0.95, "window_days": 7}, http.StatusOK, nil)
+	var windowed struct {
+		SLO struct {
+			WindowDays int `json:"window_days"`
+		} `json:"slo"`
+		Attainment struct {
+			WindowDays int  `json:"window_days"`
+			Decisions  int  `json:"decisions"`
+			SuccessMet bool `json:"success_met"`
+		} `json:"attainment"`
+	}
+	if !testutil.Eventually(t, func() bool {
+		api.Request(t, http.MethodGet, "/v1/flows/"+created.FlowID+"/slo", nil, http.StatusOK, &windowed)
+		return windowed.Attainment.Decisions >= 1
+	}) {
+		t.Fatalf("windowed attainment never reflected the decision: %+v", windowed)
+	}
+	if windowed.SLO.WindowDays != 7 || windowed.Attainment.WindowDays != 7 {
+		t.Fatalf("window_days should round-trip and be reported: %+v", windowed)
+	}
+	if !windowed.Attainment.SuccessMet {
+		t.Fatalf("today's clean decision should meet the 7-day window: %+v", windowed.Attainment)
+	}
+
+	// An out-of-range window is rejected at publish.
+	api.Request(t, http.MethodPut, "/v1/flows/"+created.FlowID+"/slo",
+		map[string]any{"success_target": 0.95, "window_days": 100000}, http.StatusBadRequest, nil)
 }
 
 // liveVersionOf reads the version currently live in an environment.

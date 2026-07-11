@@ -547,9 +547,11 @@ export async function getFlowMetrics(
 export interface SLOConfig {
   success_target: number; // fraction in [0,1]
   latency_target_ms: number; // 0 = no latency objective
+  window_days?: number; // rolling window; 0/undefined = all-time
 }
 
 export interface SLOAttainment {
+  window_days: number; // rolling window measured over (0 = all-time)
   decisions: number;
   success_rate: number;
   success_target: number;

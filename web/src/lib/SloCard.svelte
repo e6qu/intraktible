@@ -22,15 +22,20 @@
   let editing = $state(false);
   let targetPct = $state(99);
   let latencyMs = $state(0);
+  let windowDays = $state(0);
   let busy = $state(false);
 
-  // Guard the inputs: success target is a percentage in [0,100], latency >= 0.
+  // Guard the inputs: success target is a percentage in [0,100], latency >= 0, and the
+  // rolling window is 0 (all-time) to 90 days (the retained history).
   const valid = $derived(
     Number.isFinite(targetPct) &&
       targetPct >= 0 &&
       targetPct <= 100 &&
       Number.isFinite(latencyMs) &&
-      latencyMs >= 0
+      latencyMs >= 0 &&
+      Number.isFinite(windowDays) &&
+      windowDays >= 0 &&
+      windowDays <= 90
   );
 
   // Edit seeds the form from the current objective (non-destructive — unlike the old
@@ -39,6 +44,7 @@
     if (r.slo) {
       targetPct = Math.round(r.slo.success_target * 1000) / 10;
       latencyMs = r.slo.latency_target_ms;
+      windowDays = r.slo.window_days ?? 0;
     }
     editing = true;
   }
@@ -49,7 +55,8 @@
     try {
       await putFlowSLO(key, flowId, {
         success_target: targetPct / 100,
-        latency_target_ms: latencyMs
+        latency_target_ms: latencyMs,
+        window_days: windowDays
       });
       override = await getFlowSLO(key, flowId);
       editing = false;
@@ -107,7 +114,15 @@
           <small>/ ≤ {r.slo.latency_target_ms} ms</small></span
         >
       {/if}
-      <span class="stat muted"><Icon name="diagram" /> {r.attainment.decisions} decisions</span>
+      <span class="stat muted"
+        ><Icon name="diagram" />
+        {r.attainment.decisions} decisions
+        <small
+          >{r.attainment.window_days > 0
+            ? `· last ${r.attainment.window_days}d`
+            : '· all-time'}</small
+        ></span
+      >
     </div>
     <div
       class="budget-bar"
@@ -138,6 +153,16 @@
       <label
         >Latency target ms
         <input type="number" min="0" bind:value={latencyMs} placeholder="0 = none" /></label
+      >
+      <label
+        >Rolling window (days)
+        <input
+          type="number"
+          min="0"
+          max="90"
+          bind:value={windowDays}
+          placeholder="0 = all-time"
+        /></label
       >
       <button onclick={save} disabled={busy || !valid}>{busy ? 'Saving…' : 'Set objective'}</button>
       {#if editing}<button class="link" onclick={() => (editing = false)} disabled={busy}

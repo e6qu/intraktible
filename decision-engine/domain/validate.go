@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/expr-lang/expr"
-
 	"github.com/e6qu/intraktible/decision-engine/events"
 )
 
@@ -157,6 +155,16 @@ func validateNodeConfig(n events.Node) error {
 				return err
 			}
 		}
+		for i, b := range cfg.Bands {
+			if strings.TrimSpace(b.Label) == "" {
+				return fmt.Errorf("decision-engine: node %q band %d: label is required", n.ID, i)
+			}
+			for j, rc := range b.ReasonCodes {
+				if strings.TrimSpace(rc.Code) == "" {
+					return fmt.Errorf("decision-engine: node %q band %d reason code %d: code is required", n.ID, i, j)
+				}
+			}
+		}
 	case events.NodeReason:
 		var cfg reasonConfig
 		if err := decodeConfig(n, &cfg); err != nil {
@@ -247,12 +255,18 @@ func validateNodeConfig(n events.Node) error {
 // environment so unknown identifiers (resolved from the decision context at run
 // time) are permitted — this is a parse/syntax check, never an evaluation. An
 // empty optional expression is left to the executor (skipped here, not rejected).
+// It also rejects the non-deterministic builtins (now()) at publish so a flow that
+// would break replayability is caught before it can be deployed, not at decide time.
 func checkExpr(n events.Node, where, code string) error {
 	if strings.TrimSpace(code) == "" {
 		return nil
 	}
-	if _, err := expr.Compile(code); err != nil {
+	used, err := disabledBuiltinsUsed(code)
+	if err != nil {
 		return fmt.Errorf("decision-engine: node %q %s: %w", n.ID, where, err)
+	}
+	if used != "" {
+		return fmt.Errorf("decision-engine: node %q %s: %s() reads the wall clock, which would break decision replayability; it is not available in flow expressions", n.ID, where, used)
 	}
 	return nil
 }

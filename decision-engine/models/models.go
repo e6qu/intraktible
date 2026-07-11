@@ -273,7 +273,9 @@ func (t *Tree) eval(features map[string]any) (float64, error) {
 }
 
 func evalExpression(s Spec, features map[string]any) (Prediction, error) {
-	program, err := expr.Compile(s.Expr, expr.Env(features))
+	// DisableBuiltin(now) keeps an expression model a pure function of its features —
+	// no wall clock — so the prediction replays identically (mirrors domain execution).
+	program, err := expr.Compile(s.Expr, expr.Env(features), expr.DisableBuiltin("now"))
 	if err != nil {
 		return Prediction{}, fmt.Errorf("models: compile expression: %w", err)
 	}

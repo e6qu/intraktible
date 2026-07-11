@@ -5,9 +5,51 @@ package analytics_test
 import (
 	"math"
 	"testing"
+	"time"
 
 	"github.com/e6qu/intraktible/decision-engine/analytics"
 )
+
+func TestAttainmentWindowIsolatesRecentBreach(t *testing.T) {
+	now := time.Date(2026, 7, 11, 12, 0, 0, 0, time.UTC)
+	// A long-lived flow: a flawless run 10 days ago, then a bad day today.
+	m := analytics.FlowMetrics{
+		Completed: 108, Failed: 2, AvgDurationMS: 30,
+		Daily: []analytics.DailyBucket{
+			{Date: "2026-07-01", Completed: 100, Failed: 0, TotalDurationMS: 2000},
+			{Date: "2026-07-11", Completed: 8, Failed: 2, TotalDurationMS: 400},
+		},
+	}
+	// All-time (window 0) dilutes the breach: 108/110 = 98.2% ≥ 95% target → met.
+	all := analytics.AttainmentWindow(m, 0.95, 0, now, 0)
+	if !all.SuccessMet || all.WindowDays != 0 {
+		t.Fatalf("all-time should meet the target: %+v", all)
+	}
+	// A 3-day window sees only today: 8/10 = 80% < 95% → breached, which is the point.
+	win := analytics.AttainmentWindow(m, 0.95, 0, now, 3)
+	if win.SuccessMet {
+		t.Fatalf("3-day window should surface the recent breach: %+v", win)
+	}
+	if win.Decisions != 10 || win.WindowDays != 3 {
+		t.Fatalf("window should count only in-range days: %+v", win)
+	}
+	if math.Abs(win.SuccessRate-0.8) > 1e-9 {
+		t.Fatalf("window success rate = %v, want 0.8", win.SuccessRate)
+	}
+}
+
+func TestAttainmentWindowCapsAtRetention(t *testing.T) {
+	// A window past the retained history is clamped, not silently empty.
+	now := time.Date(2026, 7, 11, 0, 0, 0, 0, time.UTC)
+	m := analytics.FlowMetrics{Daily: []analytics.DailyBucket{{Date: "2026-07-11", Completed: 1}}}
+	a := analytics.AttainmentWindow(m, 0.99, 0, now, 100000)
+	if a.WindowDays != 90 {
+		t.Fatalf("window should clamp to the retention bound (90), got %d", a.WindowDays)
+	}
+	if a.Decisions != 1 {
+		t.Fatalf("clamped window still counts the retained day: %+v", a)
+	}
+}
 
 func TestAttainmentMet(t *testing.T) {
 	// 99 completed, 1 failed = 99% success, target 95% → met, budget mostly intact.

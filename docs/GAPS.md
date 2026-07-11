@@ -76,16 +76,23 @@ weeks, **L** = a real project.
    generic HTTP/GraphQL/SQL fetchers plus labelled stubs, not real bureau/KYC/fraud
    adapters with correct schemas (Experian/TransUnion/Equifax/LexisNexis/Plaid). SQL is
    SQLite-only. Even a handful of real adapters would change the evaluation.
-3. **Scorecard node is additive weight-sum only — M.** No score bins/bands, no
-   per-band reason codes, no scaling/calibration. Credit teams expect banded scorecards;
-   this is the weakest core node and the cheapest credible deepening.
+3. **Scorecard node — banded, DONE (calibration still open).** The scorecard now
+   supports score bands: the summed score falls into the highest band whose `min` it
+   reaches, which labels the outcome (a grade, written to a configurable `band` output)
+   and emits that band's adverse-action reason codes (the standard `{code, description}`
+   shape the history projector lifts). Bands are authored in the builder's node
+   inspector and validated at publish. Remaining (optional): scaling/calibration
+   (points-to-double-odds), which few evaluations require.
 4. **No model training — L.** Models are hand-authored JSON or external endpoints.
    There is no fit/cross-validation/feature-importance pipeline. Either add light
    training or position explicitly as serve-only (the registry + drift + external-model
    story is strong on its own).
-5. **Expression-language ergonomics — M.** expr-lang ships without string/date/math
-   helper builtins, forcing Starlark for trivial transforms. A standard function
-   library would materially improve authorability.
+5. **Expression-language ergonomics — DONE.** expr-lang in fact ships a full standard
+   library (strings/numbers/collections/date-parse); the gap was that it was
+   undocumented, so authors reached for Starlark unnecessarily. It is now cataloged in
+   `docs/EXPRESSIONS.md` (v2). In the same pass the one non-deterministic builtin,
+   `now()`, was disabled and is rejected at publish — closing a latent replayability
+   hole in the "no clock, no I/O" guarantee.
 6. **Drift covers predictions only — M.** PSI/KL run on the prediction distribution;
    there is no feature/covariate drift and no actuals/ground-truth reconciliation to
    measure live model performance.
@@ -94,9 +101,11 @@ weeks, **L** = a real project.
    Chargeback) that exercise the differentiating node types. Remaining (optional): convert
    a *seed* flow to scorecard/decision_table so those nodes appear in seeded, not just
    template, flows.
-8. **SLO attainment is all-time cumulative, not windowed — S.** A long-lived flow's
-   recent breach is diluted; a rolling window is needed for an operational SLO. (Honestly
-   disclosed in `analytics`.)
+8. **SLO attainment — rolling window, DONE.** The metrics projection now retains a
+   bounded ring of per-UTC-day outcome buckets (90 days, pruned relative to the newest
+   day so replay stays deterministic), and an SLO may set a `window_days` (0 = all-time).
+   Attainment over the window keeps a long-lived flow's recent breach from being diluted
+   by its lifetime history; the SLO card shows the window and lets an operator set it.
 9. **Audit query is an O(n) log scan — M (scale).** Correct and append-only, but reads
    the whole event log per query; needs an indexed audit projection at scale. (Disclosed.)
 

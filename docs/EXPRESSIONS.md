@@ -43,9 +43,28 @@ income > 50000 ? "prime" : "near"
 amount > 1000 and country in ["US", "CA"]
 ```
 
+**Built-in functions.** expr-lang ships a standard library — no need to drop into a
+Code node for a trivial transform. The available (deterministic) helpers:
+
+| Category | Functions |
+| --- | --- |
+| Strings | `lower`, `upper`, `trim`, `trimPrefix`, `trimSuffix`, `split`, `splitAfter`, `replace`, `repeat`, `indexOf`, `lastIndexOf`, `hasPrefix`, `hasSuffix` |
+| Numbers | `abs`, `ceil`, `floor`, `round`, `int`, `float`, `min`, `max`, `sum`, `mean`, `median` |
+| Collections | `len`, `first`, `last`, `take`, `keys`, `values`, `map`, `filter`, `all`, `any`, `none`, `one`, `count`, `find`, `reduce`, `sortBy`, `groupBy`, `flatten`, `uniq`, `reverse`, `concat`, `join` |
+| Dates (parse only) | `date`, `duration`, `timezone` — parse explicit values; `??` is nil-coalescing |
+
+```
+round(features.risk_score * 100) / 100
+upper(trim(applicant.country)) in ["US", "CA"]
+len(filter(txns, .amount > 1000)) > 3
+```
+
 **Determinism.** Expressions are pure: no clock, no randomness, no I/O. The same
 input always yields the same result, which is what makes a decision replayable from
-its event stream.
+its event stream. The one wall-clock builtin, `now()`, is therefore **disabled** —
+a flow that used it would replay to a different value — and using it is rejected at
+publish. Date helpers (`date`, `duration`) parse the explicit values you pass, which
+is deterministic; derive "today" from a decision input field, not from the clock.
 
 ## 2. The Code node — Starlark
 
@@ -80,3 +99,4 @@ decision is versioned and recorded here.
 | Version | Change |
 | --- | --- |
 | v1 | expr-lang conditions/expressions + Starlark Code node (no second engine — D9). |
+| v2 | Documented the expr-lang standard function library (strings/numbers/collections/date-parse). Disabled the non-deterministic `now()` builtin — rejected at publish — to enforce the replayability guarantee. No change to how existing flows evaluate (no flow used `now()`). |

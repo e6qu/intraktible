@@ -91,13 +91,28 @@ type codeConfig struct {
 
 // scorecardConfig is the config of a Scorecard node: a score is the sum of the
 // weights of the factors whose condition holds, written to Output (default
-// "score").
+// "score"). Bands optionally map that score to a labelled grade: the score falls
+// into the highest band whose Min it reaches (so bands read top-down like a rate
+// card), the label is written to Band (default "band"), and the band's reason
+// codes are appended to the reserved reason_codes list — the banded scorecard with
+// per-band adverse-action codes that credit/insurance teams expect.
 type scorecardConfig struct {
 	Output  string `json:"output"`
 	Factors []struct {
 		When   string  `json:"when"`
 		Weight float64 `json:"weight"`
 	} `json:"factors"`
+	Band  string          `json:"band"`
+	Bands []scorecardBand `json:"bands"`
+}
+
+type scorecardBand struct {
+	Min         float64 `json:"min"`
+	Label       string  `json:"label"`
+	ReasonCodes []struct {
+		Code        string `json:"code"`
+		Description string `json:"description"`
+	} `json:"reason_codes"`
 }
 
 // reasonConfig is the config of a Reason node: an ordered list of reason codes,

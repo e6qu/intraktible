@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/expr-lang/expr"
+	"github.com/expr-lang/expr/ast"
 	"github.com/expr-lang/expr/vm"
 
 	"github.com/e6qu/intraktible/decision-engine/events"
@@ -354,7 +355,40 @@ func evalScorecard(ec evalContext, n events.Node, ctx map[string]any, edges []ev
 		}
 	}
 	ctx[output] = score
-	return map[string]any{output: score}, firstEdge(edges), nil
+	out := map[string]any{output: score}
+	if band, ok := scorecardBandFor(cfg.Bands, score); ok {
+		bandKey := cfg.Band
+		if bandKey == "" {
+			bandKey = "band"
+		}
+		ctx[bandKey] = band.Label
+		out[bandKey] = band.Label
+		if len(band.ReasonCodes) > 0 {
+			codes := existingReasonCodes(ctx)
+			for _, rc := range band.ReasonCodes {
+				codes = append(codes, map[string]any{"code": rc.Code, "description": rc.Description})
+			}
+			ctx[reasonCodesField] = codes
+			out[reasonCodesField] = codes
+		}
+	}
+	return out, firstEdge(edges), nil
+}
+
+// scorecardBandFor selects the band the score falls into: the highest Min the score
+// reaches (>=). ok is false when no band's Min is met, so a score below the lowest
+// floor is left ungraded rather than forced into a band.
+func scorecardBandFor(bands []scorecardBand, score float64) (scorecardBand, bool) {
+	best := -1
+	for i, b := range bands {
+		if score >= b.Min && (best == -1 || b.Min > bands[best].Min) {
+			best = i
+		}
+	}
+	if best < 0 {
+		return scorecardBand{}, false
+	}
+	return bands[best], true
 }
 
 // reasonCodesField is the reserved context/output key that accumulates structured
@@ -933,7 +967,58 @@ func compile(code string, env map[string]any) (*vm.Program, error) {
 	if code == "" {
 		return nil, fmt.Errorf("expression is empty")
 	}
-	return expr.Compile(code, expr.Env(env))
+	return expr.Compile(code, exprCompileOptions(env)...)
+}
+
+// nonDeterministicBuiltins name expr-lang builtins that read ambient state (the wall
+// clock). A decision is a pure, replayable function of its input and the flow version
+// (docs/EXPRESSIONS.md guarantees "no clock, no randomness, no I/O"), so a flow that
+// called now() would replay to a different value and corrupt the audit trail. They are
+// DISABLED at every compile site and rejected at publish (see checkExpr).
+var nonDeterministicBuiltins = []string{"now"}
+
+// exprCompileOptions is the expr-lang options for node execution: the typed
+// environment plus the determinism guard. The other expression surfaces mirror the
+// same guard (Predict models and policies disable now() at their own compile sites;
+// publish validation rejects it via disabledBuiltinsUsed), so the guarantee holds
+// uniformly across the engine.
+func exprCompileOptions(env map[string]any) []expr.Option {
+	opts := []expr.Option{expr.Env(env)}
+	for _, b := range nonDeterministicBuiltins {
+		opts = append(opts, expr.DisableBuiltin(b))
+	}
+	return opts
+}
+
+// disabledBuiltinsUsed reports which non-deterministic builtins an expression calls,
+// compiling env-less (unknown identifiers permitted) so it can run at publish before
+// any input shape is known. Returns "" when the expression is clean.
+func disabledBuiltinsUsed(code string) (string, error) {
+	found := map[string]bool{}
+	collect := exprBuiltinCollector(func(name string) { found[name] = true })
+	if _, err := expr.Compile(code, expr.Patch(collect)); err != nil {
+		return "", err
+	}
+	for _, b := range nonDeterministicBuiltins {
+		if found[b] {
+			return b, nil
+		}
+	}
+	return "", nil
+}
+
+// exprBuiltinCollector adapts a callback to expr-lang's ast.Visitor so a compile pass
+// can enumerate the builtins an expression calls.
+type exprBuiltinCollector func(name string)
+
+// Visit satisfies expr-lang's ast.Visitor, whose signature fixes the *ast.Node
+// pointer parameter (it lets a visitor rewrite the node in place).
+//
+//nolint:gocritic // ast.Visitor requires the *ast.Node pointer receiver.
+func (c exprBuiltinCollector) Visit(node *ast.Node) {
+	if b, ok := (*node).(*ast.BuiltinNode); ok {
+		c(b.Name)
+	}
 }
 
 func inputNode(g events.Graph) string {
