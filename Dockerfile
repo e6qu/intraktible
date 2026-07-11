@@ -19,4 +19,9 @@ FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/intraktible /intraktible
 EXPOSE 8080
 VOLUME ["/data"]
-ENTRYPOINT ["/intraktible", "serve", "--addr=:8080", "--data-dir=/data"]
+# Ship with a DURABLE store: the well-known dev key is seeded ONLY with the
+# in-memory store, so a durable store means the public image never grants admin via
+# a known secret. To obtain the first credential set INTRAKTIBLE_BOOTSTRAP_API_KEY
+# (a real secret) or configure SSO. For a real deployment also set INTRAKTIBLE_ENV=
+# production, INTRAKTIBLE_ENCRYPTION_KEY, and a networked store/log — see docs/DEPLOY.md.
+ENTRYPOINT ["/intraktible", "serve", "--addr=:8080", "--data-dir=/data", "--store=sqlite"]

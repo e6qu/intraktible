@@ -94,3 +94,40 @@ func TestSeedDevKeyOnlyOnMemoryStore(t *testing.T) {
 		t.Error("an empty --dev-api-key must not seed any key")
 	}
 }
+
+func TestPreflightRefusesInsecureProduction(t *testing.T) {
+	t.Setenv("INTRAKTIBLE_ENCRYPTION_KEY", "")
+	t.Setenv("INTRAKTIBLE_ALLOW_PLAINTEXT_AT_REST", "")
+	cases := []struct {
+		name       string
+		cfg        Config
+		encryption bool
+		wantErr    bool
+	}{
+		{"dev env is always permissive", Config{Env: "development", StoreKind: "memory", LogKind: "memory"}, false, false},
+		{"empty env is permissive", Config{StoreKind: "memory"}, false, false},
+		{"prod + memory store refused", Config{Env: "production", StoreKind: "memory", LogKind: "postgres"}, true, true},
+		{"prod + memory log refused", Config{Env: "production", StoreKind: "postgres", LogKind: "memory"}, true, true},
+		{"prod without encryption refused", Config{Env: "production", StoreKind: "postgres", LogKind: "postgres"}, false, true},
+		{"prod + durable + encryption ok", Config{Env: "production", StoreKind: "postgres", LogKind: "postgres"}, true, false},
+		{"prod + file log ok (warns)", Config{Env: "production", StoreKind: "sqlite", LogKind: "file"}, true, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := preflight(c.cfg, c.encryption)
+			if c.wantErr && err == nil {
+				t.Fatal("expected a refusal, got nil")
+			}
+			if !c.wantErr && err != nil {
+				t.Fatalf("unexpected refusal: %v", err)
+			}
+		})
+	}
+}
+
+func TestPreflightPlaintextEscapeHatch(t *testing.T) {
+	t.Setenv("INTRAKTIBLE_ALLOW_PLAINTEXT_AT_REST", "1")
+	if err := preflight(Config{Env: "production", StoreKind: "postgres", LogKind: "postgres"}, false); err != nil {
+		t.Fatalf("the explicit plaintext escape hatch should allow boot: %v", err)
+	}
+}

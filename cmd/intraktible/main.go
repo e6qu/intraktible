@@ -75,11 +75,19 @@ func serveCmd(args []string) error {
 	devKey := fs.String("dev-api-key", "dev-sandbox-key", "seed a dev admin API key (in-memory store only; ignored with a durable store; empty to disable)")
 	storeKind := fs.String("store", "memory", "projection store: memory | sqlite (<data-dir>/projections.db) | postgres (INTRAKTIBLE_POSTGRES_DSN)")
 	logKind := fs.String("log", "file", "event log: file (single-process WAL) | memory (in-RAM, NOT durable; tests/wasm) | sqlite (shared across processes, for the split profile) | postgres (networked HA; INTRAKTIBLE_POSTGRES_DSN) | nats (JetStream HA; INTRAKTIBLE_NATS_URL)")
+	env := fs.String("env", envOr("INTRAKTIBLE_ENV", "development"), "deployment environment: development | production (production refuses insecure config and forces secure cookies)")
 	_ = fs.Parse(args)
-	return run(*addr, *dataDir, *modules, *devKey, *storeKind, *logKind)
+	return run(*addr, *dataDir, *modules, *devKey, *storeKind, *logKind, *env)
 }
 
-func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
+func envOr(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
+}
+
+func run(addr, dataDir, modules, devKey, storeKind, logKind, env string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -111,13 +119,23 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 	// log/store; this shell only wraps it with the listener + signal-driven
 	// shutdown. Close is deferred after the log/store closers so (LIFO) the
 	// agent workers drain before the log closes.
-	backend, err := server.New(ctx, server.Config{Modules: modules, DevAPIKey: devKey, StoreKind: storeKind}, log, st)
+	backend, err := server.New(ctx, server.Config{Modules: modules, DevAPIKey: devKey, StoreKind: storeKind, LogKind: logKind, Env: env}, log, st)
 	if err != nil {
 		return err
 	}
 	defer backend.Close()
 
-	srv := &http.Server{Addr: addr, Handler: backend.Handler, ReadHeaderTimeout: 5 * time.Second}
+	// ReadHeaderTimeout + ReadTimeout + IdleTimeout bound slow/idle clients
+	// (Slowloris). WriteTimeout is deliberately unset: the SSE/WebSocket streaming
+	// routes (/decide/stream, agent run streams) are long-lived and a global write
+	// deadline would cut them; those handlers carry their own per-request deadlines.
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           backend.Handler,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
 	errc := make(chan error, 1)
 	go func() {
 		slog.Info("listening", "addr", addr, "modules", modules)
@@ -132,7 +150,16 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind string) error {
 	case err := <-errc:
 		return err
 	}
-	shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// Give in-flight requests (a decide fanning out to connectors/AI, a draining SSE
+	// stream) time to finish before the listener closes. Tunable so an operator can
+	// match it to the orchestrator's terminationGracePeriod.
+	timeout := 30 * time.Second
+	if v := os.Getenv("INTRAKTIBLE_SHUTDOWN_TIMEOUT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			timeout = d
+		}
+	}
+	shutCtx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	return srv.Shutdown(shutCtx)
 }

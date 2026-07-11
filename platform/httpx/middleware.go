@@ -86,7 +86,9 @@ func SecurityHeaders(next http.Handler) http.Handler {
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Referrer-Policy", "no-referrer")
 		h.Set("Content-Security-Policy", contentSecurityPolicy)
-		if r.TLS != nil {
+		// HSTS only when the browser connection is actually HTTPS (direct TLS or a
+		// trusted terminating proxy) — asserting it over plaintext dev is wrong.
+		if requestIsSecure(r) {
 			h.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 		}
 		next.ServeHTTP(w, r)

@@ -1,0 +1,14 @@
+intraktible is installed.
+
+Tiers:
+  - api:       {{ if .Values.autoscaling.enabled }}{{ .Values.autoscaling.minReplicas }}–{{ .Values.autoscaling.maxReplicas }} (HPA){{ else }}{{ .Values.api.replicas }}{{ end }} replicas, stateless, behind the Service.
+  - scheduler: {{ if .Values.scheduler.enabled }}1 (singleton — runs the timed sweeps){{ else }}disabled{{ end }}.
+
+Verify readiness:
+  kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ include "intraktible.fullname" . }}-api
+
+Reach the API (port-forward):
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "intraktible.fullname" . }} 8080:{{ .Values.service.port }}
+
+First credential: set INTRAKTIBLE_BOOTSTRAP_API_KEY in the Secret (a real secret),
+or configure SSO. See docs/DEPLOY.md.

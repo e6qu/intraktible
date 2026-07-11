@@ -86,6 +86,17 @@ set of fail-fast + fail-loud fixes (store errors no longer swallowed; frontend w
 next to the action instead of an off-screen banner; role gating fail-closed). Docs/JOURNEYS realigned
 to the engine (all 14 node types, real split + backtest semantics, seven added journeys) and a
 source-scanning OpenAPI drift test now fails if a registered route is undocumented.
+**A production-hardening + deployment round** then made it genuinely enterprise-deployable (PH block in
+BUGS.md): the shipped image no longer boots with a well-known admin key (durable-store default +
+`INTRAKTIBLE_BOOTSTRAP_API_KEY`); `INTRAKTIBLE_ENV=production` runs a preflight that refuses insecure
+config (non-durable store/log, missing encryption key) and forces secure cookies/HSTS behind a proxy;
+`/v1/login` is rate-limited; 5xx errors are redacted to clients; the HTTP server got Slowloris timeouts
+and a 30s graceful drain; the SQLite event log's `busy_timeout` bug (spurious "database is locked" on
+the primary self-host backend) and the deploy scheduler's cross-replica double-fire (could strand a
+version live forever) are fixed; a `reason_codes` forgery on the decide path is closed; and `/readyz`
+gates rolling deploys. Real deployment artifacts landed: a Helm chart (`deploy/helm/intraktible` — API
+tier + singleton scheduler tier, probes, HPA/PDB/NetworkPolicy, hardened securityContext), a production
+docker-compose, and `docs/DEPLOY.md`/`docs/DR.md` runbooks.
 Roadmap & exit criteria: [PLAN.md §8](PLAN.md#8-phased-roadmap); deferrals tracked in [BUGS.md](BUGS.md).
 Working today: `platform/{eventlog,store,projection,identity,auth,httpx,ai,web,mo}` (`mo` = the
 `Option[T]`/`Result[T]` types used instead of none/null sentinels where they're easy to mishandle;

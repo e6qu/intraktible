@@ -1,0 +1,55 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Production-representative single-host profile: the app on a durable Postgres store
+# + log, encryption at rest, secure cookies, and healthchecks. Copy deploy/.env.example
+# to deploy/.env and fill it in (do NOT commit secrets). Run:
+#   docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env up -d
+# For multi-replica HA, k8s, and the API/scheduler split, use deploy/helm/intraktible
+# (see docs/DEPLOY.md). TLS terminates at a reverse proxy in front of :8080.
+services:
+  app:
+    image: intraktible:${INTRAKTIBLE_TAG:-latest}
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: ["serve", "--addr=:8080", "--data-dir=/data", "--store=postgres", "--log=postgres", "--env=production"]
+    environment:
+      INTRAKTIBLE_POSTGRES_DSN: postgres://intraktible:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/intraktible?sslmode=disable
+      INTRAKTIBLE_ENCRYPTION_KEY: ${INTRAKTIBLE_ENCRYPTION_KEY:?set a 32-byte base64 key}
+      INTRAKTIBLE_CONNECTOR_SECRET_KEY: ${INTRAKTIBLE_CONNECTOR_SECRET_KEY:-}
+      INTRAKTIBLE_BOOTSTRAP_API_KEY: ${INTRAKTIBLE_BOOTSTRAP_API_KEY:-}
+      INTRAKTIBLE_SECURE_COOKIES: "1"
+      INTRAKTIBLE_TRUST_PROXY: "1"
+    ports: ["8080:8080"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      # BusyBox/distroless has no curl; the app image is distroless too, so probe
+      # from the postgres container's network instead in a real setup. Here we rely
+      # on depends_on + the app's own /readyz for k8s; compose healthcheck is a
+      # best-effort TCP check via the shell-less image is not possible, so omitted.
+      disable: true
+    deploy:
+      resources:
+        limits: { cpus: "2", memory: 2G }
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: intraktible
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: intraktible
+    volumes: ["pg-data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U intraktible -d intraktible"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    deploy:
+      resources:
+        limits: { cpus: "2", memory: 2G }
+
+volumes:
+  pg-data: {}

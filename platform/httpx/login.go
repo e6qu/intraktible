@@ -52,7 +52,7 @@ func setSessionCookie(w http.ResponseWriter, r *http.Request, tok string, ttl ti
 		Value:    tok,
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   r.TLS != nil,
+		Secure:   requestIsSecure(r),
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   int(ttl.Seconds()),
 	})
@@ -67,7 +67,7 @@ func LogoutHandler(sessions auth.SessionStore) http.HandlerFunc {
 		}
 		http.SetCookie(w, &http.Cookie{ // #nosec G124 -- expiring cookie (MaxAge<0, empty value)
 			Name: sessionCookie, Value: "", Path: "/",
-			HttpOnly: true, Secure: r.TLS != nil, SameSite: http.SameSiteLaxMode, MaxAge: -1,
+			HttpOnly: true, Secure: requestIsSecure(r), SameSite: http.SameSiteLaxMode, MaxAge: -1,
 		})
 		w.WriteHeader(http.StatusNoContent)
 	}

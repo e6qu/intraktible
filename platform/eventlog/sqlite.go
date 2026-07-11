@@ -12,6 +12,7 @@ import (
 	"math"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	_ "modernc.org/sqlite" // pure-Go SQLite driver (CGO-free); registers "sqlite"
@@ -30,8 +31,9 @@ import (
 // projection runtime rebuilds from the log on boot and consumes the bus for live
 // updates, so a poll-interval delay is just projection lag, not data loss.
 type SQLiteLog struct {
-	db *sql.DB
-	d  *delivery
+	db  *sql.DB
+	d   *delivery
+	wmu sync.Mutex // serializes Append so concurrent writers queue instead of racing the WAL
 }
 
 // OpenSQLiteLog opens (creating if needed) a shared SQLite event log at
@@ -40,17 +42,17 @@ func OpenSQLiteLog(dir string, poll time.Duration) (*SQLiteLog, error) {
 	if poll <= 0 {
 		poll = DefaultPollInterval
 	}
-	// dir is operator config (--data-dir), the filename is constant.
+	// dir is operator config (--data-dir), the filename is constant. Apply the
+	// pragmas via the DSN so they take on EVERY pooled connection — a one-off
+	// db.Exec("PRAGMA …") only configures whichever connection served it, leaving
+	// the rest of the pool with busy_timeout=0, so a second concurrent writer would
+	// get SQLITE_BUSY ("database is locked") immediately instead of waiting. Append
+	// also serializes writes under a mutex (see below), matching the store adapter.
 	path := filepath.Join(dir, "events-log.db")
-	db, err := sql.Open("sqlite", path)
+	dsn := "file:" + path + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("eventlog: open sqlite %q: %w", path, err)
-	}
-	for _, pragma := range []string{"PRAGMA journal_mode=WAL", "PRAGMA busy_timeout=5000"} {
-		if _, err := db.Exec(pragma); err != nil {
-			_ = db.Close()
-			return nil, fmt.Errorf("eventlog: sqlite %s: %w", pragma, err)
-		}
 	}
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS events (
 		seq        INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -98,6 +100,11 @@ func (l *SQLiteLog) Append(ctx context.Context, e Envelope) (Envelope, error) {
 	if l.d.isClosed() {
 		return Envelope{}, ErrClosed
 	}
+	// Serialize writers: SQLite allows one writer at a time, and the seq/head read
+	// inside the append must be consistent with the insert. The busy_timeout DSN
+	// pragma covers cross-process contention; this covers in-process.
+	l.wmu.Lock()
+	defer l.wmu.Unlock()
 	if e.Org == "" || e.Workspace == "" {
 		return Envelope{}, fmt.Errorf("eventlog: event %q missing org/workspace", e.Type)
 	}

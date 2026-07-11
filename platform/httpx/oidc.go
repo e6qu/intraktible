@@ -156,7 +156,7 @@ func setFlowCookie(w http.ResponseWriter, r *http.Request, name, value, path str
 		Value:    value,
 		Path:     path,
 		HttpOnly: true,
-		Secure:   r.TLS != nil,
+		Secure:   requestIsSecure(r),
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   600, // the login round-trip is short-lived
 	})
@@ -165,7 +165,7 @@ func setFlowCookie(w http.ResponseWriter, r *http.Request, name, value, path str
 func clearFlowCookie(w http.ResponseWriter, r *http.Request, name, path string) {
 	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- expiring cookie (MaxAge<0, empty value)
 		Name: name, Value: "", Path: path,
-		HttpOnly: true, Secure: r.TLS != nil, SameSite: http.SameSiteLaxMode, MaxAge: -1,
+		HttpOnly: true, Secure: requestIsSecure(r), SameSite: http.SameSiteLaxMode, MaxAge: -1,
 	})
 }
 

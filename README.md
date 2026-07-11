@@ -95,6 +95,12 @@ docker compose --profile split up     # one container per module (:8081–:8084)
 docker compose --profile pg up        # add a Postgres projection store
 ```
 
+**Production** — deploy on Kubernetes with the Helm chart in [`deploy/helm/intraktible`](deploy/helm/intraktible)
+(API tier + singleton scheduler tier, `/healthz`+`/readyz` probes, HPA/PDB, hardened
+securityContext), or single-host with [`deploy/docker-compose.prod.yml`](deploy/docker-compose.prod.yml).
+Set `INTRAKTIBLE_ENV=production` and the server refuses to boot on insecure config. Full
+runbook: [docs/DEPLOY.md](docs/DEPLOY.md); backups/DR: [docs/DR.md](docs/DR.md).
+
 ### Configuration (environment variables)
 
 | Variable | Purpose |

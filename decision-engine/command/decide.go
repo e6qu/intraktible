@@ -703,7 +703,11 @@ func (h *DecideHandler) sealPII(ctx context.Context, id identity.Identity, ref E
 // reservedInputNamespaces are the top-level keys the engine populates from resolved
 // features / connector responses / agent outputs / model predictions. They are
 // engine-owned: a caller must not supply them (see stripReservedNamespaces).
-var reservedInputNamespaces = [...]string{"features", "connect", "ai", "predict"}
+// reason_codes is the accumulated adverse-action trail the Reason/manual_review
+// nodes build and evalOutput always surfaces; stripping it here (as the Resume path
+// already does, decide.go ~446) stops a caller from seeding a forged ECOA/Reg-B
+// explanation into a recorded, regulated decision.
+var reservedInputNamespaces = [...]string{"features", "connect", "ai", "predict", "reason_codes"}
 
 // stripReservedNamespaces removes the engine-owned namespaces from caller input so
 // only the injectors can populate them — making "caller forges a feature/score"

@@ -48,7 +48,14 @@ export default defineConfig({
       cwd: '..',
       // The AI stub is opt-in now (a server without it fails AI operations loudly
       // instead of serving canned text); tests opt in explicitly.
-      env: { INTRAKTIBLE_AI_STUB: '1' },
+      // All parallel workers hit /v1/login from one loopback IP, so raise the
+      // per-IP login rate limit well above the default (which would throttle the
+      // shared-IP test traffic and flake logins).
+      env: {
+        INTRAKTIBLE_AI_STUB: '1',
+        INTRAKTIBLE_LOGIN_RATE_LIMIT_RPS: '1000',
+        INTRAKTIBLE_LOGIN_RATE_LIMIT_BURST: '2000'
+      },
       url: 'http://localhost:8080/healthz',
       reuseExistingServer: false,
       // The backend logs a line per request at INFO on stdout. Piping that to the
