@@ -126,17 +126,21 @@ func (l *PostgresLog) listenLoop(ctx context.Context) {
 // — not Append — publishes to the bus, so local and cross-node events arrive by
 // the same path and are never delivered twice.
 //
-// KNOWN LIMITATION (multi-node HA only): BIGSERIAL is assigned at INSERT but a row
-// is visible only at COMMIT, so under concurrent appends from multiple nodes a
-// higher seq can commit before a lower one. The poller advances its watermark by
-// the max seq it has read, so a lower seq that commits late can be skipped from the
-// LIVE bus (it is still durably stored and is returned by any full Read/rebuild, so
-// this is a live-delivery latency gap, not data loss). A correct fix gates the
-// poller on the transaction-visibility horizon (pg_snapshot_xmin) rather than the
-// raw seq; it is deliberately not shipped untested here, as it needs a live
-// multi-node Postgres to validate and a naive contiguous-watermark would deadlock on
-// sequence numbers burned by rolled-back transactions. Single-node (the default
-// file/sqlite/memory log) is unaffected.
+// KNOWN LIMITATION (concurrent appends — multi-node HA, or a single node under
+// concurrent request load): BIGSERIAL is assigned at INSERT but a row is visible only
+// at COMMIT, so a higher seq can commit before a lower one. The poller advances its
+// watermark by the max seq it has read, so a lower seq that commits late can be
+// missed on the LIVE bus. The projection runtime now REFUSES to advance its checkpoint
+// past such a gap (projection.applyContiguous fails loud rather than skipping the
+// missing seq — previously it advanced past it, which permanently dropped the event
+// from the incremental read model, not merely a latency gap): the projection surfaces
+// the error via /healthz and re-applies the range once the lower seq is visible (on
+// the next poll or a restart, which resumes from the intact checkpoint). The complete
+// fix gates the POLLER watermark on the transaction-visibility horizon
+// (pg_snapshot_xmin) so the gap never reaches the runtime; it is deliberately not
+// shipped untested here (it needs a live multi-node Postgres to validate, and a naive
+// contiguous watermark would deadlock on seqs burned by rolled-back transactions).
+// Single-node file/sqlite/memory logs serialize appends and are unaffected.
 func (l *PostgresLog) Append(ctx context.Context, e Envelope) (Envelope, error) {
 	if l.d.isClosed() {
 		return Envelope{}, ErrClosed

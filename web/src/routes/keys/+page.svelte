@@ -16,6 +16,7 @@
     createApiKey,
     rotateApiKey,
     revokeApiKey,
+    ApiError,
     ROLES,
     SCOPES,
     type ManagedApiKey,
@@ -66,12 +67,12 @@
     try {
       keys = await listApiKeys(key);
     } catch (e) {
-      const m = msg(e);
-      // Listing keys is admin-only; surface that clearly, not as a raw 403.
-      if (m.includes('admin') || m.includes('403')) {
+      // Listing keys is admin-only; a real 403 gets the "restricted" state (keyed on
+      // the status, not a fragile message-substring match), anything else is an error.
+      if (e instanceof ApiError && e.status === 403) {
         forbidden = true;
       } else {
-        error = m;
+        error = msg(e);
       }
     } finally {
       loading = false;

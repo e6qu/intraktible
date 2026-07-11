@@ -301,13 +301,13 @@ func (h *Handler) caseStates(ctx context.Context, id identity.Identity) (map[str
 			if err := json.Unmarshal(e.Payload, &p); err != nil {
 				return nil, fmt.Errorf("case-manager: decode requested seq %d: %w", e.Seq, err)
 			}
-			states[p.CaseID] = slaCaseState{createdAt: e.Time, slaDays: p.SLADays, status: domain.StatusNeedsReview}
+			states[p.CaseID] = slaCaseState{createdAt: e.Time, slaDays: domain.NormalizeSLADays(p.SLADays), status: domain.StatusNeedsReview}
 		case decisionevents.TypeManualReviewRequested:
 			var p decisionevents.ManualReviewRequested
 			if err := json.Unmarshal(e.Payload, &p); err != nil {
 				return nil, fmt.Errorf("case-manager: decode escalated seq %d: %w", e.Seq, err)
 			}
-			states[p.CaseID] = slaCaseState{createdAt: e.Time, slaDays: p.SLADays, status: domain.StatusNeedsReview}
+			states[p.CaseID] = slaCaseState{createdAt: e.Time, slaDays: domain.NormalizeSLADays(p.SLADays), status: domain.StatusNeedsReview}
 		case events.TypeCaseAssigned:
 			var p events.CaseAssigned
 			if err := json.Unmarshal(e.Payload, &p); err != nil {

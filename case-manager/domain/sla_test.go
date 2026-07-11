@@ -9,6 +9,15 @@ import (
 	"github.com/e6qu/intraktible/case-manager/domain"
 )
 
+func TestNormalizeSLADays(t *testing.T) {
+	// An unspecified window (0 or negative) becomes the default; a real window is kept.
+	for _, c := range []struct{ in, want int }{{0, domain.DefaultSLADays}, {-4, domain.DefaultSLADays}, {1, 1}, {30, 30}} {
+		if got := domain.NormalizeSLADays(c.in); got != c.want {
+			t.Fatalf("NormalizeSLADays(%d) = %d, want %d", c.in, got, c.want)
+		}
+	}
+}
+
 func TestDaysLeft(t *testing.T) {
 	opened := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	cases := []struct {

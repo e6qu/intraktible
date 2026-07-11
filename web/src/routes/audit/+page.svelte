@@ -23,6 +23,7 @@
     createApiKey,
     rotateApiKey,
     revokeApiKey,
+    ApiError,
     type AuditEntry,
     type AuditFilter,
     type ManagedApiKey,
@@ -142,12 +143,12 @@
       total = page.total;
     } catch (e) {
       if (seq !== loadSeq) return;
-      const m = msg(e);
-      // The audit trail is admin-only; surface that clearly rather than as a raw 403.
-      if (m.includes('admin') || m.includes('403')) {
+      // The audit trail is admin-only; a real 403 gets the "restricted" state (keyed on
+      // the status, not a message-substring match), anything else is an error.
+      if (e instanceof ApiError && e.status === 403) {
         forbidden = true;
       } else {
-        error = m;
+        error = msg(e);
       }
     } finally {
       if (seq === loadSeq) loading = false;

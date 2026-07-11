@@ -107,12 +107,14 @@ func connectorSecretBoxFromEnv(ctx context.Context) (*connectors.Keyring, error)
 
 // oidcAuthenticators builds an OIDC authenticator per name in
 // INTRAKTIBLE_OIDC_PROVIDERS (e.g. "google,aws"), reading each provider's config
-// from INTRAKTIBLE_OIDC_<NAME>_* env vars. Discovery is a network call; a
-// provider that fails to initialize is skipped, not fatal.
-func oidcAuthenticators(ctx context.Context) []*auth.OIDCAuthenticator {
+// from INTRAKTIBLE_OIDC_<NAME>_* env vars. An operator who explicitly names a
+// provider expects it to work, so a provider that fails to initialize (bad config, a
+// discovery error) is a LOUD startup failure, not a silent skip that leaves SSO
+// quietly unavailable — mirroring the production preflight's fail-fast stance.
+func oidcAuthenticators(ctx context.Context) ([]*auth.OIDCAuthenticator, error) {
 	raw := strings.TrimSpace(os.Getenv("INTRAKTIBLE_OIDC_PROVIDERS"))
 	if raw == "" {
-		return nil
+		return nil, nil
 	}
 	var out []*auth.OIDCAuthenticator
 	for _, name := range strings.Split(raw, ",") {
@@ -122,12 +124,11 @@ func oidcAuthenticators(ctx context.Context) []*auth.OIDCAuthenticator {
 		}
 		a, err := auth.NewOIDCAuthenticator(ctx, oidcConfigFromEnv(name))
 		if err != nil {
-			slog.Warn("sso: skipping OIDC provider", "provider", name, "err", err)
-			continue
+			return nil, fmt.Errorf("sso: OIDC provider %q is configured but failed to initialize: %w", name, err)
 		}
 		out = append(out, a)
 	}
-	return out
+	return out, nil
 }
 
 func oidcConfigFromEnv(name string) auth.OIDCConfig {
@@ -177,11 +178,12 @@ func parseGroupRoles(s string) map[string]auth.Role {
 // samlAuthenticators builds a SAML SP authenticator per name in
 // INTRAKTIBLE_SAML_PROVIDERS, reading each provider's config (incl. the IdP
 // metadata, SP cert, and SP key from files) from INTRAKTIBLE_SAML_<NAME>_* env.
-// A provider that fails to initialize is skipped, not fatal.
-func samlAuthenticators() []*auth.SAMLAuthenticator {
+// An explicitly-named provider that fails to initialize is a LOUD startup failure
+// (see oidcAuthenticators) — not a silent skip that disables SSO unnoticed.
+func samlAuthenticators() ([]*auth.SAMLAuthenticator, error) {
 	raw := strings.TrimSpace(os.Getenv("INTRAKTIBLE_SAML_PROVIDERS"))
 	if raw == "" {
-		return nil
+		return nil, nil
 	}
 	var out []*auth.SAMLAuthenticator
 	for _, name := range strings.Split(raw, ",") {
@@ -190,17 +192,16 @@ func samlAuthenticators() []*auth.SAMLAuthenticator {
 			continue
 		}
 		cfg, err := samlConfigFromEnv(name)
-		if err == nil {
-			var a *auth.SAMLAuthenticator
-			a, err = auth.NewSAMLAuthenticator(cfg)
-			if err == nil {
-				out = append(out, a)
-				continue
-			}
+		if err != nil {
+			return nil, fmt.Errorf("sso: SAML provider %q config: %w", name, err)
 		}
-		slog.Warn("sso: skipping SAML provider", "provider", name, "err", err)
+		a, err := auth.NewSAMLAuthenticator(cfg)
+		if err != nil {
+			return nil, fmt.Errorf("sso: SAML provider %q failed to initialize: %w", name, err)
+		}
+		out = append(out, a)
 	}
-	return out
+	return out, nil
 }
 
 func samlConfigFromEnv(name string) (auth.SAMLConfig, error) {

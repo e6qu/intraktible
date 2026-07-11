@@ -170,19 +170,30 @@ func TestAuthorizeRBAC(t *testing.T) {
 		secret, method, path string
 		want                 int
 	}{
-		{"viewer-k", "GET", "/v1/flows", 200},                                    // reads open to viewer
-		{"viewer-k", "POST", "/v1/flows", 403},                                   // authoring needs editor role
-		{"editor-k", "POST", "/v1/flows", 200},                                   // editor may author
-		{"editor-k", "POST", "/v1/flows/f1/versions", 200},                       // publish needs editor
-		{"operator-k", "PATCH", "/v1/flows/f1", 403},                             // editing flow details needs editor
-		{"editor-k", "PATCH", "/v1/flows/f1", 200},                               // editor may edit details
-		{"editor-k", "POST", "/v1/flows/f1/deployments", 403},                    // deploy needs approver role
-		{"approver-k", "POST", "/v1/flows/f1/deployments", 200},                  // approver may deploy
-		{"viewer-k", "POST", "/v1/flows/s/production/decide", 403},               // decide needs operator role
-		{"operator-k", "POST", "/v1/flows/s/production/decide", 200},             // operator may decide
-		{"operator-k", "POST", "/v1/cases", 200},                                 // case ops need operator
-		{"operator-k", "POST", "/v1/agents", 403},                                // defining an agent needs editor
-		{"editor-k", "POST", "/v1/agents", 200},                                  // editor may define
+		{"viewer-k", "GET", "/v1/flows", 200},                        // reads open to viewer
+		{"viewer-k", "POST", "/v1/flows", 403},                       // authoring needs editor role
+		{"editor-k", "POST", "/v1/flows", 200},                       // editor may author
+		{"editor-k", "POST", "/v1/flows/f1/versions", 200},           // publish needs editor
+		{"operator-k", "PATCH", "/v1/flows/f1", 403},                 // editing flow details needs editor
+		{"editor-k", "PATCH", "/v1/flows/f1", 200},                   // editor may edit details
+		{"editor-k", "POST", "/v1/flows/f1/deployments", 403},        // deploy needs approver role
+		{"approver-k", "POST", "/v1/flows/f1/deployments", 200},      // approver may deploy
+		{"viewer-k", "POST", "/v1/flows/s/production/decide", 403},   // decide needs operator role
+		{"operator-k", "POST", "/v1/flows/s/production/decide", 200}, // operator may decide
+		{"operator-k", "POST", "/v1/cases", 200},                     // case ops need operator
+		{"operator-k", "POST", "/v1/agents", 403},                    // defining an agent needs editor
+		{"editor-k", "POST", "/v1/agents", 200},                      // editor may define
+		// A model's coefficients are decision logic: defining/training one is editor,
+		// not operator (an operator must not be able to swap the model a live flow uses).
+		{"operator-k", "POST", "/v1/models", 403},
+		{"editor-k", "POST", "/v1/models", 200},
+		{"operator-k", "POST", "/v1/models/train", 403},
+		{"editor-k", "POST", "/v1/models/train", 200},
+		{"operator-k", "POST", "/v1/models/m1/monitor", 403},
+		{"editor-k", "POST", "/v1/models/m1/monitor", 200},
+		// Recording a realized outcome is runtime feedback, not authoring → operator.
+		{"operator-k", "POST", "/v1/models/m1/outcomes", 200},
+		{"viewer-k", "GET", "/v1/models/m1/performance", 200},                    // reads stay open to viewer
 		{"admin-k", "POST", "/v1/flows/f1/deployments", 200},                     // admin may do anything
 		{"editor-k", "POST", "/v1/flows/f1/deployment-requests", 200},            // propose: editor
 		{"operator-k", "POST", "/v1/flows/f1/deployment-requests", 403},          // propose needs editor
