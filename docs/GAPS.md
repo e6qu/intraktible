@@ -115,9 +115,18 @@ weeks, **L** = a real project.
    `docs/EXPRESSIONS.md` (v2). In the same pass the one non-deterministic builtin,
    `now()`, was disabled and is rejected at publish — closing a latent replayability
    hole in the "no clock, no I/O" guarantee.
-6. **Drift covers predictions only — M.** PSI/KL run on the prediction distribution;
-   there is no feature/covariate drift and no actuals/ground-truth reconciliation to
-   measure live model performance.
+6. **Model monitoring — DONE (covariate drift + actuals).** Alongside the existing
+   prediction-distribution PSI, the drift report now includes **covariate (input-feature)
+   drift**: a prediction records the model's input feature values, the projector folds
+   per-feature running mean/variance (Welford), and `GET /v1/models/{name}/drift` reports
+   each feature's standardized mean shift + variance ratio vs the captured baseline — a
+   leading indicator that precedes prediction drift. **Actuals reconciliation**:
+   `POST /v1/models/{name}/outcomes {probability, label}` records realized outcomes,
+   bucketed by predicted decile, and `GET /v1/models/{name}/performance` reports
+   calibration, accuracy, Brier score, and realized AUC — live performance from ground
+   truth. Remaining (optional): full per-feature PSI histograms (mean/variance shift is
+   the bounded signal today) and decision-linked outcome recording (caller supplies the
+   probability today).
 7. **Example/template library — DONE.** A "New from template" gallery on the Flows page
    ships 6 importable starters (Consumer Credit STP, CNP Fraud, Sanctions/PEP, KYB, BNPL,
    Chargeback) that exercise the differentiating node types. Remaining (optional): convert

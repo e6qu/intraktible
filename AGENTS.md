@@ -138,6 +138,13 @@ features (de-standardized back so the served spec reads raw features), with k-fo
 (AUC/log-loss/accuracy) and feature importance — and defines it as an ordinary servable `KindLogistic`
 model. Authored from the `/models` builder (dataset → report with a feature-importance table); an HTTP
 e2e trains a model then serves it in a Predict-node decision.
+**A model-monitoring round** then closed GAPS #6 (MD block in BUGS.md): beyond the existing
+prediction-distribution PSI, drift now includes **covariate (input-feature) drift** — a prediction
+records the model's feature values, the projector folds per-feature Welford stats, and the drift report
+gives each feature's standardized mean shift + variance ratio vs baseline — and **actuals
+reconciliation** — `POST /v1/models/{name}/outcomes` records realized labels bucketed by predicted
+decile, and `GET /v1/models/{name}/performance` reports calibration, accuracy, Brier, and realized AUC
+(live performance from ground truth). Both surface in the `/models` drift readout.
 Roadmap & exit criteria: [PLAN.md §8](PLAN.md#8-phased-roadmap); deferrals tracked in [BUGS.md](BUGS.md).
 Working today: `platform/{eventlog,store,projection,identity,auth,httpx,ai,web,mo}` (`mo` = the
 `Option[T]`/`Result[T]` types used instead of none/null sentinels where they're easy to mishandle;

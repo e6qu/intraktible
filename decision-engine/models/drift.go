@@ -90,7 +90,54 @@ type ModelStats struct {
 	BaselineCount int                  `json:"baseline_count"`      // predictions in the baseline
 	Threshold     float64              `json:"threshold,omitempty"` // PSI alert threshold (0 = none)
 	Alerting      bool                 `json:"alerting"`            // last-known firing state (scheduler dedup)
-	UpdatedAt     string               `json:"updated_at"`
+	// Features holds per-input-feature running stats (Welford), for covariate drift —
+	// a shift in the INPUT population is a leading indicator that precedes prediction
+	// drift. FeatureBaseline snapshots them at capture time to measure the shift against.
+	Features        map[string]FeatureStat         `json:"features,omitempty"`
+	FeatureBaseline map[string]FeatureBaselineStat `json:"feature_baseline,omitempty"`
+	// Actuals reconciles recorded outcomes against the prediction that produced them,
+	// bucketed by predicted-probability decile ({positives, negatives}), so live model
+	// performance (calibration, accuracy, Brier, realized AUC) is measured from ground
+	// truth rather than inferred from the prediction distribution alone.
+	Actuals     [driftBuckets]ActualBucket `json:"actuals"`
+	ActualCount int                        `json:"actual_count"`
+	UpdatedAt   string                     `json:"updated_at"`
+}
+
+// FeatureStat is a feature's running count/mean/variance (Welford's algorithm), so
+// covariate drift is O(1) per observation and the projection stays bounded.
+type FeatureStat struct {
+	Count int     `json:"count"`
+	Mean  float64 `json:"mean"`
+	M2    float64 `json:"m2"` // Σ(x-mean)²; variance = M2/Count
+}
+
+func (f *FeatureStat) observe(x float64) {
+	f.Count++
+	d := x - f.Mean
+	f.Mean += d / float64(f.Count)
+	f.M2 += d * (x - f.Mean)
+}
+
+// Std is the population standard deviation (0 with fewer than 2 observations).
+func (f FeatureStat) Std() float64 {
+	if f.Count < 2 {
+		return 0
+	}
+	return math.Sqrt(f.M2 / float64(f.Count))
+}
+
+// FeatureBaselineStat is a feature's distribution snapshot at baseline capture.
+type FeatureBaselineStat struct {
+	Mean  float64 `json:"mean"`
+	Std   float64 `json:"std"`
+	Count int     `json:"count"`
+}
+
+// ActualBucket counts realized outcomes for a predicted-probability decile.
+type ActualBucket struct {
+	Pos int `json:"pos"`
+	Neg int `json:"neg"`
 }
 
 // Firing reports whether the model's PSI over the given window exceeds its
@@ -130,6 +177,9 @@ type DriftReport struct {
 	Threshold   float64   `json:"threshold,omitempty"`
 	Firing      bool      `json:"firing"`   // PSI exceeds the (set) threshold, computed live
 	Alerting    bool      `json:"alerting"` // the drift scheduler has pushed an alert (firing edge crossed)
+	// Features is per-input-feature covariate drift vs the baseline (empty until a
+	// baseline is captured); it complements the prediction-distribution PSI above.
+	Features []FeatureDrift `json:"features,omitempty"`
 }
 
 // DriftProjector folds Predict-node outputs into per-model probability histograms
@@ -152,9 +202,33 @@ func (DriftProjector) Apply(ctx context.Context, e eventlog.Envelope, s store.St
 		return applyDriftAlerting(ctx, e, s, true)
 	case events.TypeModelDriftResolved:
 		return applyDriftAlerting(ctx, e, s, false)
+	case events.TypeModelOutcomeRecorded:
+		return applyOutcome(ctx, e, s)
 	default:
 		return nil
 	}
+}
+
+// applyOutcome buckets a realized outcome by the predicted-probability decile, so the
+// read side can measure calibration and performance from ground truth.
+func applyOutcome(ctx context.Context, e eventlog.Envelope, s store.Store) error {
+	var p events.ModelOutcomeRecorded
+	if err := json.Unmarshal(e.Payload, &p); err != nil {
+		return fmt.Errorf("models: decode outcome seq %d: %w", e.Seq, err)
+	}
+	if math.IsNaN(p.Probability) || math.IsInf(p.Probability, 0) {
+		return nil
+	}
+	idx := bucket(p.Probability)
+	_, err := store.UpdateDoc(ctx, s, StatsCollection, store.Key(e.Org, e.Workspace, p.Name), func(st *ModelStats) {
+		if p.Label == 1 {
+			st.Actuals[idx].Pos++
+		} else {
+			st.Actuals[idx].Neg++
+		}
+		st.ActualCount++
+	})
+	return err // an outcome for an unseen model is a no-op (no predictions folded yet)
 }
 
 // applyDriftAlerting flips a model's last-known firing state (scheduler dedup).
@@ -195,14 +269,30 @@ func applyPredictNode(ctx context.Context, e eventlog.Envelope, s store.Store) e
 		if model == "" || !hasProb || math.IsNaN(prob) || math.IsInf(prob, 0) {
 			continue
 		}
-		if err := bumpModel(ctx, e, s, model, bucket(prob)); err != nil {
+		if err := bumpModel(ctx, e, s, model, bucket(prob), featureValues(pred["features"])); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func bumpModel(ctx context.Context, e eventlog.Envelope, s store.Store, model string, idx int) error {
+// featureValues reads the model's input features attached to a prediction (finite
+// numbers only), for covariate-drift folding.
+func featureValues(raw any) map[string]float64 {
+	m, ok := raw.(map[string]any)
+	if !ok {
+		return nil
+	}
+	out := make(map[string]float64, len(m))
+	for name, v := range m {
+		if x, ok := toFloat(v); ok && !math.IsNaN(x) && !math.IsInf(x, 0) {
+			out[name] = x
+		}
+	}
+	return out
+}
+
+func bumpModel(ctx context.Context, e eventlog.Envelope, s store.Store, model string, idx int, feats map[string]float64) error {
 	key := store.Key(e.Org, e.Workspace, model)
 	st, ok, err := store.GetDoc[ModelStats](ctx, s, StatsCollection, key)
 	if err != nil {
@@ -221,6 +311,16 @@ func bumpModel(ctx context.Context, e eventlog.Envelope, s store.Store, model st
 	d[idx]++
 	st.Daily[day] = d
 	pruneDaily(st.Daily)
+	if len(feats) > 0 {
+		if st.Features == nil {
+			st.Features = map[string]FeatureStat{}
+		}
+		for name, x := range feats {
+			f := st.Features[name]
+			f.observe(x)
+			st.Features[name] = f
+		}
+	}
 	st.UpdatedAt = e.Time.UTC().Format("2006-01-02T15:04:05Z07:00")
 	return store.PutDoc(ctx, s, StatsCollection, key, st)
 }
@@ -279,6 +379,14 @@ func applyBaseline(ctx context.Context, e eventlog.Envelope, s store.Store) erro
 	st.BaselineHist = st.Hist
 	st.BaselineCount = st.Count
 	st.HasBaseline = true
+	// Snapshot each feature's distribution too, so covariate drift measures the input
+	// shift since capture alongside the prediction-distribution PSI.
+	if len(st.Features) > 0 {
+		st.FeatureBaseline = make(map[string]FeatureBaselineStat, len(st.Features))
+		for name, f := range st.Features {
+			st.FeatureBaseline[name] = FeatureBaselineStat{Mean: f.Mean, Std: f.Std(), Count: f.Count}
+		}
+	}
 	st.UpdatedAt = e.Time.UTC().Format("2006-01-02T15:04:05Z07:00")
 	return store.PutDoc(ctx, s, StatsCollection, key, st)
 }
@@ -311,6 +419,9 @@ func Drift(ctx context.Context, s store.Store, id identity.Identity, model strin
 			rep.Firing = st.Threshold > 0 && psi > st.Threshold
 		}
 	}
+	// Covariate (input-feature) drift vs the captured baseline — a leading indicator
+	// that the input population has shifted, independent of the prediction PSI above.
+	rep.Features = st.FeatureDrift()
 	return rep, nil
 }
 

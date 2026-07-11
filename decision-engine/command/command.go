@@ -879,6 +879,38 @@ func (h *Handler) CaptureModelBaseline(ctx context.Context, id identity.Identity
 	})
 }
 
+// RecordModelOutcome records a realized ground-truth outcome (label 0/1) for a
+// prediction a model made (probability in [0,1]), so live performance is measured
+// against actuals. decisionID is optional lineage. Recording an outcome for a model
+// with no folded predictions is a no-op in the projector (nothing to reconcile).
+func (h *Handler) RecordModelOutcome(ctx context.Context, id identity.Identity, name string, probability, label float64, decisionID string) (eventlog.Envelope, error) {
+	if err := id.Valid(); err != nil {
+		return eventlog.Envelope{}, err
+	}
+	if strings.TrimSpace(name) == "" {
+		return eventlog.Envelope{}, fmt.Errorf("decision-engine: model name is required")
+	}
+	if probability < 0 || probability > 1 {
+		return eventlog.Envelope{}, fmt.Errorf("decision-engine: outcome probability %v: want a fraction in [0,1]", probability)
+	}
+	if label != 0 && label != 1 {
+		return eventlog.Envelope{}, fmt.Errorf("decision-engine: outcome label %v is not binary (0 or 1)", label)
+	}
+	payload, err := json.Marshal(events.ModelOutcomeRecorded{Name: name, Probability: probability, Label: label, DecisionID: decisionID})
+	if err != nil {
+		return eventlog.Envelope{}, fmt.Errorf("decision-engine: marshal model outcome: %w", err)
+	}
+	return h.log.Append(ctx, eventlog.Envelope{
+		Org:       id.Org,
+		Workspace: id.Workspace,
+		Actor:     id.Actor,
+		Stream:    events.StreamModels,
+		Type:      events.TypeModelOutcomeRecorded,
+		Time:      h.now(),
+		Payload:   payload,
+	})
+}
+
 // SetModelMonitor sets (threshold > 0) or clears (<= 0) the PSI drift threshold a
 // model alerts on.
 func (h *Handler) SetModelMonitor(ctx context.Context, id identity.Identity, name string, threshold float64) (eventlog.Envelope, error) {

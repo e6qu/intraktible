@@ -13,10 +13,12 @@
     defineModel,
     trainModel,
     modelDrift,
+    getModelPerformance,
     captureModelBaseline,
     setModelMonitor,
     type Model,
     type ModelDrift,
+    type ModelPerformance,
     type TrainReport,
     type TrainRow
   } from '$lib/api';
@@ -120,8 +122,12 @@
   // The open drift row's own failure text, so a failed fetch shows an inline
   // error + Retry instead of the row saying "Loading drift…" forever.
   let driftError = $state('');
+  // The open model's reconciled performance (from recorded actuals), fetched alongside
+  // its drift; null when none recorded yet.
+  let perf = $state<ModelPerformance | null>(null);
   async function loadDrift(m: string) {
     drift = null;
+    perf = null;
     driftLoading = true;
     driftError = '';
     error = '';
@@ -131,9 +137,14 @@
     const reqModel = m;
     const reqWindow = driftWindow;
     try {
-      const got = await modelDrift(key, m, driftWindow);
+      const [got, gotPerf] = await Promise.all([
+        modelDrift(key, m, driftWindow),
+        // Performance is best-effort (a model with no recorded actuals is fine).
+        getModelPerformance(key, m).catch(() => null)
+      ]);
       if (driftOpen !== reqModel || driftWindow !== reqWindow) return;
       drift = got;
+      perf = gotPerf;
       thresholdInput = drift.threshold ? String(drift.threshold) : '';
       // Keep the at-a-glance row badge in sync with what the open row shows.
       driftStatus = new Map(driftStatus).set(m, statusFromDrift(got));
@@ -504,6 +515,39 @@
                         </div>
                       {/each}
                     </div>
+                    {#if drift.features && drift.features.length > 0}
+                      <div class="covariate" data-testid="covariate-drift">
+                        <p class="sub">Covariate drift (input features vs baseline)</p>
+                        <table class="ftable">
+                          <thead>
+                            <tr><th>Feature</th><th>Mean shift</th><th>Var ratio</th><th></th></tr>
+                          </thead>
+                          <tbody>
+                            {#each drift.features as f (f.feature)}
+                              <tr>
+                                <td>{f.feature}</td>
+                                <td>{f.mean_shift.toFixed(2)}σ</td>
+                                <td>{f.var_ratio.toFixed(2)}×</td>
+                                <td>
+                                  {#if f.drifting}<span class="psi significant">drifting</span
+                                    >{:else}<span class="muted">stable</span>{/if}
+                                </td>
+                              </tr>
+                            {/each}
+                          </tbody>
+                        </table>
+                      </div>
+                    {/if}
+                    {#if perf && perf.count > 0}
+                      <div class="perf" data-testid="model-performance">
+                        <p class="sub">Live performance (from {perf.count} recorded actuals)</p>
+                        <div class="metrics">
+                          <span>AUC <b>{perf.auc.toFixed(3)}</b></span>
+                          <span>Accuracy <b>{(perf.accuracy * 100).toFixed(1)}%</b></span>
+                          <span>Brier <b>{perf.brier.toFixed(3)}</b></span>
+                        </div>
+                      </div>
+                    {/if}
                   {/if}
                 </td>
               </tr>
@@ -540,6 +584,29 @@
     gap: 1rem;
     font-size: 0.9rem;
     margin-bottom: 0.5rem;
+  }
+  .covariate,
+  .perf {
+    margin-top: 0.6rem;
+  }
+  .sub {
+    font-size: 0.8rem;
+    color: var(--fg-subtle);
+    margin: 0.4rem 0 0.2rem;
+  }
+  table.ftable {
+    border-collapse: collapse;
+    font-size: 0.85rem;
+  }
+  table.ftable th,
+  table.ftable td {
+    text-align: left;
+    padding: 0.15rem 0.8rem 0.15rem 0;
+  }
+  .perf .metrics {
+    display: flex;
+    gap: 1.2rem;
+    font-size: 0.9rem;
   }
   table.importance {
     border-collapse: collapse;
