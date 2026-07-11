@@ -833,6 +833,27 @@ func (h *Handler) DefineModel(ctx context.Context, id identity.Identity, name st
 	})
 }
 
+// TrainModel fits a logistic-regression model to a labelled dataset and defines it
+// under name — an ordinary ModelDefined carrying the fitted spec, so the trained model
+// is served and audited exactly like a hand-authored one. Returns the training report
+// (cross-validated metrics + feature importance). The fit is deterministic, so
+// re-training the same dataset/options reproduces both the model and the report.
+func (h *Handler) TrainModel(ctx context.Context, id identity.Identity, name string, rows []models.Row, opts models.TrainOptions) (eventlog.Envelope, models.TrainReport, error) {
+	spec, report, err := models.FitLogistic(rows, opts)
+	if err != nil {
+		return eventlog.Envelope{}, models.TrainReport{}, err
+	}
+	raw, err := json.Marshal(spec)
+	if err != nil {
+		return eventlog.Envelope{}, models.TrainReport{}, fmt.Errorf("decision-engine: marshal trained model: %w", err)
+	}
+	e, err := h.DefineModel(ctx, id, name, raw)
+	if err != nil {
+		return eventlog.Envelope{}, models.TrainReport{}, err
+	}
+	return e, report, nil
+}
+
 // CaptureModelBaseline snapshots a model's current prediction-probability
 // distribution as the drift baseline (the projector reads its accumulated histogram
 // at this event's position).

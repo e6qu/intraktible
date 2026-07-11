@@ -11,11 +11,14 @@
   import {
     listModels,
     defineModel,
+    trainModel,
     modelDrift,
     captureModelBaseline,
     setModelMonitor,
     type Model,
-    type ModelDrift
+    type ModelDrift,
+    type TrainReport,
+    type TrainRow
   } from '$lib/api';
   import { roleAtLeast } from '$lib/roles';
   import { user } from '$lib/session';
@@ -220,6 +223,33 @@
     }
   }
 
+  // Training: fit a logistic model from a labelled dataset (JSON array of
+  // {features, label}). The response is the trained model plus a report.
+  let trainName = $state('');
+  let trainData = $state(
+    '[\n  { "features": { "fico": 720, "dti": 0.2 }, "label": 1 },\n  { "features": { "fico": 580, "dti": 0.5 }, "label": 0 }\n]'
+  );
+  let trainBusy = $state(false);
+  let trainReport = $state<TrainReport | null>(null);
+  async function train() {
+    if (trainBusy) return;
+    trainBusy = true;
+    trainReport = null;
+    try {
+      const dataset = JSON.parse(trainData) as TrainRow[];
+      if (!Array.isArray(dataset))
+        throw new Error('dataset must be a JSON array of {features, label}');
+      const named = trainName.trim();
+      trainReport = await trainModel(key, { name: named, dataset });
+      await load();
+      toast.success(`Trained model ${named}: CV AUC ${trainReport.cv_auc.toFixed(3)}`);
+    } catch (e) {
+      toast.error(msg(e));
+    } finally {
+      trainBusy = false;
+    }
+  }
+
   onMount(load);
 </script>
 
@@ -269,6 +299,68 @@
       ></textarea></label
     >
   </form>
+
+  <details class="train">
+    <summary>Train a logistic model from a dataset</summary>
+    <p class="muted">
+      Fit a logistic-regression model from labelled examples instead of hand-authoring coefficients.
+      The fit is deterministic and cross-validated; the result is an ordinary model a Predict node
+      serves.
+    </p>
+    <form
+      class="define"
+      onsubmit={(e) => {
+        e.preventDefault();
+        train();
+      }}
+    >
+      <div class="row">
+        <label
+          >Model name <input
+            bind:value={trainName}
+            placeholder="risk"
+            aria-label="model to train"
+            required
+          /></label
+        >
+        <button
+          type="submit"
+          disabled={trainBusy || !roleAtLeast($user?.role, 'editor')}
+          title={!roleAtLeast($user?.role, 'editor') ? 'Requires the editor role' : undefined}
+          >{trainBusy ? 'Training…' : 'Train model'}</button
+        >
+      </div>
+      <label class="field"
+        >Dataset — JSON array of {'{ features, label }'} (label 0 or 1)
+        <textarea bind:value={trainData} aria-label="training dataset" rows="7" spellcheck="false"
+        ></textarea></label
+      >
+    </form>
+    {#if trainReport}
+      <div class="report" data-testid="train-report">
+        <div class="metrics">
+          <span><b>{trainReport.rows}</b> rows · <b>{trainReport.positives}</b> positive</span>
+          <span>CV AUC <b>{trainReport.cv_auc.toFixed(3)}</b></span>
+          <span>CV accuracy <b>{(trainReport.cv_accuracy * 100).toFixed(1)}%</b></span>
+          <span>log-loss <b>{trainReport.train_log_loss.toFixed(3)}</b></span>
+        </div>
+        <table class="importance">
+          <thead>
+            <tr><th>Feature</th><th>Coefficient</th><th>Importance</th></tr>
+          </thead>
+          <tbody>
+            {#each trainReport.importance as fi (fi.feature)}
+              <tr>
+                <td>{fi.feature}</td>
+                <td>{fi.coefficient.toFixed(4)}</td>
+                <td>{(fi.importance * 100).toFixed(1)}%</td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
+    {/if}
+  </details>
 
   {#if loading}
     <Skeleton rows={3} />
@@ -428,6 +520,35 @@
     max-width: 52rem;
     margin: 2rem auto;
     padding: 0 1.25rem;
+  }
+  .train {
+    margin: 0.5rem 0 1rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.5rem 0.8rem;
+  }
+  .train summary {
+    cursor: pointer;
+    font-weight: 600;
+  }
+  .report {
+    margin-top: 0.6rem;
+  }
+  .report .metrics {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    font-size: 0.9rem;
+    margin-bottom: 0.5rem;
+  }
+  table.importance {
+    border-collapse: collapse;
+    font-size: 0.85rem;
+  }
+  table.importance th,
+  table.importance td {
+    text-align: left;
+    padding: 0.2rem 0.8rem 0.2rem 0;
   }
   h1 {
     display: flex;

@@ -251,6 +251,54 @@
         }
       }
     },
+    "/v1/models/train": {
+      "post": {
+        "tags": ["models"],
+        "summary": "Train a logistic model from a labelled dataset",
+        "description": "Fits a logistic-regression model (deterministic batch gradient descent, k-fold cross-validation, feature importance) from a labelled dataset and defines it under name — a servable model, no hand-authored coefficients. Returns the training report.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["name", "dataset"],
+                "properties": {
+                  "name": { "type": "string" },
+                  "dataset": {
+                    "type": "array",
+                    "description": "Labelled examples.",
+                    "items": {
+                      "type": "object",
+                      "required": ["features", "label"],
+                      "properties": {
+                        "features": { "type": "object", "additionalProperties": { "type": "number" } },
+                        "label": { "type": "number", "description": "0 or 1" }
+                      }
+                    }
+                  },
+                  "options": {
+                    "type": "object",
+                    "properties": {
+                      "features": { "type": "array", "items": { "type": "string" } },
+                      "iterations": { "type": "integer" },
+                      "learning_rate": { "type": "number" },
+                      "l2": { "type": "number" },
+                      "folds": { "type": "integer" }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "The model was trained and registered; body carries the training report." },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/v1/models/{name}": {
       "get": {
         "tags": ["models"],

@@ -132,6 +132,12 @@ mutate the DB — verified against a real Postgres); a **credit_bureau** normali
 field paths, missing-score fails loud); and a **sanctions** deterministic in-process OFAC/EU/UN/PEP name
 screener (token-set fuzzy match against an operator watchlist, no network, replayable). The catalog's
 credit-bureau/watchlist templates now instantiate these real adapters instead of http stubs.
+**A model-training round** then closed GAPS #4 (MT block in BUGS.md): `POST /v1/models/train` fits a
+**logistic-regression** model from a labelled dataset — deterministic batch gradient descent on z-scored
+features (de-standardized back so the served spec reads raw features), with k-fold cross-validation
+(AUC/log-loss/accuracy) and feature importance — and defines it as an ordinary servable `KindLogistic`
+model. Authored from the `/models` builder (dataset → report with a feature-importance table); an HTTP
+e2e trains a model then serves it in a Predict-node decision.
 Roadmap & exit criteria: [PLAN.md §8](PLAN.md#8-phased-roadmap); deferrals tracked in [BUGS.md](BUGS.md).
 Working today: `platform/{eventlog,store,projection,identity,auth,httpx,ai,web,mo}` (`mo` = the
 `Option[T]`/`Result[T]` types used instead of none/null sentinels where they're easy to mishandle;

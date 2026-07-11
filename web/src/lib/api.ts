@@ -2074,6 +2074,52 @@ export async function defineModel(
   }
 }
 
+export interface FeatureImportance {
+  feature: string;
+  coefficient: number;
+  importance: number;
+}
+
+export interface TrainReport {
+  rows: number;
+  positives: number;
+  features: string[];
+  iterations: number;
+  train_log_loss: number;
+  folds: number;
+  cv_auc: number;
+  cv_log_loss: number;
+  cv_accuracy: number;
+  importance: FeatureImportance[];
+}
+
+export interface TrainRow {
+  features: Record<string, number>;
+  label: number; // 0 or 1
+}
+
+// trainModel fits a logistic model from a labelled dataset, defines it under name, and
+// returns the training report (cross-validated metrics + feature importance).
+export async function trainModel(
+  key: string,
+  body: {
+    name: string;
+    dataset: TrainRow[];
+    options?: { iterations?: number; learning_rate?: number; l2?: number; folds?: number };
+  },
+  fetcher: typeof fetch = recordingFetch
+): Promise<TrainReport> {
+  const res = await fetcher('/v1/models/train', {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'POST /v1/models/train');
+  }
+  return ((await res.json()) as { report: TrainReport }).report;
+}
+
 // copilotExplain returns a plain-language explanation of a flow graph.
 export async function copilotExplain(
   key: string,

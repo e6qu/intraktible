@@ -116,6 +116,7 @@ func (s *Service) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/decisions/{decision_id}/resume", s.resumeDecision)
 	mux.HandleFunc("POST /v1/decisions/{decision_id}/counterfactual", s.counterfactual)
 	mux.HandleFunc("POST /v1/models", s.defineModel)
+	mux.HandleFunc("POST /v1/models/train", s.trainModel)
 	mux.HandleFunc("GET /v1/models", s.listModels)
 	mux.HandleFunc("GET /v1/models/{name}", s.getModel)
 	mux.HandleFunc("GET /v1/models/{name}/drift", s.modelDrift)
@@ -314,6 +315,33 @@ func (s *Service) defineModel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusCreated, map[string]any{"name": req.Name, "event_id": e.ID, "seq": e.Seq})
+}
+
+type trainModelRequest struct {
+	Name    string              `json:"name"`
+	Dataset []models.Row        `json:"dataset"`
+	Options models.TrainOptions `json:"options"`
+}
+
+// trainModel fits a logistic model to the posted labelled dataset and defines it, so
+// the operator gets a servable model plus the training report (CV metrics + feature
+// importance) in one call instead of hand-authoring coefficients.
+func (s *Service) trainModel(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	var req trainModelRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	e, report, err := s.cmd.TrainModel(r.Context(), id, req.Name, req.Dataset, req.Options)
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	httpx.JSON(w, http.StatusCreated, map[string]any{"name": req.Name, "event_id": e.ID, "seq": e.Seq, "report": report})
 }
 
 func (s *Service) listModels(w http.ResponseWriter, r *http.Request) {
