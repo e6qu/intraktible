@@ -1831,6 +1831,1329 @@
           }
         }
       }
+    },
+    "/v1/cases/summary": {
+      "get": {
+        "tags": ["Cases"],
+        "summary": "Queue roll-up",
+        "description": "Counts by status, unassigned, and SLA buckets over the same filtered set as the case list (filter by status/type/assignee).",
+        "parameters": [
+          { "name": "status", "in": "query", "schema": { "type": "string" } },
+          { "name": "type", "in": "query", "schema": { "type": "string" } },
+          { "name": "assignee", "in": "query", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "The queue summary.",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/cases/sla-sweep": {
+      "post": {
+        "tags": ["Cases"],
+        "summary": "Emit SLA-breach events for overdue open cases",
+        "description": "The push side of SLA tracking — a scheduler/cron calls it. Returns the breached case ids.",
+        "responses": {
+          "200": {
+            "description": "The breached case ids.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "breached": { "type": "array", "items": { "type": "string" } },
+                    "count": { "type": "integer" }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/cases/{case_id}/assign": {
+      "post": {
+        "tags": ["Cases"],
+        "summary": "Assign (or reassign) a case",
+        "description": "Claims a case for an assignee. Assigning an already owned case without reassign=true is refused, so one claim cannot silently overwrite another.",
+        "parameters": [
+          { "name": "case_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "assignee": { "type": "string" },
+                  "reassign": { "type": "boolean", "description": "Take the case away from its current assignee." }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "The assignment event was appended.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventAck" } } }
+          },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/cases/{case_id}/status": {
+      "post": {
+        "tags": ["Cases"],
+        "summary": "Set a case's status",
+        "parameters": [
+          { "name": "case_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": { "status": { "type": "string" } }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "The status-change event was appended.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventAck" } } }
+          },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/cases/{case_id}/notes": {
+      "post": {
+        "tags": ["Cases"],
+        "summary": "Add a note to a case",
+        "parameters": [
+          { "name": "case_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": { "text": { "type": "string" } }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "The note event was appended.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventAck" } } }
+          },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/context/entities": {
+      "post": {
+        "tags": ["Context"],
+        "summary": "Record a custom entity",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["entity_type", "entity_id"],
+                "properties": {
+                  "entity_type": { "type": "string" },
+                  "entity_id": { "type": "string" },
+                  "attributes": { "type": "object" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "The entity event was appended.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventAck" } } }
+          },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "get": {
+        "tags": ["Context"],
+        "summary": "List custom entities",
+        "parameters": [
+          { "name": "type", "in": "query", "schema": { "type": "string" }, "description": "Filter by entity type." }
+        ],
+        "responses": {
+          "200": {
+            "description": "The recorded entities.",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "entities": { "type": "array", "items": { "type": "object" } } } } } }
+          },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/context/entities/{type}/{id}": {
+      "get": {
+        "tags": ["Context"],
+        "summary": "Read one entity",
+        "parameters": [
+          { "name": "type", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "The entity record.",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "401": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/context/entities/{type}/{id}/events": {
+      "get": {
+        "tags": ["Context"],
+        "summary": "List an entity's event log",
+        "parameters": [
+          { "name": "type", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "The entity's recorded events.",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "events": { "type": "array", "items": { "type": "object" } } } } } }
+          },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/context/entities/{type}/{id}/features": {
+      "get": {
+        "tags": ["Context"],
+        "summary": "Compute an entity's features now",
+        "parameters": [
+          { "name": "type", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "The computed feature values.",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "features": { "type": "array", "items": { "type": "object" } } } } } }
+          },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/context/events": {
+      "post": {
+        "tags": ["Context"],
+        "summary": "Record a custom event",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["entity_type", "entity_id", "event_name"],
+                "properties": {
+                  "entity_type": { "type": "string" },
+                  "entity_id": { "type": "string" },
+                  "event_name": { "type": "string" },
+                  "data": { "type": "object" },
+                  "occurred_at": { "type": "string", "format": "date-time" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "The event was appended.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventAck" } } }
+          },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/context/features": {
+      "post": {
+        "tags": ["Context"],
+        "summary": "Define a feature",
+        "description": "Declares an aggregation (e.g. count/sum/avg over a window) over an entity type's events, injected under 'features' at decide time.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["name", "entity_type", "event_name", "aggregation"],
+                "properties": {
+                  "name": { "type": "string" },
+                  "entity_type": { "type": "string" },
+                  "event_name": { "type": "string" },
+                  "aggregation": { "type": "string" },
+                  "field": { "type": "string" },
+                  "window_hours": { "type": "integer" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "The feature-definition event was appended.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventAck" } } }
+          },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "get": {
+        "tags": ["Context"],
+        "summary": "List feature definitions",
+        "parameters": [
+          { "name": "type", "in": "query", "schema": { "type": "string" }, "description": "Filter by entity type." }
+        ],
+        "responses": {
+          "200": {
+            "description": "The defined features.",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "features": { "type": "array", "items": { "type": "object" } } } } } }
+          },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/context/connectors": {
+      "post": {
+        "tags": ["Context"],
+        "summary": "Define a connector",
+        "description": "Registers a named external data connector. Credential fields in config are sealed under the keyring (or redacted) before the definition is recorded.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["name", "type"],
+                "properties": {
+                  "name": { "type": "string" },
+                  "type": { "type": "string" },
+                  "config": { "type": "object", "description": "Type-specific configuration; credential fields are never returned in plaintext." }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "The connector-definition event was appended.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventAck" } } }
+          },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "get": {
+        "tags": ["Context"],
+        "summary": "List connectors",
+        "description": "Credential config fields are masked at the read boundary.",
+        "parameters": [
+          { "name": "type", "in": "query", "schema": { "type": "string" }, "description": "Filter by connector type." }
+        ],
+        "responses": {
+          "200": {
+            "description": "The defined connectors (credentials redacted).",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "connectors": { "type": "array", "items": { "type": "object" } } } } } }
+          },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/context/connectors/catalog": {
+      "get": {
+        "tags": ["Context"],
+        "summary": "List connector templates",
+        "description": "The catalog of built-in connector types and their config templates.",
+        "responses": {
+          "200": {
+            "description": "The connector template catalog.",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "templates": { "type": "array", "items": { "type": "object" } } } } } }
+          },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/context/connectors/{name}/fetch": {
+      "post": {
+        "tags": ["Context"],
+        "summary": "Invoke a connector",
+        "description": "Invokes a defined connector (the external effect) and records the result as an event, so the response is auditable and replay-stable.",
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": { "type": "object", "properties": { "params": { "type": "object" } } }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The connector response, plus the recorded fetch id.",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "fetch_id": { "type": "string" }, "response": { "type": "object" } } } } }
+          },
+          "401": { "$ref": "#/components/responses/Error" },
+          "502": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/context/connectors/{name}/fetches": {
+      "get": {
+        "tags": ["Context"],
+        "summary": "List a connector's recorded fetches",
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "The connector's recorded fetches.",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "fetches": { "type": "array", "items": { "type": "object" } } } } } }
+          },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/decisions/{decision_id}/resume": {
+      "post": {
+        "tags": ["decisions"],
+        "summary": "Resume a suspended decision",
+        "description": "Un-pauses a decision suspended at a durable human task, injecting the reviewer's outcome so the flow runs on to a terminal. The outcome fields are merged into the decision's record. Carries the same environment scope gate as the decide path.",
+        "parameters": [
+          { "name": "decision_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "type": "object", "properties": { "outcome": { "type": "object" } } }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The resumed decision's terminal state.",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "decision_id": { "type": "string" }, "status": { "type": "string" }, "disposition": { "type": "string" } } } } }
+          },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/decisions/{decision_id}/counterfactual": {
+      "post": {
+        "tags": ["decisions"],
+        "summary": "Counterfactual levers for an unfavorable decision",
+        "description": "Answers \"what would flip this?\": for an unfavorable decision, searches each numeric input field for the minimal single-field change that re-runs to a more favorable disposition. Records nothing; the search is bounded.",
+        "parameters": [
+          { "name": "decision_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "The disposition and the ordered flips found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "disposition": { "type": "string" },
+                    "searched": { "type": "integer" },
+                    "flips": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "field": { "type": "string" },
+                          "from": { "type": "number" },
+                          "to": { "type": "number" },
+                          "direction": { "type": "string", "enum": ["increase", "decrease"] },
+                          "disposition": { "type": "string" }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/flows/{flow_id}/export": {
+      "get": {
+        "tags": ["flows"],
+        "summary": "Export a flow version as code / diagram",
+        "description": "Renders a flow version: ?format=mermaid (the default) | mermaid-state | bpmn | dot | json (round-trippable, the flow-as-code document /v1/flows/import accepts). ?version=N defaults to the latest. Returned as a file attachment.",
+        "parameters": [
+          { "$ref": "#/components/parameters/FlowID" },
+          { "name": "format", "in": "query", "schema": { "type": "string", "enum": ["mermaid", "mermaid-state", "bpmn", "dot", "json"] } },
+          { "name": "version", "in": "query", "schema": { "type": "integer" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "The rendered export.",
+            "content": {
+              "text/plain": { "schema": { "type": "string" } },
+              "application/json": { "schema": { "type": "object" } },
+              "application/xml": { "schema": { "type": "string" } }
+            }
+          },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/flows/{flow_id}/slo": {
+      "get": {
+        "tags": ["flows"],
+        "summary": "Get a flow's SLOs and current attainment",
+        "parameters": [ { "$ref": "#/components/parameters/FlowID" } ],
+        "responses": {
+          "200": {
+            "description": "The configured objectives (null when none) and current attainment.",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "slo": { "type": "object" }, "attainment": { "type": "object" } } } } }
+          },
+          "401": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "put": {
+        "tags": ["flows"],
+        "summary": "Set a flow's SLOs",
+        "description": "Records the flow's objectives (a zeroed body clears them).",
+        "parameters": [ { "$ref": "#/components/parameters/FlowID" } ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "success_target": { "type": "number", "description": "Target success fraction (0..1)." },
+                  "latency_target_ms": { "type": "integer" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The stored objectives.",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "slo": { "type": "object" }, "event_id": { "type": "string" }, "seq": { "type": "integer" } } } } }
+          },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/flows/{flow_id}/node-stats": {
+      "get": {
+        "tags": ["flows"],
+        "summary": "Traversal heatmap over recent decisions",
+        "description": "Across the flow's recent completed decisions, how many hit each node of its current published graph, plus the disposition tally.",
+        "parameters": [
+          { "$ref": "#/components/parameters/FlowID" },
+          { "name": "environment", "in": "query", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Per-node hit counts and the disposition distribution.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "total": { "type": "integer" },
+                    "dispositions": { "type": "object" },
+                    "nodes": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "node_id": { "type": "string" },
+                          "type": { "type": "string" },
+                          "count": { "type": "integer" },
+                          "pct": { "type": "number" }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/flows/{flow_id}/coverage": {
+      "post": {
+        "tags": ["flows"],
+        "summary": "Reachability / dead-path coverage report",
+        "description": "Generates a deterministic fan of synthetic inputs over the numeric fields the graph references, runs each through the pure engine, and tallies per-node hits, per-branch hits, and the disposition distribution. Nodes/branches with zero hits are reported as dead. Records nothing.",
+        "parameters": [ { "$ref": "#/components/parameters/FlowID" } ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "version": { "type": "integer", "description": "0 = latest published." },
+                  "runs": { "type": "integer", "description": "Synthetic runs (default 200, max 2000)." }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The coverage report.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "runs": { "type": "integer" },
+                    "fields": { "type": "array", "items": { "type": "string" } },
+                    "nodes": { "type": "array", "items": { "type": "object" } },
+                    "branches": { "type": "array", "items": { "type": "object" } },
+                    "dispositions": { "type": "object" },
+                    "dead_nodes": { "type": "array", "items": { "type": "string" } },
+                    "dead_branches": { "type": "array", "items": { "type": "object" } }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/flows/{flow_id}/deployments/schedules": {
+      "get": {
+        "tags": ["deployments"],
+        "summary": "List a flow's scheduled deploys",
+        "parameters": [ { "$ref": "#/components/parameters/FlowID" } ],
+        "responses": {
+          "200": {
+            "description": "The scheduled deploys (newest first).",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "schedules": { "type": "array", "items": { "type": "object" } } } } } }
+          },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/flows/{flow_id}/deployments/schedule": {
+      "post": {
+        "tags": ["deployments"],
+        "summary": "Schedule a deploy for a future time",
+        "description": "Queues a deployment for a future time (optionally time-boxed with until, which auto-reverts). Requires the environment scope and any per-flow grant.",
+        "parameters": [ { "$ref": "#/components/parameters/FlowID" } ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["environment", "version", "at"],
+                "properties": {
+                  "environment": { "type": "string", "enum": ["sandbox", "staging", "production"] },
+                  "version": { "type": "integer" },
+                  "at": { "type": "string", "format": "date-time", "description": "RFC3339 activation time." },
+                  "until": { "type": "string", "format": "date-time", "description": "RFC3339; when set, the deploy is time-boxed and auto-reverts." }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The deploy was scheduled.",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "schedule_id": { "type": "string" }, "event_id": { "type": "string" }, "seq": { "type": "integer" } } } } }
+          },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/flows/{flow_id}/deployments/schedules/{schedule_id}": {
+      "delete": {
+        "tags": ["deployments"],
+        "summary": "Cancel a scheduled deploy",
+        "parameters": [
+          { "$ref": "#/components/parameters/FlowID" },
+          { "name": "schedule_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "The schedule was cancelled.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventAck" } } }
+          },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/flows/{flow_id}/deployments/rollback": {
+      "post": {
+        "tags": ["deployments"],
+        "summary": "Roll an environment back to its previous version",
+        "description": "Reverts an environment to its previous live version (instant rollback). Requires the environment scope and the per-flow grant.",
+        "parameters": [ { "$ref": "#/components/parameters/FlowID" } ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["environment"],
+                "properties": { "environment": { "type": "string", "enum": ["sandbox", "staging", "production"] } }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The environment was rolled back.",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "environment": { "type": "string" }, "event_id": { "type": "string" }, "seq": { "type": "integer" } } } } }
+          },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/flows/{flow_id}/grants": {
+      "get": {
+        "tags": ["flows"],
+        "summary": "List a flow's per-flow grants",
+        "parameters": [ { "$ref": "#/components/parameters/FlowID" } ],
+        "responses": {
+          "200": {
+            "description": "The flow's grants.",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "grants": { "type": "array", "items": { "type": "object" } } } } } }
+          },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "post": {
+        "tags": ["flows"],
+        "summary": "Grant a caller change-control on a flow",
+        "description": "Grants an actor the per-flow change-control permission, optionally scoped to one environment (omit for any, \"*\").",
+        "parameters": [ { "$ref": "#/components/parameters/FlowID" } ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["actor"],
+                "properties": {
+                  "actor": { "type": "string" },
+                  "environment": { "type": "string", "description": "Environment the grant applies to; omit for any (\"*\")." }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The grant was created.",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "grant_id": { "type": "string" }, "event_id": { "type": "string" }, "seq": { "type": "integer" } } } } }
+          },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/flows/{flow_id}/grants/{grant_id}": {
+      "delete": {
+        "tags": ["flows"],
+        "summary": "Revoke a per-flow grant",
+        "parameters": [
+          { "$ref": "#/components/parameters/FlowID" },
+          { "name": "grant_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "The grant was revoked.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventAck" } } }
+          },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/policies/{policy_id}": {
+      "get": {
+        "tags": ["Policies"],
+        "summary": "Read one policy",
+        "parameters": [
+          { "name": "policy_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "The policy with its versions.",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "401": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/preapprovals/{type}/{id}": {
+      "get": {
+        "tags": ["PreApprovals"],
+        "summary": "Read a pre-approval for an entity",
+        "parameters": [
+          { "name": "type", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "The pre-approval record.",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "401": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/preapprovals/{type}/{id}/revoke": {
+      "post": {
+        "tags": ["PreApprovals"],
+        "summary": "Revoke a pre-approval",
+        "parameters": [
+          { "name": "type", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": { "type": "object", "properties": { "reason": { "type": "string" } } }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The pre-approval was revoked.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventAck" } } }
+          },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/comments/{subject_type}/{subject_id}": {
+      "get": {
+        "tags": ["Comments"],
+        "summary": "Read a subject's comment thread",
+        "description": "Any subject can carry a thread — deployment requests, decisions, cases.",
+        "parameters": [
+          { "name": "subject_type", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "subject_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "The comment thread.",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "comments": { "type": "array", "items": { "type": "object" } } } } } }
+          },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "post": {
+        "tags": ["Comments"],
+        "summary": "Append a comment to a subject",
+        "parameters": [
+          { "name": "subject_type", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "subject_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["body"],
+                "properties": {
+                  "body": { "type": "string" },
+                  "parent_id": { "type": "string", "description": "Reply to another comment in the thread." }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The comment was posted.",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "comment_id": { "type": "string" }, "event_id": { "type": "string" }, "seq": { "type": "integer" } } } } }
+          },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/notifications": {
+      "get": {
+        "tags": ["Notifications"],
+        "summary": "The caller's inbox",
+        "description": "A review-capable caller (operator+) also sees unassigned tasks in the shared queue.",
+        "responses": {
+          "200": {
+            "description": "The caller's notifications.",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "notifications": { "type": "array", "items": { "type": "object" } } } } } }
+          },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/notifications/{notification_id}/read": {
+      "post": {
+        "tags": ["Notifications"],
+        "summary": "Mark a notification read",
+        "parameters": [
+          { "name": "notification_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "The notification was marked read.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventAck" } } }
+          },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/api-keys": {
+      "get": {
+        "tags": ["ApiKeys"],
+        "summary": "List managed API keys",
+        "description": "The tenant's durable API tokens (admin-gated). Secrets are never returned on list.",
+        "responses": {
+          "200": {
+            "description": "The tenant's API keys.",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "api_keys": { "type": "array", "items": { "type": "object" } } } } } }
+          },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "post": {
+        "tags": ["ApiKeys"],
+        "summary": "Mint a managed API key",
+        "description": "Creates a durable token. A caller cannot mint a key broader than their own credential — neither a wider environment scope nor a higher role (403). The secret is returned once, on creation.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["name", "actor", "role"],
+                "properties": {
+                  "name": { "type": "string" },
+                  "actor": { "type": "string", "description": "The identity the key acts as." },
+                  "scope": { "type": "string", "enum": ["sandbox", "production", "*"], "description": "Environment the key may call (default sandbox)." },
+                  "role": { "type": "string", "enum": ["viewer", "operator", "editor", "approver", "admin"] },
+                  "expires_at": { "type": "string", "format": "date-time" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The key and its one-time secret.",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "api_key": { "type": "object" }, "secret": { "type": "string" } } } } }
+          },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/api-keys/{key_id}/rotate": {
+      "post": {
+        "tags": ["ApiKeys"],
+        "summary": "Rotate a managed API key",
+        "description": "Mints a fresh secret for the key, optionally keeping the old one working for grace_seconds. Subject to the same scope+role ceiling as create (403).",
+        "parameters": [
+          { "name": "key_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": { "grace_seconds": { "type": "integer", "description": "Seconds the previous secret keeps working (>= 0)." } }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The rotated key and its new secret.",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "api_key": { "type": "object" }, "secret": { "type": "string" } } } } }
+          },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/api-keys/{key_id}": {
+      "delete": {
+        "tags": ["ApiKeys"],
+        "summary": "Revoke a managed API key",
+        "parameters": [
+          { "name": "key_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "The revoked key.",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "api_key": { "type": "object" } } } } }
+          },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/audit": {
+      "get": {
+        "tags": ["Audit"],
+        "summary": "Read the tenant's audit trail",
+        "description": "The tenant-scoped audit log, filterable and newest-first. ?format=csv exports the filtered set as a file.",
+        "parameters": [
+          { "name": "stream", "in": "query", "schema": { "type": "string" } },
+          { "name": "actor", "in": "query", "schema": { "type": "string" } },
+          { "name": "type", "in": "query", "schema": { "type": "string" } },
+          { "name": "exclude_type", "in": "query", "schema": { "type": "string" } },
+          { "name": "resource", "in": "query", "schema": { "type": "string" } },
+          { "name": "since", "in": "query", "schema": { "type": "string", "format": "date-time" } },
+          { "name": "until", "in": "query", "schema": { "type": "string", "format": "date-time" } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer" } },
+          { "name": "offset", "in": "query", "schema": { "type": "integer" } },
+          { "name": "format", "in": "query", "schema": { "type": "string", "enum": ["csv"] } }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of audit entries, or a CSV export.",
+            "content": {
+              "application/json": { "schema": { "type": "object" } },
+              "text/csv": { "schema": { "type": "string" } }
+            }
+          },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/mrm/report": {
+      "get": {
+        "tags": ["MRM"],
+        "summary": "Model-risk-management report",
+        "description": "The live MRM report inventorying the tenant's decision logic. ?format=csv (inventory spreadsheet) or ?format=md (filed document); default JSON.",
+        "parameters": [
+          { "name": "format", "in": "query", "schema": { "type": "string", "enum": ["csv", "md", "markdown"] } }
+        ],
+        "responses": {
+          "200": {
+            "description": "The MRM report as JSON, CSV, or Markdown.",
+            "content": {
+              "application/json": { "schema": { "type": "object" } },
+              "text/csv": { "schema": { "type": "string" } },
+              "text/markdown": { "schema": { "type": "string" } }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/webhooks/{webhook_id}": {
+      "delete": {
+        "tags": ["Notifications"],
+        "summary": "Delete a notification webhook",
+        "parameters": [
+          { "name": "webhook_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "The webhook was removed.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventAck" } } }
+          },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/agents/{name}": {
+      "get": {
+        "tags": ["Agents"],
+        "summary": "Read one agent",
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "The agent definition.",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "401": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/agents/{name}/versions": {
+      "get": {
+        "tags": ["Agents"],
+        "summary": "List an agent's version history",
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "The agent's versions, newest first.",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "versions": { "type": "array", "items": { "type": "object" } } } } } }
+          },
+          "401": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/agents/{name}/evals": {
+      "get": {
+        "tags": ["Agents"],
+        "summary": "Get an agent's stored eval cases",
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "The stored eval cases.",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "cases": { "type": "array", "items": { "type": "object" } } } } } }
+          },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "put": {
+        "tags": ["Agents"],
+        "summary": "Replace an agent's eval cases",
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "type": "object", "properties": { "cases": { "type": "array", "items": { "type": "object" } } } }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The eval cases were replaced.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventAck" } } }
+          },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/agents/{name}/evals/run": {
+      "post": {
+        "tags": ["Agents"],
+        "summary": "Run an agent's stored eval cases",
+        "description": "Runs the agent's stored eval cases against a version (records nothing).",
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": { "type": "object", "properties": { "version": { "type": "integer", "description": "0 = latest published." } } }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The eval report.",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/agents/{name}/run/stream": {
+      "get": {
+        "tags": ["Agents"],
+        "summary": "Run an agent, streaming output as Server-Sent Events",
+        "description": "Runs the agent and streams provider chunks as SSE (text/event-stream): `chunk` events during the run, then a terminal `error` event on failure. The prompt is a query parameter.",
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "prompt", "in": "query", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "The SSE stream of run chunks.",
+            "content": { "text/event-stream": { "schema": { "type": "string" } } }
+          },
+          "401": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/agents/{name}/run/ws": {
+      "get": {
+        "tags": ["Agents"],
+        "summary": "Run an agent over a WebSocket",
+        "description": "Upgrades to a WebSocket (HTTP 101) and streams provider chunks as messages for the duration of the run. The prompt is a query parameter. WebSocket framing is outside the JSON contract.",
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "prompt", "in": "query", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "101": { "description": "Switching protocols to WebSocket." },
+          "401": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/agents/{name}/runs": {
+      "get": {
+        "tags": ["Agents"],
+        "summary": "List one agent's runs",
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "The agent's runs.",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "runs": { "type": "array", "items": { "type": "object" } } } } } }
+          },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/agents/{name}/runs/{run_id}/escalate": {
+      "post": {
+        "tags": ["Agents"],
+        "summary": "Escalate an agent run to a review case",
+        "description": "Opens a review case from an agent run (defaults to case type agent_review when unspecified).",
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "run_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "company_name": { "type": "string" },
+                  "case_type": { "type": "string" },
+                  "sla_days": { "type": "integer" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "The review case was opened.",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "case_id": { "type": "string" } } } } }
+          },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/agent-runs": {
+      "get": {
+        "tags": ["Agents"],
+        "summary": "List all agent runs",
+        "responses": {
+          "200": {
+            "description": "The tenant's agent runs.",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "runs": { "type": "array", "items": { "type": "object" } } } } } }
+          },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/agent-runs/summary": {
+      "get": {
+        "tags": ["Agents"],
+        "summary": "Agent-run usage and cost summary",
+        "description": "Token usage across runs, plus derived cost when a per-model price table is configured.",
+        "responses": {
+          "200": {
+            "description": "The run summary.",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/agent-runs/{run_id}": {
+      "get": {
+        "tags": ["Agents"],
+        "summary": "Read one agent run",
+        "parameters": [
+          { "name": "run_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "The agent run.",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "401": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      }
     }
   },
   "components": {
@@ -1913,6 +3236,22 @@
           "entity_id": {
             "type": "string",
             "description": "Optional Context Layer entity id."
+          },
+          "preview": {
+            "type": "boolean",
+            "description": "Run the flow without recording anything (no decision event, case, metrics, or audit) — the builder's \"Test decision\". The response carries the same shape but an empty decision_id."
+          },
+          "mock_data": {
+            "type": "object",
+            "description": "Overrides for pre-resolved engine namespaces (features/connect/ai/predict) used when previewing, so a flow can be tested without live providers."
+          },
+          "metadata": {
+            "type": "object",
+            "description": "Opaque caller metadata recorded with the decision."
+          },
+          "control": {
+            "type": "object",
+            "description": "Per-call execution controls passed through to the engine."
           }
         }
       },
@@ -1926,8 +3265,10 @@
             "type": "string",
             "enum": [
               "completed",
-              "failed"
-            ]
+              "failed",
+              "suspended"
+            ],
+            "description": "\"suspended\" when the flow paused at a durable human task (resume it via POST /v1/decisions/{decision_id}/resume)."
           },
           "data": {
             "type": "object",
@@ -1936,6 +3277,14 @@
           "disposition": {
             "type": "string",
             "description": "The policy's automated outcome, when a policy is bound."
+          },
+          "disposition_reason": {
+            "type": "string",
+            "description": "What assigned the disposition (a policy band, or \"pre-approval honored\")."
+          },
+          "preapproval_id": {
+            "type": "string",
+            "description": "The grant this decision was served from, when it was honored from a pre-approval (evidence the flow never ran)."
           },
           "error": {
             "type": "string",

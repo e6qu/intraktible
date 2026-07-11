@@ -6,6 +6,8 @@
   import Icon from '$lib/Icon.svelte';
   import { decisionStats, deployStats, pct, compact, type DashboardData } from '$lib/dashboard';
   import { appHref } from '$lib/paths';
+  import { user } from '$lib/session';
+  import { roleAtLeast } from '$lib/roles';
 
   let { data }: { data: DashboardData } = $props();
 
@@ -113,9 +115,11 @@
           <dd>{compact(ds.completed)}</dd>
         </div>
       </dl>
-      <a class="audit-link" href={appHref('/audit')}
-        ><Icon name="shield" size={14} /> Open the audit log</a
-      >
+      {#if roleAtLeast($user?.role, 'admin')}
+        <a class="audit-link" href={appHref('/audit')}
+          ><Icon name="shield" size={14} /> Open the audit log</a
+        >
+      {/if}
     </section>
   </div>
 </main>

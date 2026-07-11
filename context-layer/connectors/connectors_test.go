@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -598,4 +599,109 @@ func TestEgressClientGuardsLoopback(t *testing.T) {
 		t.Fatalf("AllowPrivate client should reach loopback: %v", err)
 	}
 	_ = resp.Body.Close()
+}
+
+// TestHeaderValuesAreSecretsWhateverTheyAreCalled: an HTTP connector's headers map
+// takes arbitrary keys, so a credential travels under a name no denylist can guess
+// ("X-Api-Key"). Every header value must be sealed at rest and masked on read, while
+// the header names — useful, and not secret — stay visible.
+func TestHeaderValuesAreSecretsWhateverTheyAreCalled(t *testing.T) {
+	cfg := json.RawMessage(`{"url":"https://api.example.com","method":"GET","headers":{"X-Api-Key":"sk-live-123","Accept":"application/json"}}`)
+
+	out := connectors.RedactConfig(cfg)
+	var m map[string]any
+	if err := json.Unmarshal(out, &m); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "sk-live-123") {
+		t.Fatalf("a header credential survived redaction: %s", out)
+	}
+	headers, ok := m["headers"].(map[string]any)
+	if !ok {
+		t.Fatalf("headers should stay an object: %v", m["headers"])
+	}
+	if headers["X-Api-Key"] != "[redacted]" || headers["Accept"] != "[redacted]" {
+		t.Fatalf("every header value must be masked: %v", headers)
+	}
+	if m["url"] != "https://api.example.com" {
+		t.Fatalf("non-secret routing config must survive: %v", m)
+	}
+
+	kr, err := connectors.NewKeyring([]byte("0123456789abcdef0123456789abcdef"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	enc, err := connectors.EncryptSecrets(cfg, kr, loc("c1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(enc), "sk-live-123") {
+		t.Fatalf("a header credential was stored in cleartext: %s", enc)
+	}
+	// And the fetch path still gets the real value back.
+	dec, err := connectors.DecryptSecrets(enc, kr, loc("c1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(dec, &got); err != nil {
+		t.Fatal(err)
+	}
+	decHeaders := got["headers"].(map[string]any)
+	if decHeaders["X-Api-Key"] != "sk-live-123" || decHeaders["Accept"] != "application/json" {
+		t.Fatalf("headers did not survive the seal/open round trip: %s", dec)
+	}
+}
+
+// TestHeaderContainerSealRoundTripsEveryShape guards the seal↔open symmetry for a
+// secret container whose value is not the usual object: a bare string or an array
+// under `headers` must still open to exactly what was sealed, and re-sealing an
+// already-sealed config must be idempotent (no nested double-sealing that would
+// strand the credential unreadable).
+func TestHeaderContainerSealRoundTripsEveryShape(t *testing.T) {
+	kr, err := connectors.NewKeyring([]byte("0123456789abcdef0123456789abcdef"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	shapes := map[string]string{
+		"object":        `{"url":"https://x","headers":{"X-Api-Key":"sk-live-1"}}`,
+		"bare string":   `{"url":"https://x","headers":"sk-live-2"}`,
+		"array":         `{"url":"https://x","headers":["sk-live-3","sk-live-4"]}`,
+		"nested object": `{"url":"https://x","headers":{"auth":{"token":"sk-live-5"}}}`,
+	}
+	for name, cfg := range shapes {
+		t.Run(name, func(t *testing.T) {
+			sealed, err := connectors.EncryptSecrets(json.RawMessage(cfg), kr, loc("c1"))
+			if err != nil {
+				t.Fatalf("seal: %v", err)
+			}
+			for _, secret := range []string{"sk-live-1", "sk-live-2", "sk-live-3", "sk-live-4", "sk-live-5"} {
+				if strings.Contains(string(sealed), secret) {
+					t.Fatalf("a header credential survived sealing: %s", sealed)
+				}
+			}
+			// Re-sealing an already-sealed config must be idempotent.
+			resealed, err := connectors.EncryptSecrets(sealed, kr, loc("c1"))
+			if err != nil {
+				t.Fatalf("reseal: %v", err)
+			}
+			// Opening either the once- or twice-sealed config returns the original.
+			for _, s := range []json.RawMessage{sealed, resealed} {
+				opened, err := connectors.DecryptSecrets(s, kr, loc("c1"))
+				if err != nil {
+					t.Fatalf("open: %v", err)
+				}
+				var got, want any
+				if err := json.Unmarshal(opened, &got); err != nil {
+					t.Fatalf("opened config is not JSON: %v", err)
+				}
+				if err := json.Unmarshal([]byte(cfg), &want); err != nil {
+					t.Fatal(err)
+				}
+				if !reflect.DeepEqual(got, want) {
+					t.Fatalf("round trip changed the config:\n got:  %s\n want: %s", opened, cfg)
+				}
+			}
+		})
+	}
 }

@@ -308,7 +308,7 @@ export const HELP = new Map<string, PageHelp>([
       capabilities: [
         'Create a policy bound to a flow.',
         'Author ordered bands (condition → disposition) and publish a version.',
-        'Preview a draft’s impact against replayed decisions before publishing.'
+        'Preview a draft’s impact by backtesting it against a dataset of input rows before publishing.'
       ],
       journeys: [
         {

@@ -33,21 +33,40 @@ Spans: **Flows** (`/engine`) → **Flow builder** (`/engine/[flowId]`).
 1. On Flows, enter a slug and name and click **Create flow**. Outcome: an empty flow
    with a single input node, version 1, nothing deployed.
 2. Open the flow. On the builder canvas, add nodes from the palette and connect them
-   from input to output. The node types are: **input**, **assignment** (set fields
-   from expressions), **split** (branch on a condition), **predict** (run a registered
-   model), **AI** (run an agent), **manual review** (escalate to a case), and
-   **output**. Outcome: a working draft graph.
-3. Select a node to edit its logic in the side panel — assignment expressions, split
-   branch conditions, the model or agent a node calls. Outcome: changes are held in
+   from input to output. There are fourteen node types:
+
+   | Node | What it does |
+   | --- | --- |
+   | **input** | the flow's entry point; exactly one per graph |
+   | **assignment** | sets fields from expressions |
+   | **rule** | when/then rules that write fields |
+   | **split** | routes on one boolean condition, down a `yes` or a `no` edge |
+   | **scorecard** | sums weighted factors into a score |
+   | **decision table** | rows of conditions to outputs, under a hit policy |
+   | **2d matrix** | looks a value up in a grid of rows × columns |
+   | **code** | a sandboxed Starlark script |
+   | **connect** | calls a registered connector for external data |
+   | **predict** | runs a registered model |
+   | **AI** | runs an agent |
+   | **manual review** | escalates to a case for a human |
+   | **reason** | emits adverse-action reason codes |
+   | **output** | the flow's verdict; at least one per graph |
+
+   Outcome: a working draft graph.
+3. Select a node to edit its logic in the side panel — assignment expressions, a
+   split's condition, the model or agent a node calls. Outcome: changes are held in
    the working draft, not yet versioned.
-4. Run a **test decision** with sample input. Outcome: you see the path taken
-   node-by-node and the resulting disposition. The builder runs against the **sandbox**
-   environment, so the run is recorded there and you can inspect or export its trace.
-   (For a true dry run that records nothing, the decision API accepts `"preview": true`,
-   which returns the full result with no decision recorded.)
+4. Run a **test decision** with sample input, choosing the environment to run it
+   against (**sandbox** by default). Outcome: you see the path taken node-by-node and
+   the resulting disposition. The run is recorded in the chosen environment, so you
+   can inspect or export its trace. (For a dry run that records nothing, the decision
+   API accepts `"preview": true`, which returns the full result with no decision
+   recorded.)
 5. Click **Publish**. Outcome: the draft becomes a new immutable version; `latest`
    advances. The active deployed version is what the decision API runs — publishing
-   alone does not deploy.
+   alone does not deploy. Publish is a dry compile: a graph that is disconnected,
+   dead-ends, has a cycle, or has a split missing a branch is refused here rather
+   than failing on a live decision.
 
 ### Promote with four-eyes
 
@@ -78,10 +97,12 @@ Spans: **Flow builder** test panel or the decision API → **Decisions** (`/deci
 1. Run a decision: either from the builder's test panel, or by calling
    `POST /v1/flows/{slug}/{env}/decide` with input data (a batch variant exists for a
    dataset). The engine walks the deployed graph: it threads the input record through
-   assignment, predict, AI, and split nodes; a split takes the first branch whose
-   condition is true (a split with no matching branch and no default fails the
-   decision rather than silently routing). Outcome: a recorded decision with a status
-   (`completed`/`failed`), an output payload, reason codes, and — if a policy is bound
+   assignment, predict, AI, and split nodes. A split evaluates one boolean condition
+   and follows the edge labelled with the answer — `yes` or `no`. (Both edges are
+   required at publish, so a live split can never take a branch that isn't wired. For
+   more than two ways out, chain splits.) Outcome: a recorded decision with a status
+   (`completed`/`failed`, or `suspended` while a manual-review node waits on a human),
+   an output payload, reason codes, and — if a policy is bound
    to the flow — a **disposition** (`approve`, `decline`, or `refer`).
 2. On Decisions, filter by flow, environment, status, variant (champion/challenger),
    or decision id to find the run. Outcome: a list showing status, disposition, and
@@ -135,7 +156,10 @@ Spans: a flow's manual-review node → **Case queue** (`/cases`) → **Case**
 3. Open the top case. Read its decision context and, if needed, open the source
    decision's trace. Outcome: full context for the review.
 4. **Assign** the case (e.g. to yourself) and record **notes**. Outcome: assignment
-   and each note land on the case's immutable activity trail.
+   and each note land on the case's immutable activity trail. Assigning is a claim: a
+   case someone else already owns is refused rather than silently taken, so two
+   reviewers cannot both believe they own it. Taking one over has to be asked for
+   (`"reassign": true`).
 5. Set the **status** to resolve it. Outcome: the case leaves the open queue; the
    status change is recorded on the trail.
 
@@ -225,8 +249,11 @@ Spans: **Policies** (`/policies`).
    `refer`, with a default. Outcome: an empty, versioned policy.
 2. Author the ordered bands (condition → disposition). The first matching band wins;
    the default applies when none match. Outcome: a draft band set.
-3. **Preview impact** (backtest the draft against recorded decisions). Outcome: the
-   mix of dispositions the draft would produce, so you see the shift before publishing.
+3. **Preview impact**: paste a dataset of input rows (or click **Sample dataset**) and
+   backtest the draft against it. Each row is replayed through the bound flow and
+   disposed by the draft bands; nothing is recorded, and the dataset is capped at 2000
+   rows. Outcome: the mix of dispositions the draft would produce, so you see the shift
+   before publishing.
 4. **Publish** the version. Outcome: a new immutable policy version; subsequent
    decisions on the bound flow carry the disposition it produces, with the matched
    band's reason code attached.
@@ -245,17 +272,94 @@ Spans: **Pre-approvals** (`/preapprovals`).
 3. Review active, expiring, and revoked grants, and **revoke** a grant with a reason.
    Outcome: the grant stops being honoured; future calls run the flow again.
 
-### Set up context data
+### Set up context data and call it from a flow
 
-Spans: **Context data** (`/data`) → **Entity** (`/data/[type]/[id]`).
+Spans: **Context data** (`/data`) → **Entity** (`/data/[type]/[id]`) → **Flow builder**.
 
-1. Define a **connector** to an external source. Outcome: a named source a flow can
-   fetch signals from (resolved before execution so the core does no I/O).
+1. Define a **connector** to an external source (pick one from the catalog, or an
+   HTTP/GraphQL/SQL connector of your own). Credentials are sealed at rest and masked
+   everywhere they are read back. Outcome: a named source a flow can fetch signals
+   from (resolved before execution, so the decision core does no I/O).
 2. Define a **feature** — an aggregation (count or sum) over an entity type's events
    within a time window. Outcome: a feature computed at read time from recorded events.
 3. Register **entities** and record **events**. Open an entity to see its attributes,
    its event history, and the current value of each feature. Outcome: the data a
    decision sees when it runs for that entity.
+4. In the flow builder, add a **connect** node and point it at the connector, naming
+   the field its response lands in. Outcome: every decision through the flow fetches
+   the signal first, and the fetch is recorded against the connector.
+
+### Stream a batch of decisions
+
+Spans: the decision API.
+
+1. `POST /v1/flows/{slug}/{env}/decide/stream` with a newline-delimited JSON body —
+   one input record per line. Outcome: one recorded decision per line, each result
+   streamed back as NDJSON the moment it is ready, rather than buffered until the
+   whole batch finishes. Use it for a population too large to hold in one request
+   (`…/decide/batch` caps at 500 rows).
+
+### Discuss a decision, a case, an agent, or a model
+
+Spans: any detail page → the **notifications** bell.
+
+1. Open the thing you want to talk about — a decision, a case, a flow, a policy, an
+   agent, a model, an entity — and write a comment on it. `@mention` a colleague to
+   address them. Outcome: the comment is recorded against that subject and visible to
+   everyone who opens it.
+2. The mentioned person sees an unread count on the bell, opens their inbox, and
+   follows the link back to the subject. Outcome: a review conversation lives next to
+   the thing under review, not in a separate tool.
+
+### Move a flow between workspaces (flow as code)
+
+Spans: **Flows** (`/engine`) → **Flow builder**.
+
+1. Export a flow version: `GET /v1/flows/{flow_id}/export` returns the graph as a
+   document (the builder also exports Mermaid, BPMN, Graphviz DOT). Outcome: the flow
+   as a file you can review, diff, and keep in version control.
+2. Import it elsewhere with `POST /v1/flows/import` (or `/import-bundle` for several
+   at once). Re-importing an identical document is a no-op; a changed one publishes a
+   new version on the same slug. Outcome: the same flow, versioned, in the target
+   workspace. Import runs the same publish-time dry compile, so a broken graph is
+   refused at the boundary.
+
+### Shadow-evaluate a candidate version on live traffic
+
+Spans: **Flow builder** (`/engine/[flowId]`), Deploy & versions tab.
+
+1. Set a **shadow** version for an environment (`PUT /v1/flows/{flow_id}/shadow`).
+   Outcome: every live decision in that environment also runs through the shadow
+   version, over the same input; the shadow's result is recorded and never returned to
+   the caller. (A decision suspended for human review has no verdict yet, so nothing
+   is compared.)
+2. Read the divergence report: how often the shadow agreed with the live version.
+   Outcome: evidence about how a candidate would behave on real traffic, before it
+   takes any.
+
+### Restrict who may change a flow
+
+Spans: **Flow builder** (`/engine/[flowId]`).
+
+1. Add a **grant** on the flow (`POST /v1/flows/{flow_id}/grants`) naming an actor and
+   one environment they may change it in. Outcome: change control narrower than a role
+   — an editor with no grant on this flow cannot deploy it there.
+2. Set a **promotion policy** per environment: whether assertions must pass, whether
+   firing monitors block, and whether a promotion may be forced. Production always
+   requires review and never allows a force. Outcome: the gates each stage enforces,
+   recorded on the flow.
+
+### Erase a subject's data (right to erasure)
+
+Spans: the erasure API. *Admin only.*
+
+1. `GET /v1/erasure/subjects` lists the subjects the workspace holds data for. Outcome:
+   what you would be erasing.
+2. `POST /v1/erasure/subjects/{subject}` erases one: the subject's key is destroyed,
+   so everything sealed under it — in the event log and in every projection — becomes
+   unrecoverable, while the log itself stays append-only. Outcome: crypto-shredded
+   personal data with the shape of the audit trail intact. `POST /v1/erasure/retention`
+   does the same for every subject older than a retention limit.
 
 ### Govern the workspace
 

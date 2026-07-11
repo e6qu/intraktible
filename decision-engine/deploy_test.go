@@ -233,6 +233,80 @@ func TestMakerCheckerApproval(t *testing.T) {
 	}
 }
 
+// TestMakerCheckerStaleApproval covers a pending request whose environment moved
+// underneath it. Two requests can be open at once, and approving the older one
+// after the newer one shipped would silently revert live production traffic to the
+// older version — with no signal that anything had changed since it was raised.
+func TestMakerCheckerStaleApproval(t *testing.T) {
+	ctx := context.Background()
+	log, err := eventlog.OpenWAL(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = log.Close() }()
+	maker := identity.Identity{Org: "demo", Workspace: "main", Actor: "maker"}
+	checker := identity.Identity{Org: "demo", Workspace: "main", Actor: "checker"}
+
+	h := command.NewHandler(log)
+	flowID, _, err := h.CreateFlow(ctx, maker, domain.CreateFlow{Slug: "stale", Name: "Stale"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range []string{"v1", "v2"} {
+		if _, _, _, err := h.PublishVersion(ctx, maker, domain.PublishVersion{FlowID: flowID, Graph: flowtest.ConstGraph(v)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Two production requests are open at once: v1 first, then v2.
+	req1, _, err := h.RequestDeployment(ctx, maker, domain.DeployVersion{FlowID: flowID, Environment: "production", Version: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req2, _, err := h.RequestDeployment(ctx, maker, domain.DeployVersion{FlowID: flowID, Environment: "production", Version: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.ApproveDeployment(ctx, checker, flowID, req2, "ship v2"); err != nil {
+		t.Fatal(err)
+	}
+	// req1 is still pending, and still pins v1. Approving it must fail rather than
+	// roll production back.
+	if _, err := h.ApproveDeployment(ctx, checker, flowID, req1, "lgtm"); err == nil {
+		t.Fatal("approving a request whose environment was deployed onto since must fail")
+	}
+
+	s := store.NewMemory()
+	if err := projection.New(log, s, flows.Projector{}).Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	fv, _, err := flows.Read(ctx, s, maker, flowID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dep := fv.Deployments["production"]; dep.Version != 2 {
+		t.Fatalf("production must still serve v2, got v%d", dep.Version)
+	}
+
+	// A stale request can still be rejected — that is how it gets cleaned up.
+	if _, err := h.RejectDeployment(ctx, checker, flowID, req1, "superseded by v2"); err != nil {
+		t.Fatalf("rejecting a stale request should work: %v", err)
+	}
+
+	// A direct deploy to a non-production environment supersedes a request the same
+	// way: the request no longer describes the change it would make.
+	req3, _, err := h.RequestDeployment(ctx, maker, domain.DeployVersion{FlowID: flowID, Environment: "staging", Version: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.Deploy(ctx, maker, domain.DeployVersion{FlowID: flowID, Environment: "staging", Version: 2}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.ApproveDeployment(ctx, checker, flowID, req3, ""); err == nil {
+		t.Fatal("approving a request whose environment was directly deployed onto must fail")
+	}
+}
+
 // TestMakerCheckerConcurrentDecision exercises the cross-process TOCTOU guard:
 // two handlers on the SAME log (two nodes, each with its own in-process mutex)
 // decide the same pending request. The per-request decision claim must let exactly

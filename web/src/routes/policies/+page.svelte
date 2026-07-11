@@ -166,12 +166,14 @@
     error = '';
     creating = true;
     try {
-      const { policy_id } = await createPolicy(key, { name: cName.trim(), flow_slug: cFlow });
+      const created = cName.trim();
+      const { policy_id } = await createPolicy(key, { name: created, flow_slug: cFlow });
       cName = '';
       await load();
       edit(policy_id);
+      toast.success(`Created policy ${created}`);
     } catch (e) {
-      error = msg(e);
+      toast.error(msg(e));
     } finally {
       creating = false;
     }
@@ -209,23 +211,30 @@
     return { rules: rs, default: dflt };
   }
   async function publish() {
-    error = '';
     if (!selectedId) {
-      error = 'Select a policy to publish.';
+      toast.error('Select a policy to publish.');
       return;
     }
     const spec = draftSpec();
     if (spec.rules.length === 0) {
-      error = 'Add at least one rule before publishing.';
+      toast.error('Add at least one rule before publishing.');
       return;
     }
+    // Publishing makes this version the live policy for real decisions — confirm the
+    // irreversible activation before the write.
+    if (
+      !confirm(
+        'Publish this policy version? It becomes live immediately and applies to real decisions.'
+      )
+    )
+      return;
     publishing = true;
     try {
       const r = await publishPolicy(key, selectedId, spec);
       toast.success(`Published policy v${r.version}`);
       await load();
     } catch (e) {
-      error = msg(e);
+      toast.error(msg(e));
     } finally {
       publishing = false;
     }
@@ -233,7 +242,6 @@
   // preview replays a dataset through the bound flow + the draft bands, diffing
   // against the latest published version (when one exists) — safe tuning.
   async function preview() {
-    error = '';
     btReport = null;
     btRunning = true;
     // Drop the result if another policy is selected mid-flight — its impact table
@@ -253,7 +261,7 @@
       });
       if (selectedId === requested) btReport = report;
     } catch (e) {
-      if (selectedId === requested) error = msg(e);
+      if (selectedId === requested) toast.error(msg(e));
     } finally {
       btRunning = false;
     }

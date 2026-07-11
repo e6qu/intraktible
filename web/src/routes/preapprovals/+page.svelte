@@ -250,9 +250,9 @@
                   <button
                     class="link danger"
                     onclick={() => startRevoke(p)}
-                    disabled={!roleAtLeast($user?.role, 'editor')}
-                    title={!roleAtLeast($user?.role, 'editor')
-                      ? 'Requires the editor role'
+                    disabled={!roleAtLeast($user?.role, 'operator')}
+                    title={!roleAtLeast($user?.role, 'operator')
+                      ? 'Requires the operator role'
                       : undefined}>Revoke</button
                   >
                 {/if}

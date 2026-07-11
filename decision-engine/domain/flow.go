@@ -81,9 +81,14 @@ func ValidateGraph(g events.Graph) error {
 func validateConnected(g events.Graph, types map[string]events.NodeType) error {
 	outgoing := make(map[string]bool, len(g.Nodes))
 	adj := make(map[string][]string, len(g.Nodes))
+	branches := make(map[string]map[string]bool, len(g.Nodes))
 	for _, e := range g.Edges {
 		outgoing[e.From] = true
 		adj[e.From] = append(adj[e.From], e.To)
+		if branches[e.From] == nil {
+			branches[e.From] = make(map[string]bool, 2)
+		}
+		branches[e.From][e.Branch] = true
 	}
 	var start string
 	for _, n := range g.Nodes {
@@ -92,6 +97,16 @@ func validateConnected(g events.Graph, types map[string]events.NodeType) error {
 		}
 		if n.Type != events.NodeOutput && !outgoing[n.ID] {
 			return fmt.Errorf("decision-engine: node %q dead-ends — every non-output node needs an outgoing edge", n.ID)
+		}
+		// A split routes on a boolean, so it needs an edge for each answer. With
+		// only one, the flow publishes and then fails at decide time on the first
+		// input that takes the missing branch — a live half-broken graph.
+		if n.Type == events.NodeSplit {
+			for _, branch := range []string{splitBranchYes, splitBranchNo} {
+				if !branches[n.ID][branch] {
+					return fmt.Errorf("decision-engine: split node %q has no %q branch edge — a split needs both", n.ID, branch)
+				}
+			}
 		}
 	}
 	reached := map[string]bool{start: true}

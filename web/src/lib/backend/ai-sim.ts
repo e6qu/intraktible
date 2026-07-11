@@ -6,11 +6,28 @@
 // synthesizes a plausible reply — a structured verdict when the agent declares
 // an output schema, else an analyst-style narrative shaped by the prompt.
 
+interface SchemaProp {
+  type?: string;
+}
+
 interface AIRequest {
   model?: string;
   system?: string;
   prompt: string;
-  schema?: { properties?: Record<string, unknown>; required?: string[] };
+  schema?: { properties?: Record<string, SchemaProp>; required?: string[] };
+}
+
+interface GraphNode {
+  id: string;
+  type: string;
+  name: string;
+  config?: Record<string, unknown>;
+}
+
+interface GraphEdge {
+  from: string;
+  to: string;
+  branch?: string;
 }
 
 interface AIResponse {
@@ -32,7 +49,10 @@ export function registerSimulatedAI(): void {
       : (req.schema?.required ?? []);
     let text: string;
     let structured: Record<string, unknown> | undefined;
-    if (fields.length > 0) {
+    if (isGraphSchema(req.schema)) {
+      structured = draftGraph(req.prompt);
+      text = JSON.stringify(structured, null, 2);
+    } else if (fields.length > 0) {
       structured = Object.fromEntries(
         fields.map((k) => [k, plausibleField(k, req.prompt, context)])
       );
@@ -43,7 +63,7 @@ export function registerSimulatedAI(): void {
     const resp: AIResponse = {
       text,
       structured,
-      model: req.model || 'simulated-llm',
+      model: simulatedModel(req.model),
       usage: {
         prompt_tokens: Math.ceil((req.system ?? '').length / 4 + req.prompt.length / 4),
         completion_tokens: Math.ceil(text.length / 4)
@@ -117,4 +137,111 @@ function plausibleField(name: string, prompt: string, context?: Record<string, u
     return narrative(prompt, context);
   if (/confidence/.test(n)) return 0.8;
   return narrative(prompt, context).split('.')[0];
+}
+
+// The demo is a simulation, not a real model, and this must never read as one:
+// the real model name (empty for the copilot, or an agent's pinned model on an AI
+// node) is prefixed so every decision/agent/observability view labels the output
+// as simulated on its own, not only via the global DemoBanner. Idempotent so a
+// value that is already marked is not double-prefixed.
+export function simulatedModel(model?: string): string {
+  if (!model) return 'simulated-llm';
+  return model.startsWith('simulated-') ? model : `simulated-${model}`;
+}
+
+// The copilot's flow-generation call is the one request whose schema declares a
+// graph (object/array `nodes` and `edges`); it needs a real graph, not the
+// field-by-field guesses plausibleField makes for a verdict schema.
+function isGraphSchema(schema?: AIRequest['schema']): boolean {
+  const props = schema?.properties;
+  if (!props) return false;
+  return props.nodes?.type === 'array' && props.edges?.type === 'array';
+}
+
+// A scorecard factor: a compilable expr-lang condition and its weight. The
+// condition references fields the flow's inputs would carry; validation is a
+// syntax-only compile (no evaluation), so unknown identifiers are fine.
+interface Factor {
+  when: string;
+  weight: number;
+}
+
+// Keyword-driven risk factors, ordered most-specific first. The synthesized
+// scorecard sums the factors that fit the requirement, so a "fraud" prompt drafts
+// velocity/device factors and a "kyc" prompt drafts sanctions/identity ones.
+const FACTOR_RULES: { match: RegExp; label: string; factors: Factor[] }[] = [
+  {
+    match: /fraud|velocity|device|chargeback|dispute|scam/,
+    label: 'Fraud',
+    factors: [
+      { when: 'transaction_velocity > 5', weight: 40 },
+      { when: 'new_device', weight: 25 }
+    ]
+  },
+  {
+    match: /sanction|watchlist|pep|aml|kyc|identity|onboard|launder/,
+    label: 'KYC & sanctions',
+    factors: [
+      { when: 'sanctions_hit', weight: 60 },
+      { when: '!identity_verified', weight: 30 }
+    ]
+  },
+  {
+    match: /credit|loan|underwrit|dti|income|fico|delinquen|afford/,
+    label: 'Credit risk',
+    factors: [
+      { when: 'dti > 0.4', weight: 35 },
+      { when: 'fico < 660', weight: 30 }
+    ]
+  },
+  {
+    match: /limit|amount|exposure|balance|spend/,
+    label: 'Exposure',
+    factors: [{ when: 'requested_amount > 50000', weight: 20 }]
+  }
+];
+
+// draftGraph synthesizes a plausible, ALWAYS-VALID decision flow from the prompt:
+// input → scorecard → split, with the split's yes/no branches ending at two
+// outputs. That shape satisfies every ValidateFlow rule — one input, an output,
+// no dead ends, fully connected, acyclic, and both "yes" and "no" edges on the
+// split — so the drafted graph always publishes. Deterministic: the same prompt
+// always yields the same graph (no Math.random), matching the seeded demo.
+export function draftGraph(prompt: string): { nodes: GraphNode[]; edges: GraphEdge[] } {
+  const p = prompt.toLowerCase();
+  const matched = FACTOR_RULES.filter((r) => r.match.test(p));
+  const label = matched[0]?.label ?? 'Risk';
+  const factors = matched.flatMap((r) => r.factors);
+  // A prompt that matches no keyword still gets a valid, non-empty scorecard.
+  if (factors.length === 0) factors.push({ when: 'true', weight: 25 });
+
+  const nodes: GraphNode[] = [
+    { id: 'input', type: 'input', name: 'Application intake' },
+    {
+      id: 'score',
+      type: 'scorecard',
+      name: `${label} scorecard`,
+      config: { output: 'risk_score', factors }
+    },
+    { id: 'gate', type: 'split', name: 'High-risk?', config: { condition: 'risk_score >= 50' } },
+    {
+      id: 'refer',
+      type: 'output',
+      name: 'Refer for review',
+      config: { fields: ['risk_score'] }
+    },
+    {
+      id: 'approve',
+      type: 'output',
+      name: 'Auto-approve',
+      config: { fields: ['risk_score'] }
+    }
+  ];
+  const edges: GraphEdge[] = [
+    { from: 'input', to: 'score' },
+    { from: 'score', to: 'gate' },
+    { from: 'gate', to: 'refer', branch: 'yes' },
+    { from: 'gate', to: 'approve', branch: 'no' }
+  ];
+  return { nodes, edges };
 }

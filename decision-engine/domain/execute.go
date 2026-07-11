@@ -323,9 +323,9 @@ func evalSplit(ec evalContext, n events.Node, ctx map[string]any, edges []events
 	if err != nil {
 		return nil, "", fmt.Errorf("decision-engine: node %q split condition: %w", n.ID, err)
 	}
-	branch := "no"
+	branch := splitBranchNo
 	if match {
-		branch = "yes"
+		branch = splitBranchYes
 	}
 	next := edgeForBranch(edges, branch)
 	if next == "" {
@@ -951,6 +951,14 @@ func firstEdge(edges []events.Edge) string {
 	}
 	return edges[0].To
 }
+
+// A split evaluates one boolean condition and follows the edge labelled with the
+// answer. ValidateGraph requires both edges, so a published split can never take a
+// branch that isn't wired.
+const (
+	splitBranchYes = "yes"
+	splitBranchNo  = "no"
+)
 
 func edgeForBranch(edges []events.Edge, branch string) string {
 	for _, e := range edges {

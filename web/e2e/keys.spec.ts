@@ -8,6 +8,7 @@ test.beforeEach(async ({ page }) => {
 });
 
 test('creates, reveals, rotates, and revokes an API key', async ({ page }) => {
+  page.on('dialog', (d) => d.accept()); // revoking a key now asks to confirm
   await page.goto('/keys');
   await expect(page.getByRole('heading', { name: 'API keys' })).toBeVisible();
 

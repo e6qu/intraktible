@@ -91,8 +91,9 @@
       a.download = 'audit.csv';
       a.click();
       setTimeout(() => URL.revokeObjectURL(url), 0);
-    } catch {
-      // best-effort download
+      toast.success('Downloaded audit.csv');
+    } catch (e) {
+      toast.error(msg(e));
     }
   }
 
@@ -265,6 +266,10 @@
   }
   async function revokeKey(id: string) {
     if (mutating) return;
+    // Revoking takes effect immediately — any service still using the token's secret
+    // starts failing to authenticate. Confirm before the irreversible write.
+    if (!confirm('Revoke this token? Any service using its secret will stop authenticating.'))
+      return;
     mutating = id;
     try {
       await revokeApiKey(key, id);

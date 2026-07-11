@@ -114,7 +114,7 @@ func (s *Service) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/decisions/{decision_id}", s.getDecision)
 	mux.HandleFunc("GET /v1/decisions/{decision_id}/export", s.exportDecision)
 	mux.HandleFunc("POST /v1/decisions/{decision_id}/resume", s.resumeDecision)
-	mux.HandleFunc("POST /v1/decisions/{id}/counterfactual", s.counterfactual)
+	mux.HandleFunc("POST /v1/decisions/{decision_id}/counterfactual", s.counterfactual)
 	mux.HandleFunc("POST /v1/models", s.defineModel)
 	mux.HandleFunc("GET /v1/models", s.listModels)
 	mux.HandleFunc("GET /v1/models/{name}", s.getModel)
@@ -896,12 +896,11 @@ func (s *Service) promote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	stage := fv.PromotionPolicy[req.To]
-	if err := s.checkPromotionGates(r.Context(), id, flowID, src.Version, req.To, stage, req.Force); err != nil {
-		httpx.Error(w, http.StatusConflict, err)
-		return
-	}
 	cmd := domain.DeployVersion{FlowID: flowID, Environment: req.To, Version: src.Version}
 	if stage.RequireReview {
+		// A review target only raises a request here — nothing goes live, so the
+		// gates wait for the approval (which re-checks against current health). This
+		// keeps a fix for a firing monitor proposable.
 		reqID, e, derr := s.cmd.RequestDeployment(r.Context(), id, cmd)
 		if derr != nil {
 			httpx.Error(w, http.StatusBadRequest, derr)
@@ -911,6 +910,11 @@ func (s *Service) promote(w http.ResponseWriter, r *http.Request) {
 			"promoted": false, "pending": true, "request_id": reqID, "from": req.From, "to": req.To,
 			"version": src.Version, "event_id": e.ID, "seq": e.Seq,
 		})
+		return
+	}
+	// A direct deploy goes live now, so it gates now.
+	if err := s.checkPromotionGates(r.Context(), id, flowID, src.Version, req.To, stage, req.Force); err != nil {
+		httpx.Error(w, http.StatusConflict, err)
 		return
 	}
 	e, derr := s.cmd.Deploy(r.Context(), id, cmd)
@@ -995,6 +999,9 @@ func (s *Service) requestDeployment(w http.ResponseWriter, r *http.Request) {
 	if !s.allowFlow(w, r, id, r.PathValue("flow_id"), req.Environment) {
 		return
 	}
+	// Raising a request is not deploying, so the promotion gates do not run here: a
+	// flow whose live version is unhealthy is exactly the one whose fix must be
+	// proposable. The gates run on the approval, which is the write that goes live.
 	reqID, e, err := s.cmd.RequestDeployment(r.Context(), id, domain.DeployVersion{
 		FlowID:            r.PathValue("flow_id"),
 		Environment:       req.Environment,
@@ -1011,7 +1018,13 @@ func (s *Service) requestDeployment(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// approveDeployment is the checker side: approve a pending request (four-eyes), deploying it.
+// approveDeployment is the checker side: a *different* user approves a pending
+// request (four-eyes), which deploys the version. Promotion to production is
+// governed by this human review — two people, seeing the flow's live health — not
+// by an automated re-check at approval: a firing monitor on the live version is
+// what a fix addresses, and a version's exact-value assertions go stale the moment
+// it deliberately changes behavior, so hard-blocking the approval on either would
+// trap the flow rather than let the reviewer ship the fix.
 func (s *Service) approveDeployment(w http.ResponseWriter, r *http.Request) {
 	s.decideDeploymentRequest(w, r, "approved", s.cmd.ApproveDeployment)
 }

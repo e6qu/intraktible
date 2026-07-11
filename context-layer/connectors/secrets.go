@@ -120,9 +120,14 @@ func walkSecretFields(
 	case map[string]any:
 		for k, val := range t {
 			var err error
-			if redactKeys[strings.ToLower(k)] {
+			switch {
+			case redactKeys[strings.ToLower(k)]:
 				t[k], err = fn(val, kr, loc, joinPath(path, k))
-			} else {
+			case secretContainers[strings.ToLower(k)]:
+				// Every value in the container is a credential, so each is sealed
+				// under its own field path — the same paths Redacted() masks.
+				t[k], err = walkContainer(val, kr, loc, joinPath(path, k), fn)
+			default:
 				t[k], err = walkSecretFields(val, kr, loc, joinPath(path, k), fn)
 			}
 			if err != nil {
@@ -147,6 +152,31 @@ func walkSecretFields(
 // joinPath/indexPath build a stable dotted field path (e.g. "auth.token",
 // "headers.0.value") so each credential's AAD is unique to its position and stays
 // the same across seal and open.
+// walkContainer applies fn to each value of a secret container (see
+// secretContainers): every value is a credential, so each is sealed/opened under
+// its own field path. Two shapes are handled whole rather than descended into:
+//   - a non-object container (a bare string or array `headers`) has no per-key
+//     structure, so fn seals/opens it as one value.
+//   - an already-sealed envelope IS a `map[string]any` ({$intraktible_sealed,
+//     value, key}), but descending into it would seal its structural fields on a
+//     re-save (nested double-sealing) and would never open it on decrypt (its
+//     fields aren't envelopes). fn handles the envelope atomically — encrypt passes
+//     it through, decrypt opens it — so it must see the whole thing.
+func walkContainer(v any, kr *Keyring, loc SecretLocation, path string, fn secretFn) (any, error) {
+	m, ok := v.(map[string]any)
+	if !ok || isSecretEnvelope(v) {
+		return fn(v, kr, loc, path)
+	}
+	for k, val := range m {
+		sealed, err := fn(val, kr, loc, joinPath(path, k))
+		if err != nil {
+			return nil, err
+		}
+		m[k] = sealed
+	}
+	return m, nil
+}
+
 func joinPath(prefix, key string) string {
 	if prefix == "" {
 		return key

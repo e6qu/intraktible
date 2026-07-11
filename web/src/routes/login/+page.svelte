@@ -6,7 +6,10 @@
   import { user } from '$lib/session';
   import { appHref } from '$lib/paths';
 
-  let apiKey = $state('dev-sandbox-key');
+  // Prefill the sandbox key only in the public demo (VITE_DEMO), where the seed key is
+  // public and there is no real secret to protect — a real deployment shows an empty
+  // field so no bundled credential is ever suggested.
+  let apiKey = $state(import.meta.env.VITE_DEMO ? 'dev-sandbox-key' : '');
   let error = $state('');
   let busy = $state(false);
   // Each entry is a provider to render a "Sign in with …" button for, with the

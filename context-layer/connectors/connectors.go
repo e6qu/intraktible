@@ -79,6 +79,7 @@ type Connector interface {
 type EgressPolicy struct {
 	// AllowPrivate permits dialing loopback/private/link-local addresses. Default
 	// false. Set via INTRAKTIBLE_CONNECTOR_ALLOW_PRIVATE at the composition root.
+	// The cloud metadata service stays blocked either way — see control.
 	AllowPrivate bool
 }
 
@@ -86,9 +87,6 @@ type EgressPolicy struct {
 // concrete IP about to be dialed, so it also defeats DNS-rebinding (a name that
 // resolves to a public IP on validation but a private one at connect time).
 func (p EgressPolicy) control(_, address string, _ syscall.RawConn) error {
-	if p.AllowPrivate {
-		return nil
-	}
 	host, _, err := net.SplitHostPort(address)
 	if err != nil {
 		return fmt.Errorf("context-layer: http connector egress: parse address %q: %w", address, err)
@@ -97,11 +95,39 @@ func (p EgressPolicy) control(_, address string, _ syscall.RawConn) error {
 	if ip == nil {
 		return fmt.Errorf("context-layer: http connector egress: unresolved address %q", address)
 	}
+	// The cloud metadata service is never a legitimate connector target, and it
+	// hands out the instance's IAM credentials to anyone who asks. AllowPrivate is
+	// there so a connector can reach an internal service; it is not a reason to open
+	// the one internal address whose whole content is a credential.
+	if metadataIP(ip) {
+		return fmt.Errorf("context-layer: http connector blocked egress to the cloud metadata service at %s", ip)
+	}
+	if p.AllowPrivate {
+		return nil
+	}
 	if blockedIP(ip) {
 		return fmt.Errorf("context-layer: http connector blocked egress to %s "+
 			"(loopback/private/link-local); set INTRAKTIBLE_CONNECTOR_ALLOW_PRIVATE to allow", ip)
 	}
 	return nil
+}
+
+// metadataIPs are the link-local addresses cloud providers serve instance
+// credentials from: AWS/GCP/Azure/OpenStack IMDS (and its IPv6 forms).
+var metadataIPs = []net.IP{
+	net.ParseIP("169.254.169.254"),
+	net.ParseIP("169.254.170.2"),   // ECS task metadata
+	net.ParseIP("fd00:ec2::254"),   // AWS IMDS over IPv6
+	net.ParseIP("fe80::a9fe:a9fe"), // GCP/Azure IMDS over IPv6
+}
+
+func metadataIP(ip net.IP) bool {
+	for _, m := range metadataIPs {
+		if m.Equal(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 // Client builds an http.Client that enforces this egress policy at dial time (so
@@ -221,10 +247,20 @@ func List(ctx context.Context, s store.Store, id identity.Identity, connType str
 // secrets even though the stored projection keeps them.
 var redactKeys = map[string]bool{
 	"dsn": true, "password": true, "passwd": true, "pwd": true,
-	"secret": true, "secret_key": true, "token": true, "access_token": true,
+	"secret": true, "secret_key": true, "client_secret": true,
+	"token": true, "access_token": true, "refresh_token": true,
 	"api_key": true, "apikey": true, "access_key": true, "private_key": true,
 	"authorization": true, "auth": true, "credential": true, "credentials": true,
+	"signing_key": true, "webhook_secret": true, "passphrase": true,
 }
+
+// secretContainers are config fields whose values are ALL credentials, whatever
+// the author names them. An HTTP connector's `headers` takes an arbitrary map, so a
+// token travels as `X-Api-Key` or `X-Acme-Session` — names no denylist can predict.
+// Guessing at field names is why `X-Api-Key: sk-live-…` was stored in cleartext and
+// served to every viewer in the tenant; inside a container the key names stay
+// visible (they are useful, and not secret) while every value is sealed and masked.
+var secretContainers = map[string]bool{"headers": true}
 
 // RedactConfig returns a copy of a connector config JSON with credential values
 // masked. Non-object / unparseable config is returned unchanged.
@@ -248,9 +284,12 @@ func redactValue(v any) any {
 	switch t := v.(type) {
 	case map[string]any:
 		for k, val := range t {
-			if redactKeys[strings.ToLower(k)] {
+			switch {
+			case redactKeys[strings.ToLower(k)]:
 				t[k] = "[redacted]"
-			} else {
+			case secretContainers[strings.ToLower(k)]:
+				t[k] = redactContainer(val)
+			default:
 				t[k] = redactValue(val)
 			}
 		}
@@ -263,6 +302,18 @@ func redactValue(v any) any {
 	default:
 		return v
 	}
+}
+
+// redactContainer masks every value in a secret container, keeping its keys.
+func redactContainer(v any) any {
+	m, ok := v.(map[string]any)
+	if !ok {
+		return "[redacted]"
+	}
+	for k := range m {
+		m[k] = "[redacted]"
+	}
+	return m
 }
 
 // Redacted returns a copy of the view with its config credentials masked — the

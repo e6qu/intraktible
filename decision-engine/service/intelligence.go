@@ -201,7 +201,7 @@ func (s *Service) counterfactual(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	rec, found, err := history.Read(r.Context(), s.store, id, r.PathValue("id"))
+	rec, found, err := history.Read(r.Context(), s.store, id, r.PathValue("decision_id"))
 	if err != nil {
 		httpx.Error(w, http.StatusInternalServerError, err)
 		return

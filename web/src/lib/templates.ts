@@ -132,7 +132,18 @@ export const TEMPLATES: FlowTemplate[] = [
               ]
             }
           },
-          { id: 'band', type: 'split', name: 'Decision band' },
+          {
+            id: 'band',
+            type: 'split',
+            name: 'Straight through?',
+            config: { condition: 'score >= 70' }
+          },
+          {
+            id: 'refer',
+            type: 'split',
+            name: 'Refer to a human?',
+            config: { condition: 'score >= 40' }
+          },
           {
             id: 'review',
             type: 'manual_review',
@@ -154,9 +165,10 @@ export const TEMPLATES: FlowTemplate[] = [
           { from: 'score', to: 'adverse' },
           { from: 'adverse', to: 'limit' },
           { from: 'limit', to: 'band' },
-          { from: 'band', to: 'out', branch: 'score >= 70' },
-          { from: 'band', to: 'review', branch: 'score >= 40' },
-          { from: 'band', to: 'out', branch: 'true' },
+          { from: 'band', to: 'out', branch: 'yes' },
+          { from: 'band', to: 'refer', branch: 'no' },
+          { from: 'refer', to: 'review', branch: 'yes' },
+          { from: 'refer', to: 'out', branch: 'no' },
           { from: 'review', to: 'out' }
         ]
       }
@@ -212,7 +224,18 @@ export const TEMPLATES: FlowTemplate[] = [
               ]
             }
           },
-          { id: 'route', type: 'split', name: 'Route on action' },
+          {
+            id: 'route',
+            type: 'split',
+            name: 'Allow outright?',
+            config: { condition: "action == 'allow'" }
+          },
+          {
+            id: 'triage',
+            type: 'split',
+            name: 'Send to an analyst?',
+            config: { condition: "action == 'review'" }
+          },
           {
             id: 'review',
             type: 'manual_review',
@@ -226,9 +249,10 @@ export const TEMPLATES: FlowTemplate[] = [
           { from: 'device', to: 'fraud' },
           { from: 'fraud', to: 'grid' },
           { from: 'grid', to: 'route' },
-          { from: 'route', to: 'out', branch: "action == 'allow'" },
-          { from: 'route', to: 'review', branch: "action == 'review'" },
-          { from: 'route', to: 'out', branch: 'true' },
+          { from: 'route', to: 'out', branch: 'yes' },
+          { from: 'route', to: 'triage', branch: 'no' },
+          { from: 'triage', to: 'review', branch: 'yes' },
+          { from: 'triage', to: 'out', branch: 'no' },
           { from: 'review', to: 'out' }
         ]
       }
@@ -306,7 +330,12 @@ export const TEMPLATES: FlowTemplate[] = [
               ]
             }
           },
-          { id: 'route', type: 'split', name: 'Route on risk' },
+          {
+            id: 'route',
+            type: 'split',
+            name: 'Alert an analyst?',
+            config: { condition: 'risk >= 20' }
+          },
           {
             id: 'review',
             type: 'manual_review',
@@ -327,9 +356,8 @@ export const TEMPLATES: FlowTemplate[] = [
           { from: 'risk', to: 'sar' },
           { from: 'sar', to: 'codes' },
           { from: 'codes', to: 'route' },
-          { from: 'route', to: 'review', branch: 'risk >= 100' },
-          { from: 'route', to: 'review', branch: 'risk >= 20' },
-          { from: 'route', to: 'out', branch: 'true' },
+          { from: 'route', to: 'review', branch: 'yes' },
+          { from: 'route', to: 'out', branch: 'no' },
           { from: 'review', to: 'out' }
         ]
       }
@@ -397,7 +425,12 @@ export const TEMPLATES: FlowTemplate[] = [
               ]
             }
           },
-          { id: 'band', type: 'split', name: 'KYB band' },
+          {
+            id: 'band',
+            type: 'split',
+            name: 'Clear to onboard?',
+            config: { condition: 'kyb >= 70' }
+          },
           {
             id: 'review',
             type: 'manual_review',
@@ -412,8 +445,8 @@ export const TEMPLATES: FlowTemplate[] = [
           { from: 'registry', to: 'ubo' },
           { from: 'ubo', to: 'score' },
           { from: 'score', to: 'band' },
-          { from: 'band', to: 'out', branch: 'kyb >= 70' },
-          { from: 'band', to: 'review', branch: 'true' },
+          { from: 'band', to: 'out', branch: 'yes' },
+          { from: 'band', to: 'review', branch: 'no' },
           { from: 'review', to: 'out' }
         ]
       }
@@ -471,11 +504,22 @@ export const TEMPLATES: FlowTemplate[] = [
               ]
             }
           },
-          { id: 'route', type: 'split', name: 'Route' },
+          {
+            id: 'route',
+            type: 'split',
+            name: 'Affordable?',
+            config: { condition: 'affordable && limit > 0' }
+          },
+          {
+            id: 'approved',
+            type: 'output',
+            name: 'Approved',
+            config: { fields: ['affordable', 'limit'] }
+          },
           {
             id: 'out',
             type: 'output',
-            name: 'Decision',
+            name: 'Declined',
             config: { fields: ['affordable', 'limit'] }
           }
         ],
@@ -484,8 +528,8 @@ export const TEMPLATES: FlowTemplate[] = [
           { from: 'bank', to: 'gate' },
           { from: 'gate', to: 'tier' },
           { from: 'tier', to: 'route' },
-          { from: 'route', to: 'out', branch: 'affordable && limit > 0' },
-          { from: 'route', to: 'out', branch: 'true' }
+          { from: 'route', to: 'approved', branch: 'yes' },
+          { from: 'route', to: 'out', branch: 'no' }
         ]
       }
     }
@@ -545,7 +589,12 @@ export const TEMPLATES: FlowTemplate[] = [
               ]
             }
           },
-          { id: 'split', type: 'split', name: 'Route' },
+          {
+            id: 'split',
+            type: 'split',
+            name: 'Auto-refund?',
+            config: { condition: "route == 'auto_refund'" }
+          },
           {
             id: 'review',
             type: 'manual_review',
@@ -559,8 +608,8 @@ export const TEMPLATES: FlowTemplate[] = [
           { from: 'feat', to: 'summary' },
           { from: 'summary', to: 'triage' },
           { from: 'triage', to: 'split' },
-          { from: 'split', to: 'out', branch: "route == 'auto_refund'" },
-          { from: 'split', to: 'review', branch: 'true' },
+          { from: 'split', to: 'out', branch: 'yes' },
+          { from: 'split', to: 'review', branch: 'no' },
           { from: 'review', to: 'out' }
         ]
       }

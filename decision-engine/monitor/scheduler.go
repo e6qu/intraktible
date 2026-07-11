@@ -123,9 +123,14 @@ func (s *Scheduler) Tick(ctx context.Context) (TickSummary, error) {
 				continue
 			}
 			// Count Delivered only when an endpoint accepted: an all-permanent-failure
-			// summary records+dedups the alert (below) but delivered nothing.
+			// summary records+dedups the alert (below) but delivered nothing. Say so —
+			// otherwise a webhook misconfigured into 4xx eats every alert in silence,
+			// and the flow's monitors look healthy because they never re-fire.
 			if summary.Delivered() {
 				sum.Delivered++
+			} else if summary.Permanent > 0 {
+				slog.Error("monitor scheduler: alert recorded but no webhook accepted it",
+					"flow", k.flow, "permanent_failures", summary.Permanent)
 			}
 		}
 		for _, v := range toAlert {

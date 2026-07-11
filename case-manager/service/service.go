@@ -148,9 +148,14 @@ func (s *Service) get(w http.ResponseWriter, r *http.Request) {
 func (s *Service) assign(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Assignee string `json:"assignee"`
+		// Reassign takes a case away from its current assignee. Assigning an already
+		// owned case without it is refused, so one claim cannot silently overwrite another.
+		Reassign bool `json:"reassign,omitempty"`
 	}
 	httpx.Emit(w, r, &req, func(id identity.Identity) (eventlog.Envelope, error) {
-		return s.cmd.AssignCase(r.Context(), id, domain.AssignCase{CaseID: r.PathValue("case_id"), Assignee: req.Assignee})
+		return s.cmd.AssignCase(r.Context(), id, domain.AssignCase{
+			CaseID: r.PathValue("case_id"), Assignee: req.Assignee, Reassign: req.Reassign,
+		})
 	})
 }
 

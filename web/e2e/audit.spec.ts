@@ -50,6 +50,7 @@ test('shows the event-log audit trail and filters it', async ({ page, request })
 });
 
 test('creates and revokes a managed API token (admin)', async ({ page }) => {
+  page.on('dialog', (d) => d.accept()); // revoking a token now asks to confirm
   await page.goto('/audit');
   const panel = page.getByTestId('api-keys-config');
   await panel.getByText('API tokens').click(); // open the <details>

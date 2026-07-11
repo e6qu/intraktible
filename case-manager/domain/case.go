@@ -89,6 +89,10 @@ func (c RequestReview) Validate() error {
 type AssignCase struct {
 	CaseID   string
 	Assignee string
+	// Reassign takes a case that is already assigned to someone else. Without it,
+	// assigning an owned case is refused, so two reviewers racing to claim the same
+	// case cannot both be told they own it.
+	Reassign bool
 }
 
 // Validate requires a case and an assignee.

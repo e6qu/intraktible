@@ -9,16 +9,24 @@
   import RelativeTime from '$lib/RelativeTime.svelte';
   import { appHref } from '$lib/paths';
   import { listNotifications, markNotificationRead, type Notification } from '$lib/api';
+  import { toast } from '$lib/toast';
 
   const key = '';
   let items = $state<Notification[]>([]);
+  // A failed fetch must not read as an empty inbox ("all caught up"); track it so the
+  // panel shows the failure and a retry instead.
+  let loadError = $state('');
   const unread = $derived(items.filter((n) => !n.read).length);
 
+  function msg(e: unknown): string {
+    return e instanceof Error ? e.message : String(e);
+  }
   async function load() {
     try {
       items = await listNotifications(key);
-    } catch {
-      items = [];
+      loadError = '';
+    } catch (e) {
+      loadError = msg(e);
     }
   }
   async function markRead(n: Notification) {
@@ -26,8 +34,9 @@
     try {
       await markNotificationRead(key, n.notification_id);
       await load();
-    } catch {
-      /* non-fatal */
+    } catch (e) {
+      // A silently-failed mark-read leaves a stale unread badge — surface it.
+      toast.error(msg(e));
     }
   }
   // The route a notification's subject lives on, so a reviewer clicking a task reminder
@@ -110,7 +119,12 @@
   </summary>
   <div class="panel" role="menu" tabindex="-1">
     <p class="head">Notifications</p>
-    {#if items.length === 0}
+    {#if loadError}
+      <p class="empty err" data-testid="notif-error">
+        Couldn't load notifications — {loadError}
+        <button class="retry" onclick={() => load()}>Retry</button>
+      </p>
+    {:else if items.length === 0}
       <p class="empty">You're all caught up.</p>
     {:else}
       <!-- role="none" strips the list semantics so the menu's accessibility tree
@@ -201,6 +215,17 @@
     margin: 0.6rem 0.4rem;
     color: var(--fg-subtle);
     font-size: 0.88rem;
+  }
+  .empty.err {
+    color: var(--danger);
+  }
+  .retry {
+    background: none;
+    border: none;
+    color: var(--accent);
+    cursor: pointer;
+    padding: 0.2rem;
+    font: inherit;
   }
   ul {
     list-style: none;

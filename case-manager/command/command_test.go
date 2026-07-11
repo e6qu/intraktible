@@ -5,11 +5,14 @@ package command_test
 import (
 	"context"
 	"encoding/json"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/e6qu/intraktible/case-manager/command"
 	"github.com/e6qu/intraktible/case-manager/domain"
+	"github.com/e6qu/intraktible/case-manager/events"
 	decisionevents "github.com/e6qu/intraktible/decision-engine/events"
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/identity"
@@ -140,5 +143,197 @@ func TestSetStatusRejectsReopeningCompleted(t *testing.T) {
 	// Re-asserting completed (idempotent no-op) is allowed.
 	if _, err := h.SetStatus(ctx, id, domain.SetStatus{CaseID: caseID, Status: domain.StatusCompleted}); err != nil {
 		t.Fatalf("re-asserting completed should be allowed: %v", err)
+	}
+}
+
+// TestAssignIsAClaimNotABlindWrite: two reviewers who both open an unassigned case
+// and both click Assign must not both be told they own it. The handlers are
+// separate, as two nodes are — each has its own mutex, so only the log's claim can
+// order them.
+func TestAssignIsAClaimNotABlindWrite(t *testing.T) {
+	ctx := context.Background()
+	log, _ := testutil.NewLogStore(t)
+	alice := identity.Identity{Org: "demo", Workspace: "main", Actor: "alice"}
+	bob := identity.Identity{Org: "demo", Workspace: "main", Actor: "bob"}
+	nodeA, nodeB := command.NewHandler(log), command.NewHandler(log)
+
+	caseID, _, err := nodeA.RequestReview(ctx, alice, domain.RequestReview{CompanyName: "Acme", CaseType: "aml", SLADays: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := nodeA.AssignCase(ctx, alice, domain.AssignCase{CaseID: caseID, Assignee: "alice"}); err != nil {
+		t.Fatalf("claiming an unassigned case should succeed: %v", err)
+	}
+	// Bob claims the case Alice already owns: refused, and told who owns it.
+	_, err = nodeB.AssignCase(ctx, bob, domain.AssignCase{CaseID: caseID, Assignee: "bob"})
+	if err == nil {
+		t.Fatal("claiming a case that is already assigned must fail")
+	}
+	if !strings.Contains(err.Error(), "alice") {
+		t.Fatalf("the refusal should name the current assignee, got: %v", err)
+	}
+	// Re-claiming for the same assignee is a no-op the caller should hear about.
+	if _, err := nodeB.AssignCase(ctx, bob, domain.AssignCase{CaseID: caseID, Assignee: "alice"}); err == nil {
+		t.Fatal("re-assigning a case to its current assignee must fail")
+	}
+	// Taking it over is allowed, but only when asked for.
+	if _, err := nodeB.AssignCase(ctx, bob, domain.AssignCase{CaseID: caseID, Assignee: "bob", Reassign: true}); err != nil {
+		t.Fatalf("an explicit reassign should succeed: %v", err)
+	}
+	if _, err := nodeA.AssignCase(ctx, alice, domain.AssignCase{CaseID: caseID, Assignee: "alice", Reassign: true}); err != nil {
+		t.Fatalf("reassigning back should succeed (the claim is per transition, not per pair): %v", err)
+	}
+}
+
+// TestSetStatusIsAtomicAcrossProcesses: two nodes both fold `needs_review` inside
+// the simultaneity window and each appends a transition. Their mutexes do not see
+// each other, so without an expected-version claim both commit from the same folded
+// state — and replaying the log then walks an illegal transition, reopening a
+// completed case and re-arming its SLA sweep. With the claim, the loser re-folds and
+// is judged against the status that actually won.
+func TestSetStatusIsAtomicAcrossProcesses(t *testing.T) {
+	ctx := context.Background()
+	log, _ := testutil.NewLogStore(t)
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "adam"}
+	nodeA, nodeB := command.NewHandler(log), command.NewHandler(log)
+
+	caseID, _, err := nodeA.RequestReview(ctx, id, domain.RequestReview{CompanyName: "Acme", CaseType: "aml", SLADays: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan struct{}, 2)
+	start := make(chan struct{})
+	for _, tc := range []struct {
+		node   *command.Handler
+		status domain.CaseStatus
+	}{{nodeA, domain.StatusCompleted}, {nodeB, domain.StatusInProgress}} {
+		go func() {
+			<-start
+			_, _ = tc.node.SetStatus(ctx, id, domain.SetStatus{CaseID: caseID, Status: tc.status})
+			done <- struct{}{}
+		}()
+	}
+	close(start)
+	for range 2 {
+		<-done
+	}
+
+	// Every transition the log records must have been legal from the one before it.
+	// Two commits from the same fold cannot satisfy that.
+	evs, err := log.Read(ctx, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	status := domain.StatusNeedsReview
+	for _, e := range evs {
+		if e.Type != events.TypeCaseStatusChanged {
+			continue
+		}
+		var p events.CaseStatusChanged
+		if err := json.Unmarshal(e.Payload, &p); err != nil {
+			t.Fatal(err)
+		}
+		next, valid := domain.ParseStatus(p.Status)
+		if !valid {
+			t.Fatalf("recorded status %q is not a status", p.Status)
+		}
+		if !status.CanTransitionTo(next) {
+			t.Fatalf("the log records an illegal transition %s -> %s", status, next)
+		}
+		status = next
+	}
+
+	// And a case that reached the terminal status stays there.
+	if status == domain.StatusCompleted {
+		if _, err := nodeA.SetStatus(ctx, id, domain.SetStatus{CaseID: caseID, Status: domain.StatusInProgress}); err == nil {
+			t.Fatal("a completed case must not reopen")
+		}
+	}
+}
+
+// TestAssignConcurrentClaimsElectOneWinner: N reviewers on N nodes all fold the
+// same unassigned case and all append a claim. Only the log's claim can order them.
+func TestAssignConcurrentClaimsElectOneWinner(t *testing.T) {
+	ctx := context.Background()
+	log, _ := testutil.NewLogStore(t)
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "adam"}
+
+	caseID, _, err := command.NewHandler(log).RequestReview(ctx, id, domain.RequestReview{CompanyName: "Acme", CaseType: "aml", SLADays: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const reviewers = 4
+	errs := make(chan error, reviewers)
+	start := make(chan struct{})
+	for i := range reviewers {
+		node := command.NewHandler(log)
+		go func() {
+			<-start
+			_, err := node.AssignCase(ctx, id, domain.AssignCase{CaseID: caseID, Assignee: "reviewer-" + strconv.Itoa(i)})
+			errs <- err
+		}()
+	}
+	close(start)
+	claimed := 0
+	for range reviewers {
+		if <-errs == nil {
+			claimed++
+		}
+	}
+	if claimed != 1 {
+		t.Fatalf("exactly one reviewer must claim the case, got %d", claimed)
+	}
+}
+
+// TestSweepSLADoesNotDoubleBreachAcrossProcesses: two schedulers (or a tick racing
+// a manual sweep on another node) both fold a case as un-breached, then both append.
+// The read model survives a duplicate, but the escalation hook and the notification
+// webhook fire once per event — so the breach must be claimed once, globally.
+func TestSweepSLADoesNotDoubleBreachAcrossProcesses(t *testing.T) {
+	ctx := context.Background()
+	log, _ := testutil.NewLogStore(t)
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "adam"}
+	nodeA, nodeB := command.NewHandler(log), command.NewHandler(log)
+
+	caseID, _, err := nodeA.RequestReview(ctx, id, domain.RequestReview{CompanyName: "Acme", CaseType: "aml", SLADays: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Add(time.Hour)
+
+	results := make(chan []string, 2)
+	start := make(chan struct{})
+	for _, node := range []*command.Handler{nodeA, nodeB} {
+		go func() {
+			<-start
+			breached, err := node.SweepSLA(ctx, id, now)
+			if err != nil {
+				t.Errorf("losing the breach claim is not an error, another node recorded it: %v", err)
+			}
+			results <- breached
+		}()
+	}
+	close(start)
+	reported := 0
+	for range 2 {
+		reported += len(<-results)
+	}
+	if reported != 1 {
+		t.Fatalf("the breach was reported by %d sweeps, want exactly 1", reported)
+	}
+
+	evs, err := log.Read(ctx, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var breaches int
+	for _, e := range evs {
+		if e.Type == events.TypeCaseSLABreached {
+			breaches++
+		}
+	}
+	if breaches != 1 {
+		t.Fatalf("the SLA breach on case %s was recorded %d times, want exactly 1", caseID, breaches)
 	}
 }

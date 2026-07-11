@@ -4,6 +4,7 @@ package schedule
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -67,7 +68,10 @@ func (s *Scheduler) Tick(ctx context.Context) (TickSummary, error) {
 			if v.At.After(now) {
 				continue // not due yet
 			}
-			prior := s.currentLive(ctx, id, v.FlowID, v.Environment)
+			prior, err := s.currentLive(ctx, id, v.FlowID, v.Environment)
+			if err != nil {
+				return sum, err
+			}
 			if err := s.cmd.ActivateSchedule(ctx, id, v.ScheduleID, v.FlowID, v.Environment, v.Version, prior); err != nil {
 				return sum, err
 			}
@@ -86,13 +90,19 @@ func (s *Scheduler) Tick(ctx context.Context) (TickSummary, error) {
 }
 
 // currentLive reads the version currently live in an environment (0 when none),
-// captured as the revert target before a time-boxed deploy goes live.
-func (s *Scheduler) currentLive(ctx context.Context, id identity.Identity, flowID, env string) int {
+// captured as the revert target before a time-boxed deploy goes live. A read error
+// is not "nothing live": swallowing it records a schedule whose PriorVersion is 0,
+// and RevertSchedule then closes the window without rolling anything back — leaving
+// the time-boxed version live forever. So it propagates, and the next tick retries.
+func (s *Scheduler) currentLive(ctx context.Context, id identity.Identity, flowID, env string) (int, error) {
 	fv, ok, err := flows.Read(ctx, s.store, id, flowID)
-	if err != nil || !ok {
-		return 0
+	if err != nil {
+		return 0, fmt.Errorf("decision-engine: read flow %q: %w", flowID, err)
 	}
-	return fv.Deployments[env].Version
+	if !ok {
+		return 0, nil
+	}
+	return fv.Deployments[env].Version, nil
 }
 
 // Run sweeps on a timer until ctx is cancelled (errors are logged, not fatal).

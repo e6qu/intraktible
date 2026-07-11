@@ -23,6 +23,13 @@ func ForFlow(slug, name string, inputSchema json.RawMessage) ([]byte, error) {
 		}
 	}
 
+	// The per-flow contract is a view of the same API, so it carries the same
+	// version as the main embedded spec rather than a second hardcoded literal.
+	parsed, err := Parse()
+	if err != nil {
+		return nil, err
+	}
+
 	envParam := map[string]any{
 		"name": "env", "in": "path", "required": true,
 		"description": "Target environment.",
@@ -31,11 +38,13 @@ func ForFlow(slug, name string, inputSchema json.RawMessage) ([]byte, error) {
 	decideResponse := map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"decision_id": map[string]any{"type": "string"},
-			"status":      map[string]any{"type": "string", "enum": []string{"completed", "failed"}},
-			"data":        map[string]any{"type": "object"},
-			"disposition": map[string]any{"type": "string"},
-			"error":       map[string]any{"type": "string"},
+			"decision_id":        map[string]any{"type": "string"},
+			"status":             map[string]any{"type": "string", "enum": []string{"completed", "failed", "suspended"}},
+			"data":               map[string]any{"type": "object"},
+			"disposition":        map[string]any{"type": "string"},
+			"disposition_reason": map[string]any{"type": "string", "description": "What assigned the disposition (a policy band, or \"pre-approval honored\")."},
+			"preapproval_id":     map[string]any{"type": "string", "description": "The grant this decision was served from, when honored from a pre-approval."},
+			"error":              map[string]any{"type": "string"},
 		},
 	}
 	jsonBody := func(schema any) map[string]any {
@@ -56,7 +65,7 @@ func ForFlow(slug, name string, inputSchema json.RawMessage) ([]byte, error) {
 		"openapi": "3.1.0",
 		"info": map[string]any{
 			"title":       name + " — decision API",
-			"version":     "1.0.0",
+			"version":     parsed.Info.Version,
 			"description": "Generated decision contract for flow \"" + slug + "\". Authenticate with an API key (X-Api-Key) scoped to the target environment.",
 		},
 		"paths": map[string]any{

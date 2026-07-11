@@ -18,6 +18,22 @@ func flow(mid events.Node) events.Graph {
 	}
 }
 
+// splitFlow wires a split's branch edges to an output each. branches picks which
+// of "yes"/"no" are wired, so a test can try to publish a split missing one; only
+// the wired branches get an output node, keeping the graph otherwise connected and
+// fully reachable so the branch check is what fails.
+func splitFlow(cfg string, branches ...string) events.Graph {
+	g := events.Graph{
+		Nodes: []events.Node{node("in", events.NodeInput), cfgNode("s", events.NodeSplit, cfg)},
+		Edges: []events.Edge{{From: "in", To: "s"}},
+	}
+	for _, branch := range branches {
+		g.Nodes = append(g.Nodes, node(branch+"_out", events.NodeOutput))
+		g.Edges = append(g.Edges, events.Edge{From: "s", To: branch + "_out", Branch: branch})
+	}
+	return g
+}
+
 func TestEtagIsCanonical(t *testing.T) {
 	a := flow(cfgNode("s", events.NodeSplit, `{"condition":"input.score >= 700"}`))
 	// Same meaning, different byte formatting (whitespace + a second key reordered).
@@ -49,9 +65,15 @@ func TestValidateFlow(t *testing.T) {
 	}{
 		{"valid rule", flow(cfgNode("r", events.NodeRule,
 			`{"rules":[{"when":"input.amount > 100","then":[{"target":"flag","expr":"true"}]}]}`)), false},
-		{"valid split", flow(cfgNode("s", events.NodeSplit, `{"condition":"input.score >= 700"}`)), false},
+		{"valid split", splitFlow(`{"condition":"input.score >= 700"}`, "yes", "no"), false},
 		{"valid code", flow(cfgNode("c", events.NodeCode, `{"code":"x = 1\ny = x + 2"}`)), false},
 		{"empty config ok", flow(cfgNode("r", events.NodeRule, ``)), false},
+
+		// A split routes on a boolean, so publishing one with a branch unwired would
+		// deploy a graph that fails at decide time on the first input taking it.
+		{"split missing the no branch", splitFlow(`{"condition":"input.score >= 700"}`, "yes"), true},
+		{"split missing the yes branch", splitFlow(`{"condition":"input.score >= 700"}`, "no"), true},
+		{"split with unlabelled edges", flow(cfgNode("s", events.NodeSplit, `{"condition":"input.score >= 700"}`)), true},
 
 		// Structural graph failures still caught.
 		{"structurally invalid", events.Graph{}, true},
@@ -59,11 +81,11 @@ func TestValidateFlow(t *testing.T) {
 		// New: semantic per-node failures rejected at publish.
 		{"bad rule expr", flow(cfgNode("r", events.NodeRule,
 			`{"rules":[{"when":"input.amount >","then":[]}]}`)), true},
-		{"bad split expr", flow(cfgNode("s", events.NodeSplit, `{"condition":"&& nope"}`)), true},
+		{"bad split expr", splitFlow(`{"condition":"&& nope"}`, "yes", "no"), true},
 		{"bad assignment expr", flow(cfgNode("a", events.NodeAssignment,
 			`{"assignments":[{"target":"x","expr":"1 +"}]}`)), true},
-		{"malformed config shape", flow(cfgNode("s", events.NodeSplit, `{"condition":123}`)), true},
-		{"unknown config field", flow(cfgNode("s", events.NodeSplit, `{"conditionx":"true"}`)), true},
+		{"malformed config shape", splitFlow(`{"condition":123}`, "yes", "no"), true},
+		{"unknown config field", splitFlow(`{"conditionx":"true"}`, "yes", "no"), true},
 		{"bad starlark", flow(cfgNode("c", events.NodeCode, `{"code":"def ("}`)), true},
 		// Hit policy / aggregate are validated at publish, not first decision.
 		{"valid decision table any", flow(cfgNode("d", events.NodeDecisionTable,

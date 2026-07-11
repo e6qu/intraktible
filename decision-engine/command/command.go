@@ -399,6 +399,11 @@ func (h *Handler) ApproveDeployment(ctx context.Context, id identity.Identity, f
 		if req.requestedBy == id.Actor {
 			return eventlog.Envelope{}, fmt.Errorf("decision-engine: four-eyes — %q cannot approve their own deployment request", id.Actor)
 		}
+		// The request pins the version it was raised for. If the environment has been
+		// deployed onto since, approving would quietly revert live traffic to it.
+		if req.superseded {
+			return eventlog.Envelope{}, fmt.Errorf("decision-engine: deployment request %q is stale — %s has been deployed since it was raised; reject it and request again", reqID, req.env)
+		}
 		payload, err := json.Marshal(events.DeploymentApproved{
 			RequestID: reqID, FlowID: flowID, Environment: req.env,
 			Version: req.version, ChallengerVersion: req.challengerVersion, ChallengerPct: req.challengerPct,
@@ -703,6 +708,10 @@ type deployReq struct {
 	version, challengerVersion, challengerPct int
 	requestedBy                               string
 	status                                    flows.RequestStatus
+	// superseded records that the request's environment was deployed, rolled back,
+	// or approved onto by someone else after the request was raised. Approving then
+	// would silently revert live traffic to this request's older version.
+	superseded bool
 }
 
 // RequestEnv reports the environment a pending deployment request targets, so the
@@ -749,6 +758,8 @@ func (h *Handler) foldRequest(ctx context.Context, id identity.Identity, flowID,
 			}
 			if p.RequestID == reqID {
 				req.status = flows.RequestApproved
+			} else if found && p.FlowID == flowID && p.Environment == req.env {
+				req.superseded = true
 			}
 		case events.TypeDeploymentRejected:
 			var p events.DeploymentRejected
@@ -757,6 +768,22 @@ func (h *Handler) foldRequest(ctx context.Context, id identity.Identity, flowID,
 			}
 			if p.RequestID == reqID {
 				req.status = flows.RequestRejected
+			}
+		case events.TypeFlowVersionDeployed:
+			var p events.FlowVersionDeployed
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				return deployReq{}, false, fmt.Errorf("decision-engine: decode deployed seq %d: %w", e.Seq, err)
+			}
+			if found && p.FlowID == flowID && p.Environment == req.env {
+				req.superseded = true
+			}
+		case events.TypeFlowVersionRolledBack:
+			var p events.FlowVersionRolledBack
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				return deployReq{}, false, fmt.Errorf("decision-engine: decode rolled back seq %d: %w", e.Seq, err)
+			}
+			if found && p.FlowID == flowID && p.Environment == req.env {
+				req.superseded = true
 			}
 		}
 	}

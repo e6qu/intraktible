@@ -15,7 +15,14 @@ describe('roleAtLeast', () => {
     expect(roleAtLeast('nope', 'operator')).toBe(false);
   });
 
-  it('treats an absent role as permitted (pre-/v1/me, matches navFor)', () => {
-    expect(roleAtLeast(undefined, 'admin')).toBe(true);
+  it('treats an unresolved role as NOT permitted (signed out / pre-/v1/me, fail closed)', () => {
+    expect(roleAtLeast(undefined, 'admin')).toBe(false);
+    expect(roleAtLeast(undefined, 'operator')).toBe(false);
+    expect(roleAtLeast(undefined, 'viewer')).toBe(false);
+  });
+
+  it('permits a resolved role that meets the bar', () => {
+    expect(roleAtLeast('operator', 'operator')).toBe(true);
+    expect(roleAtLeast('admin', 'admin')).toBe(true);
   });
 });

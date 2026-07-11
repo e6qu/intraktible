@@ -22,6 +22,7 @@
   import Badge from '$lib/Badge.svelte';
   import CommentThread from '$lib/CommentThread.svelte';
   import Hint from '$lib/Hint.svelte';
+  import { toast } from '$lib/toast';
   import type { Tone } from '$lib/badge';
 
   // Authenticates via the session cookie (empty key → no X-Api-Key header).
@@ -157,16 +158,15 @@
     await loadDrift(m);
   }
   async function captureBaseline(m: string) {
-    error = '';
     try {
       await captureModelBaseline(key, m);
       await loadDrift(m);
+      toast.success(`Captured baseline for ${m}`);
     } catch (e) {
-      error = msg(e);
+      toast.error(msg(e));
     }
   }
   async function saveThreshold(m: string) {
-    error = '';
     // An empty field clears the monitor (threshold 0); a non-numeric entry is a
     // mistake — surface it instead of silently coercing to 0 (which would disable
     // the monitor the operator was trying to set).
@@ -175,15 +175,16 @@
     if (raw !== '') {
       threshold = Number(raw);
       if (!Number.isFinite(threshold) || threshold < 0) {
-        error = 'Threshold must be a non-negative number (or empty to clear).';
+        toast.error('Threshold must be a non-negative number (or empty to clear).');
         return;
       }
     }
     try {
       await setModelMonitor(key, m, threshold);
       await loadDrift(m);
+      toast.success(threshold === 0 ? 'Drift monitor cleared' : 'Drift threshold saved');
     } catch (e) {
-      error = msg(e);
+      toast.error(msg(e));
     }
   }
   function starter(kind: string) {
@@ -207,11 +208,13 @@
     busy = true;
     try {
       const parsed: unknown = JSON.parse(spec); // fail loudly on bad JSON before POST
-      await defineModel(key, { name: name.trim(), spec: parsed });
+      const defined = name.trim();
+      await defineModel(key, { name: defined, spec: parsed });
       name = '';
       await load();
+      toast.success(`Defined model ${defined}`);
     } catch (e) {
-      error = msg(e);
+      toast.error(msg(e));
     } finally {
       busy = false;
     }

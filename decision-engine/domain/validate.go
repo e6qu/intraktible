@@ -138,6 +138,12 @@ func validateNodeConfig(n events.Node) error {
 		if err := decodeConfig(n, &cfg); err != nil {
 			return err
 		}
+		// checkExpr passes an empty expression, which is right for the nodes where
+		// omitting one means "no rule". A split with no condition has nothing to
+		// route on, so it would publish and then fail on every decision.
+		if strings.TrimSpace(cfg.Condition) == "" {
+			return fmt.Errorf("decision-engine: node %q split has no condition", n.ID)
+		}
 		if err := checkExpr(n, "split condition", cfg.Condition); err != nil {
 			return err
 		}
