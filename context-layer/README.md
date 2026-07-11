@@ -39,10 +39,14 @@ Done — custom entities + events + feature engine + connectors (command→event
   these folded into its input under `features.*` (read by Rule nodes).
 - **Connectors** fetch external data. A definition is `{name, type, config}` for one of the
   types: **http**/**graphql** (operator-configured REST/GraphQL — the "Custom Connect" case — with
-  an optional `auth` block (bearer | header | basic | query) + custom headers), **sql**, **static**,
-  the first-class provider adapters **plaid** (credentials injected into the request body, env-selected
-  base URL) and **stripe** (bearer secret key, GET retrieval), or **mock_bureau** (a deterministic
-  in-process bureau). Credential fields are sealed by the secret keyring and masked at the HTTP
+  an optional `auth` block (bearer | header | basic | query | oauth2) + custom headers), **sql**
+  (**sqlite** or **postgres** — postgres runs read-only-transaction SELECTs with `$1` args),
+  **static**, the provider adapters **plaid** (credentials injected into the request body, env-selected
+  base URL), **stripe** (bearer secret key, GET retrieval), **credit_bureau** (Experian/Equifax/
+  TransUnion inquiry, normalized to a common `{provider, score, band, reason_codes}` shape via
+  configurable field paths), **sanctions** (deterministic in-process OFAC/EU/UN/PEP name screening
+  against an operator watchlist — token-set fuzzy match, no network), or **mock_bureau** (a
+  deterministic in-process reference bureau). Credential fields are sealed by the secret keyring and masked at the HTTP
   boundary; config is **validated at define time** (a bad endpoint/credential fails on save, not on
   first fetch). Invoking a connector is an effect performed by the shell and **recorded as a
   `ConnectorFetched` event**, so the stored response — never a re-fetch — is what replay/audit reads.

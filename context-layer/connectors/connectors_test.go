@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -252,10 +253,188 @@ func TestSQLConnector(t *testing.T) {
 }
 
 func TestSQLConnectorRejectsUnknownDriver(t *testing.T) {
-	if _, err := connectors.Invoke(context.Background(), seedSQLDef(t, `{"driver":"postgres","dsn":"x","query":"SELECT 1"}`),
+	if _, err := connectors.Invoke(context.Background(), seedSQLDef(t, `{"driver":"oracle","dsn":"x","query":"SELECT 1"}`),
 		identity.Identity{Org: "demo", Workspace: "main"}, "pg", nil); err == nil {
 		t.Fatal("expected an unavailable driver to fail loudly")
 	}
+}
+
+// TestSQLConnectorPostgres exercises the Postgres driver against a real database
+// pointed to by INTRAKTIBLE_TEST_POSTGRES (a pgx DSN); skipped otherwise. It proves
+// the positional-arg binding and the read-only transaction (a write is refused).
+func TestSQLConnectorPostgres(t *testing.T) {
+	dsn := os.Getenv("INTRAKTIBLE_TEST_POSTGRES")
+	if dsn == "" {
+		t.Skip("set INTRAKTIBLE_TEST_POSTGRES (a pgx DSN) to run the Postgres connector test")
+	}
+	ctx := context.Background()
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	// A permanent table: the connector opens its own connection, so a TEMP table
+	// (per-connection) wouldn't be visible to it.
+	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS itk_scores(subject TEXT PRIMARY KEY, risk INT)`); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = db.ExecContext(ctx, `DROP TABLE IF EXISTS itk_scores`) })
+	if _, err := db.ExecContext(ctx, `INSERT INTO itk_scores VALUES('acme',73) ON CONFLICT (subject) DO UPDATE SET risk=EXCLUDED.risk`); err != nil {
+		t.Fatal(err)
+	}
+
+	s := store.NewMemory()
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "dev"}
+	cfg := `{"driver":"postgres","dsn":"` + dsn + `","query":"SELECT subject, risk FROM itk_scores WHERE subject = $1","args":["subject"]}`
+	define(ctx, t, s, id, connectors.ConnectorView{Name: "pg", Type: domain.ConnectorSQL, Config: json.RawMessage(cfg)})
+	resp, err := connectors.Invoke(ctx, s, id, "pg", json.RawMessage(`{"subject":"acme"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out struct {
+		Rows []struct {
+			Subject string `json:"subject"`
+			Risk    int    `json:"risk"`
+		} `json:"rows"`
+	}
+	if err := json.Unmarshal(resp, &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Rows) != 1 || out.Rows[0].Subject != "acme" || out.Rows[0].Risk != 73 {
+		t.Fatalf("unexpected postgres connector response: %s", resp)
+	}
+
+	// A read-only connector must refuse a data-modifying statement.
+	badCfg := `{"driver":"postgres","dsn":"` + dsn + `","query":"CREATE TABLE itk_evil(x int)"}`
+	define(ctx, t, s, id, connectors.ConnectorView{Name: "evil", Type: domain.ConnectorSQL, Config: json.RawMessage(badCfg)})
+	if _, err := connectors.Invoke(ctx, s, id, "evil", nil); err == nil {
+		t.Fatal("a write in a read-only connector tx must fail loudly")
+	}
+}
+
+func TestSanctionsConnector(t *testing.T) {
+	ctx := context.Background()
+	s := store.NewMemory()
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "dev"}
+	cfg := `{"watchlist":[` +
+		`{"name":"Vladimir Ivanov","list":"OFAC-SDN","program":"UKRAINE-EO13662"},` +
+		`{"name":"Acme Trading LLC","list":"EU"}` +
+		`]}`
+	define(ctx, t, s, id, connectors.ConnectorView{Name: "screen", Type: domain.ConnectorSanctions, Config: json.RawMessage(cfg)})
+
+	screen := func(name string) struct {
+		Matched bool `json:"matched"`
+		Matches []struct {
+			Name  string  `json:"name"`
+			List  string  `json:"list"`
+			Score float64 `json:"score"`
+		} `json:"matches"`
+		Screened int `json:"screened"`
+	} {
+		resp, err := connectors.Invoke(ctx, s, id, "screen", json.RawMessage(`{"name":"`+name+`"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out struct {
+			Matched bool `json:"matched"`
+			Matches []struct {
+				Name  string  `json:"name"`
+				List  string  `json:"list"`
+				Score float64 `json:"score"`
+			} `json:"matches"`
+			Screened int `json:"screened"`
+		}
+		if err := json.Unmarshal(resp, &out); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+
+	// Exact match (word order / case ignored) flags with score 1.
+	hit := screen("IVANOV, Vladimir")
+	if !hit.Matched || len(hit.Matches) != 1 || hit.Matches[0].Score != 1 || hit.Matches[0].List != "OFAC-SDN" {
+		t.Fatalf("exact screen = %+v", hit)
+	}
+	if hit.Screened != 2 {
+		t.Fatalf("screened count = %d, want 2", hit.Screened)
+	}
+	// A subset of tokens ("Vladimir Ivanov" vs a middle name) still flags.
+	if sub := screen("Vladimir Petrovich Ivanov"); !sub.Matched {
+		t.Fatalf("subset name should flag: %+v", sub)
+	}
+	// An unrelated name does not flag.
+	if clean := screen("Jane Smith"); clean.Matched {
+		t.Fatalf("unrelated name should not flag: %+v", clean)
+	}
+	// Deterministic: same input, byte-identical output (replay-safe).
+	r1, _ := connectors.Invoke(ctx, s, id, "screen", json.RawMessage(`{"name":"Vladimir Ivanov"}`))
+	r2, _ := connectors.Invoke(ctx, s, id, "screen", json.RawMessage(`{"name":"Vladimir Ivanov"}`))
+	if string(r1) != string(r2) {
+		t.Fatalf("screening not deterministic: %s vs %s", r1, r2)
+	}
+	// An empty watchlist is rejected at define time.
+	if _, err := connectors.Invoke(ctx, seedConnDef(t, domain.ConnectorSanctions, `{"watchlist":[]}`), id, "c", json.RawMessage(`{"name":"x"}`)); err == nil {
+		t.Fatal("an empty watchlist must fail loudly")
+	}
+}
+
+func TestCreditBureauConnectorNormalizes(t *testing.T) {
+	ctx := context.Background()
+	// A bureau-shaped response with a nested score and provider-specific field names.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer sekret" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"riskModel":{"score":720},"grade":"A","reasons":["R01","R02"]}`))
+	}))
+	defer srv.Close()
+
+	s := store.NewMemory()
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "dev"}
+	cfg := `{"provider":"experian","base_url":"` + srv.URL + `","path":"/v1/inquiry",` +
+		`"auth":{"type":"bearer","token":"sekret"},` +
+		`"score_field":"riskModel.score","band_field":"grade","reasons_field":"reasons"}`
+	define(ctx, t, s, id, connectors.ConnectorView{Name: "bureau", Type: domain.ConnectorCreditBureau, Config: json.RawMessage(cfg)})
+
+	resp, err := connectors.InvokeWith(ctx, s, id, "bureau", json.RawMessage(`{"ssn":"000-00-0000"}`), connectors.EgressPolicy{AllowPrivate: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out struct {
+		Provider    string   `json:"provider"`
+		Score       float64  `json:"score"`
+		Band        string   `json:"band"`
+		ReasonCodes []string `json:"reason_codes"`
+	}
+	if err := json.Unmarshal(resp, &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Provider != "experian" || out.Score != 720 || out.Band != "A" || len(out.ReasonCodes) != 2 {
+		t.Fatalf("normalized bureau response = %+v (%s)", out, resp)
+	}
+
+	// A response missing the score fails loudly (a phantom-0 score would silently drive a decision).
+	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"grade":"A"}`))
+	}))
+	defer bad.Close()
+	badCfg := `{"provider":"equifax","base_url":"` + bad.URL + `","path":"/x","score_field":"score"}`
+	define(ctx, t, s, id, connectors.ConnectorView{Name: "bad", Type: domain.ConnectorCreditBureau, Config: json.RawMessage(badCfg)})
+	if _, err := connectors.InvokeWith(ctx, s, id, "bad", nil, connectors.EgressPolicy{AllowPrivate: true}); err == nil {
+		t.Fatal("a bureau response with no score must fail loudly")
+	}
+}
+
+// seedConnDef stores a connector definition named "c" of the given type and returns
+// the store — a helper for the fail-loud define/invoke cases.
+func seedConnDef(t *testing.T, typ domain.ConnectorType, cfg string) store.Store {
+	t.Helper()
+	s := store.NewMemory()
+	id := identity.Identity{Org: "demo", Workspace: "main"}
+	define(context.Background(), t, s, id, connectors.ConnectorView{Name: "c", Type: typ, Config: json.RawMessage(cfg)})
+	return s
 }
 
 // seedSQLDef stores a sql connector definition named "pg" and returns the store.

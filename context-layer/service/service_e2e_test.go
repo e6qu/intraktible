@@ -310,7 +310,9 @@ func TestConnectorCatalog(t *testing.T) {
 			bureau = &cat.Templates[i]
 		}
 	}
-	if bureau == nil || bureau.Type != "http" || len(bureau.Config) == 0 {
+	// The credit-bureau template is now a real normalizing adapter, not a generic
+	// http stub.
+	if bureau == nil || bureau.Type != "credit_bureau" || len(bureau.Config) == 0 {
 		t.Fatalf("credit-bureau template missing or malformed: %+v", bureau)
 	}
 
@@ -321,7 +323,7 @@ func TestConnectorCatalog(t *testing.T) {
 		var list struct {
 			Connectors []connectors.ConnectorView `json:"connectors"`
 		}
-		api.Request(t, http.MethodGet, "/v1/context/connectors?type=http", nil, http.StatusOK, &list)
+		api.Request(t, http.MethodGet, "/v1/context/connectors?type=credit_bureau", nil, http.StatusOK, &list)
 		for _, c := range list.Connectors {
 			if c.Name == "my-bureau" {
 				return true

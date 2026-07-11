@@ -79,10 +79,20 @@ weeks, **L** = a real project.
    event, a redefinition, or window expiry. Remaining (optional): proactive/incremental
    materialization (maintaining rolling aggregates) for very high-volume entities, where
    the read-through fold on a cold/expired value is still O(events).
-2. **Connector catalog is HTTP templates, not integrations — M–L.** The catalog is
-   generic HTTP/GraphQL/SQL fetchers plus labelled stubs, not real bureau/KYC/fraud
-   adapters with correct schemas (Experian/TransUnion/Equifax/LexisNexis/Plaid). SQL is
-   SQLite-only. Even a handful of real adapters would change the evaluation.
+2. **Connectors — real adapters added; long-tail catalog still HTTP templates.** The
+   subsystem already had real Plaid/Stripe provider adapters (preconfigured host + auth,
+   egress-guarded, OAuth2). Added: a **credit-bureau** adapter (Experian/Equifax/
+   TransUnion — inquiry POST under the operator's auth, response normalized to a common
+   `{provider, score, band, reason_codes}` via configurable field paths, so a scorecard
+   reads one shape regardless of bureau); a **sanctions/PEP screening** connector (a
+   deterministic in-process OFAC/EU/UN name screener — token-set fuzzy match against an
+   operator watchlist, no network, replayable); and **Postgres** support in the SQL
+   connector (positional `$1` args, a read-only transaction so a connector can't mutate
+   the DB — verified against a real Postgres). The catalog's credit-bureau and
+   watchlist templates now instantiate these real adapters instead of http stubs.
+   Remaining (optional): MySQL (same driver-import pattern), and the long tail of
+   labelled catalog templates (fraud/OCR/device-risk) that are still generic http
+   scaffolds — a real adapter per vendor is added on demand.
 3. **Scorecard node — banded, DONE (calibration still open).** The scorecard now
    supports score bands: the summed score falls into the highest band whose `min` it
    reaches, which labels the outcome (a grade, written to a configurable `band` output)
