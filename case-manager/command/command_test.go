@@ -25,8 +25,8 @@ func TestSweepSLABreachesOverdueOnce(t *testing.T) {
 	h := command.NewHandler(log)
 	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "adam"}
 
-	// A case due immediately (sla_days 0) and one with a long window.
-	overdue, _, err := h.RequestReview(ctx, id, domain.RequestReview{CompanyName: "Acme", CaseType: "aml", SLADays: 0})
+	// A case with a 1-day window and one with a long window.
+	overdue, _, err := h.RequestReview(ctx, id, domain.RequestReview{CompanyName: "Acme", CaseType: "aml", SLADays: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,8 +34,8 @@ func TestSweepSLABreachesOverdueOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Sweeping later than the deadline breaches only the overdue case.
-	now := time.Now().UTC().Add(time.Hour)
+	// Sweeping two days later (past the 1-day deadline) breaches only the overdue case.
+	now := time.Now().UTC().Add(48 * time.Hour)
 	breached, err := h.SweepSLA(ctx, id, now)
 	if err != nil {
 		t.Fatal(err)
@@ -51,6 +51,28 @@ func TestSweepSLABreachesOverdueOnce(t *testing.T) {
 	}
 	if len(again) != 0 {
 		t.Fatalf("second sweep re-breached: %v", again)
+	}
+}
+
+// TestSweepSLADefaultsUnspecifiedWindow guards that a case opened with sla_days:0
+// (unspecified) gets the default window in the SWEEPER too — so it is not breached the
+// instant it opens, matching what the read model shows the reviewer.
+func TestSweepSLADefaultsUnspecifiedWindow(t *testing.T) {
+	ctx := context.Background()
+	log, _ := testutil.NewLogStore(t)
+	h := command.NewHandler(log)
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "adam"}
+
+	if _, _, err := h.RequestReview(ctx, id, domain.RequestReview{CompanyName: "Acme", CaseType: "aml", SLADays: 0}); err != nil {
+		t.Fatal(err)
+	}
+	// An hour after opening, a defaulted (3-day) case must NOT be overdue.
+	breached, err := h.SweepSLA(ctx, id, time.Now().UTC().Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(breached) != 0 {
+		t.Fatalf("a 0-day (defaulted) case must not breach an hour after opening: %v", breached)
 	}
 }
 
@@ -296,11 +318,12 @@ func TestSweepSLADoesNotDoubleBreachAcrossProcesses(t *testing.T) {
 	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "adam"}
 	nodeA, nodeB := command.NewHandler(log), command.NewHandler(log)
 
-	caseID, _, err := nodeA.RequestReview(ctx, id, domain.RequestReview{CompanyName: "Acme", CaseType: "aml", SLADays: 0})
+	caseID, _, err := nodeA.RequestReview(ctx, id, domain.RequestReview{CompanyName: "Acme", CaseType: "aml", SLADays: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
-	now := time.Now().UTC().Add(time.Hour)
+	// Sweep two days later, past the 1-day deadline.
+	now := time.Now().UTC().Add(48 * time.Hour)
 
 	results := make(chan []string, 2)
 	start := make(chan struct{})

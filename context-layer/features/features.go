@@ -216,9 +216,16 @@ func ComputeCached(ctx context.Context, s store.Store, id identity.Identity, ent
 			if err != nil {
 				return nil, fmt.Errorf("context-layer: compute feature %q: %w", def.Name, err)
 			}
+			// The value changes at the earliest of: the oldest in-window event aging out
+			// (OldestInWin + window), or a future-dated event entering the window
+			// (NextFuture). Expire at whichever comes first, so the cache never serves a
+			// value that a fresh Compute(...now) would disagree with.
 			validUntil := farFuture
 			if res.HasInWindow {
 				validUntil = res.OldestInWin.Add(time.Duration(def.WindowHours) * time.Hour)
+			}
+			if res.HasFuture && res.NextFuture.Before(validUntil) {
+				validUntil = res.NextFuture
 			}
 			cache.Values[def.Name] = materialized{
 				Value: res.Value, Version: def.Version, EntityEventCount: ent.EventCount,

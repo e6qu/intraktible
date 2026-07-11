@@ -198,6 +198,39 @@ func TestWALFailsOnMidFileCorruption(t *testing.T) {
 	}
 }
 
+// A Unique claim must survive a restart: the reopened WAL rebuilds its claim set from
+// disk, so a key already on the log is still rejected (Append's cross-log uniqueness
+// contract — a stale optimistic-concurrency claim must not be re-accepted after boot).
+func TestWALUniqueClaimSurvivesReopen(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+
+	w, err := OpenWAL(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Append(ctx, Envelope{Org: "o", Workspace: "w", Type: "claim", Unique: "k1"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	w2, err := OpenWAL(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = w2.Close() }()
+	// The same key, reused after the restart, must still conflict.
+	if _, err := w2.Append(ctx, Envelope{Org: "o", Workspace: "w", Type: "claim", Unique: "k1"}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("a Unique key claimed before restart must conflict after reopen, got %v", err)
+	}
+	// A fresh key still succeeds.
+	if _, err := w2.Append(ctx, Envelope{Org: "o", Workspace: "w", Type: "claim", Unique: "k2"}); err != nil {
+		t.Fatalf("a fresh key should append: %v", err)
+	}
+}
+
 func TestWALAppendReadReopen(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()

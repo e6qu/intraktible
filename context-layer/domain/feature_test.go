@@ -148,6 +148,35 @@ func TestComputePointInTime(t *testing.T) {
 	}
 }
 
+// A matching event dated after asOf isn't counted yet, but ComputeDetailed reports it
+// as NextFuture so a cache expires when it enters the window (rather than serving a
+// value that omits a now-in-window event).
+func TestComputeDetailedTracksFutureEvent(t *testing.T) {
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	future := now.Add(2 * time.Hour)
+	spec := domain.FeatureSpec{EventName: "txn", Aggregation: domain.AggCount, Window: 24 * time.Hour}
+	evs := []domain.FeatureInput{
+		{EventName: "txn", OccurredAt: now.Add(-1 * time.Hour)},     // in window
+		{EventName: "txn", OccurredAt: future},                      // dated in the future
+		{EventName: "login", OccurredAt: now.Add(30 * time.Minute)}, // future but wrong name — ignored
+	}
+	res, err := domain.ComputeDetailed(spec, evs, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Value != 1 {
+		t.Fatalf("value = %v, want 1 (future event not counted yet)", res.Value)
+	}
+	if !res.HasFuture || !res.NextFuture.Equal(future) {
+		t.Fatalf("next future = %v (has=%v), want %v — a wrong-name future event must not count",
+			res.NextFuture, res.HasFuture, future)
+	}
+	// As of the future instant, the event is now in-window and counted.
+	if v, _ := domain.Compute(spec, evs, future); v != 2 {
+		t.Fatalf("as-of-future count = %v, want 2", v)
+	}
+}
+
 // ComputeDetailed exposes the lineage a materialized cache needs: event count and the
 // oldest in-window instant (whose +window is when the value next changes).
 func TestComputeDetailedLineage(t *testing.T) {

@@ -28,6 +28,18 @@ const MaxSLADays = 10000
 // sensible default gives the reviewer time to act.
 const DefaultSLADays = 3
 
+// NormalizeSLADays maps an unspecified window (0 or negative) to DefaultSLADays. The
+// read model, the SLA sweeper, and the deadline annotations must ALL run the raw
+// recorded value through this before computing a deadline — otherwise a case opened
+// with sla_days:0 reads on-track in the UI (projector normalizes) while the sweeper
+// (folding the raw value) computes a due-at-open deadline and immediately breaches it.
+func NormalizeSLADays(slaDays int) int {
+	if slaDays <= 0 {
+		return DefaultSLADays
+	}
+	return slaDays
+}
+
 // Deadline is when a case opened at createdAt with an slaDays window is due.
 // An slaDays of 0 means the case is due at the moment it opened. The window is
 // clamped to [0, MaxSLADays]: a value persisted outside that range (the SLA sweep

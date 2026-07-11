@@ -267,13 +267,23 @@ func finitePrediction(p Prediction) error {
 }
 
 func evalLogistic(s Spec, features map[string]any) (Prediction, error) {
+	// Sum in sorted key order: Go randomizes map iteration and float addition is
+	// non-associative, so an unordered sum could differ in the last bits between two
+	// evaluations of the same model — breaking the "replays identically" contract and,
+	// at a threshold boundary, flipping the outcome. The GBM/expression paths already
+	// iterate ordered slices.
+	names := make([]string, 0, len(s.Coefficients))
+	for name := range s.Coefficients {
+		names = append(names, name)
+	}
+	sort.Strings(names)
 	z := s.Intercept
-	for name, w := range s.Coefficients {
+	for _, name := range names {
 		x, err := feature(features, name)
 		if err != nil {
 			return Prediction{}, err
 		}
-		z += w * x
+		z += s.Coefficients[name] * x
 	}
 	p := sigmoid(z)
 	return Prediction{Score: z, Probability: &p}, nil

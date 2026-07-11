@@ -86,11 +86,13 @@ func Summarize(views []CaseView, now time.Time) Summary {
 	for i := range views {
 		c := views[i]
 		s.ByStatus[c.Status]++
-		if c.Assignee == "" {
-			s.Unassigned++
-		}
+		// A completed case is off the queue — it counts against neither the SLA clock
+		// nor the "unassigned" backlog (which tracks OPEN cases waiting for an owner).
 		if c.Status == domain.StatusCompleted {
 			continue
+		}
+		if c.Assignee == "" {
+			s.Unassigned++
 		}
 		switch domain.SLAState(c.CreatedAt, c.SLADays, now) {
 		case domain.SLAOverdue:
@@ -176,10 +178,9 @@ func applyRequested(ctx context.Context, e eventlog.Envelope, s store.Store) err
 // first audit entry. Used by both the manual and flow-escalation open paths.
 func openCase(ctx context.Context, e eventlog.Envelope, s store.Store, caseID, company, caseType string, slaDays int, context json.RawMessage, sourceID, detail string) error {
 	// A case opened without an SLA window would be due the instant it opens
-	// (immediately overdue); apply a sensible default so the reviewer has time.
-	if slaDays <= 0 {
-		slaDays = domain.DefaultSLADays
-	}
+	// (immediately overdue); apply the shared default so the reviewer has time (and so
+	// this read model and the SLA sweeper agree on the deadline).
+	slaDays = domain.NormalizeSLADays(slaDays)
 	c := CaseView{
 		Org: e.Org, Workspace: e.Workspace, CaseID: caseID,
 		CompanyName: company, CaseType: caseType, Status: domain.StatusNeedsReview,

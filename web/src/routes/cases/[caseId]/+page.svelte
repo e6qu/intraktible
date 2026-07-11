@@ -186,9 +186,6 @@
         {/each}
       </div>
     {/if}
-  {:else if !error}
-    <h1>{caseID}</h1>
-    <Skeleton rows={5} />
   {:else if notFound}
     <EmptyState
       icon="cases"
@@ -199,8 +196,11 @@
         <a href={appHref('/cases')}>← Back to the queue</a>
       {/snippet}
     </EmptyState>
+  {:else if error}
+    <h1>{caseID}</h1>
   {:else}
     <h1>{caseID}</h1>
+    <Skeleton rows={5} />
   {/if}
   {#if error && !notFound}<p class="err">{error}</p>{/if}
 

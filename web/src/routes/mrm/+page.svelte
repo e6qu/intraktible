@@ -7,7 +7,7 @@
   import Hint from '$lib/Hint.svelte';
   import { coverageTone } from '$lib/badge';
   import { pct } from '$lib/dashboard';
-  import { getMrmReport, mrmReportText, type MrmReport } from '$lib/api';
+  import { getMrmReport, mrmReportText, ApiError, type MrmReport } from '$lib/api';
   import { appHref } from '$lib/paths';
   import { toast } from '$lib/toast';
 
@@ -24,12 +24,12 @@
     try {
       report = await getMrmReport(key);
     } catch (e) {
-      const m = e instanceof Error ? e.message : String(e);
-      // The model-risk report is admin-only; surface that clearly, not as a raw 403.
-      if (m.includes('admin') || m.includes('403')) {
+      // The model-risk report is admin-only; a real 403 gets the "restricted" state
+      // (keyed on the status, not a message-substring match), anything else is an error.
+      if (e instanceof ApiError && e.status === 403) {
         forbidden = true;
       } else {
-        error = m;
+        error = e instanceof Error ? e.message : String(e);
       }
     } finally {
       loading = false;

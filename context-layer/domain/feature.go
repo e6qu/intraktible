@@ -114,6 +114,12 @@ type FeatureResult struct {
 	EventCount  int
 	OldestInWin time.Time
 	HasInWindow bool
+	// NextFuture is the earliest matching event dated AFTER asOf — the instant it
+	// enters the window and changes the value. A materialized cache must expire no
+	// later than this, or it would keep serving a value that omits a now-in-window
+	// event. HasFuture is false when no such event exists.
+	NextFuture time.Time
+	HasFuture  bool
 }
 
 // ComputeDetailed is Compute plus the lineage a feature store needs to cache the
@@ -137,9 +143,17 @@ func ComputeDetailed(spec FeatureSpec, events []FeatureInput, asOf time.Time) (F
 		if ev.EventName != spec.EventName {
 			continue
 		}
+		// A matching event dated after asOf isn't in the window yet, but it WILL enter
+		// as time advances — track the earliest so a cache knows when to expire.
+		if ev.OccurredAt.After(asOf) {
+			if !res.HasFuture || ev.OccurredAt.Before(res.NextFuture) {
+				res.NextFuture, res.HasFuture = ev.OccurredAt, true
+			}
+			continue
+		}
 		// Window is (cutoff, asOf]: exclude an event on the cutoff instant (lower bound
-		// exclusive) and any after asOf (point-in-time upper bound).
-		if !ev.OccurredAt.After(cutoff) || ev.OccurredAt.After(asOf) {
+		// exclusive).
+		if !ev.OccurredAt.After(cutoff) {
 			continue
 		}
 		res.EventCount++

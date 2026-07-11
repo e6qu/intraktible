@@ -174,8 +174,20 @@ func (r *Runtime) applyOne(ctx context.Context, e eventlog.Envelope) error {
 }
 
 // applyContiguous applies a single next-in-sequence event and advances the
-// checkpoint, atomically when the store supports transactions.
+// checkpoint, atomically when the store supports transactions. It REFUSES a
+// non-contiguous event (Seq != applied+1): the caller must only reach here with the
+// immediate successor, so a gap means a lower seq isn't yet visible in the log (e.g.
+// an uncommitted Postgres BIGSERIAL row that a higher seq committed ahead of).
+// Advancing the checkpoint past that gap would permanently skip the missing event from
+// the incremental read model, so we fail LOUD instead — the runtime surfaces the error
+// (/healthz degraded) and re-applies the range once the lower seq is visible.
 func (r *Runtime) applyContiguous(ctx context.Context, e eventlog.Envelope) error {
+	r.mu.Lock()
+	applied := r.applied
+	r.mu.Unlock()
+	if e.Seq != applied+1 {
+		return fmt.Errorf("projection: refusing to apply seq %d over applied head %d — a lower seq is not yet visible in the log; advancing past it would skip an event", e.Seq, applied)
+	}
 	if r.tx == nil {
 		// Ephemeral store (memory): no atomicity needed — a crash loses everything
 		// and the next boot fully rebuilds.

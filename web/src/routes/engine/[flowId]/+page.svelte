@@ -766,6 +766,12 @@
     for (const e of detail.edges) {
       editEdges = editEdges.filter((ed) => !(ed.from === e.source && ed.to === e.target));
     }
+    // Removing edges shifts their indices; the edge inspector binds by POSITION
+    // (selectedEdge = editEdges[selectedEdgeIdx]), so clear it rather than let it
+    // silently rebind to a different edge that slid into that slot (matches deleteEdge).
+    if (selectedEdgeIdx !== null && (delIds.size > 0 || detail.edges.length > 0)) {
+      selectedEdgeIdx = null;
+    }
     clearTelemetry();
     syncCanvas();
   }
@@ -1692,8 +1698,13 @@
       const s = await listSchedules(key, flowId);
       if (flowId !== requested) return; // dropped: a newer flow loaded mid-request
       schedules = s;
-    } catch {
-      if (flowId === requested) schedules = [];
+    } catch (e) {
+      // Surface a load failure (a toast) rather than showing an empty list that reads
+      // as "none configured" — an operator could otherwise re-create existing schedules.
+      if (flowId === requested) {
+        schedules = [];
+        toast.error(msg(e));
+      }
     }
   }
   async function addSchedule() {
@@ -1915,8 +1926,12 @@
       const m = await listMonitors(key, flowId);
       if (flowId !== requested) return; // dropped: a newer flow loaded mid-request
       monitors = m;
-    } catch {
-      if (flowId === requested) monitors = [];
+    } catch (e) {
+      // A failed load must not masquerade as "no monitors" (see loadAssertions).
+      if (flowId === requested) {
+        monitors = [];
+        toast.error(msg(e));
+      }
     }
   }
   function fmtActual(m: Monitor): string {
@@ -1995,8 +2010,10 @@
   async function loadWebhooks() {
     try {
       webhooks = await listWebhooks(key);
-    } catch {
+    } catch (e) {
+      // A failed load must not look like "no webhooks configured".
       webhooks = [];
+      toast.error(msg(e));
     }
   }
   async function addWebhook() {
@@ -2361,16 +2378,21 @@
               class="ghost"
               onclick={captureBaselineNow}
               data-testid="capture-baseline"
-              title="Snapshot the current disposition mix as the drift baseline"
+              disabled={!roleAtLeast($user?.role, 'editor')}
+              title={roleAtLeast($user?.role, 'editor')
+                ? 'Snapshot the current disposition mix as the drift baseline'
+                : 'Requires the editor role'}
             >
               <Icon name="scorecard" size={14} /> Capture baseline
             </button>
             <button
               class="ghost"
               onclick={checkNow}
-              disabled={checking}
+              disabled={checking || !roleAtLeast($user?.role, 'editor')}
               data-testid="check-monitors"
-              title="Evaluate and push firing monitors to webhooks"
+              title={roleAtLeast($user?.role, 'editor')
+                ? 'Evaluate and push firing monitors to webhooks'
+                : 'Requires the editor role'}
             >
               <Icon name="check" size={14} /> Check &amp; notify
             </button>
@@ -2514,7 +2536,8 @@
             </label>
             <button
               onclick={addWebhook}
-              disabled={hookBusy || !hookURL.trim()}
+              disabled={hookBusy || !hookURL.trim() || !roleAtLeast($user?.role, 'editor')}
+              title={!roleAtLeast($user?.role, 'editor') ? 'Requires the editor role' : undefined}
               data-testid="add-webhook">Add webhook</button
             >
           </div>
@@ -2540,8 +2563,13 @@
                         : ' · last failed'
                       : ''}</span
                   >
-                  <button class="link danger" onclick={() => removeWebhook(h.webhook_id)}
-                    >remove</button
+                  <button
+                    class="link danger"
+                    onclick={() => removeWebhook(h.webhook_id)}
+                    disabled={!roleAtLeast($user?.role, 'editor')}
+                    title={!roleAtLeast($user?.role, 'editor')
+                      ? 'Requires the editor role'
+                      : undefined}>remove</button
                   >
                 </li>
               {/each}
@@ -2885,8 +2913,8 @@
             >
             <button
               onclick={grant}
-              disabled={grantBusy || !grantActor.trim() || !roleAtLeast($user?.role, 'editor')}
-              title={!roleAtLeast($user?.role, 'editor') ? 'Requires the editor role' : undefined}
+              disabled={grantBusy || !grantActor.trim() || !roleAtLeast($user?.role, 'admin')}
+              title={!roleAtLeast($user?.role, 'admin') ? 'Requires the admin role' : undefined}
               >Grant</button
             >
           </div>
@@ -2898,9 +2926,9 @@
                   <button
                     class="linkbtn"
                     onclick={() => ungrant(g.grant_id)}
-                    disabled={!roleAtLeast($user?.role, 'editor')}
-                    title={!roleAtLeast($user?.role, 'editor')
-                      ? 'Requires the editor role'
+                    disabled={!roleAtLeast($user?.role, 'admin')}
+                    title={!roleAtLeast($user?.role, 'admin')
+                      ? 'Requires the admin role'
                       : undefined}>revoke</button
                   >
                 </li>

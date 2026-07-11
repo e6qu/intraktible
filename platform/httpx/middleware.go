@@ -394,7 +394,16 @@ func isAuthoringPath(path string) bool {
 		strings.HasSuffix(path, "/versions") || // publish a flow or policy version
 		path == "/v1/agents" || // define an agent
 		path == "/v1/context/features" || // define a feature
-		path == "/v1/context/connectors" // define a connector
+		path == "/v1/context/connectors" || // define a connector
+		// Model authoring is decision logic too: a model's coefficients/trees (or an
+		// "external" endpoint the shell POSTs features to) drive live Predict-node
+		// decisions, so defining/training one — and configuring its drift baseline/
+		// monitor — is an editor action, not an operator one. Recording ground-truth
+		// outcomes (/outcomes) stays operator: it is runtime feedback, not authoring.
+		path == "/v1/models" || // define a model
+		path == "/v1/models/train" || // train (fit + define) a model
+		(strings.HasPrefix(path, "/v1/models/") &&
+			(strings.HasSuffix(path, "/baseline") || strings.HasSuffix(path, "/monitor")))
 }
 
 type statusWriter struct {

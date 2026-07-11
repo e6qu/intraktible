@@ -497,14 +497,22 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 			return scimStore.Allowed(context.Background(), id, id.Actor)
 		})
 	}
-	if authers := oidcAuthenticators(ctx); len(authers) > 0 {
+	authers, err := oidcAuthenticators(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(authers) > 0 {
 		oh := httpx.NewOIDCHandler(sessions, authers...)
 		oh.SetGate(ssoGate)
 		oh.SetRoleAugmenter(ssoAugment)
 		oh.Routes(root)
 		slog.Info("sso: OIDC enabled", "providers", oidcNames(authers))
 	}
-	if samlers := samlAuthenticators(); len(samlers) > 0 {
+	samlers, err := samlAuthenticators()
+	if err != nil {
+		return nil, err
+	}
+	if len(samlers) > 0 {
 		sh := httpx.NewSAMLHandler(sessions, samlers...)
 		sh.SetGate(ssoGate)
 		sh.SetRoleAugmenter(ssoAugment)

@@ -99,6 +99,17 @@ func (w *WAL) load() error {
 		if complete {
 			if len(line) > 1 { // a non-empty record (skip stray blank lines)
 				w.offsets = append(w.offsets, pos)
+				// Rebuild the Unique-claim set from disk so a key claimed BEFORE this
+				// restart is still enforced — otherwise Append's "unique across the whole
+				// log" contract would silently lapse across a reopen and accept a duplicate
+				// (a stale optimistic-concurrency claim). Best-effort like the rest of load:
+				// a record's full validity is checked lazily on Read.
+				var rec struct {
+					Unique string `json:"unique"`
+				}
+				if json.Unmarshal(line, &rec) == nil && rec.Unique != "" {
+					w.claimed[rec.Unique] = true
+				}
 			}
 			pos += int64(len(line))
 			continue

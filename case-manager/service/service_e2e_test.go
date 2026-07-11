@@ -5,6 +5,7 @@ package service_test
 import (
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/e6qu/intraktible/case-manager/cases"
 	"github.com/e6qu/intraktible/case-manager/command"
@@ -83,14 +84,19 @@ func TestCaseAPIEndToEnd(t *testing.T) {
 }
 
 func TestCaseSLASweepBreachesOverdue(t *testing.T) {
-	api := start(t)
+	// Run the sweep two days in the (simulated) future so a 1-day-SLA case is genuinely
+	// overdue — sla_days:0 no longer means "immediately overdue" (it defaults to a
+	// sensible window, matching the read model).
+	log, st := testutil.NewLogStore(t)
+	svc := service.New(command.NewHandler(log), st).WithNow(func() time.Time { return time.Now().UTC().Add(48 * time.Hour) })
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "adam"}
+	api := testutil.StartAPI(t, log, st, "test-key", id, svc.Routes, cases.Projector{})
 
-	// A case due immediately (sla_days 0) is overdue the moment it opens.
 	var opened struct {
 		CaseID string `json:"case_id"`
 	}
 	api.Request(t, http.MethodPost, "/v1/cases",
-		map[string]any{"company_name": "Acme Corp", "case_type": "aml", "sla_days": 0},
+		map[string]any{"company_name": "Acme Corp", "case_type": "aml", "sla_days": 1},
 		http.StatusCreated, &opened)
 
 	// The sweep emits a breach event for it.

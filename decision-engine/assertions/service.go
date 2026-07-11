@@ -4,7 +4,9 @@ package assertions
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 
 	"github.com/e6qu/intraktible/decision-engine/flows"
@@ -82,8 +84,15 @@ func (s *Service) run(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// An empty body means "run the latest version" (req.Version stays 0); a NON-empty
+	// but malformed/unknown-field body is a client mistake — reject it loudly rather
+	// than silently running the wrong version (version identity is the whole point of
+	// a promotion-gate assertion run).
 	var req runRequest
-	_ = httpx.DecodeJSON(r, &req)
+	if err := httpx.DecodeJSON(r, &req); err != nil && !errors.Is(err, io.EOF) {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
 	flowID := r.PathValue("flow_id")
 	rep, err := RunForFlow(r.Context(), s.store, id, flowID, req.Version)
 	if err != nil {
