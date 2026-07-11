@@ -32,6 +32,11 @@
   async function load() {
     error = '';
     loading = true;
+    // Clear the prior entity so a failed reload can't leave the previous entity's
+    // attributes/events on screen under an error.
+    entity = null;
+    events = [];
+    featureValues = [];
     // Drop a stale response when sibling navigation changes type/id mid-flight.
     const reqType = type;
     const reqId = id;
@@ -60,9 +65,10 @@
 <main>
   <p><a href={appHref('/data')}>← context data</a></p>
   <h1>{type} / {id}</h1>
-  {#if error}<p class="err">{error}</p>{/if}
   {#if loading}
     <p class="muted">Loading…</p>
+  {:else if error}
+    <p class="err">{error} <button class="link" onclick={() => load()}>Retry</button></p>
   {:else if entity}
     <section>
       <h2>Attributes</h2>
@@ -200,5 +206,13 @@
   }
   .err {
     color: var(--danger);
+  }
+  button.link {
+    background: none;
+    border: none;
+    color: var(--accent);
+    cursor: pointer;
+    padding: 0.2rem;
+    font: inherit;
   }
 </style>

@@ -109,9 +109,14 @@ func List(ctx context.Context, s store.Store, id identity.Identity) ([]View, err
 // policy (or no published version) is bound.
 func ActiveForFlow(ctx context.Context, s store.Store, id identity.Identity, flowSlug string) (View, VersionView, bool, error) {
 	// Fast path: the flow index lists exactly the policies bound to this slug, so
-	// only those candidates are fetched (no whole-collection scan). If it resolves
-	// an active policy, return it.
-	if idx, ok, err := store.GetDoc[flowPolicyIndex](ctx, s, flowIndexCollection, store.Key(id.Org, id.Workspace, flowSlug)); err == nil && ok {
+	// only those candidates are fetched (no whole-collection scan). A store error is
+	// real and surfaces — degrading to the scan would hide a broken store behind a
+	// slower query that reads the same store. Only a miss falls through.
+	idx, indexed, err := store.GetDoc[flowPolicyIndex](ctx, s, flowIndexCollection, store.Key(id.Org, id.Workspace, flowSlug))
+	if err != nil {
+		return View{}, VersionView{}, false, fmt.Errorf("decision-engine: read policy flow index %q: %w", flowSlug, err)
+	}
+	if indexed {
 		var best View
 		found := false
 		for _, pid := range idx.PolicyIDs {
@@ -157,12 +162,17 @@ func ActiveForFlow(ctx context.Context, s store.Store, id identity.Identity, flo
 // tracked Latest field rather than array position: Versions is appended in event
 // order, which is not guaranteed to be version order, so the last element is not
 // reliably the latest. Falls back to the last element only if Latest is absent
-// (it never should be for a policy with versions).
+// (it never should be for a policy with versions). Every caller already skips a
+// policy with no versions, so an empty View yields the zero version rather than
+// indexing past the end.
 func latestVersion(pv View) VersionView {
 	for i := range pv.Versions {
 		if pv.Versions[i].Version == pv.Latest {
 			return pv.Versions[i]
 		}
+	}
+	if len(pv.Versions) == 0 {
+		return VersionView{}
 	}
 	return pv.Versions[len(pv.Versions)-1]
 }

@@ -106,9 +106,13 @@ func (s *Scheduler) Tick(ctx context.Context) (TickSummary, error) {
 					continue
 				}
 				// Count Delivered only when an endpoint accepted (an all-permanent sweep
-				// records+dedups below but delivered nothing).
+				// records+dedups below but delivered nothing). Say so — otherwise a
+				// webhook misconfigured into 4xx eats every drift alert in silence.
 				if summary.Delivered() {
 					sum.Delivered++
+				} else if summary.Permanent > 0 {
+					slog.Error("model drift scheduler: alert recorded but no webhook accepted it",
+						"model", st.Name, "permanent_failures", summary.Permanent)
 				}
 			}
 			if _, err := s.cmd.MarkModelDriftAlerted(ctx, id, st.Name, psi, st.Threshold); err != nil {

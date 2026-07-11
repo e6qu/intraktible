@@ -227,6 +227,14 @@
       setCanvasMode('board');
       return;
     }
+    // Escape closes an open node/edge inspector (clearing the selection) even when a
+    // field inside it holds focus — otherwise a mouse is the only way to dismiss it.
+    // Checked before the typing guard for that reason.
+    if (e.key === 'Escape' && (selectedId !== null || selectedEdgeIdx !== null)) {
+      e.preventDefault();
+      selectNode(null);
+      return;
+    }
     if (typingIn(e) || e.metaKey || e.ctrlKey || e.altKey || !flow) return;
     if (e.key === 'f') {
       e.preventDefault();
@@ -284,6 +292,8 @@
   // appeared to do nothing.
   function selectTab(t: Tab) {
     tab = t;
+    // The error banner is a page-load failure; a stale one must not bleed across tabs.
+    error = '';
     tabbarEl?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
   const TABS: { id: Tab; label: string; hint: string }[] = [
@@ -670,6 +680,7 @@
         );
       }
     } catch (e) {
+      // Page-level load failure renders in the banner (the whole panel is unusable).
       error = msg(e);
     }
   }
@@ -1069,7 +1080,7 @@
       );
       await load();
     } catch (e) {
-      error = msg(e);
+      toast.error(msg(e));
     } finally {
       publishing = false;
     }
@@ -1136,7 +1147,7 @@
     try {
       copilotOut = await copilotExplain(key, currentGraph());
     } catch (e) {
-      error = msg(e);
+      toast.error(msg(e));
     } finally {
       copilotBusy = false;
     }
@@ -1149,7 +1160,7 @@
     try {
       copilotOut = await copilotSuggest(key, copilotPrompt.trim());
     } catch (e) {
-      error = msg(e);
+      toast.error(msg(e));
     } finally {
       copilotBusy = false;
     }
@@ -1167,7 +1178,7 @@
       importJSON(JSON.stringify(graph));
       copilotOut = 'Generated a flow and applied it to the canvas — review it, then Publish.';
     } catch (e) {
-      error = msg(e);
+      toast.error(msg(e));
     } finally {
       copilotBusy = false;
     }
@@ -1178,7 +1189,7 @@
   function importJSON(text: string): void {
     error = '';
     if (!text.trim()) {
-      error = 'Import failed: paste a flow export or a graph object first';
+      toast.error('Import failed: paste a flow export or a graph object first');
       return;
     }
     try {
@@ -1222,7 +1233,7 @@
         `Imported ${editNodes.length} node${editNodes.length === 1 ? '' : 's'} — review, then Publish`
       );
     } catch (e) {
-      error = 'Import failed: ' + msg(e);
+      toast.error('Import failed: ' + msg(e));
     }
   }
 
@@ -1343,7 +1354,7 @@
       setTimeout(() => URL.revokeObjectURL(url), 0);
       toast.success('Downloaded run trace');
     } catch (e) {
-      error = msg(e);
+      toast.error(msg(e));
     }
   }
   async function copyTrace() {
@@ -1351,7 +1362,7 @@
       await navigator.clipboard.writeText(await exportDecision(key, lastDecisionId));
       toast.success('Copied run trace to clipboard');
     } catch (e) {
-      error = msg(e);
+      toast.error(msg(e));
     }
   }
 
@@ -1375,7 +1386,7 @@
       setTimeout(() => URL.revokeObjectURL(url), 0);
       toast.success(`Downloaded ${exportFilename(format)}`);
     } catch (e) {
-      error = msg(e);
+      toast.error(msg(e));
     }
   }
   async function copyExport(format: ExportFormat) {
@@ -1383,7 +1394,7 @@
       await navigator.clipboard.writeText(await exportFlow(key, flowId, format));
       toast.success(`Copied ${format} to clipboard`);
     } catch (e) {
-      error = msg(e);
+      toast.error(msg(e));
     }
   }
 
@@ -1404,7 +1415,7 @@
       btReport = await backtestFlow(key, flowId, body);
       toast.success(`Backtested ${btReport.summary.total} records`);
     } catch (e) {
-      error = msg(e);
+      toast.error(msg(e));
     } finally {
       btRunning = false;
     }
@@ -1430,13 +1441,13 @@
         .filter(Boolean)
         .map((v) => (Number.isNaN(Number(v)) ? v : Number(v)));
       if (!wiField.trim() || values.length === 0) {
-        error = 'Enter a field and at least one value';
+        toast.error('Enter a field and at least one value');
         return;
       }
       wiReport = await whatif(key, flowId, { base, field: wiField.trim(), values });
       toast.success(`Swept ${values.length} values — ${wiReport.transitions} transition(s)`);
     } catch (e) {
-      error = msg(e);
+      toast.error(msg(e));
     } finally {
       wiRunning = false;
     }
@@ -1460,7 +1471,7 @@
       );
       await loadMetrics();
     } catch (e) {
-      error = msg(e);
+      toast.error(msg(e));
     } finally {
       batchRunning = false;
     }
@@ -1481,7 +1492,7 @@
     // A cleared number input binds as null in Svelte 5; reject it rather than
     // posting valid_days:null (or a non-positive window) to the API.
     if (!Number.isInteger(paValidDays) || paValidDays < 1) {
-      error = 'Valid days must be a whole number of at least 1.';
+      toast.error('Valid days must be a whole number of at least 1.');
       return;
     }
     paRunning = true;
@@ -1499,7 +1510,7 @@
       );
       await loadMetrics();
     } catch (e) {
-      error = msg(e);
+      toast.error(msg(e));
     } finally {
       paRunning = false;
     }
@@ -1534,7 +1545,7 @@
       body.challenger_version = cv;
       if (!Number.isNaN(pct) && pct > 0) {
         if (pct > 100) {
-          error = 'Challenger traffic % must be between 1 and 100.';
+          toast.error('Challenger traffic % must be between 1 and 100.');
           return;
         }
         body.challenger_pct = pct;
@@ -1552,7 +1563,7 @@
       }
       await load();
     } catch (e) {
-      error = msg(e);
+      toast.error(msg(e));
     } finally {
       deploying = false;
     }
@@ -1569,7 +1580,7 @@
       toast.success(`Rolled back ${environment} to the previous version`);
       await load();
     } catch (e) {
-      error = msg(e);
+      toast.error(msg(e));
     } finally {
       deploying = false;
     }
@@ -1607,7 +1618,7 @@
       toast.success('Deploy scheduled');
       await loadSchedules();
     } catch (e) {
-      error = msg(e);
+      toast.error(msg(e));
     } finally {
       schBusy = false;
     }
@@ -1647,7 +1658,7 @@
       toast.success('Grant added');
       await loadGrants();
     } catch (e) {
-      error = msg(e);
+      toast.error(msg(e));
     } finally {
       grantBusy = false;
     }
@@ -1700,7 +1711,7 @@
       flow = { ...flow, promotion_policy: next };
       toast.success('Promotion policy saved');
     } catch (e) {
-      error = msg(e);
+      toast.error(msg(e));
     } finally {
       policySaving = false;
     }
@@ -1734,7 +1745,7 @@
       toast.success(version ? `Shadowing v${version} in ${environment}` : `Shadow cleared`);
       await loadShadow();
     } catch (e) {
-      error = msg(e);
+      toast.error(msg(e));
     } finally {
       shadowSaving = false;
     }
@@ -1759,7 +1770,7 @@
       );
       await load();
     } catch (e) {
-      error = msg(e);
+      toast.error(msg(e));
     } finally {
       promoting = false;
     }
@@ -1793,7 +1804,7 @@
       deciding = null;
       await load();
     } catch (e) {
-      error = msg(e);
+      toast.error(msg(e));
     }
   }
 
@@ -1832,7 +1843,7 @@
     // A cleared number input binds as null in Svelte 5; reject a missing/non-finite
     // threshold rather than posting null.
     if (typeof monThreshold !== 'number' || !Number.isFinite(monThreshold)) {
-      error = 'Monitor threshold must be a number.';
+      toast.error('Monitor threshold must be a number.');
       return;
     }
     monBusy = true;
@@ -1847,12 +1858,13 @@
       toast.success('Monitor added');
       await loadMonitors();
     } catch (e) {
-      error = msg(e);
+      toast.error(msg(e));
     } finally {
       monBusy = false;
     }
   }
   async function removeMonitor(m: Monitor) {
+    if (!confirm('Delete this monitor? It will stop evaluating and alerting.')) return;
     try {
       await deleteMonitor(key, flowId, m.monitor_id);
       toast.success('Monitor removed');
@@ -1874,7 +1886,7 @@
       const sent = lastCheck.deliveries?.length ?? 0;
       toast.success(n === 0 ? 'No monitors firing' : `${n} firing → ${sent} webhook(s) notified`);
     } catch (e) {
-      error = msg(e);
+      toast.error(msg(e));
     } finally {
       checking = false;
     }
@@ -1912,12 +1924,13 @@
       toast.success('Webhook added');
       await loadWebhooks();
     } catch (e) {
-      error = msg(e);
+      toast.error(msg(e));
     } finally {
       hookBusy = false;
     }
   }
   async function removeWebhook(wid: string) {
+    if (!confirm('Remove this webhook? Notifications will stop being delivered to it.')) return;
     try {
       await deleteWebhook(key, wid);
       toast.success('Webhook removed');
@@ -1946,7 +1959,7 @@
       await loadDrift();
       await loadMonitors();
     } catch (e) {
-      error = msg(e);
+      toast.error(msg(e));
     }
   }
   function pct(n: number): string {
@@ -1971,7 +1984,7 @@
       // Reset the editor (the previous flow's cases must not be saveable here)
       // and surface the failure rather than quietly showing the placeholder.
       assertText = ASSERT_PLACEHOLDER;
-      error = msg(e);
+      toast.error(msg(e));
     }
   }
   async function saveAssertions() {
@@ -1982,7 +1995,7 @@
       await setAssertions(key, flowId, cases);
       toast.success('Assertions saved');
     } catch (e) {
-      error = msg(e);
+      toast.error(msg(e));
     } finally {
       assertBusy = false;
     }
@@ -1995,7 +2008,7 @@
       assertReport = await runAssertions(key, flowId);
       toast.success(`${assertReport.passed}/${assertReport.total} assertions passed`);
     } catch (e) {
-      error = msg(e);
+      toast.error(msg(e));
     } finally {
       assertBusy = false;
     }
@@ -4011,7 +4024,14 @@
           Up to 500 rows.
         </p>
         <div class="row">
-          <button onclick={runBatch} disabled={!flow || batchRunning} data-testid="run-batch">
+          <button
+            onclick={runBatch}
+            disabled={!flow || batchRunning || !roleAtLeast($user?.role, 'operator')}
+            title={!roleAtLeast($user?.role, 'operator')
+              ? 'Each row is a recorded decision — requires the operator role'
+              : undefined}
+            data-testid="run-batch"
+          >
             {batchRunning ? 'Deciding…' : 'Run batch'}
           </button>
           <button
@@ -4116,7 +4136,14 @@
           </label>
           <button
             onclick={runPreapproveBatch}
-            disabled={!flow || paRunning || !paEntityType.trim() || !paEntityKey.trim()}
+            disabled={!flow ||
+              paRunning ||
+              !paEntityType.trim() ||
+              !paEntityKey.trim() ||
+              !roleAtLeast($user?.role, 'editor')}
+            title={!roleAtLeast($user?.role, 'editor')
+              ? 'Granting pre-approvals from a run requires the editor role'
+              : undefined}
             data-testid="run-preapprove"
           >
             {paRunning ? 'Granting…' : 'Promote'}

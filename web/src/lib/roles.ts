@@ -14,10 +14,12 @@ const RANK = new Map<string, number>([
   ['admin', 5]
 ]);
 
-// roleAtLeast reports whether `role` ranks at or above `min`. An unknown/absent role
-// (e.g. before /v1/me resolves) is treated as permitted, matching navFor's behavior
-// — so controls aren't briefly disabled for an admin on first paint.
+// roleAtLeast reports whether `role` ranks at or above `min`. An unknown or absent
+// role (signed out, or before /v1/me resolves) ranks BELOW every requirement, so a
+// write control is disabled and an admin-only page is hidden until a real role is
+// known. Fail closed: briefly disabling a control for an admin on first paint is far
+// better than offering a viewer (or a signed-out visitor) an affordance the backend
+// will 403, or dead-ending them on an admin page they can never load.
 export function roleAtLeast(role: string | undefined, min: RoleName): boolean {
-  if (role === undefined) return true;
-  return (RANK.get(role) ?? 0) >= (RANK.get(min) ?? 99);
+  return (RANK.get(role ?? '') ?? 0) >= (RANK.get(min) ?? 99);
 }

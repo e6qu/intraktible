@@ -135,11 +135,22 @@
 
   async function bulkAssign() {
     if (bulkBusy || !bulkAssignee.trim() || selectedIds.length === 0) return;
+    const who = bulkAssignee.trim();
+    // The backend refuses to overwrite another reviewer's claim. Ask once for the
+    // whole batch rather than letting most of it succeed and the owned ones fail.
+    const owned = list.filter(
+      (c) => selectedIds.includes(c.case_id) && c.assignee && c.assignee !== who
+    );
+    if (
+      owned.length > 0 &&
+      !confirm(`${owned.length} of these cases are assigned to someone else. Take them over?`)
+    ) {
+      return;
+    }
     bulkBusy = true;
     error = '';
-    const who = bulkAssignee.trim();
     try {
-      await runBulk(`Assigned to ${who}:`, (id) => assignCase(key, id, who));
+      await runBulk(`Assigned to ${who}:`, (id) => assignCase(key, id, who, owned.length > 0));
       bulkAssignee = '';
     } finally {
       bulkBusy = false;
@@ -164,8 +175,10 @@
     creating = true;
     try {
       await requestReview(key, { company_name: company, case_type: caseType, sla_days: slaDays });
+      const opened = company;
       company = '';
       await load();
+      toast.success(`Opened case for ${opened}`);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     } finally {

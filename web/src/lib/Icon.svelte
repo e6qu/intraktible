@@ -24,6 +24,8 @@
     ['home', '<path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/>'],
     ['plus', '<path d="M12 5v14M5 12h14"/>'],
     ['trash', '<path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/>'],
+    ['alert', '<path d="M12 3l9.5 17H2.5L12 3z"/><path d="M12 9v5M12 17.5h.01"/>'],
+    ['info', '<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 7.5h.01"/>'],
     ['play', '<path d="M7 4l13 8-13 8V4z"/>'],
     ['check', '<path d="M5 12l5 5L20 6"/>'],
     [

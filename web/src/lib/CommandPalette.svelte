@@ -266,6 +266,16 @@
     selected = 0;
   });
 
+  // Keep the highlighted row in view when arrowing past the visible window, so a
+  // keyboard user never loses the selection off-screen. block:'nearest' is a no-op
+  // when the row is already visible (e.g. on mouse hover), so it never fights the
+  // pointer or jumps the list unnecessarily. Ids can contain '/' and ':', so look up
+  // by getElementById (a CSS selector would need escaping).
+  $effect(() => {
+    const cur = filtered.at(selected);
+    if (cur) document.getElementById(cur.id)?.scrollIntoView({ block: 'nearest' });
+  });
+
   // Global shortcut: Cmd/Ctrl-K toggles the palette from anywhere.
   $effect(() => {
     function onKey(e: KeyboardEvent): void {

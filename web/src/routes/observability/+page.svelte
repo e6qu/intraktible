@@ -67,10 +67,10 @@
     every flow.
   </p>
 
-  {#if error}<p class="err">{error}</p>{/if}
-
   {#if loading}
     <Skeleton rows={6} />
+  {:else if error}
+    <p class="err">{error} <button class="link" onclick={() => load()}>Retry</button></p>
   {:else}
     <h2>AI usage &amp; cost</h2>
     {#if summary}
@@ -210,6 +210,14 @@
   }
   .err {
     color: var(--danger);
+  }
+  button.link {
+    background: none;
+    border: none;
+    color: var(--accent);
+    cursor: pointer;
+    padding: 0.2rem;
+    font: inherit;
   }
   .muted {
     color: var(--fg-subtle);

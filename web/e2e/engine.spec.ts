@@ -341,7 +341,8 @@ test('switches the flow canvas between card and BPMN views', async ({ page, requ
         ],
         edges: [
           { from: 'in', to: 'gate' },
-          { from: 'gate', to: 'out', branch: 'yes' }
+          { from: 'gate', to: 'out', branch: 'yes' },
+          { from: 'gate', to: 'out', branch: 'no' }
         ]
       }
     }
@@ -536,6 +537,7 @@ test('promotes an approved batch into pre-approvals', async ({ page, request }) 
 });
 
 test('defines an outcome monitor and sees it fire', async ({ page, request }) => {
+  page.on('dialog', (d) => d.accept()); // removing a webhook now asks to confirm
   const slug = uniqueSlug();
   const created = await request.post('/v1/flows', {
     headers: { 'X-Api-Key': KEY },
@@ -1072,7 +1074,8 @@ test('shows the backend validation error when publishing an invalid graph', asyn
   await page.getByLabel('new node type').selectOption('rule');
   await page.getByRole('button', { name: 'Add', exact: true }).click();
   await page.getByRole('button', { name: 'Publish version' }).click();
-  await expect(page.locator('.err')).toContainText('input');
+  // A write failure now surfaces as a toast beside the action, not the old banner.
+  await expect(page.locator('.toast.error')).toContainText('input');
 });
 
 // --- Design window (Miro-style board) ---------------------------------------------
@@ -1098,7 +1101,8 @@ test('clicking a canvas node opens its inspector; pane click closes it', async (
         ],
         edges: [
           { from: 'in', to: 'gate' },
-          { from: 'gate', to: 'out', branch: 'yes' }
+          { from: 'gate', to: 'out', branch: 'yes' },
+          { from: 'gate', to: 'out', branch: 'no' }
         ]
       }
     }
@@ -1183,23 +1187,28 @@ test('clicking an edge opens its inspector; the branch label edits live', async 
         nodes: [
           { id: 'in', type: 'input' },
           { id: 'gate', type: 'split', config: { condition: 'x > 1' } },
-          { id: 'out', type: 'output' }
+          { id: 'out', type: 'output' },
+          // The no branch lands on its own node so the two gate edges don't overlap
+          // (a click on stacked identical curves would hit the wrong one).
+          { id: 'decline', type: 'output' }
         ],
         edges: [
           { from: 'in', to: 'gate' },
-          { from: 'gate', to: 'out', branch: 'yes' }
+          { from: 'gate', to: 'out', branch: 'yes' },
+          { from: 'gate', to: 'decline', branch: 'no' }
         ]
       }
     }
   });
 
   await page.goto(`/engine/${flow_id}`);
-  await expect(page.locator('.svelte-flow__node')).toHaveCount(3);
-  // Click a point ON the edge's interaction path — a curve's bounding-box
-  // center (what a plain click targets) usually misses the path itself.
+  await expect(page.locator('.svelte-flow__node')).toHaveCount(4);
+  // Click a point ON a branch edge's interaction path — a curve's bounding-box
+  // center (what a plain click targets) usually misses the path itself. The split's
+  // two branch edges are the last two; either exercises the inspector.
   const pt = await page
     .locator('.svelte-flow__edge-interaction')
-    .nth(1)
+    .last()
     .evaluate((el) => {
       const path = el as SVGPathElement;
       const mid = path.getPointAtLength(path.getTotalLength() / 2);
@@ -1212,13 +1221,17 @@ test('clicking an edge opens its inspector; the branch label edits live', async 
 
   const inspector = page.getByTestId('edge-inspector');
   await expect(inspector).toBeVisible();
-  await expect(inspector.getByLabel('edge branch label')).toHaveValue('yes');
-  await inspector.getByLabel('edge branch label').fill('approved');
+  // The clicked edge carries a branch (yes or no — ordering isn't guaranteed after
+  // the backend's layout pass); editing it updates the on-canvas label live.
+  const branchInput = inspector.getByLabel('edge branch label');
+  expect(['yes', 'no']).toContain(await branchInput.inputValue());
+  await branchInput.fill('approved');
   await expect(page.locator('.svelte-flow__edge-label').getByText('approved')).toBeVisible();
 
   await inspector.getByRole('button', { name: 'Delete edge' }).click();
   await expect(inspector).toHaveCount(0);
-  await expect(page.locator('.svelte-flow__edge')).toHaveCount(1);
+  // Deleting one branch edge leaves in→gate and the other branch.
+  await expect(page.locator('.svelte-flow__edge')).toHaveCount(2);
 });
 
 test('dragging a rail type onto the board places the node at the drop point', async ({

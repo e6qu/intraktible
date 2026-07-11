@@ -96,7 +96,10 @@ func applyCaseAssigned(ctx context.Context, e eventlog.Envelope, s store.Store) 
 		func(idx *caseIndex) { idx.Assignee = p.Assignee }); err != nil {
 		return err
 	}
-	idx, _, _ := store.GetDoc[caseIndex](ctx, s, caseIndexCollection, store.Key(e.Org, e.Workspace, p.CaseID))
+	idx, _, err := store.GetDoc[caseIndex](ctx, s, caseIndexCollection, store.Key(e.Org, e.Workspace, p.CaseID))
+	if err != nil {
+		return fmt.Errorf("notifications: read case index %q: %w", p.CaseID, err)
+	}
 	idx.CaseID = p.CaseID
 	return task(ctx, e, s, p.Assignee, p.CaseID, "assigned",
 		fmt.Sprintf("Review task assigned to you: %s", label(idx)))

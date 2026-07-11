@@ -377,9 +377,19 @@ func GraphForVersion(fv FlowView, version int) (events.Graph, error) {
 // per tenant, so at most one matches; it is the decide path's flow lookup.
 func BySlug(ctx context.Context, s store.Store, id identity.Identity, slug string) (FlowView, bool, error) {
 	// Fast path: the slug index resolves to a flow id without scanning the
-	// collection (this is the decide hot path).
-	if ref, ok, err := store.GetDoc[slugRef](ctx, s, slugIndexCollection, store.Key(id.Org, id.Workspace, slug)); err == nil && ok {
-		if fv, found, ferr := store.GetDoc[FlowView](ctx, s, Collection, store.Key(id.Org, id.Workspace, ref.FlowID)); ferr == nil && found {
+	// collection (this is the decide hot path). A store error is real and surfaces —
+	// degrading to the scan would hide a broken store behind a slower query. Only a
+	// miss falls through.
+	ref, indexed, err := store.GetDoc[slugRef](ctx, s, slugIndexCollection, store.Key(id.Org, id.Workspace, slug))
+	if err != nil {
+		return FlowView{}, false, fmt.Errorf("decision-engine: read slug index %q: %w", slug, err)
+	}
+	if indexed {
+		fv, found, err := store.GetDoc[FlowView](ctx, s, Collection, store.Key(id.Org, id.Workspace, ref.FlowID))
+		if err != nil {
+			return FlowView{}, false, fmt.Errorf("decision-engine: read flow %q: %w", ref.FlowID, err)
+		}
+		if found {
 			fv.PromotionPolicy = EffectivePromotionPolicy(fv.PromotionPolicy)
 			return fv, true, nil
 		}
@@ -408,7 +418,11 @@ func List(ctx context.Context, s store.Store, id identity.Identity) ([]FlowView,
 	return fvs, err
 }
 
-// DefaultPromotionPolicy preserves the existing promotion behavior.
+// DefaultPromotionPolicy preserves the existing promotion behavior. Production is
+// governed by four-eyes review (RequireReview), so its deployment never runs the
+// automated health gate — a human checker decides. AllowForce is pinned false there
+// as defense-in-depth: force is gated by no privilege of its own, so no future code
+// path can wave a production deploy past the gates on the strength of a force flag.
 func DefaultPromotionPolicy() map[string]events.PromotionStagePolicy {
 	return map[string]events.PromotionStagePolicy{
 		"sandbox": {
@@ -426,19 +440,20 @@ func DefaultPromotionPolicy() map[string]events.PromotionStagePolicy {
 		"production": {
 			RequireAssertions:       true,
 			RequireNoFiringMonitors: true,
-			AllowForce:              true,
+			AllowForce:              false,
 			RequireReview:           true,
 		},
 	}
 }
 
 // EffectivePromotionPolicy fills missing stages from the default and forces the
-// non-negotiable production review requirement.
+// non-negotiable production requirements: review, and no force override.
 func EffectivePromotionPolicy(policy map[string]events.PromotionStagePolicy) map[string]events.PromotionStagePolicy {
 	effective := DefaultPromotionPolicy()
 	for env, stage := range policy {
 		if env == "production" {
 			stage.RequireReview = true
+			stage.AllowForce = false
 		}
 		effective[env] = stage
 	}

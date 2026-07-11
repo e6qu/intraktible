@@ -9,6 +9,7 @@
   import { pct } from '$lib/dashboard';
   import { getMrmReport, mrmReportText, type MrmReport } from '$lib/api';
   import { appHref } from '$lib/paths';
+  import { toast } from '$lib/toast';
 
   const key = '';
   let report = $state<MrmReport | null>(null);
@@ -49,15 +50,16 @@
       a.download = format === 'csv' ? 'mrm-report.csv' : 'mrm-report.md';
       a.click();
       setTimeout(() => URL.revokeObjectURL(url), 0);
-    } catch {
-      // best-effort download; the report stays visible on the page
+      toast.success(`Downloaded ${a.download}`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
     }
   }
 
   // Each inventory row drills through to its underlying entity so a gap is actionable.
   function entityHref(kind: string, id: string): string | null {
     if (kind === 'flow') return appHref(`/engine/${id}`);
-    if (kind === 'agent') return appHref(`/agents/${id}`);
+    if (kind === 'agent') return appHref(`/agents/${encodeURIComponent(id)}`);
     if (kind === 'predictive_model') return appHref('/models');
     return null;
   }

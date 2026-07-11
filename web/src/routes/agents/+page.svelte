@@ -8,6 +8,7 @@
   import { appHref } from '$lib/paths';
   import { roleAtLeast } from '$lib/roles';
   import { user } from '$lib/session';
+  import { toast } from '$lib/toast';
 
   // API calls authenticate via the session cookie (empty key -> no X-Api-Key header).
   const key = '';
@@ -84,6 +85,7 @@
         .map((t) => t.trim())
         .filter(Boolean);
       if (tl.length > 0) body.tools = tl;
+      const defined = body.name;
       await defineAgent(key, body);
       name = '';
       provider = '';
@@ -92,8 +94,9 @@
       schema = '';
       tools = '';
       await load();
+      toast.success(`Defined agent ${defined}`);
     } catch (e) {
-      error = e instanceof Error ? e.message : String(e);
+      toast.error(e instanceof Error ? e.message : String(e));
     } finally {
       busy = false;
     }
@@ -150,7 +153,7 @@
         <tbody>
           {#each list as a (a.name)}
             <tr>
-              <td><a href={appHref(`/agents/${a.name}`)}>{a.name}</a></td>
+              <td><a href={appHref(`/agents/${encodeURIComponent(a.name)}`)}>{a.name}</a></td>
               <td>{a.model || '—'}</td>
               <td>
                 {#if a.schema}<span class="badge">structured</span>{/if}

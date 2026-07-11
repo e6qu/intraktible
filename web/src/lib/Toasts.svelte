@@ -5,7 +5,7 @@
   import { toasts, dismiss } from '$lib/toast';
 
   const icon = (kind: string) =>
-    kind === 'success' ? 'check' : kind === 'error' ? 'trash' : 'diagram';
+    kind === 'success' ? 'check' : kind === 'error' ? 'alert' : 'info';
 </script>
 
 <div class="toasts" aria-live="polite" aria-atomic="false">

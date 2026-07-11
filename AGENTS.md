@@ -69,6 +69,23 @@ into a per-navigation ring buffer, and "Copy for AI" (header button next to the 
 Download row in the page guide) emits a semi-structured markdown export — the help-registry entry,
 the deduped API calls behind the visit (OpenAPI at `/openapi.json`), and a generic summary of the
 rendered content (outline, table samples, stat chips).
+**A journeys + correctness audit round** (five lenses: security, backend, frontend, docs, fake-
+functionality) then hardened the platform against its own user journeys — see the JA block in
+BUGS.md. The load-bearing fixes: the Code node was an editor-triggerable backend OOM (the Starlark
+build budgets steps not bytes; a heap watchdog plus size-checked rewrites of the four unbounded
+builtins now bound it); a Split missing a branch edge published fine and failed at decide time —
+now rejected at publish, which surfaced that ALL SIX starter templates shipped broken splits (a
+multi-branch model the engine never had), all rebuilt; a lingering maker-checker approval could
+silently revert production; three cross-process case races (double-claim, completed-case reopen,
+double SLA breach) closed with expected-version claims; promotion governance corrected so a fix stays
+proposable (raising a request never health-gates) while production is governed by four-eyes review and
+can no longer be force-deployed past its gates; connector credentials in an HTTP `headers` map were stored
+cleartext and served to viewers (now sealed) and the cloud-metadata IP stays SSRF-blocked even with
+private egress allowed; the "Draft a flow with AI" demo button (silently 422ing) works; and a swept
+set of fail-fast + fail-loud fixes (store errors no longer swallowed; frontend write failures toast
+next to the action instead of an off-screen banner; role gating fail-closed). Docs/JOURNEYS realigned
+to the engine (all 14 node types, real split + backtest semantics, seven added journeys) and a
+source-scanning OpenAPI drift test now fails if a registered route is undocumented.
 Roadmap & exit criteria: [PLAN.md §8](PLAN.md#8-phased-roadmap); deferrals tracked in [BUGS.md](BUGS.md).
 Working today: `platform/{eventlog,store,projection,identity,auth,httpx,ai,web,mo}` (`mo` = the
 `Option[T]`/`Result[T]` types used instead of none/null sentinels where they're easy to mishandle;

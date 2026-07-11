@@ -10,9 +10,11 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 
@@ -83,18 +85,53 @@ func (h *Handler) RequestReview(ctx context.Context, id identity.Identity, cmd d
 	return caseID, e, nil
 }
 
-// AssignCase assigns an existing case to a reviewer.
+// AssignCase assigns an existing case to a reviewer. Claiming a case is a
+// compare-and-swap, not a blind write: two reviewers who both open an unassigned
+// case and both click Assign must not both be told they own it. The loser of the
+// race is refused, and taking a case off a colleague has to be asked for
+// explicitly (cmd.Reassign) rather than happening by accident.
 func (h *Handler) AssignCase(ctx context.Context, id identity.Identity, cmd domain.AssignCase) (eventlog.Envelope, error) {
-	return h.onExisting(ctx, id, cmd.CaseID, cmd.Validate, events.TypeCaseAssigned,
-		events.CaseAssigned{CaseID: cmd.CaseID, Assignee: cmd.Assignee})
+	if err := id.Valid(); err != nil {
+		return eventlog.Envelope{}, err
+	}
+	if err := cmd.Validate(); err != nil {
+		return eventlog.Envelope{}, err
+	}
+	b, err := json.Marshal(events.CaseAssigned{CaseID: cmd.CaseID, Assignee: cmd.Assignee})
+	if err != nil {
+		return eventlog.Envelope{}, fmt.Errorf("case-manager: marshal %s: %w", events.TypeCaseAssigned, err)
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	// The claim pins the append to the state we folded, so the check-then-append is
+	// atomic across processes and not just within this Handler's mutex. A loser
+	// re-folds and re-checks against the assignee that actually won.
+	for attempt := 0; ; attempt++ {
+		st, err := h.caseState(ctx, id, cmd.CaseID)
+		if err != nil {
+			return eventlog.Envelope{}, err
+		}
+		if st.assignee == cmd.Assignee {
+			return eventlog.Envelope{}, fmt.Errorf("case-manager: case %q is already assigned to %q", cmd.CaseID, cmd.Assignee)
+		}
+		if st.assignee != "" && !cmd.Reassign {
+			return eventlog.Envelope{}, fmt.Errorf("case-manager: case %q is already assigned to %q — reassign to take it", cmd.CaseID, st.assignee)
+		}
+		e, err := h.appendUnique(ctx, id, events.TypeCaseAssigned, b, assignClaim(cmd.CaseID, st.assignCount))
+		if errors.Is(err, eventlog.ErrConflict) && attempt < maxClaimRetries {
+			continue
+		}
+		return e, err
+	}
 }
 
-// SetStatus transitions an existing case to a new status. Unlike the other
-// mutations it folds the case's current status under the lock and enforces the
-// CaseStatus lifecycle: a completed (terminal) case cannot be reopened, which
-// would otherwise silently re-arm the SLA sweep against a legitimately-closed
-// case. Existence and transition checks are serialized with the append so the
-// decision is linearizable.
+// SetStatus transitions an existing case to a new status, enforcing the CaseStatus
+// lifecycle: a completed (terminal) case cannot be reopened, which would otherwise
+// silently re-arm the SLA sweep against a legitimately-closed case. The transition
+// is appended under a claim on the number of transitions folded, so the check and
+// the append are atomic across processes — two nodes both folding `needs_review`
+// cannot both commit, one moving the case to `completed` and the other back to
+// `in_progress`.
 func (h *Handler) SetStatus(ctx context.Context, id identity.Identity, cmd domain.SetStatus) (eventlog.Envelope, error) {
 	if err := id.Valid(); err != nil {
 		return eventlog.Envelope{}, err
@@ -108,19 +145,56 @@ func (h *Handler) SetStatus(ctx context.Context, id identity.Identity, cmd domai
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	for attempt := 0; ; attempt++ {
+		st, err := h.caseState(ctx, id, cmd.CaseID)
+		if err != nil {
+			return eventlog.Envelope{}, err
+		}
+		if !st.status.CanTransitionTo(cmd.Status) {
+			return eventlog.Envelope{}, fmt.Errorf("case-manager: cannot transition case %q from %s to %s", cmd.CaseID, st.status, cmd.Status)
+		}
+		e, err := h.appendUnique(ctx, id, events.TypeCaseStatusChanged, b, statusClaim(cmd.CaseID, st.statusCount))
+		if errors.Is(err, eventlog.ErrConflict) && attempt < maxClaimRetries {
+			continue
+		}
+		return e, err
+	}
+}
+
+// maxClaimRetries bounds the CAS retry loops: a claim is only lost to a concurrent
+// writer, and after a few rounds the caller should see the conflict rather than
+// spin.
+const maxClaimRetries = 8
+
+// caseState folds one case's current state, failing loudly when the case does not
+// exist for the tenant. Callers hold h.mu.
+func (h *Handler) caseState(ctx context.Context, id identity.Identity, caseID string) (slaCaseState, error) {
 	states, err := h.caseStates(ctx, id)
 	if err != nil {
-		return eventlog.Envelope{}, err
+		return slaCaseState{}, err
 	}
-	st, ok := states[cmd.CaseID]
+	st, ok := states[caseID]
 	if !ok {
-		return eventlog.Envelope{}, fmt.Errorf("case-manager: unknown case %q", cmd.CaseID)
+		return slaCaseState{}, fmt.Errorf("case-manager: unknown case %q", caseID)
 	}
-	if !st.status.CanTransitionTo(cmd.Status) {
-		return eventlog.Envelope{}, fmt.Errorf("case-manager: cannot transition case %q from %s to %s", cmd.CaseID, st.status, cmd.Status)
-	}
-	return h.append(ctx, id, events.TypeCaseStatusChanged, b)
+	return st, nil
 }
+
+// The claims below make each fold-then-append atomic across processes. Assign and
+// status carry the count of prior events of their kind, so they are an expected-
+// version check; the SLA claims are per-case-once, so a second sweep on another
+// node cannot double-emit a breach.
+func assignClaim(caseID string, seen int) string {
+	return "case.assign\x00" + caseID + "\x00" + strconv.Itoa(seen)
+}
+
+func statusClaim(caseID string, seen int) string {
+	return "case.status\x00" + caseID + "\x00" + strconv.Itoa(seen)
+}
+
+func slaBreachClaim(caseID string) string { return "case.sla_breach\x00" + caseID }
+
+func slaReminderClaim(caseID string) string { return "case.sla_reminder\x00" + caseID }
 
 // AddNote appends a note to an existing case.
 func (h *Handler) AddNote(ctx context.Context, id identity.Identity, cmd domain.AddNote) (eventlog.Envelope, error) {
@@ -128,13 +202,17 @@ func (h *Handler) AddNote(ctx context.Context, id identity.Identity, cmd domain.
 		events.CaseNoteAdded{CaseID: cmd.CaseID, Text: cmd.Text})
 }
 
-// slaCaseState is the folded state the SLA sweep needs per case.
+// slaCaseState is the folded state of one case: what the SLA sweep needs, plus the
+// current assignee and the per-kind event counts the CAS claims pin an append to.
 type slaCaseState struct {
 	createdAt time.Time
 	slaDays   int
 	status    domain.CaseStatus
 	breached  bool
 	reminded  bool
+
+	assignee                 string
+	assignCount, statusCount int
 }
 
 // SweepSLA finds the tenant's open cases whose SLA deadline has passed as of now
@@ -173,7 +251,14 @@ func (h *Handler) SweepSLA(ctx context.Context, id identity.Identity, now time.T
 			if err != nil {
 				return breached, fmt.Errorf("case-manager: marshal sla_breached: %w", err)
 			}
-			if _, err := h.append(ctx, id, events.TypeCaseSLABreached, b); err != nil {
+			// The fold above dedupes within this process; the claim dedupes across
+			// them, so a second scheduler (or a manual sweep on another node) racing
+			// this one cannot breach the same case twice and fire its escalation and
+			// webhook twice. Losing the claim means someone else recorded it.
+			if _, err := h.appendUnique(ctx, id, events.TypeCaseSLABreached, b, slaBreachClaim(cid)); err != nil {
+				if errors.Is(err, eventlog.ErrConflict) {
+					continue
+				}
 				return breached, err
 			}
 			breached = append(breached, cid)
@@ -186,7 +271,10 @@ func (h *Handler) SweepSLA(ctx context.Context, id identity.Identity, now time.T
 			if err != nil {
 				return breached, fmt.Errorf("case-manager: marshal sla_reminder: %w", err)
 			}
-			if _, err := h.append(ctx, id, events.TypeCaseSLAReminder, b); err != nil {
+			if _, err := h.appendUnique(ctx, id, events.TypeCaseSLAReminder, b, slaReminderClaim(cid)); err != nil {
+				if errors.Is(err, eventlog.ErrConflict) {
+					continue
+				}
 				return breached, err
 			}
 		}
@@ -220,16 +308,31 @@ func (h *Handler) caseStates(ctx context.Context, id identity.Identity) (map[str
 				return nil, fmt.Errorf("case-manager: decode escalated seq %d: %w", e.Seq, err)
 			}
 			states[p.CaseID] = slaCaseState{createdAt: e.Time, slaDays: p.SLADays, status: domain.StatusNeedsReview}
+		case events.TypeCaseAssigned:
+			var p events.CaseAssigned
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				return nil, fmt.Errorf("case-manager: decode assigned seq %d: %w", e.Seq, err)
+			}
+			if st, ok := states[p.CaseID]; ok {
+				st.assignee = p.Assignee
+				st.assignCount++
+				states[p.CaseID] = st
+			}
 		case events.TypeCaseStatusChanged:
 			var p events.CaseStatusChanged
 			if err := json.Unmarshal(e.Payload, &p); err != nil {
 				return nil, fmt.Errorf("case-manager: decode status seq %d: %w", e.Seq, err)
 			}
 			if st, ok := states[p.CaseID]; ok {
-				if status, valid := domain.ParseStatus(p.Status); valid {
-					st.status = status
-					states[p.CaseID] = st
+				// A status the domain no longer knows must not be silently dropped:
+				// keeping the prior status would sweep a case that actually closed.
+				status, valid := domain.ParseStatus(p.Status)
+				if !valid {
+					return nil, fmt.Errorf("case-manager: case %q has unknown status %q at seq %d", p.CaseID, p.Status, e.Seq)
 				}
+				st.status = status
+				st.statusCount++
+				states[p.CaseID] = st
 			}
 		case events.TypeCaseSLABreached:
 			var p events.CaseSLABreached
@@ -327,6 +430,13 @@ func caseKey(org, workspace, caseID string) string {
 }
 
 func (h *Handler) append(ctx context.Context, id identity.Identity, typ string, payload json.RawMessage) (eventlog.Envelope, error) {
+	return h.appendUnique(ctx, id, typ, payload, "")
+}
+
+// appendUnique appends under a tenant-global claim key: a second append carrying
+// the same key fails with ErrConflict, which is how a fold-then-append stays
+// atomic across processes. An empty key claims nothing.
+func (h *Handler) appendUnique(ctx context.Context, id identity.Identity, typ string, payload json.RawMessage, unique string) (eventlog.Envelope, error) {
 	return h.log.Append(ctx, eventlog.Envelope{
 		Org:       id.Org,
 		Workspace: id.Workspace,
@@ -335,6 +445,7 @@ func (h *Handler) append(ctx context.Context, id identity.Identity, typ string, 
 		Type:      typ,
 		Time:      h.now(),
 		Payload:   payload,
+		Unique:    unique,
 	})
 }
 

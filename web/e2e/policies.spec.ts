@@ -13,6 +13,7 @@ test.beforeEach(async ({ page }) => {
 });
 
 test('creates a policy bound to a flow and publishes a band', async ({ page, request }) => {
+  page.on('dialog', (d) => d.accept()); // publishing a policy version now asks to confirm
   const slug = 'pol-' + Math.random().toString(36).slice(2, 8);
   const created = await request.post('/v1/flows', {
     headers: { 'X-Api-Key': KEY },

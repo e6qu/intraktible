@@ -21,6 +21,7 @@
   import { roleAtLeast } from '$lib/roles';
   import { user } from '$lib/session';
   import { appHref } from '$lib/paths';
+  import { toast } from '$lib/toast';
 
   // API calls authenticate via the session cookie (empty key -> no X-Api-Key header).
   const key = '';
@@ -94,17 +95,28 @@
   }
 
   let busy = $state(false);
-  async function run(action: () => Promise<void>) {
+  async function run(action: () => Promise<void>, success: string) {
     error = '';
     busy = true;
     try {
       await action();
       await load();
+      toast.success(success);
     } catch (e) {
-      error = e instanceof Error ? e.message : String(e);
+      toast.error(e instanceof Error ? e.message : String(e));
     } finally {
       busy = false;
     }
+  }
+
+  // The backend refuses to overwrite another reviewer's claim, so taking a case over
+  // is an explicit act the reviewer confirms — not something an Assign click does
+  // silently while its owner is halfway through the review.
+  async function claim(target: string) {
+    const current = c?.assignee ?? '';
+    const takeover = current !== '' && current !== target;
+    if (takeover && !confirm(`${current} is reviewing this case. Take it over?`)) return;
+    await assignCase(key, caseID, target, takeover);
   }
 
   $effect(() => {
@@ -191,7 +203,7 @@
     <div class="resolve-bar">
       <button
         class="resolve"
-        onclick={() => run(() => setCaseStatus(key, caseID, 'completed'))}
+        onclick={() => run(() => setCaseStatus(key, caseID, 'completed'), 'Case resolved')}
         disabled={busy || !roleAtLeast($user?.role, 'operator')}
         title={!roleAtLeast($user?.role, 'operator') ? 'Requires the operator role' : undefined}
       >
@@ -209,16 +221,26 @@
       <div class="row">
         <input bind:value={assignee} placeholder="assignee" aria-label="assignee" />
         <button
-          onclick={() => run(() => assignCase(key, caseID, assignee))}
-          disabled={busy || !roleAtLeast($user?.role, 'operator')}
+          onclick={() =>
+            run(async () => {
+              await claim(assignee);
+              assignee = ''; // only clear after a successful save (run() surfaces errors)
+            }, 'Assignee updated')}
+          disabled={busy || !assignee.trim() || !roleAtLeast($user?.role, 'operator')}
           title={!roleAtLeast($user?.role, 'operator') ? 'Requires the operator role' : undefined}
-          >Assign</button
+          >{c.assignee ? 'Reassign' : 'Assign'}</button
         >
         <button
-          onclick={() => run(() => assignCase(key, caseID, $user?.actor ?? ''))}
-          disabled={busy || !$user?.actor || !roleAtLeast($user?.role, 'operator')}
-          title={!roleAtLeast($user?.role, 'operator') ? 'Requires the operator role' : undefined}
-          >Assign to me</button
+          onclick={() => run(() => claim($user?.actor ?? ''), 'Assigned to you')}
+          disabled={busy ||
+            !$user?.actor ||
+            c.assignee === $user?.actor ||
+            !roleAtLeast($user?.role, 'operator')}
+          title={c.assignee === $user?.actor
+            ? 'This case is already yours'
+            : !roleAtLeast($user?.role, 'operator')
+              ? 'Requires the operator role'
+              : undefined}>{c.assignee ? 'Take over' : 'Assign to me'}</button
         >
       </div>
       <div class="row">
@@ -228,7 +250,7 @@
           <option value="completed">completed</option>
         </select>
         <button
-          onclick={() => run(() => setCaseStatus(key, caseID, newStatus))}
+          onclick={() => run(() => setCaseStatus(key, caseID, newStatus), 'Status updated')}
           disabled={busy || !roleAtLeast($user?.role, 'operator')}
           title={!roleAtLeast($user?.role, 'operator') ? 'Requires the operator role' : undefined}
           >Set status</button
@@ -240,8 +262,8 @@
           onclick={() =>
             run(async () => {
               await addCaseNote(key, caseID, noteText);
-              noteText = ''; // only clear after a successful save (run() swallows errors)
-            })}
+              noteText = ''; // only clear after a successful save (run() surfaces errors)
+            }, 'Note added')}
           disabled={busy || !roleAtLeast($user?.role, 'operator')}
           title={!roleAtLeast($user?.role, 'operator') ? 'Requires the operator role' : undefined}
         >

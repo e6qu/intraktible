@@ -101,12 +101,14 @@ func TestImportFlowOverHTTP(t *testing.T) {
 		"graph": map[string]any{
 			"nodes": []map[string]any{
 				{"id": "in", "type": "input"},
-				{"id": "s", "type": "split", "name": "route"},
+				{"id": "s", "type": "split", "name": "route", "config": map[string]any{"condition": "true"}},
 				{"id": "out", "type": "output"},
+				{"id": "decline", "type": "output"},
 			},
 			"edges": []map[string]any{
 				{"from": "in", "to": "s"},
 				{"from": "s", "to": "out", "branch": "yes"},
+				{"from": "s", "to": "decline", "branch": "no"},
 			},
 		},
 	}
@@ -529,12 +531,14 @@ func TestExportFlowOverHTTP(t *testing.T) {
 		"graph": map[string]any{
 			"nodes": []map[string]any{
 				{"id": "in", "type": "input"},
-				{"id": "s", "type": "split", "name": "score"},
+				{"id": "s", "type": "split", "name": "score", "config": map[string]any{"condition": "true"}},
 				{"id": "out", "type": "output"},
+				{"id": "decline", "type": "output"},
 			},
 			"edges": []map[string]any{
 				{"from": "in", "to": "s"},
 				{"from": "s", "to": "out", "branch": "yes"},
+				{"from": "s", "to": "decline", "branch": "no"},
 			},
 		},
 	}, http.StatusCreated, nil)
@@ -2393,6 +2397,103 @@ func TestAssertionsAndPromoteGateOverHTTP(t *testing.T) {
 		map[string]any{"from": "sandbox", "to": "staging"}, http.StatusCreated, &promo)
 	if !promo.Promoted {
 		t.Fatalf("promote should succeed once assertions pass: %+v", promo)
+	}
+}
+
+// TestProductionPromotionIsProposableWhileUnhealthy: promoting a fix to production
+// must not be blocked by the state the fix addresses. Raising a deployment request —
+// via /promote or directly — never runs the health gate (a firing monitor on the
+// live version is exactly what a fix targets), so the request is always accepted and
+// production is governed by the four-eyes approval, not an automated propose-time
+// gate.
+func TestProductionPromotionIsProposableWhileUnhealthy(t *testing.T) {
+	api := startEngine(t)
+	var created struct {
+		FlowID string `json:"flow_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows",
+		map[string]string{"slug": "gates", "name": "Gates"}, http.StatusCreated, &created)
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/versions",
+		map[string]any{"graph": flowtest.ConstGraph("approve")}, http.StatusCreated, nil)
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/deployments",
+		map[string]any{"environment": "staging", "version": 1}, http.StatusCreated, nil)
+
+	// A monitor fires on the live flow.
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/monitors",
+		map[string]any{"metric": "volume", "op": "gt", "threshold": 0}, http.StatusCreated, nil)
+	api.Request(t, http.MethodPost, "/v1/flows/gates/staging/decide",
+		map[string]any{"data": map[string]any{}}, http.StatusOK, nil)
+
+	// Both routes to a production request still succeed while the monitor fires.
+	var direct struct {
+		RequestID string `json:"request_id"`
+	}
+	if !testutil.Eventually(t, func() bool {
+		api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/deployment-requests",
+			map[string]any{"environment": "production", "version": 1}, http.StatusCreated, &direct)
+		return direct.RequestID != ""
+	}) {
+		t.Fatal("a direct production request must be proposable while a monitor fires")
+	}
+	var promo struct {
+		Pending   bool   `json:"pending"`
+		RequestID string `json:"request_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/promote",
+		map[string]any{"from": "staging", "to": "production"}, http.StatusCreated, &promo)
+	if !promo.Pending || promo.RequestID == "" {
+		t.Fatalf("a production promote must raise a pending request even while unhealthy: %+v", promo)
+	}
+
+	// A different user approves — four-eyes is the production control, and it is not
+	// blocked by the firing monitor.
+	checker := api.AddKey("gate-checker", auth.APIKey{
+		ID: "gchk", Identity: identity.Identity{Org: api.Identity.Org, Workspace: api.Identity.Workspace, Actor: "checker"},
+		Scope: auth.ScopeAll, Role: auth.RoleAdmin,
+	})
+	if !testutil.Eventually(t, func() bool {
+		return checker.RequestStatus(t, http.MethodPost,
+			"/v1/flows/"+created.FlowID+"/deployment-requests/"+direct.RequestID+"/approve", map[string]any{}, nil) == http.StatusOK
+	}) {
+		t.Fatal("four-eyes approval must ship the fix despite the firing monitor")
+	}
+}
+
+// TestProductionCannotBeDirectlyDeployedOrForced: production is never a direct
+// deploy — it must go through maker-checker — and a forced /promote to production
+// still only raises a review request (production pins AllowForce=false), so force
+// cannot shortcut four-eyes.
+func TestProductionCannotBeDirectlyDeployedOrForced(t *testing.T) {
+	api := startEngine(t)
+	var created struct {
+		FlowID string `json:"flow_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows",
+		map[string]string{"slug": "forced", "name": "Forced"}, http.StatusCreated, &created)
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/versions",
+		map[string]any{"graph": flowtest.ConstGraph("approve")}, http.StatusCreated, nil)
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/deployments",
+		map[string]any{"environment": "staging", "version": 1}, http.StatusCreated, nil)
+
+	// A direct deploy to production is refused outright.
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/deployments",
+		map[string]any{"environment": "production", "version": 1}, http.StatusBadRequest, nil)
+
+	// A forced promote to production still only raises a pending request — force
+	// cannot turn it into a direct deploy.
+	var prod struct {
+		Promoted  bool   `json:"promoted"`
+		Pending   bool   `json:"pending"`
+		RequestID string `json:"request_id"`
+	}
+	if !testutil.Eventually(t, func() bool {
+		return api.RequestStatus(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/promote",
+			map[string]any{"from": "staging", "to": "production", "force": true}, &prod) == http.StatusCreated
+	}) {
+		t.Fatal("a production promote should return created")
+	}
+	if prod.Promoted || !prod.Pending || prod.RequestID == "" {
+		t.Fatalf("force must not turn a production promote into a direct deploy: %+v", prod)
 	}
 }
 

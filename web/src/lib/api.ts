@@ -1641,10 +1641,22 @@ function caseQuery(filter: CaseFilter): string {
   return qs ? '?' + qs : '';
 }
 
+// ApiError carries the HTTP status alongside the backend's message so a caller can
+// branch on it (e.g. show a "not found" copy only for a real 404, not any failure).
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number
+  ) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
+
 // errorOrStatus throws the backend's error message (or a status fallback).
 async function errorOrStatus(res: Response, label: string): Promise<never> {
   const body = (await res.json().catch(() => ({}))) as { error?: string };
-  throw new Error(body.error ?? `${label}: ${res.status}`);
+  throw new ApiError(body.error ?? `${label}: ${res.status}`, res.status);
 }
 
 export interface AuditEntry {
@@ -2434,13 +2446,16 @@ async function caseAction(
   }
 }
 
+// assignCase claims a case. The backend refuses to overwrite another reviewer's
+// claim unless reassign says to, so two reviewers cannot both believe they own it.
 export function assignCase(
   key: string,
   caseID: string,
   assignee: string,
+  reassign = false,
   fetcher: typeof fetch = recordingFetch
 ): Promise<void> {
-  return caseAction(key, caseID, 'assign', { assignee }, fetcher);
+  return caseAction(key, caseID, 'assign', { assignee, reassign }, fetcher);
 }
 
 export function setCaseStatus(

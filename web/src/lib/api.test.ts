@@ -15,6 +15,7 @@ import {
   exportDecision,
   listDecisions,
   getDecision,
+  ApiError,
   getFlowMetrics,
   backtestFlow,
   whatif,
@@ -182,6 +183,25 @@ describe('decisions + analytics', () => {
 
   it('listDecisions throws loudly on a non-2xx', async () => {
     await expect(listDecisions('k', fetcherReturning(401, {}))).rejects.toThrow(/401/);
+  });
+
+  it('getDecision throws an ApiError carrying the status so a caller can single out a 404', async () => {
+    const err = await getDecision('k', 'gone', fetcherReturning(404, {})).catch((e) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).status).toBe(404);
+  });
+
+  it('ApiError.status distinguishes a real 404 from other failures', async () => {
+    const notFound = await getDecision('k', 'gone', fetcherReturning(404, {})).catch((e) => e);
+    const serverError = await getDecision(
+      'k',
+      'boom',
+      fetcherReturning(500, { error: 'kaboom' })
+    ).catch((e) => e);
+    expect((notFound as ApiError).status).toBe(404);
+    expect((serverError as ApiError).status).toBe(500);
+    // The backend's message is preserved verbatim (not masked as a generic not-found).
+    expect((serverError as ApiError).message).toBe('kaboom');
   });
 });
 
@@ -619,12 +639,19 @@ describe('cases', () => {
     );
   });
 
-  it('assignCase posts to the assign action', async () => {
+  it('assignCase claims a case without taking it from anyone', async () => {
     const fetcher = fetcherReturning(202, {});
-    await assignCase('k', 'c1', 'adam', fetcher);
+    await assignCase('k', 'c1', 'adam', false, fetcher);
     const [url, init] = fetcher.mock.calls[0];
     expect(url).toBe('/v1/cases/c1/assign');
-    expect(init?.body).toBe(JSON.stringify({ assignee: 'adam' }));
+    expect(init?.body).toBe(JSON.stringify({ assignee: 'adam', reassign: false }));
+  });
+
+  it('assignCase asks to take over only when told to', async () => {
+    const fetcher = fetcherReturning(202, {});
+    await assignCase('k', 'c1', 'adam', true, fetcher);
+    const [, init] = fetcher.mock.calls[0];
+    expect(init?.body).toBe(JSON.stringify({ assignee: 'adam', reassign: true }));
   });
 
   it('setCaseStatus surfaces the backend error', async () => {

@@ -11,12 +11,15 @@
     exportDecision,
     resumeDecision,
     decisionCounterfactual,
+    ApiError,
     type Decision,
     type Counterfactual,
     type RunExportFormat
   } from '$lib/api';
   import { toast } from '$lib/toast';
   import { appHref } from '$lib/paths';
+  import { user } from '$lib/session';
+  import { roleAtLeast } from '$lib/roles';
   import Badge from '$lib/Badge.svelte';
   import { statusTone, dispositionTone } from '$lib/badge';
   import { nodeAccent } from '$lib/nodevis';
@@ -28,6 +31,9 @@
   const id = $derived($page.params.decisionId ?? '');
   let d = $state<Decision | null>(null);
   let error = $state('');
+  // A missing decision (real 404) gets the "stale link" copy; any other failure
+  // surfaces the server's actual message rather than masquerading as not-found.
+  let notFound = $state(false);
 
   function msg(e: unknown): string {
     return e instanceof Error ? e.message : String(e);
@@ -56,13 +62,14 @@
       await load();
       toast.success(`Resumed — ${outcome}`);
     } catch (e) {
-      error = msg(e);
+      toast.error(msg(e));
     } finally {
       resuming = false;
     }
   }
   async function load() {
     error = '';
+    notFound = false;
     // Sibling navigation changes id mid-flight; drop a stale response so a slower
     // load for the previous decision can't clobber the one now shown.
     const reqId = id;
@@ -71,7 +78,9 @@
       if (id !== reqId) return;
       d = got;
     } catch (e) {
-      if (id === reqId) error = msg(e);
+      if (id !== reqId) return;
+      if (e instanceof ApiError && e.status === 404) notFound = true;
+      else error = msg(e);
     }
   }
   const RUN_EXPORTS: { format: RunExportFormat; label: string; ext: string; mime: string }[] = [
@@ -137,8 +146,10 @@
 
 <main>
   <Breadcrumb sectionHref="/decisions" sectionLabel="Decisions" current={id} />
-  {#if error}
+  {#if notFound}
     <p class="err">This decision couldn't be loaded — it may not exist or the link is stale.</p>
+  {:else if error}
+    <p class="err">{error} <button class="link" onclick={() => load()}>Retry</button></p>
   {/if}
   {#if d}
     <div class="head">
@@ -146,6 +157,7 @@
     </div>
 
     {#if d.status === 'suspended'}
+      {@const cannotResume = resuming || !roleAtLeast($user?.role, 'operator')}
       <div class="resume" data-testid="resume-panel">
         <div class="resume-body">
           <b><Icon name="manual_review" size={16} /> Paused for human review</b>
@@ -154,10 +166,17 @@
             holding no running process) and resumes when you record an outcome.
           </p>
         </div>
-        <div class="resume-actions">
-          <button disabled={resuming} onclick={() => resume('approve')}>Approve</button>
-          <button disabled={resuming} onclick={() => resume('decline')}>Decline</button>
-          <button class="ghost" disabled={resuming} onclick={() => resume('refer')}>Refer</button>
+        <div
+          class="resume-actions"
+          title={!roleAtLeast($user?.role, 'operator')
+            ? 'Recording a review outcome requires the operator role'
+            : undefined}
+        >
+          <button disabled={cannotResume} onclick={() => resume('approve')}>Approve</button>
+          <button disabled={cannotResume} onclick={() => resume('decline')}>Decline</button>
+          <button class="ghost" disabled={cannotResume} onclick={() => resume('refer')}
+            >Refer</button
+          >
         </div>
       </div>
     {/if}
@@ -233,7 +252,14 @@
         >
       </h2>
       {#if !cf}
-        <button onclick={loadCf} disabled={cfBusy} data-testid="cf-run">
+        <button
+          onclick={loadCf}
+          disabled={cfBusy || !roleAtLeast($user?.role, 'operator')}
+          title={!roleAtLeast($user?.role, 'operator')
+            ? 'Searching counterfactuals re-runs the flow (a recorded operation) — requires the operator role'
+            : undefined}
+          data-testid="cf-run"
+        >
           {cfBusy ? 'Searching…' : 'Find what would flip it'}
         </button>
       {:else if cf.flips.length}
@@ -324,7 +350,7 @@
     </div>
 
     <CommentThread subjectType="decision" subjectId={d.decision_id} title="Discussion" />
-  {:else if !error}
+  {:else if !error && !notFound}
     <Skeleton rows={6} />
   {/if}
 </main>
@@ -631,6 +657,14 @@
   }
   .err {
     color: var(--danger);
+  }
+  button.link {
+    background: none;
+    border: none;
+    color: var(--accent);
+    cursor: pointer;
+    padding: 0.2rem;
+    font: inherit;
   }
   .ok {
     color: var(--ok);

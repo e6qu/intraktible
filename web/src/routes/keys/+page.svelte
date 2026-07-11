@@ -10,6 +10,7 @@
   import Badge from '$lib/Badge.svelte';
   import CodeSnippet from '$lib/CodeSnippet.svelte';
   import { lifecycleTone } from '$lib/badge';
+  import { user } from '$lib/session';
   import {
     listApiKeys,
     createApiKey,
@@ -123,6 +124,10 @@
 
   async function revoke(id: string) {
     if (mutating) return;
+    // Revoking kills a live credential instantly — any service still using its secret
+    // starts failing to authenticate. Confirm before the irreversible write.
+    if (!confirm('Revoke this API key? Any service using its secret will stop authenticating.'))
+      return;
     error = '';
     mutating = id;
     try {
@@ -145,6 +150,19 @@
   }
 
   onMount(load);
+
+  // Re-gate when the demo user switches mid-page (DemoBanner changes $user without
+  // navigating, so there is no route change to trigger a reload): re-fetch on a role
+  // change so a downgraded viewer stops seeing the admin-only key list, and an
+  // upgraded admin gets it, without a hard reload.
+  let lastRole = $state($user?.role);
+  $effect(() => {
+    const role = $user?.role;
+    if (role !== lastRole) {
+      lastRole = role;
+      void load();
+    }
+  });
 </script>
 
 <main>

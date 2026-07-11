@@ -78,7 +78,7 @@
       // doesn't settle. The button clears immediately; the route advances when it can.
       void goto(appHref(`/engine/${created.flow_id}`));
     } catch (e) {
-      error = e instanceof Error ? e.message : String(e);
+      toast.error(e instanceof Error ? e.message : String(e));
     } finally {
       busy = false;
     }
@@ -104,7 +104,7 @@
       toast.success(`Created ${res.slug} from "${t.name}"`);
       void goto(appHref(`/engine/${res.flow_id}`));
     } catch (e) {
-      error = e instanceof Error ? e.message : String(e);
+      toast.error(e instanceof Error ? e.message : String(e));
     } finally {
       templating = '';
     }
@@ -136,7 +136,7 @@
       };
       draftGraph = graph;
     } catch (e) {
-      error = e instanceof Error ? e.message : String(e);
+      toast.error(e instanceof Error ? e.message : String(e));
     } finally {
       drafting = false;
     }
@@ -153,7 +153,7 @@
       toast.success(`Drafted ${res.slug} — opening in the builder`);
       void goto(appHref(`/engine/${res.flow_id}`));
     } catch (e) {
-      error = e instanceof Error ? e.message : String(e);
+      toast.error(e instanceof Error ? e.message : String(e));
     } finally {
       drafting = false;
     }
@@ -165,12 +165,11 @@
   const isBundle = (d: unknown): d is { flows: unknown[] } =>
     typeof d === 'object' && d !== null && Array.isArray((d as { flows?: unknown }).flows);
   async function runImport() {
-    error = '';
     let doc: unknown;
     try {
       doc = JSON.parse(importText);
     } catch {
-      error = 'Import document is not valid JSON';
+      toast.error('Import document is not valid JSON');
       return;
     }
     importing = true;
@@ -196,7 +195,7 @@
         void goto(appHref(`/engine/${res.flow_id}`));
       }
     } catch (e) {
-      error = e instanceof Error ? e.message : String(e);
+      toast.error(e instanceof Error ? e.message : String(e));
     } finally {
       importing = false;
     }
