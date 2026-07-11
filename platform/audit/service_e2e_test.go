@@ -19,8 +19,8 @@ import (
 func TestAuditEndpointReturnsTenantTrail(t *testing.T) {
 	log, st := testutil.NewLogStore(t)
 	id := identity.Identity{Org: "o", Workspace: "w", Actor: "alice"}
-	api := testutil.StartAPI(t, log, st, "admin-key", id, audit.New(log).Routes)
 
+	// Seed before StartAPI so the boot projection indexes these events.
 	at := time.Date(2026, 6, 16, 9, 0, 0, 0, time.UTC)
 	if _, err := log.Append(context.Background(), eventlog.Envelope{
 		Org: "o", Workspace: "w", Actor: "alice", Stream: "flows",
@@ -35,11 +35,16 @@ func TestAuditEndpointReturnsTenantTrail(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	api := testutil.StartAPI(t, log, st, "admin-key", id, audit.New(st).Routes, audit.Projector{})
+
 	var out struct {
 		Entries []audit.Entry `json:"entries"`
 	}
-	api.Request(t, http.MethodGet, "/v1/audit", nil, http.StatusOK, &out)
-	if len(out.Entries) != 1 {
+	if !testutil.Eventually(t, func() bool {
+		out.Entries = nil
+		api.Request(t, http.MethodGet, "/v1/audit", nil, http.StatusOK, &out)
+		return len(out.Entries) == 1
+	}) {
 		t.Fatalf("want 1 tenant entry, got %d: %+v", len(out.Entries), out.Entries)
 	}
 	if out.Entries[0].Type != "flow.created" || out.Entries[0].Actor != "alice" {
@@ -53,13 +58,25 @@ func TestAuditEndpointReturnsTenantTrail(t *testing.T) {
 func TestAuditEndpointCSVExport(t *testing.T) {
 	log, st := testutil.NewLogStore(t)
 	id := identity.Identity{Org: "o", Workspace: "w", Actor: "alice"}
-	api := testutil.StartAPI(t, log, st, "admin-key", id, audit.New(log).Routes)
 
 	if _, err := log.Append(context.Background(), eventlog.Envelope{
 		Org: "o", Workspace: "w", Actor: "alice", Stream: "cases",
 		Type: "case.opened", Time: time.Now().UTC(), Payload: []byte(`{"case_id":"c1"}`),
 	}); err != nil {
 		t.Fatal(err)
+	}
+
+	api := testutil.StartAPI(t, log, st, "admin-key", id, audit.New(st).Routes, audit.Projector{})
+
+	// Wait for the boot projection to index the seeded event before exporting.
+	if !testutil.Eventually(t, func() bool {
+		var out struct {
+			Entries []audit.Entry `json:"entries"`
+		}
+		api.Request(t, http.MethodGet, "/v1/audit", nil, http.StatusOK, &out)
+		return len(out.Entries) == 1
+	}) {
+		t.Fatal("audit entry never indexed")
 	}
 
 	req, _ := http.NewRequest(http.MethodGet, api.Server.URL+"/v1/audit?format=csv", http.NoBody)

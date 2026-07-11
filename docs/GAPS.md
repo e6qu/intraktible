@@ -137,8 +137,15 @@ weeks, **L** = a real project.
    day so replay stays deterministic), and an SLO may set a `window_days` (0 = all-time).
    Attainment over the window keeps a long-lived flow's recent breach from being diluted
    by its lifetime history; the SLO card shows the window and lets an operator set it.
-9. **Audit query is an O(n) log scan — M (scale).** Correct and append-only, but reads
-   the whole event log per query; needs an indexed audit projection at scale. (Disclosed.)
+9. **Indexed audit projection — DONE.** The audit read no longer folds the whole
+   (multi-tenant) event log per query. A platform-level `audit.Projector` re-indexes
+   every event into an `audit_entries` collection keyed by `(org, workspace, seq)`, so a
+   query is an INDEXED prefix range scan of just the caller's tenant (the store's
+   C-collation `(collection, key)` index bounds it on SQLite/Postgres) over pre-derived
+   compact entries — not a re-read of every event. Trade-off: the audit read is now
+   eventually-consistent (a projection) like every other read model, and the index
+   duplicates the payload for the resource-value filter; both are the standard cost of
+   an indexed read model and it rebuilds from the log on replay.
 
 ## Where intraktible genuinely leads
 

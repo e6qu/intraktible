@@ -11,8 +11,22 @@ import (
 	"github.com/e6qu/intraktible/platform/audit"
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/identity"
+	"github.com/e6qu/intraktible/platform/projection"
+	"github.com/e6qu/intraktible/platform/store"
 	"github.com/e6qu/intraktible/platform/testutil"
 )
+
+// built seeds the mixed trail and projects it into the audit index, returning the
+// store the reads run against and the caller identity.
+func built(t *testing.T) (store.Store, identity.Identity) {
+	t.Helper()
+	log, st := testutil.NewLogStore(t)
+	id := seed(t, log)
+	if err := projection.New(log, st, audit.Projector{}).Start(context.Background()); err != nil {
+		t.Fatalf("project: %v", err)
+	}
+	return st, id
+}
 
 func appended(t *testing.T, log eventlog.Log, e eventlog.Envelope) {
 	t.Helper()
@@ -35,10 +49,9 @@ func seed(t *testing.T, log eventlog.Log) identity.Identity {
 }
 
 func TestReadScopesToTenantNewestFirst(t *testing.T) {
-	log, _ := testutil.NewLogStore(t)
-	id := seed(t, log)
+	st, id := built(t)
 
-	got, err := audit.Read(context.Background(), log, id, audit.Query{})
+	got, err := audit.Read(context.Background(), st, id, audit.Query{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,51 +70,48 @@ func TestReadScopesToTenantNewestFirst(t *testing.T) {
 }
 
 func TestReadFilters(t *testing.T) {
-	log, _ := testutil.NewLogStore(t)
-	id := seed(t, log)
+	st, id := built(t)
 	ctx := context.Background()
 
-	byStream, _ := audit.Read(ctx, log, id, audit.Query{Stream: "cases"})
+	byStream, _ := audit.Read(ctx, st, id, audit.Query{Stream: "cases"})
 	if len(byStream) != 1 || byStream[0].Stream != "cases" {
 		t.Fatalf("stream filter: %+v", byStream)
 	}
-	byActor, _ := audit.Read(ctx, log, id, audit.Query{Actor: "bob"})
+	byActor, _ := audit.Read(ctx, st, id, audit.Query{Actor: "bob"})
 	if len(byActor) != 1 || byActor[0].Actor != "bob" {
 		t.Fatalf("actor filter: %+v", byActor)
 	}
-	byType, _ := audit.Read(ctx, log, id, audit.Query{Type: "flow.created"})
+	byType, _ := audit.Read(ctx, st, id, audit.Query{Type: "flow.created"})
 	if len(byType) != 1 {
 		t.Fatalf("type filter: %+v", byType)
 	}
 	// Resource filter walks the payload: both flow events reference f1, the case does not.
-	byResource, _ := audit.Read(ctx, log, id, audit.Query{Resource: "f1"})
+	byResource, _ := audit.Read(ctx, st, id, audit.Query{Resource: "f1"})
 	if len(byResource) != 2 {
 		t.Fatalf("resource filter f1: want 2, got %+v", byResource)
 	}
 }
 
 func TestReadTimeRangeAndLimit(t *testing.T) {
-	log, _ := testutil.NewLogStore(t)
-	id := seed(t, log)
+	st, id := built(t)
 	ctx := context.Background()
 
 	// Only events at/after 10:00 (the published + case events).
 	since := time.Date(2026, 6, 16, 10, 0, 0, 0, time.UTC)
-	windowed, _ := audit.Read(ctx, log, id, audit.Query{Since: since})
+	windowed, _ := audit.Read(ctx, st, id, audit.Query{Since: since})
 	if len(windowed) != 2 {
 		t.Fatalf("since filter: want 2, got %+v", windowed)
 	}
 
-	limited, _ := audit.Read(ctx, log, id, audit.Query{Limit: 1})
+	limited, _ := audit.Read(ctx, st, id, audit.Query{Limit: 1})
 	if len(limited) != 1 || limited[0].Type != "case.opened" {
 		t.Fatalf("limit: want the single newest, got %+v", limited)
 	}
 }
 
 func TestCSV(t *testing.T) {
-	log, _ := testutil.NewLogStore(t)
-	id := seed(t, log)
-	entries, _ := audit.Read(context.Background(), log, id, audit.Query{})
+	st, id := built(t)
+	entries, _ := audit.Read(context.Background(), st, id, audit.Query{})
 	doc, err := audit.CSV(entries)
 	if err != nil {
 		t.Fatal(err)

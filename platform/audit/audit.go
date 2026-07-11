@@ -11,24 +11,59 @@ import (
 	"context"
 	"encoding/csv"
 	"encoding/json"
-	"sort"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/identity"
+	"github.com/e6qu/intraktible/platform/store"
 )
+
+// Collection holds the indexed audit entries. Instead of folding the whole (multi-
+// tenant) event log on every audit query, a projector writes one compact Entry per
+// event keyed by (org, workspace, seq); a query then does an INDEXED prefix range
+// scan of just the caller's tenant — the O(n)→indexed fix for large logs.
+const Collection = "audit_entries"
 
 // Entry is one audit record: an event projected to its accountability fields.
 type Entry struct {
-	Seq     uint64          `json:"seq"`
-	ID      string          `json:"id"`
-	Time    time.Time       `json:"time"`
-	Actor   string          `json:"actor"`
-	Stream  string          `json:"stream"`
-	Type    string          `json:"type"`
-	Payload json.RawMessage `json:"payload,omitempty"`
+	Seq       uint64          `json:"seq"`
+	Org       string          `json:"org"`
+	Workspace string          `json:"workspace"`
+	ID        string          `json:"id"`
+	Time      time.Time       `json:"time"`
+	Actor     string          `json:"actor"`
+	Stream    string          `json:"stream"`
+	Type      string          `json:"type"`
+	Payload   json.RawMessage `json:"payload,omitempty"`
+}
+
+// Projector folds every event into the audit index. It owns no domain state — it is
+// a pure re-indexing of the log — so it fits any module set and rebuilds from seq 0.
+type Projector struct{}
+
+// Name identifies the projector.
+func (Projector) Name() string { return "audit_entries" }
+
+// Collections lists the store collection this projector owns.
+func (Projector) Collections() []string { return []string{Collection} }
+
+// Apply writes one audit Entry per event. Idempotent by key (seq), so a replay
+// rewrites the same doc.
+func (Projector) Apply(ctx context.Context, e eventlog.Envelope, s store.Store) error {
+	entry := Entry{
+		Seq: e.Seq, Org: e.Org, Workspace: e.Workspace, ID: e.ID, Time: e.Time,
+		Actor: e.Actor, Stream: e.Stream, Type: e.Type, Payload: e.Payload,
+	}
+	return store.PutDoc(ctx, s, Collection, entryKey(e.Org, e.Workspace, e.Seq), entry)
+}
+
+// entryKey keys an entry under its tenant with a zero-padded seq, so the store's
+// lexical key order matches numeric seq order (newest-first by reverse scan).
+func entryKey(org, workspace string, seq uint64) string {
+	return store.Key(org, workspace, fmt.Sprintf("%020d", seq))
 }
 
 // Query filters an audit read. Zero-value fields are not applied; Since/Until are
@@ -62,12 +97,11 @@ const (
 	MaxLimit = 1000
 )
 
-// Read scans the log for the caller's tenant (org+workspace) and returns the
-// matching entries most-recent first, capped at the (clamped) query limit. It
-// folds the whole log — the same O(n) read the projection rebuild and the
-// existence checks use; the SQLite log is the indexed backend for large logs.
-func Read(ctx context.Context, log eventlog.Log, id identity.Identity, q Query) ([]Entry, error) {
-	out, err := matched(ctx, log, id, q)
+// Read returns the caller's tenant's matching audit entries, most-recent first,
+// capped at the (clamped) query limit. It reads the indexed audit projection —
+// a tenant-prefixed range scan of pre-derived entries — not a fold of the whole log.
+func Read(ctx context.Context, s store.Store, id identity.Identity, q Query) ([]Entry, error) {
+	out, err := matched(ctx, s, id, q)
 	if err != nil {
 		return nil, err
 	}
@@ -79,8 +113,8 @@ func Read(ctx context.Context, log eventlog.Log, id identity.Identity, q Query) 
 
 // ReadPage is Read with offset+total, for the paginated UI. Total is the full
 // match count (before limit/offset); Entries is the requested window.
-func ReadPage(ctx context.Context, log eventlog.Log, id identity.Identity, q Query) (Page, error) {
-	all, err := matched(ctx, log, id, q)
+func ReadPage(ctx context.Context, s store.Store, id identity.Identity, q Query) (Page, error) {
+	all, err := matched(ctx, s, id, q)
 	if err != nil {
 		return Page{}, err
 	}
@@ -100,25 +134,12 @@ func ReadPage(ctx context.Context, log eventlog.Log, id identity.Identity, q Que
 	return Page{Entries: all[lo:hi], Total: total, Limit: limit, Offset: lo}, nil
 }
 
-// matched folds the log for the caller's tenant and returns all entries matching
-// q, most-recent first (no limit/offset applied).
-func matched(ctx context.Context, log eventlog.Log, id identity.Identity, q Query) ([]Entry, error) {
-	evs, err := log.Read(ctx, 0)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]Entry, 0, len(evs))
-	for _, e := range evs {
-		if e.Org != id.Org || e.Workspace != id.Workspace || !match(e, q) {
-			continue
-		}
-		out = append(out, Entry{
-			Seq: e.Seq, ID: e.ID, Time: e.Time, Actor: e.Actor,
-			Stream: e.Stream, Type: e.Type, Payload: e.Payload,
-		})
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Seq > out[j].Seq })
-	return out, nil
+// matched reads the caller's tenant's audit entries from the index (an indexed
+// prefix scan, not a whole-log fold) and returns those matching q, most-recent first.
+func matched(ctx context.Context, s store.Store, id identity.Identity, q Query) ([]Entry, error) {
+	return store.QueryDocs(ctx, s, Collection, store.Key(id.Org, id.Workspace, ""),
+		func(e Entry) bool { return match(e, q) },
+		func(a, b Entry) bool { return a.Seq > b.Seq })
 }
 
 func clampLimit(n int) int {
@@ -132,7 +153,7 @@ func clampLimit(n int) int {
 	}
 }
 
-func match(e eventlog.Envelope, q Query) bool {
+func match(e Entry, q Query) bool {
 	switch {
 	case q.Stream != "" && e.Stream != q.Stream:
 		return false
