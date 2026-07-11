@@ -91,6 +91,14 @@ type Config struct {
 	// (memory | sqlite | postgres). It gates dev-key seeding: a durable store
 	// never seeds the well-known key.
 	StoreKind string
+	// LogKind names the event-log backend (file | memory | sqlite | postgres |
+	// nats), used by the production preflight to reject non-durable/HA-unsafe
+	// choices. Empty skips the log-kind checks.
+	LogKind string
+	// Env is the deployment environment ("production" turns on the preflight that
+	// refuses insecure config, and defaults secure cookies on). Empty/"development"
+	// keeps the permissive local-dev behavior.
+	Env string
 	// Now, when non-nil, overrides the clock every command handler stamps event
 	// times with (and the SLA/expiry math reads). Nil means the UTC system clock,
 	// so native behavior is unchanged. Deterministic tests and the demo seeder
@@ -150,6 +158,10 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 	if atRest != nil {
 		slog.Info("encryption at rest enabled (event payloads + projection store)")
 	}
+	if err := preflight(cfg, atRest != nil); err != nil {
+		return nil, err
+	}
+	configureCookieSecurity(cfg.Env)
 	log = eventlog.Encrypted(log, atRest)
 	st = store.Encrypted(st, atRest)
 
@@ -164,6 +176,22 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 		slog.Warn("seeded dev API key (in-memory store, local dev only)", "scope", auth.ScopeAll, "role", auth.RoleAdmin)
 	} else if cfg.DevAPIKey != "" {
 		slog.Warn("ignoring --dev-api-key: a durable store does not seed the well-known dev key; issue a managed API key instead", "store", cfg.StoreKind)
+	}
+	// Production bootstrap: an operator-chosen admin key from the environment (a real
+	// secret, not a well-known value), seeded on ANY store so a self-host install can
+	// obtain its first credential without SSO and without the dev key. Re-added each
+	// boot (idempotent); rotate it to a managed key and unset the env var thereafter.
+	if boot := os.Getenv("INTRAKTIBLE_BOOTSTRAP_API_KEY"); boot != "" {
+		if len(boot) < 16 {
+			return nil, fmt.Errorf("INTRAKTIBLE_BOOTSTRAP_API_KEY must be at least 16 characters")
+		}
+		keyring.Add(boot, auth.APIKey{
+			ID:       "bootstrap",
+			Identity: identity.Identity{Org: "default", Workspace: "main", Actor: "bootstrap"},
+			Scope:    auth.ScopeAll,
+			Role:     auth.RoleAdmin,
+		})
+		slog.Warn("seeded bootstrap admin API key from INTRAKTIBLE_BOOTSTRAP_API_KEY; rotate to a managed key and unset the variable")
 	}
 
 	root := http.NewServeMux()
@@ -410,6 +438,10 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 	// stopped the consumer, so an orchestrator does not keep routing to a node
 	// serving stale read models.
 	root.HandleFunc("GET /healthz", httpx.Health(rt.Err))
+	// /readyz gates traffic during a rolling deploy: 503 until this replica's
+	// projections have caught up to the log head, so a freshly-started pod does not
+	// serve empty read models while it rebuilds. Liveness (/healthz) vs readiness.
+	root.HandleFunc("GET /readyz", httpx.Ready(rt.Applied, log.Head, rt.Err))
 	// /version reports the build (VCS revision + Go) so ops can confirm what's live.
 	root.HandleFunc("GET /version", httpx.Version())
 	// /metrics is the Prometheus scrape endpoint (unauthenticated like /healthz —
@@ -418,7 +450,20 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 
 	// Public auth endpoints — exchange an API key for a session cookie (and clear
 	// it). Registered on root with exact patterns so they win over the /v1/ chain.
-	root.HandleFunc("POST /v1/login", httpx.LoginHandler(keyring, sessions))
+	// Rate-limit the credential-verifying endpoint per client IP so a durable store
+	// (real users) can't be brute-forced or credential-stuffed. The default is
+	// generous enough for humans behind a shared NAT yet tight enough to make
+	// guessing infeasible; tune with INTRAKTIBLE_LOGIN_RATE_LIMIT_RPS/_BURST, or set
+	// rps to 0 to disable (behind a proxy that already rate-limits). With
+	// INTRAKTIBLE_TRUST_PROXY the bucket is per X-Forwarded-For, so shared egress IPs
+	// don't collide.
+	rps := envFloat("INTRAKTIBLE_LOGIN_RATE_LIMIT_RPS", 10)
+	burst := envInt("INTRAKTIBLE_LOGIN_RATE_LIMIT_BURST", 30)
+	loginHandler := httpx.LoginHandler(keyring, sessions)
+	if rps > 0 {
+		loginHandler = httpx.NewRateLimit(rps, burst)(loginHandler)
+	}
+	root.HandleFunc("POST /v1/login", loginHandler)
 	root.HandleFunc("POST /v1/logout", httpx.LogoutHandler(sessions))
 	// SSO: OIDC login for the configured providers (Google, AWS Cognito, …). Each
 	// provider's discovery runs now; a provider that fails to initialize is skipped
@@ -499,6 +544,57 @@ func startTimedSweeps(ctx context.Context, interval string, sweeps []timedSweepe
 // non-durable in-memory store. Any durable store (sqlite/postgres) — the only kind a
 // real deployment can use — refuses to seed it regardless of the flag value, so
 // production can never boot with a known admin credential. Returns whether it seeded.
+// preflight refuses to boot on config that is unsafe for production. It is a no-op
+// outside production so local dev stays permissive; in production it fails loud
+// (the repo's no-fallbacks rule) rather than silently serving an insecure system.
+func preflight(cfg Config, encryptionEnabled bool) error {
+	if !strings.EqualFold(cfg.Env, "production") {
+		return nil
+	}
+	var problems []string
+	if cfg.StoreKind == "memory" {
+		problems = append(problems, "--store=memory is not durable (read models are lost on restart); use sqlite or postgres")
+	}
+	if cfg.LogKind == "memory" {
+		problems = append(problems, "--log=memory is not durable (the event log is the system of record); use file, sqlite, postgres, or nats")
+	}
+	if !encryptionEnabled && os.Getenv("INTRAKTIBLE_ALLOW_PLAINTEXT_AT_REST") == "" {
+		problems = append(problems, "INTRAKTIBLE_ENCRYPTION_KEY is unset, so PII/event payloads would be written in plaintext at rest; set it, or set INTRAKTIBLE_ALLOW_PLAINTEXT_AT_REST=1 to accept that risk")
+	}
+	if len(problems) > 0 {
+		return fmt.Errorf("server: refusing to start with INTRAKTIBLE_ENV=production and insecure config:\n  - %s", strings.Join(problems, "\n  - "))
+	}
+	// Non-fatal production advisories.
+	if cfg.LogKind == "file" {
+		slog.Warn("--log=file is a single-process WAL; use --log=postgres or --log=nats for multi-replica HA")
+	}
+	if os.Getenv("INTRAKTIBLE_CONNECTOR_ALLOW_PRIVATE") != "" {
+		slog.Warn("INTRAKTIBLE_CONNECTOR_ALLOW_PRIVATE is set: flow connectors may reach private/internal hosts (the cloud metadata service stays blocked)")
+	}
+	return nil
+}
+
+// configureCookieSecurity decides when session cookies are marked Secure and HSTS
+// is emitted. Production forces Secure on (a prod deployment is reached over HTTPS)
+// unless explicitly opted out; either environment can force it via env. A trusted
+// TLS-terminating proxy is honored only when INTRAKTIBLE_TRUST_PROXY is set (the
+// X-Forwarded-Proto header is otherwise client-forgeable).
+func configureCookieSecurity(env string) {
+	force := truthy(os.Getenv("INTRAKTIBLE_SECURE_COOKIES"))
+	if strings.EqualFold(env, "production") && !isFalsey(os.Getenv("INTRAKTIBLE_SECURE_COOKIES")) {
+		force = true
+	}
+	httpx.ConfigureCookieSecurity(force, truthy(os.Getenv("INTRAKTIBLE_TRUST_PROXY")))
+}
+
+func isFalsey(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "0", "false", "no", "off":
+		return true
+	}
+	return false
+}
+
 func seedDevKey(keyring *auth.Keyring, devKey, storeKind string) bool {
 	if devKey == "" || storeKind != "memory" {
 		return false

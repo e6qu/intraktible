@@ -1,0 +1,82 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Production values for the intraktible chart. Postgres and NATS are treated as
+# external dependencies (a managed PG + a JetStream cluster) — wire their
+# DSN/URL through the Secret below; the chart does not run them for you.
+
+image:
+  repository: intraktible
+  tag: "" # defaults to .Chart.appVersion
+  pullPolicy: IfNotPresent
+
+# The event log + projection store. For multi-replica HA use a networked log
+# (postgres or nats); the projection store should be postgres.
+store: postgres   # memory | sqlite | postgres
+log: postgres     # file | sqlite | postgres | nats
+
+# The API (read/write) tier is horizontally scalable and stateless.
+api:
+  replicas: 3
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits: { cpu: "1", memory: 1Gi }
+  # Never set INTRAKTIBLE_MONITOR_INTERVAL here — the timed sweeps run on the
+  # scheduler tier only (see below), so the API replicas don't double-fire them.
+
+# The scheduler tier runs the timed sweeps (monitor/model-drift/deploy/SLA). It is
+# a SINGLETON (replicas: 1): those sweeps are not leader-elected, so running them on
+# more than one replica would double-deliver alerts. The deploy-activation sweep is
+# claim-guarded, but keep this at 1 unless you have added leader election.
+scheduler:
+  enabled: true
+  monitorInterval: "1m"
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+
+# Secrets. In real clusters wire these from an external secret manager (External
+# Secrets / Sealed Secrets) rather than plaintext values; existingSecret skips the
+# chart-managed Secret entirely.
+secret:
+  existingSecret: ""   # name of a pre-created Secret with the INTRAKTIBLE_* keys
+  # Populated into a chart-managed Secret when existingSecret is empty. Leave a
+  # value empty to omit it. INTRAKTIBLE_ENCRYPTION_KEY is REQUIRED in production
+  # (the pod refuses to start without it under INTRAKTIBLE_ENV=production).
+  data:
+    INTRAKTIBLE_POSTGRES_DSN: ""
+    INTRAKTIBLE_NATS_URL: ""
+    INTRAKTIBLE_ENCRYPTION_KEY: ""
+    INTRAKTIBLE_CONNECTOR_SECRET_KEY: ""
+    INTRAKTIBLE_AI_PROVIDER: ""
+    INTRAKTIBLE_AI_API_KEY: ""
+
+# Non-secret env applied to every pod.
+env:
+  INTRAKTIBLE_ENV: production
+  INTRAKTIBLE_SECURE_COOKIES: "1"
+  INTRAKTIBLE_TRUST_PROXY: "1" # honor X-Forwarded-Proto from the ingress/LB
+
+service:
+  type: ClusterIP
+  port: 8080
+
+ingress:
+  enabled: false
+  className: ""
+  host: intraktible.example.com
+  annotations: {}
+  tls: true
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+networkPolicy:
+  enabled: false # enable and set the ingress/metrics selectors for your cluster
+
+terminationGracePeriodSeconds: 60

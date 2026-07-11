@@ -598,7 +598,14 @@ func (h *Handler) ActivateSchedule(ctx context.Context, id identity.Identity, sc
 	if err != nil {
 		return fmt.Errorf("decision-engine: marshal deploy_schedule_activated: %w", err)
 	}
-	if _, err := h.appendFlowEvent(ctx, id, events.TypeDeployScheduleActivated, marker); err != nil {
+	// The activation marker is claimed per schedule so two scheduler replicas ticking
+	// together can't both activate: the loser conflicts and skips (returns nil), which
+	// also prevents the PriorVersion-capture race that would strand the boxed version
+	// live forever. The claim gates the deploy below because we return on conflict.
+	if _, err := h.appendFlowEventUnique(ctx, id, events.TypeDeployScheduleActivated, marker, scheduleClaim("activate", scheduleID)); err != nil {
+		if errors.Is(err, eventlog.ErrConflict) {
+			return nil // another replica already activated this schedule
+		}
 		return err
 	}
 	deployed, err := json.Marshal(events.FlowVersionDeployed{FlowID: flowID, Environment: env, Version: version})
@@ -618,7 +625,11 @@ func (h *Handler) RevertSchedule(ctx context.Context, id identity.Identity, sche
 	if err != nil {
 		return fmt.Errorf("decision-engine: marshal deploy_schedule_reverted: %w", err)
 	}
-	if _, err := h.appendFlowEvent(ctx, id, events.TypeDeployScheduleReverted, marker); err != nil {
+	// Claimed per schedule so two replicas can't both revert (double rollback).
+	if _, err := h.appendFlowEventUnique(ctx, id, events.TypeDeployScheduleReverted, marker, scheduleClaim("revert", scheduleID)); err != nil {
+		if errors.Is(err, eventlog.ErrConflict) {
+			return nil
+		}
 		return err
 	}
 	if priorVersion < 1 {
@@ -942,6 +953,12 @@ func versionClaim(flowID string, version int) string {
 // across processes — cannot both commit a decision on the same request.
 func decisionClaim(flowID, reqID string) string {
 	return "deployment.decision\x00" + flowID + "\x00" + reqID
+}
+
+// scheduleClaim reserves a schedule's one-shot activate/revert transition, so two
+// scheduler replicas sweeping the same due schedule cannot both fire it.
+func scheduleClaim(transition, scheduleID string) string {
+	return "deploy.schedule." + transition + "\x00" + scheduleID
 }
 
 // foldTenant replays the flow stream for id's tenant into per-flow aggregates,

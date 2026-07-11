@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "intraktible.fullname" . }}-api
+  labels: {{- include "intraktible.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.api.replicas }}
+  {{- end }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "intraktible.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      intraktible.dev/tier: api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "intraktible.name" . }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        intraktible.dev/tier: api
+    spec:
+      serviceAccountName: {{ include "intraktible.fullname" . }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: intraktible
+          image: {{ include "intraktible.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["serve", "--addr=:8080", "--data-dir=/data", "--store={{ .Values.store }}", "--log={{ .Values.log }}"]
+          ports:
+            - { name: http, containerPort: 8080 }
+          envFrom:
+            - secretRef: { name: {{ include "intraktible.secretName" . }} }
+          env:
+            {{- range $k, $v := .Values.env }}
+            - { name: {{ $k }}, value: {{ $v | quote }} }
+            {{- end }}
+          # The API tier must NOT run the timed sweeps — the scheduler tier owns them.
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 6
+          resources: {{- toYaml .Values.api.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: data, mountPath: /data }
+      volumes:
+        - name: data
+          emptyDir: {} # projections are rebuildable; the log is the external store

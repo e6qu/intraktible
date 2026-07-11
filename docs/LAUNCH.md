@@ -4,6 +4,21 @@
 
 A practical pre-launch and day-2 reference for running intraktible. The single binary
 serves the API and the embedded UI; everything is configured by flags + environment.
+For the full production runbook (Kubernetes/Helm, TLS, HA topology) see
+[DEPLOY.md](./DEPLOY.md); for backups and disaster recovery see [DR.md](./DR.md).
+
+## Production preflight
+
+Set `INTRAKTIBLE_ENV=production` (or `--env=production`) and the server **refuses to
+start** on insecure config rather than booting unsafely: a non-durable store/log is
+refused, a missing `INTRAKTIBLE_ENCRYPTION_KEY` is refused (unless
+`INTRAKTIBLE_ALLOW_PLAINTEXT_AT_REST=1`), session cookies are forced `Secure` and HSTS
+is emitted, and the well-known dev key is never seeded. It warns on a single-process
+`--log=file` and on `INTRAKTIBLE_CONNECTOR_ALLOW_PRIVATE`. Behind a TLS-terminating
+proxy, set `INTRAKTIBLE_SECURE_COOKIES=1` (production defaults it on) and
+`INTRAKTIBLE_TRUST_PROXY=1` to honor `X-Forwarded-Proto`. The `/v1/login` endpoint is
+per-IP rate-limited. A durable-store install seeds no key — bootstrap the first admin
+credential with `INTRAKTIBLE_BOOTSTRAP_API_KEY` (a real secret, ≥16 chars) or via SSO.
 
 ## Durability (pick per environment)
 
@@ -47,8 +62,11 @@ store always full-rebuilds from the log.
 
 ## Health & introspection
 
-- `GET /healthz` — liveness + projection health (503 `degraded` if a projection stalled, so an
+- `GET /healthz` — **liveness** + projection health (503 `degraded` if a projection stalled, so an
   orchestrator can depool/restart).
+- `GET /readyz` — **readiness**: 503 (`rebuilding`) until this replica's projections have caught
+  up to the log head, then 200 (`ready`). Wire it as the readiness probe so a rolling deploy never
+  routes traffic to a pod still rebuilding its read models. Reports `{applied, head}`.
 - `GET /version` — build revision + Go toolchain (confirm what's deployed).
 - `GET /metrics` — Prometheus exposition (unauthenticated, aggregate counters only): HTTP
   request rate/latency by route, projection freshness (`intraktible_projection_applied_seq`) +

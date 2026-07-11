@@ -1,0 +1,21 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "intraktible.fullname" . }}
+  labels: {{- include "intraktible.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "intraktible.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes: [Ingress]
+  ingress:
+    # /metrics and /healthz are unauthenticated by design — a NetworkPolicy is the
+    # real control that keeps them (and the app) reachable only from the ingress
+    # controller and the metrics scraper. Set the selectors for your cluster.
+    - from:
+        - namespaceSelector: {}
+      ports:
+        - { protocol: TCP, port: 8080 }
+{{- end }}

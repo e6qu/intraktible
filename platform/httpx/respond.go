@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"runtime/debug"
 	"strings"
+	"sync/atomic"
 
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/identity"
@@ -30,9 +31,18 @@ func JSON(w http.ResponseWriter, status int, v any) {
 	}
 }
 
-// Error writes a structured JSON error. We surface the real message (fail
-// loudly) rather than masking it behind a generic string.
+// Error writes a structured JSON error. A 4xx is the caller's own fault, so its
+// message is returned verbatim (fail loudly — validation errors are meant to be
+// read). A 5xx is a server fault whose message can leak internals (a DSN, a driver
+// error, a wrapped chain of context): it is logged loudly server-side but the
+// client receives only a generic message, so operational detail never crosses the
+// trust boundary. The per-request access log (method/path/status) correlates it.
 func Error(w http.ResponseWriter, status int, err error) {
+	if status >= 500 {
+		slog.Error("httpx: server error", "status", status, "err", err)
+		JSON(w, status, map[string]string{"error": http.StatusText(status)})
+		return
+	}
 	JSON(w, status, map[string]string{"error": err.Error()})
 }
 
@@ -87,6 +97,34 @@ func Health(check func() error) http.HandlerFunc {
 			}
 		}
 		JSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	}
+}
+
+// Ready is the readiness probe (distinct from liveness). It is 503 until the
+// projection consumer is healthy AND has caught up to the event-log head — a fresh
+// replica rebuilding its read models from seq 0 is "up" (Health is 200) but must
+// NOT take traffic yet, or it would serve empty/stale reads during a rolling
+// deploy. `applied` and `head` report progress in the body for ops. Once caught up
+// a replica stays ready under steady-state write lag (it is depooled only if the
+// projection actually stalls, which Health/check surfaces).
+func Ready(applied, head func() uint64, check func() error) http.HandlerFunc {
+	var caughtUp atomic.Bool
+	return func(w http.ResponseWriter, _ *http.Request) {
+		a, h := applied(), head()
+		if check != nil {
+			if err := check(); err != nil {
+				JSON(w, http.StatusServiceUnavailable, map[string]any{"status": "degraded", "error": err.Error(), "applied": a, "head": h})
+				return
+			}
+		}
+		if !caughtUp.Load() {
+			if a < h {
+				JSON(w, http.StatusServiceUnavailable, map[string]any{"status": "rebuilding", "applied": a, "head": h})
+				return
+			}
+			caughtUp.Store(true) // first catch-up latches; steady-state write lag no longer flaps readiness
+		}
+		JSON(w, http.StatusOK, map[string]any{"status": "ready", "applied": a, "head": h})
 	}
 }
 
