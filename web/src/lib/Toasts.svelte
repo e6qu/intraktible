@@ -8,11 +8,14 @@
     kind === 'success' ? 'check' : kind === 'error' ? 'alert' : 'info';
 </script>
 
-<div class="toasts" aria-live="polite" aria-atomic="false">
+<!-- Errors are announced assertively (role="alert" → interrupt) and prefixed "Error:";
+     success/info stay polite (role="status"). Per-toast roles carry the live-region
+     semantics, so the container itself needs no aria-live. -->
+<div class="toasts" aria-atomic="false">
   {#each $toasts as t (t.id)}
-    <div class="toast {t.kind}" role="status">
+    <div class="toast {t.kind}" role={t.kind === 'error' ? 'alert' : 'status'}>
       <span class="ico"><Icon name={icon(t.kind)} size={15} /></span>
-      <span class="msg">{t.message}</span>
+      <span class="msg">{t.kind === 'error' ? `Error: ${t.message}` : t.message}</span>
       <button class="x" aria-label="Dismiss" onclick={() => dismiss(t.id)}>✕</button>
     </div>
   {/each}

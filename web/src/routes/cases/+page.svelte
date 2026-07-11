@@ -28,6 +28,50 @@
   function msg(e: unknown): string {
     return e instanceof Error ? e.message : String(e);
   }
+  // One CSV cell — quote/escape per RFC 4180 so commas/quotes/newlines are safe.
+  function csvCell(v: unknown): string {
+    const s = v == null ? '' : String(v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  }
+  const CSV_HEADERS = [
+    'case_id',
+    'company_name',
+    'case_type',
+    'status',
+    'assignee',
+    'sla_days',
+    'days_left',
+    'sla_state',
+    'created_at'
+  ];
+  // Export the rows currently on screen (the applied status filter, in display order),
+  // via a Blob download — mirrors the audit CSV idiom (an <a href="/v1/…"> would escape
+  // the demo's fetch mock).
+  function exportCsv() {
+    const rows = sorted.map((c) =>
+      [
+        c.case_id,
+        c.company_name,
+        c.case_type,
+        c.status,
+        c.assignee ?? '',
+        c.sla_days,
+        c.days_left,
+        c.sla_state ?? '',
+        c.created_at
+      ]
+        .map(csvCell)
+        .join(',')
+    );
+    const csv = [CSV_HEADERS.join(','), ...rows].join('\n') + '\n';
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'cases.csv';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+    toast.success(`Exported ${sorted.length} case(s)`);
+  }
   // A closed case has no live SLA clock — its days_left is a frozen leftover, so the
   // queue and detail views show "—" rather than a stale countdown. (completed is the
   // only terminal status today; resolved/cancelled are guarded for forward-compat.)
@@ -241,6 +285,9 @@
       </select>
     </label>
     <button onclick={load}>Reload</button>
+    <button onclick={exportCsv} disabled={list.length === 0} data-testid="cases-csv">
+      Export CSV
+    </button>
     <button
       onclick={runSweep}
       disabled={sweeping || !roleAtLeast($user?.role, 'operator')}
@@ -321,7 +368,12 @@
   {#if loading}
     <Skeleton rows={5} />
   {:else if list.length === 0}
-    <EmptyState icon="cases" title={emptyCopy.title} hint={emptyCopy.hint} />
+    <!-- Only show the onboarding empty state when the load SUCCEEDED and returned
+         nothing; a failed load surfaces `error` above, so an errored queue isn't
+         misrepresented as a fresh/empty one. -->
+    {#if !error}
+      <EmptyState icon="cases" title={emptyCopy.title} hint={emptyCopy.hint} />
+    {/if}
   {:else}
     <div class="table-wrap">
       <table>

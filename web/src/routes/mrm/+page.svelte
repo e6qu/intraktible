@@ -91,8 +91,6 @@
     validation evidence, live monitoring, and open governance gaps.
   </p>
 
-  {#if error}<p class="err">{error}</p>{/if}
-
   {#if loading}
     <Skeleton rows={6} />
   {:else if forbidden}
@@ -101,6 +99,8 @@
       title="Restricted to the admin role"
       hint="The model-risk report aggregates every model across the workspace, so it is available only to admins. Ask an admin to share the exported report."
     />
+  {:else if error}
+    <p class="err">{error}</p>
   {:else if report}
     <p class="asof">
       As of <time datetime={report.generated_at}

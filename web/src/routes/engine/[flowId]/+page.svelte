@@ -1,6 +1,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   import { page } from '$app/stores';
+  import { beforeNavigate } from '$app/navigation';
   import {
     SvelteFlow,
     Background,
@@ -91,6 +92,7 @@
   import { layoutLanes, type XY } from '$lib/layout';
   import { theme } from '$lib/theme';
   import Icon from '$lib/Icon.svelte';
+  import Skeleton from '$lib/Skeleton.svelte';
   import FlowBridge from '$lib/FlowBridge.svelte';
   import Badge from '$lib/Badge.svelte';
   import Hint from '$lib/Hint.svelte';
@@ -135,6 +137,7 @@
   const key = '';
   let flow = $state<Flow | null>(null);
   let error = $state('');
+  let loading = $state(true);
   let metrics = $state<FlowMetrics | null>(null);
 
   // loadMetrics fetches the flow's analytics roll-up (non-fatal if none yet).
@@ -236,6 +239,19 @@
       return;
     }
     if (typingIn(e) || e.metaKey || e.ctrlKey || e.altKey || !flow) return;
+    // The tool/mode shortcuts (f/t/v/h) fire only when the canvas surface is the
+    // active area — otherwise reading the Deploy/Monitor panel and pressing 'f'
+    // would yank the user into a full-viewport canvas takeover. The canvas pane
+    // isn't focusable, so a click on it lands focus on the neutral page landmark
+    // (#main, tabindex=-1); treat that — like the body or the canvas subtree — as
+    // on-canvas. Focus on an actual control inside a panel is what we suppress.
+    const active = document.activeElement;
+    const onCanvas =
+      active === null ||
+      active === document.body ||
+      active.id === 'main' ||
+      active.closest('[data-testid="flow-canvas"]') !== null;
+    if (!onCanvas) return;
     if (e.key === 'f') {
       e.preventDefault();
       setCanvasMode(canvasMode === 'focus' ? 'board' : 'focus');
@@ -642,6 +658,7 @@
 
   async function load() {
     error = '';
+    loading = true;
     // Capture the flow this load is for; sibling navigation changes flowId while a
     // request is in flight, and a stale response must not clobber the new flow's
     // editor/canvas state (last-write-wins race).
@@ -679,9 +696,14 @@
           byVersion[byVersion.length >= 2 ? byVersion.length - 2 : byVersion.length - 1].version
         );
       }
+      // Snapshot the just-loaded graph as the saved baseline, so an author's later
+      // edits register as unsaved and the leave-guard can warn before they're lost.
+      savedFingerprint = graphFingerprint();
     } catch (e) {
       // Page-level load failure renders in the banner (the whole panel is unusable).
       error = msg(e);
+    } finally {
+      if (flowId === requested) loading = false;
     }
   }
 
@@ -1067,6 +1089,43 @@
     });
     return { nodes, edges: editEdges };
   }
+
+  // Unsaved-changes tracking. The builder holds every edit in memory until Publish,
+  // so leaving the page (a link, the browser back button, a reload) would silently
+  // discard it. graphFingerprint serializes the LOGIC (nodes + edges + config), not
+  // node positions — a pure re-layout is cosmetic and shouldn't nag. savedFingerprint
+  // is set to the current graph after each load/publish; dirty is the diff.
+  let savedFingerprint = $state('');
+  function graphFingerprint(): string {
+    return JSON.stringify({
+      nodes: editNodes.map((n) => ({
+        id: n.id,
+        type: n.type,
+        name: n.name,
+        config: n.config,
+        lane: n.lane
+      })),
+      edges: editEdges.map((e) => ({ from: e.from, to: e.to, branch: e.branch }))
+    });
+  }
+  const dirty = $derived(flow !== null && !loading && graphFingerprint() !== savedFingerprint);
+
+  // Warn before a navigation that would drop unsaved edits (SvelteKit link/back).
+  beforeNavigate((nav) => {
+    if (
+      dirty &&
+      !confirm('You have unsaved changes to this flow. Leave without publishing them?')
+    ) {
+      nav.cancel();
+    }
+  });
+  // Warn before a browser-level reload/close too. Registered only while dirty.
+  $effect(() => {
+    if (!dirty) return;
+    const handler = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  });
 
   let publishing = $state(false);
   async function publish() {
@@ -2056,7 +2115,10 @@
 <svelte:window onkeydown={onCanvasKeydown} />
 
 <main>
-  {#if !flow}
+  {#if loading && !flow}
+    <p><a href={appHref('/engine')}>← all flows</a></p>
+    <Skeleton rows={6} />
+  {:else if !flow}
     <p><a href={appHref('/engine')}>← all flows</a></p>
     <h1>{flowId}</h1>
     <p class="err">
@@ -2067,6 +2129,10 @@
     <div class="flowhead">
       <a href={appHref('/engine')} class="backlink" title="All flows">←</a>
       <h1>{flow.name}</h1>
+      {#if dirty}
+        <span class="unsaved" title="You have edits that aren't published yet">● Unsaved edits</span
+        >
+      {/if}
       <div class="head-actions">
         <button
           class="iconbtn"
@@ -4751,6 +4817,13 @@
     font-size: 1.45rem;
     overflow: hidden;
     text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .unsaved {
+    flex: none;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--warn, #b26a00);
     white-space: nowrap;
   }
   .backlink {

@@ -5,6 +5,8 @@
   import Icon from '$lib/Icon.svelte';
   import RelativeTime from '$lib/RelativeTime.svelte';
   import Badge from '$lib/Badge.svelte';
+  import Skeleton from '$lib/Skeleton.svelte';
+  import EmptyState from '$lib/EmptyState.svelte';
   import CommentThread from '$lib/CommentThread.svelte';
   import { statusTone } from '$lib/badge';
   import { toast } from '$lib/toast';
@@ -17,6 +19,7 @@
     getAgentEvals,
     setAgentEvals,
     runAgentEval,
+    ApiError,
     type Agent,
     type AgentRun,
     type AgentVersion,
@@ -46,6 +49,10 @@
   let runs = $state<AgentRun[]>([]);
   let versions = $state<AgentVersion[]>([]);
   let error = $state('');
+  // A missing agent (real 404) is a distinct, expected state — a stale/mistyped name —
+  // shown as a "not found" EmptyState rather than a raw error with a doomed Retry.
+  let notFound = $state(false);
+  let loading = $state(true);
 
   let prompt = $state('');
   let lastRunID = $state('');
@@ -64,6 +71,13 @@
 
   async function load() {
     error = '';
+    notFound = false;
+    loading = true;
+    // Clear the prior agent so a failed reload can't leave the previous agent's data on
+    // screen under an error.
+    agent = null;
+    runs = [];
+    versions = [];
     // Drop a stale response when sibling navigation changes name mid-flight.
     const reqName = name;
     try {
@@ -77,7 +91,12 @@
       [agent, runs, versions] = [a, r, v];
       evalText = ec.length > 0 ? JSON.stringify(ec, null, 2) : '';
     } catch (e) {
-      if (name === reqName) error = e instanceof Error ? e.message : String(e);
+      if (name === reqName) {
+        if (e instanceof ApiError && e.status === 404) notFound = true;
+        else error = e instanceof Error ? e.message : String(e);
+      }
+    } finally {
+      if (name === reqName) loading = false;
     }
   }
 
@@ -117,6 +136,10 @@
       lastRunID = res.run_id;
       lastResult = res;
       await load();
+      // The inline panel already shows the output; a toast confirms the run landed (and
+      // flags a failed run, which reads the same as success without it).
+      if (res.status === 'failed') toast.error('Agent run failed');
+      else toast.success('Run complete');
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     } finally {
@@ -289,11 +312,13 @@
 
 <main>
   <p><a href={appHref('/agents')}>← agents</a></p>
-  <div class="row reload-row">
-    <button onclick={load} title="Re-fetch this agent, its runs, and evals"
-      ><Icon name="reload" size={15} /> Reload</button
-    >
-  </div>
+  {#if !notFound}
+    <div class="row reload-row">
+      <button onclick={load} title="Re-fetch this agent, its runs, and evals"
+        ><Icon name="reload" size={15} /> Reload</button
+      >
+    </div>
+  {/if}
   {#if agent}
     <h1>{agent.name}</h1>
     <dl>
@@ -304,6 +329,19 @@
       <dt>runs</dt>
       <dd data-testid="run-count">{agent.runs}</dd>
     </dl>
+  {:else if loading}
+    <h1>{name}</h1>
+    <Skeleton rows={5} />
+  {:else if notFound}
+    <EmptyState
+      icon="agents"
+      title="Agent not found"
+      hint="No agent matches this name. It may have been removed, or the name may be mistyped."
+    >
+      {#snippet action()}
+        <a href={appHref('/agents')}>← Back to agents</a>
+      {/snippet}
+    </EmptyState>
   {:else}
     <h1>{name}</h1>
   {/if}

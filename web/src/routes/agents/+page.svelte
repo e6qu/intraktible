@@ -120,8 +120,6 @@
     >
   </div>
 
-  {#if error}<p class="err">{error}</p>{/if}
-
   {#if summary}
     <div class="summary" aria-label="run summary">
       <span class="stat">Runs <b>{summary.total}</b></span>
@@ -138,6 +136,8 @@
 
   {#if loading}
     <Skeleton rows={4} />
+  {:else if error}
+    <p class="err">{error}</p>
   {:else if list.length === 0}
     <EmptyState
       icon="agents"

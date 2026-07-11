@@ -17,6 +17,7 @@
   import { resolvePersona, personaConfig, personaLens, type DecisionColumn } from '$lib/persona';
   import { appHref } from '$lib/paths';
   import { withOffset } from '$lib/paging';
+  import { toast } from '$lib/toast';
   import Badge from '$lib/Badge.svelte';
   import { statusTone, dispositionTone } from '$lib/badge';
 
@@ -73,6 +74,61 @@
 
   function msg(e: unknown): string {
     return e instanceof Error ? e.message : String(e);
+  }
+  // One CSV cell — quote and escape per RFC 4180 so commas/quotes/newlines don't break
+  // the row.
+  function csvCell(v: unknown): string {
+    const s = v == null ? '' : String(v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  }
+  const CSV_HEADERS = [
+    'decision_id',
+    'slug',
+    'status',
+    'disposition',
+    'environment',
+    'version',
+    'variant',
+    'duration_ms',
+    'started_at'
+  ];
+  let exporting = $state(false);
+  // Export every row the applied filter matches (not just the visible page) so the CSV
+  // covers the same set the filter describes — fetched with no limit, matching the audit
+  // Blob-download idiom (an <a href="/v1/…"> would escape the demo's fetch mock).
+  async function exportCsv() {
+    if (exporting) return;
+    exporting = true;
+    try {
+      const page = await listDecisionsPage(key, { ...applied });
+      const rows = page.decisions.map((d) =>
+        [
+          d.decision_id,
+          d.slug,
+          d.status,
+          d.disposition ?? '',
+          d.environment,
+          `v${d.version}`,
+          d.variant ?? '',
+          d.duration_ms ?? '',
+          d.started_at
+        ]
+          .map(csvCell)
+          .join(',')
+      );
+      const csv = [CSV_HEADERS.join(','), ...rows].join('\n') + '\n';
+      const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'decisions.csv';
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+      toast.success(`Exported ${page.decisions.length} decision(s)`);
+    } catch (e) {
+      toast.error(msg(e));
+    } finally {
+      exporting = false;
+    }
   }
   // The last-applied (URL-driven) filter. Reload and the pager fetch through this —
   // never the draft inputs — so edits that haven't been Applied can't leak into a
@@ -182,7 +238,12 @@
           >{/if}
       </p>
     </div>
-    <button onclick={load}><Icon name="reload" size={15} /> Reload</button>
+    <div class="head-actions">
+      <button class="ghost" onclick={exportCsv} disabled={exporting} data-testid="decisions-csv">
+        <Icon name="download" size={14} /> Export CSV
+      </button>
+      <button onclick={load}><Icon name="reload" size={15} /> Reload</button>
+    </div>
   </div>
 
   <form
@@ -232,10 +293,10 @@
     <button type="submit" disabled={loading}><Icon name="search" size={14} /> Apply</button>
   </form>
 
-  {#if error}<p class="err">{error}</p>{/if}
-
   {#if loading}
     <Skeleton rows={6} />
+  {:else if error}
+    <p class="err">{error}</p>
   {:else if list.length === 0}
     <EmptyState icon="diagram" title={emptyTitle} hint={emptyHint}>
       {#snippet action()}
@@ -308,6 +369,16 @@
   }
   .head-titles h1 {
     margin: 0;
+  }
+  .head-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex: none;
+  }
+  .head-actions .ghost {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
   }
   .subtitle {
     margin: 0.15rem 0 0;

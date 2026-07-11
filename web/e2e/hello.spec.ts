@@ -1,14 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { test, expect } from '@playwright/test';
 
-const KEY = 'dev-sandbox-key';
-
-// Covers the Phase 0 hello slice, now on its own /hello route (the landing page is
-// a persona-aware dashboard). The UI authenticates via the session cookie now, so
-// the demo tests sign in first; the error test does not.
-async function signIn(page: import('@playwright/test').Page) {
-  await page.context().request.post('/v1/login', { data: { api_key: KEY } });
-}
+// The Phase-0 backbone (command → event log → projection → API → UI) lives on the
+// /hello slice, which is dev scaffolding — not a product surface. It is kept only
+// for the interactive wasm demo and is compiled out of the product build, where it
+// redirects to the dashboard. Its client calls (getStats/sayHello, including the
+// fail-fast 401/400 surfacing) are unit-tested in src/lib/api.test.ts; this suite
+// covers the landing page and the production gate.
 
 test('landing page renders with the persona switcher', async ({ page }) => {
   await page.goto('/');
@@ -17,51 +15,13 @@ test('landing page renders with the persona switcher', async ({ page }) => {
   await expect(page.getByTestId('persona-switch')).toBeVisible();
 });
 
-test('hello slice page renders', async ({ page }) => {
+test('the hello scaffolding slice is excluded from the product build', async ({ page }) => {
+  // A non-demo (product) build must not expose the backbone showcase to operators:
+  // it redirects to the dashboard rather than rendering the Say hello / Refresh UI.
   await page.goto('/hello');
-  await expect(page.getByRole('button', { name: 'Say hello' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Refresh' })).toBeVisible();
-});
-
-test('say hello posts a greeting and refreshes stats', async ({ page }) => {
-  await signIn(page);
-  await page.goto('/hello');
-  await page.getByLabel('name').fill('playwright');
-  await page.getByRole('button', { name: 'Say hello' }).click();
-
-  // say() posts then overwrites the output with refreshed stats; the greeting
-  // must appear there. Refresh until the eventually-consistent projection shows it.
-  const output = page.locator('pre');
-  await expect(async () => {
-    await page.getByRole('button', { name: 'Refresh' }).click();
-    await expect(output).toContainText('"last_name": "playwright"');
-    await expect(output).toContainText('"count"');
-  }).toPass({ timeout: 5000 });
-});
-
-test('refresh shows current stats', async ({ page }) => {
-  await signIn(page);
-  await page.goto('/hello');
-  await page.getByRole('button', { name: 'Refresh' }).click();
-  await expect(page.locator('pre')).toContainText('"count"');
-});
-
-test('an unauthenticated request surfaces an error, not silent success', async ({ page }) => {
-  // No sign-in: the session cookie is absent, so the call must fail loudly (401)
-  // and the UI must display the error (not a fake success).
-  await page.goto('/hello');
-  await page.getByRole('button', { name: 'Refresh' }).click();
-  const output = page.locator('pre');
-  await expect(output).toContainText('Error:');
-  // The client surfaces the server's explanation, not a bare status code.
-  await expect(output).toContainText('authentication required');
-  await expect(output).not.toContainText('"count"');
-});
-
-test('stats load on page open without a click', async ({ page }) => {
-  await signIn(page);
-  await page.goto('/hello');
-  // No Refresh click: the page fetches stats on mount instead of sitting on a
-  // "stats will appear here…" placeholder.
-  await expect(page.locator('pre')).toContainText('"count"');
+  // The redirect is a client-side replaceState on mount, so wait for the URL to
+  // settle off /hello before asserting the scaffolding UI is absent.
+  await page.waitForURL((url) => !url.pathname.replace(/\/$/, '').endsWith('/hello'));
+  await expect(page.getByTestId('persona-switch')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Say hello' })).toHaveCount(0);
 });
