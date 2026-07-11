@@ -47,9 +47,9 @@ func Catalog() []Template {
 			Config:      json.RawMessage(`{"url":"https://api.example.com/resource","method":"POST","auth":{"type":"oauth2","token_url":"https://idp.example.com/oauth/token","client_id":"","client_secret":"","scope":""}}`),
 		},
 		{
-			ID: "credit-bureau", Name: "Credit bureau", Category: "Credit", Type: "http",
-			Description: "A bureau scoring endpoint (Experian/Equifax/TransUnion-style). POST the applicant, read the score.",
-			Config:      json.RawMessage(`{"url":"https://bureau.example.com/v1/score","method":"POST"}`),
+			ID: "credit-bureau", Name: "Credit bureau", Category: "Credit", Type: "credit_bureau",
+			Description: "Experian/Equifax/TransUnion inquiry, normalized to {score, band, reason_codes}. Set the provider, inquiry path, auth, and the response field paths.",
+			Config:      json.RawMessage(`{"provider":"experian","path":"/v1/creditreport","auth":{"type":"bearer","token":"…"},"score_field":"riskModel.score","band_field":"grade","reasons_field":"reasonCodes"}`),
 		},
 		{
 			ID: "kyc-aml", Name: "KYC / AML", Category: "Identity", Type: "http",
@@ -102,9 +102,9 @@ func Catalog() []Template {
 			Config:      json.RawMessage(`{"url":"https://kyb.example.com/v1/verify","method":"POST"}`),
 		},
 		{
-			ID: "watchlist-screening", Name: "Watchlist / sanctions screening", Category: "Compliance", Type: "http",
-			Description: "PEP + sanctions + adverse-media screening. POST the entity, read the match verdict.",
-			Config:      json.RawMessage(`{"url":"https://screening.example.com/v1/watchlist","method":"POST"}`),
+			ID: "watchlist-screening", Name: "Watchlist / sanctions screening", Category: "Compliance", Type: "sanctions",
+			Description: "In-process PEP/sanctions name screening (OFAC/EU/UN) — fuzzy-matches the subject against a watchlist and returns the hits. No network; the watchlist is the config.",
+			Config:      json.RawMessage(`{"threshold":0.85,"watchlist":[{"name":"Example Name","list":"OFAC-SDN","program":"…"}]}`),
 		},
 		{
 			ID: "geo-ip", Name: "Geolocation (IP)", Category: "Risk", Type: "http",
@@ -117,9 +117,14 @@ func Catalog() []Template {
 			Config:      json.RawMessage(`{"url":"https://valuation.example.com/v1/value","method":"POST"}`),
 		},
 		{
-			ID: "sql-lookup", Name: "SQL lookup", Category: "Data", Type: "sql",
-			Description: "A SQL SELECT with named (:name) placeholders. Built-in driver: sqlite.",
+			ID: "sql-lookup", Name: "SQL lookup (sqlite)", Category: "Data", Type: "sql",
+			Description: "A SQL SELECT with named (:name) placeholders against a local sqlite database.",
 			Config:      json.RawMessage(`{"driver":"sqlite","dsn":"file:reference.db","query":"SELECT score FROM applicants WHERE id = :id"}`),
+		},
+		{
+			ID: "sql-postgres", Name: "SQL lookup (Postgres)", Category: "Data", Type: "sql",
+			Description: "A read-only SELECT against Postgres with positional ($1) placeholders. Runs in a read-only transaction, so a connector can never mutate the database.",
+			Config:      json.RawMessage(`{"driver":"postgres","dsn":"postgres://user:pass@host:5432/db","query":"SELECT score FROM applicants WHERE id = $1","args":["id"]}`),
 		},
 		{
 			ID: "sql-feature-store", Name: "SQL feature store", Category: "Data", Type: "sql",

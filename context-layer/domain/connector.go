@@ -20,23 +20,27 @@ type ConnectorType string
 // MockBureau is a deterministic in-process reference connector. Plaid and Stripe
 // are first-class provider adapters (preconfigured base URL + auth scheme).
 const (
-	ConnectorHTTP       ConnectorType = "http"
-	ConnectorSQL        ConnectorType = "sql"
-	ConnectorGraphQL    ConnectorType = "graphql"
-	ConnectorStatic     ConnectorType = "static"
-	ConnectorMockBureau ConnectorType = "mock_bureau"
-	ConnectorPlaid      ConnectorType = "plaid"
-	ConnectorStripe     ConnectorType = "stripe"
+	ConnectorHTTP         ConnectorType = "http"
+	ConnectorSQL          ConnectorType = "sql"
+	ConnectorGraphQL      ConnectorType = "graphql"
+	ConnectorStatic       ConnectorType = "static"
+	ConnectorMockBureau   ConnectorType = "mock_bureau"
+	ConnectorPlaid        ConnectorType = "plaid"
+	ConnectorStripe       ConnectorType = "stripe"
+	ConnectorCreditBureau ConnectorType = "credit_bureau"
+	ConnectorSanctions    ConnectorType = "sanctions"
 )
 
 var connectorTypes = map[ConnectorType]bool{
-	ConnectorHTTP:       true,
-	ConnectorSQL:        true,
-	ConnectorGraphQL:    true,
-	ConnectorStatic:     true,
-	ConnectorMockBureau: true,
-	ConnectorPlaid:      true,
-	ConnectorStripe:     true,
+	ConnectorHTTP:         true,
+	ConnectorSQL:          true,
+	ConnectorGraphQL:      true,
+	ConnectorStatic:       true,
+	ConnectorMockBureau:   true,
+	ConnectorPlaid:        true,
+	ConnectorStripe:       true,
+	ConnectorCreditBureau: true,
+	ConnectorSanctions:    true,
 }
 
 // Valid reports whether t is a known connector type.
@@ -49,8 +53,10 @@ func ValidConnectorType(t string) bool { return ConnectorType(t).Valid() }
 
 // DefineConnector registers (or redefines) a named connector. Config is
 // type-specific JSON (http: {"url","method","headers","auth"}; sql:
-// {"dsn","query","args"}; plaid: {"env","client_id","secret","path"}; stripe:
-// {"secret_key","path"}; mock_bureau: optional {"dataset"}).
+// {"driver","dsn","query","args"} — sqlite or postgres; plaid:
+// {"env","client_id","secret","path"}; stripe: {"secret_key","path"};
+// credit_bureau: {"provider","path","auth","score_field",…}; sanctions:
+// {"watchlist","threshold"}; mock_bureau: optional {"dataset"}).
 type DefineConnector struct {
 	Name   string
 	Type   ConnectorType
@@ -63,7 +69,7 @@ func (c DefineConnector) Validate() error {
 		return errors.New("context-layer: connector name is required")
 	}
 	if !c.Type.Valid() {
-		return fmt.Errorf("context-layer: unknown connector type %q (http|graphql|sql|static|plaid|stripe|mock_bureau)", c.Type)
+		return fmt.Errorf("context-layer: unknown connector type %q (http|graphql|sql|static|plaid|stripe|credit_bureau|sanctions|mock_bureau)", c.Type)
 	}
 	return validJSONObject("config", c.Config)
 }

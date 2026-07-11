@@ -419,6 +419,10 @@ func build(def ConnectorView, egress EgressPolicy) (Connector, error) {
 		return newPlaid(def.Config, egress)
 	case domain.ConnectorStripe:
 		return newStripe(def.Config, egress)
+	case domain.ConnectorCreditBureau:
+		return newCreditBureau(def.Config, egress)
+	case domain.ConnectorSanctions:
+		return newSanctions(def.Config)
 	case domain.ConnectorMockBureau:
 		return mockBureau{}, nil
 	default:

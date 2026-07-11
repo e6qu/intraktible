@@ -15,12 +15,12 @@ test('defines a connector and a feature from the UI', async ({ page }) => {
   await page.goto('/data');
   await expect(page.getByRole('heading', { name: /Context data/i })).toBeVisible();
 
-  // A catalog template scaffolds the define form: clicking it sets type=http and
-  // fills the config with the template's URL placeholder.
+  // A catalog template scaffolds the define form: clicking the (real, normalizing)
+  // Credit bureau template sets type=credit_bureau and fills its config skeleton.
   const catalog = page.getByTestId('connector-catalog');
   await catalog.getByRole('button', { name: 'Credit bureau' }).click();
-  await expect(page.getByLabel('connector type')).toHaveValue('http');
-  await expect(page.getByLabel('connector config')).toHaveValue(/bureau\.example\.com/);
+  await expect(page.getByLabel('connector type')).toHaveValue('credit_bureau');
+  await expect(page.getByLabel('connector config')).toHaveValue(/experian/);
 
   // Define a connector.
   await page.getByLabel('connector name').fill(conn);

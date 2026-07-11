@@ -17,22 +17,33 @@ import (
 	"path/filepath"
 	"strings"
 
-	_ "modernc.org/sqlite" // pure-Go SQLite driver (CGO-free); registers "sqlite"
+	_ "github.com/jackc/pgx/v5/stdlib" // Postgres driver (registers "pgx")
+	_ "modernc.org/sqlite"             // pure-Go SQLite driver (CGO-free); registers "sqlite"
 )
 
 // maxSQLRows bounds how many rows a SQL connector returns, so a broad query can
 // never blow up memory or the recorded event.
 const maxSQLRows = 1000
 
+// sqlDrivers maps a connector's configured driver name to the registered
+// database/sql driver, so an operator writes "postgres" rather than the pgx alias.
+// Only drivers compiled in appear here; anything else fails loudly at define time.
+var sqlDrivers = map[string]string{
+	"sqlite":   "sqlite",
+	"postgres": "pgx",
+	"pgx":      "pgx",
+}
+
 type sqlConfig struct {
-	Driver string   `json:"driver"` // database/sql driver name; only "sqlite" is built in
+	Driver string   `json:"driver"` // "sqlite" (default) or "postgres"
 	DSN    string   `json:"dsn"`    // driver-specific data source name
-	Query  string   `json:"query"`  // a SELECT with named placeholders (:name)
-	Args   []string `json:"args"`   // param names bound positionally from the params object
+	Query  string   `json:"query"`  // a SELECT; sqlite uses :name placeholders, postgres $1..$n
+	Args   []string `json:"args"`   // param names bound (by name for sqlite, positionally for postgres)
 }
 
 type sqlConnector struct {
-	cfg sqlConfig
+	cfg    sqlConfig
+	driver string // resolved database/sql driver
 }
 
 func newSQL(config json.RawMessage) (sqlConnector, error) {
@@ -45,20 +56,21 @@ func newSQL(config json.RawMessage) (sqlConnector, error) {
 	if cfg.Driver == "" {
 		cfg.Driver = "sqlite"
 	}
-	if cfg.Driver != "sqlite" {
-		// Only the pure-Go sqlite driver is compiled in; other drivers need a build
-		// that imports them. Fail loudly rather than open a nil driver.
-		return sqlConnector{}, fmt.Errorf("context-layer: sql connector driver %q is not available (only \"sqlite\" is built in)", cfg.Driver)
+	driver, ok := sqlDrivers[cfg.Driver]
+	if !ok {
+		return sqlConnector{}, fmt.Errorf("context-layer: sql connector driver %q is not available (sqlite|postgres)", cfg.Driver)
 	}
 	if cfg.DSN == "" || cfg.Query == "" {
 		return sqlConnector{}, fmt.Errorf("context-layer: sql connector needs a dsn and a query")
 	}
-	dsn, err := resolveSQLiteDSN(cfg.DSN)
-	if err != nil {
-		return sqlConnector{}, err
+	if driver == "sqlite" {
+		dsn, err := resolveSQLiteDSN(cfg.DSN)
+		if err != nil {
+			return sqlConnector{}, err
+		}
+		cfg.DSN = dsn
 	}
-	cfg.DSN = dsn
-	return sqlConnector{cfg: cfg}, nil
+	return sqlConnector{cfg: cfg, driver: driver}, nil
 }
 
 // sqliteConnectorDirEnv, when set, confines SQL-connector databases to files under
@@ -132,25 +144,20 @@ func resolveSQLiteDSN(dsn string) (string, error) {
 // declared args from the params object as values — never string-interpolated, so
 // caller params cannot inject SQL), and returns {"rows": [...]} as JSON.
 func (c sqlConnector) Fetch(ctx context.Context, params json.RawMessage) (json.RawMessage, error) {
-	db, err := sql.Open(c.cfg.Driver, c.cfg.DSN)
+	db, err := sql.Open(c.driver, c.cfg.DSN)
 	if err != nil {
 		return nil, fmt.Errorf("context-layer: sql connector open: %w", err)
 	}
 	defer func() { _ = db.Close() }()
 
-	args, err := bindArgs(c.cfg.Args, params)
+	// sqlite binds by name (:name); postgres by position ($1..$n).
+	args, err := bindArgs(c.cfg.Args, params, c.driver == "sqlite")
 	if err != nil {
 		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, fetchTimeout)
 	defer cancel()
-	rows, err := db.QueryContext(ctx, c.cfg.Query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("context-layer: sql connector query: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	out, err := scanRows(rows)
+	out, err := c.runQuery(ctx, db, args)
 	if err != nil {
 		return nil, err
 	}
@@ -161,9 +168,37 @@ func (c sqlConnector) Fetch(ctx context.Context, params json.RawMessage) (json.R
 	return b, nil
 }
 
-// bindArgs maps each declared arg name to a named query parameter, reading its
-// value from the params object (a missing name binds to nil).
-func bindArgs(names []string, params json.RawMessage) ([]any, error) {
+// runQuery runs the connector's SELECT and scans the rows. For a network driver
+// (postgres) it wraps the read in a read-only transaction so a connector can never
+// mutate the operator's database even if the query is a data-modifying statement;
+// sqlite is already opened mode=ro. The tx and rows are fully consumed here so
+// neither leaks past the call.
+func (c sqlConnector) runQuery(ctx context.Context, db *sql.DB, args []any) ([]map[string]any, error) {
+	if c.driver == "sqlite" {
+		rows, err := db.QueryContext(ctx, c.cfg.Query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("context-layer: sql connector query: %w", err)
+		}
+		defer func() { _ = rows.Close() }()
+		return scanRows(rows)
+	}
+	tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, fmt.Errorf("context-layer: sql connector begin read-only tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }() // read-only: rollback always (a no-op after the read)
+	rows, err := tx.QueryContext(ctx, c.cfg.Query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("context-layer: sql connector query: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	return scanRows(rows)
+}
+
+// bindArgs maps each declared arg name to a query parameter, reading its value from
+// the params object (a missing name fails loudly). named=true binds by name (sqlite
+// :name); otherwise by position (postgres $1..$n, in declared order).
+func bindArgs(names []string, params json.RawMessage, named bool) ([]any, error) {
 	if len(names) == 0 {
 		return nil, nil
 	}
@@ -181,7 +216,11 @@ func bindArgs(names []string, params json.RawMessage) ([]any, error) {
 			// silently and return wrong/empty rows — fail loudly instead.
 			return nil, fmt.Errorf("context-layer: sql connector arg %q not provided in params", name)
 		}
-		args = append(args, sql.Named(name, v))
+		if named {
+			args = append(args, sql.Named(name, v))
+		} else {
+			args = append(args, v)
+		}
 	}
 	return args, nil
 }

@@ -420,3 +420,152 @@ func (s stripeConnector) Fetch(ctx context.Context, params json.RawMessage) (jso
 	defer func() { _ = resp.Body.Close() }()
 	return readJSONResponse(resp, "stripe connector")
 }
+
+// --- Credit bureau connector (Experian / Equifax / TransUnion) ---
+//
+// A NORMALIZING adapter over a credit bureau's inquiry API: the flow supplies the
+// applicant inquiry (ssn/name/dob…), the adapter POSTs it to the provider endpoint
+// under the operator's auth, and — the value over a raw HTTP connector — maps the
+// bureau's heterogeneous response into ONE common shape a scorecard/rule can read:
+// {provider, score, band, reason_codes, raw}. The bureaus' response schemas differ, so
+// the score/band/reason field paths are configurable (with sensible defaults). base_url
+// defaults per provider but is overridable to point at the provider's sandbox/mTLS
+// gateway; the egress guard still applies at dial time.
+
+var creditBureauHosts = map[string]string{
+	"experian":   "https://us-api.experian.com",
+	"equifax":    "https://api.equifax.com",
+	"transunion": "https://api.transunion.com",
+}
+
+type creditBureauConfig struct {
+	Provider     string      `json:"provider"`
+	BaseURL      string      `json:"base_url"`
+	Path         string      `json:"path"`
+	Auth         *authConfig `json:"auth"`
+	ScoreField   string      `json:"score_field"`
+	BandField    string      `json:"band_field"`
+	ReasonsField string      `json:"reasons_field"`
+}
+
+type creditBureauConnector struct {
+	provider     string
+	url          string
+	auth         *authConfig
+	scoreField   string
+	bandField    string
+	reasonsField string
+	client       *http.Client
+}
+
+func newCreditBureau(config json.RawMessage, egress EgressPolicy) (creditBureauConnector, error) {
+	var cfg creditBureauConfig
+	if len(config) > 0 {
+		if err := json.Unmarshal(config, &cfg); err != nil {
+			return creditBureauConnector{}, fmt.Errorf("context-layer: credit bureau connector config: %w", err)
+		}
+	}
+	if _, ok := creditBureauHosts[cfg.Provider]; !ok {
+		return creditBureauConnector{}, fmt.Errorf("context-layer: credit bureau connector needs a provider (experian|equifax|transunion), got %q", cfg.Provider)
+	}
+	base := cfg.BaseURL
+	if base == "" {
+		base = creditBureauHosts[cfg.Provider]
+	}
+	if !strings.HasPrefix(base, "http://") && !strings.HasPrefix(base, "https://") {
+		return creditBureauConnector{}, fmt.Errorf("context-layer: credit bureau base_url must be http(s), got %q", base)
+	}
+	if cfg.Path == "" {
+		return creditBureauConnector{}, fmt.Errorf("context-layer: credit bureau connector needs an inquiry path")
+	}
+	if err := cfg.Auth.validate(); err != nil {
+		return creditBureauConnector{}, err
+	}
+	return creditBureauConnector{
+		provider: cfg.Provider, url: strings.TrimRight(base, "/") + cfg.Path, auth: cfg.Auth,
+		scoreField:   orDefault(cfg.ScoreField, "score"),
+		bandField:    orDefault(cfg.BandField, "band"),
+		reasonsField: orDefault(cfg.ReasonsField, "reason_codes"),
+		client:       egress.Client(fetchTimeout),
+	}, nil
+}
+
+func orDefault(v, def string) string {
+	if v == "" {
+		return def
+	}
+	return v
+}
+
+// Fetch POSTs the inquiry, then normalizes the bureau response into the common shape.
+func (c creditBureauConnector) Fetch(ctx context.Context, params json.RawMessage) (json.RawMessage, error) {
+	body := params
+	if len(body) == 0 {
+		body = json.RawMessage("{}")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.url, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("context-layer: credit bureau request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	if err := c.auth.authorize(ctx, req, c.client); err != nil {
+		return nil, err
+	}
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("context-layer: credit bureau fetch: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	raw, err := readJSONResponse(resp, "credit bureau")
+	if err != nil {
+		return nil, err
+	}
+	return normalizeBureau(c.provider, raw, c.scoreField, c.bandField, c.reasonsField)
+}
+
+// normalizeBureau maps a provider's raw response to {provider, score, band,
+// reason_codes, raw}, reading the configured field paths (dot-separated for nested
+// objects). A missing score fails loudly — a bureau inquiry with no score is not a
+// usable decision input, and silently defaulting it to 0 would approve/decline on a
+// phantom value.
+func normalizeBureau(provider string, raw json.RawMessage, scoreField, bandField, reasonsField string) (json.RawMessage, error) {
+	var obj map[string]any
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return nil, fmt.Errorf("context-layer: credit bureau response must be a JSON object: %w", err)
+	}
+	scoreVal, ok := lookupPath(obj, scoreField)
+	if !ok {
+		return nil, fmt.Errorf("context-layer: credit bureau response has no score at %q", scoreField)
+	}
+	score, ok := scoreVal.(float64)
+	if !ok {
+		return nil, fmt.Errorf("context-layer: credit bureau score at %q is not numeric (got %T)", scoreField, scoreVal)
+	}
+	out := map[string]any{"provider": provider, "score": score, "raw": raw}
+	if band, ok := lookupPath(obj, bandField); ok {
+		out["band"] = band
+	}
+	if reasons, ok := lookupPath(obj, reasonsField); ok {
+		out["reason_codes"] = reasons
+	}
+	return json.Marshal(out)
+}
+
+// lookupPath resolves a dot-separated path (e.g. "riskModel.score") against a decoded
+// JSON object.
+func lookupPath(obj map[string]any, path string) (any, bool) {
+	parts := strings.Split(path, ".")
+	var cur any = obj
+	for _, p := range parts {
+		m, ok := cur.(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		cur, ok = m[p]
+		if !ok {
+			return nil, false
+		}
+	}
+	return cur, true
+}

@@ -125,6 +125,13 @@ its version + the event count that fed it), and **precompute/caching** (a per-en
 read-through cache, `context_feature_values`, that serves a warm live value without folding the stream
 and invalidates on a new event, a redefinition, or window expiry). The decision-engine feature Provider
 reads through the cache.
+**A real-connectors round** then closed GAPS #2 (RC block in BUGS.md): the SQL connector gained
+**Postgres** (pgx stdlib driver, positional `$1` args, a read-only transaction so a connector can't
+mutate the DB — verified against a real Postgres); a **credit_bureau** normalizing adapter
+(Experian/Equifax/TransUnion inquiry → common `{provider, score, band, reason_codes}` via configurable
+field paths, missing-score fails loud); and a **sanctions** deterministic in-process OFAC/EU/UN/PEP name
+screener (token-set fuzzy match against an operator watchlist, no network, replayable). The catalog's
+credit-bureau/watchlist templates now instantiate these real adapters instead of http stubs.
 Roadmap & exit criteria: [PLAN.md §8](PLAN.md#8-phased-roadmap); deferrals tracked in [BUGS.md](BUGS.md).
 Working today: `platform/{eventlog,store,projection,identity,auth,httpx,ai,web,mo}` (`mo` = the
 `Option[T]`/`Result[T]` types used instead of none/null sentinels where they're easy to mishandle;

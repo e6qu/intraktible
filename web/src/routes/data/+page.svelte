@@ -179,6 +179,8 @@
       <input bind:value={cName} placeholder="name" aria-label="connector name" size="14" required />
       <select bind:value={cType} aria-label="connector type">
         <option value="mock_bureau">mock_bureau</option>
+        <option value="credit_bureau">credit_bureau</option>
+        <option value="sanctions">sanctions</option>
         <option value="http">http</option>
         <option value="graphql">graphql</option>
         <option value="sql">sql</option>
