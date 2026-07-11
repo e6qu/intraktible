@@ -67,11 +67,18 @@ SLA sweep + webhook plumbing — no new subsystem.
 Sizes are rough effort to become competitively credible. **S** = days, **M** = ~1–2
 weeks, **L** = a real project.
 
-1. **Feature layer is read-time aggregation, not a feature store — L.** Features are
-   `count`/`sum` over the event log computed at decide time. There is no precompute,
-   no point-in-time correctness, no caching, no feature versioning/lineage, and a
-   narrow aggregation set. A point-in-time feature store is the headline differentiator
-   of commercial credit-risk platforms; this is the biggest data gap.
+1. **Feature store — DONE (incremental precompute still open).** The feature layer is
+   now a feature store: (a) a wider aggregation set — count, sum, avg, min, max, last,
+   first, count_distinct; (b) **point-in-time correctness** — `Compute` windows against
+   an explicit `as_of` instant (only events that had occurred by then), exposed as
+   `GET .../features?as_of=<RFC3339>`, so a decision's features are reproducible; (c)
+   **versioning + lineage** — every (re)definition bumps a monotonic version, and a
+   computed value carries the version + the event count that fed it; (d) **precompute +
+   caching** — a per-entity materialized read-through cache (`context_feature_values`)
+   serves a warm value without folding the event stream, invalidating on a new entity
+   event, a redefinition, or window expiry. Remaining (optional): proactive/incremental
+   materialization (maintaining rolling aggregates) for very high-volume entities, where
+   the read-through fold on a cold/expired value is still O(events).
 2. **Connector catalog is HTTP templates, not integrations — M–L.** The catalog is
    generic HTTP/GraphQL/SQL fetchers plus labelled stubs, not real bureau/KYC/fraud
    adapters with correct schemas (Experian/TransUnion/Equifax/LexisNexis/Plaid). SQL is

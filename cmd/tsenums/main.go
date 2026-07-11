@@ -49,7 +49,10 @@ var enums = []tsEnum{
 		events.NodeAI, events.NodeConnect, events.NodePredict, events.NodeManualReview,
 		events.NodeReason, events.NodeOutput,
 	)},
-	{"Aggregation", "AGGREGATIONS", strs(ctxdomain.AggCount, ctxdomain.AggSum)},
+	{"Aggregation", "AGGREGATIONS", strs(
+		ctxdomain.AggCount, ctxdomain.AggSum, ctxdomain.AggAvg, ctxdomain.AggMin,
+		ctxdomain.AggMax, ctxdomain.AggLast, ctxdomain.AggFirst, ctxdomain.AggCountDistinct,
+	)},
 	{"Role", "ROLES", strs(auth.RoleViewer, auth.RoleOperator, auth.RoleEditor, auth.RoleApprover, auth.RoleAdmin)},
 	{"Scope", "SCOPES", strs(auth.Sandbox, auth.Production, auth.ScopeAll)},
 	{"Environment", "ENVIRONMENTS", strs(dedomain.EnvSandbox, dedomain.EnvStaging, dedomain.EnvProduction)},

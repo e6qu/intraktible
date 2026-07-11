@@ -6,7 +6,9 @@ package service
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/e6qu/intraktible/context-layer/command"
@@ -216,7 +218,20 @@ func (s *Service) computeFeatures(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	vals, err := features.Compute(r.Context(), s.store, id, r.PathValue("type"), r.PathValue("id"), s.now())
+	entityType, entityID := r.PathValue("type"), r.PathValue("id")
+	// ?as_of=<RFC3339> reproduces the POINT-IN-TIME values as of a past instant (fresh
+	// fold, no cache); without it a live read is served through the materialized cache.
+	if raw := strings.TrimSpace(r.URL.Query().Get("as_of")); raw != "" {
+		asOf, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			httpx.Error(w, http.StatusBadRequest, fmt.Errorf("as_of must be RFC3339: %w", err))
+			return
+		}
+		vals, err := features.Compute(r.Context(), s.store, id, entityType, entityID, asOf.UTC())
+		httpx.WriteList(w, "features", vals, err)
+		return
+	}
+	vals, err := features.ComputeCached(r.Context(), s.store, id, entityType, entityID, s.now())
 	httpx.WriteList(w, "features", vals, err)
 }
 

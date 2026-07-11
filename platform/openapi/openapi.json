@@ -2045,10 +2045,11 @@
     "/v1/context/entities/{type}/{id}/features": {
       "get": {
         "tags": ["Context"],
-        "summary": "Compute an entity's features now",
+        "summary": "Compute an entity's features (live, or point-in-time via as_of)",
         "parameters": [
           { "name": "type", "in": "path", "required": true, "schema": { "type": "string" } },
-          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "as_of", "in": "query", "required": false, "schema": { "type": "string", "format": "date-time" }, "description": "RFC3339 instant to reproduce the point-in-time feature values as of the past (only events that had occurred by then). Omit for a live read served through the materialized cache." }
         ],
         "responses": {
           "200": {
@@ -2107,7 +2108,7 @@
                   "name": { "type": "string" },
                   "entity_type": { "type": "string" },
                   "event_name": { "type": "string" },
-                  "aggregation": { "type": "string" },
+                  "aggregation": { "type": "string", "enum": ["count", "sum", "avg", "min", "max", "last", "first", "count_distinct"] },
                   "field": { "type": "string" },
                   "window_hours": { "type": "integer" }
                 }

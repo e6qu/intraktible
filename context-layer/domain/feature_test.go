@@ -90,3 +90,79 @@ func TestComputeRejectsUnknownAggregationOnEmptyInput(t *testing.T) {
 		t.Fatal("an unknown aggregation must error even with no matching events")
 	}
 }
+
+func TestComputeAggregations(t *testing.T) {
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	evs := []domain.FeatureInput{
+		{EventName: "txn", Data: json.RawMessage(`{"amount":100,"cur":"USD"}`), OccurredAt: now.Add(-1 * time.Hour)}, // newest
+		{EventName: "txn", Data: json.RawMessage(`{"amount":40,"cur":"EUR"}`), OccurredAt: now.Add(-5 * time.Hour)},
+		{EventName: "txn", Data: json.RawMessage(`{"amount":10,"cur":"USD"}`), OccurredAt: now.Add(-10 * time.Hour)},  // oldest in-window
+		{EventName: "txn", Data: json.RawMessage(`{"amount":999,"cur":"GBP"}`), OccurredAt: now.Add(-48 * time.Hour)}, // out of window
+	}
+	spec := func(a domain.Aggregation) domain.FeatureSpec {
+		return domain.FeatureSpec{EventName: "txn", Aggregation: a, Field: "amount", Window: 24 * time.Hour}
+	}
+	cases := []struct {
+		agg  domain.Aggregation
+		want float64
+	}{
+		{domain.AggAvg, 50}, // (100+40+10)/3
+		{domain.AggMin, 10},
+		{domain.AggMax, 100},
+		{domain.AggLast, 100}, // most recent event's amount
+		{domain.AggFirst, 10}, // oldest in-window event's amount
+	}
+	for _, c := range cases {
+		got, err := domain.Compute(spec(c.agg), evs, now)
+		if err != nil {
+			t.Fatalf("%s: %v", c.agg, err)
+		}
+		if got != c.want {
+			t.Fatalf("%s = %v, want %v", c.agg, got, c.want)
+		}
+	}
+	// count_distinct over the "cur" field: USD, EUR (GBP is out of window) = 2.
+	cd := domain.FeatureSpec{EventName: "txn", Aggregation: domain.AggCountDistinct, Field: "cur", Window: 24 * time.Hour}
+	if got, err := domain.Compute(cd, evs, now); err != nil || got != 2 {
+		t.Fatalf("count_distinct = %v (err %v), want 2", got, err)
+	}
+}
+
+// Point-in-time: computing as of a past instant sees only the events that had
+// occurred by then, so a feature is reproducible for any historical decision.
+func TestComputePointInTime(t *testing.T) {
+	base := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	spec := domain.FeatureSpec{EventName: "txn", Aggregation: domain.AggCount, Window: 24 * time.Hour}
+	evs := []domain.FeatureInput{
+		{EventName: "txn", OccurredAt: base.Add(-2 * time.Hour)},
+		{EventName: "txn", OccurredAt: base.Add(-1 * time.Hour)},
+		{EventName: "txn", OccurredAt: base.Add(30 * time.Minute)}, // after the as-of instant
+	}
+	// As of `base`, only the two earlier events count; the later one is "in the future".
+	if v, _ := domain.Compute(spec, evs, base); v != 2 {
+		t.Fatalf("as-of count = %v, want 2 (future event excluded)", v)
+	}
+	// An hour later, all three are in-window and past.
+	if v, _ := domain.Compute(spec, evs, base.Add(time.Hour)); v != 3 {
+		t.Fatalf("later count = %v, want 3", v)
+	}
+}
+
+// ComputeDetailed exposes the lineage a materialized cache needs: event count and the
+// oldest in-window instant (whose +window is when the value next changes).
+func TestComputeDetailedLineage(t *testing.T) {
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	oldest := now.Add(-20 * time.Hour)
+	spec := domain.FeatureSpec{EventName: "txn", Aggregation: domain.AggCount, Window: 24 * time.Hour}
+	evs := []domain.FeatureInput{
+		{EventName: "txn", OccurredAt: now.Add(-1 * time.Hour)},
+		{EventName: "txn", OccurredAt: oldest},
+	}
+	res, err := domain.ComputeDetailed(spec, evs, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Value != 2 || res.EventCount != 2 || !res.HasInWindow || !res.OldestInWin.Equal(oldest) {
+		t.Fatalf("lineage = %+v", res)
+	}
+}

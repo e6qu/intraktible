@@ -23,16 +23,20 @@ Done — custom entities + events + feature engine + connectors (command→event
   appends to the entity's per-entity event log and bumps the entity's `event_count`; an event about a
   not-yet-recorded entity auto-creates a shell entity. `occurred_at` is optional — the command fills
   it with the record time when omitted and records it in the event (replay-stable).
-- **Features** are windowed signals over an entity type's event stream: a definition is
-  `{name, entity_type, event_name, aggregation(count|sum), field?, window_hours}` (re-defining the
-  same name overwrites). The pure `domain.Compute` folds an entity's events — keeping those whose name
-  matches and whose `occurred_at` falls in `(now-window, now]` — into a `count` or a `sum` of a
-  numeric top-level `field` (a matching event missing the field contributes nothing; a present
-  non-numeric field fails loudly). Computation is **read-time** (windowed against now), so the stored
-  log stays clock-free. `features.Provider` adapts the engine to a `name->value` lookup for one
-  entity; the **decision engine** consumes it through a port so a decide call carrying an
-  `{entity_type, entity_id}` ref gets these folded into its input under `features.*` (read by Rule
-  nodes).
+- **Features** are windowed signals over an entity type's event stream — a small **feature store**: a
+  definition is `{name, entity_type, event_name, aggregation, field?, window_hours}` (re-defining the
+  same name overwrites and bumps a monotonic `version`). The pure `domain.Compute` folds an entity's
+  events — keeping those whose name matches and whose `occurred_at` falls in `(asOf-window, asOf]` —
+  into one of `count | sum | avg | min | max | last | first | count_distinct` over a top-level `field`
+  (a matching event missing the field contributes nothing; a present non-numeric field fails loudly).
+  Because the upper bound is `asOf`, passing a past instant yields the **point-in-time** value —
+  reproducible for a historical decision (`GET .../features?as_of=<RFC3339>`); the stored log stays
+  clock-free. A computed value carries its **lineage** (definition version + event count). A per-entity
+  **materialized read-through cache** (`context_feature_values`) serves a warm live value without
+  folding the stream, invalidating on a new entity event, a redefinition, or window expiry.
+  `features.Provider` adapts the engine to a `name->value` lookup for one entity; the **decision
+  engine** consumes it through a port so a decide call carrying an `{entity_type, entity_id}` ref gets
+  these folded into its input under `features.*` (read by Rule nodes).
 - **Connectors** fetch external data. A definition is `{name, type, config}` for one of the
   types: **http**/**graphql** (operator-configured REST/GraphQL — the "Custom Connect" case — with
   an optional `auth` block (bearer | header | basic | query) + custom headers), **sql**, **static**,

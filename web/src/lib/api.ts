@@ -1983,6 +1983,7 @@ export interface Feature {
   aggregation: Aggregation;
   field?: string;
   window_hours: number;
+  version: number;
   updated_at: string;
 }
 
@@ -2008,6 +2009,9 @@ export interface EntityEvent {
 export interface FeatureValue {
   name: string;
   value: number;
+  version: number;
+  event_count: number; // events that fed the value (lineage)
+  cached?: boolean; // served from the materialized cache
 }
 
 export async function listConnectors(

@@ -155,6 +155,85 @@ func TestFeatureReplay(t *testing.T) {
 	}
 }
 
+// TestFeatureVersioningAndCache covers the feature store's versioning (a redefinition
+// bumps the monotonic version) and its materialized read-through cache (a warm value
+// is served without a fold, and invalidates on a new entity event or a redefinition).
+func TestFeatureVersioningAndCache(t *testing.T) {
+	ctx := context.Background()
+	log, err := eventlog.OpenWAL(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = log.Close() }()
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "dev"}
+	h := command.NewHandler(log)
+	st := store.NewMemory()
+	reproject := func() {
+		if err := projection.New(log, st, entities.Projector{}, features.Projector{}).Start(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	def := func() {
+		if _, err := h.DefineFeature(ctx, id, domain.DefineFeature{
+			Name: "txn_count", EntityType: "customer", EventName: "transaction", Aggregation: "count", WindowHours: 24,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	record := func(amt string) {
+		if _, err := h.RecordEvent(ctx, id, domain.RecordEvent{
+			EntityType: "customer", EntityID: "c1", EventName: "transaction", Data: json.RawMessage(amt),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	def()
+	def() // redefinition
+	record(`{"amount":10}`)
+	record(`{"amount":20}`)
+	reproject()
+
+	// Version bumped to 2 across the two definitions.
+	defs, err := features.List(ctx, st, id, "customer")
+	if err != nil || len(defs) != 1 {
+		t.Fatalf("defs = %+v (err %v)", defs, err)
+	}
+	if defs[0].Version != 2 {
+		t.Fatalf("version = %d, want 2 after a redefinition", defs[0].Version)
+	}
+
+	// First read folds; second read (no new events) is served from the cache.
+	v1, err := features.ComputeCached(ctx, st, id, "customer", "c1", time.Now().UTC())
+	if err != nil || len(v1) != 1 || v1[0].Value != 2 || v1[0].Cached {
+		t.Fatalf("first read = %+v (err %v), want count 2 uncached", v1, err)
+	}
+	v2, err := features.ComputeCached(ctx, st, id, "customer", "c1", time.Now().UTC())
+	if err != nil || v2[0].Value != 2 || !v2[0].Cached {
+		t.Fatalf("second read = %+v, want count 2 from cache", v2)
+	}
+	if v2[0].Version != 2 || v2[0].EventCount != 2 {
+		t.Fatalf("cached lineage = %+v, want version 2 / 2 events", v2[0])
+	}
+
+	// A new entity event invalidates the cache (entity event count changed).
+	record(`{"amount":30}`)
+	reproject()
+	v3, err := features.ComputeCached(ctx, st, id, "customer", "c1", time.Now().UTC())
+	if err != nil || v3[0].Value != 3 || v3[0].Cached {
+		t.Fatalf("after a new event = %+v, want count 3 recomputed (uncached)", v3)
+	}
+
+	// A redefinition invalidates the cache (version changed) — the recomputed value
+	// carries the newer version.
+	def()
+	reproject()
+	v4, err := features.ComputeCached(ctx, st, id, "customer", "c1", time.Now().UTC())
+	if err != nil || v4[0].Cached || v4[0].Version <= v2[0].Version {
+		t.Fatalf("after a redefinition = %+v, want a higher version recomputed (uncached)", v4)
+	}
+}
+
 // TestConnectorReplay defines a connector and records a fetch, then rebuilds from
 // the log and confirms the definition and the recorded result survive the replay.
 func TestConnectorReplay(t *testing.T) {
