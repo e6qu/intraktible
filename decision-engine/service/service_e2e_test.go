@@ -21,6 +21,7 @@ import (
 	"github.com/e6qu/intraktible/decision-engine/flows"
 	"github.com/e6qu/intraktible/decision-engine/history"
 	"github.com/e6qu/intraktible/decision-engine/internal/flowtest"
+	"github.com/e6qu/intraktible/decision-engine/models"
 	"github.com/e6qu/intraktible/decision-engine/monitor"
 	"github.com/e6qu/intraktible/decision-engine/notify"
 	"github.com/e6qu/intraktible/decision-engine/policy"
@@ -1980,6 +1981,9 @@ func startEngine(t *testing.T, opts ...command.DecideOption) *testutil.API {
 	t.Helper()
 	log, st := testutil.NewLogStore(t)
 	paCmd := preapproval.NewHandler(log)
+	// Always wire the model provider (+ its registry projector below) so Predict nodes
+	// resolve; a flow without a Predict node is unaffected.
+	opts = append([]command.DecideOption{command.WithModels(models.Provider{Store: st})}, opts...)
 	svc := service.New(command.NewHandler(log), command.NewDecideHandler(log, st, opts...), paCmd, st)
 	pol := policy.New(policy.NewHandler(log), st)
 	pa := preapproval.New(paCmd, st)
@@ -1999,7 +2003,7 @@ func startEngine(t *testing.T, opts ...command.DecideOption) *testutil.API {
 		asserts.Routes(mux)
 	}
 	return testutil.StartAPI(t, log, st, "test-key", id, routes,
-		flows.Projector{}, history.Projector{}, analytics.Projector{}, policy.Projector{}, preapproval.Projector{}, monitor.Projector{}, notify.Projector{}, privacy.Projector{}, assertions.Projector{}, shadow.Projector{}, schedule.Projector{})
+		flows.Projector{}, history.Projector{}, analytics.Projector{}, policy.Projector{}, preapproval.Projector{}, monitor.Projector{}, notify.Projector{}, privacy.Projector{}, assertions.Projector{}, shadow.Projector{}, schedule.Projector{}, models.Projector{})
 }
 
 // stubFeatures is a fixed feature source for the decide HTTP test.
@@ -2974,4 +2978,82 @@ func TestDecideUnknownProviderRefIsBadRequest(t *testing.T) {
 	}) {
 		t.Fatal("decide against an undefined connector must be a 400, not a 500")
 	}
+}
+
+// TestTrainModelOverHTTP fits a logistic model from a posted dataset, then serves it
+// in a decision — the trained model is an ordinary Predict-node model.
+func TestTrainModelOverHTTP(t *testing.T) {
+	api := startEngine(t)
+
+	// A separable dataset: label is driven by `signal`, `noise` is irrelevant.
+	var dataset []map[string]any
+	for i := 0; i < 120; i++ {
+		signal := float64(i%60) / 6 // 0..~9.8
+		label := 0
+		if signal >= 5 {
+			label = 1
+		}
+		dataset = append(dataset, map[string]any{
+			"features": map[string]any{"signal": signal, "noise": float64((i * 7) % 30)},
+			"label":    label,
+		})
+	}
+
+	var trained struct {
+		Name   string `json:"name"`
+		Report struct {
+			CVAUC      float64 `json:"cv_auc"`
+			Rows       int     `json:"rows"`
+			Importance []struct {
+				Feature    string  `json:"feature"`
+				Importance float64 `json:"importance"`
+			} `json:"importance"`
+		} `json:"report"`
+	}
+	api.Request(t, http.MethodPost, "/v1/models/train", map[string]any{
+		"name": "risk", "dataset": dataset, "options": map[string]any{"iterations": 600, "folds": 5},
+	}, http.StatusCreated, &trained)
+	if trained.Report.Rows != 120 || trained.Report.CVAUC < 0.9 {
+		t.Fatalf("training report weak: %+v", trained.Report)
+	}
+	if len(trained.Report.Importance) == 0 || trained.Report.Importance[0].Feature != "signal" {
+		t.Fatalf("importance should rank signal first: %+v", trained.Report.Importance)
+	}
+
+	// The trained model is now defined and servable in a Predict node.
+	var flow struct {
+		FlowID string `json:"flow_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows", map[string]string{"slug": "riskflow", "name": "Risk"}, http.StatusCreated, &flow)
+	api.Request(t, http.MethodPost, "/v1/flows/"+flow.FlowID+"/versions", map[string]any{
+		"graph": map[string]any{
+			"nodes": []map[string]any{
+				{"id": "in", "type": "input"},
+				{"id": "p", "type": "predict", "config": map[string]any{"model": "risk", "output": "risk"}},
+				{"id": "a", "type": "assignment", "config": map[string]any{
+					"assignments": []map[string]any{{"target": "prob", "expr": "predict.risk.probability"}},
+				}},
+				{"id": "out", "type": "output", "config": map[string]any{"fields": []string{"prob"}}},
+			},
+			"edges": []map[string]any{{"from": "in", "to": "p"}, {"from": "p", "to": "a"}, {"from": "a", "to": "out"}},
+		},
+	}, http.StatusCreated, nil)
+
+	if !testutil.Eventually(t, func() bool {
+		var res struct {
+			Status string         `json:"status"`
+			Data   map[string]any `json:"data"`
+		}
+		api.Request(t, http.MethodPost, "/v1/flows/riskflow/sandbox/decide",
+			map[string]any{"data": map[string]any{"signal": 9.0, "noise": 3.0}}, http.StatusOK, &res)
+		prob, ok := res.Data["prob"].(float64)
+		return res.Status == "completed" && ok && prob > 0.5
+	}) {
+		t.Fatal("the trained model never served a high-signal probability > 0.5")
+	}
+
+	// An unusable dataset (one class) is a 400.
+	api.Request(t, http.MethodPost, "/v1/models/train", map[string]any{
+		"name": "bad", "dataset": []map[string]any{{"features": map[string]any{"x": 1}, "label": 1}},
+	}, http.StatusBadRequest, nil)
 }

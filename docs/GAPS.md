@@ -100,10 +100,15 @@ weeks, **L** = a real project.
    shape the history projector lifts). Bands are authored in the builder's node
    inspector and validated at publish. Remaining (optional): scaling/calibration
    (points-to-double-odds), which few evaluations require.
-4. **No model training — L.** Models are hand-authored JSON or external endpoints.
-   There is no fit/cross-validation/feature-importance pipeline. Either add light
-   training or position explicitly as serve-only (the registry + drift + external-model
-   story is strong on its own).
+4. **Model training — DONE (logistic).** `POST /v1/models/train` fits a
+   logistic-regression model from a labelled dataset and defines it — a servable
+   `KindLogistic` model, no hand-authored coefficients. The fit is a deterministic batch
+   gradient descent (z-scored features, de-standardized back to raw space) with k-fold
+   **cross-validation** (AUC / log-loss / accuracy) and **feature importance**
+   (standardized-coefficient magnitude). Being deterministic, re-training the same
+   dataset/options reproduces the model and report. Authored from the `/models` builder.
+   Remaining (optional): GBM/tree training (the serve path already supports `gbm`), and
+   a dataset registry so a training set is stored/versioned rather than posted per run.
 5. **Expression-language ergonomics — DONE.** expr-lang in fact ships a full standard
    library (strings/numbers/collections/date-parse); the gap was that it was
    undocumented, so authors reached for Starlark unnecessarily. It is now cataloged in

@@ -27,6 +27,33 @@ test('defines a predictive model from the registry page', async ({ page }) => {
   await expect(driftRow).toContainText('No predictions recorded yet');
 });
 
+test('trains a logistic model from a dataset and shows the report', async ({ page }) => {
+  await page.goto('/models');
+  await expect(page.getByRole('heading', { name: 'Models' })).toBeVisible();
+
+  await page.getByText('Train a logistic model from a dataset').click();
+  const name = 'trained-' + Math.random().toString(36).slice(2, 8);
+  await page.getByLabel('model to train').fill(name);
+
+  // A small separable dataset: label follows `signal`; `noise` is irrelevant.
+  const rows: { features: Record<string, number>; label: number }[] = [];
+  for (let i = 0; i < 40; i++) {
+    const signal = (i % 20) / 2; // 0..9.5
+    rows.push({ features: { signal, noise: (i * 3) % 7 }, label: signal >= 5 ? 1 : 0 });
+  }
+  await page.getByLabel('training dataset').fill(JSON.stringify(rows));
+  await page.getByRole('button', { name: 'Train model' }).click();
+
+  // The training report renders with metrics and per-feature importance.
+  const report = page.getByTestId('train-report');
+  await expect(report).toBeVisible();
+  await expect(report).toContainText('CV AUC');
+  await expect(report).toContainText('signal');
+
+  // The trained model now appears in the registry table.
+  await expect(page.locator('tbody tr').filter({ hasText: name })).toBeVisible();
+});
+
 test('a predict node panel edits model + output without raw JSON', async ({ page, request }) => {
   const slug = 'pf-' + Math.random().toString(36).slice(2, 8);
   const created = await request.post('/v1/flows', {
