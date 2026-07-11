@@ -320,7 +320,7 @@
       "get": {
         "tags": ["models"],
         "summary": "Prediction-drift report for a model",
-        "description": "Returns the model's distribution of predicted probabilities (deciles) and, once a baseline is captured, the PSI vs that baseline (<0.1 stable, 0.1–0.25 moderate, >0.25 significant). ?window=Nd measures only the most recent N day-buckets (a windowed view; absent = all-time). firing is set when PSI exceeds the configured monitor threshold.",
+        "description": "Returns the model's distribution of predicted probabilities (deciles) and, once a baseline is captured, the PSI vs that baseline (<0.1 stable, 0.1–0.25 moderate, >0.25 significant), plus per-input-feature COVARIATE drift (features[]: standardized mean shift + variance ratio vs the baseline). ?window=Nd measures only the most recent N day-buckets (a windowed view; absent = all-time). firing is set when PSI exceeds the configured monitor threshold.",
         "parameters": [
           { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } },
           {
@@ -332,9 +332,57 @@
         ],
         "responses": {
           "200": {
-            "description": "Drift report: count, decile histogram, and PSI when a baseline exists.",
+            "description": "Drift report: count, decile histogram, PSI when a baseline exists, and per-feature covariate drift.",
             "content": { "application/json": { "schema": { "type": "object" } } }
           },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/models/{name}/performance": {
+      "get": {
+        "tags": ["models"],
+        "summary": "Live performance reconciled against recorded actuals",
+        "description": "Returns the model's live performance measured from recorded ground-truth outcomes: calibration (realized positive rate per predicted decile), accuracy, Brier score, and realized AUC.",
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Performance report (zero-valued until actuals are recorded).",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/models/{name}/outcomes": {
+      "post": {
+        "tags": ["models"],
+        "summary": "Record a realized outcome for a model prediction",
+        "description": "Reconciles a realized ground-truth label (0/1) with the probability the model predicted, feeding the performance report.",
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["probability", "label"],
+                "properties": {
+                  "probability": { "type": "number", "description": "The predicted probability (0..1)." },
+                  "label": { "type": "number", "description": "Realized binary outcome (0 or 1)." },
+                  "decision_id": { "type": "string", "description": "Optional lineage back to the decision." }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": { "description": "The outcome was recorded." },
+          "400": { "$ref": "#/components/responses/Error" },
           "401": { "$ref": "#/components/responses/Error" }
         }
       }

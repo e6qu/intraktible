@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 
 	"github.com/expr-lang/expr"
@@ -191,6 +192,42 @@ func (t *Tree) validate() error {
 // Evaluate runs the model over the feature map and returns its prediction. It is a
 // pure, deterministic function (no clock, no I/O), so a recorded prediction replays
 // identically. A coefficient/feature referenced but absent fails loudly.
+// FeatureNames returns the input features a model reads: a logistic model's
+// coefficient keys and a GBM's tree split features (sorted, de-duplicated). It is
+// empty for expression/external kinds (their inputs aren't statically enumerable),
+// so covariate-drift tracking simply has nothing to fold for them.
+func (s Spec) FeatureNames() []string {
+	set := map[string]struct{}{}
+	switch s.Kind {
+	case KindLogistic:
+		for name := range s.Coefficients {
+			set[name] = struct{}{}
+		}
+	case KindGBM:
+		for i := range s.Trees {
+			s.Trees[i].collectFeatures(set)
+		}
+	}
+	out := make([]string, 0, len(set))
+	for name := range set {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// collectFeatures adds a tree's split features to set (leaves carry none).
+func (t *Tree) collectFeatures(set map[string]struct{}) {
+	if t == nil || t.Leaf {
+		return
+	}
+	if t.Feature != "" {
+		set[t.Feature] = struct{}{}
+	}
+	t.Left.collectFeatures(set)
+	t.Right.collectFeatures(set)
+}
+
 func Evaluate(s Spec, features map[string]any) (Prediction, error) {
 	var (
 		pred Prediction

@@ -2264,6 +2264,18 @@ export async function flowCoverage(
   return (await res.json()) as Coverage;
 }
 
+export interface FeatureDrift {
+  feature: string;
+  count: number;
+  mean: number;
+  std: number;
+  baseline_mean: number;
+  baseline_std: number;
+  mean_shift: number;
+  var_ratio: number;
+  drifting: boolean;
+}
+
 export interface ModelDrift {
   model: string;
   count: number;
@@ -2274,6 +2286,56 @@ export interface ModelDrift {
   threshold?: number;
   firing: boolean;
   alerting: boolean;
+  features?: FeatureDrift[]; // covariate (input) drift vs the baseline
+}
+
+export interface Calibration {
+  bucket: number;
+  predicted: number;
+  actual: number;
+  count: number;
+}
+
+export interface ModelPerformance {
+  model: string;
+  count: number;
+  positives: number;
+  accuracy: number;
+  brier: number;
+  auc: number;
+  calibration: Calibration[];
+}
+
+export async function getModelPerformance(
+  key: string,
+  name: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<ModelPerformance> {
+  const res = await fetcher(`/v1/models/${encodeURIComponent(name)}/performance`, {
+    headers: authHeaders(key)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, `GET /v1/models/${name}/performance`);
+  }
+  return (await res.json()) as ModelPerformance;
+}
+
+// recordModelOutcome reconciles a realized outcome (label 0/1) with the probability a
+// model predicted, feeding live-performance metrics.
+export async function recordModelOutcome(
+  key: string,
+  name: string,
+  body: { probability: number; label: number; decision_id?: string },
+  fetcher: typeof fetch = recordingFetch
+): Promise<void> {
+  const res = await fetcher(`/v1/models/${encodeURIComponent(name)}/outcomes`, {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, `POST /v1/models/${name}/outcomes`);
+  }
 }
 
 export async function modelDrift(

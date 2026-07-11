@@ -120,6 +120,8 @@ func (s *Service) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/models", s.listModels)
 	mux.HandleFunc("GET /v1/models/{name}", s.getModel)
 	mux.HandleFunc("GET /v1/models/{name}/drift", s.modelDrift)
+	mux.HandleFunc("GET /v1/models/{name}/performance", s.modelPerformance)
+	mux.HandleFunc("POST /v1/models/{name}/outcomes", s.recordModelOutcome)
 	mux.HandleFunc("POST /v1/models/{name}/baseline", s.captureModelBaseline)
 	mux.HandleFunc("POST /v1/models/{name}/monitor", s.setModelMonitor)
 	mux.HandleFunc("POST /v1/copilot/explain", s.copilotExplain)
@@ -259,6 +261,44 @@ func (s *Service) modelDrift(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, rep)
+}
+
+// modelPerformance reports a model's live performance reconciled against recorded
+// actuals: calibration, accuracy, Brier score, and realized AUC.
+func (s *Service) modelPerformance(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	perf, err := models.ReadPerformance(r.Context(), s.store, id, r.PathValue("name"))
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, perf)
+}
+
+// recordModelOutcome records a realized ground-truth outcome for a model prediction.
+func (s *Service) recordModelOutcome(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		Probability float64 `json:"probability"`
+		Label       float64 `json:"label"`
+		DecisionID  string  `json:"decision_id"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	e, err := s.cmd.RecordModelOutcome(r.Context(), id, r.PathValue("name"), req.Probability, req.Label, req.DecisionID)
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	httpx.JSON(w, http.StatusAccepted, map[string]any{"event_id": e.ID, "seq": e.Seq})
 }
 
 func (s *Service) setModelMonitor(w http.ResponseWriter, r *http.Request) {

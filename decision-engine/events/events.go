@@ -26,7 +26,21 @@ const (
 	// is pushed to webhooks once, not every tick — mirroring the flow monitor.
 	TypeModelDriftAlerted  = "decision.model.drift_alerted"
 	TypeModelDriftResolved = "decision.model.drift_resolved"
+	// TypeModelOutcomeRecorded records a realized ground-truth label for a prediction a
+	// model made, so live performance (calibration, accuracy, Brier, realized AUC) is
+	// measured against actuals — not inferred from the prediction distribution alone.
+	TypeModelOutcomeRecorded = "decision.model.outcome_recorded"
 )
+
+// ModelOutcomeRecorded reconciles a model's prediction with the outcome that later
+// materialized: Probability is what the model predicted (0..1), Label is the realized
+// binary outcome (0 or 1). DecisionID links it back to the decision when known.
+type ModelOutcomeRecorded struct {
+	Name        string  `json:"name"`
+	Probability float64 `json:"probability"`
+	Label       float64 `json:"label"`
+	DecisionID  string  `json:"decision_id,omitempty"`
+}
 
 // ModelMonitorSet sets (Threshold > 0) or clears (Threshold <= 0) the PSI drift
 // threshold a model alerts on.

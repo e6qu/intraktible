@@ -138,7 +138,25 @@ func (p Provider) Predict(ctx context.Context, id identity.Identity, model strin
 	if err != nil {
 		return nil, err
 	}
-	return json.Marshal(pred)
+	// Attach the model's input feature values so the drift projector can track
+	// covariate drift (the recorded prediction is the only per-model signal it folds).
+	// Evaluate already required these features to be present, so the lookups succeed.
+	resp := map[string]any{"score": pred.Score}
+	if pred.Probability != nil {
+		resp["probability"] = *pred.Probability
+	}
+	if names := spec.FeatureNames(); len(names) > 0 {
+		fv := make(map[string]float64, len(names))
+		for _, name := range names {
+			if x, err := feature(features, name); err == nil {
+				fv[name] = x
+			}
+		}
+		if len(fv) > 0 {
+			resp["features"] = fv
+		}
+	}
+	return json.Marshal(resp)
 }
 
 // predictExternal POSTs the features to the model's serving endpoint and reads back

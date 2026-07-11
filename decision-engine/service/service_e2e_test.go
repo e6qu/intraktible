@@ -2003,7 +2003,7 @@ func startEngine(t *testing.T, opts ...command.DecideOption) *testutil.API {
 		asserts.Routes(mux)
 	}
 	return testutil.StartAPI(t, log, st, "test-key", id, routes,
-		flows.Projector{}, history.Projector{}, analytics.Projector{}, policy.Projector{}, preapproval.Projector{}, monitor.Projector{}, notify.Projector{}, privacy.Projector{}, assertions.Projector{}, shadow.Projector{}, schedule.Projector{}, models.Projector{})
+		flows.Projector{}, history.Projector{}, analytics.Projector{}, policy.Projector{}, preapproval.Projector{}, monitor.Projector{}, notify.Projector{}, privacy.Projector{}, assertions.Projector{}, shadow.Projector{}, schedule.Projector{}, models.Projector{}, models.DriftProjector{})
 }
 
 // stubFeatures is a fixed feature source for the decide HTTP test.
@@ -3056,4 +3056,108 @@ func TestTrainModelOverHTTP(t *testing.T) {
 	api.Request(t, http.MethodPost, "/v1/models/train", map[string]any{
 		"name": "bad", "dataset": []map[string]any{{"features": map[string]any{"x": 1}, "label": 1}},
 	}, http.StatusBadRequest, nil)
+}
+
+// TestModelPerformanceAndCovariateDrift exercises GAPS #6 end to end: a model's
+// predictions fold input-feature stats (covariate drift), and recorded actuals
+// reconcile into live performance.
+func TestModelPerformanceAndCovariateDrift(t *testing.T) {
+	api := startEngine(t)
+
+	// A logistic model over one feature (so predictions carry a probability + fico).
+	api.Request(t, http.MethodPost, "/v1/models", map[string]any{
+		"name": "risk",
+		"spec": map[string]any{"kind": "logistic", "intercept": -7, "coefficients": map[string]any{"fico": 0.01}},
+	}, http.StatusCreated, nil)
+
+	var flow struct {
+		FlowID string `json:"flow_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows", map[string]string{"slug": "riskf", "name": "RiskF"}, http.StatusCreated, &flow)
+	api.Request(t, http.MethodPost, "/v1/flows/"+flow.FlowID+"/versions", map[string]any{
+		"graph": map[string]any{
+			"nodes": []map[string]any{
+				{"id": "in", "type": "input"},
+				{"id": "p", "type": "predict", "config": map[string]any{"model": "risk", "output": "r"}},
+				{"id": "out", "type": "output"},
+			},
+			"edges": []map[string]any{{"from": "in", "to": "p"}, {"from": "p", "to": "out"}},
+		},
+	}, http.StatusCreated, nil)
+
+	decide := func(fico int) {
+		testutil.Eventually(t, func() bool {
+			var res struct {
+				Status string `json:"status"`
+			}
+			api.Request(t, http.MethodPost, "/v1/flows/riskf/sandbox/decide",
+				map[string]any{"data": map[string]any{"fico": fico}}, http.StatusOK, &res)
+			return res.Status == "completed"
+		})
+	}
+	// A batch of decisions; the drift projector folds the fico values it saw.
+	for _, f := range []int{800, 780, 760, 820, 790} {
+		decide(f)
+	}
+
+	// Capture the covariate baseline, then decide over a SHIFTED fico population.
+	if !testutil.Eventually(t, func() bool {
+		var d struct {
+			Features []struct {
+				Feature string `json:"feature"`
+			} `json:"features"`
+			Count int `json:"count"`
+		}
+		api.Request(t, http.MethodGet, "/v1/models/risk/drift", nil, http.StatusOK, &d)
+		return d.Count >= 5
+	}) {
+		t.Fatal("drift never reflected the predictions")
+	}
+	api.Request(t, http.MethodPost, "/v1/models/risk/baseline", nil, http.StatusOK, nil)
+	for _, f := range []int{500, 520, 480, 510, 495} { // a lower-fico population
+		decide(f)
+	}
+	// Covariate drift should now flag fico's mean shift.
+	if !testutil.Eventually(t, func() bool {
+		var d struct {
+			Features []struct {
+				Feature   string  `json:"feature"`
+				MeanShift float64 `json:"mean_shift"`
+				Drifting  bool    `json:"drifting"`
+			} `json:"features"`
+		}
+		api.Request(t, http.MethodGet, "/v1/models/risk/drift", nil, http.StatusOK, &d)
+		for _, f := range d.Features {
+			if f.Feature == "fico" && f.Drifting && f.MeanShift > 1 {
+				return true
+			}
+		}
+		return false
+	}) {
+		t.Fatal("covariate drift never flagged the fico shift")
+	}
+
+	// Record actuals and read reconciled performance.
+	for i := 0; i < 20; i++ {
+		prob, label := 0.9, 1.0 // confident-positive predictions that came true
+		if i%2 == 0 {
+			prob, label = 0.1, 0.0 // confident-negative that came true
+		}
+		api.Request(t, http.MethodPost, "/v1/models/risk/outcomes",
+			map[string]any{"probability": prob, "label": label}, http.StatusAccepted, nil)
+	}
+	if !testutil.Eventually(t, func() bool {
+		var perf struct {
+			Count int     `json:"count"`
+			AUC   float64 `json:"auc"`
+		}
+		api.Request(t, http.MethodGet, "/v1/models/risk/performance", nil, http.StatusOK, &perf)
+		return perf.Count == 20 && perf.AUC > 0.9
+	}) {
+		t.Fatal("performance never reconciled the recorded actuals")
+	}
+
+	// A non-binary label is rejected.
+	api.Request(t, http.MethodPost, "/v1/models/risk/outcomes",
+		map[string]any{"probability": 0.5, "label": 2}, http.StatusBadRequest, nil)
 }
