@@ -184,7 +184,14 @@
     {#if d.disposition}
       <div class="verdict {dispositionTone(d.disposition)}" data-testid="verdict">
         <span class="verdict-mark" aria-hidden="true">
-          <Icon name={d.disposition === 'refer' ? 'manual_review' : 'check'} size={22} />
+          <Icon
+            name={d.disposition === 'refer'
+              ? 'manual_review'
+              : d.disposition === 'decline'
+                ? 'alert'
+                : 'check'}
+            size={22}
+          />
         </span>
         <div class="verdict-body">
           <span class="verdict-disp">

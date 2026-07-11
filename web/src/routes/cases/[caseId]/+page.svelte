@@ -7,6 +7,7 @@
     assignCase,
     setCaseStatus,
     addCaseNote,
+    ApiError,
     type Case,
     type CaseStatus
   } from '$lib/api';
@@ -27,10 +28,10 @@
   const key = '';
   let c = $state<Case | null>(null);
   let error = $state('');
-  // A 404 (or "not found") is a distinct, expected state — a mistyped/stale id — and
-  // gets a polished EmptyState rather than the raw red error string used for real
-  // failures (network, 5xx).
-  const notFound = $derived(/not found|404/i.test(error));
+  // A 404 is a distinct, expected state — a mistyped/stale id — and gets a polished
+  // EmptyState rather than the raw red error string used for real failures (network,
+  // 5xx). Keyed off the HTTP status (ApiError.status), not a fragile message regex.
+  let notFound = $state(false);
 
   let assignee = $state('');
   let newStatus = $state<CaseStatus>('in_progress');
@@ -59,6 +60,7 @@
 
   async function load() {
     error = '';
+    notFound = false;
     // Drop a stale response when sibling navigation changes caseID mid-flight.
     const reqID = caseID;
     try {
@@ -72,7 +74,10 @@
         statusSeeded = true;
       }
     } catch (e) {
-      if (caseID === reqID) error = e instanceof Error ? e.message : String(e);
+      if (caseID === reqID) {
+        if (e instanceof ApiError && e.status === 404) notFound = true;
+        else error = e instanceof Error ? e.message : String(e);
+      }
     }
   }
 

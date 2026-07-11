@@ -4,11 +4,13 @@
   import { displayEntries } from '$lib/kv';
   import CommentThread from '$lib/CommentThread.svelte';
   import EmptyState from '$lib/EmptyState.svelte';
+  import Skeleton from '$lib/Skeleton.svelte';
   import RelativeTime from '$lib/RelativeTime.svelte';
   import {
     getEntity,
     listEntityEvents,
     getEntityFeatures,
+    ApiError,
     type Entity,
     type EntityEvent,
     type FeatureValue
@@ -24,6 +26,9 @@
   let events = $state<EntityEvent[]>([]);
   let featureValues = $state<FeatureValue[]>([]);
   let error = $state('');
+  // A missing entity (real 404) is an expected state — a stale/mistyped id — and gets
+  // the "not found" EmptyState, not the raw error string with a Retry that can't succeed.
+  let notFound = $state(false);
   let loading = $state(true);
 
   function msg(e: unknown): string {
@@ -31,6 +36,7 @@
   }
   async function load() {
     error = '';
+    notFound = false;
     loading = true;
     // Clear the prior entity so a failed reload can't leave the previous entity's
     // attributes/events on screen under an error.
@@ -50,7 +56,10 @@
       if (type !== reqType || id !== reqId) return;
       [entity, events, featureValues] = [ent, evs, feats];
     } catch (e) {
-      if (type === reqType && id === reqId) error = msg(e);
+      if (type === reqType && id === reqId) {
+        if (e instanceof ApiError && e.status === 404) notFound = true;
+        else error = msg(e);
+      }
     } finally {
       if (type === reqType && id === reqId) loading = false;
     }
@@ -66,7 +75,13 @@
   <p><a href={appHref('/data')}>← context data</a></p>
   <h1>{type} / {id}</h1>
   {#if loading}
-    <p class="muted">Loading…</p>
+    <Skeleton rows={5} />
+  {:else if notFound}
+    <EmptyState
+      icon="database"
+      title="Entity not found"
+      hint="No entity matches this type and id. It may not exist yet, or the id may be mistyped."
+    />
   {:else if error}
     <p class="err">{error} <button class="link" onclick={() => load()}>Retry</button></p>
   {:else if entity}
@@ -129,12 +144,6 @@
            path segment on the wire (encodeURIComponent in the API client). -->
       <CommentThread subjectType="entity" subjectId={`${type}/${id}`} title="Entity discussion" />
     </section>
-  {:else}
-    <EmptyState
-      icon="database"
-      title="Entity not found"
-      hint="No entity matches this type and id. It may not exist yet, or the id may be mistyped."
-    />
   {/if}
 </main>
 

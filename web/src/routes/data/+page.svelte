@@ -200,11 +200,15 @@
     {#if loadingData && connectors.length === 0}
       <Skeleton rows={3} />
     {:else if connectors.length === 0}
-      <EmptyState
-        icon="database"
-        title="No connectors yet"
-        hint="Define one above — a Connect node calls a connector by name to pull data into a decision."
-      />
+      <!-- Onboard only on a successful empty load; a failed load surfaces `error`
+           above, so an errored workspace isn't misread as fresh. -->
+      {#if !error}
+        <EmptyState
+          icon="database"
+          title="No connectors yet"
+          hint="Define one above — a Connect node calls a connector by name to pull data into a decision."
+        />
+      {/if}
     {:else}
       <div class="table-wrap">
         <table>
@@ -297,11 +301,13 @@
     {#if loadingData && features.length === 0}
       <Skeleton rows={3} />
     {:else if features.length === 0}
-      <EmptyState
-        icon="database"
-        title="No features yet"
-        hint="Define one above — Rule and Split nodes read features.* to make data-driven decisions."
-      />
+      {#if !error}
+        <EmptyState
+          icon="database"
+          title="No features yet"
+          hint="Define one above — Rule and Split nodes read features.* to make data-driven decisions."
+        />
+      {/if}
     {:else}
       <div class="table-wrap">
         <table>
@@ -329,11 +335,13 @@
     {#if loadingData && entities.length === 0}
       <Skeleton rows={3} />
     {:else if entities.length === 0}
-      <EmptyState
-        icon="database"
-        title="No entities yet"
-        hint="Entities appear when a decision references one, when an event records one, or when you create them via the API."
-      />
+      {#if !error}
+        <EmptyState
+          icon="database"
+          title="No entities yet"
+          hint="Entities appear when a decision references one, when an event records one, or when you create them via the API."
+        />
+      {/if}
     {:else}
       <div class="table-wrap">
         <table>

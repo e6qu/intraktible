@@ -9,6 +9,8 @@
   import EmptyState from '$lib/EmptyState.svelte';
   import Skeleton from '$lib/Skeleton.svelte';
   import RelativeTime from '$lib/RelativeTime.svelte';
+  import Badge from '$lib/Badge.svelte';
+  import { lifecycleTone } from '$lib/badge';
   import { now } from '$lib/time';
   import { toast } from '$lib/toast';
   import {
@@ -210,11 +212,15 @@
   {#if loading}
     <Skeleton rows={3} />
   {:else if items.length === 0}
-    <EmptyState
-      icon="check"
-      title="No pre-approvals yet"
-      hint="Grant one above to let the decide path honor an instant decision for that entity until it expires."
-    />
+    <!-- Only onboard on a SUCCESSFUL empty load; a failed load surfaces `error` above,
+         so an errored list isn't misread as "no pre-approvals yet". -->
+    {#if !error}
+      <EmptyState
+        icon="check"
+        title="No pre-approvals yet"
+        hint="Grant one above to let the decide path honor an instant decision for that entity until it expires."
+      />
+    {/if}
   {:else}
     <div class="table-wrap">
       <table>
@@ -244,7 +250,7 @@
                     >—</span
                   >{:else}<RelativeTime value={p.valid_until} />{/if}</td
               >
-              <td><span class="status {st}">{st}</span></td>
+              <td><Badge tone={lifecycleTone(st)}>{st}</Badge></td>
               <td class="right">
                 {#if st === 'active' && revokingId !== p.preapproval_id}
                   <button
@@ -437,8 +443,7 @@
   .note.revoked {
     color: var(--danger);
   }
-  .disp,
-  .status {
+  .disp {
     padding: 0.05rem 0.5rem;
     border-radius: 999px;
     font-size: 0.76rem;
@@ -447,19 +452,13 @@
     background: var(--surface-2);
     color: var(--fg-muted);
   }
-  .disp.approve,
-  .status.active {
+  .disp.approve {
     background: color-mix(in srgb, var(--ok) 18%, transparent);
     color: var(--ok);
   }
-  .disp.decline,
-  .status.revoked {
+  .disp.decline {
     background: color-mix(in srgb, var(--danger) 16%, transparent);
     color: var(--danger);
-  }
-  .status.expired {
-    background: color-mix(in srgb, var(--warn) 18%, transparent);
-    color: var(--warn);
   }
   button.link {
     background: none;

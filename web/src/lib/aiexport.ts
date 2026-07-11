@@ -135,7 +135,40 @@ function extractContent(main: ParentNode | null): string[] {
     out.push('', '### Stats', '', ...stats.map((s) => `- ${s}`));
   }
 
-  if (out.length === 0) return ['(no headings, tables, or stats rendered)'];
+  // Detail pages render their substance as <dl> key/value grids (a decision's fields,
+  // an entity's attributes, a case's meta) and labelled fact chips (.fact-key/.fact-val)
+  // — neither a heading, a table, nor a .stat, so they were previously dropped.
+  const details: string[] = [];
+  for (const dl of main.querySelectorAll('dl')) {
+    let dt: string | null = null;
+    for (const el of [...dl.children]) {
+      if (el.tagName === 'DT') dt = text(el);
+      else if (el.tagName === 'DD' && dt !== null) {
+        details.push(`- ${dt}: ${text(el)}`);
+        dt = null;
+      }
+    }
+  }
+  for (const f of main.querySelectorAll('.fact')) {
+    const k = f.querySelector('.fact-key');
+    const v = f.querySelector('.fact-val');
+    if (k && v) details.push(`- ${text(k)}: ${text(v)}`);
+  }
+  if (details.length > 0) out.push('', '### Details', '', ...details);
+
+  // Labelled list items outside tables carry the rest (reason codes, notes, timelines,
+  // counterfactual flips), so a decision's disposition rationale is captured too.
+  const listItems: string[] = [];
+  for (const list of main.querySelectorAll('ul, ol')) {
+    if (list.closest('table')) continue;
+    for (const li of [...list.children].filter((c) => c.tagName === 'LI').slice(0, SAMPLE_ROWS)) {
+      const t = text(li);
+      if (t) listItems.push(`- ${t}`);
+    }
+  }
+  if (listItems.length > 0) out.push('', '### List items', '', ...listItems);
+
+  if (out.length === 0) return ['(no headings, tables, stats, or details rendered)'];
   return out;
 }
 

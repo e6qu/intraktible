@@ -16,9 +16,13 @@ export const toasts = writable<Toast[]>([]);
 
 let nextId = 1;
 
+// Keep only the newest few on screen: a burst of toasts (e.g. a bulk action that
+// fails per-item) must not grow an unbounded stack off the top of the viewport.
+const MAX_VISIBLE = 5;
+
 function push(kind: ToastKind, message: string, ttl = 4000): void {
   const id = nextId++;
-  toasts.update((list) => [...list, { id, kind, message }]);
+  toasts.update((list) => [...list, { id, kind, message }].slice(-MAX_VISIBLE));
   if (ttl > 0 && typeof setTimeout !== 'undefined') {
     setTimeout(() => dismiss(id), ttl);
   }

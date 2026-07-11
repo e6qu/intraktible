@@ -39,13 +39,37 @@
       toast.error(msg(e));
     }
   }
+  // Mark every unread item read in one action, reporting any that failed rather than
+  // leaving the badge silently stale.
+  async function markAllRead() {
+    const pending = items.filter((n) => !n.read);
+    if (pending.length === 0) return;
+    const results = await Promise.allSettled(
+      pending.map((n) => markNotificationRead(key, n.notification_id))
+    );
+    const failed = results.filter((r) => r.status === 'rejected').length;
+    if (failed > 0) toast.error(`Couldn't mark ${failed} of ${pending.length} notifications read`);
+    await load();
+  }
   // The route a notification's subject lives on, so a reviewer clicking a task reminder
-  // lands on the case/decision/flow instead of just marking it read in place.
+  // or an @-mention lands on the case/decision/flow/agent/entity/model instead of just
+  // marking it read in place.
   function subjectHref(n: Notification): string | undefined {
     if (!n.subject_id) return undefined;
     if (n.subject_type === 'case') return appHref(`/cases/${n.subject_id}`);
     if (n.subject_type === 'decision') return appHref(`/decisions/${n.subject_id}`);
     if (n.subject_type === 'flow') return appHref(`/engine/${n.subject_id}`);
+    if (n.subject_type === 'agent') return appHref(`/agents/${encodeURIComponent(n.subject_id)}`);
+    if (n.subject_type === 'model') return appHref('/models');
+    if (n.subject_type === 'entity') {
+      // The entity subject is "<type>/<id>" (one wire segment); split on the first
+      // slash so each half is escaped into the /data/<type>/<id> route.
+      const slash = n.subject_id.indexOf('/');
+      if (slash < 0) return undefined;
+      const t = n.subject_id.slice(0, slash);
+      const eid = n.subject_id.slice(slash + 1);
+      return appHref(`/data/${encodeURIComponent(t)}/${encodeURIComponent(eid)}`);
+    }
     return undefined;
   }
   // Open the item's subject and mark it read (the dropdown closes via the navigation).
@@ -110,15 +134,26 @@
 >
   <summary
     bind:this={summaryEl}
-    aria-haspopup="menu"
+    aria-haspopup="true"
     aria-label={`Notifications${unread ? ` (${unread} unread)` : ''}`}
     title="Notifications"
   >
     <Icon name="bell" size={16} />
     {#if unread > 0}<span class="badge" data-testid="notif-badge">{unread}</span>{/if}
   </summary>
-  <div class="panel" role="menu" tabindex="-1">
-    <p class="head">Notifications</p>
+  <!-- A plain focusable dropdown, not an ARIA menu: the panel also holds a Retry
+       button (in the error state) that the menu roving-focus pattern couldn't reach,
+       so keeping menu/menuitem roles here would hide it from keyboard users. Arrow
+       keys still rove across the items for convenience. -->
+  <div class="panel" tabindex="-1">
+    <div class="head">
+      <p class="head-title">Notifications</p>
+      {#if !loadError && unread > 0}
+        <button class="markall" onclick={markAllRead} data-testid="notif-mark-all"
+          >Mark all read</button
+        >
+      {/if}
+    </div>
     {#if loadError}
       <p class="empty err" data-testid="notif-error">
         Couldn't load notifications — {loadError}
@@ -127,12 +162,10 @@
     {:else if items.length === 0}
       <p class="empty">You're all caught up.</p>
     {:else}
-      <!-- role="none" strips the list semantics so the menu's accessibility tree
-           goes straight menu → menuitem, as the ARIA menu pattern requires. -->
-      <ul role="none">
+      <ul>
         {#each items as n (n.notification_id)}
-          <li role="none">
-            <button class="item" class:unread={!n.read} role="menuitem" onclick={() => open(n)}>
+          <li>
+            <button class="item" class:unread={!n.read} onclick={() => open(n)}>
               <span class="meta">
                 {#if n.kind === 'task'}<b>Review task</b>
                 {:else if n.kind === 'mention'}<b>{n.author}</b> mentioned you on a {n.subject_type.replace(
@@ -204,12 +237,31 @@
     z-index: 50;
   }
   .head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.5rem;
     margin: 0.2rem 0.4rem 0.4rem;
+  }
+  .head-title {
+    margin: 0;
     font-size: 0.78rem;
     font-weight: 600;
     color: var(--fg-subtle);
     text-transform: uppercase;
     letter-spacing: 0.03em;
+  }
+  .markall {
+    background: none;
+    border: none;
+    color: var(--accent-ink);
+    cursor: pointer;
+    padding: 0;
+    font: inherit;
+    font-size: 0.76rem;
+  }
+  .markall:hover {
+    text-decoration: underline;
   }
   .empty {
     margin: 0.6rem 0.4rem;

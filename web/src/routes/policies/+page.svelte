@@ -300,10 +300,10 @@
     >
   </form>
 
-  {#if error}<p class="err">{error}</p>{/if}
-
   {#if loading}
     <Skeleton rows={4} />
+  {:else if error}
+    <p class="err">{error}</p>
   {:else if policies.length === 0}
     <EmptyState
       icon="rule"

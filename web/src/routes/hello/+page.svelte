@@ -4,9 +4,15 @@
      the home view can be a real, persona-aware dashboard. -->
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { goto } from '$app/navigation';
   import Icon from '$lib/Icon.svelte';
   import { getStats, sayHello } from '$lib/api';
   import { appHref } from '$lib/paths';
+
+  // This is the Phase-0 backbone showcase — kept for the interactive demo, not part
+  // of the product. A real (non-demo) build redirects to the dashboard so it never
+  // surfaces to an operator.
+  const showcase = import.meta.env.VITE_DEMO;
 
   // API calls authenticate via the session cookie (empty key → no X-Api-Key).
   const key = '';
@@ -29,20 +35,28 @@
       out = `Error: ${err instanceof Error ? err.message : String(err)}`;
     }
   }
-  onMount(stats);
+  onMount(() => {
+    if (!showcase) {
+      void goto(appHref('/'), { replaceState: true });
+      return;
+    }
+    void stats();
+  });
 </script>
 
-<main>
-  <p class="back"><a href={appHref('/')}>← dashboard</a></p>
-  <h1>Phase 0 vertical slice</h1>
-  <p class="muted">command → event log → projection → API → this UI.</p>
-  <div class="row">
-    <input bind:value={name} aria-label="name" placeholder="name" />
-    <button class="primary" onclick={say}>Say hello</button>
-    <button onclick={stats}><Icon name="reload" size={14} /> Refresh</button>
-  </div>
-  <pre>{out}</pre>
-</main>
+{#if showcase}
+  <main>
+    <p class="back"><a href={appHref('/')}>← dashboard</a></p>
+    <h1>Phase 0 vertical slice</h1>
+    <p class="muted">command → event log → projection → API → this UI.</p>
+    <div class="row">
+      <input bind:value={name} aria-label="name" placeholder="name" />
+      <button class="primary" onclick={say}>Say hello</button>
+      <button onclick={stats}><Icon name="reload" size={14} /> Refresh</button>
+    </div>
+    <pre>{out}</pre>
+  </main>
+{/if}
 
 <style>
   main {

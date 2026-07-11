@@ -270,10 +270,10 @@
     >
   </form>
 
-  {#if error}<p class="err">{error}</p>{/if}
-
   {#if loading}
     <Skeleton rows={3} />
+  {:else if error}
+    <p class="err">{error}</p>
   {:else if models.length === 0}
     <EmptyState
       icon="scorecard"

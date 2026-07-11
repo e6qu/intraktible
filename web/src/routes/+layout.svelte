@@ -5,7 +5,7 @@
   import '../app.css';
   import { onMount } from 'svelte';
   import { page } from '$app/stores';
-  import { afterNavigate } from '$app/navigation';
+  import { afterNavigate, goto } from '$app/navigation';
   import Icon from '$lib/Icon.svelte';
   import { initTheme, toggleTheme, theme as themeStore } from '$lib/theme';
   import {
@@ -24,6 +24,7 @@
   import { resetRecorder } from '$lib/recorder';
   import { buildCurrentPageExport } from '$lib/aiexport';
   import { copyText } from '$lib/clipboard';
+  import { toast } from '$lib/toast';
   import Toasts from '$lib/Toasts.svelte';
   import CommandPalette from '$lib/CommandPalette.svelte';
   import ShortcutsOverlay from '$lib/ShortcutsOverlay.svelte';
@@ -38,7 +39,9 @@
   onMount(() => {
     theme = initTheme();
     initPersona();
-    void refreshUser();
+    // A transient /v1/me failure no longer clears the session (see session.ts); surface
+    // it rather than dropping it, and don't let it reject unhandled.
+    refreshUser().catch((e) => toast.error(e instanceof Error ? e.message : String(e)));
     const unsubTheme = themeStore.subscribe((t) => (theme = t));
     const unsubPersona = personaStore.subscribe((p) => (persona = p));
     return () => {
@@ -58,6 +61,18 @@
   // One-click "copy this page for AI" — the same document the guide panel offers.
   async function copyForAI(): Promise<void> {
     await copyText(buildCurrentPageExport($page.route.id, $page.url.pathname), 'Copied for AI');
+  }
+
+  // Signing out clears the session server-side and in the store; redirect to /login and
+  // confirm it, otherwise the user is stranded on a now-unauthorized page that errors.
+  async function doSignOut(): Promise<void> {
+    try {
+      await signOut();
+      toast.success('Signed out');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    }
+    await goto(appHref('/login'));
   }
 
   // Navigation is the current persona's ordered (and optionally relabelled) subset
@@ -227,7 +242,7 @@
           </button>
         {/each}
         {#if $user}
-          <button class="acct-action" onclick={signOut}>
+          <button class="acct-action" onclick={doSignOut}>
             <Icon name="signout" size={14} /> Sign out
           </button>
         {:else}

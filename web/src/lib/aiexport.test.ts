@@ -102,6 +102,37 @@ describe('the "Export for AI" document', () => {
     expect(empty).not.toContain('## Flows, step by step');
   });
 
+  it('captures <dl> key/value pairs, .fact chips, and labelled list items', () => {
+    const main = document.createElement('main');
+    main.innerHTML = `
+      <h1>loans-v3</h1>
+      <dl class="fields">
+        <dt>environment</dt><dd>production</dd>
+        <dt>version</dt><dd>v3</dd>
+      </dl>
+      <div class="facts">
+        <div class="fact"><span class="fact-key">risk_score</span><span class="fact-val">742</span></div>
+      </div>
+      <ul class="reasons">
+        <li><span class="rcode">R01</span> thin file</li>
+        <li><span class="rcode">R02</span> high utilization</li>
+      </ul>`;
+    const doc = buildPageExport({
+      routeId: '/decisions/[decisionId]',
+      path: '/decisions/abc',
+      help,
+      calls: [],
+      main
+    });
+    expect(doc).toContain('### Details');
+    expect(doc).toContain('- environment: production');
+    expect(doc).toContain('- version: v3');
+    expect(doc).toContain('- risk_score: 742');
+    expect(doc).toContain('### List items');
+    expect(doc).toContain('- R01 thin file');
+    expect(doc).toContain('- R02 high utilization');
+  });
+
   it('derives a stable download filename from the route id', () => {
     expect(exportFilename('/')).toBe('intraktible-home.ai.md');
     expect(exportFilename('/decisions/[decisionId]')).toBe(

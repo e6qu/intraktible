@@ -5,27 +5,26 @@
   import Icon from '$lib/Icon.svelte';
   import { appHref } from '$lib/paths';
 
+  // A signed-out visitor can't read any of these surfaces (they'd 401), so every card
+  // routes to sign-in rather than dead-ending on a protected route. The icon/title/desc
+  // still narrate what each surface is.
   const surfaces = [
     {
-      href: '/engine',
       icon: 'engine',
       title: 'Decision Engine',
       desc: 'Versioned decision flows on a visual canvas — deploy, A/B, backtest, export.'
     },
     {
-      href: '/data',
       icon: 'database',
       title: 'Context Layer',
       desc: 'Entities, windowed features, and connectors the flows decide on.'
     },
     {
-      href: '/cases',
       icon: 'cases',
       title: 'Case Manager',
       desc: 'Human-in-the-loop review with SLA tracking and a full audit trail.'
     },
     {
-      href: '/agents',
       icon: 'agents',
       title: 'Agent Manager',
       desc: 'AI agents with tools and structured output — run, monitor, escalate.'
@@ -45,8 +44,8 @@
   </section>
 
   <section class="cards">
-    {#each surfaces as c, i (c.href)}
-      <a class="card" href={appHref(c.href)} style="--i:{i}">
+    {#each surfaces as c, i (c.title)}
+      <a class="card" href={appHref('/login')} style="--i:{i}">
         <span class="cardicon"><Icon name={c.icon} size={22} /></span>
         <span class="cardtitle">{c.title}</span>
         <span class="carddesc">{c.desc}</span>

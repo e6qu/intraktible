@@ -97,6 +97,17 @@ version live forever) are fixed; a `reason_codes` forgery on the decide path is 
 gates rolling deploys. Real deployment artifacts landed: a Helm chart (`deploy/helm/intraktible` — API
 tier + singleton scheduler tier, probes, HPA/PDB/NetworkPolicy, hardened securityContext), a production
 docker-compose, and `docs/DEPLOY.md`/`docs/DR.md` runbooks.
+**A UI/UX + user-flow round** then cleared the frontend/product findings deferred from the hardening
+round plus the boyscout fixes found alongside (UX block in BUGS.md): a transient `/v1/me` blip no
+longer silently signs the user out (only a real 401 clears the session; other errors surface as a
+toast); sign-out redirects to `/login` instead of stranding the user on a now-unauthorized page;
+error toasts are announced (`role="alert"`) and the stack is capped; list routes render error vs
+empty as exclusive states and detail routes show a real 404 as a not-found panel; a root
+`+error.svelte` boundary and `Promise.allSettled` panel loading replace blank-page failure modes;
+the AI page-export now captures detail-page substance (`<dl>`/`.fact`/lists); the flow editor got a
+load state, an unsaved-edits guard, and canvas-scoped shortcuts; the Phase-0 `hello` scaffolding is
+compiled out of the product build (demo-only); and a WCAG-AA contrast miss on "Mark all read" is
+fixed. Native + demo (incl. contrast) e2e suites are green.
 Roadmap & exit criteria: [PLAN.md §8](PLAN.md#8-phased-roadmap); deferrals tracked in [BUGS.md](BUGS.md).
 Working today: `platform/{eventlog,store,projection,identity,auth,httpx,ai,web,mo}` (`mo` = the
 `Option[T]`/`Result[T]` types used instead of none/null sentinels where they're easy to mishandle;
