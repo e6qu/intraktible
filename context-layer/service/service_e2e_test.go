@@ -204,7 +204,7 @@ func TestFeatureEngineEndToEnd(t *testing.T) {
 		t.Fatal("features never computed to count=2 / sum=350")
 	}
 
-	// The definitions list, filtered by entity type.
+	// The definitions list, filtered by entity type — versioned.
 	var defs struct {
 		Features []features.FeatureView `json:"features"`
 	}
@@ -212,6 +212,44 @@ func TestFeatureEngineEndToEnd(t *testing.T) {
 	if len(defs.Features) != 2 {
 		t.Fatalf("feature defs: %d, want 2", len(defs.Features))
 	}
+	for _, f := range defs.Features {
+		if f.Version != 1 {
+			t.Fatalf("feature %q version = %d, want 1", f.Name, f.Version)
+		}
+	}
+
+	// The wider aggregation set: max and count_distinct over the same stream.
+	api.Request(t, http.MethodPost, "/v1/context/features",
+		map[string]any{"name": "txn_max_24h", "entity_type": "customer", "event_name": "transaction", "aggregation": "max", "field": "amount", "window_hours": 24},
+		http.StatusAccepted, nil)
+	if !testutil.Eventually(t, func() bool {
+		var out struct {
+			Features []features.Value `json:"features"`
+		}
+		api.Request(t, http.MethodGet, "/v1/context/entities/customer/c1/features", nil, http.StatusOK, &out)
+		for _, v := range out.Features {
+			if v.Name == "txn_max_24h" {
+				return v.Value == 250
+			}
+		}
+		return false
+	}) {
+		t.Fatal("max feature never computed to 250")
+	}
+
+	// Point-in-time: as of the far past (before any event), the count is 0 — the
+	// feature is reproducible for a historical instant.
+	var past struct {
+		Features []features.Value `json:"features"`
+	}
+	api.Request(t, http.MethodGet, "/v1/context/entities/customer/c1/features?as_of=2000-01-01T00:00:00Z", nil, http.StatusOK, &past)
+	for _, v := range past.Features {
+		if v.Name == "txn_count_24h" && v.Value != 0 {
+			t.Fatalf("as-of-2000 count = %v, want 0 (no events had occurred)", v.Value)
+		}
+	}
+	// A malformed as_of is rejected.
+	api.Request(t, http.MethodGet, "/v1/context/entities/customer/c1/features?as_of=nonsense", nil, http.StatusBadRequest, nil)
 }
 
 func TestConnectorEndToEnd(t *testing.T) {

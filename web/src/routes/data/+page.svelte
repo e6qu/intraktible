@@ -97,9 +97,11 @@
   let fAgg = $state('count');
   let fField = $state('');
   let fWindow = $state('24');
+  // Every aggregation but count reads a data field.
+  const fNeedsField = $derived(fAgg !== 'count');
   // Plain-language preview of the feature being defined.
   const featurePreview = $derived(
-    `${fAgg}${fAgg === 'sum' ? ` of ${fField || '…'}` : ''} of "${fEventName || '…'}" events per ${fEntityType || '…'} over ${fWindow || '…'}h`
+    `${fAgg}${fNeedsField ? ` of ${fField || '…'}` : ''} of "${fEventName || '…'}" events per ${fEntityType || '…'} over ${fWindow || '…'}h`
   );
   let fBusy = $state(false);
   async function addFeature() {
@@ -271,14 +273,22 @@
         <select bind:value={fAgg} aria-label="feature aggregation">
           <option value="count">count</option>
           <option value="sum">sum</option>
+          <option value="avg">avg</option>
+          <option value="min">min</option>
+          <option value="max">max</option>
+          <option value="last">last</option>
+          <option value="first">first</option>
+          <option value="count_distinct">count_distinct</option>
         </select></label
       >
       <label
-        >Field (for sum) <input
+        >Field {fNeedsField ? '(required)' : '(unused for count)'}
+        <input
           bind:value={fField}
           placeholder="amount"
           aria-label="feature field"
           size="8"
+          required={fNeedsField}
         /></label
       >
       <label

@@ -116,6 +116,15 @@ documented (EXPRESSIONS.md v2) so authors stop reaching for Starlark, and the on
 now() — a latent replayability hole — is disabled and rejected at publish; and SLO attainment gained a
 rolling window (the metrics projection retains a bounded 90-day ring of per-UTC-day buckets, an SLO sets
 window_days, and the card shows and sets the window) so a long-lived flow's recent breach isn't diluted.
+**A feature-store round** then closed GAPS #1 (the biggest data gap; FS block in BUGS.md): the
+context-layer feature layer, formerly read-time count/sum only, became a real feature store — a wider
+aggregation set (count/sum/avg/min/max/last/first/count_distinct), **point-in-time correctness**
+(Compute windows against an explicit as_of instant; `GET .../features?as_of=` reproduces a past value),
+**versioning + lineage** (a monotonic version per definition, replay-derived; a computed value carries
+its version + the event count that fed it), and **precompute/caching** (a per-entity materialized
+read-through cache, `context_feature_values`, that serves a warm live value without folding the stream
+and invalidates on a new event, a redefinition, or window expiry). The decision-engine feature Provider
+reads through the cache.
 Roadmap & exit criteria: [PLAN.md §8](PLAN.md#8-phased-roadmap); deferrals tracked in [BUGS.md](BUGS.md).
 Working today: `platform/{eventlog,store,projection,identity,auth,httpx,ai,web,mo}` (`mo` = the
 `Option[T]`/`Result[T]` types used instead of none/null sentinels where they're easy to mishandle;

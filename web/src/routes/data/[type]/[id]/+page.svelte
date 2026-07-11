@@ -108,7 +108,15 @@
         <h2>Computed features</h2>
         <div class="features">
           {#each featureValues as f (f.name)}
-            <span class="feat">{f.name} <b>{f.value}</b></span>
+            <span class="feat"
+              >{f.name} <b>{f.value}</b>
+              <small
+                class="lineage"
+                title="feature definition version · events that fed this value"
+              >
+                v{f.version} · {f.event_count} ev{f.cached ? ' · cached' : ''}
+              </small></span
+            >
           {/each}
         </div>
       </section>
@@ -183,6 +191,11 @@
     border-radius: var(--radius);
     background: var(--surface);
     font-size: 0.9rem;
+  }
+  .lineage {
+    color: var(--fg-subtle);
+    font-size: 0.75rem;
+    margin-left: 0.3rem;
   }
   .timeline {
     list-style: none;
