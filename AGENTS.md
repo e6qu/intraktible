@@ -145,6 +145,11 @@ gives each feature's standardized mean shift + variance ratio vs baseline — an
 reconciliation** — `POST /v1/models/{name}/outcomes` records realized labels bucketed by predicted
 decile, and `GET /v1/models/{name}/performance` reports calibration, accuracy, Brier, and realized AUC
 (live performance from ground truth). Both surface in the `/models` drift readout.
+**An indexed-audit round** then closed GAPS #9 (AU block in BUGS.md): the audit read folded the whole
+multi-tenant event log per query; a platform-level `audit.Projector` now re-indexes every event into an
+`audit_entries` collection keyed by `(org, workspace, seq)`, so a query is an indexed tenant-prefix range
+scan of pre-derived entries — not a whole-log fold. The audit read is now eventually-consistent like every
+other read model. **With this, every honestly-disclosed GAPS item (#1–#9) is now closed or done.**
 Roadmap & exit criteria: [PLAN.md §8](PLAN.md#8-phased-roadmap); deferrals tracked in [BUGS.md](BUGS.md).
 Working today: `platform/{eventlog,store,projection,identity,auth,httpx,ai,web,mo}` (`mo` = the
 `Option[T]`/`Result[T]` types used instead of none/null sentinels where they're easy to mishandle;

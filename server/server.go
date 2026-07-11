@@ -368,7 +368,7 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 
 	// Audit surface (platform capability, independent of the enabled modules): a
 	// tenant-scoped, filterable, exportable read over the event log.
-	audit.New(log).Routes(api)
+	audit.New(st).Routes(api)
 
 	// Model-risk report (SR 11-7 / SS1/23): a read-only aggregation of the model
 	// inventory + validation evidence + monitoring across flows, predictive models,
@@ -612,9 +612,10 @@ func seedDevKey(keyring *auth.Keyring, devKey, storeKind string) bool {
 // single source of truth shared by `serve` (live projections) and `replay`
 // (rebuild from the log).
 func Projectors(modules string) []projection.Projector {
-	// Privacy masking config is a platform capability, projected regardless of
-	// which modules are enabled (so masking works in every profile).
-	ps := []projection.Projector{privacy.Projector{}, comments.Projector{}, notifications.Projector{}}
+	// Privacy masking config and the audit index are platform capabilities, projected
+	// regardless of which modules are enabled (so masking and the audit trail work in
+	// every profile). The audit projector re-indexes every event for tenant-scoped reads.
+	ps := []projection.Projector{privacy.Projector{}, comments.Projector{}, notifications.Projector{}, audit.Projector{}}
 	if enabled(modules, "hello") {
 		ps = append(ps, stats.Projector{})
 	}

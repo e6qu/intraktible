@@ -8,17 +8,19 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/httpx"
+	"github.com/e6qu/intraktible/platform/store"
 )
 
-// Service is the audit surface's HTTP shell: a tenant-scoped read over the log.
+// Service is the audit surface's HTTP shell: a tenant-scoped read over the indexed
+// audit projection.
 type Service struct {
-	log eventlog.Log
+	store store.Store
 }
 
-// New builds the audit service over the event log.
-func New(log eventlog.Log) *Service { return &Service{log: log} }
+// New builds the audit service over the indexed audit projection (register the
+// audit.Projector so the store is populated).
+func New(s store.Store) *Service { return &Service{store: s} }
 
 // Routes registers the audit endpoint. It is a platform capability (independent
 // of which product modules are enabled).
@@ -43,7 +45,7 @@ func (s *Service) list(w http.ResponseWriter, r *http.Request) {
 	// CSV export covers the whole filtered set (capped at MaxLimit), independent of
 	// the on-screen page.
 	if r.URL.Query().Get("format") == "csv" {
-		entries, err := Read(r.Context(), s.log, id, Query{
+		entries, err := Read(r.Context(), s.store, id, Query{
 			Stream: q.Stream, Actor: q.Actor, Type: q.Type, Resource: q.Resource,
 			Since: q.Since, Until: q.Until, ExcludeType: q.ExcludeType, Limit: MaxLimit,
 		})
@@ -59,7 +61,7 @@ func (s *Service) list(w http.ResponseWriter, r *http.Request) {
 		httpx.Download(w, "text/csv; charset=utf-8", "audit.csv", doc)
 		return
 	}
-	page, err := ReadPage(r.Context(), s.log, id, q)
+	page, err := ReadPage(r.Context(), s.store, id, q)
 	if err != nil {
 		httpx.Error(w, http.StatusInternalServerError, err)
 		return
