@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/e6qu/intraktible/decision-engine/domain"
@@ -44,8 +45,29 @@ type FlowMetrics struct {
 	// ByDisposition counts completed decisions by the policy's disposition
 	// (approve|decline|refer); approve+decline over the total is the automation rate.
 	ByDisposition map[string]int `json:"by_disposition"`
-	UpdatedAt     time.Time      `json:"updated_at"`
+	// Daily holds per-UTC-day dispositioned outcomes so SLO attainment can be measured
+	// over a rolling window, not only all-time. Bounded to the most recent
+	// maxDailyBuckets days (pruned relative to the newest day seen, so it replays
+	// identically). Sorted ascending by date.
+	Daily     []DailyBucket `json:"daily,omitempty"`
+	UpdatedAt time.Time     `json:"updated_at"`
 }
+
+// DailyBucket is one UTC day of a flow's dispositioned outcomes.
+type DailyBucket struct {
+	Date            string `json:"date"` // YYYY-MM-DD, UTC
+	Completed       int    `json:"completed"`
+	Failed          int    `json:"failed"`
+	TotalDurationMS int64  `json:"total_duration_ms"`
+}
+
+// maxDailyBuckets bounds the retained daily history — also the maximum rolling SLO
+// window. Pruning is relative to the newest bucket, not the wall clock, so a replay
+// of the same event log yields byte-identical metrics.
+const maxDailyBuckets = events.MaxSLOWindowDays
+
+// dayKey is the UTC calendar day an event falls in, the daily-bucket key.
+func dayKey(t time.Time) string { return t.UTC().Format("2006-01-02") }
 
 // Projector folds decision events into FlowMetrics.
 type Projector struct{}
@@ -98,6 +120,10 @@ func applyCompleted(ctx context.Context, e eventlog.Envelope, s store.Store) err
 		if p.Disposition != "" {
 			m.ByDisposition[p.Disposition]++
 		}
+		bumpDay(m, dayKey(e.Time), func(b *DailyBucket) {
+			b.Completed++
+			b.TotalDurationMS += p.DurationMS
+		})
 	})
 }
 
@@ -109,7 +135,26 @@ func applyFailed(ctx context.Context, e eventlog.Envelope, s store.Store) error 
 	return update(ctx, s, e, p.FlowID, func(m *FlowMetrics) {
 		m.Failed++
 		bump(m, p.Variant, func(v *VariantStats) { v.Failed++ })
+		bumpDay(m, dayKey(e.Time), func(b *DailyBucket) { b.Failed++ })
 	})
+}
+
+// bumpDay mutates the bucket for the given UTC day, creating it (kept date-sorted) and
+// pruning to the most recent maxDailyBuckets days.
+func bumpDay(m *FlowMetrics, day string, mutate func(*DailyBucket)) {
+	for i := range m.Daily {
+		if m.Daily[i].Date == day {
+			mutate(&m.Daily[i])
+			return
+		}
+	}
+	b := DailyBucket{Date: day}
+	mutate(&b)
+	m.Daily = append(m.Daily, b)
+	sort.Slice(m.Daily, func(i, j int) bool { return m.Daily[i].Date < m.Daily[j].Date })
+	if len(m.Daily) > maxDailyBuckets {
+		m.Daily = m.Daily[len(m.Daily)-maxDailyBuckets:]
+	}
 }
 
 // bump mutates the stats for a variant, defaulting an unset variant to champion.
@@ -127,12 +172,14 @@ func Read(ctx context.Context, s store.Store, id identity.Identity, flowID strin
 	return store.GetDoc[FlowMetrics](ctx, s, Collection, store.Key(id.Org, id.Workspace, flowID))
 }
 
-// SLOAttainment reports a flow's measured performance against its objectives.
-// Measured over the flow's CUMULATIVE counts (the metrics read model is all-time,
-// not windowed), so it answers "since inception" — a rolling-window SLO would need
-// time-bucketed metrics, noted as a follow-up.
+// SLOAttainment reports a flow's measured performance against its objectives, over
+// either the flow's all-time counts (WindowDays 0) or a rolling window of the most
+// recent WindowDays (so a long-lived flow's recent breach isn't diluted by its
+// lifetime history). See AttainmentWindow.
 type SLOAttainment struct {
-	Decisions int `json:"decisions"` // dispositioned volume: completed + failed
+	// WindowDays is the rolling window the attainment was measured over (0 = all-time).
+	WindowDays int `json:"window_days"`
+	Decisions  int `json:"decisions"` // dispositioned volume: completed + failed
 	// Availability (success rate = completed / (completed + failed)).
 	SuccessRate     float64 `json:"success_rate"`
 	SuccessTarget   float64 `json:"success_target"`
@@ -171,6 +218,35 @@ func Attainment(m FlowMetrics, successTarget float64, latencyTargetMS int64) SLO
 	if latencyTargetMS > 0 {
 		a.LatencyMet = m.AvgDurationMS <= latencyTargetMS
 	}
+	return a
+}
+
+// AttainmentWindow computes attainment over the last windowDays UTC days ending at
+// now; windowDays <= 0 (or unset) falls back to the all-time Attainment. The window is
+// capped at the retained history (maxDailyBuckets). Summing the daily buckets in range
+// keeps a recent breach from being averaged away by a flow's whole lifetime.
+func AttainmentWindow(m FlowMetrics, successTarget float64, latencyTargetMS int64, now time.Time, windowDays int) SLOAttainment {
+	if windowDays <= 0 {
+		return Attainment(m, successTarget, latencyTargetMS)
+	}
+	if windowDays > maxDailyBuckets {
+		windowDays = maxDailyBuckets
+	}
+	// Inclusive lower bound: today (UTC) and the prior windowDays-1 days.
+	cutoff := dayKey(now.AddDate(0, 0, -(windowDays - 1)))
+	var wm FlowMetrics
+	for _, b := range m.Daily {
+		if b.Date >= cutoff {
+			wm.Completed += b.Completed
+			wm.Failed += b.Failed
+			wm.TotalDurationMS += b.TotalDurationMS
+		}
+	}
+	if wm.Completed > 0 {
+		wm.AvgDurationMS = (wm.TotalDurationMS + int64(wm.Completed)/2) / int64(wm.Completed)
+	}
+	a := Attainment(wm, successTarget, latencyTargetMS)
+	a.WindowDays = windowDays
 	return a
 }
 

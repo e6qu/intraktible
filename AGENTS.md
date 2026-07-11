@@ -108,6 +108,14 @@ the AI page-export now captures detail-page substance (`<dl>`/`.fact`/lists); th
 load state, an unsaved-edits guard, and canvas-scoped shortcuts; the Phase-0 `hello` scaffolding is
 compiled out of the product build (demo-only); and a WCAG-AA contrast miss on "Mark all read" is
 fixed. Native + demo (incl. contrast) e2e suites are green.
+**A product-completeness round** then closed the three cheapest credible gaps a decisioning-platform
+buyer probes (docs/GAPS.md items 3/5/8 — CP block in BUGS.md): the Scorecard node gained score bands
+(highest-min-wins grade + per-band adverse-action reason codes, authored in the builder inspector,
+validated at publish); the expr-lang standard library (strings/numbers/collections/date-parse) is now
+documented (EXPRESSIONS.md v2) so authors stop reaching for Starlark, and the one wall-clock builtin
+now() — a latent replayability hole — is disabled and rejected at publish; and SLO attainment gained a
+rolling window (the metrics projection retains a bounded 90-day ring of per-UTC-day buckets, an SLO sets
+window_days, and the card shows and sets the window) so a long-lived flow's recent breach isn't diluted.
 Roadmap & exit criteria: [PLAN.md §8](PLAN.md#8-phased-roadmap); deferrals tracked in [BUGS.md](BUGS.md).
 Working today: `platform/{eventlog,store,projection,identity,auth,httpx,ai,web,mo}` (`mo` = the
 `Option[T]`/`Result[T]` types used instead of none/null sentinels where they're easy to mishandle;

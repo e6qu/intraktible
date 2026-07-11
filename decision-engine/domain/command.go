@@ -217,6 +217,9 @@ func (c SetSLO) Validate() error {
 	if c.SLO.LatencyTargetMS < 0 {
 		return errors.New("decision-engine: slo latency_target_ms must be non-negative")
 	}
+	if c.SLO.WindowDays < 0 || c.SLO.WindowDays > events.MaxSLOWindowDays {
+		return fmt.Errorf("decision-engine: slo window_days %d: want 0 (all-time) to %d", c.SLO.WindowDays, events.MaxSLOWindowDays)
+	}
 	return nil
 }
 

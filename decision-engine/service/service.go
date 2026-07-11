@@ -1780,6 +1780,7 @@ func (s *Service) metrics(w http.ResponseWriter, r *http.Request) {
 type sloRequest struct {
 	SuccessTarget   float64 `json:"success_target"`
 	LatencyTargetMS int64   `json:"latency_target_ms"`
+	WindowDays      int     `json:"window_days"`
 }
 
 // getSLO returns a flow's configured objectives (null when none) and its current
@@ -1806,7 +1807,9 @@ func (s *Service) getSLO(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := map[string]any{"slo": fv.SLO}
 	if fv.SLO != nil {
-		resp["attainment"] = analytics.Attainment(m, fv.SLO.SuccessTarget, fv.SLO.LatencyTargetMS)
+		// A read, not a recorded decision, so wall-clock now() is fine — the rolling
+		// window ends at the moment the operator asks.
+		resp["attainment"] = analytics.AttainmentWindow(m, fv.SLO.SuccessTarget, fv.SLO.LatencyTargetMS, time.Now(), fv.SLO.WindowDays)
 	}
 	httpx.JSON(w, http.StatusOK, resp)
 }
@@ -1822,7 +1825,7 @@ func (s *Service) setSLO(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, err)
 		return
 	}
-	slo := events.SLOConfig{SuccessTarget: req.SuccessTarget, LatencyTargetMS: req.LatencyTargetMS}
+	slo := events.SLOConfig{SuccessTarget: req.SuccessTarget, LatencyTargetMS: req.LatencyTargetMS, WindowDays: req.WindowDays}
 	e, err := s.cmd.SetSLO(r.Context(), id, domain.SetSLO{FlowID: r.PathValue("flow_id"), SLO: slo})
 	if err != nil {
 		httpx.Error(w, http.StatusBadRequest, err)

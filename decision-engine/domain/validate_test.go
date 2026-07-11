@@ -99,6 +99,21 @@ func TestValidateFlow(t *testing.T) {
 			`{"company_name":"'Acme'","case_type":"'aml'","sla_days":5}`)), false},
 		{"negative sla_days", flow(cfgNode("m", events.NodeManualReview,
 			`{"company_name":"'Acme'","case_type":"'aml'","sla_days":-5}`)), true},
+		// Scorecard bands are validated at publish: every band needs a label, and any
+		// band reason code needs a code (so the adverse-action lift can't drop it).
+		{"valid scorecard bands", flow(cfgNode("s", events.NodeScorecard,
+			`{"factors":[{"when":"true","weight":10}],"bands":[{"min":0,"label":"A","reason_codes":[{"code":"X","description":"d"}]}]}`)), false},
+		{"scorecard band missing label", flow(cfgNode("s", events.NodeScorecard,
+			`{"factors":[{"when":"true","weight":10}],"bands":[{"min":0,"label":""}]}`)), true},
+		{"scorecard band code missing code", flow(cfgNode("s", events.NodeScorecard,
+			`{"bands":[{"min":0,"label":"A","reason_codes":[{"code":"","description":"d"}]}]}`)), true},
+		// now() reads the wall clock, which would break decision replayability — it is
+		// rejected at publish anywhere an expression is authored.
+		{"now() in a rule is rejected", flow(cfgNode("r", events.NodeRule,
+			`{"rules":[{"when":"now().Hour > 9","then":[{"target":"x","expr":"1"}]}]}`)), true},
+		{"now() in a split is rejected", splitFlow(`{"condition":"now().Year > 2000"}`, "yes", "no"), true},
+		{"round()/upper() builtins are allowed", flow(cfgNode("a", events.NodeAssignment,
+			`{"assignments":[{"target":"x","expr":"round(1.6) + len(upper('hi'))"}]}`)), false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

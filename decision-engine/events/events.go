@@ -89,13 +89,21 @@ const (
 	TypeSLOSet = "decision.flow.slo_set"
 )
 
+// MaxSLOWindowDays bounds a flow's rolling SLO window — and the daily history the
+// metrics projection retains, since the window can't reach past what is kept.
+const MaxSLOWindowDays = 90
+
 // SLOConfig is a flow's service-level objectives. SuccessTarget is the minimum
 // acceptable fraction of decisions that complete (vs fail), in [0,1] — e.g. 0.99.
 // LatencyTargetMS is the maximum acceptable average decision latency in ms (0 =
 // no latency objective). A zero SuccessTarget means no availability objective.
+// WindowDays measures attainment over a rolling window of the most recent N days
+// (0 = all-time, so a long-lived flow's recent breach isn't diluted by its history);
+// capped at MaxSLOWindowDays.
 type SLOConfig struct {
 	SuccessTarget   float64 `json:"success_target"`
 	LatencyTargetMS int64   `json:"latency_target_ms"`
+	WindowDays      int     `json:"window_days"`
 }
 
 // SLOSet records a flow's service-level objectives.

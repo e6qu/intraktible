@@ -851,6 +851,40 @@
     patchCfg({ factors: factors().map((f, j) => (j === i ? { ...f, ...patch } : f)) });
   }
 
+  // Scorecard bands: bands[] = {min, label, reason_codes:[{code, description}]}; the
+  // summed score falls into the highest band whose min it reaches, labelling the
+  // outcome (a grade) and emitting that band's adverse-action reason codes.
+  type BandCode = { code?: string; description?: string };
+  type Band = { min?: number; label?: string; reason_codes?: BandCode[] };
+  function bands(): Band[] {
+    const b = nodeCfg().bands;
+    return Array.isArray(b) ? (b as Band[]) : [];
+  }
+  function addBand() {
+    patchCfg({ bands: [...bands(), { min: 0, label: '', reason_codes: [] }] });
+  }
+  function removeBand(i: number) {
+    patchCfg({ bands: bands().filter((_, j) => j !== i) });
+  }
+  function setBand(i: number, patch: Band) {
+    patchCfg({ bands: bands().map((b, j) => (j === i ? { ...b, ...patch } : b)) });
+  }
+  function bandCodes(i: number): BandCode[] {
+    const c = bands().at(i)?.reason_codes;
+    return Array.isArray(c) ? c : [];
+  }
+  function addBandCode(i: number) {
+    setBand(i, { reason_codes: [...bandCodes(i), { code: '', description: '' }] });
+  }
+  function removeBandCode(i: number, k: number) {
+    setBand(i, { reason_codes: bandCodes(i).filter((_, j) => j !== k) });
+  }
+  function setBandCode(i: number, k: number, patch: BandCode) {
+    setBand(i, {
+      reason_codes: bandCodes(i).map((c, j) => (j === k ? { ...c, ...patch } : c))
+    });
+  }
+
   // Reason node: reasons[] = {when, code, description}
   type Reason = { when?: string; code?: string; description?: string };
   function reasons(): Reason[] {
@@ -3502,6 +3536,68 @@
                   </div>
                 {/each}
                 <button onclick={addFactor}>Add factor</button>
+                <label
+                  >band output key <input
+                    value={asText(nodeCfg().band)}
+                    oninput={(e) => patchCfg({ band: e.currentTarget.value })}
+                    aria-label="scorecard band output"
+                    placeholder="band"
+                  /></label
+                >
+                <p class="muted">bands (score ≥ min → grade + reason codes)</p>
+                {#each bands() as b, i (i)}
+                  <div class="band">
+                    <div class="row">
+                      <input
+                        type="number"
+                        step="any"
+                        value={asNum(b.min)}
+                        oninput={(e) =>
+                          setBand(i, {
+                            min: e.currentTarget.value === '' ? 0 : Number(e.currentTarget.value)
+                          })}
+                        aria-label={`band ${i} min`}
+                        placeholder="min"
+                        size="6"
+                      />
+                      <input
+                        value={asText(b.label)}
+                        oninput={(e) => setBand(i, { label: e.currentTarget.value })}
+                        aria-label={`band ${i} label`}
+                        placeholder="grade"
+                      />
+                      <button
+                        class="x"
+                        aria-label={`remove band ${i}`}
+                        onclick={() => removeBand(i)}>✕</button
+                      >
+                    </div>
+                    {#each bandCodes(i) as c, k (k)}
+                      <div class="row bandcode">
+                        <input
+                          value={asText(c.code)}
+                          oninput={(e) => setBandCode(i, k, { code: e.currentTarget.value })}
+                          aria-label={`band ${i} code ${k}`}
+                          placeholder="code"
+                          size="8"
+                        />
+                        <input
+                          value={asText(c.description)}
+                          oninput={(e) => setBandCode(i, k, { description: e.currentTarget.value })}
+                          aria-label={`band ${i} code ${k} description`}
+                          placeholder="description"
+                        />
+                        <button
+                          class="x"
+                          aria-label={`remove band ${i} code ${k}`}
+                          onclick={() => removeBandCode(i, k)}>✕</button
+                        >
+                      </div>
+                    {/each}
+                    <button onclick={() => addBandCode(i)}>Add reason code</button>
+                  </div>
+                {/each}
+                <button onclick={addBand}>Add band</button>
               {:else if selected.type === 'reason'}
                 <p class="muted">reason codes (when → code + description)</p>
                 {#each reasons() as r, i (i)}
@@ -5464,6 +5560,14 @@
     margin: 0.3rem 0;
   }
   .row.indent {
+    margin-left: 1rem;
+  }
+  .band {
+    border-left: 2px solid #8883;
+    padding-left: 0.5rem;
+    margin: 0.35rem 0;
+  }
+  .row.bandcode {
     margin-left: 1rem;
   }
   .cellrow {

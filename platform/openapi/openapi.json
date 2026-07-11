@@ -2361,7 +2361,8 @@
                 "type": "object",
                 "properties": {
                   "success_target": { "type": "number", "description": "Target success fraction (0..1)." },
-                  "latency_target_ms": { "type": "integer" }
+                  "latency_target_ms": { "type": "integer" },
+                  "window_days": { "type": "integer", "description": "Rolling window in days to measure attainment over (0 = all-time; max 90)." }
                 }
               }
             }

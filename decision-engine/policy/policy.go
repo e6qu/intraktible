@@ -81,7 +81,7 @@ func (s Spec) Validate() error {
 // condition that errors (e.g. references a missing field) fails loudly.
 func (s Spec) Apply(output map[string]any) (Outcome, error) {
 	for i, r := range s.Rules {
-		program, err := expr.Compile(r.When, expr.Env(output))
+		program, err := expr.Compile(r.When, expr.Env(output), expr.DisableBuiltin("now"))
 		if err != nil {
 			return Outcome{}, fmt.Errorf("policy: rule %d condition %q: %w", i, r.When, err)
 		}

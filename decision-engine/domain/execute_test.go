@@ -293,6 +293,41 @@ func TestExecuteReasonCodes(t *testing.T) {
 	}
 }
 
+func TestExecuteScorecardBands(t *testing.T) {
+	// A banded scorecard: 10 (fico<700) + 25 (defaults>0) = 35 → the "high risk" band
+	// (highest Min the score reaches), which labels the outcome and emits its codes.
+	g := linear(
+		cfgNode("m", events.NodeScorecard, `{"output":"score","band":"grade","factors":[`+
+			`{"when":"fico < 700","weight":10},{"when":"defaults > 0","weight":25}],"bands":[`+
+			`{"min":0,"label":"high risk","reason_codes":[{"code":"HR","description":"Score below threshold"}]},`+
+			`{"min":30,"label":"medium risk"},{"min":60,"label":"low risk"}]}`),
+		cfgNode("out", events.NodeOutput, `{"fields":["score","grade"]}`),
+	)
+	run := domain.Execute(g, map[string]any{"fico": 650, "defaults": 1})
+	if run.Status != domain.StatusCompleted {
+		t.Fatalf("status=%s err=%s", run.Status, run.Err)
+	}
+	if run.Output["score"] != 35.0 {
+		t.Fatalf("score = %v, want 35", run.Output["score"])
+	}
+	if run.Output["grade"] != "medium risk" {
+		t.Fatalf("grade = %v, want medium risk (min 30 is the highest reached)", run.Output["grade"])
+	}
+	// The band it landed in carries no codes; a lower score would emit HR. Confirm the
+	// floor band's codes surface for a below-threshold score.
+	low := domain.Execute(g, map[string]any{"fico": 800, "defaults": 0})
+	if low.Output["grade"] != "high risk" {
+		t.Fatalf("grade = %v, want high risk", low.Output["grade"])
+	}
+	rc, ok := low.Output["reason_codes"].([]any)
+	if !ok || len(rc) != 1 {
+		t.Fatalf("want the floor band's reason code surfaced, got %#v", low.Output["reason_codes"])
+	}
+	if first, _ := rc[0].(map[string]any); first["code"] != "HR" {
+		t.Fatalf("wrong band code: %#v", rc[0])
+	}
+}
+
 func TestExecuteFailsLoudly(t *testing.T) {
 	cases := []struct {
 		name       string
