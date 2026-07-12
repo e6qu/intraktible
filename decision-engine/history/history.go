@@ -68,13 +68,17 @@ type Record struct {
 	PreApprovalID     string `json:"preapproval_id,omitempty"`
 	// CaseID links a decision that routed to manual_review to the case it opened,
 	// populated from the decision's ManualReviewRequested escalation event.
-	CaseID      string       `json:"case_id,omitempty"`
-	Error       string       `json:"error,omitempty"`
-	TimeOrdered []string     `json:"time_ordered"`
-	Nodes       []NodeRecord `json:"nodes"`
-	StartedAt   time.Time    `json:"started_at"`
-	EndedAt     time.Time    `json:"ended_at,omitempty"`
-	DurationMS  int64        `json:"duration_ms,omitempty"`
+	CaseID string `json:"case_id,omitempty"`
+	// HumanReviewed is set once a suspended decision is resumed by a person — the
+	// durable signal that a human was in the loop, so a "solely automated" decision
+	// (the Art. 22 / reconsideration predicate) is distinguishable after the fact.
+	HumanReviewed bool         `json:"human_reviewed,omitempty"`
+	Error         string       `json:"error,omitempty"`
+	TimeOrdered   []string     `json:"time_ordered"`
+	Nodes         []NodeRecord `json:"nodes"`
+	StartedAt     time.Time    `json:"started_at"`
+	EndedAt       time.Time    `json:"ended_at,omitempty"`
+	DurationMS    int64        `json:"duration_ms,omitempty"`
 }
 
 // Projector folds decision events into Record documents.
@@ -140,6 +144,7 @@ func applyResumed(ctx context.Context, e eventlog.Envelope, s store.Store) error
 	return update(ctx, s, e, p.DecisionID, func(r *Record) {
 		r.Status = "started"
 		r.SuspendState = nil
+		r.HumanReviewed = true
 	})
 }
 

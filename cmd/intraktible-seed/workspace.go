@@ -43,6 +43,46 @@ func (s *seeder) adverseActionActions(anchor time.Time) []action {
 	}}}
 }
 
+// reconsiderationActions records a human review of a couple of solely-automated credit
+// declines — one overturned, one upheld — so the Art. 22 / reconsideration surface on
+// the decision page shows real records. It only picks declines that ran end to end with
+// no person in the loop (the eligibility the endpoint enforces).
+func (s *seeder) reconsiderationActions(anchor time.Time) []action {
+	return []action{{at: anchor.Add(3 * time.Hour), name: "record human reviews", run: func() {
+		var q struct {
+			AdverseActions []struct {
+				DecisionID string `json:"decision_id"`
+				Slug       string `json:"slug"`
+			} `json:"adverse_actions"`
+		}
+		s.call(actorDiego, http.MethodGet, "/v1/adverse-actions", nil, &q)
+		reviews := []map[string]any{
+			{"basis": "applicant_contest", "outcome": "overturned",
+				"rationale": "Applicant supplied a pay stub the automated bureau pull missed; recomputed DTI is within the program limit, so the decline is reversed."},
+			{"basis": "proactive", "outcome": "upheld",
+				"rationale": "Reviewed against the file: the delinquency and utilization drivers are confirmed and material; the automated decline stands."},
+		}
+		i := 0
+		for _, aa := range q.AdverseActions {
+			if i >= len(reviews) || aa.Slug != "credit-decision" {
+				continue
+			}
+			var dec struct {
+				Disposition   string `json:"disposition"`
+				Status        string `json:"status"`
+				CaseID        string `json:"case_id"`
+				HumanReviewed bool   `json:"human_reviewed"`
+			}
+			s.call(actorDiego, http.MethodGet, "/v1/decisions/"+url.PathEscape(aa.DecisionID), nil, &dec)
+			if dec.Status != "completed" || dec.Disposition != "decline" || dec.CaseID != "" || dec.HumanReviewed {
+				continue
+			}
+			s.call(actorDiego, http.MethodPost, "/v1/decisions/"+url.PathEscape(aa.DecisionID)+"/reconsideration", reviews[i], nil)
+			i++
+		}
+	}}}
+}
+
 // timeCursor hands out strictly increasing config-phase timestamps.
 type timeCursor struct{ t time.Time }
 

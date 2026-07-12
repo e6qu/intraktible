@@ -14,11 +14,14 @@
     adverseActionNotice,
     getAdverseAction,
     issueAdverseAction,
+    getReconsideration,
+    recordReconsideration,
     ApiError,
     type Decision,
     type Counterfactual,
     type RunExportFormat,
-    type AdverseActionIssuance
+    type AdverseActionIssuance,
+    type Reconsideration
   } from '$lib/api';
   import { toast } from '$lib/toast';
   import { appHref } from '$lib/paths';
@@ -96,6 +99,44 @@
       issuing = false;
     }
   }
+  // The Art. 22 / ECOA human review of a solely-automated decline (null = none yet).
+  let review = $state<Reconsideration | null>(null);
+  let reviewBasis = $state('applicant_contest');
+  let reviewOutcome = $state('upheld');
+  let reviewRationale = $state('');
+  let reviewing = $state(false);
+  // Eligible only when the decline ran end to end with no person in the loop.
+  const solelyAutomated = $derived(!!d && !d.case_id && !d.human_reviewed);
+
+  async function loadReview() {
+    if (!id) return;
+    try {
+      review = await getReconsideration(key, id);
+    } catch {
+      review = null;
+    }
+  }
+  async function submitReview() {
+    if (!reviewRationale.trim()) {
+      toast.error('A rationale is required — a review with no reasoning is a rubber stamp.');
+      return;
+    }
+    reviewing = true;
+    try {
+      await recordReconsideration(key, id, {
+        basis: reviewBasis,
+        outcome: reviewOutcome,
+        rationale: reviewRationale.trim()
+      });
+      toast.success('Human review recorded.');
+      reviewRationale = '';
+      await loadReview();
+    } catch (e) {
+      toast.error(msg(e));
+    } finally {
+      reviewing = false;
+    }
+  }
   function pretty(v: unknown): string {
     return v === undefined || v === null ? '—' : JSON.stringify(v, null, 2);
   }
@@ -135,7 +176,10 @@
       const got = await getDecision(key, id);
       if (id !== reqId) return;
       d = got;
-      if (d.disposition === 'decline') void loadIssuance();
+      if (d.disposition === 'decline') {
+        void loadIssuance();
+        void loadReview();
+      }
     } catch (e) {
       if (id !== reqId) return;
       if (e instanceof ApiError && e.status === 404) notFound = true;
@@ -197,6 +241,7 @@
     void id; // reload on initial mount and sibling navigation
     cf = null;
     issuance = null;
+    review = null;
     // Reset the rendered decision too — otherwise a failed sibling load keeps
     // showing the previous decision (including its Resume panel) under the new id.
     d = null;
@@ -367,6 +412,64 @@
         The notice renders from these reason codes and the workspace creditor settings (set on the
         Fair lending page). Recording an issuance requires the operator role.
       </p>
+
+      <h2>
+        Human review
+        <Hint label="Art. 22 / reconsideration"
+          >A decline reached with no person in the loop can be contested: a human reviewer upholds
+          or overturns it, with a stated rationale. This is the GDPR Art. 22 right to human
+          intervention and the ECOA reconsideration record — the original decision stays immutable.</Hint
+        >
+      </h2>
+      {#if review}
+        <dl class="issuance">
+          <dt>Outcome</dt>
+          <dd>
+            {#if review.outcome === 'overturned'}
+              <span class="badge overturned">overturned</span>
+            {:else}
+              <span class="badge">upheld</span>
+            {/if}
+          </dd>
+          <dt>Basis</dt>
+          <dd>{review.basis.replace('_', ' ')}</dd>
+          <dt>Reviewer</dt>
+          <dd>{review.reviewed_by} · {review.reviewed_at?.slice(0, 10)}</dd>
+          <dt>Rationale</dt>
+          <dd>{review.rationale}</dd>
+        </dl>
+      {:else if !solelyAutomated}
+        <p class="muted small">
+          This decision already had a person in the loop{d.case_id
+            ? ' (routed to a review case)'
+            : ''}
+          — the Art. 22 human-intervention record is for a solely-automated decline.
+        </p>
+      {:else if canIssue}
+        <div class="aa-issue">
+          <div class="aa-controls">
+            <select bind:value={reviewBasis} aria-label="review basis">
+              <option value="applicant_contest">applicant contest</option>
+              <option value="proactive">proactive</option>
+              <option value="regulator_inquiry">regulator inquiry</option>
+            </select>
+            <select bind:value={reviewOutcome} aria-label="review outcome">
+              <option value="upheld">upheld</option>
+              <option value="overturned">overturned</option>
+            </select>
+          </div>
+          <textarea
+            bind:value={reviewRationale}
+            rows="2"
+            placeholder="Rationale — what the human reviewer weighed (required)"
+          ></textarea>
+          <button class="notice-btn" onclick={submitReview} disabled={reviewing}>
+            {reviewing ? 'Recording…' : 'Record human review'}
+          </button>
+        </div>
+      {:else}
+        <p class="muted small">Recording a human review requires the operator role.</p>
+      {/if}
     {/if}
 
     {#if d.disposition === 'decline' || d.disposition === 'refer'}
@@ -820,6 +923,19 @@
   .badge.ok {
     background: var(--ok-bg, #dcfce7);
     color: var(--ok, #166534);
+  }
+  .badge.overturned {
+    background: var(--warn-bg, #fef3c7);
+    color: var(--warn, #92400e);
+  }
+  .aa-issue textarea {
+    font: inherit;
+    padding: 0.4rem 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface);
+    color: var(--fg);
+    resize: vertical;
   }
   .issuance {
     display: grid;

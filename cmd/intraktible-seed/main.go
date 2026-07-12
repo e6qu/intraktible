@@ -169,6 +169,7 @@ func buildSeed() []eventlog.Envelope {
 	acts = append(acts, s.monitorCheckActions(anchor)...)
 	acts = append(acts, s.inboxActions(anchor)...)
 	acts = append(acts, s.adverseActionActions(anchor)...)
+	acts = append(acts, s.reconsiderationActions(anchor)...)
 
 	s.runTimeline(acts)
 
@@ -315,6 +316,18 @@ func spotCheck(srv *server.Server) string {
 	}
 	if len(pending.AdverseActions) == 0 {
 		fatalf("round trip: no adverse-action notices left pending (queue would look empty)")
+	}
+
+	// Human reviews (Art. 22 / reconsideration): a couple of automated declines were
+	// reviewed by a person, one overturned and one upheld.
+	var reconsiderations struct {
+		Reconsiderations []struct {
+			Outcome string `json:"outcome"`
+		} `json:"reconsiderations"`
+	}
+	get("/v1/reconsiderations", &reconsiderations)
+	if len(reconsiderations.Reconsiderations) < 2 {
+		fatalf("round trip: %d human reviews, want >= 2", len(reconsiderations.Reconsiderations))
 	}
 
 	var cases struct {

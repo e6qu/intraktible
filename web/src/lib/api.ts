@@ -415,6 +415,7 @@ export interface Decision {
   policy_version?: number;
   preapproval_id?: string; // set when served instantly from a pre-approval
   case_id?: string; // set when the decision routed to manual_review and opened a case
+  human_reviewed?: boolean; // set when a suspended decision was resumed by a person
   error?: string;
   nodes?: NodeRecord[];
   started_at: string;
@@ -3214,6 +3215,51 @@ export async function listAdverseActions(
     return errorOrStatus(res, 'list adverse-actions');
   }
   return ((await res.json()) as { adverse_actions: AdverseActionItem[] }).adverse_actions ?? [];
+}
+
+// Reconsideration is the human review of a solely-automated adverse decision — the
+// Art. 22 / ECOA record that a person, not the model, upheld or overturned the decline.
+export interface Reconsideration {
+  decision_id: string;
+  subject?: string;
+  basis: string;
+  outcome: string;
+  rationale: string;
+  reviewed_at: string;
+  reviewed_by: string;
+}
+// getReconsideration returns the recorded human review for a decision, if any.
+export async function getReconsideration(
+  key: string,
+  decisionId: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<Reconsideration | null> {
+  const res = await fetcher(`/v1/decisions/${encodeURIComponent(decisionId)}/reconsideration`, {
+    headers: authHeaders(key)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'get reconsideration');
+  }
+  const body = (await res.json()) as { reviewed: boolean; review?: Reconsideration };
+  return body.reviewed ? (body.review ?? null) : null;
+}
+// recordReconsideration logs a human review (upheld/overturned + rationale) of an
+// automated decline. Rejected unless the decision is a completed, solely-automated
+// decline (the Art. 22 predicate).
+export async function recordReconsideration(
+  key: string,
+  decisionId: string,
+  body: { basis: string; outcome: string; rationale: string },
+  fetcher: typeof fetch = recordingFetch
+): Promise<void> {
+  const res = await fetcher(`/v1/decisions/${encodeURIComponent(decisionId)}/reconsideration`, {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'record reconsideration');
+  }
 }
 
 // ConsentEvidence is the proof backing a grant — the document/audit-trail a regulator
