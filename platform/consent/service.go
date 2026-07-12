@@ -34,6 +34,17 @@ func (s *Service) Routes(mux *http.ServeMux) {
 	// segment — a slash in a path segment would misroute.
 	mux.HandleFunc("GET /v1/consent", s.list)
 	mux.HandleFunc("GET /v1/consent/status", s.status)
+	// The cross-subject view for a compliance surface (every record in the tenant).
+	mux.HandleFunc("GET /v1/consent/records", s.listAll)
+}
+
+func (s *Service) listAll(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	records, err := ListAll(r.Context(), s.store, id)
+	httpx.WriteList(w, "consents", records, err)
 }
 
 type grantRequest struct {

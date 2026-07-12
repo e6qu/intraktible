@@ -2926,6 +2926,17 @@
         }
       }
     },
+    "/v1/consent/records": {
+      "get": {
+        "tags": ["Consent"],
+        "summary": "List every consent / lawful-basis record in the tenant",
+        "description": "The cross-subject view a compliance surface reads (the per-subject GET /v1/consent answers a data-subject request). Viewer-readable.",
+        "responses": {
+          "200": { "description": "Every consent record in the tenant, subject then purpose.", "content": { "application/json": { "schema": { "type": "object" } } } },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/v1/consent/status": {
       "get": {
         "tags": ["Consent"],

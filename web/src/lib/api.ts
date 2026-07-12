@@ -3261,6 +3261,62 @@ export async function recordReconsideration(
     return errorOrStatus(res, 'record reconsideration');
   }
 }
+// listReconsiderations returns every recorded human review for the tenant (the audit
+// trail behind the compliance surface).
+export async function listReconsiderations(
+  key: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<Reconsideration[]> {
+  const res = await fetcher('/v1/reconsiderations', { headers: authHeaders(key) });
+  if (!res.ok) {
+    return errorOrStatus(res, 'list reconsiderations');
+  }
+  return ((await res.json()) as { reconsiderations: Reconsideration[] }).reconsiderations ?? [];
+}
+
+// LegalHold suspends erasure/retention for a subject under an investigation or dispute.
+export interface LegalHold {
+  subject: string;
+  reason?: string;
+  since: string;
+}
+// RetentionPolicy is the workspace's retention window (0 = keep indefinitely).
+export interface RetentionPolicy {
+  retention_days: number;
+}
+// listLegalHolds returns the tenant's active legal holds (admin).
+export async function listLegalHolds(
+  key: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<LegalHold[]> {
+  const res = await fetcher('/v1/erasure/holds', { headers: authHeaders(key) });
+  if (!res.ok) {
+    return errorOrStatus(res, 'list legal holds');
+  }
+  return ((await res.json()) as { held: LegalHold[] }).held ?? [];
+}
+// getRetentionPolicy returns the workspace retention window (admin).
+export async function getRetentionPolicy(
+  key: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<RetentionPolicy> {
+  const res = await fetcher('/v1/erasure/retention-policy', { headers: authHeaders(key) });
+  if (!res.ok) {
+    return errorOrStatus(res, 'get retention policy');
+  }
+  return (await res.json()) as RetentionPolicy;
+}
+// listErasedSubjects returns the subject keys that have been crypto-shredded (admin).
+export async function listErasedSubjects(
+  key: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<string[]> {
+  const res = await fetcher('/v1/erasure/subjects', { headers: authHeaders(key) });
+  if (!res.ok) {
+    return errorOrStatus(res, 'list erased subjects');
+  }
+  return ((await res.json()) as { erased: string[] }).erased ?? [];
+}
 
 // ConsentEvidence is the proof backing a grant — the document/audit-trail a regulator
 // asks the controller to produce. The signed artifact stays in the controller's own
@@ -3296,6 +3352,18 @@ export async function getConsents(
   });
   if (!res.ok) {
     return errorOrStatus(res, 'GET /v1/consent');
+  }
+  return ((await res.json()) as { consents: ConsentRecord[] }).consents ?? [];
+}
+// listConsentRecords returns every consent/lawful-basis record in the tenant — the
+// cross-subject view for the compliance surface (per-subject getConsents answers a DSAR).
+export async function listConsentRecords(
+  key: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<ConsentRecord[]> {
+  const res = await fetcher('/v1/consent/records', { headers: authHeaders(key) });
+  if (!res.ok) {
+    return errorOrStatus(res, 'list consent records');
   }
   return ((await res.json()) as { consents: ConsentRecord[] }).consents ?? [];
 }

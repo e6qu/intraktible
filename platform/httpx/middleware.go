@@ -350,6 +350,13 @@ func requiredRole(method, path string) auth.Role {
 	if strings.HasSuffix(path, "/run/stream") || strings.HasSuffix(path, "/run/ws") {
 		return auth.RoleOperator
 	}
+	// The adverse-action WORK QUEUE is a read-only status list (declines and whether
+	// each has had its notice issued) — a compliance viewer's overview, so viewer.
+	// Checked before the /adverse-action operator rule below, which it would otherwise
+	// match as a substring.
+	if path == "/v1/adverse-actions" {
+		return auth.RoleViewer
+	}
 	// Generating an adverse-action notice produces a customer-facing Reg B document
 	// from a declined decision — a runtime operation, so operator (checked before the
 	// all-GETs-are-reads rule, since the notice is served over GET).

@@ -43,6 +43,18 @@ func (s *seeder) adverseActionActions(anchor time.Time) []action {
 	}}}
 }
 
+// dataGovernanceActions sets the workspace retention window so the compliance surface's
+// admin data-governance card shows a real policy. (A legal hold is not pre-seeded: a
+// hold requires the subject to already hold sealed PII, which the demo does not mask —
+// masking company_name would hide the applicant names the rest of the demo relies on.
+// The hold API itself works; it is exercised by the erasure tests.)
+func (s *seeder) dataGovernanceActions(anchor time.Time) []action {
+	return []action{{at: anchor.Add(4 * time.Hour), name: "retention policy", run: func() {
+		// Seven-year retention (FCRA best practice).
+		s.call(actorAva, http.MethodPut, "/v1/erasure/retention-policy", map[string]any{"retention_days": 2555}, nil)
+	}}}
+}
+
 // reconsiderationActions records a human review of a couple of solely-automated credit
 // declines — one overturned, one upheld — so the Art. 22 / reconsideration surface on
 // the decision page shows real records. It only picks declines that ran end to end with

@@ -32,6 +32,7 @@ export type NavId =
   | 'observability'
   | 'mrm'
   | 'fairlending'
+  | 'compliance'
   | 'keys'
   | 'audit';
 
@@ -61,6 +62,7 @@ export const NAV = new Map<NavId, NavItem>([
     'fairlending',
     { id: 'fairlending', href: '/fairlending', label: 'Fair lending', icon: 'gauge' }
   ],
+  ['compliance', { id: 'compliance', href: '/compliance', label: 'Compliance', icon: 'shield' }],
   ['keys', { id: 'keys', href: '/keys', label: 'API keys', icon: 'connect' }],
   ['audit', { id: 'audit', href: '/audit', label: 'Audit', icon: 'shield' }]
 ]);
@@ -210,7 +212,7 @@ export const PERSONAS: PersonaConfig[] = [
     blurb: 'Work the queues, SLAs, and monitors',
     icon: 'operator',
     home: 'operator',
-    nav: ['cases', 'decisions', 'preapprovals', 'policies', 'observability', 'audit'],
+    nav: ['cases', 'decisions', 'preapprovals', 'policies', 'compliance', 'observability', 'audit'],
     actions: [
       { label: 'Work the case queue', href: '/cases', icon: 'cases' },
       { label: 'Review pre-approvals', href: '/preapprovals', icon: 'check' },
@@ -235,7 +237,16 @@ export const PERSONAS: PersonaConfig[] = [
     blurb: 'Approvals, reviewer workload, and SLA health',
     icon: 'check',
     home: 'persona',
-    nav: ['preapprovals', 'cases', 'decisions', 'observability', 'mrm', 'fairlending', 'audit'],
+    nav: [
+      'preapprovals',
+      'cases',
+      'decisions',
+      'observability',
+      'mrm',
+      'fairlending',
+      'compliance',
+      'audit'
+    ],
     actions: [
       { label: 'Clear pending approvals', href: '/preapprovals', icon: 'check' },
       { label: 'Check case load', href: '/cases', icon: 'cases' },
@@ -275,7 +286,7 @@ export const PERSONAS: PersonaConfig[] = [
     blurb: 'KPIs, trends, and governance posture',
     icon: 'showcase',
     home: 'showcase',
-    nav: ['decisions', 'cases', 'observability', 'mrm', 'fairlending', 'audit'],
+    nav: ['decisions', 'cases', 'observability', 'mrm', 'fairlending', 'compliance', 'audit'],
     actions: [{ label: 'View decision volume', href: '/decisions', icon: 'diagram' }]
   },
   {
