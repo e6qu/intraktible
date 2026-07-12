@@ -561,15 +561,31 @@ func (s *seeder) contextConfigActions(cfg *timeCursor) []action {
 		acts = append(acts, action{at: cfg.step(time.Minute), name: "entity " + e.id, run: func() {
 			s.call(actorDiego, http.MethodPost, "/v1/context/entities",
 				map[string]any{"entity_type": e.typ, "entity_id": e.id, "attributes": e.attributes}, nil)
-			// The onboarding team records the consent obtained from the customer, keyed
-			// on the same subject ("type/id") a decision, PII sealing, and erasure use —
-			// the permissible-purpose record shown on the entity's page.
-			purpose := "credit_underwriting"
-			if e.typ != "applicant" {
-				purpose = "account_servicing"
+			// The onboarding team records the lawful basis for processing this subject,
+			// keyed on the same subject ("type/id") a decision, PII sealing, and erasure
+			// use — the permissible-purpose record shown on the entity's page. The basis
+			// is NOT "consent": scoring an application the customer submitted rests on
+			// contract necessity (GDPR 6(1)(b)); ongoing account servicing on legitimate
+			// interest. Forcing consent where you'd process anyway is the classic error
+			// (ICO's own worked example is a credit-reference pull).
+			grant := map[string]any{
+				"subject": e.typ + "/" + e.id,
+				"purpose": "account_servicing",
+				"basis":   "legitimate_interest",
 			}
-			s.call(actorDiego, http.MethodPost, "/v1/consent/grant",
-				map[string]any{"subject": e.typ + "/" + e.id, "purpose": purpose, "basis": "consent"}, nil)
+			if e.typ == "applicant" {
+				grant["purpose"] = "credit_underwriting"
+				grant["basis"] = "contract"
+				// A worked evidence record: the signed application the customer submitted,
+				// captured by e-signature against a named disclosure version. The bytes
+				// live in the lender's document store; we hold the reference + method.
+				grant["evidence"] = map[string]any{
+					"method":         "e_signature",
+					"reference":      "loan-application-" + e.id + ".pdf",
+					"notice_version": "privacy-notice-2026-Q2",
+				}
+			}
+			s.call(actorDiego, http.MethodPost, "/v1/consent/grant", grant, nil)
 		}})
 	}
 	return acts

@@ -408,7 +408,17 @@ them hardest-blocker-first; each phase is a direction, not a committed date.
   sealing and erasure use — so a data subject is identifiable across consent, PII, holds, and erasure
   (the substrate for GDPR responses). A **compliance operator manages consent on the subject's entity
   page** (grant/withdraw/review), and the demo seed records consent for its applicant/customer entities.
-  _Still open:_ FCRA/GLBA disclosure workflows.
+  **Records now carry evidence and are reframed as a lawful-basis record** (research: US/UK/EU +
+  ISO 27560/Kantara, see `docs/CONSENT.md`). Cross-jurisdiction research found consent is usually the
+  *wrong* basis for credit decisioning (power imbalance → not freely given; the ICO's own worked example
+  is a credit-reference pull) — so a grant records the Art. 6 basis (contract/legitimate_interest for
+  decisioning, not consent) plus optional **`Evidence`**: how it was obtained (a controlled vocabulary),
+  a reference to the signed artifact in the controller's own store, a **content hash** for tamper-
+  evidence, and the **notice version** shown. The subject's data page lets an operator attach a file that
+  is **hashed in the browser (SHA-256)** — only the fingerprint + name are stored, the document's bytes
+  never leave the tenant (data residency). The demo seed uses the correct basis and a worked evidence
+  record for applicants. _Still open:_ FCRA/GLBA disclosure workflows; Art. 22 automated-decision
+  safeguards and the UK 22A–22D split; byte-level WORM artifact storage; retention-clock enforcement.
 
 **Parallel non-code track (organisational, not code):** SOC 2 Type II, ISO 27001, independent
 penetration testing, data-provider commercial relationships, model-validation staffing, and reference

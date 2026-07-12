@@ -41,6 +41,7 @@ type grantRequest struct {
 	Purpose   string      `json:"purpose"`
 	Basis     LawfulBasis `json:"basis,omitempty"`
 	ExpiresAt *time.Time  `json:"expires_at,omitempty"`
+	Evidence  *Evidence   `json:"evidence,omitempty"`
 }
 
 func (s *Service) grant(w http.ResponseWriter, r *http.Request) {
@@ -53,7 +54,7 @@ func (s *Service) grant(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, err)
 		return
 	}
-	e, err := s.cmd.Grant(r.Context(), id, req.Subject, req.Purpose, req.Basis, req.ExpiresAt)
+	e, err := s.cmd.Grant(r.Context(), id, GrantCmd(req))
 	if err != nil {
 		httpx.Error(w, http.StatusBadRequest, err)
 		return

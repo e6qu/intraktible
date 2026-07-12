@@ -31,26 +31,50 @@ func (h *Handler) WithNow(now func() time.Time) *Handler {
 	return h
 }
 
-// Grant records a subject's consent to process their data for a purpose under a
-// lawful basis (defaulting to explicit consent), optionally until expiresAt.
-func (h *Handler) Grant(ctx context.Context, id identity.Identity, subject, purpose string, basis LawfulBasis, expiresAt *time.Time) (eventlog.Envelope, error) {
+// GrantCmd is the input to Grant: a subject's authorization to process their data for
+// a purpose under a lawful basis, optionally until ExpiresAt, optionally backed by
+// Evidence (the document/audit trail the controller must be able to produce).
+type GrantCmd struct {
+	Subject   string
+	Purpose   string
+	Basis     LawfulBasis
+	ExpiresAt *time.Time
+	Evidence  *Evidence
+}
+
+// Grant records a subject's authorization to process their data for a purpose under a
+// lawful basis. Basis defaults to consent, but for credit decisioning the correct
+// basis is usually contract/legal_obligation/legitimate_interest — consent is rarely
+// "freely given" given the power imbalance (GDPR Art. 6; ICO). Evidence, when present,
+// must be well formed.
+func (h *Handler) Grant(ctx context.Context, id identity.Identity, cmd GrantCmd) (eventlog.Envelope, error) {
 	if err := id.Valid(); err != nil {
 		return eventlog.Envelope{}, err
 	}
-	subject, purpose = strings.TrimSpace(subject), strings.TrimSpace(purpose)
+	subject, purpose := strings.TrimSpace(cmd.Subject), strings.TrimSpace(cmd.Purpose)
 	if subject == "" || purpose == "" {
 		return eventlog.Envelope{}, fmt.Errorf("consent: subject and purpose are required")
 	}
+	basis := cmd.Basis
 	if basis == "" {
 		basis = BasisConsent
 	}
 	if !basis.Valid() {
 		return eventlog.Envelope{}, fmt.Errorf("consent: unknown lawful basis %q", basis)
 	}
-	if expiresAt != nil && !expiresAt.After(h.now()) {
+	if cmd.ExpiresAt != nil && !cmd.ExpiresAt.After(h.now()) {
 		return eventlog.Envelope{}, fmt.Errorf("consent: expires_at must be in the future")
 	}
-	b, err := json.Marshal(Granted{Subject: subject, Purpose: purpose, Basis: basis, ExpiresAt: expiresAt})
+	ev := cmd.Evidence
+	if ev != nil {
+		if err := ev.Validate(); err != nil {
+			return eventlog.Envelope{}, err
+		}
+		if ev.Zero() {
+			ev = nil
+		}
+	}
+	b, err := json.Marshal(Granted{Subject: subject, Purpose: purpose, Basis: basis, ExpiresAt: cmd.ExpiresAt, Evidence: ev})
 	if err != nil {
 		return eventlog.Envelope{}, fmt.Errorf("consent: marshal granted: %w", err)
 	}

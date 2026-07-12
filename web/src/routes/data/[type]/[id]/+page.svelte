@@ -17,7 +17,8 @@
     type Entity,
     type EntityEvent,
     type FeatureValue,
-    type ConsentRecord
+    type ConsentRecord,
+    type ConsentEvidence
   } from '$lib/api';
   import { appHref } from '$lib/paths';
   import { roleAtLeast } from '$lib/roles';
@@ -26,8 +27,40 @@
 
   const canManageConsent = $derived(roleAtLeast($user?.role, 'operator'));
   let consentPurpose = $state('');
-  let consentBasis = $state('consent');
+  // Default to a non-consent basis: for decisioning, the basis is usually contract or
+  // legitimate interest, not "consent" (which is rarely freely given). See the hint.
+  let consentBasis = $state('contract');
   let consentBusy = $state(false);
+  // Evidence fields — how the authorization was obtained, and a tamper-evident
+  // reference to the signed artifact (the file is hashed locally; its bytes never
+  // leave this machine, so the record respects data residency).
+  let consentMethod = $state('');
+  let consentReference = $state('');
+  let consentNotice = $state('');
+  let consentHash = $state('');
+  let consentHashAlgo = $state('');
+  let hashing = $state(false);
+
+  async function hashEvidenceFile(e: Event) {
+    const input = e.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) {
+      consentHash = '';
+      consentHashAlgo = '';
+      return;
+    }
+    hashing = true;
+    try {
+      const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer());
+      consentHash = [...new Uint8Array(digest)]
+        .map((b) => b.toString(16).padStart(2, '0'))
+        .join('');
+      consentHashAlgo = 'sha-256';
+      if (!consentReference.trim()) consentReference = file.name;
+    } finally {
+      hashing = false;
+    }
+  }
 
   const key = '';
   // Derive from the route params so navigating between sibling entities reloads.
@@ -92,11 +125,29 @@
       toast.error('A purpose is required.');
       return;
     }
+    const evidence: ConsentEvidence = {};
+    if (consentMethod) evidence.method = consentMethod;
+    if (consentReference.trim()) evidence.reference = consentReference.trim();
+    if (consentHash) {
+      evidence.content_hash = consentHash;
+      evidence.hash_algo = consentHashAlgo;
+    }
+    if (consentNotice.trim()) evidence.notice_version = consentNotice.trim();
     consentBusy = true;
     try {
-      await grantConsent(key, { subject, purpose: consentPurpose.trim(), basis: consentBasis });
-      toast.success('Consent recorded.');
+      await grantConsent(key, {
+        subject,
+        purpose: consentPurpose.trim(),
+        basis: consentBasis,
+        evidence: Object.keys(evidence).length ? evidence : undefined
+      });
+      toast.success('Basis recorded.');
       consentPurpose = '';
+      consentMethod = '';
+      consentReference = '';
+      consentNotice = '';
+      consentHash = '';
+      consentHashAlgo = '';
       await reloadConsents();
     } catch (e) {
       toast.error(msg(e));
@@ -177,17 +228,22 @@
 
     {#if consents.length > 0 || canManageConsent}
       <section>
-        <h2>Consent <span class="muted">(purpose limitation)</span></h2>
+        <h2>Lawful basis <span class="muted">(purpose limitation)</span></h2>
         <p class="muted small">
-          The consent your organization has recorded for this subject. A decision that pulls data
-          for a purpose requires active consent here — the permissible-purpose record for GDPR /
-          GLBA.
+          The lawful basis your organization has recorded for processing this subject. A decision
+          that pulls data for a purpose requires an active basis here — the permissible-purpose
+          record for GDPR / GLBA. For credit decisioning the basis is usually
+          <em>contract</em> or <em>legitimate interest</em>, not <em>consent</em> (which is rarely freely
+          given given the power imbalance).
         </p>
         {#if consents.length > 0}
           <div class="table-wrap">
             <table>
               <thead>
-                <tr><th>Purpose</th><th>Status</th><th>Basis</th><th>Recorded</th><th></th></tr>
+                <tr
+                  ><th>Purpose</th><th>Status</th><th>Basis</th><th>Evidence</th><th>Recorded</th
+                  ><th></th></tr
+                >
               </thead>
               <tbody>
                 {#each consents as c (c.purpose)}
@@ -201,6 +257,27 @@
                       {/if}
                     </td>
                     <td class="muted">{c.basis || '—'}</td>
+                    <td class="muted small">
+                      {#if c.evidence}
+                        {#if c.evidence.method}<span class="badge">{c.evidence.method}</span>{/if}
+                        {#if c.evidence.reference}<div class="ev-ref" title={c.evidence.reference}>
+                            {c.evidence.reference}
+                          </div>{/if}
+                        {#if c.evidence.content_hash}
+                          <div
+                            class="ev-hash"
+                            title={`${c.evidence.hash_algo}: ${c.evidence.content_hash}`}
+                          >
+                            ⛓ {c.evidence.content_hash.slice(0, 10)}…
+                          </div>
+                        {/if}
+                        {#if c.evidence.notice_version}<div class="ev-ref">
+                            notice {c.evidence.notice_version}
+                          </div>{/if}
+                      {:else}
+                        —
+                      {/if}
+                    </td>
                     <td class="muted"
                       ><RelativeTime value={c.granted_at ?? c.withdrawn_at ?? ''} /></td
                     >
@@ -219,21 +296,43 @@
             </table>
           </div>
         {:else}
-          <p class="muted">No consent recorded for this subject yet.</p>
+          <p class="muted">No lawful basis recorded for this subject yet.</p>
         {/if}
         {#if canManageConsent}
           <div class="consent-form">
             <input bind:value={consentPurpose} placeholder="purpose (e.g. credit_underwriting)" />
-            <select bind:value={consentBasis}>
-              <option value="consent">consent</option>
+            <select bind:value={consentBasis} aria-label="lawful basis">
               <option value="contract">contract</option>
-              <option value="legal_obligation">legal_obligation</option>
               <option value="legitimate_interest">legitimate_interest</option>
+              <option value="legal_obligation">legal_obligation</option>
+              <option value="consent">consent</option>
             </select>
-            <button class="btn" disabled={consentBusy} onclick={recordConsent}
-              >Record consent</button
+            <select bind:value={consentMethod} aria-label="how obtained">
+              <option value="">how obtained…</option>
+              <option value="e_signature">e_signature</option>
+              <option value="wet_signature">wet_signature</option>
+              <option value="scanned_document">scanned_document</option>
+              <option value="click_through">click_through</option>
+              <option value="verbal">verbal</option>
+            </select>
+            <input bind:value={consentReference} placeholder="document reference" />
+            <input bind:value={consentNotice} placeholder="notice version" />
+            <label
+              class="file-label"
+              title="Hashed locally — the file's bytes never leave this device"
+            >
+              <input type="file" onchange={hashEvidenceFile} />
+              {#if consentHash}⛓ {consentHash.slice(0, 10)}…{:else if hashing}hashing…{:else}attach
+                + hash{/if}
+            </label>
+            <button class="btn" disabled={consentBusy || hashing} onclick={recordConsent}
+              >Record basis</button
             >
           </div>
+          <p class="muted small">
+            Attaching a file hashes it in your browser (SHA-256) and stores only the fingerprint +
+            name — the document itself stays in your own system of record.
+          </p>
         {/if}
       </section>
     {/if}
@@ -356,6 +455,31 @@
     border-radius: 6px;
     background: var(--surface);
     color: var(--fg);
+  }
+  .file-label {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.35rem 0.5rem;
+    border: 1px dashed var(--border);
+    border-radius: 6px;
+    background: var(--surface);
+    color: var(--fg-subtle);
+    font-size: 0.85rem;
+    cursor: pointer;
+  }
+  .file-label input[type='file'] {
+    display: none;
+  }
+  .ev-ref {
+    font-size: 0.78rem;
+    max-width: 12rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .ev-hash {
+    font-size: 0.78rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   }
   .btn {
     font: inherit;

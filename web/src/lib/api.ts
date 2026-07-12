@@ -3139,6 +3139,17 @@ export async function adverseActionNotice(
   return res.text();
 }
 
+// ConsentEvidence is the proof backing a grant — the document/audit-trail a regulator
+// asks the controller to produce. The signed artifact stays in the controller's own
+// system of record; we hold a tamper-evident reference (content hash) and the capture
+// metadata, so the bytes never leave the tenant (data residency).
+export interface ConsentEvidence {
+  method?: string;
+  reference?: string;
+  content_hash?: string;
+  hash_algo?: string;
+  notice_version?: string;
+}
 export interface ConsentRecord {
   subject: string;
   purpose: string;
@@ -3147,6 +3158,7 @@ export interface ConsentRecord {
   granted_at?: string;
   withdrawn_at?: string;
   expires_at?: string;
+  evidence?: ConsentEvidence;
   updated_by: string;
 }
 // getConsents lists a data subject's consent records across purposes (the subject is
@@ -3168,7 +3180,13 @@ export async function getConsents(
 // business's staff (a bank/insurer/fintech employee), not the end customer.
 export async function grantConsent(
   key: string,
-  body: { subject: string; purpose: string; basis?: string; expires_at?: string },
+  body: {
+    subject: string;
+    purpose: string;
+    basis?: string;
+    expires_at?: string;
+    evidence?: ConsentEvidence;
+  },
   fetcher: typeof fetch = recordingFetch
 ): Promise<void> {
   const res = await fetcher('/v1/consent/grant', {

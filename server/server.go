@@ -715,7 +715,13 @@ func (g consentGate) HasConsent(ctx context.Context, id identity.Identity, subje
 }
 
 func (g consentGate) RecordConsent(ctx context.Context, id identity.Identity, subject, purpose, basis string) error {
-	_, err := g.cmd.Grant(ctx, id, subject, purpose, consent.LawfulBasis(basis), nil)
+	// A consent asserted inside a decision request is the controller vouching, via the
+	// API, for authorization it holds out-of-band; the signed artifact is attached
+	// separately on the subject's page. Record the method so the audit trail shows how.
+	_, err := g.cmd.Grant(ctx, id, consent.GrantCmd{
+		Subject: subject, Purpose: purpose, Basis: consent.LawfulBasis(basis),
+		Evidence: &consent.Evidence{Method: consent.MethodAPIAssertion},
+	})
 	return err
 }
 
