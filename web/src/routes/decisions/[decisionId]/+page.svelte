@@ -16,6 +16,7 @@
     issueAdverseAction,
     getReconsideration,
     recordReconsideration,
+    decisionExplanation,
     ApiError,
     type Decision,
     type Counterfactual,
@@ -65,6 +66,25 @@
       toast.error(msg(e));
     } finally {
       notifying = false;
+    }
+  }
+  let explaining = $state(false);
+  // Download the GDPR Art. 22 "how this decision was made & your rights" explanation.
+  async function downloadExplanation() {
+    explaining = true;
+    try {
+      const text = await decisionExplanation(key, id);
+      const url = URL.createObjectURL(new Blob([text], { type: 'text/markdown' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `decision-explanation-${id}.md`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+      toast.success('Downloaded the decision explanation.');
+    } catch (e) {
+      toast.error(msg(e));
+    } finally {
+      explaining = false;
     }
   }
   // The recorded issuance for this decline (null = not yet served). Loaded best-effort
@@ -352,6 +372,18 @@
       </ul>
     {:else}
       <p class="muted">No reason codes were emitted for this decision.</p>
+    {/if}
+    {#if d.disposition}
+      <div class="aa-row">
+        <button class="notice-btn" onclick={downloadExplanation} disabled={explaining}>
+          <Icon name="shield" />
+          {explaining ? 'Generating…' : 'Explanation (Art. 22)'}
+        </button>
+        <span class="muted small"
+          >How this decision was made and the data subject's rights (human intervention, contest,
+          explanation) — the GDPR Art. 22 / DUAA 22A–22D disclosure.</span
+        >
+      </div>
     {/if}
     {#if d.disposition === 'decline'}
       <h2>

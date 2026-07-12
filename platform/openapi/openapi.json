@@ -3442,6 +3442,25 @@
         }
       }
     },
+    "/v1/decisions/{decision_id}/explanation": {
+      "get": {
+        "tags": ["MRM"],
+        "summary": "The GDPR Art. 22 explanation of an automated decision",
+        "description": "A subject-facing explanation of how the decision was made — whether it was solely automated, the outcome, the principal factors, and the subject's Art. 22(3) rights (human intervention, contest, explanation) — folding in any recorded human review. Markdown by default; ?format=json returns { explanation }.",
+        "parameters": [
+          { "name": "decision_id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "format", "in": "query", "schema": { "type": "string", "enum": ["json", "md", "markdown"] } }
+        ],
+        "responses": {
+          "200": {
+            "description": "The explanation as Markdown, or JSON when ?format=json.",
+            "content": { "application/json": { "schema": { "type": "object" } }, "text/markdown": { "schema": { "type": "string" } } }
+          },
+          "401": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/v1/reconsiderations": {
       "get": {
         "tags": ["MRM"],

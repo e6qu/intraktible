@@ -309,12 +309,22 @@ func spotCheck(srv *server.Server) string {
 	// Adverse-action notices: the credit flow's declines split into issued and still-
 	// pending, so both sides of the Fair-lending work queue are populated.
 	var issued, pending struct {
-		AdverseActions []json.RawMessage `json:"adverse_actions"`
+		AdverseActions []struct {
+			DecisionID string `json:"decision_id"`
+		} `json:"adverse_actions"`
 	}
 	get("/v1/adverse-actions?status=issued", &issued)
 	get("/v1/adverse-actions?status=pending", &pending)
 	if len(issued.AdverseActions) == 0 {
 		fatalf("round trip: no adverse-action notices were issued")
+	}
+	// The Art. 22 explanation renders for a declined decision.
+	explReq := httptest.NewRequest("GET", "/v1/decisions/"+url.PathEscape(issued.AdverseActions[0].DecisionID)+"/explanation", http.NoBody)
+	explReq.Header.Set("X-Api-Key", devAPIKey)
+	explRec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(explRec, explReq)
+	if explRec.Code != 200 || !strings.Contains(explRec.Body.String(), "How this decision was made") {
+		fatalf("round trip: decision explanation -> %d\n%s", explRec.Code, explRec.Body.String())
 	}
 	if len(pending.AdverseActions) == 0 {
 		fatalf("round trip: no adverse-action notices left pending (queue would look empty)")

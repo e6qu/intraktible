@@ -32,6 +32,59 @@ func (s *Service) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/decisions/{decision_id}/reconsideration", s.get)
 	mux.HandleFunc("POST /v1/decisions/{decision_id}/reconsideration", s.record)
 	mux.HandleFunc("GET /v1/reconsiderations", s.list)
+	mux.HandleFunc("GET /v1/decisions/{decision_id}/explanation", s.explain)
+}
+
+// explain renders the Art. 22 subject-facing explanation of a decision — how it was
+// made, the principal factors, and the subject's rights — folding in any recorded human
+// review. Markdown by default (the document); ?format=json returns { explanation }.
+func (s *Service) explain(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	decisionID := r.PathValue("decision_id")
+	rec, found, err := history.Read(r.Context(), s.store, id, decisionID)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	if !found {
+		httpx.Error(w, http.StatusNotFound, fmt.Errorf("decision %s not found", decisionID))
+		return
+	}
+	rv, reviewed, err := Read(r.Context(), s.store, id, decisionID)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	var review *Review
+	if reviewed {
+		review = &rv
+	}
+	doc := Explain(rec, review, s.now())
+	if r.URL.Query().Get("format") == "json" {
+		httpx.JSON(w, http.StatusOK, map[string]string{"decision_id": decisionID, "explanation": doc})
+		return
+	}
+	httpx.Download(w, "text/markdown; charset=utf-8", "decision-explanation-"+sanitizeID(decisionID)+".md", doc)
+}
+
+// sanitizeID keeps a decision id safe for a download filename.
+func sanitizeID(s string) string {
+	if s == "" {
+		return "decision"
+	}
+	var b []rune
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
+			b = append(b, r)
+		default:
+			b = append(b, '_')
+		}
+	}
+	return string(b)
 }
 
 // list returns every recorded human review for the tenant — the audit trail of which
