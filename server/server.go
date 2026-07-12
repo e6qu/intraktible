@@ -72,6 +72,7 @@ import (
 	"github.com/e6qu/intraktible/platform/projection"
 	"github.com/e6qu/intraktible/platform/scim"
 	"github.com/e6qu/intraktible/platform/secretbox"
+	"github.com/e6qu/intraktible/platform/sharing"
 	"github.com/e6qu/intraktible/platform/store"
 	"github.com/e6qu/intraktible/platform/web"
 	"github.com/e6qu/intraktible/reconsideration"
@@ -259,6 +260,7 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 	// Consent: one handler backs both the /v1/consent surface and the decide-path
 	// gate (capture asserted consent + enforce permissible purpose on Connect nodes).
 	consentHandler := consent.NewHandler(log).WithNow(now)
+	sharingHandler := sharing.NewHandler(log).WithNow(now)
 
 	if enabled(cfg.Modules, "hello") {
 		helloservice.New(hellocmd.NewHandler(log).WithNow(now), st).Routes(api)
@@ -283,6 +285,7 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 			enginecmd.WithAgents(agents.Provider{Store: st, Registry: aiRegistry, Tools: toolbox}),
 			enginecmd.WithModels(enginemodels.Provider{Store: st, HTTP: egress.Client(10 * time.Second)}),
 			enginecmd.WithConsent(consentGate{store: st, cmd: consentHandler, now: now}),
+			enginecmd.WithSharing(sharingGate{store: st}),
 		}
 		// Crypto-shred recorded decision PII under the entity subject when erasure
 		// fields are configured (same set as the Context Layer's event sealing).
@@ -413,6 +416,10 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 	// their data for a named purpose, recorded as events so the grant/withdraw
 	// history is auditable (GDPR Art. 6/7, GLBA purpose limitation).
 	consent.New(consentHandler, st).Routes(api)
+
+	// GLBA sharing opt-out: a consumer's election to stop NPI sharing with
+	// nonaffiliated third parties, enforced at outbound-sharing Connect nodes.
+	sharing.New(sharingHandler, st).Routes(api)
 
 	// Notifications: a per-user inbox derived from @-mentions in comments.
 	notifications.New(notifications.NewHandler(log).WithNow(now), st).Routes(api)
@@ -657,7 +664,7 @@ func Projectors(modules string) []projection.Projector {
 	// Privacy masking config and the audit index are platform capabilities, projected
 	// regardless of which modules are enabled (so masking and the audit trail work in
 	// every profile). The audit projector re-indexes every event for tenant-scoped reads.
-	ps := []projection.Projector{privacy.Projector{}, comments.Projector{}, consent.Projector{}, notifications.Projector{}, audit.Projector{},
+	ps := []projection.Projector{privacy.Projector{}, comments.Projector{}, consent.Projector{}, sharing.Projector{}, notifications.Projector{}, audit.Projector{},
 		fairlending.ConfigProjector{}, fairlending.SettingsProjector{}, fairlending.IssuanceProjector{}, reconsideration.Projector{}}
 	if enabled(modules, "hello") {
 		ps = append(ps, stats.Projector{})
@@ -733,6 +740,14 @@ func (g consentGate) RecordConsent(ctx context.Context, id identity.Identity, su
 		Evidence: &consent.Evidence{Method: consent.MethodAPIAssertion},
 	})
 	return err
+}
+
+// sharingGate adapts the GLBA sharing opt-out ledger to the engine's SharingGate port
+// (composition-root wiring, so the engine doesn't import platform/sharing).
+type sharingGate struct{ store store.Store }
+
+func (g sharingGate) HasOptedOut(ctx context.Context, id identity.Identity, subject string) (bool, error) {
+	return sharing.HasOptedOut(ctx, g.store, id, subject)
 }
 
 // aiCompleter adapts the AI registry to the engine's copilot AICompleter port (a

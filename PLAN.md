@@ -444,9 +444,13 @@ them hardest-blocker-first; each phase is a direction, not a committed date.
   adverse-action register (ECOA/Reg B record of adverse actions taken), the human-review register
   (Art. 22 reconsiderations), and the lawful-basis register (consent), as CSV (formula-injection-safe)
   or Markdown — the artifact a lender produces on examination.
-  _Still open:_ GLBA privacy opt-out disclosure; the **in-flow** Art. 22 safeguards (standing contest
-  channel, logic-explanation artifact) and the UK 22A–22D split; byte-level WORM artifact storage;
-  retention-clock enforcement.
+  **GLBA sharing opt-out** (`platform/sharing`) is the opt-out mirror of consent: consent is opt-in and
+  gates an inbound data pull; this records a consumer's election to stop their NPI being shared with
+  nonaffiliated third parties (GLBA §6802), and the decide path blocks a Connect node marked
+  `shares_npi` once the subject has opted out (fail-loud, the share never happens). Managed on the entity
+  page, surfaced on the compliance dashboard.
+  _Still open:_ the **in-flow** Art. 22 safeguards (standing contest channel, logic-explanation
+  artifact) and the UK 22A–22D split; byte-level WORM artifact storage; retention-clock enforcement.
 
 **Parallel non-code track (organisational, not code):** SOC 2 Type II, ISO 27001, independent
 penetration testing, data-provider commercial relationships, model-validation staffing, and reference

@@ -341,6 +341,23 @@ func spotCheck(srv *server.Server) string {
 		fatalf("round trip: adverse-action register -> %d\n%s", regRec.Code, regRec.Body.String())
 	}
 
+	// GLBA sharing opt-outs: a couple of subjects declined NPI sharing.
+	var sharingRecs struct {
+		Records []struct {
+			OptedOut bool `json:"opted_out"`
+		} `json:"records"`
+	}
+	get("/v1/sharing/records", &sharingRecs)
+	optedOut := 0
+	for _, rec := range sharingRecs.Records {
+		if rec.OptedOut {
+			optedOut++
+		}
+	}
+	if optedOut < 2 {
+		fatalf("round trip: %d sharing opt-outs, want >= 2", optedOut)
+	}
+
 	var cases struct {
 		Cases []struct {
 			Status string `json:"status"`

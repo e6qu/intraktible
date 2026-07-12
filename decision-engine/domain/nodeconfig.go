@@ -66,6 +66,10 @@ type connectConfig struct {
 	// RequiresConsent, when set, names the purpose the decision's subject must have
 	// active consent for before this connector is fetched (FCRA permissible purpose).
 	RequiresConsent string `json:"requires_consent,omitempty"`
+	// SharesNPI marks this connector as transmitting the subject's nonpublic personal
+	// information to a nonaffiliated third party — blocked if the subject has opted out
+	// of sharing (GLBA §6802).
+	SharesNPI bool `json:"shares_npi,omitempty"`
 }
 
 // predictConfig is the config of a Predict node: it names a registered model to

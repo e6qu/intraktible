@@ -94,6 +94,14 @@ type ConsentGate interface {
 	RecordConsent(ctx context.Context, id identity.Identity, subject, purpose, basis string) error
 }
 
+// SharingGate is the decide path's GLBA opt-out hook: it reports whether a subject has
+// opted out of having their NPI shared with nonaffiliated third parties, so a Connect
+// node that shares NPI outward (shares_npi) is blocked before the share happens. It is
+// the opt-out mirror of ConsentGate; the composition root supplies the adapter.
+type SharingGate interface {
+	HasOptedOut(ctx context.Context, id identity.Identity, subject string) (bool, error)
+}
+
 // PIISealer crypto-shreds the configured PII fields of a recorded decision under
 // the subject (the referenced entity), so a later erasure of that subject makes
 // the recorded input/output PII unrecoverable. The port lives here so the engine
@@ -118,6 +126,7 @@ type DecideHandler struct {
 	models     ModelProvider
 	sealer     PIISealer
 	consent    ConsentGate
+	sharing    SharingGate
 	tracer     trace.Tracer
 	// evalTimeout bounds per-node expression/Code evaluation so a CPU-heavy
 	// expression a flow author ships can't tie up the synchronous decide.
@@ -176,6 +185,14 @@ func WithPIISealer(s PIISealer) DecideOption {
 // never fetched) so consent is never silently skipped.
 func WithConsent(g ConsentGate) DecideOption {
 	return func(h *DecideHandler) { h.consent = g }
+}
+
+// WithSharing supplies the GLBA opt-out gate that blocks a Connect node marked
+// shares_npi when the subject has opted out of NPI sharing. Without it, a shares_npi
+// node fails loudly at execution (the share never happens) so an opt-out is never
+// silently ignored.
+func WithSharing(g SharingGate) DecideOption {
+	return func(h *DecideHandler) { h.sharing = g }
 }
 
 // WithEvalTimeout overrides the per-decide expression/Code evaluation budget. A
@@ -825,6 +842,9 @@ func (h *DecideHandler) injectConnectors(ctx context.Context, id identity.Identi
 		if err := h.enforceConsent(ctx, id, ref, sp); err != nil {
 			return nil, err
 		}
+		if err := h.enforceSharing(ctx, id, ref, sp); err != nil {
+			return nil, err
+		}
 		callCtx, span := h.tracer.Start(ctx, "engine.connector", trace.WithAttributes(
 			attribute.String("connector.name", sp.Connector),
 			attribute.String("node.id", sp.NodeID),
@@ -869,6 +889,31 @@ func (h *DecideHandler) enforceConsent(ctx context.Context, id identity.Identity
 	}
 	if !ok {
 		return fmt.Errorf("decision-engine: connect node %q — subject %q has no active consent for %q (no permissible purpose)", sp.NodeID, ref.Key(), sp.RequiresConsent)
+	}
+	return nil
+}
+
+// enforceSharing gates a Connect node that declares shares_npi: if the decision's
+// subject has opted out of NPI sharing with nonaffiliated third parties (GLBA §6802),
+// the connector — which would transmit the subject's NPI outward — must not be called.
+// It fails LOUD when sharing is declared but no gate is wired or the decision has no
+// subject, so an opt-out is never silently ignored.
+func (h *DecideHandler) enforceSharing(ctx context.Context, id identity.Identity, ref EntityRef, sp domain.ConnectSpec) error {
+	if !sp.SharesNPI {
+		return nil
+	}
+	if h.sharing == nil {
+		return fmt.Errorf("decision-engine: connect node %q shares NPI but no sharing opt-out gate is configured", sp.NodeID)
+	}
+	if ref.Empty() {
+		return fmt.Errorf("decision-engine: connect node %q shares NPI but the decision has no subject (entity ref)", sp.NodeID)
+	}
+	optedOut, err := h.sharing.HasOptedOut(ctx, id, ref.Key())
+	if err != nil {
+		return fmt.Errorf("decision-engine: connect node %q sharing check: %w", sp.NodeID, err)
+	}
+	if optedOut {
+		return fmt.Errorf("decision-engine: connect node %q — subject %q has opted out of NPI sharing (GLBA); the share is blocked", sp.NodeID, ref.Key())
 	}
 	return nil
 }
