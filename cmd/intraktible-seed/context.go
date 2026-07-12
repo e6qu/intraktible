@@ -561,6 +561,15 @@ func (s *seeder) contextConfigActions(cfg *timeCursor) []action {
 		acts = append(acts, action{at: cfg.step(time.Minute), name: "entity " + e.id, run: func() {
 			s.call(actorDiego, http.MethodPost, "/v1/context/entities",
 				map[string]any{"entity_type": e.typ, "entity_id": e.id, "attributes": e.attributes}, nil)
+			// The onboarding team records the consent obtained from the customer, keyed
+			// on the same subject ("type/id") a decision, PII sealing, and erasure use —
+			// the permissible-purpose record shown on the entity's page.
+			purpose := "credit_underwriting"
+			if e.typ != "applicant" {
+				purpose = "account_servicing"
+			}
+			s.call(actorDiego, http.MethodPost, "/v1/consent/grant",
+				map[string]any{"subject": e.typ + "/" + e.id, "purpose": purpose, "basis": "consent"}, nil)
 		}})
 	}
 	return acts

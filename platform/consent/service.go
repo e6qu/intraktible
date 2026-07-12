@@ -3,6 +3,7 @@
 package consent
 
 import (
+	"fmt"
 	"net/http"
 	"time"
 
@@ -28,8 +29,11 @@ func New(cmd *Handler, st store.Store) *Service {
 func (s *Service) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/consent/grant", s.grant)
 	mux.HandleFunc("POST /v1/consent/withdraw", s.withdraw)
-	mux.HandleFunc("GET /v1/consent/{subject}", s.list)
-	mux.HandleFunc("GET /v1/consent/{subject}/{purpose}", s.status)
+	// The subject is an opaque string that may contain any character (the decide
+	// integration keys it as "type/id"), so it is a query parameter, not a path
+	// segment — a slash in a path segment would misroute.
+	mux.HandleFunc("GET /v1/consent", s.list)
+	mux.HandleFunc("GET /v1/consent/status", s.status)
 }
 
 type grantRequest struct {
@@ -86,7 +90,12 @@ func (s *Service) list(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	records, err := List(r.Context(), s.store, id, r.PathValue("subject"))
+	subject := r.URL.Query().Get("subject")
+	if subject == "" {
+		httpx.Error(w, http.StatusBadRequest, fmt.Errorf("subject query parameter is required"))
+		return
+	}
+	records, err := List(r.Context(), s.store, id, subject)
 	httpx.WriteList(w, "consents", records, err)
 }
 
@@ -97,7 +106,11 @@ func (s *Service) status(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	subject, purpose := r.PathValue("subject"), r.PathValue("purpose")
+	subject, purpose := r.URL.Query().Get("subject"), r.URL.Query().Get("purpose")
+	if subject == "" || purpose == "" {
+		httpx.Error(w, http.StatusBadRequest, fmt.Errorf("subject and purpose query parameters are required"))
+		return
+	}
 	rec, found, err := Get(r.Context(), s.store, id, subject, purpose)
 	if err != nil {
 		httpx.Error(w, http.StatusInternalServerError, err)

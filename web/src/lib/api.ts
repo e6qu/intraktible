@@ -3139,6 +3139,62 @@ export async function adverseActionNotice(
   return res.text();
 }
 
+export interface ConsentRecord {
+  subject: string;
+  purpose: string;
+  granted: boolean;
+  basis?: string;
+  granted_at?: string;
+  withdrawn_at?: string;
+  expires_at?: string;
+  updated_by: string;
+}
+// getConsents lists a data subject's consent records across purposes (the subject is
+// opaque — the decide integration keys it as "type/id").
+export async function getConsents(
+  key: string,
+  subject: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<ConsentRecord[]> {
+  const res = await fetcher(`/v1/consent?subject=${encodeURIComponent(subject)}`, {
+    headers: authHeaders(key)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'GET /v1/consent');
+  }
+  return ((await res.json()) as { consents: ConsentRecord[] }).consents ?? [];
+}
+// grantConsent records a subject's consent for a purpose. Provided by the operating
+// business's staff (a bank/insurer/fintech employee), not the end customer.
+export async function grantConsent(
+  key: string,
+  body: { subject: string; purpose: string; basis?: string; expires_at?: string },
+  fetcher: typeof fetch = recordingFetch
+): Promise<void> {
+  const res = await fetcher('/v1/consent/grant', {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'POST /v1/consent/grant');
+  }
+}
+export async function withdrawConsent(
+  key: string,
+  body: { subject: string; purpose: string; reason?: string },
+  fetcher: typeof fetch = recordingFetch
+): Promise<void> {
+  const res = await fetcher('/v1/consent/withdraw', {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'POST /v1/consent/withdraw');
+  }
+}
+
 export async function listAgentRuns(
   key: string,
   name: string,

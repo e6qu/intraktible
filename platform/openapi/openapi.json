@@ -2904,29 +2904,32 @@
         }
       }
     },
-    "/v1/consent/{subject}": {
+    "/v1/consent": {
       "get": {
         "tags": ["Consent"],
         "summary": "List a subject's consents across purposes",
+        "description": "The subject is an opaque string (the decide integration keys it as 'type/id'), so it is a query parameter.",
         "parameters": [
-          { "name": "subject", "in": "path", "required": true, "schema": { "type": "string" } }
+          { "name": "subject", "in": "query", "required": true, "schema": { "type": "string" } }
         ],
         "responses": {
           "200": { "description": "The subject's consent records.", "content": { "application/json": { "schema": { "type": "object" } } } },
+          "400": { "$ref": "#/components/responses/Error" },
           "401": { "$ref": "#/components/responses/Error" }
         }
       }
     },
-    "/v1/consent/{subject}/{purpose}": {
+    "/v1/consent/status": {
       "get": {
         "tags": ["Consent"],
         "summary": "Whether a subject has active consent for a purpose",
         "parameters": [
-          { "name": "subject", "in": "path", "required": true, "schema": { "type": "string" } },
-          { "name": "purpose", "in": "path", "required": true, "schema": { "type": "string" } }
+          { "name": "subject", "in": "query", "required": true, "schema": { "type": "string" } },
+          { "name": "purpose", "in": "query", "required": true, "schema": { "type": "string" } }
         ],
         "responses": {
           "200": { "description": "The active flag plus the full record when one exists.", "content": { "application/json": { "schema": { "type": "object" } } } },
+          "400": { "$ref": "#/components/responses/Error" },
           "401": { "$ref": "#/components/responses/Error" }
         }
       }

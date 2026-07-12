@@ -10,12 +10,24 @@
     getEntity,
     listEntityEvents,
     getEntityFeatures,
+    getConsents,
+    grantConsent,
+    withdrawConsent,
     ApiError,
     type Entity,
     type EntityEvent,
-    type FeatureValue
+    type FeatureValue,
+    type ConsentRecord
   } from '$lib/api';
   import { appHref } from '$lib/paths';
+  import { roleAtLeast } from '$lib/roles';
+  import { user } from '$lib/session';
+  import { toast } from '$lib/toast';
+
+  const canManageConsent = $derived(roleAtLeast($user?.role, 'operator'));
+  let consentPurpose = $state('');
+  let consentBasis = $state('consent');
+  let consentBusy = $state(false);
 
   const key = '';
   // Derive from the route params so navigating between sibling entities reloads.
@@ -25,6 +37,9 @@
   let entity = $state<Entity | null>(null);
   let events = $state<EntityEvent[]>([]);
   let featureValues = $state<FeatureValue[]>([]);
+  // The entity IS the data subject (keyed "type/id"); its consents are the
+  // permissible-purpose record a compliance reviewer checks.
+  let consents = $state<ConsentRecord[]>([]);
   let error = $state('');
   // A missing entity (real 404) is an expected state — a stale/mistyped id — and gets
   // the "not found" EmptyState, not the raw error string with a Retry that can't succeed.
@@ -43,18 +58,21 @@
     entity = null;
     events = [];
     featureValues = [];
+    consents = [];
     // Drop a stale response when sibling navigation changes type/id mid-flight.
     const reqType = type;
     const reqId = id;
     try {
-      const [ent, evs, feats] = await Promise.all([
+      const [ent, evs, feats, cons] = await Promise.all([
         getEntity(key, type, id),
         listEntityEvents(key, type, id),
         // Computed features are best-effort (none defined for this type is fine).
-        getEntityFeatures(key, type, id).catch(() => [])
+        getEntityFeatures(key, type, id).catch(() => []),
+        // Consents are best-effort (a subject with none is normal).
+        getConsents(key, `${type}/${id}`).catch(() => [])
       ]);
       if (type !== reqType || id !== reqId) return;
-      [entity, events, featureValues] = [ent, evs, feats];
+      [entity, events, featureValues, consents] = [ent, evs, feats, cons];
     } catch (e) {
       if (type === reqType && id === reqId) {
         if (e instanceof ApiError && e.status === 404) notFound = true;
@@ -64,6 +82,41 @@
       if (type === reqType && id === reqId) loading = false;
     }
   }
+  // The subject key matches the decide integration + seeder convention: "<type>/<id>".
+  const subject = $derived(`${type}/${id}`);
+  async function reloadConsents() {
+    consents = await getConsents(key, subject).catch(() => []);
+  }
+  async function recordConsent() {
+    if (!consentPurpose.trim()) {
+      toast.error('A purpose is required.');
+      return;
+    }
+    consentBusy = true;
+    try {
+      await grantConsent(key, { subject, purpose: consentPurpose.trim(), basis: consentBasis });
+      toast.success('Consent recorded.');
+      consentPurpose = '';
+      await reloadConsents();
+    } catch (e) {
+      toast.error(msg(e));
+    } finally {
+      consentBusy = false;
+    }
+  }
+  async function revokeConsent(purpose: string) {
+    consentBusy = true;
+    try {
+      await withdrawConsent(key, { subject, purpose });
+      toast.success('Consent withdrawn.');
+      await reloadConsents();
+    } catch (e) {
+      toast.error(msg(e));
+    } finally {
+      consentBusy = false;
+    }
+  }
+
   $effect(() => {
     void type;
     void id; // reload on initial mount and sibling navigation
@@ -119,6 +172,69 @@
             >
           {/each}
         </div>
+      </section>
+    {/if}
+
+    {#if consents.length > 0 || canManageConsent}
+      <section>
+        <h2>Consent <span class="muted">(purpose limitation)</span></h2>
+        <p class="muted small">
+          The consent your organization has recorded for this subject. A decision that pulls data
+          for a purpose requires active consent here — the permissible-purpose record for GDPR /
+          GLBA.
+        </p>
+        {#if consents.length > 0}
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>Purpose</th><th>Status</th><th>Basis</th><th>Recorded</th><th></th></tr>
+              </thead>
+              <tbody>
+                {#each consents as c (c.purpose)}
+                  <tr>
+                    <td>{c.purpose}</td>
+                    <td>
+                      {#if c.granted}
+                        <span class="badge ok">active</span>
+                      {:else}
+                        <span class="badge">withdrawn</span>
+                      {/if}
+                    </td>
+                    <td class="muted">{c.basis || '—'}</td>
+                    <td class="muted"
+                      ><RelativeTime value={c.granted_at ?? c.withdrawn_at ?? ''} /></td
+                    >
+                    <td>
+                      {#if c.granted && canManageConsent}
+                        <button
+                          class="link"
+                          disabled={consentBusy}
+                          onclick={() => revokeConsent(c.purpose)}>Withdraw</button
+                        >
+                      {/if}
+                    </td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          </div>
+        {:else}
+          <p class="muted">No consent recorded for this subject yet.</p>
+        {/if}
+        {#if canManageConsent}
+          <div class="consent-form">
+            <input bind:value={consentPurpose} placeholder="purpose (e.g. credit_underwriting)" />
+            <select bind:value={consentBasis}>
+              <option value="consent">consent</option>
+              <option value="contract">contract</option>
+              <option value="legal_obligation">legal_obligation</option>
+              <option value="legitimate_interest">legitimate_interest</option>
+            </select>
+            <button class="btn" disabled={consentBusy} onclick={recordConsent}
+              >Record consent</button
+            >
+          </div>
+        {/if}
       </section>
     {/if}
 
@@ -196,6 +312,63 @@
     color: var(--fg-subtle);
     font-size: 0.75rem;
     margin-left: 0.3rem;
+  }
+  .small {
+    font-size: 0.82rem;
+  }
+  .table-wrap {
+    overflow-x: auto;
+  }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 0.9rem;
+  }
+  th,
+  td {
+    text-align: left;
+    padding: 0.35rem 0.6rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .badge {
+    display: inline-block;
+    padding: 0.05rem 0.45rem;
+    border-radius: 999px;
+    font-size: 0.78rem;
+    background: var(--surface-2);
+    color: var(--fg-muted);
+  }
+  .badge.ok {
+    background: var(--ok-bg, #dcfce7);
+    color: var(--ok, #166534);
+  }
+  .consent-form {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 0.6rem;
+  }
+  .consent-form input,
+  .consent-form select {
+    font: inherit;
+    padding: 0.35rem 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface);
+    color: var(--fg);
+  }
+  .btn {
+    font: inherit;
+    padding: 0.35rem 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface);
+    color: var(--fg);
+    cursor: pointer;
+  }
+  .btn:disabled {
+    opacity: 0.5;
+    cursor: default;
   }
   .timeline {
     list-style: none;

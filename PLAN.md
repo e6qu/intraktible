@@ -399,9 +399,16 @@ them hardest-blocker-first; each phase is a direction, not a committed date.
   (`platform/consent`): a data subject's consent to process their data for a named purpose, recorded as
   events (grant/withdraw) so the history is auditable, with a GDPR Art. 6 lawful basis and optional
   expiry. `Has(subject, purpose, now)` answers "may we use this data for this purpose right now?" (honors
-  withdrawal + expiry); `List` returns a subject's consents; endpoints grant/withdraw/list/status. _Still
-  open:_ enforcing consent in the decide path (the ledger is the authoritative record a gate would
-  consult; gating is a separate, invasive step) and FCRA/GLBA disclosure workflows.
+  withdrawal + expiry); `List` returns a subject's consents. **Consent is now wired into the decision
+  journey** (the business, not the end customer, provides it): a **Connect node can declare
+  `requires_consent`** and the decide path **refuses to pull that data source** without the subject's
+  active consent (FCRA permissible purpose) — failing loud, never fetching; a caller may also **assert
+  consent in the request** (the bank passing through what it obtained), captured under the subject before
+  the gate runs. The subject is the decision's entity (`ref.Key()` = `type/id`), the same key PII
+  sealing and erasure use — so a data subject is identifiable across consent, PII, holds, and erasure
+  (the substrate for GDPR responses). A **compliance operator manages consent on the subject's entity
+  page** (grant/withdraw/review), and the demo seed records consent for its applicant/customer entities.
+  _Still open:_ FCRA/GLBA disclosure workflows.
 
 **Parallel non-code track (organisational, not code):** SOC 2 Type II, ISO 27001, independent
 penetration testing, data-provider commercial relationships, model-validation staffing, and reference
