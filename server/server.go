@@ -60,6 +60,7 @@ import (
 	"github.com/e6qu/intraktible/platform/audit"
 	"github.com/e6qu/intraktible/platform/auth"
 	"github.com/e6qu/intraktible/platform/comments"
+	"github.com/e6qu/intraktible/platform/consent"
 	"github.com/e6qu/intraktible/platform/erasure"
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/httpx"
@@ -394,6 +395,11 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 	// requests, decisions, cases) so workflow surfaces carry an explanation trail.
 	comments.New(comments.NewHandler(log).WithNow(now), st).Routes(api)
 
+	// Consent: a purpose-limitation ledger — a data subject's consent to process
+	// their data for a named purpose, recorded as events so the grant/withdraw
+	// history is auditable (GDPR Art. 6/7, GLBA purpose limitation).
+	consent.New(consent.NewHandler(log).WithNow(now), st).Routes(api)
+
 	// Notifications: a per-user inbox derived from @-mentions in comments.
 	notifications.New(notifications.NewHandler(log).WithNow(now), st).Routes(api)
 
@@ -637,7 +643,7 @@ func Projectors(modules string) []projection.Projector {
 	// Privacy masking config and the audit index are platform capabilities, projected
 	// regardless of which modules are enabled (so masking and the audit trail work in
 	// every profile). The audit projector re-indexes every event for tenant-scoped reads.
-	ps := []projection.Projector{privacy.Projector{}, comments.Projector{}, notifications.Projector{}, audit.Projector{},
+	ps := []projection.Projector{privacy.Projector{}, comments.Projector{}, consent.Projector{}, notifications.Projector{}, audit.Projector{},
 		fairlending.ConfigProjector{}, fairlending.SettingsProjector{}}
 	if enabled(modules, "hello") {
 		ps = append(ps, stats.Projector{})
