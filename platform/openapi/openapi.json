@@ -3008,6 +3008,32 @@
         }
       }
     },
+    "/v1/fairlending/report": {
+      "get": {
+        "tags": ["MRM"],
+        "summary": "Disparate-impact (fair-lending) report",
+        "description": "Adverse-impact ratio (four-fifths rule, ECOA / Reg B) of favorable-outcome rates across a protected-class attribute, folded from the flow's recorded decisions. flow and attribute are required. ?format=csv or ?format=md; default JSON.",
+        "parameters": [
+          { "name": "flow", "in": "query", "required": true, "schema": { "type": "string" } },
+          { "name": "attribute", "in": "query", "required": true, "schema": { "type": "string" }, "description": "Dot-path into the decision input naming the protected class, e.g. applicant.gender." },
+          { "name": "favorable", "in": "query", "schema": { "type": "string", "enum": ["approve", "decline", "refer"] } },
+          { "name": "env", "in": "query", "schema": { "type": "string" } },
+          { "name": "format", "in": "query", "schema": { "type": "string", "enum": ["csv", "md", "markdown"] } }
+        ],
+        "responses": {
+          "200": {
+            "description": "The disparate-impact report as JSON, CSV, or Markdown.",
+            "content": {
+              "application/json": { "schema": { "type": "object" } },
+              "text/csv": { "schema": { "type": "string" } },
+              "text/markdown": { "schema": { "type": "string" } }
+            }
+          },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/v1/webhooks/{webhook_id}": {
       "delete": {
         "tags": ["Notifications"],

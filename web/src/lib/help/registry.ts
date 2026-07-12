@@ -705,6 +705,34 @@ export const HELP = new Map<string, PageHelp>([
     }
   ],
   [
+    '/fairlending',
+    {
+      title: 'Fair lending',
+      summary:
+        'A disparate-impact report over a flow’s recorded decisions: the adverse-impact ratio (four-fifths rule, ECOA / Reg B) of favorable-outcome rates across a protected-class attribute you name. A screen over real decisions, not a legal conclusion. Admin only.',
+      capabilities: [
+        'Pick a flow and the input field that encodes the protected class.',
+        'Compute each group’s favorable rate and its ratio to the reference group.',
+        'See which groups fall below the 0.80 four-fifths threshold, and which are small samples.',
+        'Read what was excluded (referred, no disposition, or attribute absent).',
+        'Export the report (CSV or Markdown).'
+      ],
+      journeys: [
+        {
+          name: 'Screen a flow for disparate impact',
+          steps: [
+            'Choose the flow and enter the protected-class attribute path (e.g. applicant.gender).',
+            'Set the favorable outcome (usually approve) and, optionally, an environment.',
+            'Click Run analysis.',
+            'Read the verdict: passes, flagged, or insufficient groups.',
+            'Scan the table (ordered most-impacted first) for groups with an AIR below 0.80.',
+            'Note the Excluded count — it states what the ratio left out.'
+          ]
+        }
+      ]
+    }
+  ],
+  [
     '/keys',
     {
       title: 'API keys',

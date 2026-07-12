@@ -2878,6 +2878,80 @@ export async function mrmReportText(
   return res.text();
 }
 
+export interface FairLendingGroup {
+  value: string;
+  total: number;
+  favorable: number;
+  adverse: number;
+  rate: number;
+  air: number;
+  reference?: boolean;
+  flagged?: boolean;
+  small_sample?: boolean;
+}
+export interface FairLendingReport {
+  generated_at: string;
+  org: string;
+  workspace: string;
+  flow_id: string;
+  attribute: string;
+  favorable: string;
+  environment?: string;
+  groups: FairLendingGroup[];
+  reference: string;
+  min_air: number;
+  passes: boolean;
+  decisions: number;
+  excluded: number;
+  two_groups: boolean;
+}
+export interface FairLendingParams {
+  flow: string;
+  attribute: string;
+  favorable?: string;
+  env?: string;
+}
+
+// fairLendingQuery serializes the report parameters, dropping the blank optionals
+// so the request carries only what was set.
+function fairLendingQuery(p: FairLendingParams): string {
+  const q = new URLSearchParams({ flow: p.flow, attribute: p.attribute });
+  if (p.favorable) q.set('favorable', p.favorable);
+  if (p.env) q.set('env', p.env);
+  return q.toString();
+}
+
+// getFairLendingReport fetches the disparate-impact report for a flow (admin-gated).
+export async function getFairLendingReport(
+  key: string,
+  params: FairLendingParams,
+  fetcher: typeof fetch = recordingFetch
+): Promise<FairLendingReport> {
+  const res = await fetcher(`/v1/fairlending/report?${fairLendingQuery(params)}`, {
+    headers: authHeaders(key)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'GET /v1/fairlending/report');
+  }
+  return (await res.json()) as FairLendingReport;
+}
+// The report as CSV/Markdown text — the page wraps it in a Blob download (an
+// <a href> would escape the demo's fetch mock and 404 on the static host).
+export async function fairLendingReportText(
+  key: string,
+  params: FairLendingParams,
+  format: 'csv' | 'md',
+  fetcher: typeof fetch = recordingFetch
+): Promise<string> {
+  const res = await fetcher(`/v1/fairlending/report?${fairLendingQuery(params)}&format=${format}`, {
+    headers: authHeaders(key)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, `export fair-lending report (${format}) failed`);
+  }
+  return res.text();
+}
+
 export async function listAgentRuns(
   key: string,
   name: string,

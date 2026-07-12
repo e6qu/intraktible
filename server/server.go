@@ -51,6 +51,7 @@ import (
 	"github.com/e6qu/intraktible/decision-engine/schedule"
 	engineservice "github.com/e6qu/intraktible/decision-engine/service"
 	"github.com/e6qu/intraktible/decision-engine/shadow"
+	"github.com/e6qu/intraktible/fairlending"
 	hellocmd "github.com/e6qu/intraktible/hello/command"
 	helloservice "github.com/e6qu/intraktible/hello/service"
 	"github.com/e6qu/intraktible/hello/stats"
@@ -374,6 +375,11 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 	// inventory + validation evidence + monitoring across flows, predictive models,
 	// and agents, exportable as JSON / CSV / Markdown.
 	mrm.New(st).Routes(api)
+
+	// Fair lending: a read-only disparate-impact report — the adverse-impact ratio
+	// (four-fifths rule, ECOA / Reg B) of favorable-outcome rates across a
+	// protected-class attribute, folded from the recorded decision history.
+	fairlending.New(st).Routes(api)
 
 	// Privacy: per-workspace sensitive-field masking, applied at read boundaries
 	// (decision history/exports). A platform capability, independent of modules.

@@ -326,10 +326,15 @@ absent, and nothing has been run at scale (single-node projection; no load or ch
 here is a claim that a competitor is beaten — only a list of gaps to work through. The roadmap orders
 them hardest-blocker-first; each phase is a direction, not a committed date.
 
-- **Phase 6 — Fair lending & adverse action.** Disparate-impact / AIR testing (ECOA/Reg B) as a flow
-  artifact; adverse-action notice generation from a defined reason-code set (not raw codes); fairness
-  metrics on the drift/monitor surface so a regression fires like any other check. This is the gap that
-  most blocks a lending deployment; Zest AI's tooling is a reference point for scope.
+- **Phase 6 — Fair lending & adverse action.** _First slice shipped:_ a read-only disparate-impact
+  report (`fairlending/`, `GET /v1/fairlending/report`, admin-gated) — the adverse-impact ratio
+  (four-fifths rule, ECOA/Reg B) of favorable-outcome rates across an analyst-named protected-class
+  attribute, folded from the recorded decision history, with CSV/Markdown export and a `/fairlending`
+  page. It is a screen, not a legal conclusion, and it states what it excludes (referred, no
+  disposition, attribute absent). _Still open:_ persisting the protected-attribute/favorable-outcome
+  choice as a per-flow artifact (today it is a query parameter); adverse-action notice generation from
+  a defined reason-code set (not raw codes); and wiring a fair-lending regression into the drift/monitor
+  surface so it fires like any other check. Zest AI's tooling is a reference point for scope.
 - **Phase 7 — Model governance parity.** Put models under the same four-eyes maker-checker as flows
   (today they bypass it); a model-validation workflow with evidence capture feeding the `mrm/`
   inventory; SR 11-7 documentation export.
