@@ -400,6 +400,8 @@ func isAuthoringPath(path string) bool {
 		strings.HasSuffix(path, "/preapprove/batch") || // bulk-grant pre-approvals from a run
 		strings.Contains(path, "/monitors") || // define/delete a monitor; check pushes alerts
 		strings.HasSuffix(path, "/assertions") || // define a flow's test cases (run is separate)
+		strings.HasSuffix(path, "/approval-request") || // maker proposes a model version for review
+		strings.HasSuffix(path, "/validation") || // attach model validation evidence
 		strings.HasSuffix(path, "/shadow") || // assign a shadow version (PUT; GET is a viewer read)
 		strings.HasSuffix(path, "/slo") || // configure a flow's SLO targets (PUT; GET is a viewer read)
 		strings.HasPrefix(path, "/v1/webhooks") || // register/remove a notification endpoint

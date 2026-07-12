@@ -124,6 +124,10 @@ func (s *Service) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/models/{name}/outcomes", s.recordModelOutcome)
 	mux.HandleFunc("POST /v1/models/{name}/baseline", s.captureModelBaseline)
 	mux.HandleFunc("POST /v1/models/{name}/monitor", s.setModelMonitor)
+	mux.HandleFunc("POST /v1/models/{name}/validation", s.recordModelValidation)
+	mux.HandleFunc("POST /v1/models/{name}/approval-request", s.requestModelApproval)
+	mux.HandleFunc("POST /v1/models/{name}/approve", s.approveModel)
+	mux.HandleFunc("POST /v1/models/{name}/reject", s.rejectModel)
 	mux.HandleFunc("POST /v1/copilot/explain", s.copilotExplain)
 	mux.HandleFunc("POST /v1/copilot/suggest", s.copilotSuggest)
 	mux.HandleFunc("POST /v1/copilot/generate", s.copilotGenerate)
@@ -355,6 +359,92 @@ func (s *Service) defineModel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusCreated, map[string]any{"name": req.Name, "event_id": e.ID, "seq": e.Seq})
+}
+
+// requestModelApproval is the maker side of model four-eyes: propose the current
+// version for review.
+func (s *Service) requestModelApproval(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	reqID, e, err := s.cmd.RequestModelApproval(r.Context(), id, r.PathValue("name"))
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"request_id": reqID, "event_id": e.ID, "seq": e.Seq})
+}
+
+type modelDecisionRequest struct {
+	RequestID string `json:"request_id"`
+	Reason    string `json:"reason,omitempty"`
+}
+
+// approveModel is the checker side: a different actor approves a pending request.
+func (s *Service) approveModel(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	var req modelDecisionRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	e, err := s.cmd.ApproveModelApproval(r.Context(), id, r.PathValue("name"), req.RequestID, req.Reason)
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"event_id": e.ID, "seq": e.Seq})
+}
+
+func (s *Service) rejectModel(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	var req modelDecisionRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	e, err := s.cmd.RejectModelApproval(r.Context(), id, r.PathValue("name"), req.RequestID, req.Reason)
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"event_id": e.ID, "seq": e.Seq})
+}
+
+type modelValidationRequest struct {
+	Dataset   string             `json:"dataset,omitempty"`
+	Metrics   map[string]float64 `json:"metrics,omitempty"`
+	Validator string             `json:"validator,omitempty"`
+	Notes     string             `json:"notes,omitempty"`
+	Passed    bool               `json:"passed"`
+}
+
+// recordModelValidation attaches validation evidence to the model's current version.
+func (s *Service) recordModelValidation(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	var req modelValidationRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	e, err := s.cmd.RecordModelValidation(r.Context(), id, r.PathValue("name"), events.ModelValidationRecorded{
+		Dataset: req.Dataset, Metrics: req.Metrics, Validator: req.Validator, Notes: req.Notes, Passed: req.Passed,
+	})
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"event_id": e.ID, "seq": e.Seq})
 }
 
 type trainModelRequest struct {

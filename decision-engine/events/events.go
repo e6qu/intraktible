@@ -26,6 +26,14 @@ const (
 	// is pushed to webhooks once, not every tick — mirroring the flow monitor.
 	TypeModelDriftAlerted  = "decision.model.drift_alerted"
 	TypeModelDriftResolved = "decision.model.drift_resolved"
+	// Model governance (four-eyes) + validation evidence. A model version is the count
+	// of ModelDefined events for a name; approval is granted to a specific version and
+	// a redefine (new version) invalidates a prior approval — the same "changed logic
+	// must be re-reviewed" rule flows already follow.
+	TypeModelApprovalRequested  = "decision.model.approval_requested"
+	TypeModelApprovalApproved   = "decision.model.approval_approved"
+	TypeModelApprovalRejected   = "decision.model.approval_rejected"
+	TypeModelValidationRecorded = "decision.model.validation_recorded"
 	// TypeModelOutcomeRecorded records a realized ground-truth label for a prediction a
 	// model made, so live performance (calibration, accuracy, Brier, realized AUC) is
 	// measured against actuals — not inferred from the prediction distribution alone.
@@ -68,6 +76,46 @@ type ModelDriftResolved struct {
 type ModelDefined struct {
 	Name string          `json:"name"`
 	Spec json.RawMessage `json:"spec"`
+}
+
+// ModelApprovalRequested proposes a model version for review (the maker side of
+// four-eyes). Version pins the definition being submitted so a redefine after the
+// request makes it stale.
+type ModelApprovalRequested struct {
+	RequestID string `json:"request_id"`
+	Name      string `json:"name"`
+	Version   int    `json:"version"`
+}
+
+// ModelApprovalApproved records a checker approving a pending model-approval request.
+// The approver must differ from both the requester and the version's author.
+type ModelApprovalApproved struct {
+	RequestID string `json:"request_id"`
+	Name      string `json:"name"`
+	Version   int    `json:"version"`
+	Reason    string `json:"reason,omitempty"`
+}
+
+// ModelApprovalRejected records a checker rejecting a pending model-approval request.
+type ModelApprovalRejected struct {
+	RequestID string `json:"request_id"`
+	Name      string `json:"name"`
+	Version   int    `json:"version"`
+	Reason    string `json:"reason,omitempty"`
+}
+
+// ModelValidationRecorded attaches validation evidence to a model version: the
+// dataset it was validated on, named metrics (e.g. auc, ks), the validator, notes,
+// and whether it passed. It is evidence, not a gate — the four-eyes approval is the
+// gate; this is what an approver reviews.
+type ModelValidationRecorded struct {
+	Name      string             `json:"name"`
+	Version   int                `json:"version"`
+	Dataset   string             `json:"dataset,omitempty"`
+	Metrics   map[string]float64 `json:"metrics,omitempty"`
+	Validator string             `json:"validator,omitempty"`
+	Notes     string             `json:"notes,omitempty"`
+	Passed    bool               `json:"passed"`
 }
 
 // ModelBaselineCaptured snapshots a model's current prediction-probability

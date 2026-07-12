@@ -2040,12 +2040,110 @@ export async function defineConnector(
   }
 }
 
+export interface ModelValidation {
+  version: number;
+  dataset?: string;
+  metrics?: Record<string, number>;
+  validator?: string;
+  notes?: string;
+  passed: boolean;
+  recorded_by?: string;
+  recorded_at?: string;
+}
+export interface ModelPendingApproval {
+  request_id: string;
+  version: number;
+  requested_by: string;
+  requested_at: string;
+}
 export interface Model {
   name: string;
   kind: ModelKind;
   spec: unknown;
   owner?: string;
   updated_at: string;
+  version?: number;
+  approved_version?: number;
+  approved_by?: string;
+  approved_at?: string;
+  pending?: ModelPendingApproval | null;
+  validations?: ModelValidation[];
+}
+// modelApproved mirrors the backend's Approved(): the current version is the one a
+// checker signed off on.
+export function modelApproved(m: Model): boolean {
+  return (m.version ?? 0) > 0 && m.approved_version === m.version;
+}
+
+// requestModelApproval proposes a model's current version for four-eyes review (maker).
+export async function requestModelApproval(
+  key: string,
+  name: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<{ request_id: string }> {
+  const res = await fetcher(`/v1/models/${encodeURIComponent(name)}/approval-request`, {
+    method: 'POST',
+    headers: authHeaders(key)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'request model approval');
+  }
+  return (await res.json()) as { request_id: string };
+}
+// approveModel / rejectModel are the checker side (a different actor than the maker).
+export async function approveModel(
+  key: string,
+  name: string,
+  requestId: string,
+  reason: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<void> {
+  const res = await fetcher(`/v1/models/${encodeURIComponent(name)}/approve`, {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify({ request_id: requestId, reason })
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'approve model');
+  }
+}
+export async function rejectModel(
+  key: string,
+  name: string,
+  requestId: string,
+  reason: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<void> {
+  const res = await fetcher(`/v1/models/${encodeURIComponent(name)}/reject`, {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify({ request_id: requestId, reason })
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'reject model');
+  }
+}
+// recordModelValidation attaches validation evidence to the model's current version.
+export async function recordModelValidation(
+  key: string,
+  name: string,
+  body: {
+    dataset?: string;
+    metrics?: Record<string, number>;
+    validator?: string;
+    notes?: string;
+    passed: boolean;
+  },
+  fetcher: typeof fetch = recordingFetch
+): Promise<void> {
+  const res = await fetcher(`/v1/models/${encodeURIComponent(name)}/validation`, {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'record model validation');
+  }
 }
 
 export async function listModels(

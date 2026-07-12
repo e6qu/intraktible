@@ -16,6 +16,11 @@
     getModelPerformance,
     captureModelBaseline,
     setModelMonitor,
+    requestModelApproval,
+    approveModel,
+    rejectModel,
+    recordModelValidation,
+    modelApproved,
     type Model,
     type ModelDrift,
     type ModelPerformance,
@@ -65,6 +70,103 @@
   // True while the open drift row is fetching its report (so the row shows a
   // loading line instead of looking empty).
   let driftLoading = $state(false);
+
+  // The model whose governance (four-eyes approval + validation) panel is open.
+  let govOpen = $state('');
+  let govBusy = $state(false);
+  // Validation-evidence form fields for the open governance panel.
+  let valDataset = $state('');
+  let valMetrics = $state('');
+  let valValidator = $state('');
+  let valNotes = $state('');
+  let valPassed = $state(true);
+
+  function toggleGov(name: string) {
+    govOpen = govOpen === name ? '' : name;
+  }
+
+  // approvalStatus renders the model's four-eyes state as a badge tone + label.
+  function approvalStatus(m: Model): { tone: Tone; label: string } {
+    if (modelApproved(m)) return { tone: 'ok', label: 'approved' };
+    if (m.pending) return { tone: 'warn', label: 'pending review' };
+    return { tone: 'danger', label: 'not approved' };
+  }
+
+  // refreshModels reloads just the registry list (governance state changes) without
+  // the heavier per-model drift refetch that the full load() does.
+  async function refreshModels() {
+    try {
+      models = await listModels(key);
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  async function doRequestApproval(name: string) {
+    govBusy = true;
+    try {
+      await requestModelApproval(key, name);
+      toast.success('Approval requested.');
+      await refreshModels();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      govBusy = false;
+    }
+  }
+
+  async function doApprove(m: Model, approve: boolean) {
+    if (!m.pending) return;
+    govBusy = true;
+    try {
+      const reason = approve ? 'Reviewed and approved.' : 'Rejected on review.';
+      if (approve) await approveModel(key, m.name, m.pending.request_id, reason);
+      else await rejectModel(key, m.name, m.pending.request_id, reason);
+      toast.success(approve ? 'Model approved.' : 'Request rejected.');
+      await refreshModels();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      govBusy = false;
+    }
+  }
+
+  // parseMetrics reads the "name=value, …" metrics box into a numeric map, ignoring
+  // blank entries and failing loudly on a non-numeric value rather than dropping it.
+  function parseMetrics(raw: string): Record<string, number> {
+    const out = new Map<string, number>();
+    for (const pair of raw.split(',')) {
+      const t = pair.trim();
+      if (!t) continue;
+      const [k, v] = t.split('=').map((x) => x.trim());
+      const n = Number(v);
+      if (!k || !Number.isFinite(n)) throw new Error(`bad metric "${t}" (use name=number)`);
+      out.set(k, n);
+    }
+    return Object.fromEntries(out);
+  }
+
+  async function doRecordValidation(name: string) {
+    govBusy = true;
+    try {
+      const metrics = parseMetrics(valMetrics);
+      await recordModelValidation(key, name, {
+        dataset: valDataset.trim() || undefined,
+        metrics: Object.keys(metrics).length ? metrics : undefined,
+        validator: valValidator.trim() || undefined,
+        notes: valNotes.trim() || undefined,
+        passed: valPassed
+      });
+      toast.success('Validation evidence recorded.');
+      valDataset = valMetrics = valValidator = valNotes = '';
+      valPassed = true;
+      await refreshModels();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      govBusy = false;
+    }
+  }
 
   // An at-a-glance drift status per model, fetched once on load so the table shows
   // which models are drifting without the operator expanding each row.
@@ -389,6 +491,12 @@
         <thead>
           <tr
             ><th>Name</th><th>Kind</th><th>Owner</th><th>Updated</th><th
+              ><Hint label="Approval"
+                >Four-eyes governance: a model version must be approved by a different actor than
+                its author before it can serve decisions outside the sandbox — the same
+                maker-checker gate flows use.</Hint
+              ></th
+            ><th
               ><Hint label="Drift"
                 >Population Stability Index (PSI) of the model's recent prediction distribution
                 versus its captured baseline — <code>&gt;0.2</code> signals meaningful drift. "no baseline"
@@ -405,6 +513,9 @@
               <td class="muted">{m.owner || '—'}</td>
               <td class="muted"><RelativeTime value={m.updated_at} /></td>
               <td>
+                <Badge tone={approvalStatus(m).tone}>{approvalStatus(m).label}</Badge>
+              </td>
+              <td>
                 {#if driftStatus.get(m.name)}
                   {@const s = driftStatus.get(m.name)}
                   <Badge tone={s?.tone ?? 'neutral'}>{s?.label}</Badge>
@@ -413,7 +524,10 @@
                 {/if}
               </td>
               <td class="rowactions"
-                ><button class="link" onclick={() => toggleDrift(m.name)}
+                ><button class="link" onclick={() => toggleGov(m.name)}
+                  >{govOpen === m.name ? 'Hide governance' : 'Governance'}</button
+                >
+                <button class="link" onclick={() => toggleDrift(m.name)}
                   >{driftOpen === m.name ? 'Hide drift' : 'Drift'}</button
                 >
                 <button
@@ -424,16 +538,103 @@
                 ></td
               >
             </tr>
+            {#if govOpen === m.name}
+              <tr class="drift-row" data-testid="model-governance">
+                <td colspan="7">
+                  <div class="gov">
+                    <div class="gov-status">
+                      <b>Version {m.version ?? 1}</b>
+                      {#if modelApproved(m)}
+                        <Badge tone="ok">approved v{m.approved_version}</Badge>
+                        {#if m.approved_by}<span class="muted">by {m.approved_by}</span>{/if}
+                      {:else if m.pending}
+                        <Badge tone="warn">pending review</Badge>
+                        <span class="muted">requested by {m.pending.requested_by}</span>
+                      {:else}
+                        <Badge tone="danger">not approved</Badge>
+                        <span class="muted">unapproved models are refused outside the sandbox</span>
+                      {/if}
+                    </div>
+
+                    <div class="gov-actions">
+                      {#if !m.pending && !modelApproved(m) && roleAtLeast($user?.role, 'editor')}
+                        <button
+                          class="btn"
+                          disabled={govBusy}
+                          onclick={() => doRequestApproval(m.name)}>Request approval</button
+                        >
+                      {/if}
+                      {#if m.pending && roleAtLeast($user?.role, 'approver')}
+                        <button
+                          class="btn primary"
+                          disabled={govBusy}
+                          onclick={() => doApprove(m, true)}>Approve</button
+                        >
+                        <button class="btn" disabled={govBusy} onclick={() => doApprove(m, false)}
+                          >Reject</button
+                        >
+                        <span class="muted small"
+                          >Four-eyes: the author and requester can't approve.</span
+                        >
+                      {/if}
+                    </div>
+
+                    <div class="gov-validation">
+                      <h4>Validation evidence</h4>
+                      {#if m.validations && m.validations.length}
+                        <ul class="val-list">
+                          {#each m.validations as v (v.recorded_at)}
+                            <li>
+                              <Badge tone={v.passed ? 'ok' : 'danger'}
+                                >{v.passed ? 'pass' : 'fail'}</Badge
+                              >
+                              v{v.version}
+                              {#if v.dataset}· {v.dataset}{/if}
+                              {#if v.metrics}· {Object.entries(v.metrics)
+                                  .map(([k, val]) => `${k}=${val}`)
+                                  .join(' ')}{/if}
+                              {#if v.validator}<span class="muted">— {v.validator}</span>{/if}
+                            </li>
+                          {/each}
+                        </ul>
+                      {:else}
+                        <p class="muted">No validation evidence recorded yet.</p>
+                      {/if}
+
+                      {#if roleAtLeast($user?.role, 'editor')}
+                        <div class="val-form">
+                          <input bind:value={valDataset} placeholder="dataset (e.g. backtest_Q1)" />
+                          <input
+                            bind:value={valMetrics}
+                            placeholder="metrics (auc=0.81, ks=0.42)"
+                          />
+                          <input bind:value={valValidator} placeholder="validator" />
+                          <input bind:value={valNotes} placeholder="notes" />
+                          <label class="pass"
+                            ><input type="checkbox" bind:checked={valPassed} /> passed</label
+                          >
+                          <button
+                            class="btn"
+                            disabled={govBusy}
+                            onclick={() => doRecordValidation(m.name)}>Record validation</button
+                          >
+                        </div>
+                      {/if}
+                    </div>
+                  </div>
+                </td>
+              </tr>
+            {/if}
             {#if discussOpen === m.name}
               <tr class="drift-row" data-testid="model-discussion">
-                <td colspan="6">
+                <td colspan="7">
                   <CommentThread subjectType="model" subjectId={m.name} title="Model discussion" />
                 </td>
               </tr>
             {/if}
             {#if driftOpen === m.name}
               <tr class="drift-row" data-testid="model-drift">
-                <td colspan="6">
+                <td colspan="7">
                   {#if driftError}
                     <p class="err">
                       Couldn't load drift: {driftError}

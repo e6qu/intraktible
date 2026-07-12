@@ -854,6 +854,205 @@ func (h *Handler) TrainModel(ctx context.Context, id identity.Identity, name str
 	return e, report, nil
 }
 
+// modelGov is the folded governance state of one model: its current version and
+// author, the approved version, and any pending approval request.
+type modelGov struct {
+	version         int
+	owner           string
+	approvedVersion int
+	pendingID       string
+	pendingVersion  int
+	pendingBy       string
+	exists          bool
+}
+
+// foldModelGov folds the models stream for one model into its governance state. Like
+// the flow maker-checker, it reads the log (not the projection) so a request made in
+// this process is visible to an approval in another before the projector catches up.
+func (h *Handler) foldModelGov(ctx context.Context, id identity.Identity, name string) (modelGov, error) {
+	evs, err := h.log.Read(ctx, 0)
+	if err != nil {
+		return modelGov{}, fmt.Errorf("decision-engine: read log: %w", err)
+	}
+	var g modelGov
+	for _, e := range evs {
+		if e.Stream != events.StreamModels || e.Org != id.Org || e.Workspace != id.Workspace {
+			continue
+		}
+		switch e.Type {
+		case events.TypeModelDefined:
+			var p events.ModelDefined
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				return modelGov{}, fmt.Errorf("decision-engine: decode model-defined seq %d: %w", e.Seq, err)
+			}
+			if p.Name != name {
+				continue
+			}
+			g.exists = true
+			g.version++
+			g.owner = e.Actor
+			g.pendingID, g.pendingVersion, g.pendingBy = "", 0, ""
+		case events.TypeModelApprovalRequested:
+			var p events.ModelApprovalRequested
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				return modelGov{}, fmt.Errorf("decision-engine: decode approval-requested seq %d: %w", e.Seq, err)
+			}
+			if p.Name == name && p.Version == g.version {
+				g.pendingID, g.pendingVersion, g.pendingBy = p.RequestID, p.Version, e.Actor
+			}
+		case events.TypeModelApprovalApproved:
+			var p events.ModelApprovalApproved
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				return modelGov{}, fmt.Errorf("decision-engine: decode approval-approved seq %d: %w", e.Seq, err)
+			}
+			if p.Name == name && p.RequestID == g.pendingID {
+				g.approvedVersion = p.Version
+				g.pendingID, g.pendingVersion, g.pendingBy = "", 0, ""
+			}
+		case events.TypeModelApprovalRejected:
+			var p events.ModelApprovalRejected
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				return modelGov{}, fmt.Errorf("decision-engine: decode approval-rejected seq %d: %w", e.Seq, err)
+			}
+			if p.Name == name && p.RequestID == g.pendingID {
+				g.pendingID, g.pendingVersion, g.pendingBy = "", 0, ""
+			}
+		}
+	}
+	return g, nil
+}
+
+// appendModelEventUnique appends a models-stream event with an optimistic claim key,
+// mirroring appendFlowEventUnique for the flow maker-checker.
+func (h *Handler) appendModelEventUnique(ctx context.Context, id identity.Identity, typ string, payload json.RawMessage, unique string) (eventlog.Envelope, error) {
+	return h.log.Append(ctx, eventlog.Envelope{
+		Org: id.Org, Workspace: id.Workspace, Actor: id.Actor,
+		Stream: events.StreamModels, Type: typ, Time: h.now(), Payload: payload, Unique: unique,
+	})
+}
+
+// modelDecisionClaim reserves a model-approval request's terminal decision so a
+// concurrent approve and reject of the same request cannot both commit.
+func modelDecisionClaim(name, reqID string) string {
+	return "model.approval.decision\x00" + name + "\x00" + reqID
+}
+
+// RequestModelApproval proposes the model's current version for review (the maker
+// side of four-eyes). It fails if the model is unknown, already approved at this
+// version, or already has a pending request.
+func (h *Handler) RequestModelApproval(ctx context.Context, id identity.Identity, name string) (string, eventlog.Envelope, error) {
+	if err := id.Valid(); err != nil {
+		return "", eventlog.Envelope{}, err
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	g, err := h.foldModelGov(ctx, id, name)
+	if err != nil {
+		return "", eventlog.Envelope{}, err
+	}
+	if !g.exists {
+		return "", eventlog.Envelope{}, fmt.Errorf("decision-engine: unknown model %q", name)
+	}
+	if g.approvedVersion == g.version {
+		return "", eventlog.Envelope{}, fmt.Errorf("decision-engine: model %q version %d is already approved", name, g.version)
+	}
+	if g.pendingID != "" {
+		return "", eventlog.Envelope{}, fmt.Errorf("decision-engine: model %q already has a pending approval request", name)
+	}
+	reqID := h.newID()
+	payload, err := json.Marshal(events.ModelApprovalRequested{RequestID: reqID, Name: name, Version: g.version})
+	if err != nil {
+		return "", eventlog.Envelope{}, fmt.Errorf("decision-engine: marshal model-approval request: %w", err)
+	}
+	e, err := h.appendModelEventUnique(ctx, id, events.TypeModelApprovalRequested, payload, "")
+	return reqID, e, err
+}
+
+// ApproveModelApproval is the checker side: a different actor — neither the requester
+// nor the version's author — approves a pending request, marking the version approved
+// for serving.
+func (h *Handler) ApproveModelApproval(ctx context.Context, id identity.Identity, name, reqID, reason string) (eventlog.Envelope, error) {
+	return h.decideModelApproval(ctx, id, name, reqID, reason, true)
+}
+
+// RejectModelApproval rejects a pending model-approval request.
+func (h *Handler) RejectModelApproval(ctx context.Context, id identity.Identity, name, reqID, reason string) (eventlog.Envelope, error) {
+	return h.decideModelApproval(ctx, id, name, reqID, reason, false)
+}
+
+func (h *Handler) decideModelApproval(ctx context.Context, id identity.Identity, name, reqID, reason string, approve bool) (eventlog.Envelope, error) {
+	if err := id.Valid(); err != nil {
+		return eventlog.Envelope{}, err
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for attempt := 0; ; attempt++ {
+		g, err := h.foldModelGov(ctx, id, name)
+		if err != nil {
+			return eventlog.Envelope{}, err
+		}
+		if g.pendingID == "" || g.pendingID != reqID {
+			return eventlog.Envelope{}, fmt.Errorf("decision-engine: no pending model-approval request %q for %q", reqID, name)
+		}
+		if approve {
+			// Four-eyes: the approver must differ from both the requester and the
+			// version's author, so a model is never self-approved into production.
+			if id.Actor == g.pendingBy {
+				return eventlog.Envelope{}, fmt.Errorf("decision-engine: four-eyes — %q cannot approve their own model-approval request", id.Actor)
+			}
+			if id.Actor == g.owner {
+				return eventlog.Envelope{}, fmt.Errorf("decision-engine: four-eyes — %q authored model %q and cannot approve it", id.Actor, name)
+			}
+			if g.pendingVersion != g.version {
+				return eventlog.Envelope{}, fmt.Errorf("decision-engine: model-approval request %q is stale — %q was redefined since; reject and request again", reqID, name)
+			}
+		}
+		typ := events.TypeModelApprovalApproved
+		var payload []byte
+		if approve {
+			payload, err = json.Marshal(events.ModelApprovalApproved{RequestID: reqID, Name: name, Version: g.pendingVersion, Reason: reason})
+		} else {
+			typ = events.TypeModelApprovalRejected
+			payload, err = json.Marshal(events.ModelApprovalRejected{RequestID: reqID, Name: name, Version: g.pendingVersion, Reason: reason})
+		}
+		if err != nil {
+			return eventlog.Envelope{}, fmt.Errorf("decision-engine: marshal model-approval decision: %w", err)
+		}
+		e, err := h.appendModelEventUnique(ctx, id, typ, payload, modelDecisionClaim(name, reqID))
+		if err != nil {
+			if errors.Is(err, eventlog.ErrConflict) && attempt < maxClaimRetries {
+				continue
+			}
+			return eventlog.Envelope{}, err
+		}
+		return e, nil
+	}
+}
+
+// RecordModelValidation attaches validation evidence to the model's current version
+// (dataset, named metrics, validator, notes, pass/fail). Evidence is what an approver
+// reviews; it is not itself the gate.
+func (h *Handler) RecordModelValidation(ctx context.Context, id identity.Identity, name string, rec events.ModelValidationRecorded) (eventlog.Envelope, error) {
+	if err := id.Valid(); err != nil {
+		return eventlog.Envelope{}, err
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	g, err := h.foldModelGov(ctx, id, name)
+	if err != nil {
+		return eventlog.Envelope{}, err
+	}
+	if !g.exists {
+		return eventlog.Envelope{}, fmt.Errorf("decision-engine: unknown model %q", name)
+	}
+	rec.Name, rec.Version = name, g.version
+	payload, err := json.Marshal(rec)
+	if err != nil {
+		return eventlog.Envelope{}, fmt.Errorf("decision-engine: marshal model validation: %w", err)
+	}
+	return h.appendModelEventUnique(ctx, id, events.TypeModelValidationRecorded, payload, "")
+}
+
 // CaptureModelBaseline snapshots a model's current prediction-probability
 // distribution as the drift baseline (the projector reads its accumulated histogram
 // at this event's position).

@@ -9,6 +9,12 @@ Format: `ID | severity | component | description | status`.
 - `P6-3 | — | fairlending | adverse-action notice generation (GET /v1/decisions/{id}/adverse-action, operator-gated) — ECOA/Reg B notice from a declined decision's recorded reason codes (≤4 principal reasons) + a per-workspace creditor-identification setting (event-sourced); errors rather than emit an incomplete notice; download button on the decision page. | shipped`
 - `P6-4 | — | mrm | a configured flow whose AIR falls below its threshold surfaces as an MRM open issue ("fair-lending AIR X below Y"), firing on the governance surface like any other check. | shipped`
 
+## Phase 7 — model governance parity (DONE; see PLAN.md §8b)
+- `P7-1 | — | decision-engine | model versioning + four-eyes approval (ModelApprovalRequested/Approved/Rejected on StreamModels; RequestModelApproval/ApproveModelApproval/RejectModelApproval commands with per-request decision claims). Approver must differ from requester AND the version's author; a redefine bumps the version and invalidates a prior approval. | shipped`
+- `P7-2 | — | decision-engine | enforcement: outside the sandbox, injectPredictions refuses a Predict node whose model's current version is not approved (models.Provider.ApprovedForServing, an optional gate on the ModelProvider port). | shipped`
+- `P7-3 | — | decision-engine/mrm | validation evidence (ModelValidationRecorded: dataset/metrics/validator/notes/passed) attached per version; MRM flags unapproved + unvalidated models as governance gaps; models page shows approval status + request/approve/reject + validation log. | shipped`
+- `P7-4 | — | cmd/intraktible-seed | the demo seed validates + four-eyes-approves every model before traffic, so production Predict decisions serve approved models. | shipped`
+
 ## Open — audit round 3 (planned; sequenced into PRs, see PLAN.md roadmap)
 A third audit (code/security, a UI/UX review against screenshots of every page × persona × theme, and a competitive + API study vs. comparable decisioning and BPMN/DMN platforms) produced the backlog below. Grouped into healthy-sized PRs (one open at a time; no anemic PRs).
 

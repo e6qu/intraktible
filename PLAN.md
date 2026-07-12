@@ -340,9 +340,16 @@ them hardest-blocker-first; each phase is a direction, not a committed date.
   other check. Admin-gated report/config/settings; operator-gated notice; `/fairlending` page (config
   save + settings) and an adverse-action download on the decision page. Zest AI's tooling was the scope
   reference; independent model validation of the fair-lending model itself lands in Phase 7.
-- **Phase 7 — Model governance parity.** Put models under the same four-eyes maker-checker as flows
-  (today they bypass it); a model-validation workflow with evidence capture feeding the `mrm/`
-  inventory; SR 11-7 documentation export.
+- **Phase 7 — Model governance parity — ✅ DONE.** Models now carry a **version** (each redefine bumps
+  it) and a **four-eyes approval** (`ModelApprovalRequested/Approved/Rejected`): a maker requests, and a
+  checker who is neither the requester nor the version's author approves — a redefine invalidates a
+  prior approval, the same "changed logic, re-review" rule flows follow. Enforcement mirrors flows:
+  **outside the sandbox, a Predict node refuses a model whose current version is not approved**.
+  **Validation evidence** (`ModelValidationRecorded`: dataset, metrics, validator, notes, pass/fail)
+  attaches to a version — what a checker reviews. The **MRM inventory** flags an unapproved model and a
+  model with no validation evidence as governance gaps (they fire like any other MRM issue), and the
+  models page carries the approval status, request/approve/reject, and the validation log. The demo seed
+  runs every model through validation + approval, so its production decisions serve approved models.
 - **Phase 8 — Production hardening at scale.** Leader election / single-writer for the projection
   runtime. Today every replica runs the full projection with in-memory dedup and a non-CAS shared
   checkpoint; a review flagged this as a suspected multi-replica double-apply — it needs a test to

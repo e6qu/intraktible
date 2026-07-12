@@ -426,6 +426,89 @@
         }
       }
     },
+    "/v1/models/{name}/validation": {
+      "post": {
+        "tags": ["models"],
+        "summary": "Record validation evidence for the model's current version",
+        "description": "Attaches a validation record (dataset, named metrics, validator, notes, pass/fail) to the model's current version. Evidence an approver reviews; not itself the gate. Editor role.",
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "properties": {
+            "dataset": { "type": "string" },
+            "metrics": { "type": "object", "additionalProperties": { "type": "number" } },
+            "validator": { "type": "string" },
+            "notes": { "type": "string" },
+            "passed": { "type": "boolean" }
+          } } } }
+        },
+        "responses": {
+          "200": { "description": "Validation evidence recorded.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventAck" } } } },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/models/{name}/approval-request": {
+      "post": {
+        "tags": ["models"],
+        "summary": "Request four-eyes approval of the model's current version",
+        "description": "The maker side of model four-eyes: proposes the current version for review. Fails if the model is unknown, already approved at this version, or already has a pending request. Editor role.",
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Approval requested.", "content": { "application/json": { "schema": { "type": "object", "properties": { "request_id": { "type": "string" } } } } } },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/models/{name}/approve": {
+      "post": {
+        "tags": ["models"],
+        "summary": "Approve a pending model-approval request (checker)",
+        "description": "The checker side: a different actor — neither the requester nor the version's author — approves, marking the version approved for serving. Approver role.",
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "required": ["request_id"], "properties": {
+            "request_id": { "type": "string" },
+            "reason": { "type": "string" }
+          } } } }
+        },
+        "responses": {
+          "200": { "description": "Approved.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventAck" } } } },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/models/{name}/reject": {
+      "post": {
+        "tags": ["models"],
+        "summary": "Reject a pending model-approval request (checker)",
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "required": ["request_id"], "properties": {
+            "request_id": { "type": "string" },
+            "reason": { "type": "string" }
+          } } } }
+        },
+        "responses": {
+          "200": { "description": "Rejected.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventAck" } } } },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/v1/copilot/explain": {
       "post": {
         "tags": ["copilot"],

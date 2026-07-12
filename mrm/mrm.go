@@ -259,9 +259,22 @@ func buildModels(ctx context.Context, s store.Store, id identity.Identity, rep *
 		return err
 	}
 	for _, mv := range mvs {
-		m := Model{Kind: KindPredictive, ID: mv.Name, Name: mv.Name, Owner: mv.Owner}
+		m := Model{Kind: KindPredictive, ID: mv.Name, Name: mv.Name, Owner: mv.Owner, Version: mv.Version}
 		if t, err := time.Parse(time.RFC3339, mv.UpdatedAt); err == nil {
 			m.UpdatedAt = t
+		}
+		// Four-eyes governance parity with flows: an unapproved model version is a
+		// governance gap (it cannot serve production decisions), and a model with no
+		// validation evidence is another — both surface like any other MRM issue.
+		if !mv.Approved() {
+			if mv.Pending != nil {
+				m.Issues = append(m.Issues, "model approval pending review")
+			} else {
+				m.Issues = append(m.Issues, "model version not approved (four-eyes)")
+			}
+		}
+		if len(mv.Validations) == 0 {
+			m.Issues = append(m.Issues, "no validation evidence recorded")
 		}
 		d, err := models.Drift(ctx, s, id, mv.Name, 0)
 		if err == nil {
