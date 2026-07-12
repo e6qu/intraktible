@@ -21,6 +21,8 @@
     listErasedSubjects,
     listSharingRecords,
     listContests,
+    getJurisdiction,
+    setJurisdiction,
     exportComplianceRegister,
     type AdverseActionItem,
     type Reconsideration,
@@ -28,7 +30,8 @@
     type LegalHold,
     type RetentionPolicy,
     type SharingRecord,
-    type Contest
+    type Contest,
+    type JurisdictionSetting
   } from '$lib/api';
   import { toast } from '$lib/toast';
 
@@ -62,6 +65,36 @@
   let erasedCount = $state(0);
   let sharing = $state<SharingRecord[]>([]);
   let contests = $state<Contest[]>([]);
+  let jurisdiction = $state<JurisdictionSetting | null>(null);
+  let savingJurisdiction = $state(false);
+
+  const REGIMES = [
+    { code: 'eu', label: 'EU (General Data Protection Regulation)' },
+    { code: 'uk', label: 'UK (Data (Use and Access) Act 2025)' },
+    { code: 'us', label: 'US (Equal Credit Opportunity Act)' }
+  ];
+  // Toggle a regime on/off and save; at least one must remain selected.
+  async function toggleRegime(code: string) {
+    if (!jurisdiction) return;
+    const has = jurisdiction.regimes.includes(code);
+    const next = has
+      ? jurisdiction.regimes.filter((r) => r !== code)
+      : [...jurisdiction.regimes, code];
+    if (next.length === 0) {
+      toast.error('At least one regime must apply.');
+      return;
+    }
+    savingJurisdiction = true;
+    try {
+      await setJurisdiction(key, next);
+      jurisdiction = await getJurisdiction(key);
+      toast.success('Operating jurisdiction updated.');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      savingJurisdiction = false;
+    }
+  }
 
   onMount(async () => {
     // Every source is best-effort: an admin-only read (holds/retention/erased) 403s
@@ -86,6 +119,7 @@
       sh,
       co
     ];
+    jurisdiction = await getJurisdiction(key).catch(() => null);
     loading = false;
   });
 
@@ -321,6 +355,28 @@
               {/each}
             </ul>
           {/if}
+
+          {#if jurisdiction}
+            <h3 class="sub-h">Operating jurisdiction</h3>
+            <p class="hint">
+              Which regimes apply — the decision explanation cites the law you select.{jurisdiction.configured
+                ? ''
+                : ' (Defaulting to all until set.)'}
+            </p>
+            <div class="regimes">
+              {#each REGIMES as rg (rg.code)}
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={jurisdiction.regimes.includes(rg.code)}
+                    disabled={savingJurisdiction}
+                    onchange={() => toggleRegime(rg.code)}
+                  />
+                  {rg.label}
+                </label>
+              {/each}
+            </div>
+          {/if}
         </section>
       {/if}
     </div>
@@ -436,6 +492,22 @@
     color: var(--fg-subtle);
     font-size: 0.82rem;
     margin: 0 0 0.8rem;
+  }
+  .sub-h {
+    margin: 1.1rem 0 0.2rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+  }
+  .regimes {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    font-size: 0.85rem;
+  }
+  .regimes label {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
   }
   .muted {
     color: var(--fg-subtle);

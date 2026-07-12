@@ -10,6 +10,7 @@ import (
 	"github.com/e6qu/intraktible/decision-engine/history"
 	"github.com/e6qu/intraktible/decision-engine/policy"
 	"github.com/e6qu/intraktible/platform/httpx"
+	"github.com/e6qu/intraktible/platform/jurisdiction"
 	"github.com/e6qu/intraktible/platform/store"
 )
 
@@ -148,7 +149,12 @@ func (s *Service) explain(w http.ResponseWriter, r *http.Request) {
 	if reviewed {
 		review = &rv
 	}
-	doc := Explain(rec, review, s.now())
+	regimes, err := jurisdiction.Applicable(r.Context(), s.store, id)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	doc := Explain(rec, review, regimes, s.now())
 	if r.URL.Query().Get("format") == "json" {
 		httpx.JSON(w, http.StatusOK, map[string]string{"decision_id": decisionID, "explanation": doc})
 		return

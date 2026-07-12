@@ -238,6 +238,8 @@ func TestAuthorizeRoutesByPattern(t *testing.T) {
 	mux.HandleFunc("GET /v1/adverse-actions", ok)
 	mux.HandleFunc("POST /v1/decisions/{decision_id}/adverse-action/issue", ok)
 	mux.HandleFunc("GET /v1/consent/records", ok)
+	mux.HandleFunc("GET /v1/compliance/jurisdiction", ok)
+	mux.HandleFunc("PUT /v1/compliance/jurisdiction", ok)
 	h := httpx.Chain(mux, httpx.Authenticate(kr, auth.NewSessions()), httpx.AuthorizeRoutes(mux))
 
 	do := func(secret, method, path string) int {
@@ -261,6 +263,9 @@ func TestAuthorizeRoutesByPattern(t *testing.T) {
 		{"viewer-k", "POST", "/v1/decisions/d1/adverse-action/issue", 403}, // ...but issuing → operator+
 		{"editor-k", "POST", "/v1/decisions/d1/adverse-action/issue", 200}, // editor outranks operator
 		{"viewer-k", "GET", "/v1/consent/records", 200},                    // cross-subject consent read → viewer
+		{"viewer-k", "GET", "/v1/compliance/jurisdiction", 200},            // reading the regimes → viewer
+		{"viewer-k", "PUT", "/v1/compliance/jurisdiction", 403},            // setting them → admin
+		{"admin-k", "PUT", "/v1/compliance/jurisdiction", 200},             // ...admin may
 	}
 	for _, c := range cases {
 		if got := do(c.secret, c.method, c.path); got != c.want {

@@ -465,8 +465,11 @@ them hardest-blocker-first; each phase is a direction, not a committed date.
   is logged (`POST /v1/decisions/{id}/contest`, by the channel they used) and stays open until a human
   review of that decision resolves it — surfaced as an "awaiting review" queue on the compliance
   dashboard, so a contest is tracked from receipt to outcome, not just recorded after the fact.
-  _Still open:_ the UK 22A–22D regime split as first-class per-tenant config; byte-level WORM artifact
-  storage.
+  A workspace now records its **applicable regimes** (`platform/jurisdiction`: eu/uk/us), so the
+  decision explanation cites the law that applies rather than hedging across all three — a UK-only
+  workspace drops the EU Regulation; a US-only workspace cites the Equal Credit Opportunity Act, not
+  Article 22. Editable on the compliance dashboard (admin), defaulting to all three when unset.
+  _Still open:_ byte-level WORM artifact storage; the ops-heavy scale tail (load/chaos, log compaction).
 
 **Parallel non-code track (organisational, not code):** SOC 2 Type II, ISO 27001, independent
 penetration testing, data-provider commercial relationships, model-validation staffing, and reference

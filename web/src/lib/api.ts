@@ -3549,6 +3549,40 @@ export async function optInSharing(
     return errorOrStatus(res, 'POST /v1/sharing/opt-in');
   }
 }
+// JurisdictionSetting is the data-protection / fair-lending regimes a workspace operates
+// under — which law the automated-decision explanation cites.
+export interface JurisdictionSetting {
+  regimes: string[]; // any of 'eu' | 'uk' | 'us'
+  configured: boolean;
+  updated_at?: string;
+  updated_by?: string;
+}
+// getJurisdiction returns the workspace's applicable regimes (defaults to all when unset).
+export async function getJurisdiction(
+  key: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<JurisdictionSetting> {
+  const res = await fetcher('/v1/compliance/jurisdiction', { headers: authHeaders(key) });
+  if (!res.ok) {
+    return errorOrStatus(res, 'get jurisdiction');
+  }
+  return (await res.json()) as JurisdictionSetting;
+}
+// setJurisdiction replaces the workspace's applicable regimes (admin).
+export async function setJurisdiction(
+  key: string,
+  regimes: string[],
+  fetcher: typeof fetch = recordingFetch
+): Promise<void> {
+  const res = await fetcher('/v1/compliance/jurisdiction', {
+    method: 'PUT',
+    headers: jsonHeaders(key),
+    body: JSON.stringify({ regimes })
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'set jurisdiction');
+  }
+}
 // RetentionStatus is how long a subject's compliance records must be kept, and thus
 // whether the subject may be erased (GDPR Art. 17(3)(b) exempts required retention).
 export interface RetentionStatus {

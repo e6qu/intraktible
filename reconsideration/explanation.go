@@ -21,8 +21,18 @@ func SolelyAutomated(rec history.Record) bool {
 // Art. 22(3) rights (human intervention, contest, explanation). Distinct from the ECOA
 // adverse-action notice: that is a US decline letter; this is the data-subject rights
 // explanation, and it names the reconsideration channel a review is recorded through.
-// review is the recorded human review, or nil when none exists.
-func Explain(rec history.Record, review *Review, now time.Time) string {
+// review is the recorded human review, or nil when none exists. regimes are the
+// workspace's applicable data-protection regimes ("eu", "uk", "us"), so the citations
+// name the law that actually applies rather than hedging across all of them.
+func Explain(rec history.Record, review *Review, regimes []string, now time.Time) string {
+	has := func(code string) bool {
+		for _, r := range regimes {
+			if r == code {
+				return true
+			}
+		}
+		return len(regimes) == 0 // an empty set is treated as "all apply"
+	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "# How this decision was made\n\n")
 	fmt.Fprintf(&b, "Decision reference: %s  \n", rec.DecisionID)
@@ -40,9 +50,19 @@ func Explain(rec history.Record, review *Review, now time.Time) string {
 	} else {
 		b.WriteString("A person was involved in this decision; it was not reached by automated processing alone. ")
 	}
-	b.WriteString("Where a solely automated decision has a legal or similarly significant effect, it is subject to " +
-		"Article 22 of the EU General Data Protection Regulation (and, in the UK, " +
-		"Articles 22A to 22D of the UK Data (Use and Access) Act 2025).\n\n")
+	var art22 []string
+	if has("eu") {
+		art22 = append(art22, "Article 22 of the EU General Data Protection Regulation")
+	}
+	if has("uk") {
+		art22 = append(art22, "Articles 22A to 22D of the UK Data (Use and Access) Act 2025")
+	}
+	if len(art22) > 0 {
+		fmt.Fprintf(&b, "Where a solely automated decision has a legal or similarly significant effect, it is subject to %s.\n\n",
+			strings.Join(art22, " and "))
+	} else {
+		b.WriteString("This kind of automated credit decision is governed by the US Equal Credit Opportunity Act.\n\n")
+	}
 
 	b.WriteString("## The outcome\n\n")
 	if rec.Disposition != "" {
@@ -71,10 +91,20 @@ func Explain(rec history.Record, review *Review, now time.Time) string {
 	}
 
 	b.WriteString("## Your rights\n\n")
-	b.WriteString("Under Article 22(3) of the EU General Data Protection Regulation you have the right to:\n\n")
+	switch {
+	case has("eu"):
+		b.WriteString("Under Article 22(3) of the EU General Data Protection Regulation you have the right to:\n\n")
+	case has("uk"):
+		b.WriteString("Under Articles 22A to 22D of the UK Data (Use and Access) Act 2025 you have the right to:\n\n")
+	default:
+		b.WriteString("In relation to this decision you may:\n\n")
+	}
 	b.WriteString("- **obtain human intervention** — ask that a person review this decision;\n")
 	b.WriteString("- **express your point of view and contest** the outcome;\n")
 	b.WriteString("- **obtain an explanation** of how the decision was reached.\n\n")
+	if has("us") {
+		b.WriteString("Under the US Equal Credit Opportunity Act you may also request that this decision be reconsidered.\n\n")
+	}
 	if review != nil {
 		fmt.Fprintf(&b, "A human reviewer %s this decision on %s", review.Outcome, review.ReviewedAt.Format("2006-01-02"))
 		if r := strings.TrimSpace(review.Rationale); r != "" {

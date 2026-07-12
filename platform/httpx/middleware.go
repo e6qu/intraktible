@@ -375,6 +375,11 @@ func requiredRole(method, path string) auth.Role {
 	if path == "/v1/privacy" {
 		return auth.RoleAdmin
 	}
+	// Setting the workspace's operating jurisdiction drives tenant-wide legal citations
+	// — a compliance control, admin only (GET is a viewer read, handled above).
+	if path == "/v1/compliance/jurisdiction" {
+		return auth.RoleAdmin
+	}
 	// A user manages their own notification inbox (marking read) — any viewer.
 	if strings.HasPrefix(path, "/v1/notifications") {
 		return auth.RoleViewer

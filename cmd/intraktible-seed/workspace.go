@@ -52,6 +52,9 @@ func (s *seeder) dataGovernanceActions(anchor time.Time) []action {
 	return []action{{at: anchor.Add(4 * time.Hour), name: "retention policy", run: func() {
 		// Seven-year retention (FCRA best practice).
 		s.call(actorAva, http.MethodPut, "/v1/erasure/retention-policy", map[string]any{"retention_days": 2555}, nil)
+		// A US lender that also serves EU customers — so the decision explanation cites
+		// the US Equal Credit Opportunity Act and the EU Regulation, but not the UK Act.
+		s.call(actorAva, http.MethodPut, "/v1/compliance/jurisdiction", map[string]any{"regimes": []string{"us", "eu"}}, nil)
 		// A couple of customers exercised their GLBA opt-out from NPI sharing.
 		s.call(actorDiego, http.MethodPost, "/v1/sharing/opt-out",
 			map[string]any{"subject": "applicant/APP-1007", "reason": "Customer opted out of information sharing at onboarding."}, nil)
