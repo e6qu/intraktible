@@ -449,8 +449,14 @@ them hardest-blocker-first; each phase is a direction, not a committed date.
   nonaffiliated third parties (GLBA §6802), and the decide path blocks a Connect node marked
   `shares_npi` once the subject has opted out (fail-loud, the share never happens). Managed on the entity
   page, surfaced on the compliance dashboard.
+  **Retention-clock enforcement** (`retention`) closes the data-lifecycle loop: it computes how long a
+  subject's records must be kept — ECOA / Reg B §1002.12 (25 months) over their adverse-action
+  issuances + credit decisions — and the erasure endpoint now **refuses** a subject still inside that
+  window (a `RetentionGate` on the erasure service; GDPR Art. 17(3)(b) exempts erasure where retention
+  is a legal obligation) — the automatic counterpart to a manual legal hold. The entity page shows the
+  subject's retain-until.
   _Still open:_ the **in-flow** Art. 22 safeguards (standing contest channel, logic-explanation
-  artifact) and the UK 22A–22D split; byte-level WORM artifact storage; retention-clock enforcement.
+  artifact) and the UK 22A–22D split; byte-level WORM artifact storage.
 
 **Parallel non-code track (organisational, not code):** SOC 2 Type II, ISO 27001, independent
 penetration testing, data-provider commercial relationships, model-validation staffing, and reference

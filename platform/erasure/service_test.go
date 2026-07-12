@@ -3,6 +3,7 @@
 package erasure_test
 
 import (
+	"context"
 	"net/http"
 	"testing"
 
@@ -51,4 +52,26 @@ func TestErasureServiceOverHTTP(t *testing.T) {
 	if sweep.Erased != 0 {
 		t.Fatalf("fresh subjects should survive a 30-day retention sweep, erased=%d", sweep.Erased)
 	}
+}
+
+// fakeRetention is a RetentionGate that reports a fixed protection state.
+type fakeRetention struct{ retained bool }
+
+func (f fakeRetention) Retained(_ context.Context, _ identity.Identity, _ string) (bool, string, error) {
+	return f.retained, "kept until 2028-01-01 (ECOA)", nil
+}
+
+func TestErasureBlockedByRetention(t *testing.T) {
+	log, st := testutil.NewLogStore(t)
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "admin"}
+
+	// A subject still within a statutory retention window cannot be erased — 409.
+	blocked := erasure.NewService(erasure.NewVault(st)).WithRetentionGate(fakeRetention{retained: true})
+	api := testutil.StartAPI(t, log, st, "admin-key", id, blocked.Routes)
+	api.Request(t, http.MethodPost, "/v1/erasure/subjects/ada", nil, http.StatusConflict, nil)
+
+	// Once no record is retained, erasure proceeds.
+	free := erasure.NewService(erasure.NewVault(st)).WithRetentionGate(fakeRetention{retained: false})
+	api2 := testutil.StartAPI(t, log, st, "admin-key2", id, free.Routes)
+	api2.Request(t, http.MethodPost, "/v1/erasure/subjects/bob", nil, http.StatusOK, nil)
 }
