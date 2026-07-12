@@ -433,9 +433,16 @@ them hardest-blocker-first; each phase is a direction, not a committed date.
   the rubber stamp Art. 22 forbids), keyed to the decision. Eligibility fails loud unless the decision is
   a completed, solely-automated decline (`history.Record.HumanReviewed`, set on resume, excludes
   decisions that already had a person in the loop); the original decision stays immutable. The decision
-  page shows a human-review panel for solely-automated declines. _Still open:_ GLBA privacy opt-out
-  disclosure; the **in-flow** Art. 22 safeguards (standing contest channel, logic-explanation artifact)
-  and the UK 22A–22D split; byte-level WORM artifact storage; retention-clock enforcement.
+  page shows a human-review panel for solely-automated declines. A **compliance operator dashboard**
+  (`/compliance`) now unifies the whole arc for a compliance officer: the adverse-action 30-day queue
+  (overdue flagged), the human-review audit trail, the lawful-basis / consent overview (by basis, with
+  withdrawn + expiring counts), and an admin-only data-governance card (retention, legal holds, erased
+  subjects). Cards degrade per role — the queue/audit/consent reads are viewer-level, so a compliance
+  *viewer* can work it; the governance card is admin-only. A tenant-global consent list
+  (`GET /v1/consent/records`) was added, and the adverse-action queue GET relaxed to viewer (a read).
+  _Still open:_ GLBA privacy opt-out disclosure; the **in-flow** Art. 22 safeguards (standing contest
+  channel, logic-explanation artifact) and the UK 22A–22D split; byte-level WORM artifact storage;
+  retention-clock enforcement.
 
 **Parallel non-code track (organisational, not code):** SOC 2 Type II, ISO 27001, independent
 penetration testing, data-provider commercial relationships, model-validation staffing, and reference

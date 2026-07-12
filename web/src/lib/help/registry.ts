@@ -733,6 +733,31 @@ export const HELP = new Map<string, PageHelp>([
     }
   ],
   [
+    '/compliance',
+    {
+      title: 'Compliance',
+      summary:
+        'The compliance officer’s home: the tenant’s regulatory work in one view — the adverse-action 30-day queue, the human-review (Art. 22 / reconsideration) audit trail, the lawful-basis overview, and, for admins, data-governance holds and retention. Cards degrade per role.',
+      capabilities: [
+        'See declined decisions awaiting their ECOA / Reg B notice, with the 30-day clock and overdue rows flagged.',
+        'Read the audit trail of automated declines a person reviewed — upheld or overturned.',
+        'Review the lawful basis recorded across subjects, broken down by basis, with withdrawn and expiring counts.',
+        'For admins: the retention window, active legal holds, and count of crypto-shredded subjects.'
+      ],
+      journeys: [
+        {
+          name: 'Work the 30-day adverse-action queue',
+          steps: [
+            'Open Compliance and read the Notices pending tile — the count and how many are past 30 days.',
+            'Scan the Adverse-action queue card; a row with a red age is past the 30-day clock.',
+            'Follow a decision link to its page and record the notice as issued.',
+            'Return; the queue shrinks as notices are served.'
+          ]
+        }
+      ]
+    }
+  ],
+  [
     '/keys',
     {
       title: 'API keys',

@@ -235,6 +235,9 @@ func TestAuthorizeRoutesByPattern(t *testing.T) {
 	mux.HandleFunc("GET /v1/flows/{id}", ok)
 	mux.HandleFunc("POST /v1/flows/{id}/monitors", ok)
 	mux.HandleFunc("GET /v1/audit", ok)
+	mux.HandleFunc("GET /v1/adverse-actions", ok)
+	mux.HandleFunc("POST /v1/decisions/{decision_id}/adverse-action/issue", ok)
+	mux.HandleFunc("GET /v1/consent/records", ok)
 	h := httpx.Chain(mux, httpx.Authenticate(kr, auth.NewSessions()), httpx.AuthorizeRoutes(mux))
 
 	do := func(secret, method, path string) int {
@@ -248,12 +251,16 @@ func TestAuthorizeRoutesByPattern(t *testing.T) {
 		secret, method, path string
 		want                 int
 	}{
-		{"editor-k", "POST", "/v1/flows/f1/monitors", 200}, // monitors template → editor
-		{"viewer-k", "POST", "/v1/flows/f1/monitors", 403}, // ...not viewer
-		{"viewer-k", "GET", "/v1/flows/monitors", 200},     // id="monitors" matches {id} → viewer read, NOT editor
-		{"viewer-k", "GET", "/v1/flows/audit", 200},        // id="audit" matches {id} → viewer, NOT admin
-		{"admin-k", "GET", "/v1/audit", 200},               // the real audit route → admin
-		{"viewer-k", "GET", "/v1/audit", 403},              // ...denied to viewer
+		{"editor-k", "POST", "/v1/flows/f1/monitors", 200},                 // monitors template → editor
+		{"viewer-k", "POST", "/v1/flows/f1/monitors", 403},                 // ...not viewer
+		{"viewer-k", "GET", "/v1/flows/monitors", 200},                     // id="monitors" matches {id} → viewer read, NOT editor
+		{"viewer-k", "GET", "/v1/flows/audit", 200},                        // id="audit" matches {id} → viewer, NOT admin
+		{"admin-k", "GET", "/v1/audit", 200},                               // the real audit route → admin
+		{"viewer-k", "GET", "/v1/audit", 403},                              // ...denied to viewer
+		{"viewer-k", "GET", "/v1/adverse-actions", 200},                    // the read-only queue → viewer
+		{"viewer-k", "POST", "/v1/decisions/d1/adverse-action/issue", 403}, // ...but issuing → operator+
+		{"editor-k", "POST", "/v1/decisions/d1/adverse-action/issue", 200}, // editor outranks operator
+		{"viewer-k", "GET", "/v1/consent/records", 200},                    // cross-subject consent read → viewer
 	}
 	for _, c := range cases {
 		if got := do(c.secret, c.method, c.path); got != c.want {

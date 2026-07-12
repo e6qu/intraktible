@@ -116,3 +116,20 @@ func List(ctx context.Context, s store.Store, id identity.Identity, subject stri
 	sort.Slice(out, func(i, j int) bool { return out[i].Purpose < out[j].Purpose })
 	return out, nil
 }
+
+// ListAll returns every consent record in the tenant, ordered by subject then purpose
+// — the cross-subject view a compliance surface reads (a per-subject query answers a
+// data-subject request; this answers "what has this workspace recorded overall?").
+func ListAll(ctx context.Context, s store.Store, id identity.Identity) ([]Record, error) {
+	out, err := store.ListDocs[Record](ctx, s, Collection, store.Key(id.Org, id.Workspace, ""))
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Subject != out[j].Subject {
+			return out[i].Subject < out[j].Subject
+		}
+		return out[i].Purpose < out[j].Purpose
+	})
+	return out, nil
+}

@@ -170,6 +170,7 @@ func buildSeed() []eventlog.Envelope {
 	acts = append(acts, s.inboxActions(anchor)...)
 	acts = append(acts, s.adverseActionActions(anchor)...)
 	acts = append(acts, s.reconsiderationActions(anchor)...)
+	acts = append(acts, s.dataGovernanceActions(anchor)...)
 
 	s.runTimeline(acts)
 
