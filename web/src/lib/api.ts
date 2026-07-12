@@ -3139,6 +3139,80 @@ export async function adverseActionNotice(
   return res.text();
 }
 
+// ConsentEvidence is the proof backing a grant — the document/audit-trail a regulator
+// asks the controller to produce. The signed artifact stays in the controller's own
+// system of record; we hold a tamper-evident reference (content hash) and the capture
+// metadata, so the bytes never leave the tenant (data residency).
+export interface ConsentEvidence {
+  method?: string;
+  reference?: string;
+  content_hash?: string;
+  hash_algo?: string;
+  notice_version?: string;
+}
+export interface ConsentRecord {
+  subject: string;
+  purpose: string;
+  granted: boolean;
+  basis?: string;
+  granted_at?: string;
+  withdrawn_at?: string;
+  expires_at?: string;
+  evidence?: ConsentEvidence;
+  updated_by: string;
+}
+// getConsents lists a data subject's consent records across purposes (the subject is
+// opaque — the decide integration keys it as "type/id").
+export async function getConsents(
+  key: string,
+  subject: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<ConsentRecord[]> {
+  const res = await fetcher(`/v1/consent?subject=${encodeURIComponent(subject)}`, {
+    headers: authHeaders(key)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'GET /v1/consent');
+  }
+  return ((await res.json()) as { consents: ConsentRecord[] }).consents ?? [];
+}
+// grantConsent records a subject's consent for a purpose. Provided by the operating
+// business's staff (a bank/insurer/fintech employee), not the end customer.
+export async function grantConsent(
+  key: string,
+  body: {
+    subject: string;
+    purpose: string;
+    basis?: string;
+    expires_at?: string;
+    evidence?: ConsentEvidence;
+  },
+  fetcher: typeof fetch = recordingFetch
+): Promise<void> {
+  const res = await fetcher('/v1/consent/grant', {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'POST /v1/consent/grant');
+  }
+}
+export async function withdrawConsent(
+  key: string,
+  body: { subject: string; purpose: string; reason?: string },
+  fetcher: typeof fetch = recordingFetch
+): Promise<void> {
+  const res = await fetcher('/v1/consent/withdraw', {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'POST /v1/consent/withdraw');
+  }
+}
+
 export async function listAgentRuns(
   key: string,
   name: string,

@@ -29,6 +29,7 @@ type Record struct {
 	GrantedAt   *time.Time  `json:"granted_at,omitempty"`
 	WithdrawnAt *time.Time  `json:"withdrawn_at,omitempty"`
 	ExpiresAt   *time.Time  `json:"expires_at,omitempty"`
+	Evidence    *Evidence   `json:"evidence,omitempty"`
 	UpdatedBy   string      `json:"updated_by"`
 }
 
@@ -66,7 +67,7 @@ func (Projector) Apply(ctx context.Context, e eventlog.Envelope, s store.Store) 
 		at := e.Time
 		r := Record{
 			Org: e.Org, Workspace: e.Workspace, Subject: p.Subject, Purpose: p.Purpose,
-			Granted: true, Basis: p.Basis, GrantedAt: &at, ExpiresAt: p.ExpiresAt, UpdatedBy: e.Actor,
+			Granted: true, Basis: p.Basis, GrantedAt: &at, ExpiresAt: p.ExpiresAt, Evidence: p.Evidence, UpdatedBy: e.Actor,
 		}
 		return store.PutDoc(ctx, s, Collection, key(e.Org, e.Workspace, p.Subject, p.Purpose), r)
 	case TypeConsentWithdrawn:

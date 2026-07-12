@@ -83,6 +83,17 @@ type ModelProvider interface {
 	ApprovedForServing(ctx context.Context, id identity.Identity, model string) (bool, error)
 }
 
+// ConsentGate is the decide path's purpose-limitation hook: it records a subject's
+// consent captured in the application input, and checks whether the subject has
+// active consent for a purpose before a data pull (a Connect node) that requires it —
+// FCRA-style permissible-purpose enforcement. The engine never imports the consent
+// ledger; the composition root supplies the adapter. The subject is the decision's
+// entity (ref.Key()), the same subject PII sealing and erasure key on.
+type ConsentGate interface {
+	HasConsent(ctx context.Context, id identity.Identity, subject, purpose string) (bool, error)
+	RecordConsent(ctx context.Context, id identity.Identity, subject, purpose, basis string) error
+}
+
 // PIISealer crypto-shreds the configured PII fields of a recorded decision under
 // the subject (the referenced entity), so a later erasure of that subject makes
 // the recorded input/output PII unrecoverable. The port lives here so the engine
@@ -106,6 +117,7 @@ type DecideHandler struct {
 	agentsP    AgentProvider
 	models     ModelProvider
 	sealer     PIISealer
+	consent    ConsentGate
 	tracer     trace.Tracer
 	// evalTimeout bounds per-node expression/Code evaluation so a CPU-heavy
 	// expression a flow author ships can't tie up the synchronous decide.
@@ -156,6 +168,14 @@ func WithModels(p ModelProvider) DecideOption {
 // ref), decisions are recorded in the clear as before.
 func WithPIISealer(s PIISealer) DecideOption {
 	return func(h *DecideHandler) { h.sealer = s }
+}
+
+// WithConsent supplies the consent gate that captures consent from the input and
+// enforces permissible purpose on Connect nodes that require it. Without it, a
+// Connect node's requires_consent is enforced loudly at execution (the connector is
+// never fetched) so consent is never silently skipped.
+func WithConsent(g ConsentGate) DecideOption {
+	return func(h *DecideHandler) { h.consent = g }
 }
 
 // WithEvalTimeout overrides the per-decide expression/Code evaluation budget. A
@@ -588,7 +608,13 @@ func (h *DecideHandler) prepare(ctx context.Context, id identity.Identity, requi
 	if err != nil {
 		return nil, err
 	}
-	data, err = h.injectConnectors(ctx, id, version.Graph, data)
+	// Record any consent the caller (the bank/insurer/fintech) asserts in this
+	// request — the consent it obtained from its own customer — under the decision's
+	// subject, BEFORE the connectors that enforce it run.
+	if err := h.captureConsent(ctx, id, ref, data); err != nil {
+		return nil, err
+	}
+	data, err = h.injectConnectors(ctx, id, ref, version.Graph, data)
 	if err != nil {
 		return nil, err
 	}
@@ -782,7 +808,7 @@ func (h *DecideHandler) injectFeatures(ctx context.Context, id identity.Identity
 // "connect" (keyed by each node's output). The fetch is the only I/O; doing it
 // here keeps domain.Execute pure. When no provider is set this is a no-op and any
 // Connect node will fail loudly during execution.
-func (h *DecideHandler) injectConnectors(ctx context.Context, id identity.Identity, graph events.Graph, data map[string]any) (map[string]any, error) {
+func (h *DecideHandler) injectConnectors(ctx context.Context, id identity.Identity, ref EntityRef, graph events.Graph, data map[string]any) (map[string]any, error) {
 	specs, err := domain.ConnectSpecs(graph)
 	if err != nil {
 		return nil, err
@@ -796,6 +822,9 @@ func (h *DecideHandler) injectConnectors(ctx context.Context, id identity.Identi
 	}
 	resolved := make(map[string]any, len(specs))
 	for _, sp := range specs {
+		if err := h.enforceConsent(ctx, id, ref, sp); err != nil {
+			return nil, err
+		}
 		callCtx, span := h.tracer.Start(ctx, "engine.connector", trace.WithAttributes(
 			attribute.String("connector.name", sp.Connector),
 			attribute.String("node.id", sp.NodeID),
@@ -817,6 +846,65 @@ func (h *DecideHandler) injectConnectors(ctx context.Context, id identity.Identi
 	}
 	out["connect"] = resolved
 	return out, nil
+}
+
+// enforceConsent gates a Connect node that declares requires_consent: the decision's
+// subject must have active consent for that purpose before the connector is fetched
+// (FCRA permissible purpose). It fails LOUD — never silently fetches — when the
+// purpose is required but no consent gate is wired, the decision has no subject, or
+// the subject has not consented; the connector's data is never pulled.
+func (h *DecideHandler) enforceConsent(ctx context.Context, id identity.Identity, ref EntityRef, sp domain.ConnectSpec) error {
+	if sp.RequiresConsent == "" {
+		return nil
+	}
+	if h.consent == nil {
+		return fmt.Errorf("decision-engine: connect node %q requires consent for %q but no consent gate is configured", sp.NodeID, sp.RequiresConsent)
+	}
+	if ref.Empty() {
+		return fmt.Errorf("decision-engine: connect node %q requires consent for %q but the decision has no subject (entity ref)", sp.NodeID, sp.RequiresConsent)
+	}
+	ok, err := h.consent.HasConsent(ctx, id, ref.Key(), sp.RequiresConsent)
+	if err != nil {
+		return fmt.Errorf("decision-engine: connect node %q consent check: %w", sp.NodeID, err)
+	}
+	if !ok {
+		return fmt.Errorf("decision-engine: connect node %q — subject %q has no active consent for %q (no permissible purpose)", sp.NodeID, ref.Key(), sp.RequiresConsent)
+	}
+	return nil
+}
+
+// consentInput is the consent a caller asserts in a decision request: the purposes
+// their customer consented to, under a lawful basis. It is the bank/insurer/fintech
+// passing through the consent it obtained in its own onboarding — intraktible's
+// users are those businesses, never the end customer.
+type consentInput struct {
+	Purposes []string `json:"purposes"`
+	Basis    string   `json:"basis"`
+}
+
+// captureConsent records the consent asserted in the request's "consent" block under
+// the decision's subject, so the ledger carries an auditable record of the permissible
+// purpose the caller relied on. No block, no gate, or no subject → nothing to record.
+// A malformed block fails loud rather than silently dropping a compliance assertion.
+func (h *DecideHandler) captureConsent(ctx context.Context, id identity.Identity, ref EntityRef, data map[string]any) error {
+	raw, present := data["consent"]
+	if !present || h.consent == nil || ref.Empty() {
+		return nil
+	}
+	b, err := json.Marshal(raw)
+	if err != nil {
+		return fmt.Errorf("decision-engine: marshal consent input: %w", err)
+	}
+	var in consentInput
+	if err := json.Unmarshal(b, &in); err != nil {
+		return fmt.Errorf("%w: malformed consent block: %w", ErrBadRequest, err)
+	}
+	for _, purpose := range in.Purposes {
+		if err := h.consent.RecordConsent(ctx, id, ref.Key(), purpose, in.Basis); err != nil {
+			return fmt.Errorf("decision-engine: record consent for %q: %w", purpose, err)
+		}
+	}
+	return nil
 }
 
 // injectAI pre-resolves a flow's AI nodes: it runs each named agent (with the

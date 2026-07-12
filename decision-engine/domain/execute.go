@@ -707,11 +707,13 @@ func matchAxis(ec evalContext, n events.Node, axis string, conds []axisCond, ctx
 	return 0, fmt.Errorf("decision-engine: node %q matrix has no matching %s", n.ID, axis)
 }
 
-// ConnectSpec names a Connect node's connector + the key its response lands under.
+// ConnectSpec names a Connect node's connector + the key its response lands under,
+// plus an optional consent purpose the subject must have granted before the fetch.
 type ConnectSpec struct {
-	NodeID    string
-	Connector string
-	Output    string
+	NodeID          string
+	Connector       string
+	Output          string
+	RequiresConsent string
 }
 
 // ConnectSpecs extracts the Connect nodes from a graph so the shell can pre-resolve
@@ -722,7 +724,7 @@ func ConnectSpecs(g events.Graph) ([]ConnectSpec, error) {
 		if cfg.Connector == "" || cfg.Output == "" {
 			return ConnectSpec{}, fmt.Errorf("decision-engine: connect node %q needs a connector and an output", n.ID)
 		}
-		return ConnectSpec{NodeID: n.ID, Connector: cfg.Connector, Output: cfg.Output}, nil
+		return ConnectSpec{NodeID: n.ID, Connector: cfg.Connector, Output: cfg.Output, RequiresConsent: cfg.RequiresConsent}, nil
 	})
 }
 

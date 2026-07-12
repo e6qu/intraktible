@@ -254,6 +254,9 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 	// by default — a tenant with no policy is never swept.
 	retentionScheduler := erasure.NewScheduler(erasureVault).WithNow(now)
 	erasurePIIFields := splitCSV(os.Getenv("INTRAKTIBLE_ERASURE_PII_FIELDS"))
+	// Consent: one handler backs both the /v1/consent surface and the decide-path
+	// gate (capture asserted consent + enforce permissible purpose on Connect nodes).
+	consentHandler := consent.NewHandler(log).WithNow(now)
 
 	if enabled(cfg.Modules, "hello") {
 		helloservice.New(hellocmd.NewHandler(log).WithNow(now), st).Routes(api)
@@ -277,6 +280,7 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 			enginecmd.WithConnectors(connectorProvider),
 			enginecmd.WithAgents(agents.Provider{Store: st, Registry: aiRegistry, Tools: toolbox}),
 			enginecmd.WithModels(enginemodels.Provider{Store: st, HTTP: egress.Client(10 * time.Second)}),
+			enginecmd.WithConsent(consentGate{store: st, cmd: consentHandler, now: now}),
 		}
 		// Crypto-shred recorded decision PII under the entity subject when erasure
 		// fields are configured (same set as the Context Layer's event sealing).
@@ -398,7 +402,7 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 	// Consent: a purpose-limitation ledger — a data subject's consent to process
 	// their data for a named purpose, recorded as events so the grant/withdraw
 	// history is auditable (GDPR Art. 6/7, GLBA purpose limitation).
-	consent.New(consent.NewHandler(log).WithNow(now), st).Routes(api)
+	consent.New(consentHandler, st).Routes(api)
 
 	// Notifications: a per-user inbox derived from @-mentions in comments.
 	notifications.New(notifications.NewHandler(log).WithNow(now), st).Routes(api)
@@ -696,6 +700,29 @@ func newPIISealer(v *erasure.Vault, fields []string) piiSealer {
 
 func (p piiSealer) SealPII(ctx context.Context, id identity.Identity, subject string, doc json.RawMessage) (json.RawMessage, error) {
 	return p.vault.SealFields(ctx, id, subject, doc, p.fields)
+}
+
+// consentGate adapts the consent ledger to the engine's ConsentGate port, keeping the
+// decision engine from importing platform/consent directly (composition-root wiring).
+type consentGate struct {
+	store store.Store
+	cmd   *consent.Handler
+	now   func() time.Time
+}
+
+func (g consentGate) HasConsent(ctx context.Context, id identity.Identity, subject, purpose string) (bool, error) {
+	return consent.Has(ctx, g.store, id, subject, purpose, g.now())
+}
+
+func (g consentGate) RecordConsent(ctx context.Context, id identity.Identity, subject, purpose, basis string) error {
+	// A consent asserted inside a decision request is the controller vouching, via the
+	// API, for authorization it holds out-of-band; the signed artifact is attached
+	// separately on the subject's page. Record the method so the audit trail shows how.
+	_, err := g.cmd.Grant(ctx, id, consent.GrantCmd{
+		Subject: subject, Purpose: purpose, Basis: consent.LawfulBasis(basis),
+		Evidence: &consent.Evidence{Method: consent.MethodAPIAssertion},
+	})
+	return err
 }
 
 // aiCompleter adapts the AI registry to the engine's copilot AICompleter port (a

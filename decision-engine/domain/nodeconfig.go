@@ -63,6 +63,9 @@ type manualReviewConfig struct {
 type connectConfig struct {
 	Connector string `json:"connector"`
 	Output    string `json:"output"`
+	// RequiresConsent, when set, names the purpose the decision's subject must have
+	// active consent for before this connector is fetched (FCRA permissible purpose).
+	RequiresConsent string `json:"requires_consent,omitempty"`
 }
 
 // predictConfig is the config of a Predict node: it names a registered model to
