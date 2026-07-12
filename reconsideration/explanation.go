@@ -41,7 +41,8 @@ func Explain(rec history.Record, review *Review, now time.Time) string {
 		b.WriteString("A person was involved in this decision; it was not reached by automated processing alone. ")
 	}
 	b.WriteString("Where a solely automated decision has a legal or similarly significant effect, it is subject to " +
-		"GDPR Article 22 (and, in the UK, Articles 22A–22D under the Data (Use and Access) Act 2025).\n\n")
+		"Article 22 of the General Data Protection Regulation (and, in the United Kingdom, Articles 22A to 22D of " +
+		"the Data (Use and Access) Act 2025).\n\n")
 
 	b.WriteString("## The outcome\n\n")
 	if rec.Disposition != "" {
@@ -70,7 +71,7 @@ func Explain(rec history.Record, review *Review, now time.Time) string {
 	}
 
 	b.WriteString("## Your rights\n\n")
-	b.WriteString("Under GDPR Article 22(3) you have the right to:\n\n")
+	b.WriteString("Under Article 22(3) of the General Data Protection Regulation you have the right to:\n\n")
 	b.WriteString("- **obtain human intervention** — ask that a person review this decision;\n")
 	b.WriteString("- **express your point of view and contest** the outcome;\n")
 	b.WriteString("- **obtain an explanation** of how the decision was reached.\n\n")

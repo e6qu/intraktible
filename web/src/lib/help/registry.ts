@@ -709,7 +709,7 @@ export const HELP = new Map<string, PageHelp>([
     {
       title: 'Fair lending',
       summary:
-        'A disparate-impact report over a flow’s recorded decisions: the adverse-impact ratio (four-fifths rule, ECOA / Reg B) of favorable-outcome rates across a protected-class attribute you name. A screen over real decisions, not a legal conclusion. Admin only.',
+        'A disparate-impact report over a flow’s recorded decisions: the adverse-impact ratio (four-fifths rule, ECOA / Regulation B) of favorable-outcome rates across a protected-class attribute you name. A screen over real decisions, not a legal conclusion. Admin only.',
       capabilities: [
         'Pick a flow and the input field that encodes the protected class.',
         'Compute each group’s favorable rate and its ratio to the reference group.',
@@ -737,9 +737,9 @@ export const HELP = new Map<string, PageHelp>([
     {
       title: 'Compliance',
       summary:
-        'The compliance officer’s home: the tenant’s regulatory work in one view — the adverse-action 30-day queue, the human-review (Art. 22 / reconsideration) audit trail, the lawful-basis overview, and, for admins, data-governance holds and retention. Cards degrade per role.',
+        'The compliance officer’s home: the tenant’s regulatory work in one view — the adverse-action 30-day queue, the human-review (Article 22 / reconsideration) audit trail, the lawful-basis overview, and, for admins, data-governance holds and retention. Cards degrade per role.',
       capabilities: [
-        'See declined decisions awaiting their ECOA / Reg B notice, with the 30-day clock and overdue rows flagged.',
+        'See declined decisions awaiting their ECOA / Regulation B notice, with the 30-day clock and overdue rows flagged.',
         'Read the audit trail of automated declines a person reviewed — upheld or overturned.',
         'Review the lawful basis recorded across subjects, broken down by basis, with withdrawn and expiring counts.',
         'For admins: the retention window, active legal holds, and count of crypto-shredded subjects.'

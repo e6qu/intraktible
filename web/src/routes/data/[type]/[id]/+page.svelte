@@ -146,7 +146,7 @@
         toast.success('Sharing opt-out rescinded.');
       } else {
         await optOutSharing(key, { subject });
-        toast.success('Recorded: opted out of NPI sharing.');
+        toast.success('Recorded: opted out of information sharing.');
       }
       await reloadSharing();
     } catch (e) {
@@ -273,15 +273,16 @@
         </p>
         <div class="sharing">
           <div>
-            <span class="sharing-label">GLBA sharing</span>
+            <span class="sharing-label">Information sharing</span>
             {#if sharingOptedOut}
-              <span class="badge">opted out of NPI sharing</span>
+              <span class="badge">opted out of sharing</span>
             {:else}
               <span class="badge ok">sharing permitted</span>
             {/if}
             <span class="muted small"
-              >— whether this subject's NPI may be shared with nonaffiliated third parties. A
-              decision node marked as sharing NPI is blocked when opted out.</span
+              >— whether this subject's nonpublic personal information may be shared with
+              unaffiliated third parties (under the Gramm-Leach-Bliley Act). A decision that would
+              share it is blocked once the subject has opted out.</span
             >
           </div>
           {#if canManageConsent}
@@ -295,8 +296,8 @@
             <span class="sharing-label">Record retention</span>
             {#if retention.retained}
               <span class="badge">retain until {retention.retain_until?.slice(0, 10)}</span> — a record
-              about this subject must be kept (ECOA Reg B, 25 months), so an erasure request is refused
-              until it lapses (GDPR Art. 17(3)(b)).
+              about this subject must be kept (ECOA / Regulation B, 25 months), so an erasure request
+              is refused until it lapses (Article 17(3)(b) of the General Data Protection Regulation).
             {:else}
               <span class="badge ok">no mandatory retention</span> — no record blocks an erasure request
               for this subject.
