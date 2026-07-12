@@ -70,8 +70,10 @@ the record is keyed to the same subject identity as PII sealing and erasure.
 
 ## Not done
 
-- No modelling of the Art. 22 automated-decision safeguards (human-intervention log,
-  contest channel) or the UK 22A–22D split — decisioning records those elsewhere, and
-  unifying them is a larger piece.
+- The Art. 22 **post-decision** human-review safeguard is now recorded (see the
+  `reconsideration` package: a person upholds/overturns a solely-automated decline with
+  a rationale). Still open: the **in-flow** safeguards (a standing right-to-contest
+  channel, the "meaningful information about the logic" explanation as a first-class
+  artifact) and the UK DUAA 2025 (22A–22D) divergence.
 - No byte-level artifact storage / WORM retention lock; we hold the reference only.
 - Retention clocks (ECOA/CCPA/FCRA) are not enforced against consent records yet.

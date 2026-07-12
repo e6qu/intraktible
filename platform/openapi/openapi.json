@@ -3321,6 +3321,52 @@
         }
       }
     },
+    "/v1/decisions/{decision_id}/reconsideration": {
+      "get": {
+        "tags": ["MRM"],
+        "summary": "Get the human review of an automated decision",
+        "description": "Returns { reviewed: false } when no human review has been recorded, else { reviewed: true, review }.",
+        "parameters": [
+          { "name": "decision_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "The recorded human review, if any.", "content": { "application/json": { "schema": { "type": "object" } } } },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "post": {
+        "tags": ["MRM"],
+        "summary": "Record a human review of a solely-automated decline (Art. 22 / reconsideration)",
+        "description": "Logs that a person upheld or overturned an automated adverse decision, with a required rationale (a review with no reasoning is not meaningful human review). Rejected (400) unless the decision is a completed, solely-automated decline — a decision that already had a person in the loop (routed to manual_review, or resumed by a reviewer) is not eligible. Operator only. The original decision stays immutable; this is an overlay.",
+        "parameters": [
+          { "name": "decision_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "properties": {
+            "basis": { "type": "string", "enum": ["applicant_contest", "proactive", "regulator_inquiry"] },
+            "outcome": { "type": "string", "enum": ["upheld", "overturned"] },
+            "rationale": { "type": "string" }
+          }, "required": ["basis", "outcome", "rationale"] } } }
+        },
+        "responses": {
+          "200": { "description": "The review was recorded.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventAck" } } } },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/reconsiderations": {
+      "get": {
+        "tags": ["MRM"],
+        "summary": "List recorded human reviews (the reconsideration audit trail)",
+        "responses": {
+          "200": { "description": "Every recorded human review for the tenant, newest first.", "content": { "application/json": { "schema": { "type": "object" } } } },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/v1/webhooks/{webhook_id}": {
       "delete": {
         "tags": ["Notifications"],

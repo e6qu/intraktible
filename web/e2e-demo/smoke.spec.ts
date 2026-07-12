@@ -78,7 +78,11 @@ test('a builder preview run shows a verdict but records no decision', async ({ p
   await page.locator('a[href*="/engine/"]').first().click();
   await page.getByLabel("preview (don't record)").check();
   await page.getByRole('button', { name: 'Run', exact: true }).click();
-  await expect(page.getByTestId('run-verdict')).toBeVisible();
+  // The FIRST decide in a freshly-booted wasm engine JIT-compiles the flow's
+  // expression/rule VMs, so the verdict can take ~19s — right at the global 20s
+  // expect timeout. Give this one assertion headroom so the boundary case (CI under
+  // load) doesn't flake; the follow-up assertions are then instant.
+  await expect(page.getByTestId('run-verdict')).toBeVisible({ timeout: 45_000 });
   await expect(page.getByText('preview · not recorded')).toBeVisible();
   await expect(page.getByText('View the recorded decision')).toHaveCount(0);
 });
