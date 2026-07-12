@@ -74,10 +74,13 @@ var internalRoutes = map[string]string{
 	// GDPR right-to-erasure / retention: a privacy/compliance control-plane admin
 	// surface (data-subject rights), out of scope of the integrator data plane like
 	// the RBAC/secrets surfaces this document already excludes.
-	"GET /v1/erasure/subjects":            "privacy/compliance control plane (RTBF admin)",
-	"GET /v1/erasure/subjects/{subject}":  "privacy/compliance control plane (RTBF admin)",
-	"POST /v1/erasure/subjects/{subject}": "privacy/compliance control plane (RTBF admin)",
-	"POST /v1/erasure/retention":          "privacy/compliance control plane (retention admin)",
+	"GET /v1/erasure/subjects":                    "privacy/compliance control plane (RTBF admin)",
+	"GET /v1/erasure/subjects/{subject}":          "privacy/compliance control plane (RTBF admin)",
+	"POST /v1/erasure/subjects/{subject}":         "privacy/compliance control plane (RTBF admin)",
+	"POST /v1/erasure/subjects/{subject}/hold":    "privacy/compliance control plane (legal-hold admin)",
+	"POST /v1/erasure/subjects/{subject}/release": "privacy/compliance control plane (legal-hold admin)",
+	"GET /v1/erasure/holds":                       "privacy/compliance control plane (legal-hold admin)",
+	"POST /v1/erasure/retention":                  "privacy/compliance control plane (retention admin)",
 }
 
 func TestEveryRegisteredRouteIsDocumented(t *testing.T) {
