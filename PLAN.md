@@ -395,8 +395,13 @@ them hardest-blocker-first; each phase is a direction, not a committed date.
   (opt-in, off by default) drives a **scheduled sweep** (`erasure.Scheduler`, on the shared sweep
   cadence) that crypto-shreds subjects past their window and **skips held subjects** — a tenant with no
   policy is never swept, so the timer never erases data no one asked to expire. Admin endpoints:
-  hold/release/list-held, get/set retention-policy. _Still open:_ consent/purpose tracking and FCRA/GLBA
-  disclosure workflows.
+  hold/release/list-held, get/set retention-policy. **Consent/purpose ledger shipped**
+  (`platform/consent`): a data subject's consent to process their data for a named purpose, recorded as
+  events (grant/withdraw) so the history is auditable, with a GDPR Art. 6 lawful basis and optional
+  expiry. `Has(subject, purpose, now)` answers "may we use this data for this purpose right now?" (honors
+  withdrawal + expiry); `List` returns a subject's consents; endpoints grant/withdraw/list/status. _Still
+  open:_ enforcing consent in the decide path (the ledger is the authoritative record a gate would
+  consult; gating is a separate, invasive step) and FCRA/GLBA disclosure workflows.
 
 **Parallel non-code track (organisational, not code):** SOC 2 Type II, ISO 27001, independent
 penetration testing, data-provider commercial relationships, model-validation staffing, and reference

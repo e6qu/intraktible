@@ -2864,6 +2864,73 @@
         }
       }
     },
+    "/v1/consent/grant": {
+      "post": {
+        "tags": ["Consent"],
+        "summary": "Record a subject's consent for a purpose",
+        "description": "A purpose-limitation ledger entry (GDPR Art. 6/7, GLBA). subject and purpose are required; basis defaults to 'consent'; expires_at is optional and must be in the future.",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "required": ["subject", "purpose"], "properties": {
+            "subject": { "type": "string" },
+            "purpose": { "type": "string" },
+            "basis": { "type": "string", "enum": ["consent", "contract", "legal_obligation", "vital_interests", "public_task", "legitimate_interest"] },
+            "expires_at": { "type": "string", "format": "date-time" }
+          } } } }
+        },
+        "responses": {
+          "200": { "description": "Consent recorded.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventAck" } } } },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/consent/withdraw": {
+      "post": {
+        "tags": ["Consent"],
+        "summary": "Withdraw a subject's consent for a purpose",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "required": ["subject", "purpose"], "properties": {
+            "subject": { "type": "string" },
+            "purpose": { "type": "string" },
+            "reason": { "type": "string" }
+          } } } }
+        },
+        "responses": {
+          "200": { "description": "Withdrawal recorded.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventAck" } } } },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/consent/{subject}": {
+      "get": {
+        "tags": ["Consent"],
+        "summary": "List a subject's consents across purposes",
+        "parameters": [
+          { "name": "subject", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "The subject's consent records.", "content": { "application/json": { "schema": { "type": "object" } } } },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/consent/{subject}/{purpose}": {
+      "get": {
+        "tags": ["Consent"],
+        "summary": "Whether a subject has active consent for a purpose",
+        "parameters": [
+          { "name": "subject", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "purpose", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "The active flag plus the full record when one exists.", "content": { "application/json": { "schema": { "type": "object" } } } },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/v1/comments/{subject_type}/{subject_id}": {
       "get": {
         "tags": ["Comments"],
