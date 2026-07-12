@@ -65,6 +65,7 @@ import (
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/httpx"
 	"github.com/e6qu/intraktible/platform/identity"
+	"github.com/e6qu/intraktible/platform/jurisdiction"
 	"github.com/e6qu/intraktible/platform/metrics"
 	"github.com/e6qu/intraktible/platform/notifications"
 	"github.com/e6qu/intraktible/platform/openapi"
@@ -418,6 +419,10 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 	// history is auditable (GDPR Art. 6/7, GLBA purpose limitation).
 	consent.New(consentHandler, st).Routes(api)
 
+	// Applicable data-protection / fair-lending regimes for the workspace, so the
+	// automated-decision explanation cites the law that actually applies.
+	jurisdiction.New(jurisdiction.NewHandler(log).WithNow(now), st).Routes(api)
+
 	// GLBA sharing opt-out: a consumer's election to stop NPI sharing with
 	// nonaffiliated third parties, enforced at outbound-sharing Connect nodes.
 	sharing.New(sharingHandler, st).Routes(api)
@@ -668,7 +673,7 @@ func Projectors(modules string) []projection.Projector {
 	// Privacy masking config and the audit index are platform capabilities, projected
 	// regardless of which modules are enabled (so masking and the audit trail work in
 	// every profile). The audit projector re-indexes every event for tenant-scoped reads.
-	ps := []projection.Projector{privacy.Projector{}, comments.Projector{}, consent.Projector{}, sharing.Projector{}, notifications.Projector{}, audit.Projector{},
+	ps := []projection.Projector{privacy.Projector{}, comments.Projector{}, consent.Projector{}, sharing.Projector{}, jurisdiction.Projector{}, notifications.Projector{}, audit.Projector{},
 		fairlending.ConfigProjector{}, fairlending.SettingsProjector{}, fairlending.IssuanceProjector{}, reconsideration.Projector{}, reconsideration.ContestProjector{}}
 	if enabled(modules, "hello") {
 		ps = append(ps, stats.Projector{})

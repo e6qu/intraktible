@@ -3532,6 +3532,33 @@
         }
       }
     },
+    "/v1/compliance/jurisdiction": {
+      "get": {
+        "tags": ["MRM"],
+        "summary": "The workspace's applicable data-protection / fair-lending regimes",
+        "description": "Which regimes the workspace operates under — the decision explanation cites the law that applies. Defaults to all three when unset. Response: { regimes: [\"eu\"|\"uk\"|\"us\"], configured, updated_at, updated_by }.",
+        "responses": {
+          "200": { "description": "The applicable regimes.", "content": { "application/json": { "schema": { "type": "object" } } } },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "put": {
+        "tags": ["MRM"],
+        "summary": "Set the workspace's applicable regimes",
+        "description": "At least one recognized regime is required; unknown codes are rejected. Admin only.",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "required": ["regimes"], "properties": {
+            "regimes": { "type": "array", "items": { "type": "string", "enum": ["eu", "uk", "us"] } }
+          } } } }
+        },
+        "responses": {
+          "200": { "description": "The regimes were recorded (echoes the normalized set).", "content": { "application/json": { "schema": { "type": "object" } } } },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/v1/webhooks/{webhook_id}": {
       "delete": {
         "tags": ["Notifications"],
