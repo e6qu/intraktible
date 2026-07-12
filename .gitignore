@@ -68,7 +68,9 @@ web/.pw-data-embedded/
 
 # rendered docs site (build artifact)
 web/build-docs/
-web/static/intraktible.wasm
+# Demo build artifacts (make wasm demo-seed) — rebuildable, never committed. A wasm
+# binary especially must not land in git (see the no-committed-wasm rule).
+web/static/*.wasm
 web/static/wasm_exec.js
 web/static/demo-seed.json
 web/static/demo-users.json

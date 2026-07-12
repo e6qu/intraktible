@@ -16,6 +16,8 @@
     getSharingStatus,
     optOutSharing,
     optInSharing,
+    getRetentionStatus,
+    type RetentionStatus,
     ApiError,
     type Entity,
     type EntityEvent,
@@ -32,6 +34,8 @@
   // GLBA sharing opt-out state for this subject (the opt-out mirror of consent).
   let sharingOptedOut = $state(false);
   let sharingBusy = $state(false);
+  // Statutory record-retention status — whether the subject may be erased yet.
+  let retention = $state<RetentionStatus | null>(null);
   let consentPurpose = $state('');
   // Default to a non-consent basis: for decisioning, the basis is usually contract or
   // legitimate interest, not "consent" (which is rarely freely given). See the hint.
@@ -99,6 +103,7 @@
     featureValues = [];
     consents = [];
     sharingOptedOut = false;
+    retention = null;
     // Drop a stale response when sibling navigation changes type/id mid-flight.
     const reqType = type;
     const reqId = id;
@@ -131,6 +136,7 @@
   async function reloadSharing() {
     const s = await getSharingStatus(key, subject).catch(() => ({ opted_out: false }));
     sharingOptedOut = s.opted_out;
+    retention = await getRetentionStatus(key, subject).catch(() => null);
   }
   async function toggleSharing() {
     sharingBusy = true;
@@ -284,6 +290,19 @@
             </button>
           {/if}
         </div>
+        {#if retention}
+          <p class="muted small retention">
+            <span class="sharing-label">Record retention</span>
+            {#if retention.retained}
+              <span class="badge">retain until {retention.retain_until?.slice(0, 10)}</span> — a record
+              about this subject must be kept (ECOA Reg B, 25 months), so an erasure request is refused
+              until it lapses (GDPR Art. 17(3)(b)).
+            {:else}
+              <span class="badge ok">no mandatory retention</span> — no record blocks an erasure request
+              for this subject.
+            {/if}
+          </p>
+        {/if}
         {#if consents.length > 0}
           <div class="table-wrap">
             <table>

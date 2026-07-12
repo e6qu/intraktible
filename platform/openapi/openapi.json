@@ -3011,6 +3011,21 @@
         }
       }
     },
+    "/v1/retention": {
+      "get": {
+        "tags": ["MRM"],
+        "summary": "A subject's statutory record-retention status",
+        "description": "How long the compliance records about a subject must be kept (ECOA / Reg B §1002.12, 25 months) and thus whether the subject may be erased — GDPR Art. 17(3)(b) exempts erasure where retention is a legal obligation. A subject with a record still inside its window is refused by the erasure endpoint.",
+        "parameters": [
+          { "name": "subject", "in": "query", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "The subject's retention status: retained flag, retain_until, and the contributing records.", "content": { "application/json": { "schema": { "type": "object" } } } },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/v1/comments/{subject_type}/{subject_id}": {
       "get": {
         "tags": ["Comments"],

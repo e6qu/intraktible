@@ -3475,6 +3475,28 @@ export async function optInSharing(
     return errorOrStatus(res, 'POST /v1/sharing/opt-in');
   }
 }
+// RetentionStatus is how long a subject's compliance records must be kept, and thus
+// whether the subject may be erased (GDPR Art. 17(3)(b) exempts required retention).
+export interface RetentionStatus {
+  subject: string;
+  retained: boolean;
+  retain_until?: string;
+  items: { kind: string; record_id: string; basis: string; retain_until: string }[];
+}
+// getRetentionStatus returns a subject's statutory record-retention status.
+export async function getRetentionStatus(
+  key: string,
+  subject: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<RetentionStatus> {
+  const res = await fetcher(`/v1/retention?subject=${encodeURIComponent(subject)}`, {
+    headers: authHeaders(key)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'GET /v1/retention');
+  }
+  return (await res.json()) as RetentionStatus;
+}
 // listSharingRecords returns every sharing record in the tenant (the compliance view).
 export async function listSharingRecords(
   key: string,

@@ -77,6 +77,7 @@ import (
 	"github.com/e6qu/intraktible/platform/web"
 	"github.com/e6qu/intraktible/reconsideration"
 	"github.com/e6qu/intraktible/registers"
+	"github.com/e6qu/intraktible/retention"
 )
 
 // asyncRunWorkers is the size of the Agent Manager's async-run worker pool.
@@ -427,8 +428,11 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 	// Authenticated caller introspection (inside the /v1 auth chain).
 	httpx.NewAPIKeysHandler(apiKeys, log).Routes(api)
 	// Right-to-erasure (crypto-shredding) + retention, admin-gated. erasureVault is
-	// built earlier and shared with the Context Layer's PII field sealing.
-	erasure.NewService(erasureVault).Routes(api)
+	// built earlier and shared with the Context Layer's PII field sealing. The retention
+	// gate refuses erasure of a subject still within a statutory record-retention window.
+	erasure.NewService(erasureVault).WithRetentionGate(retentionGate{store: st, now: now}).Routes(api)
+	// A subject's record-retention status (read-only), for the compliance/entity view.
+	retention.New(st).WithNow(now).Routes(api)
 	api.HandleFunc("GET /v1/me", httpx.MeHandler())
 
 	rt := projection.New(log, st, Projectors(cfg.Modules)...)
@@ -748,6 +752,17 @@ type sharingGate struct{ store store.Store }
 
 func (g sharingGate) HasOptedOut(ctx context.Context, id identity.Identity, subject string) (bool, error) {
 	return sharing.HasOptedOut(ctx, g.store, id, subject)
+}
+
+// retentionGate adapts the retention read model to the erasure service's RetentionGate
+// port, so platform/erasure needn't import the compliance-record packages.
+type retentionGate struct {
+	store store.Store
+	now   func() time.Time
+}
+
+func (g retentionGate) Retained(ctx context.Context, id identity.Identity, subject string) (bool, string, error) {
+	return retention.Retained(ctx, g.store, id, subject, g.now())
 }
 
 // aiCompleter adapts the AI registry to the engine's copilot AICompleter port (a

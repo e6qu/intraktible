@@ -3,6 +3,7 @@
 package erasure
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -10,17 +11,34 @@ import (
 	"time"
 
 	"github.com/e6qu/intraktible/platform/httpx"
+	"github.com/e6qu/intraktible/platform/identity"
 )
+
+// RetentionGate reports whether a subject must be retained because a record about them
+// is still within its statutory mandatory-retention window — the automatic, rule-driven
+// counterpart to a manual legal hold. The composition root supplies the adapter so the
+// vault stays free of the compliance-record packages.
+type RetentionGate interface {
+	Retained(ctx context.Context, id identity.Identity, subject string) (retained bool, reason string, err error)
+}
 
 // Service exposes admin-only erasure operations: fulfilling a right-to-erasure
 // request (crypto-shred a subject), listing fulfilled erasures, and running a
 // retention sweep.
 type Service struct {
-	vault *Vault
+	vault         *Vault
+	retentionGate RetentionGate
 }
 
 // NewService builds the erasure HTTP surface.
 func NewService(v *Vault) *Service { return &Service{vault: v} }
+
+// WithRetentionGate makes erasure refuse a subject still within a statutory retention
+// window (GDPR Art. 17(3)(b)). Without it, only manual legal holds block erasure.
+func (s *Service) WithRetentionGate(g RetentionGate) *Service {
+	s.retentionGate = g
+	return s
+}
 
 // Routes registers the erasure endpoints (admin-gated in the middleware).
 func (s *Service) Routes(mux *http.ServeMux) {
@@ -106,6 +124,20 @@ func (s *Service) erase(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	subj := r.PathValue("subject")
+	// A statutory retention window is a legal obligation to keep the record (GDPR Art.
+	// 17(3)(b)), so it blocks erasure just as a manual hold does — a caller-fixable 409
+	// (the record ages out), not a fault.
+	if s.retentionGate != nil {
+		retained, reason, err := s.retentionGate.Retained(r.Context(), id, subj)
+		if err != nil {
+			httpx.Error(w, http.StatusInternalServerError, err)
+			return
+		}
+		if retained {
+			httpx.Error(w, http.StatusConflict, fmt.Errorf("erasure: %s", reason))
+			return
+		}
+	}
 	if err := s.vault.Erase(r.Context(), id, subj); err != nil {
 		// A subject under legal hold is a caller-fixable state (release the hold),
 		// not a server fault — 409, with the reason, not a 500.
