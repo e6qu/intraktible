@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/e6qu/intraktible/platform/eventlog"
@@ -223,6 +224,90 @@ func TestMultiReplicaNoDoubleApplyPostgres(t *testing.T) {
 	}
 	if got := readCount(t, st); got != n {
 		t.Fatalf("multi-replica double-apply on Postgres: count=%d, want %d", got, n)
+	}
+}
+
+// TestConcurrentBootstrapNoDoubleApply is the P8-4 cold-start case: two runtimes
+// bootstrap a fresh, PRE-POPULATED durable store at the same time. Each would run a
+// full rebuild from offset 0; without coordination they interleave and double-apply
+// the counter. After the fix, exactly N applies survive between them.
+func TestConcurrentBootstrapNoDoubleApply(t *testing.T) {
+	st, err := store.NewSQLite(filepath.Join(t.TempDir(), "p.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = st.Close() }()
+	log := eventlog.NewMemory()
+	const n = 600
+	for i := 0; i < n; i++ {
+		appendEvent(t, log, "e")
+	}
+
+	rtA := projection.New(log, st, counter{})
+	rtB := projection.New(log, st, counter{})
+	ctxA, cancelA := context.WithCancel(context.Background())
+	defer cancelA()
+	ctxB, cancelB := context.WithCancel(context.Background())
+	defer cancelB()
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	var errA, errB error
+	go func() { defer wg.Done(); errA = rtA.Start(ctxA) }()
+	go func() { defer wg.Done(); errB = rtB.Start(ctxB) }()
+	wg.Wait()
+	if errA != nil || errB != nil {
+		t.Fatalf("bootstrap errors: A=%v B=%v", errA, errB)
+	}
+	if got := readCount(t, st); got != n {
+		t.Fatalf("concurrent-bootstrap double-apply: count=%d, want %d", got, n)
+	}
+}
+
+// TestConcurrentBootstrapNoDoubleApplyPostgres proves the bootstrap coordination on
+// real Postgres, where two replicas' bootstrap transactions run concurrently and must
+// serialize on the checkpoint row (created via INSERT … ON CONFLICT DO NOTHING, then
+// locked FOR UPDATE). Skipped without a DSN.
+func TestConcurrentBootstrapNoDoubleApplyPostgres(t *testing.T) {
+	dsn := os.Getenv("INTRAKTIBLE_TEST_POSTGRES")
+	if dsn == "" {
+		t.Skip("set INTRAKTIBLE_TEST_POSTGRES (a pgx DSN) to run the Postgres bootstrap test")
+	}
+	ctx := context.Background()
+	st, err := store.NewPostgres(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = st.Close() }()
+	if err := st.Reset(ctx, "_projection"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Reset(ctx, countCollection); err != nil {
+		t.Fatal(err)
+	}
+	log := eventlog.NewMemory()
+	const n = 200
+	for i := 0; i < n; i++ {
+		appendEvent(t, log, "e")
+	}
+
+	rtA := projection.New(log, st, counter{})
+	rtB := projection.New(log, st, counter{})
+	ctxA, cancelA := context.WithCancel(ctx)
+	defer cancelA()
+	ctxB, cancelB := context.WithCancel(ctx)
+	defer cancelB()
+	var wg sync.WaitGroup
+	wg.Add(2)
+	var errA, errB error
+	go func() { defer wg.Done(); errA = rtA.Start(ctxA) }()
+	go func() { defer wg.Done(); errB = rtB.Start(ctxB) }()
+	wg.Wait()
+	if errA != nil || errB != nil {
+		t.Fatalf("bootstrap errors: A=%v B=%v", errA, errB)
+	}
+	if got := readCount(t, st); got != n {
+		t.Fatalf("concurrent-bootstrap double-apply on Postgres: count=%d, want %d", got, n)
 	}
 }
 

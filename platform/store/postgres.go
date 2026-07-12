@@ -181,6 +181,22 @@ func (t *pgTx) Put(ctx context.Context, collection, key string, doc json.RawMess
 	return nil
 }
 
+// PutIfAbsent inserts the doc only when (collection,key) is not already present; an
+// existing row is left untouched. A concurrent inserter of the same key blocks on the
+// first inserter's uncommitted row and then no-ops — so it serializes racers without
+// clobbering a value another transaction committed (used to coordinate the projection
+// bootstrap across replicas).
+func (t *pgTx) PutIfAbsent(ctx context.Context, collection, key string, doc json.RawMessage) error {
+	_, err := t.tx.Exec(ctx,
+		`INSERT INTO docs (collection, key, doc) VALUES ($1, $2, $3)
+		 ON CONFLICT (collection, key) DO NOTHING`,
+		collection, key, []byte(doc))
+	if err != nil {
+		return fmt.Errorf("store: postgres tx put-if-absent %s/%s: %w", collection, key, err)
+	}
+	return nil
+}
+
 func (t *pgTx) Get(ctx context.Context, collection, key string) (json.RawMessage, bool, error) {
 	return t.get(ctx, collection, key, false)
 }
