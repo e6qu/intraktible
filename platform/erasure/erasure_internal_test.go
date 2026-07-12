@@ -323,3 +323,70 @@ func TestHoldValidation(t *testing.T) {
 		t.Fatalf("ListHeld = %v (len %d), err %v", held, len(held), err)
 	}
 }
+
+func TestRetentionSchedulerAppliesPolicyAndSkipsHolds(t *testing.T) {
+	ctx := context.Background()
+	v := NewVault(store.NewMemory())
+	base := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	v.now = func() time.Time { return base }
+
+	a := identity.Identity{Org: "oa", Workspace: "w", Actor: "admin"}
+	b := identity.Identity{Org: "ob", Workspace: "w", Actor: "admin"}
+	// Tenant a: two old subjects, one held; a 30-day policy. Tenant b: an old subject
+	// but NO policy — it must never be swept.
+	for _, s := range []string{"keep", "drop"} {
+		if _, err := v.Seal(ctx, a, s, []byte("pii")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := v.Seal(ctx, b, "b1", []byte("pii")); err != nil {
+		t.Fatal(err)
+	}
+	if err := v.Hold(ctx, a, "keep", "hold"); err != nil {
+		t.Fatal(err)
+	}
+	if err := v.SetRetentionPolicy(ctx, a, 30); err != nil {
+		t.Fatal(err)
+	}
+
+	sched := NewScheduler(v).WithNow(func() time.Time { return base.Add(365 * 24 * time.Hour) })
+	// The vault's own clock must also advance so RetentionSweep sees the subjects as
+	// expired (the sweep reads v.now, not the scheduler's).
+	v.now = func() time.Time { return base.Add(365 * 24 * time.Hour) }
+	sum, err := sched.Tick(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum.Erased != 1 {
+		t.Fatalf("erased %d, want 1 (held exempt, other tenant has no policy)", sum.Erased)
+	}
+	if e, _ := v.Erased(ctx, a, "keep"); e {
+		t.Fatal("held subject must survive the scheduled sweep")
+	}
+	if e, _ := v.Erased(ctx, a, "drop"); !e {
+		t.Fatal("expired unheld subject must be erased")
+	}
+	if e, _ := v.Erased(ctx, b, "b1"); e {
+		t.Fatal("a tenant without a policy must never be swept")
+	}
+}
+
+func TestRetentionPolicyRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	v := NewVault(store.NewMemory())
+	id := identity.Identity{Org: "o", Workspace: "w", Actor: "admin"}
+	// Default: no policy → zero days (off).
+	p, err := v.RetentionPolicyFor(ctx, id)
+	if err != nil || p.RetentionDays != 0 {
+		t.Fatalf("default policy = %+v err=%v", p, err)
+	}
+	if err := v.SetRetentionPolicy(ctx, id, 90); err != nil {
+		t.Fatal(err)
+	}
+	if p, _ := v.RetentionPolicyFor(ctx, id); p.RetentionDays != 90 || p.Org != "o" {
+		t.Fatalf("stored policy = %+v", p)
+	}
+	if err := v.SetRetentionPolicy(ctx, id, -1); err == nil {
+		t.Fatal("negative retention days must be rejected")
+	}
+}

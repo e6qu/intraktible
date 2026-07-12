@@ -35,7 +35,7 @@ Format: `ID | severity | component | description | status`.
 
 ## Phase 11 — regulatory data lifecycle (PARTIAL; see PLAN.md §8b)
 - `P11-1 | — | platform/erasure | legal hold: a subject can be held (Hold/ReleaseHold/OnHold/ListHeld) — survives retention (RetentionSweep skips held) and blocks erasure (Erase → ErrHeld, 409); serialized with the shred via v.mu; Hold refuses unknown/erased subjects, ReleaseHold refuses not-held (fail loud). Admin endpoints POST .../hold, POST .../release, GET /v1/erasure/holds (control-plane, allowlisted in the openapi drift test like the other erasure routes). Tests: hold-blocks-erase, hold-exempts-retention, validation. | shipped`
-- `P11-2 | — | platform/erasure + scheduler | open: persisted, scheduled policy-driven retention sweep (today retention is a manual POST /v1/erasure/retention?max_age_days=N). Legal hold (P11-1) is the safety prerequisite. | planned`
+- `P11-2 | — | platform/erasure | scheduled policy-driven retention: a per-tenant RetentionPolicy (opt-in, 0=off) + erasure.Scheduler (Tick/Run on the shared sweep cadence, wired into server sweeps) that crypto-shreds subjects past their window and SKIPS held subjects; a tenant without a policy is never swept. GET/PUT /v1/erasure/retention-policy. Tests: scheduler-applies-policy-skips-holds-and-other-tenants, policy round-trip + negative rejection. | shipped`
 - `P11-3 | — | platform | open: consent/purpose tracking; FCRA/GLBA disclosure workflows. | planned`
 
 ## Open — audit round 3 (planned; sequenced into PRs, see PLAN.md roadmap)

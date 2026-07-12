@@ -24,6 +24,24 @@ import (
 
 const collection = "erasure_subjects"
 
+// policyCollection holds the per-tenant retention policy (one doc per tenant). It is
+// separate from the subject records so listing policies for the scheduled sweep never
+// scans subjects. policyKey is the fixed per-tenant doc id.
+const (
+	policyCollection = "erasure_retention_policy"
+	policyKey        = "policy"
+)
+
+// RetentionPolicy is a tenant's data-retention setting: crypto-shred a subject once
+// it is older than RetentionDays. Zero disables automatic retention (the default) —
+// nothing is auto-erased. Org/Workspace are stored so the cross-tenant scheduler can
+// recover the tenant from a policy doc.
+type RetentionPolicy struct {
+	Org           string `json:"org"`
+	Workspace     string `json:"workspace"`
+	RetentionDays int    `json:"retention_days"`
+}
+
 // ErrErased is returned when sealing or opening data for a subject whose key has
 // been destroyed — the subject's data is irrecoverable, by design.
 var ErrErased = errors.New("erasure: subject has been erased")
@@ -286,6 +304,36 @@ func (v *Vault) RetentionSweep(ctx context.Context, id identity.Identity, maxAge
 		}
 	}
 	return erased, nil
+}
+
+// SetRetentionPolicy stores a tenant's retention setting. days must be >= 0; 0
+// disables automatic retention. It does not itself erase anything — the scheduled
+// sweep applies it.
+func (v *Vault) SetRetentionPolicy(ctx context.Context, id identity.Identity, days int) error {
+	if days < 0 {
+		return fmt.Errorf("erasure: retention_days must be >= 0")
+	}
+	p := RetentionPolicy{Org: id.Org, Workspace: id.Workspace, RetentionDays: days}
+	return store.PutDoc(ctx, v.store, policyCollection, store.Key(id.Org, id.Workspace, policyKey), p)
+}
+
+// RetentionPolicyFor returns a tenant's retention policy (a zero-days default when
+// none is set — i.e. retention off).
+func (v *Vault) RetentionPolicyFor(ctx context.Context, id identity.Identity) (RetentionPolicy, error) {
+	p, ok, err := store.GetDoc[RetentionPolicy](ctx, v.store, policyCollection, store.Key(id.Org, id.Workspace, policyKey))
+	if err != nil {
+		return RetentionPolicy{}, err
+	}
+	if !ok {
+		return RetentionPolicy{Org: id.Org, Workspace: id.Workspace}, nil
+	}
+	return p, nil
+}
+
+// ListRetentionPolicies returns every tenant's retention policy — the cross-tenant
+// scan the scheduled sweep iterates.
+func (v *Vault) ListRetentionPolicies(ctx context.Context) ([]RetentionPolicy, error) {
+	return store.ListDocs[RetentionPolicy](ctx, v.store, policyCollection, "")
 }
 
 func (v *Vault) load(ctx context.Context, id identity.Identity, subj string) (subject, bool, error) {

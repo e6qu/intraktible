@@ -30,7 +30,45 @@ func (s *Service) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/erasure/subjects/{subject}/hold", s.hold)
 	mux.HandleFunc("POST /v1/erasure/subjects/{subject}/release", s.release)
 	mux.HandleFunc("GET /v1/erasure/holds", s.holds)
+	mux.HandleFunc("GET /v1/erasure/retention-policy", s.getPolicy)
+	mux.HandleFunc("PUT /v1/erasure/retention-policy", s.setPolicy)
 	mux.HandleFunc("POST /v1/erasure/retention", s.retention)
+}
+
+func (s *Service) getPolicy(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	p, err := s.vault.RetentionPolicyFor(r.Context(), id)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, p)
+}
+
+type policyRequest struct {
+	RetentionDays int `json:"retention_days"`
+}
+
+// setPolicy stores the tenant's retention window (0 disables). The scheduled sweep
+// applies it; nothing is erased by this call.
+func (s *Service) setPolicy(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	var req policyRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := s.vault.SetRetentionPolicy(r.Context(), id, req.RetentionDays); err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"retention_days": req.RetentionDays})
 }
 
 func (s *Service) list(w http.ResponseWriter, r *http.Request) {

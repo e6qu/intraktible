@@ -248,6 +248,10 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 	// The erasure vault crypto-shreds PII: it backs the /v1/erasure admin surface
 	// and seals the Context Layer's configured PII event fields per subject.
 	erasureVault := erasure.NewVault(st)
+	// Retention: on the shared sweep cadence, apply each tenant's retention policy
+	// (crypto-shred subjects past their window, skipping legal holds). Opt-in and off
+	// by default — a tenant with no policy is never swept.
+	retentionScheduler := erasure.NewScheduler(erasureVault).WithNow(now)
 	erasurePIIFields := splitCSV(os.Getenv("INTRAKTIBLE_ERASURE_PII_FIELDS"))
 
 	if enabled(cfg.Modules, "hello") {
@@ -433,6 +437,9 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 	if caseScheduler != nil {
 		sweeps = append(sweeps, caseScheduler)
 	}
+	// Retention runs regardless of module (erasure is a platform capability); it is a
+	// no-op for every tenant without a retention policy.
+	sweeps = append(sweeps, retentionScheduler)
 	if err := startTimedSweeps(ctx, os.Getenv("INTRAKTIBLE_MONITOR_INTERVAL"), sweeps); err != nil {
 		return nil, err
 	}

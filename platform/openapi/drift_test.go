@@ -80,6 +80,8 @@ var internalRoutes = map[string]string{
 	"POST /v1/erasure/subjects/{subject}/hold":    "privacy/compliance control plane (legal-hold admin)",
 	"POST /v1/erasure/subjects/{subject}/release": "privacy/compliance control plane (legal-hold admin)",
 	"GET /v1/erasure/holds":                       "privacy/compliance control plane (legal-hold admin)",
+	"GET /v1/erasure/retention-policy":            "privacy/compliance control plane (retention admin)",
+	"PUT /v1/erasure/retention-policy":            "privacy/compliance control plane (retention admin)",
 	"POST /v1/erasure/retention":                  "privacy/compliance control plane (retention admin)",
 }
 

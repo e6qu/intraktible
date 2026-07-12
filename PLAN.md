@@ -386,14 +386,16 @@ them hardest-blocker-first; each phase is a direction, not a committed date.
   not an optional capability the caller feels for (see the no-fallbacks note below). _Still open:_
   `history.ListPage` still loads a tenant's full decision set to paginate (a bigger change — a paginated
   index projection).
-- **Phase 11 — Regulatory data lifecycle — 🚧 partial.** **Legal hold shipped:** a subject can be put
-  under a legal/litigation hold (`platform/erasure`), which makes it **survive retention** and **blocks
-  erasure** (destroying data under hold is spoliation) — the existing `RetentionSweep` now skips held
-  subjects and `Erase` refuses them with `ErrHeld` (a 409, "release the hold first"), all serialized
-  with the crypto-shred so a hold can't race a shred. Admin endpoints: hold / release / list-held. This
-  is the safety brake that must exist *before* retention is automated. _Still open:_ a persisted,
-  scheduled policy-driven retention sweep (today retention is a manual admin call); and consent/purpose
-  tracking + FCRA/GLBA disclosure workflows.
+- **Phase 11 — Regulatory data lifecycle — 🚧 partial.** **Legal hold + automated retention shipped**
+  (`platform/erasure`). Legal hold: a subject can be put under a legal/litigation hold, which makes it
+  **survive retention** and **blocks erasure** (destroying data under hold is spoliation) — `Erase`
+  refuses a held subject with `ErrHeld` (a 409, "release the hold first"), serialized with the
+  crypto-shred so a hold can't race a shred. Automated retention: a **per-tenant retention policy**
+  (opt-in, off by default) drives a **scheduled sweep** (`erasure.Scheduler`, on the shared sweep
+  cadence) that crypto-shreds subjects past their window and **skips held subjects** — a tenant with no
+  policy is never swept, so the timer never erases data no one asked to expire. Admin endpoints:
+  hold/release/list-held, get/set retention-policy. _Still open:_ consent/purpose tracking and FCRA/GLBA
+  disclosure workflows.
 
 **Parallel non-code track (organisational, not code):** SOC 2 Type II, ISO 27001, independent
 penetration testing, data-provider commercial relationships, model-validation staffing, and reference
