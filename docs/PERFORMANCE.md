@@ -55,8 +55,11 @@ Environment: `darwin/arm64`, Apple M4 Pro, Go's default settings.
 - **No projection under load.** The benchmark exercises the synchronous decide (which
   appends events); it does not measure the async projection runtime keeping read models
   current under a sustained write rate, which is single-node today.
-- **No chaos / soak.** There is no failure-injection (slow connector, dying store) or
-  sustained multi-hour soak evidence. Graceful degradation under those conditions is
-  asserted by design (fail-loud, bounded per-node eval timeout) but not yet measured.
+- **Partial failure-injection; no soak.** The decide boundary's fail-loud guarantees are
+  now tested (`decision-engine/decide_resilience_test.go`): a one-nanosecond evaluation
+  budget makes a decision fail quickly instead of hanging, and a failing Connect, AI, or
+  Predict node fails the decision loudly rather than completing with that step's data
+  silently missing. Not yet covered: a dying/slow *store* mid-decide, and sustained
+  multi-hour soak evidence (no leak / no drift under continuous load).
 - **One machine, one run.** Absolute numbers are machine- and run-specific; treat the
   ratios (core scaling) as more durable than the absolute nanoseconds.
