@@ -16,6 +16,7 @@
     issueAdverseAction,
     getReconsideration,
     recordReconsideration,
+    decisionExplanation,
     ApiError,
     type Decision,
     type Counterfactual,
@@ -47,7 +48,7 @@
   }
 
   let notifying = $state(false);
-  // Generate the ECOA / Reg B adverse-action notice for a declined decision and offer
+  // Generate the ECOA / Regulation B adverse-action notice for a declined decision and offer
   // it as a download. Fetched through the app fetch (so the demo's mock serves it) and
   // wrapped in a Blob — an <a href> would escape the mock and 404 on the static host.
   async function downloadNotice() {
@@ -65,6 +66,25 @@
       toast.error(msg(e));
     } finally {
       notifying = false;
+    }
+  }
+  let explaining = $state(false);
+  // Download the GDPR Article 22 "how this decision was made & your rights" explanation.
+  async function downloadExplanation() {
+    explaining = true;
+    try {
+      const text = await decisionExplanation(key, id);
+      const url = URL.createObjectURL(new Blob([text], { type: 'text/markdown' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `decision-explanation-${id}.md`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+      toast.success('Downloaded the decision explanation.');
+    } catch (e) {
+      toast.error(msg(e));
+    } finally {
+      explaining = false;
     }
   }
   // The recorded issuance for this decline (null = not yet served). Loaded best-effort
@@ -99,7 +119,7 @@
       issuing = false;
     }
   }
-  // The Art. 22 / ECOA human review of a solely-automated decline (null = none yet).
+  // The Article 22 / ECOA human review of a solely-automated decline (null = none yet).
   let review = $state<Reconsideration | null>(null);
   let reviewBasis = $state('applicant_contest');
   let reviewOutcome = $state('upheld');
@@ -353,12 +373,27 @@
     {:else}
       <p class="muted">No reason codes were emitted for this decision.</p>
     {/if}
+    {#if d.disposition}
+      <div class="aa-row">
+        <button class="notice-btn" onclick={downloadExplanation} disabled={explaining}>
+          <Icon name="shield" />
+          {explaining ? 'Generating…' : 'Decision explanation'}
+        </button>
+        <span class="muted small"
+          >How this decision was made and the data subject's rights — to obtain human intervention,
+          to contest the outcome, and to an explanation — as required by Article 22 of the European
+          Union's General Data Protection Regulation (and Articles 22A to 22D of the UK Data (Use
+          and Access) Act 2025).</span
+        >
+      </div>
+    {/if}
     {#if d.disposition === 'decline'}
       <h2>
         Adverse-action notice
         <Hint label="Adverse action"
-          >A declined applicant must be served an ECOA / Reg B notice stating the specific principal
-          reasons (and, if a consumer report was used, the FCRA §615 disclosures). Recording the
+          >A declined applicant must be served a notice under the US Equal Credit Opportunity Act
+          (Regulation B) stating the specific principal reasons — and, if a consumer report was
+          used, the Section 615 disclosures of the US Fair Credit Reporting Act. Recording the
           issuance is the durable proof — who served it, when, how, and a hash of the exact
           document.</Hint
         >
@@ -393,7 +428,8 @@
         <div class="aa-issue">
           <label class="aa-check">
             <input type="checkbox" bind:checked={issueConsumerReport} onchange={loadIssuance} />
-            Decision used a consumer / credit report (adds FCRA §615 disclosures)
+            Decision used a consumer / credit report (adds the US Fair Credit Reporting Act, Section 615
+            disclosures)
           </label>
           <div class="aa-controls">
             <select bind:value={issueMethod} aria-label="delivery method">
@@ -415,10 +451,11 @@
 
       <h2>
         Human review
-        <Hint label="Art. 22 / reconsideration"
+        <Hint label="Human review"
           >A decline reached with no person in the loop can be contested: a human reviewer upholds
-          or overturns it, with a stated rationale. This is the GDPR Art. 22 right to human
-          intervention and the ECOA reconsideration record — the original decision stays immutable.</Hint
+          or overturns it, with a stated rationale. This is the right to human intervention under
+          Article 22 of the EU General Data Protection Regulation, and the reconsideration record
+          under the US Equal Credit Opportunity Act — the original decision stays immutable.</Hint
         >
       </h2>
       {#if review}
@@ -443,7 +480,8 @@
           This decision already had a person in the loop{d.case_id
             ? ' (routed to a review case)'
             : ''}
-          — the Art. 22 human-intervention record is for a solely-automated decline.
+          — the human-intervention record (Article 22 of the EU General Data Protection Regulation) is
+          for a solely-automated decline.
         </p>
       {:else if canIssue}
         <div class="aa-issue">

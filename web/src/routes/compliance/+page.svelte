@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <!-- The compliance officer's home: the tenant's regulatory work in one place — the
-     adverse-action 30-day queue, the human-review (Art. 22) audit trail, the lawful-
+     adverse-action 30-day queue, the human-review (Article 22) audit trail, the lawful-
      basis / consent overview, and (for admins) data-governance holds & retention.
      Reads degrade per-section: a viewer sees the queue/audit/consent; the admin-only
      governance card appears only for admins (the erasure reads are admin-gated). -->
@@ -164,8 +164,8 @@
           >
         </h2>
         <p class="hint">
-          Declined decisions awaiting their ECOA / Reg B notice. The age is the 30-day clock; a row
-          past 30 days is flagged.
+          Declined decisions awaiting their notice under the US Equal Credit Opportunity Act
+          (Regulation B). The age is the 30-day clock; a row past 30 days is flagged.
         </p>
         {#if pending.length === 0}
           <EmptyState
@@ -212,7 +212,8 @@
           >
         </h2>
         <p class="hint">
-          Solely-automated declines a person reviewed (GDPR Art. 22 / ECOA reconsideration).
+          Solely-automated declines a person reviewed — Article 22 of the EU General Data Protection
+          Regulation, and reconsideration under the US Equal Credit Opportunity Act.
         </p>
         {#if reviews.length === 0}
           <EmptyState
@@ -268,8 +269,8 @@
           </p>
         {/if}
         <p class="line">
-          GLBA sharing opt-outs <b>{optedOut}</b> — subjects who declined NPI sharing with nonaffiliated
-          third parties.
+          Information-sharing opt-outs <b>{optedOut}</b> — subjects who declined sharing of their nonpublic
+          personal information with unaffiliated third parties.
         </p>
       </section>
 

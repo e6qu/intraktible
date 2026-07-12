@@ -3228,6 +3228,22 @@ export interface Reconsideration {
   reviewed_at: string;
   reviewed_by: string;
 }
+// decisionExplanation fetches the GDPR Art. 22 subject-facing explanation of a decision
+// (how it was made, the factors, the subject's rights) as Markdown text, for the caller
+// to download as a Blob.
+export async function decisionExplanation(
+  key: string,
+  decisionId: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<string> {
+  const res = await fetcher(`/v1/decisions/${encodeURIComponent(decisionId)}/explanation`, {
+    headers: authHeaders(key)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'get decision explanation');
+  }
+  return res.text();
+}
 // getReconsideration returns the recorded human review for a decision, if any.
 export async function getReconsideration(
   key: string,
