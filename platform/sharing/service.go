@@ -5,7 +5,9 @@ package sharing
 import (
 	"fmt"
 	"net/http"
+	"strings"
 
+	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/httpx"
 	"github.com/e6qu/intraktible/platform/store"
 )
@@ -25,8 +27,10 @@ func New(cmd *Handler, st store.Store) *Service {
 
 // Routes registers the sharing endpoints.
 func (s *Service) Routes(mux *http.ServeMux) {
-	mux.HandleFunc("POST /v1/sharing/opt-out", s.optOut)
-	mux.HandleFunc("POST /v1/sharing/opt-in", s.optIn)
+	// Opt-out and opt-in (rescind) are mirror elections sharing one handler that
+	// dispatches on the path — the record differs only in direction.
+	mux.HandleFunc("POST /v1/sharing/opt-out", s.elect)
+	mux.HandleFunc("POST /v1/sharing/opt-in", s.elect)
 	// The subject is an opaque "type/id" string, so it is a query parameter, not a
 	// path segment (a slash in a segment would misroute).
 	mux.HandleFunc("GET /v1/sharing", s.status)
@@ -38,7 +42,7 @@ type optOutRequest struct {
 	Reason  string `json:"reason,omitempty"`
 }
 
-func (s *Service) optOut(w http.ResponseWriter, r *http.Request) {
+func (s *Service) elect(w http.ResponseWriter, r *http.Request) {
 	id, ok := httpx.Caller(w, r)
 	if !ok {
 		return
@@ -48,25 +52,15 @@ func (s *Service) optOut(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, err)
 		return
 	}
-	e, err := s.cmd.OptOut(r.Context(), id, req.Subject, req.Reason)
-	if err != nil {
-		httpx.Error(w, http.StatusBadRequest, err)
-		return
+	var (
+		e   eventlog.Envelope
+		err error
+	)
+	if strings.HasSuffix(r.URL.Path, "/opt-in") {
+		e, err = s.cmd.Rescind(r.Context(), id, req.Subject)
+	} else {
+		e, err = s.cmd.OptOut(r.Context(), id, req.Subject, req.Reason)
 	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"event_id": e.ID, "seq": e.Seq})
-}
-
-func (s *Service) optIn(w http.ResponseWriter, r *http.Request) {
-	id, ok := httpx.Caller(w, r)
-	if !ok {
-		return
-	}
-	var req optOutRequest
-	if err := httpx.DecodeJSON(r, &req); err != nil {
-		httpx.Error(w, http.StatusBadRequest, err)
-		return
-	}
-	e, err := s.cmd.Rescind(r.Context(), id, req.Subject)
 	if err != nil {
 		httpx.Error(w, http.StatusBadRequest, err)
 		return
