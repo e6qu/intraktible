@@ -205,6 +205,13 @@ func (l *PostgresLog) ReadTenantStream(ctx context.Context, org, workspace, stre
 	if err != nil {
 		return nil, fmt.Errorf("eventlog: postgres read tenant-stream: %w", err)
 	}
+	return scanEventRows(rows)
+}
+
+// scanEventRows drains a pgx result of the standard event columns into Envelopes in
+// row order (the query decides order), closing the rows. Shared by the full and the
+// tenant-stream reads so the scan lives in one place.
+func scanEventRows(rows pgx.Rows) ([]Envelope, error) {
 	defer rows.Close()
 	var out []Envelope
 	for rows.Next() {
@@ -212,7 +219,7 @@ func (l *PostgresLog) ReadTenantStream(ctx context.Context, org, workspace, stre
 		var seq int64
 		var ts, payload string
 		if err := rows.Scan(&seq, &e.ID, &e.Org, &e.Workspace, &e.Stream, &e.Type, &ts, &e.Actor, &payload); err != nil {
-			return nil, fmt.Errorf("eventlog: postgres scan tenant-stream: %w", err)
+			return nil, fmt.Errorf("eventlog: postgres scan: %w", err)
 		}
 		if seq <= 0 {
 			return nil, fmt.Errorf("eventlog: postgres non-positive seq %d", seq)
@@ -227,7 +234,7 @@ func (l *PostgresLog) ReadTenantStream(ctx context.Context, org, workspace, stre
 		out = append(out, e)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("eventlog: postgres read tenant-stream rows: %w", err)
+		return nil, fmt.Errorf("eventlog: postgres read rows: %w", err)
 	}
 	return out, nil
 }
@@ -256,31 +263,7 @@ func (l *PostgresLog) readFrom(ctx context.Context, fromSeq uint64, limit int) (
 	if err != nil {
 		return nil, fmt.Errorf("eventlog: postgres read: %w", err)
 	}
-	defer rows.Close()
-	var out []Envelope
-	for rows.Next() {
-		var e Envelope
-		var seq int64
-		var ts, payload string
-		if err := rows.Scan(&seq, &e.ID, &e.Org, &e.Workspace, &e.Stream, &e.Type, &ts, &e.Actor, &payload); err != nil {
-			return nil, fmt.Errorf("eventlog: postgres scan: %w", err)
-		}
-		if seq <= 0 {
-			return nil, fmt.Errorf("eventlog: postgres non-positive seq %d", seq)
-		}
-		t, err := time.Parse(time.RFC3339Nano, ts)
-		if err != nil {
-			return nil, fmt.Errorf("eventlog: postgres parse time at seq %d: %w", seq, err)
-		}
-		e.Seq = uint64(seq)
-		e.Time = t
-		e.Payload = []byte(payload)
-		out = append(out, e)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("eventlog: postgres read rows: %w", err)
-	}
-	return out, nil
+	return scanEventRows(rows)
 }
 
 // Subscribe returns events the poller publishes after the call.

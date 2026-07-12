@@ -381,26 +381,17 @@ type modelDecisionRequest struct {
 	Reason    string `json:"reason,omitempty"`
 }
 
-// approveModel is the checker side: a different actor approves a pending request.
+// approveModel / rejectModel are the checker side: a different actor decides a pending
+// request. They share modelApprovalDecision (the only difference is which command runs).
 func (s *Service) approveModel(w http.ResponseWriter, r *http.Request) {
-	id, ok := httpx.Caller(w, r)
-	if !ok {
-		return
-	}
-	var req modelDecisionRequest
-	if err := httpx.DecodeJSON(r, &req); err != nil {
-		httpx.Error(w, http.StatusBadRequest, err)
-		return
-	}
-	e, err := s.cmd.ApproveModelApproval(r.Context(), id, r.PathValue("name"), req.RequestID, req.Reason)
-	if err != nil {
-		httpx.Error(w, http.StatusBadRequest, err)
-		return
-	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"event_id": e.ID, "seq": e.Seq})
+	s.modelApprovalDecision(w, r, s.cmd.ApproveModelApproval)
 }
 
 func (s *Service) rejectModel(w http.ResponseWriter, r *http.Request) {
+	s.modelApprovalDecision(w, r, s.cmd.RejectModelApproval)
+}
+
+func (s *Service) modelApprovalDecision(w http.ResponseWriter, r *http.Request, decide func(context.Context, identity.Identity, string, string, string) (eventlog.Envelope, error)) {
 	id, ok := httpx.Caller(w, r)
 	if !ok {
 		return
@@ -410,7 +401,7 @@ func (s *Service) rejectModel(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, err)
 		return
 	}
-	e, err := s.cmd.RejectModelApproval(r.Context(), id, r.PathValue("name"), req.RequestID, req.Reason)
+	e, err := decide(r.Context(), id, r.PathValue("name"), req.RequestID, req.Reason)
 	if err != nil {
 		httpx.Error(w, http.StatusBadRequest, err)
 		return
