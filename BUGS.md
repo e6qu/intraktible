@@ -33,6 +33,11 @@ Format: `ID | severity | component | description | status`.
 ## No-fallbacks hardening (project rule: no fallbacks, fail loud)
 - `NF-1 | — | eventlog/store/decision-engine | removed the optional-interface fallbacks introduced this arc, making the capabilities REQUIRED (compiler-enforced) so no path can silently diverge: eventlog.Log.ReadTenantStream; store.Tx.GetForUpdate + PutIfAbsent (SQLite GetForUpdate = plain read under its Begin writer-lock; encTx delegates); command.ModelProvider.ApprovedForServing (the four-eyes model gate can no longer be silently skipped by a provider lacking it). | shipped`
 
+## Phase 11 — regulatory data lifecycle (PARTIAL; see PLAN.md §8b)
+- `P11-1 | — | platform/erasure | legal hold: a subject can be held (Hold/ReleaseHold/OnHold/ListHeld) — survives retention (RetentionSweep skips held) and blocks erasure (Erase → ErrHeld, 409); serialized with the shred via v.mu; Hold refuses unknown/erased subjects, ReleaseHold refuses not-held (fail loud). Admin endpoints POST .../hold, POST .../release, GET /v1/erasure/holds (control-plane, allowlisted in the openapi drift test like the other erasure routes). Tests: hold-blocks-erase, hold-exempts-retention, validation. | shipped`
+- `P11-2 | — | platform/erasure | scheduled policy-driven retention: a per-tenant RetentionPolicy (opt-in, 0=off) + erasure.Scheduler (Tick/Run on the shared sweep cadence, wired into server sweeps) that crypto-shreds subjects past their window and SKIPS held subjects; a tenant without a policy is never swept. GET/PUT /v1/erasure/retention-policy. Tests: scheduler-applies-policy-skips-holds-and-other-tenants, policy round-trip + negative rejection. | shipped`
+- `P11-3 | — | platform | open: consent/purpose tracking; FCRA/GLBA disclosure workflows. | planned`
+
 ## Open — audit round 3 (planned; sequenced into PRs, see PLAN.md roadmap)
 A third audit (code/security, a UI/UX review against screenshots of every page × persona × theme, and a competitive + API study vs. comparable decisioning and BPMN/DMN platforms) produced the backlog below. Grouped into healthy-sized PRs (one open at a time; no anemic PRs).
 

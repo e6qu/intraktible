@@ -234,3 +234,159 @@ func TestVaultRetentionSweep(t *testing.T) {
 		t.Fatal("new subject should survive retention")
 	}
 }
+
+func TestLegalHoldBlocksErase(t *testing.T) {
+	ctx := context.Background()
+	v := NewVault(store.NewMemory())
+	id := identity.Identity{Org: "o", Workspace: "w", Actor: "admin"}
+	if _, err := v.Seal(ctx, id, "s1", []byte("pii")); err != nil {
+		t.Fatal(err)
+	}
+	if err := v.Hold(ctx, id, "s1", "litigation X"); err != nil {
+		t.Fatal(err)
+	}
+	if held, _ := v.OnHold(ctx, id, "s1"); !held {
+		t.Fatal("subject should be on hold")
+	}
+	// A held subject cannot be erased.
+	if err := v.Erase(ctx, id, "s1"); !errors.Is(err, ErrHeld) {
+		t.Fatalf("Erase of a held subject = %v, want ErrHeld", err)
+	}
+	// Data is still readable (the key was not shredded).
+	sealed, _ := v.Seal(ctx, id, "s1", []byte("pii"))
+	if _, err := v.Open(ctx, id, "s1", sealed); err != nil {
+		t.Fatalf("held subject data must still open: %v", err)
+	}
+	// Releasing the hold re-enables erasure.
+	if err := v.ReleaseHold(ctx, id, "s1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := v.Erase(ctx, id, "s1"); err != nil {
+		t.Fatalf("Erase after release: %v", err)
+	}
+}
+
+func TestLegalHoldExemptsRetention(t *testing.T) {
+	ctx := context.Background()
+	v := NewVault(store.NewMemory())
+	id := identity.Identity{Org: "o", Workspace: "w", Actor: "admin"}
+	// Both subjects created "long ago".
+	base := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	v.now = func() time.Time { return base }
+	if _, err := v.Seal(ctx, id, "keep", []byte("pii")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := v.Seal(ctx, id, "drop", []byte("pii")); err != nil {
+		t.Fatal(err)
+	}
+	if err := v.Hold(ctx, id, "keep", "hold"); err != nil {
+		t.Fatal(err)
+	}
+	// Now is a year later; a 30-day retention makes both "expired".
+	v.now = func() time.Time { return base.Add(365 * 24 * time.Hour) }
+	n, err := v.RetentionSweep(ctx, id, 30*24*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("swept %d, want 1 (the held subject is exempt)", n)
+	}
+	if erased, _ := v.Erased(ctx, id, "keep"); erased {
+		t.Fatal("held subject must survive retention")
+	}
+	if erased, _ := v.Erased(ctx, id, "drop"); !erased {
+		t.Fatal("unheld expired subject must be erased")
+	}
+}
+
+func TestHoldValidation(t *testing.T) {
+	ctx := context.Background()
+	v := NewVault(store.NewMemory())
+	id := identity.Identity{Org: "o", Workspace: "w", Actor: "admin"}
+	if err := v.Hold(ctx, id, "ghost", "x"); err == nil {
+		t.Fatal("holding an unknown subject should fail")
+	}
+	if err := v.ReleaseHold(ctx, id, "ghost"); err == nil {
+		t.Fatal("releasing a non-held subject should fail")
+	}
+	if _, err := v.Seal(ctx, id, "s1", []byte("pii")); err != nil {
+		t.Fatal(err)
+	}
+	if err := v.Erase(ctx, id, "s1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := v.Hold(ctx, id, "s1", "x"); !errors.Is(err, ErrErased) {
+		t.Fatalf("holding an erased subject = %v, want ErrErased", err)
+	}
+	held, err := v.ListHeld(ctx, id)
+	if err != nil || len(held) != 0 {
+		t.Fatalf("ListHeld = %v (len %d), err %v", held, len(held), err)
+	}
+}
+
+func TestRetentionSchedulerAppliesPolicyAndSkipsHolds(t *testing.T) {
+	ctx := context.Background()
+	v := NewVault(store.NewMemory())
+	base := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	v.now = func() time.Time { return base }
+
+	a := identity.Identity{Org: "oa", Workspace: "w", Actor: "admin"}
+	b := identity.Identity{Org: "ob", Workspace: "w", Actor: "admin"}
+	// Tenant a: two old subjects, one held; a 30-day policy. Tenant b: an old subject
+	// but NO policy — it must never be swept.
+	for _, s := range []string{"keep", "drop"} {
+		if _, err := v.Seal(ctx, a, s, []byte("pii")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := v.Seal(ctx, b, "b1", []byte("pii")); err != nil {
+		t.Fatal(err)
+	}
+	if err := v.Hold(ctx, a, "keep", "hold"); err != nil {
+		t.Fatal(err)
+	}
+	if err := v.SetRetentionPolicy(ctx, a, 30); err != nil {
+		t.Fatal(err)
+	}
+
+	sched := NewScheduler(v).WithNow(func() time.Time { return base.Add(365 * 24 * time.Hour) })
+	// The vault's own clock must also advance so RetentionSweep sees the subjects as
+	// expired (the sweep reads v.now, not the scheduler's).
+	v.now = func() time.Time { return base.Add(365 * 24 * time.Hour) }
+	sum, err := sched.Tick(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum.Erased != 1 {
+		t.Fatalf("erased %d, want 1 (held exempt, other tenant has no policy)", sum.Erased)
+	}
+	if e, _ := v.Erased(ctx, a, "keep"); e {
+		t.Fatal("held subject must survive the scheduled sweep")
+	}
+	if e, _ := v.Erased(ctx, a, "drop"); !e {
+		t.Fatal("expired unheld subject must be erased")
+	}
+	if e, _ := v.Erased(ctx, b, "b1"); e {
+		t.Fatal("a tenant without a policy must never be swept")
+	}
+}
+
+func TestRetentionPolicyRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	v := NewVault(store.NewMemory())
+	id := identity.Identity{Org: "o", Workspace: "w", Actor: "admin"}
+	// Default: no policy → zero days (off).
+	p, err := v.RetentionPolicyFor(ctx, id)
+	if err != nil || p.RetentionDays != 0 {
+		t.Fatalf("default policy = %+v err=%v", p, err)
+	}
+	if err := v.SetRetentionPolicy(ctx, id, 90); err != nil {
+		t.Fatal(err)
+	}
+	if p, _ := v.RetentionPolicyFor(ctx, id); p.RetentionDays != 90 || p.Org != "o" {
+		t.Fatalf("stored policy = %+v", p)
+	}
+	if err := v.SetRetentionPolicy(ctx, id, -1); err == nil {
+		t.Fatal("negative retention days must be rejected")
+	}
+}

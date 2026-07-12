@@ -24,9 +24,32 @@ import (
 
 const collection = "erasure_subjects"
 
+// policyCollection holds the per-tenant retention policy (one doc per tenant). It is
+// separate from the subject records so listing policies for the scheduled sweep never
+// scans subjects. policyKey is the fixed per-tenant doc id.
+const (
+	policyCollection = "erasure_retention_policy"
+	policyKey        = "policy"
+)
+
+// RetentionPolicy is a tenant's data-retention setting: crypto-shred a subject once
+// it is older than RetentionDays. Zero disables automatic retention (the default) —
+// nothing is auto-erased. Org/Workspace are stored so the cross-tenant scheduler can
+// recover the tenant from a policy doc.
+type RetentionPolicy struct {
+	Org           string `json:"org"`
+	Workspace     string `json:"workspace"`
+	RetentionDays int    `json:"retention_days"`
+}
+
 // ErrErased is returned when sealing or opening data for a subject whose key has
 // been destroyed — the subject's data is irrecoverable, by design.
 var ErrErased = errors.New("erasure: subject has been erased")
+
+// ErrHeld is returned when erasing a subject under a legal hold. A hold survives
+// retention and blocks erasure entirely (destroying data under litigation hold is
+// spoliation) — the hold must be released first, deliberately.
+var ErrHeld = errors.New("erasure: subject is under a legal hold — release the hold before erasing")
 
 // subject is the stored per-subject record. Key is cleared on erasure (the
 // shred); the record is retained as a tombstone for listing and audit.
@@ -35,6 +58,11 @@ type subject struct {
 	Key     []byte     `json:"key,omitempty"`
 	Created time.Time  `json:"created"`
 	Erased  *time.Time `json:"erased,omitempty"`
+	// Held marks a legal/litigation hold: the subject survives retention and cannot
+	// be erased until released. HeldReason/HeldAt record why and when, for audit.
+	Held       bool       `json:"held,omitempty"`
+	HeldReason string     `json:"held_reason,omitempty"`
+	HeldAt     *time.Time `json:"held_at,omitempty"`
 }
 
 // Vault seals/opens subject PII and erases subjects (crypto-shredding).
@@ -138,6 +166,12 @@ func (v *Vault) Erase(ctx context.Context, id identity.Identity, subj string) er
 	if err != nil {
 		return err
 	}
+	// A legal hold blocks erasure outright — you cannot destroy data under
+	// litigation hold; release the hold first (checked under v.mu so a hold can't
+	// slip in between this check and the shred).
+	if ok && rec.Held {
+		return ErrHeld
+	}
 	now := v.now().UTC()
 	if !ok {
 		rec = subject{Subject: subj, Created: now}
@@ -147,6 +181,79 @@ func (v *Vault) Erase(ctx context.Context, id identity.Identity, subj string) er
 		rec.Erased = &now
 	}
 	return v.put(ctx, id, rec)
+}
+
+// Hold places a legal/litigation hold on a subject: it survives retention and
+// cannot be erased until released. It refuses to hold an already-erased subject
+// (there is nothing left to preserve) — fail loud rather than record a meaningless
+// hold. Serialized with erasure via v.mu so a hold can't race a concurrent shred.
+func (v *Vault) Hold(ctx context.Context, id identity.Identity, subj, reason string) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	rec, ok, err := v.load(ctx, id, subj)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("erasure: unknown subject %q", subj)
+	}
+	if rec.Erased != nil {
+		return ErrErased
+	}
+	now := v.now().UTC()
+	rec.Held, rec.HeldReason, rec.HeldAt = true, reason, &now
+	return v.put(ctx, id, rec)
+}
+
+// ReleaseHold lifts a subject's legal hold. It errors if the subject is unknown or
+// not held, so releasing is deliberate and observable rather than a silent no-op.
+func (v *Vault) ReleaseHold(ctx context.Context, id identity.Identity, subj string) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	rec, ok, err := v.load(ctx, id, subj)
+	if err != nil {
+		return err
+	}
+	if !ok || !rec.Held {
+		return fmt.Errorf("erasure: subject %q is not under a legal hold", subj)
+	}
+	rec.Held, rec.HeldReason, rec.HeldAt = false, "", nil
+	return v.put(ctx, id, rec)
+}
+
+// OnHold reports whether a subject is under a legal hold.
+func (v *Vault) OnHold(ctx context.Context, id identity.Identity, subj string) (bool, error) {
+	rec, ok, err := v.load(ctx, id, subj)
+	if err != nil || !ok {
+		return false, err
+	}
+	return rec.Held, nil
+}
+
+// Held is one subject under legal hold, for the compliance view.
+type Held struct {
+	Subject string    `json:"subject"`
+	Reason  string    `json:"reason,omitempty"`
+	Since   time.Time `json:"since"`
+}
+
+// ListHeld returns the subjects currently under a legal hold.
+func (v *Vault) ListHeld(ctx context.Context, id identity.Identity) ([]Held, error) {
+	recs, err := store.ListDocs[subject](ctx, v.store, collection, store.Key(id.Org, id.Workspace, ""))
+	if err != nil {
+		return nil, err
+	}
+	var out []Held
+	for _, r := range recs {
+		if r.Held {
+			h := Held{Subject: r.Subject, Reason: r.HeldReason}
+			if r.HeldAt != nil {
+				h.Since = *r.HeldAt
+			}
+			out = append(out, h)
+		}
+	}
+	return out, nil
 }
 
 // Erased reports whether a subject has been erased.
@@ -184,6 +291,11 @@ func (v *Vault) RetentionSweep(ctx context.Context, id identity.Identity, maxAge
 	cutoff := v.now().UTC().Add(-maxAge)
 	erased := 0
 	for _, r := range recs {
+		// A subject under a legal hold survives retention — skip it (Erase would
+		// refuse anyway with ErrHeld; skipping keeps the sweep going past it).
+		if r.Held {
+			continue
+		}
 		if r.Erased == nil && r.Created.Before(cutoff) {
 			if err := v.Erase(ctx, id, r.Subject); err != nil {
 				return erased, err
@@ -192,6 +304,36 @@ func (v *Vault) RetentionSweep(ctx context.Context, id identity.Identity, maxAge
 		}
 	}
 	return erased, nil
+}
+
+// SetRetentionPolicy stores a tenant's retention setting. days must be >= 0; 0
+// disables automatic retention. It does not itself erase anything — the scheduled
+// sweep applies it.
+func (v *Vault) SetRetentionPolicy(ctx context.Context, id identity.Identity, days int) error {
+	if days < 0 {
+		return fmt.Errorf("erasure: retention_days must be >= 0")
+	}
+	p := RetentionPolicy{Org: id.Org, Workspace: id.Workspace, RetentionDays: days}
+	return store.PutDoc(ctx, v.store, policyCollection, store.Key(id.Org, id.Workspace, policyKey), p)
+}
+
+// RetentionPolicyFor returns a tenant's retention policy (a zero-days default when
+// none is set — i.e. retention off).
+func (v *Vault) RetentionPolicyFor(ctx context.Context, id identity.Identity) (RetentionPolicy, error) {
+	p, ok, err := store.GetDoc[RetentionPolicy](ctx, v.store, policyCollection, store.Key(id.Org, id.Workspace, policyKey))
+	if err != nil {
+		return RetentionPolicy{}, err
+	}
+	if !ok {
+		return RetentionPolicy{Org: id.Org, Workspace: id.Workspace}, nil
+	}
+	return p, nil
+}
+
+// ListRetentionPolicies returns every tenant's retention policy — the cross-tenant
+// scan the scheduled sweep iterates.
+func (v *Vault) ListRetentionPolicies(ctx context.Context) ([]RetentionPolicy, error) {
+	return store.ListDocs[RetentionPolicy](ctx, v.store, policyCollection, "")
 }
 
 func (v *Vault) load(ctx context.Context, id identity.Identity, subj string) (subject, bool, error) {
