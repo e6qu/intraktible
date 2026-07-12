@@ -10,10 +10,15 @@
     listFlows,
     getFairLendingReport,
     fairLendingReportText,
+    getFairLendingConfig,
+    setFairLendingConfig,
+    getAdverseActionSettings,
+    setAdverseActionSettings,
     ApiError,
     type Flow,
     type FairLendingReport,
-    type FairLendingParams
+    type FairLendingParams,
+    type AdverseActionSettings
   } from '$lib/api';
   import { toast } from '$lib/toast';
 
@@ -22,13 +27,18 @@
   let flow = $state('');
   let attribute = $state('');
   let favorable = $state('approve');
+  let threshold = $state(0.8);
   let env = $state('');
+  let savingConfig = $state(false);
 
   let report = $state<FairLendingReport | null>(null);
   let loading = $state(true);
   let running = $state(false);
   let error = $state('');
   let forbidden = $state(false);
+
+  let settings = $state<AdverseActionSettings>({ creditor_name: '' });
+  let savingSettings = $state(false);
 
   // The report is admin-gated; probing the flow list surfaces a 403 up-front so the
   // page shows the restricted state instead of an empty form the user can't use.
@@ -38,12 +48,70 @@
     forbidden = false;
     try {
       flows = await listFlows(key);
-      if (flows.length > 0) flow = flows[0].flow_id;
+      if (flows.length > 0) {
+        flow = flows[0].flow_id;
+        await loadConfig();
+      }
+      settings = await getAdverseActionSettings(key);
     } catch (e) {
       if (e instanceof ApiError && e.status === 403) forbidden = true;
       else error = e instanceof Error ? e.message : String(e);
     } finally {
       loading = false;
+    }
+  }
+
+  // Prefill the controls from the selected flow's stored config, so the page opens on
+  // the flow's declared protected attribute rather than a blank form.
+  async function loadConfig() {
+    if (!flow) return;
+    report = null;
+    try {
+      const cfg = await getFairLendingConfig(key, flow);
+      attribute = cfg.attribute ?? '';
+      favorable = cfg.favorable || 'approve';
+      threshold = cfg.threshold && cfg.threshold > 0 ? cfg.threshold : 0.8;
+    } catch (e) {
+      // A missing config is not an error — leave the form as-is for the analyst.
+      if (!(e instanceof ApiError && e.status === 404)) {
+        error = e instanceof Error ? e.message : String(e);
+      }
+    }
+  }
+
+  async function saveConfig() {
+    if (!flow || !attribute.trim()) {
+      toast.error('Pick a flow and enter a protected-class attribute.');
+      return;
+    }
+    savingConfig = true;
+    try {
+      await setFairLendingConfig(key, flow, {
+        attribute: attribute.trim(),
+        favorable,
+        threshold
+      });
+      toast.success('Saved as the flow default.');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      savingConfig = false;
+    }
+  }
+
+  async function saveSettings() {
+    if (!settings.creditor_name.trim()) {
+      toast.error('A creditor name is required for adverse-action notices.');
+      return;
+    }
+    savingSettings = true;
+    try {
+      await setAdverseActionSettings(key, settings);
+      toast.success('Adverse-action settings saved.');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      savingSettings = false;
     }
   }
 
@@ -135,7 +203,7 @@
     <div class="controls">
       <label>
         <span>Flow</span>
-        <select bind:value={flow}>
+        <select bind:value={flow} onchange={loadConfig}>
           {#each flows as f (f.flow_id)}
             <option value={f.flow_id}>{f.name}</option>
           {/each}
@@ -154,11 +222,23 @@
         </select>
       </label>
       <label>
+        <span>Threshold</span>
+        <input type="number" min="0" max="1" step="0.05" bind:value={threshold} />
+      </label>
+      <label>
         <span>Environment <em>(optional)</em></span>
         <input bind:value={env} placeholder="all" spellcheck="false" />
       </label>
       <button class="btn primary" onclick={run} disabled={running || !flow}>
         {running ? 'Analysing…' : 'Run analysis'}
+      </button>
+      <button
+        class="btn"
+        onclick={saveConfig}
+        disabled={savingConfig || !flow}
+        title="Store this attribute, favorable outcome, and threshold as the flow's default — the governance report screens the flow against it."
+      >
+        {savingConfig ? 'Saving…' : 'Save as flow default'}
       </button>
     </div>
 
@@ -231,6 +311,39 @@
         </div>
       {/if}
     {/if}
+
+    <div class="settings">
+      <h2>Adverse-action notices</h2>
+      <p class="lede">
+        The creditor identification an ECOA / Reg B adverse-action notice must carry. A declined
+        decision's notice is generated on its decision page from its recorded reason codes and these
+        settings. A notice cannot be produced without a creditor name.
+      </p>
+      <div class="controls">
+        <label>
+          <span>Creditor name</span>
+          <input bind:value={settings.creditor_name} placeholder="Acme Bank, N.A." />
+        </label>
+        <label>
+          <span>Creditor address</span>
+          <input bind:value={settings.creditor_address} placeholder="1 Main St, City, ST 00000" />
+        </label>
+        <label>
+          <span>Creditor phone</span>
+          <input bind:value={settings.creditor_phone} placeholder="1-800-000-0000" />
+        </label>
+        <label>
+          <span>Enforcement agency <em>(optional)</em></span>
+          <input
+            bind:value={settings.enforcement_agency}
+            placeholder="defaults to the FTC reference"
+          />
+        </label>
+        <button class="btn primary" onclick={saveSettings} disabled={savingSettings}>
+          {savingSettings ? 'Saving…' : 'Save settings'}
+        </button>
+      </div>
+    </div>
   {/if}
 </section>
 
@@ -246,6 +359,14 @@
   .lede {
     color: var(--fg-muted);
     margin-top: 0;
+  }
+  .settings {
+    margin-top: 2rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid var(--border);
+  }
+  .settings h2 {
+    margin-bottom: 0.25rem;
   }
   .controls {
     display: flex;

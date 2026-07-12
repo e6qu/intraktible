@@ -376,10 +376,11 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 	// and agents, exportable as JSON / CSV / Markdown.
 	mrm.New(st).Routes(api)
 
-	// Fair lending: a read-only disparate-impact report — the adverse-impact ratio
-	// (four-fifths rule, ECOA / Reg B) of favorable-outcome rates across a
-	// protected-class attribute, folded from the recorded decision history.
-	fairlending.New(st).Routes(api)
+	// Fair lending: the disparate-impact report (adverse-impact ratio, four-fifths
+	// rule) parameterized by a first-class per-flow config, plus ECOA / Reg B
+	// adverse-action notice generation from a declined decision's recorded reason
+	// codes and the workspace creditor settings.
+	fairlending.New(fairlending.NewHandler(log).WithNow(now), st).Routes(api)
 
 	// Privacy: per-workspace sensitive-field masking, applied at read boundaries
 	// (decision history/exports). A platform capability, independent of modules.
@@ -629,7 +630,8 @@ func Projectors(modules string) []projection.Projector {
 	// Privacy masking config and the audit index are platform capabilities, projected
 	// regardless of which modules are enabled (so masking and the audit trail work in
 	// every profile). The audit projector re-indexes every event for tenant-scoped reads.
-	ps := []projection.Projector{privacy.Projector{}, comments.Projector{}, notifications.Projector{}, audit.Projector{}}
+	ps := []projection.Projector{privacy.Projector{}, comments.Projector{}, notifications.Projector{}, audit.Projector{},
+		fairlending.ConfigProjector{}, fairlending.SettingsProjector{}}
 	if enabled(modules, "hello") {
 		ps = append(ps, stats.Projector{})
 	}

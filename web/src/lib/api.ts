@@ -2952,6 +2952,95 @@ export async function fairLendingReportText(
   return res.text();
 }
 
+export interface FairLendingConfig {
+  flow_id: string;
+  attribute: string;
+  favorable: string;
+  threshold: number;
+  updated_at?: string;
+  updated_by?: string;
+}
+// getFairLendingConfig fetches a flow's stored fair-lending config (empty when unset).
+export async function getFairLendingConfig(
+  key: string,
+  flowId: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<FairLendingConfig> {
+  const res = await fetcher(`/v1/flows/${encodeURIComponent(flowId)}/fairlending`, {
+    headers: authHeaders(key)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'GET fair-lending config');
+  }
+  return (await res.json()) as FairLendingConfig;
+}
+// setFairLendingConfig stores a flow's protected-attribute / favorable / threshold (admin).
+export async function setFairLendingConfig(
+  key: string,
+  flowId: string,
+  body: { attribute: string; favorable?: string; threshold?: number },
+  fetcher: typeof fetch = recordingFetch
+): Promise<void> {
+  const res = await fetcher(`/v1/flows/${encodeURIComponent(flowId)}/fairlending`, {
+    method: 'PUT',
+    headers: { ...authHeaders(key), 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'PUT fair-lending config');
+  }
+}
+
+export interface AdverseActionSettings {
+  creditor_name: string;
+  creditor_address?: string;
+  creditor_phone?: string;
+  enforcement_agency?: string;
+  updated_at?: string;
+  updated_by?: string;
+}
+// getAdverseActionSettings fetches the workspace creditor identification for notices.
+export async function getAdverseActionSettings(
+  key: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<AdverseActionSettings> {
+  const res = await fetcher('/v1/fairlending/settings', { headers: authHeaders(key) });
+  if (!res.ok) {
+    return errorOrStatus(res, 'GET adverse-action settings');
+  }
+  return (await res.json()) as AdverseActionSettings;
+}
+// setAdverseActionSettings stores the workspace creditor identification (admin).
+export async function setAdverseActionSettings(
+  key: string,
+  body: AdverseActionSettings,
+  fetcher: typeof fetch = recordingFetch
+): Promise<void> {
+  const res = await fetcher('/v1/fairlending/settings', {
+    method: 'PUT',
+    headers: { ...authHeaders(key), 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'PUT adverse-action settings');
+  }
+}
+// adverseActionNotice fetches the ECOA / Reg B notice for a declined decision as text
+// (wrapped in a Blob download by the caller, so it survives the demo's fetch mock).
+export async function adverseActionNotice(
+  key: string,
+  decisionId: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<string> {
+  const res = await fetcher(`/v1/decisions/${encodeURIComponent(decisionId)}/adverse-action`, {
+    headers: authHeaders(key)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'generate adverse-action notice');
+  }
+  return res.text();
+}
+
 export async function listAgentRuns(
   key: string,
   name: string,

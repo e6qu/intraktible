@@ -43,6 +43,7 @@ type Params struct {
 	Attribute   string             // dot-path into the decision input naming the protected class (e.g. "applicant.gender")
 	Favorable   policy.Disposition // the disposition counted as favorable; defaults to approve
 	Environment string             // optional: restrict to one environment
+	Threshold   float64            // AIR threshold below which a group is flagged; <=0 uses FourFifths
 }
 
 // Group is one protected-class value's outcome tally and its AIR.
@@ -67,10 +68,11 @@ type Report struct {
 	Attribute   string             `json:"attribute"`
 	Favorable   policy.Disposition `json:"favorable"`
 	Environment string             `json:"environment,omitempty"`
+	Threshold   float64            `json:"threshold"` // the AIR threshold applied (the four-fifths default unless configured)
 	Groups      []Group            `json:"groups"`
 	Reference   string             `json:"reference"`  // value of the highest-rate group (the AIR denominator)
 	MinAIR      float64            `json:"min_air"`    // lowest AIR across the groups
-	Passes      bool               `json:"passes"`     // four-fifths rule holds across all groups
+	Passes      bool               `json:"passes"`     // threshold holds across all groups
 	Decisions   int                `json:"decisions"`  // scored decisions folded into the groups
 	Excluded    int                `json:"excluded"`   // completed decisions dropped (referred, no disposition, or attribute absent)
 	Groups2Plus bool               `json:"two_groups"` // at least two protected-class values were present
@@ -88,6 +90,10 @@ func Build(ctx context.Context, s store.Store, id identity.Identity, p Params, n
 	fav := p.Favorable
 	if fav == "" {
 		fav = policy.Approve
+	}
+	threshold := p.Threshold
+	if threshold <= 0 {
+		threshold = FourFifths
 	}
 
 	recs, err := history.List(ctx, s, id)
@@ -132,9 +138,9 @@ func Build(ctx context.Context, s store.Store, id identity.Identity, p Params, n
 	rep := Report{
 		GeneratedAt: now, Org: id.Org, Workspace: id.Workspace,
 		FlowID: p.FlowID, Attribute: p.Attribute, Favorable: fav, Environment: p.Environment,
-		Excluded: excluded,
+		Threshold: threshold, Excluded: excluded,
 	}
-	rep.Groups, rep.Reference, rep.MinAIR, rep.Passes = compute(tally)
+	rep.Groups, rep.Reference, rep.MinAIR, rep.Passes = compute(tally, threshold)
 	for _, g := range rep.Groups {
 		rep.Decisions += g.Total
 	}
@@ -146,7 +152,7 @@ func Build(ctx context.Context, s store.Store, id identity.Identity, p Params, n
 // rate/AIR/flags, picks the reference (highest-rate) group as the AIR denominator,
 // and applies the four-fifths rule. Returned groups are ordered most-impacted first
 // (lowest AIR), so the reader sees the worst disparity at the top.
-func compute(tally map[string]*Group) (groups []Group, reference string, minAIR float64, passes bool) {
+func compute(tally map[string]*Group, threshold float64) (groups []Group, reference string, minAIR float64, passes bool) {
 	for _, g := range tally {
 		g.Total = g.Favorable + g.Adverse
 		if g.Total > 0 {
@@ -180,7 +186,7 @@ func compute(tally map[string]*Group) (groups []Group, reference string, minAIR 
 		if ref != nil && g.Value == ref.Value {
 			g.Reference = true
 		}
-		if !g.Reference && g.AIR < FourFifths {
+		if !g.Reference && g.AIR < threshold {
 			g.Flagged = true
 			passes = false
 		}

@@ -3,11 +3,11 @@
 Tracked alongside `PLAN.md`; updated in the same PR at the end of every phase.
 Format: `ID | severity | component | description | status`.
 
-## Forward roadmap — Phase 6, fair lending (see PLAN.md §8b)
-- `P6-1 | — | fairlending | first slice: a read-only disparate-impact report (fairlending/, GET /v1/fairlending/report, admin-gated) — the adverse-impact ratio (four-fifths rule, ECOA/Reg B) of favorable-outcome rates across an analyst-named protected-class attribute, folded from decision history; excludes referred/no-disposition/attribute-absent decisions and reports the count; CSV+Markdown export; /fairlending page; unit + build tests. | shipped`
-- `P6-2 | — | fairlending | open: persist the protected-attribute + favorable-outcome choice as a per-flow artifact (today a query parameter). | planned`
-- `P6-3 | — | decision-engine | open: adverse-action notice generation from a defined reason-code set (not raw codes). | planned`
-- `P6-4 | — | monitor | open: wire a fair-lending regression into the drift/monitor surface so it fires like any other check. | planned`
+## Phase 6 — fair lending & adverse action (DONE; see PLAN.md §8b)
+- `P6-1 | — | fairlending | disparate-impact report (fairlending/, GET /v1/fairlending/report, admin-gated) — the adverse-impact ratio (four-fifths rule, ECOA/Reg B) of favorable-outcome rates across a protected-class attribute, folded from decision history; excludes referred/no-disposition/attribute-absent decisions and reports the count; small-sample flag; CSV+Markdown export; /fairlending page. | shipped`
+- `P6-2 | — | fairlending | per-flow config (event-sourced: ConfigProjector, GET/PUT /v1/flows/{id}/fairlending, admin-gated PUT) declaring the protected attribute, favorable outcome, and AIR threshold; the report runs from it when the query omits params; page prefills + "Save as flow default". | shipped`
+- `P6-3 | — | fairlending | adverse-action notice generation (GET /v1/decisions/{id}/adverse-action, operator-gated) — ECOA/Reg B notice from a declined decision's recorded reason codes (≤4 principal reasons) + a per-workspace creditor-identification setting (event-sourced); errors rather than emit an incomplete notice; download button on the decision page. | shipped`
+- `P6-4 | — | mrm | a configured flow whose AIR falls below its threshold surfaces as an MRM open issue ("fair-lending AIR X below Y"), firing on the governance surface like any other check. | shipped`
 
 ## Open — audit round 3 (planned; sequenced into PRs, see PLAN.md roadmap)
 A third audit (code/security, a UI/UX review against screenshots of every page × persona × theme, and a competitive + API study vs. comparable decisioning and BPMN/DMN platforms) produced the backlog below. Grouped into healthy-sized PRs (one open at a time; no anemic PRs).

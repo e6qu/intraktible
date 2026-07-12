@@ -19,7 +19,7 @@ import (
 
 var (
 	ctx = context.Background()
-	id  = identity.Identity{Org: "demo", Workspace: "main"}
+	id  = identity.Identity{Org: "demo", Workspace: "main", Actor: "tester"}
 	now = time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC)
 )
 

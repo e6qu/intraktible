@@ -350,8 +350,19 @@ func requiredRole(method, path string) auth.Role {
 	if strings.HasSuffix(path, "/run/stream") || strings.HasSuffix(path, "/run/ws") {
 		return auth.RoleOperator
 	}
+	// Generating an adverse-action notice produces a customer-facing Reg B document
+	// from a declined decision — a runtime operation, so operator (checked before the
+	// all-GETs-are-reads rule, since the notice is served over GET).
+	if strings.Contains(path, "/adverse-action") {
+		return auth.RoleOperator
+	}
 	if method == http.MethodGet || method == http.MethodHead || method == http.MethodOptions {
 		return auth.RoleViewer
+	}
+	// A flow's fair-lending config declares which input field is the protected class
+	// — a governance control, admin only (GET is a viewer read, handled above).
+	if strings.HasSuffix(path, "/fairlending") {
+		return auth.RoleAdmin
 	}
 	// Changing the PII masking config is a compliance control — admin only.
 	if path == "/v1/privacy" {
