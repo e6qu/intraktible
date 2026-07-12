@@ -75,6 +75,7 @@ import (
 	"github.com/e6qu/intraktible/platform/store"
 	"github.com/e6qu/intraktible/platform/web"
 	"github.com/e6qu/intraktible/reconsideration"
+	"github.com/e6qu/intraktible/registers"
 )
 
 // asyncRunWorkers is the size of the Agent Manager's async-run worker pool.
@@ -395,6 +396,10 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 	// Reconsideration: the human review of a solely-automated adverse decision (Art. 22
 	// human intervention / ECOA reconsideration), recorded per decision.
 	reconsideration.New(reconsideration.NewHandler(log).WithNow(now), st).Routes(api)
+
+	// Compliance registers: the adverse-action / human-review / lawful-basis records a
+	// lender retains and produces on examination, exported as CSV or Markdown.
+	registers.New(st).WithNow(now).Routes(api)
 
 	// Privacy: per-workspace sensitive-field masking, applied at read boundaries
 	// (decision history/exports). A platform capability, independent of modules.

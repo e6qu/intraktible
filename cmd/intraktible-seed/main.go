@@ -22,6 +22,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/e6qu/intraktible/platform/eventlog"
@@ -329,6 +330,15 @@ func spotCheck(srv *server.Server) string {
 	get("/v1/reconsiderations", &reconsiderations)
 	if len(reconsiderations.Reconsiderations) < 2 {
 		fatalf("round trip: %d human reviews, want >= 2", len(reconsiderations.Reconsiderations))
+	}
+
+	// The adverse-action register exports as CSV with its header and at least one issued row.
+	regReq := httptest.NewRequest("GET", "/v1/compliance/registers/adverse-actions", http.NoBody)
+	regReq.Header.Set("X-Api-Key", devAPIKey)
+	regRec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(regRec, regReq)
+	if regRec.Code != 200 || !strings.Contains(regRec.Body.String(), "decision_id,subject") {
+		fatalf("round trip: adverse-action register -> %d\n%s", regRec.Code, regRec.Body.String())
 	}
 
 	var cases struct {

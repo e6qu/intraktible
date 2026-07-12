@@ -3284,6 +3284,23 @@ export interface LegalHold {
 export interface RetentionPolicy {
   retention_days: number;
 }
+// exportComplianceRegister fetches a compliance register (adverse-actions,
+// reconsiderations, or consent) as CSV or Markdown text, for the caller to download
+// as a Blob — the examiner-ready artifact behind the compliance dashboard.
+export async function exportComplianceRegister(
+  key: string,
+  register: 'adverse-actions' | 'reconsiderations' | 'consent',
+  format: 'csv' | 'md' = 'csv',
+  fetcher: typeof fetch = recordingFetch
+): Promise<string> {
+  const res = await fetcher(`/v1/compliance/registers/${register}?format=${format}`, {
+    headers: authHeaders(key)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, `export ${register} register`);
+  }
+  return res.text();
+}
 // listLegalHolds returns the tenant's active legal holds (admin).
 export async function listLegalHolds(
   key: string,

@@ -440,6 +440,10 @@ them hardest-blocker-first; each phase is a direction, not a committed date.
   subjects). Cards degrade per role — the queue/audit/consent reads are viewer-level, so a compliance
   *viewer* can work it; the governance card is admin-only. A tenant-global consent list
   (`GET /v1/consent/records`) was added, and the adverse-action queue GET relaxed to viewer (a read).
+  The dashboard exports **examiner-ready compliance registers** (`registers` package): the
+  adverse-action register (ECOA/Reg B record of adverse actions taken), the human-review register
+  (Art. 22 reconsiderations), and the lawful-basis register (consent), as CSV (formula-injection-safe)
+  or Markdown — the artifact a lender produces on examination.
   _Still open:_ GLBA privacy opt-out disclosure; the **in-flow** Art. 22 safeguards (standing contest
   channel, logic-explanation artifact) and the UK 22A–22D split; byte-level WORM artifact storage;
   retention-clock enforcement.
