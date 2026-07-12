@@ -75,14 +75,18 @@ test('opens a flow, a decision, a case, and an agent from their lists', async ({
 // default tab, so the controls are immediately available after opening a flow).
 test('a builder preview run shows a verdict but records no decision', async ({ page }) => {
   await page.goto('engine');
+  // Wait for the embedded wasm backend to be installed AND to have replayed the seed
+  // (its size grows as the demo does) before running — so the timed assertion below
+  // measures only the decide, not the one-time cold boot + replay.
+  await page.waitForFunction(() => '__demo' in window, undefined, { timeout: 90_000 });
   await page.locator('a[href*="/engine/"]').first().click();
   await page.getByLabel("preview (don't record)").check();
   await page.getByRole('button', { name: 'Run', exact: true }).click();
-  // The FIRST decide in a freshly-booted wasm engine JIT-compiles the flow's
-  // expression/rule VMs, so the verdict can take ~19s — right at the global 20s
-  // expect timeout. Give this one assertion headroom so the boundary case (CI under
-  // load) doesn't flake; the follow-up assertions are then instant.
-  await expect(page.getByTestId('run-verdict')).toBeVisible({ timeout: 45_000 });
+  // Even warm, the FIRST decide JIT-compiles the flow's expression/rule VMs; on a
+  // slow, loaded CI runner that can take tens of seconds. Give this one assertion a
+  // generous ceiling so the cold path doesn't flake; the follow-up assertions are
+  // then instant. A genuinely broken preview still fails, just later.
+  await expect(page.getByTestId('run-verdict')).toBeVisible({ timeout: 90_000 });
   await expect(page.getByText('preview · not recorded')).toBeVisible();
   await expect(page.getByText('View the recorded decision')).toHaveCount(0);
 });
