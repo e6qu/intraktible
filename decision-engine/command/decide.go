@@ -293,7 +293,8 @@ func (h *DecideHandler) Decide(ctx context.Context, id identity.Identity, slug, 
 		}
 	}
 
-	data, err = h.prepare(ctx, id, env, version, ref, data)
+	// A recorded decision outside the sandbox must serve four-eyes-approved models.
+	data, err = h.prepare(ctx, id, env != string(domain.EnvSandbox), version, ref, data)
 	if err != nil {
 		if badProviderRef(err) {
 			return DecideResult{}, fmt.Errorf("%w: %w", ErrBadRequest, err)
@@ -562,7 +563,7 @@ func badProviderRef(err error) bool {
 // into the input — the augmented input the pure core executes. Shared by the
 // recording Decide path and the record-free Preview path so both run identical
 // input preparation.
-func (h *DecideHandler) prepare(ctx context.Context, id identity.Identity, env string, version flows.VersionView, ref EntityRef, data map[string]any) (map[string]any, error) {
+func (h *DecideHandler) prepare(ctx context.Context, id identity.Identity, requireApproval bool, version flows.VersionView, ref EntityRef, data map[string]any) (map[string]any, error) {
 	// Validate the caller's input against the version's contract before anything
 	// is injected or recorded — a contract violation is a bad request, not a
 	// recorded decision.
@@ -595,7 +596,7 @@ func (h *DecideHandler) prepare(ctx context.Context, id identity.Identity, env s
 	if err != nil {
 		return nil, err
 	}
-	data, err = h.injectPredictions(ctx, id, env, version.Graph, data)
+	data, err = h.injectPredictions(ctx, id, requireApproval, version.Graph, data)
 	if err != nil {
 		return nil, err
 	}
@@ -640,7 +641,9 @@ func (h *DecideHandler) Preview(ctx context.Context, id identity.Identity, slug,
 		return DecideResult{}, fmt.Errorf("%w: flow %q has no version %d", ErrNotFound, slug, versionNo)
 	}
 
-	data, err = h.prepare(ctx, id, env, version, ref, data)
+	// A preview records nothing — it is the author's test tool, exempt from the model
+	// four-eyes gate so a model can be tried before it is approved.
+	data, err = h.prepare(ctx, id, false, version, ref, data)
 	if err != nil {
 		if badProviderRef(err) {
 			return DecideResult{}, fmt.Errorf("%w: %w", ErrBadRequest, err)
@@ -867,7 +870,7 @@ func (h *DecideHandler) injectAI(ctx context.Context, id identity.Identity, grap
 // above) and injects the predictions under "predict" (keyed by each node's output).
 // Evaluation is the only "effect"; doing it here keeps domain.Execute pure. Without
 // a provider it is a no-op and any Predict node fails loudly during execution.
-func (h *DecideHandler) injectPredictions(ctx context.Context, id identity.Identity, env string, graph events.Graph, data map[string]any) (map[string]any, error) {
+func (h *DecideHandler) injectPredictions(ctx context.Context, id identity.Identity, requireApproval bool, graph events.Graph, data map[string]any) (map[string]any, error) {
 	specs, err := domain.PredictSpecs(graph)
 	if err != nil {
 		return nil, err
@@ -875,19 +878,19 @@ func (h *DecideHandler) injectPredictions(ctx context.Context, id identity.Ident
 	if h.models == nil || len(specs) == 0 {
 		return data, nil
 	}
-	// Outside the sandbox, a Predict node may only serve a model whose current version
-	// has four-eyes approval — the model equivalent of "production decide refuses an
-	// un-deployed flow version". Sandbox is exempt so authors can test freely.
-	requireApproval := env != string(domain.EnvSandbox)
 	resolved := make(map[string]any, len(specs))
 	for _, sp := range specs {
+		// A recorded non-sandbox decision may only serve a model whose current version
+		// has four-eyes approval — the model equivalent of "production decide refuses an
+		// un-deployed flow version". The sandbox and previews (which record nothing) are
+		// exempt so authors can test a model before it is approved.
 		if requireApproval {
 			approved, err := h.models.ApprovedForServing(ctx, id, sp.Model)
 			if err != nil {
 				return nil, fmt.Errorf("decision-engine: predict node %q (model %q): %w", sp.NodeID, sp.Model, err)
 			}
 			if !approved {
-				return nil, fmt.Errorf("decision-engine: predict node %q model %q is not approved for %s (needs four-eyes approval)", sp.NodeID, sp.Model, env)
+				return nil, fmt.Errorf("decision-engine: predict node %q model %q is not approved for serving (needs four-eyes approval)", sp.NodeID, sp.Model)
 			}
 		}
 		callCtx, span := h.tracer.Start(ctx, "engine.predict", trace.WithAttributes(
