@@ -83,11 +83,22 @@ type Projector struct{}
 // Name identifies the projector.
 func (Projector) Name() string { return "decision_history" }
 
-// Collections lists the store collection this projector owns.
-func (Projector) Collections() []string { return []string{Collection} }
+// Collections lists the store collections this projector owns: the full records and
+// the lightweight list index. It owns both so registering this one projector always
+// yields a working paginated list (no separate index projector to forget).
+func (Projector) Collections() []string { return []string{Collection, IndexCollection} }
 
-// Apply maintains the decision record across its lifecycle events.
+// Apply maintains the decision record AND its list-index entry across the decision's
+// lifecycle events. Both advance in the same apply, so the index can never drift from
+// the records.
 func (Projector) Apply(ctx context.Context, e eventlog.Envelope, s store.Store) error {
+	if err := applyRecord(ctx, e, s); err != nil {
+		return err
+	}
+	return applyIndex(ctx, e, s)
+}
+
+func applyRecord(ctx context.Context, e eventlog.Envelope, s store.Store) error {
 	switch e.Type {
 	case events.TypeDecisionStarted:
 		return applyStarted(ctx, e, s)
@@ -257,62 +268,58 @@ type Page struct {
 	Offset  int      `json:"offset"`
 }
 
-// ListPage returns the tenant's decisions matching f, newest-first, paginated.
-// (The store has no field index, so it lists the tenant's records and filters in
-// memory — same read cost as List; pagination bounds the response, not the scan.)
+// query returns the normalized decision-id search term.
+func (f Filter) query() string { return strings.ToLower(strings.TrimSpace(f.Query)) }
+
+// ListPage returns the tenant's decisions matching f, newest-first, paginated. It
+// filters and sorts over the lightweight index (a tenant-prefixed scan of per-decision
+// summaries), then loads the FULL records only for the window it returns — so listing
+// a large tenant's decisions never loads every full record's input/output/node trace
+// into memory. (The store has no limit pushdown, so the index scan is still O(tenant
+// entries), but of small entries; the expensive full-record load is bounded to the
+// page.)
 func ListPage(ctx context.Context, s store.Store, id identity.Identity, f Filter) (Page, error) {
-	all, err := List(ctx, s, id)
+	entries, err := listIndex(ctx, s, id, f)
 	if err != nil {
 		return Page{}, err
 	}
-	q := strings.ToLower(strings.TrimSpace(f.Query))
-	matched := make([]Record, 0, len(all))
-	for _, r := range all {
-		if f.Slug != "" && r.Slug != f.Slug {
-			continue
+	total := len(entries)
+	// limit <= 0 means "no pagination" — the window is every match (aggregating
+	// callers and the dashboard want the full set); a positive limit paginates.
+	limit, lo, hi := total, 0, total
+	if f.Limit > 0 {
+		limit = f.Limit
+		if limit > MaxPageSize {
+			limit = MaxPageSize
 		}
-		if f.Environment != "" && r.Environment != f.Environment {
-			continue
+		lo = f.Offset
+		if lo < 0 {
+			lo = 0
 		}
-		if f.Status != "" && r.Status != f.Status {
-			continue
+		if lo > total {
+			lo = total
 		}
-		if f.Variant != "" && r.Variant != f.Variant {
-			continue
+		hi = lo + limit
+		if hi > total {
+			hi = total
 		}
-		if q != "" && !strings.Contains(strings.ToLower(r.DecisionID), q) {
-			continue
-		}
-		if !f.Since.IsZero() && r.StartedAt.Before(f.Since) {
-			continue
-		}
-		if !f.Until.IsZero() && r.StartedAt.After(f.Until) {
-			continue
-		}
-		matched = append(matched, r)
 	}
-	total := len(matched)
-	// limit <= 0 means "no pagination" — return all matches (legacy callers and the
-	// dashboard, which aggregate over the full set). A positive limit paginates.
-	if f.Limit <= 0 {
-		return Page{Records: matched, Total: total, Limit: total, Offset: 0}, nil
+	window := entries[lo:hi]
+	records := make([]Record, 0, len(window))
+	for _, e := range window {
+		r, ok, err := store.GetDoc[Record](ctx, s, Collection, store.Key(id.Org, id.Workspace, e.DecisionID))
+		if err != nil {
+			return Page{}, err
+		}
+		// The index and the record projections fold the same events in lock-step, so
+		// an index entry with no record is a projection inconsistency — fail loud, do
+		// not silently drop the row.
+		if !ok {
+			return Page{}, fmt.Errorf("history: index entry %q has no record (projections inconsistent)", e.DecisionID)
+		}
+		records = append(records, r)
 	}
-	limit := f.Limit
-	if limit > MaxPageSize {
-		limit = MaxPageSize
-	}
-	lo := f.Offset
-	if lo < 0 {
-		lo = 0
-	}
-	if lo > total {
-		lo = total
-	}
-	hi := lo + limit
-	if hi > total {
-		hi = total
-	}
-	return Page{Records: matched[lo:hi], Total: total, Limit: limit, Offset: lo}, nil
+	return Page{Records: records, Total: total, Limit: limit, Offset: lo}, nil
 }
 
 func update(ctx context.Context, s store.Store, e eventlog.Envelope, decisionID string, mutate func(*Record)) error {

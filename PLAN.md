@@ -377,15 +377,16 @@ them hardest-blocker-first; each phase is a direction, not a committed date.
   real provider adapters — intraktible has ~9 connector types (incl. credit-bureau + sanctions
   normalizers) vs the ~270 / ~200 sources Alloy and Taktile advertise, which is commercial-relationship +
   per-API-spec work.
-- **Phase 10 — Command-path performance — 🚧 partial.** The flow/model maker-checker folds
-  (`foldTenant`, `foldRequest`, `foldModelGov`, `deployHistory`) read the **entire, decision-dominated
-  log** on every deploy/publish/approve to reconstruct a handful of flow/model events. Fixed: the `Log`
-  interface now carries **`ReadTenantStream`** — an indexed `(org, workspace, stream, seq)` query on the
-  durable SQLite/Postgres logs (a new index), a filtered scan on the index-less logs (memory, WAL, NATS)
-  — so those folds scan the flow/model events, not the whole log. Made a **required** interface method,
-  not an optional capability the caller feels for (see the no-fallbacks note below). _Still open:_
-  `history.ListPage` still loads a tenant's full decision set to paginate (a bigger change — a paginated
-  index projection).
+- **Phase 10 — Command-path performance — ✅ DONE.** Two O(n) reads fixed. (1) The flow/model
+  maker-checker folds (`foldTenant`, `foldRequest`, `foldModelGov`, `deployHistory`) read the **entire,
+  decision-dominated log** on every deploy/publish/approve; the `Log` interface now carries a **required**
+  `ReadTenantStream` — indexed `(org, workspace, stream, seq)` on the durable logs (a new index),
+  filtered scan on the index-less ones — so those folds scan the flow/model events, not the whole log.
+  (2) `history.ListPage` loaded **every full decision record** (input + node trace + output) to filter
+  and paginate; it now filters/sorts/counts over a **lightweight index** (a per-decision summary the
+  single `history.Projector` maintains alongside the record) and loads full records **only for the
+  window it returns** — generalizing the audit-index pattern. An index entry with no record fails loud
+  (projection inconsistency), never a silent skip.
 - **Phase 11 — Regulatory data lifecycle — 🚧 partial.** **Legal hold + automated retention shipped**
   (`platform/erasure`). Legal hold: a subject can be put under a legal/litigation hold, which makes it
   **survive retention** and **blocks erasure** (destroying data under hold is spoliation) — `Erase`
