@@ -72,6 +72,10 @@ func OpenPostgresLog(ctx context.Context, dsn string, poll time.Duration) (*Post
 		pool.Close()
 		return nil, fmt.Errorf("eventlog: postgres add unique_key: %w", err)
 	}
+	if _, err := pool.Exec(ctx, `CREATE INDEX IF NOT EXISTS events_tenant_stream ON events(org, workspace, stream, seq)`); err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("eventlog: postgres tenant-stream index: %w", err)
+	}
 	if _, err := pool.Exec(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS events_unique_key ON events(unique_key) WHERE unique_key IS NOT NULL`); err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("eventlog: postgres unique_key index: %w", err)
@@ -181,10 +185,10 @@ func (l *PostgresLog) Read(ctx context.Context, fromSeq uint64) ([]Envelope, err
 	return l.readFrom(ctx, fromSeq, 0)
 }
 
-// readFrom returns events with Seq >= fromSeq in order, capped at limit rows
-// (limit <= 0 = unbounded). The poller passes a bound so one pass never loads
-// the whole unread tail into memory; Read passes 0 for full replay.
-func (l *PostgresLog) readFrom(ctx context.Context, fromSeq uint64, limit int) ([]Envelope, error) {
+// ReadTenantStream returns one tenant's events on one stream with Seq >= fromSeq, in
+// order — the indexed read the maker-checker folds use instead of scanning the whole
+// log.
+func (l *PostgresLog) ReadTenantStream(ctx context.Context, org, workspace, stream string, fromSeq uint64) ([]Envelope, error) {
 	if l.d.isClosed() {
 		return nil, ErrClosed
 	}
@@ -194,17 +198,20 @@ func (l *PostgresLog) readFrom(ctx context.Context, fromSeq uint64, limit int) (
 	if fromSeq > math.MaxInt64 {
 		return nil, fmt.Errorf("eventlog: postgres fromSeq %d out of range", fromSeq)
 	}
-	query := `SELECT seq, id, org, workspace, stream, type, time, actor, payload
-		 FROM events WHERE seq >= $1 ORDER BY seq`
-	args := []any{int64(fromSeq)}
-	if limit > 0 {
-		query += ` LIMIT $2`
-		args = append(args, limit)
-	}
-	rows, err := l.pool.Query(ctx, query, args...)
+	rows, err := l.pool.Query(ctx,
+		`SELECT seq, id, org, workspace, stream, type, time, actor, payload
+		 FROM events WHERE org = $1 AND workspace = $2 AND stream = $3 AND seq >= $4 ORDER BY seq`,
+		org, workspace, stream, int64(fromSeq))
 	if err != nil {
-		return nil, fmt.Errorf("eventlog: postgres read: %w", err)
+		return nil, fmt.Errorf("eventlog: postgres read tenant-stream: %w", err)
 	}
+	return scanEventRows(rows)
+}
+
+// scanEventRows drains a pgx result of the standard event columns into Envelopes in
+// row order (the query decides order), closing the rows. Shared by the full and the
+// tenant-stream reads so the scan lives in one place.
+func scanEventRows(rows pgx.Rows) ([]Envelope, error) {
 	defer rows.Close()
 	var out []Envelope
 	for rows.Next() {
@@ -230,6 +237,33 @@ func (l *PostgresLog) readFrom(ctx context.Context, fromSeq uint64, limit int) (
 		return nil, fmt.Errorf("eventlog: postgres read rows: %w", err)
 	}
 	return out, nil
+}
+
+// readFrom returns events with Seq >= fromSeq in order, capped at limit rows
+// (limit <= 0 = unbounded). The poller passes a bound so one pass never loads
+// the whole unread tail into memory; Read passes 0 for full replay.
+func (l *PostgresLog) readFrom(ctx context.Context, fromSeq uint64, limit int) ([]Envelope, error) {
+	if l.d.isClosed() {
+		return nil, ErrClosed
+	}
+	if fromSeq == 0 {
+		fromSeq = 1
+	}
+	if fromSeq > math.MaxInt64 {
+		return nil, fmt.Errorf("eventlog: postgres fromSeq %d out of range", fromSeq)
+	}
+	query := `SELECT seq, id, org, workspace, stream, type, time, actor, payload
+		 FROM events WHERE seq >= $1 ORDER BY seq`
+	args := []any{int64(fromSeq)}
+	if limit > 0 {
+		query += ` LIMIT $2`
+		args = append(args, limit)
+	}
+	rows, err := l.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("eventlog: postgres read: %w", err)
+	}
+	return scanEventRows(rows)
 }
 
 // Subscribe returns events the poller publishes after the call.

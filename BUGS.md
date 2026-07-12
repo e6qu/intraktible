@@ -3,6 +3,36 @@
 Tracked alongside `PLAN.md`; updated in the same PR at the end of every phase.
 Format: `ID | severity | component | description | status`.
 
+## Phase 6 — fair lending & adverse action (DONE; see PLAN.md §8b)
+- `P6-1 | — | fairlending | disparate-impact report (fairlending/, GET /v1/fairlending/report, admin-gated) — the adverse-impact ratio (four-fifths rule, ECOA/Reg B) of favorable-outcome rates across a protected-class attribute, folded from decision history; excludes referred/no-disposition/attribute-absent decisions and reports the count; small-sample flag; CSV+Markdown export; /fairlending page. | shipped`
+- `P6-2 | — | fairlending | per-flow config (event-sourced: ConfigProjector, GET/PUT /v1/flows/{id}/fairlending, admin-gated PUT) declaring the protected attribute, favorable outcome, and AIR threshold; the report runs from it when the query omits params; page prefills + "Save as flow default". | shipped`
+- `P6-3 | — | fairlending | adverse-action notice generation (GET /v1/decisions/{id}/adverse-action, operator-gated) — ECOA/Reg B notice from a declined decision's recorded reason codes (≤4 principal reasons) + a per-workspace creditor-identification setting (event-sourced); errors rather than emit an incomplete notice; download button on the decision page. | shipped`
+- `P6-4 | — | mrm | a configured flow whose AIR falls below its threshold surfaces as an MRM open issue ("fair-lending AIR X below Y"), firing on the governance surface like any other check. | shipped`
+
+## Phase 7 — model governance parity (DONE; see PLAN.md §8b)
+- `P7-1 | — | decision-engine | model versioning + four-eyes approval (ModelApprovalRequested/Approved/Rejected on StreamModels; RequestModelApproval/ApproveModelApproval/RejectModelApproval commands with per-request decision claims). Approver must differ from requester AND the version's author; a redefine bumps the version and invalidates a prior approval. | shipped`
+- `P7-2 | — | decision-engine | enforcement: outside the sandbox, injectPredictions refuses a Predict node whose model's current version is not approved (models.Provider.ApprovedForServing, an optional gate on the ModelProvider port). | shipped`
+- `P7-3 | — | decision-engine/mrm | validation evidence (ModelValidationRecorded: dataset/metrics/validator/notes/passed) attached per version; MRM flags unapproved + unvalidated models as governance gaps; models page shows approval status + request/approve/reject + validation log. | shipped`
+- `P7-4 | — | cmd/intraktible-seed | the demo seed validates + four-eyes-approves every model before traffic, so production Predict decisions serve approved models. | shipped`
+
+## Phase 8 — production hardening at scale (PARTIAL; see PLAN.md §8b)
+- `P8-1 | HIGH | platform/projection | CONFIRMED + FIXED: multi-replica double-apply. TestMultiReplicaNoDoubleApply reproduced it (two runtimes sharing one durable store counted 2N). Fix: applyContiguous (tx path) reads the durable checkpoint under a lock inside the apply tx (readCheckpointLocked → GetForUpdate on Postgres; SQLite's Begin writer-mutex serializes) and skips an already-applied event — single-writer across replicas. Proven on SQLite + real Postgres, race-clean ×10. | shipped`
+- `P8-2 | — | platform/projection | BenchmarkDurableApply measures the checkpoint-locked apply throughput (~77µs/event on SQLite, fsync-bound). | shipped`
+- `P8-3 | — | ci | new 'postgres' CI job runs the DSN-gated store/eventlog/projection tests against a live Postgres service (previously skipped everywhere); TestMultiReplicaNoDoubleApplyPostgres exercises the FOR UPDATE path. | shipped`
+- `P8-4 | MED | platform/projection | CONFIRMED + FIXED: concurrent cold-start bootstrap double-apply. TestConcurrentBootstrapNoDoubleApply reproduced it (two replicas rebuilding a fresh pre-populated store drifted off the count, e.g. 1509 for 1500). Fix: bootstrapDurable runs in ONE tx that create-if-absents the checkpoint row (store.PutIfAbsent → INSERT ON CONFLICT DO NOTHING), locks it (readCheckpointLocked), then resets+replays+advances the checkpoint atomically — concurrent boots serialize, one builds, the rest no-op. Proven on SQLite + real Postgres, race-clean. | shipped`
+- `P8-5 | — | ops | open (ops-heavy tail): load + chaos tests; compaction/archival/backup automation. | planned`
+
+## Phase 9 — connector resilience & data sources (PARTIAL; see PLAN.md §8b)
+- `P9-1 | — | context-layer/connectors | resilience.go: every outbound connector fetch runs through a retry budget (capped exponential backoff, transient-only) + a per-(tenant,connector) circuit breaker (opens after N consecutive transient failures, cooldown → half-open probe), applied once at the InvokeWithSecrets choke point. Transient = timeout / connection failure / upstream 5xx-429 (HTTP, GraphQL, and the shared provider readJSONResponse mark it); permanent = 4xx / bad body (no retry, no trip). Replay-safe (fetch is a recorded effect). Unit tests cover retry/exhaust/permanent/open/half-open/close/isolation/cancel. | shipped`
+- `P9-2 | — | context-layer/connectors | open (data-provider work, not code): breadth of real provider adapters (~9 types today vs ~270/~200 for Alloy/Taktile) — needs commercial relationships + per-API specs. | planned`
+
+## Phase 10 — command-path performance (PARTIAL; see PLAN.md §8b)
+- `P10-1 | — | platform/eventlog + decision-engine/command | the maker-checker folds read the whole log; now eventlog.Log carries ReadTenantStream (indexed WHERE on SQLite/Postgres via a new events_tenant_stream index; filtered scan on memory/WAL/NATS). foldTenant/foldRequest/foldModelGov/deployHistory use it. Required interface method, not an optional capability. | shipped`
+- `P10-2 | — | decision-engine/history | open: history.ListPage still loads a tenant's full decision set to paginate — a paginated index projection is the bigger fix. | planned`
+
+## No-fallbacks hardening (project rule: no fallbacks, fail loud)
+- `NF-1 | — | eventlog/store/decision-engine | removed the optional-interface fallbacks introduced this arc, making the capabilities REQUIRED (compiler-enforced) so no path can silently diverge: eventlog.Log.ReadTenantStream; store.Tx.GetForUpdate + PutIfAbsent (SQLite GetForUpdate = plain read under its Begin writer-lock; encTx delegates); command.ModelProvider.ApprovedForServing (the four-eyes model gate can no longer be silently skipped by a provider lacking it). | shipped`
+
 ## Open — audit round 3 (planned; sequenced into PRs, see PLAN.md roadmap)
 A third audit (code/security, a UI/UX review against screenshots of every page × persona × theme, and a competitive + API study vs. comparable decisioning and BPMN/DMN platforms) produced the backlog below. Grouped into healthy-sized PRs (one open at a time; no anemic PRs).
 

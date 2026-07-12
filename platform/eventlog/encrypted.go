@@ -66,7 +66,17 @@ func (l *encLog) Append(ctx context.Context, e Envelope) (Envelope, error) {
 }
 
 func (l *encLog) Read(ctx context.Context, fromSeq uint64) ([]Envelope, error) {
-	evs, err := l.inner.Read(ctx, fromSeq)
+	return l.decryptAll(l.inner.Read(ctx, fromSeq))
+}
+
+// ReadTenantStream delegates the (possibly indexed) filtered read to the inner log,
+// then decrypts — so the encryption wrapper keeps the inner backend's index.
+func (l *encLog) ReadTenantStream(ctx context.Context, org, workspace, stream string, fromSeq uint64) ([]Envelope, error) {
+	return l.decryptAll(l.inner.ReadTenantStream(ctx, org, workspace, stream, fromSeq))
+}
+
+// decryptAll opens every event's sealed payload in place.
+func (l *encLog) decryptAll(evs []Envelope, err error) ([]Envelope, error) {
 	if err != nil {
 		return nil, err
 	}

@@ -87,9 +87,29 @@ type Log interface {
 	// Subscribe returns a channel of events appended after subscription, plus
 	// a cancel func. Used by the in-process projection runtime (the monolith).
 	Subscribe() (<-chan Envelope, func())
+	// ReadTenantStream returns one tenant's events on one stream with Seq >= fromSeq,
+	// in order — the read the flow/model maker-checker folds use so they scan a handful
+	// of flow/model events instead of the entire, decision-dominated log. The durable
+	// SQL logs answer it with an indexed query; the index-less logs (memory, WAL, NATS)
+	// scan and filter (filterTenantStream). It is part of the contract — not an
+	// optional capability the caller feels for — so every backend supplies it.
+	ReadTenantStream(ctx context.Context, org, workspace, stream string, fromSeq uint64) ([]Envelope, error)
 	// Head returns the highest assigned Seq (0 when empty).
 	Head() uint64
 	Close() error
+}
+
+// filterTenantStream returns the events matching one tenant + stream, in order — the
+// scan implementation of ReadTenantStream for the index-less backends (memory, WAL,
+// NATS). The durable SQL logs override it with an indexed WHERE.
+func filterTenantStream(evs []Envelope, org, workspace, stream string) []Envelope {
+	out := make([]Envelope, 0, len(evs))
+	for _, e := range evs {
+		if e.Org == org && e.Workspace == workspace && e.Stream == stream {
+			out = append(out, e)
+		}
+	}
+	return out
 }
 
 // AppendJSON marshals payload and appends it as a typed event for the given

@@ -7,6 +7,7 @@ package projection
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -103,38 +104,114 @@ func (r *Runtime) Start(ctx context.Context) error {
 	return nil
 }
 
-// bootstrap either resumes from the checkpoint (a transactional durable store
-// that has applied events before) or fully rebuilds from offset 0.
+// bootstrap brings the store current before the live consumer starts. The ephemeral
+// store fully rebuilds (a restart lost everything). A durable store catches up inside
+// ONE lock-coordinated transaction so that N replicas booting against the same store
+// don't each rebuild and double-count — the same single-writer property the live
+// apply has.
 func (r *Runtime) bootstrap(ctx context.Context) error {
-	cp, _, err := store.GetDoc[checkpoint](ctx, r.store, checkpointCollection, checkpointKey)
-	if err != nil {
-		return fmt.Errorf("projection: read checkpoint: %w", err)
+	if r.tx == nil {
+		return r.bootstrapEphemeral(ctx)
 	}
+	return r.bootstrapDurable(ctx)
+}
+
+// bootstrapEphemeral rebuilds the in-memory store from offset 0 (a single process
+// owns it — no cross-replica race), bounded to the head snapshot so events appended
+// during boot are applied once by the live consumer, not twice.
+func (r *Runtime) bootstrapEphemeral(ctx context.Context) error {
 	head := r.log.Head()
-	// Incremental resume: only when the store can apply transactionally (so the
-	// checkpoint advances atomically with each event) and the checkpoint is a
-	// valid prefix of the log.
-	if r.tx != nil && cp.Seq > 0 && cp.Seq <= head {
-		r.setApplied(cp.Seq)
-		evs, rerr := r.log.Read(ctx, cp.Seq+1)
-		if rerr != nil {
-			return fmt.Errorf("projection: read log for resume: %w", rerr)
-		}
-		for _, e := range evs {
-			if err := r.applyOne(ctx, e); err != nil {
-				return fmt.Errorf("projection: resume at seq %d: %w", e.Seq, err)
-			}
-		}
-		return nil
-	}
-	// Full rebuild from scratch — bounded to the head snapshot so events appended
-	// during boot are applied only once, by the live consumer (not re-applied here
-	// and then again off the bus).
 	if _, err := r.RebuildTo(ctx, head); err != nil {
 		return err
 	}
 	r.setApplied(head)
 	return r.writeCheckpoint(ctx, r.store, head)
+}
+
+// bootstrapDurable catches a transactional durable store up to the log head inside a
+// single transaction that locks the checkpoint row. Concurrent replicas serialize on
+// that lock: the first builds and commits the new checkpoint; the rest see it already
+// at/past head and do nothing. A fresh (checkpoint-0) store resets the projector
+// collections and replays from the start; a store with a checkpoint resumes from it
+// without resetting (so a resume never wipes state).
+func (r *Runtime) bootstrapDurable(ctx context.Context) (err error) {
+	head := r.log.Head()
+	tx, err := r.tx.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("projection: begin bootstrap tx: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	// Create the checkpoint row if absent so the lock below has a row to hold and
+	// concurrent bootstraps serialize on it (Postgres); a no-op on an existing row.
+	if err := ensureCheckpointRow(ctx, tx); err != nil {
+		return err
+	}
+	durable, err := readCheckpointLocked(ctx, tx)
+	if err != nil {
+		return fmt.Errorf("projection: lock checkpoint for bootstrap: %w", err)
+	}
+
+	// A peer already caught this store up to (or past) head — nothing to build.
+	if durable >= head {
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("projection: commit bootstrap (no-op): %w", err)
+		}
+		committed = true
+		r.setApplied(durable)
+		return nil
+	}
+
+	from := durable + 1
+	if durable == 0 {
+		// Fresh/checkpoint-less store: reset each projector's collections for a clean
+		// full rebuild, in this same tx so it is atomic with the checkpoint write.
+		for _, p := range r.projectors {
+			for _, c := range p.Collections() {
+				if err := tx.Reset(ctx, c); err != nil {
+					return fmt.Errorf("projection: reset %s during bootstrap: %w", c, err)
+				}
+			}
+		}
+		from = 1
+	}
+
+	evs, err := r.log.Read(ctx, from)
+	if err != nil {
+		return fmt.Errorf("projection: read log for bootstrap: %w", err)
+	}
+	for _, e := range evs {
+		if e.Seq > head {
+			break
+		}
+		if err := r.applyAll(ctx, e, tx); err != nil {
+			return fmt.Errorf("projection: bootstrap at seq %d: %w", e.Seq, err)
+		}
+	}
+	if err := r.writeCheckpoint(ctx, tx, head); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("projection: commit bootstrap to %d: %w", head, err)
+	}
+	committed = true
+	r.setApplied(head)
+	return nil
+}
+
+// ensureCheckpointRow makes the checkpoint row exist (at seq 0 if it did not) so the
+// FOR UPDATE lock below has a row to hold and concurrent bootstraps serialize on it.
+func ensureCheckpointRow(ctx context.Context, tx store.Tx) error {
+	doc, err := json.Marshal(checkpoint{Seq: 0})
+	if err != nil {
+		return err
+	}
+	return tx.PutIfAbsent(ctx, checkpointCollection, checkpointKey, doc)
 }
 
 // applyOne applies a delivered event. Already-applied events are no-ops (the
@@ -182,15 +259,16 @@ func (r *Runtime) applyOne(ctx context.Context, e eventlog.Envelope) error {
 // the incremental read model, so we fail LOUD instead — the runtime surfaces the error
 // (/healthz degraded) and re-applies the range once the lower seq is visible.
 func (r *Runtime) applyContiguous(ctx context.Context, e eventlog.Envelope) error {
-	r.mu.Lock()
-	applied := r.applied
-	r.mu.Unlock()
-	if e.Seq != applied+1 {
-		return fmt.Errorf("projection: refusing to apply seq %d over applied head %d — a lower seq is not yet visible in the log; advancing past it would skip an event", e.Seq, applied)
-	}
 	if r.tx == nil {
-		// Ephemeral store (memory): no atomicity needed — a crash loses everything
-		// and the next boot fully rebuilds.
+		// Ephemeral store (memory): a single process owns it — no cross-replica
+		// sharing — so the in-memory head is authority. No atomicity needed: a crash
+		// loses everything and the next boot fully rebuilds.
+		r.mu.Lock()
+		applied := r.applied
+		r.mu.Unlock()
+		if e.Seq != applied+1 {
+			return fmt.Errorf("projection: refusing to apply seq %d over applied head %d — a lower seq is not yet visible in the log; advancing past it would skip an event", e.Seq, applied)
+		}
 		if err := r.applyAll(ctx, e, r.store); err != nil {
 			return err
 		}
@@ -200,9 +278,31 @@ func (r *Runtime) applyContiguous(ctx context.Context, e eventlog.Envelope) erro
 		r.setApplied(e.Seq)
 		return nil
 	}
+	// Durable, transactional store: the DURABLE checkpoint — read under a lock inside
+	// the tx — is authority, not this process's in-memory head. This makes the apply
+	// single-writer across replicas: when N runtimes share one store, they serialize
+	// on the checkpoint row (SELECT … FOR UPDATE on Postgres; SQLite's Begin already
+	// holds a global writer lock), so each event's non-idempotent projectors run
+	// exactly once between them instead of once per replica.
 	tx, err := r.tx.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("projection: begin tx: %w", err)
+	}
+	durable, err := readCheckpointLocked(ctx, tx)
+	if err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("projection: lock checkpoint: %w", err)
+	}
+	switch {
+	case e.Seq <= durable:
+		// Another replica already applied this event (the durable checkpoint advanced
+		// past it under the lock). Roll back our no-op and resync our in-memory head.
+		_ = tx.Rollback()
+		r.setApplied(durable)
+		return nil
+	case e.Seq != durable+1:
+		_ = tx.Rollback()
+		return fmt.Errorf("projection: refusing to apply seq %d over durable checkpoint %d — a lower seq is not yet visible in the log; advancing past it would skip an event", e.Seq, durable)
 	}
 	if err := r.applyAll(ctx, e, tx); err != nil {
 		_ = tx.Rollback()
@@ -217,6 +317,24 @@ func (r *Runtime) applyContiguous(ctx context.Context, e eventlog.Envelope) erro
 	}
 	r.setApplied(e.Seq)
 	return nil
+}
+
+// readCheckpointLocked reads the durable applied-head inside the current tx under an
+// exclusive lock (GetForUpdate), so concurrent replicas serialize on the checkpoint
+// row — the store.Tx contract guarantees the lock on every backend.
+func readCheckpointLocked(ctx context.Context, tx store.Tx) (uint64, error) {
+	raw, ok, err := tx.GetForUpdate(ctx, checkpointCollection, checkpointKey)
+	if err != nil {
+		return 0, err
+	}
+	if !ok {
+		return 0, nil
+	}
+	var cp checkpoint
+	if err := json.Unmarshal(raw, &cp); err != nil {
+		return 0, fmt.Errorf("decode checkpoint: %w", err)
+	}
+	return cp.Seq, nil
 }
 
 func (r *Runtime) writeCheckpoint(ctx context.Context, s store.Store, seq uint64) error {

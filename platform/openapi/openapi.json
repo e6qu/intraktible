@@ -426,6 +426,89 @@
         }
       }
     },
+    "/v1/models/{name}/validation": {
+      "post": {
+        "tags": ["models"],
+        "summary": "Record validation evidence for the model's current version",
+        "description": "Attaches a validation record (dataset, named metrics, validator, notes, pass/fail) to the model's current version. Evidence an approver reviews; not itself the gate. Editor role.",
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "properties": {
+            "dataset": { "type": "string" },
+            "metrics": { "type": "object", "additionalProperties": { "type": "number" } },
+            "validator": { "type": "string" },
+            "notes": { "type": "string" },
+            "passed": { "type": "boolean" }
+          } } } }
+        },
+        "responses": {
+          "200": { "description": "Validation evidence recorded.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventAck" } } } },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/models/{name}/approval-request": {
+      "post": {
+        "tags": ["models"],
+        "summary": "Request four-eyes approval of the model's current version",
+        "description": "The maker side of model four-eyes: proposes the current version for review. Fails if the model is unknown, already approved at this version, or already has a pending request. Editor role.",
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Approval requested.", "content": { "application/json": { "schema": { "type": "object", "properties": { "request_id": { "type": "string" } } } } } },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/models/{name}/approve": {
+      "post": {
+        "tags": ["models"],
+        "summary": "Approve a pending model-approval request (checker)",
+        "description": "The checker side: a different actor — neither the requester nor the version's author — approves, marking the version approved for serving. Approver role.",
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "required": ["request_id"], "properties": {
+            "request_id": { "type": "string" },
+            "reason": { "type": "string" }
+          } } } }
+        },
+        "responses": {
+          "200": { "description": "Approved.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventAck" } } } },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/models/{name}/reject": {
+      "post": {
+        "tags": ["models"],
+        "summary": "Reject a pending model-approval request (checker)",
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "required": ["request_id"], "properties": {
+            "request_id": { "type": "string" },
+            "reason": { "type": "string" }
+          } } } }
+        },
+        "responses": {
+          "200": { "description": "Rejected.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventAck" } } } },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/v1/copilot/explain": {
       "post": {
         "tags": ["copilot"],
@@ -3005,6 +3088,118 @@
             }
           },
           "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/fairlending/report": {
+      "get": {
+        "tags": ["MRM"],
+        "summary": "Disparate-impact (fair-lending) report",
+        "description": "Adverse-impact ratio (four-fifths rule, ECOA / Reg B) of favorable-outcome rates across a protected-class attribute, folded from the flow's recorded decisions. flow and attribute are required. ?format=csv or ?format=md; default JSON.",
+        "parameters": [
+          { "name": "flow", "in": "query", "required": true, "schema": { "type": "string" } },
+          { "name": "attribute", "in": "query", "required": true, "schema": { "type": "string" }, "description": "Dot-path into the decision input naming the protected class, e.g. applicant.gender." },
+          { "name": "favorable", "in": "query", "schema": { "type": "string", "enum": ["approve", "decline", "refer"] } },
+          { "name": "env", "in": "query", "schema": { "type": "string" } },
+          { "name": "format", "in": "query", "schema": { "type": "string", "enum": ["csv", "md", "markdown"] } }
+        ],
+        "responses": {
+          "200": {
+            "description": "The disparate-impact report as JSON, CSV, or Markdown.",
+            "content": {
+              "application/json": { "schema": { "type": "object" } },
+              "text/csv": { "schema": { "type": "string" } },
+              "text/markdown": { "schema": { "type": "string" } }
+            }
+          },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/flows/{flow_id}/fairlending": {
+      "get": {
+        "tags": ["MRM"],
+        "summary": "Get a flow's fair-lending config",
+        "parameters": [
+          { "name": "flow_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "The flow's fair-lending config (defaults when unset).", "content": { "application/json": { "schema": { "type": "object" } } } },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "put": {
+        "tags": ["MRM"],
+        "summary": "Set a flow's fair-lending config",
+        "description": "Declares the protected-class attribute (dot-path into the decision input), the favorable disposition, and the AIR threshold (0 = four-fifths default). Admin only.",
+        "parameters": [
+          { "name": "flow_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "properties": {
+            "attribute": { "type": "string" },
+            "favorable": { "type": "string", "enum": ["approve", "decline", "refer"] },
+            "threshold": { "type": "number" }
+          }, "required": ["attribute"] } } }
+        },
+        "responses": {
+          "200": { "description": "The config was recorded.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventAck" } } } },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/fairlending/settings": {
+      "get": {
+        "tags": ["MRM"],
+        "summary": "Get the workspace adverse-action settings",
+        "responses": {
+          "200": { "description": "The workspace creditor identification (defaults when unset).", "content": { "application/json": { "schema": { "type": "object" } } } },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "put": {
+        "tags": ["MRM"],
+        "summary": "Set the workspace adverse-action settings",
+        "description": "The creditor identification an ECOA / Reg B adverse-action notice requires. creditor_name is required. Admin only.",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "properties": {
+            "creditor_name": { "type": "string" },
+            "creditor_address": { "type": "string" },
+            "creditor_phone": { "type": "string" },
+            "enforcement_agency": { "type": "string" }
+          }, "required": ["creditor_name"] } } }
+        },
+        "responses": {
+          "200": { "description": "The settings were recorded.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventAck" } } } },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/decisions/{decision_id}/adverse-action": {
+      "get": {
+        "tags": ["MRM"],
+        "summary": "Generate an adverse-action notice for a declined decision",
+        "description": "Renders the ECOA / Reg B notice from the decision's recorded reason codes and the workspace creditor settings. Markdown by default; ?format=json returns { decision_id, notice }. 400 when the decision is not a decline, carries no reason codes, or the workspace has no creditor configured.",
+        "parameters": [
+          { "name": "decision_id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "format", "in": "query", "schema": { "type": "string", "enum": ["json", "md", "markdown"] } }
+        ],
+        "responses": {
+          "200": {
+            "description": "The adverse-action notice as Markdown, or JSON when ?format=json.",
+            "content": {
+              "application/json": { "schema": { "type": "object" } },
+              "text/markdown": { "schema": { "type": "string" } }
+            }
+          },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
         }
       }
     },

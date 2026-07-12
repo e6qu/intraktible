@@ -40,6 +40,17 @@ type Store interface {
 // possible without requiring every projector to be idempotent.
 type Tx interface {
 	Store
+	// GetForUpdate reads a row under an exclusive lock held for the tx's lifetime
+	// (Postgres SELECT … FOR UPDATE). SQLite has no row lock, but its Begin already
+	// holds a global writer lock, so a plain read inside the tx is equally exclusive —
+	// each backend implements the same guarantee its own way, so the caller never
+	// branches on which store it has.
+	GetForUpdate(ctx context.Context, collection, key string) (json.RawMessage, bool, error)
+	// PutIfAbsent inserts a row only when its key is not already present (INSERT …
+	// ON CONFLICT DO NOTHING), leaving an existing row untouched — the projection
+	// bootstrap uses it to create-if-missing the checkpoint row so concurrent boots
+	// serialize on it without clobbering a peer's committed value.
+	PutIfAbsent(ctx context.Context, collection, key string, doc json.RawMessage) error
 	Commit() error
 	Rollback() error
 }

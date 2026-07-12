@@ -331,7 +331,8 @@ func requiredRole(method, path string) auth.Role {
 	// checked before the general read rule below.
 	if path == "/v1/audit" || strings.HasPrefix(path, "/v1/audit/") ||
 		strings.HasPrefix(path, "/v1/api-keys") || strings.HasPrefix(path, "/v1/erasure") ||
-		strings.HasPrefix(path, "/v1/mrm") || strings.Contains(path, "/grants") {
+		strings.HasPrefix(path, "/v1/mrm") || strings.HasPrefix(path, "/v1/fairlending") ||
+		strings.Contains(path, "/grants") {
 		// Managing per-flow access grants (and listing who holds them) is an admin
 		// action regardless of method — checked before the general read rule.
 		return auth.RoleAdmin
@@ -349,8 +350,19 @@ func requiredRole(method, path string) auth.Role {
 	if strings.HasSuffix(path, "/run/stream") || strings.HasSuffix(path, "/run/ws") {
 		return auth.RoleOperator
 	}
+	// Generating an adverse-action notice produces a customer-facing Reg B document
+	// from a declined decision — a runtime operation, so operator (checked before the
+	// all-GETs-are-reads rule, since the notice is served over GET).
+	if strings.Contains(path, "/adverse-action") {
+		return auth.RoleOperator
+	}
 	if method == http.MethodGet || method == http.MethodHead || method == http.MethodOptions {
 		return auth.RoleViewer
+	}
+	// A flow's fair-lending config declares which input field is the protected class
+	// — a governance control, admin only (GET is a viewer read, handled above).
+	if strings.HasSuffix(path, "/fairlending") {
+		return auth.RoleAdmin
 	}
 	// Changing the PII masking config is a compliance control — admin only.
 	if path == "/v1/privacy" {
@@ -388,6 +400,8 @@ func isAuthoringPath(path string) bool {
 		strings.HasSuffix(path, "/preapprove/batch") || // bulk-grant pre-approvals from a run
 		strings.Contains(path, "/monitors") || // define/delete a monitor; check pushes alerts
 		strings.HasSuffix(path, "/assertions") || // define a flow's test cases (run is separate)
+		strings.HasSuffix(path, "/approval-request") || // maker proposes a model version for review
+		strings.HasSuffix(path, "/validation") || // attach model validation evidence
 		strings.HasSuffix(path, "/shadow") || // assign a shadow version (PUT; GET is a viewer read)
 		strings.HasSuffix(path, "/slo") || // configure a flow's SLO targets (PUT; GET is a viewer read)
 		strings.HasPrefix(path, "/v1/webhooks") || // register/remove a notification endpoint

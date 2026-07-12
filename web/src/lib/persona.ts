@@ -31,6 +31,7 @@ export type NavId =
   | 'models'
   | 'observability'
   | 'mrm'
+  | 'fairlending'
   | 'keys'
   | 'audit';
 
@@ -56,6 +57,10 @@ export const NAV = new Map<NavId, NavItem>([
     { id: 'observability', href: '/observability', label: 'Observability', icon: 'gauge' }
   ],
   ['mrm', { id: 'mrm', href: '/mrm', label: 'Model risk', icon: 'shield' }],
+  [
+    'fairlending',
+    { id: 'fairlending', href: '/fairlending', label: 'Fair lending', icon: 'gauge' }
+  ],
   ['keys', { id: 'keys', href: '/keys', label: 'API keys', icon: 'connect' }],
   ['audit', { id: 'audit', href: '/audit', label: 'Audit', icon: 'shield' }]
 ]);
@@ -230,11 +235,12 @@ export const PERSONAS: PersonaConfig[] = [
     blurb: 'Approvals, reviewer workload, and SLA health',
     icon: 'check',
     home: 'persona',
-    nav: ['preapprovals', 'cases', 'decisions', 'observability', 'mrm', 'audit'],
+    nav: ['preapprovals', 'cases', 'decisions', 'observability', 'mrm', 'fairlending', 'audit'],
     actions: [
       { label: 'Clear pending approvals', href: '/preapprovals', icon: 'check' },
       { label: 'Check case load', href: '/cases', icon: 'cases' },
       { label: 'Check model-risk posture', href: '/mrm', icon: 'shield' },
+      { label: 'Check fair-lending impact', href: '/fairlending', icon: 'gauge' },
       { label: 'Review the audit trail', href: '/audit', icon: 'shield' }
     ],
     homeStats: ['pending_approvals', 'needs_review', 'overdue'],
@@ -269,7 +275,7 @@ export const PERSONAS: PersonaConfig[] = [
     blurb: 'KPIs, trends, and governance posture',
     icon: 'showcase',
     home: 'showcase',
-    nav: ['decisions', 'cases', 'observability', 'mrm', 'audit'],
+    nav: ['decisions', 'cases', 'observability', 'mrm', 'fairlending', 'audit'],
     actions: [{ label: 'View decision volume', href: '/decisions', icon: 'diagram' }]
   },
   {
@@ -299,7 +305,7 @@ export function personaConfig(p: Persona): PersonaConfig {
 // audit log, and API-key management). They're hidden from a non-admin caller's nav +
 // home so a manager/executive/developer doesn't land on a 403 dead-end (the pages
 // themselves also gate gracefully, as defense in depth).
-const adminOnlyNav = new Set<NavId>(['mrm', 'audit', 'keys']);
+const adminOnlyNav = new Set<NavId>(['mrm', 'fairlending', 'audit', 'keys']);
 
 // navFor resolves a persona's ordered nav subset (with term relabels). When role is
 // given and is not "admin", admin-only items are dropped — so admin surfaces only

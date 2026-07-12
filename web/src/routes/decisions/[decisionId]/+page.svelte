@@ -11,6 +11,7 @@
     exportDecision,
     resumeDecision,
     decisionCounterfactual,
+    adverseActionNotice,
     ApiError,
     type Decision,
     type Counterfactual,
@@ -37,6 +38,28 @@
 
   function msg(e: unknown): string {
     return e instanceof Error ? e.message : String(e);
+  }
+
+  let notifying = $state(false);
+  // Generate the ECOA / Reg B adverse-action notice for a declined decision and offer
+  // it as a download. Fetched through the app fetch (so the demo's mock serves it) and
+  // wrapped in a Blob — an <a href> would escape the mock and 404 on the static host.
+  async function downloadNotice() {
+    notifying = true;
+    try {
+      const text = await adverseActionNotice(key, id);
+      const url = URL.createObjectURL(new Blob([text], { type: 'text/markdown' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `adverse-action-${id}.md`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+      toast.success('Downloaded the adverse-action notice.');
+    } catch (e) {
+      toast.error(msg(e));
+    } finally {
+      notifying = false;
+    }
   }
   function pretty(v: unknown): string {
     return v === undefined || v === null ? '—' : JSON.stringify(v, null, 2);
@@ -247,6 +270,16 @@
       </ul>
     {:else}
       <p class="muted">No reason codes were emitted for this decision.</p>
+    {/if}
+    {#if d.disposition === 'decline'}
+      <button class="notice-btn" onclick={downloadNotice} disabled={notifying}>
+        <Icon name="shield" />
+        {notifying ? 'Generating…' : 'Adverse-action notice'}
+      </button>
+      <p class="muted small">
+        Renders the ECOA / Reg B notice from these reason codes and the workspace creditor settings
+        (set on the Fair lending page). Requires the operator role.
+      </p>
     {/if}
 
     {#if d.disposition === 'decline' || d.disposition === 'refer'}
@@ -661,6 +694,27 @@
   }
   .muted {
     color: var(--fg-subtle);
+  }
+  .muted.small {
+    font-size: 0.82rem;
+    margin-top: 0.3rem;
+  }
+  .notice-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin-top: 0.6rem;
+    padding: 0.4rem 0.75rem;
+    font: inherit;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface);
+    color: var(--fg);
+    cursor: pointer;
+  }
+  .notice-btn:disabled {
+    opacity: 0.5;
+    cursor: default;
   }
   .err {
     color: var(--danger);

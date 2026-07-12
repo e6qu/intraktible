@@ -182,6 +182,29 @@ func (t *sqliteTx) Put(ctx context.Context, collection, key string, doc json.Raw
 	return nil
 }
 
+// PutIfAbsent inserts the doc only when (collection,key) is not already present.
+// SQLite serializes all transactions behind one writer lock, so this is race-free by
+// construction; it exists so the projection bootstrap can create-if-missing the
+// checkpoint row uniformly across the durable backends.
+func (t *sqliteTx) PutIfAbsent(ctx context.Context, collection, key string, doc json.RawMessage) error {
+	_, err := t.tx.ExecContext(ctx,
+		`INSERT INTO docs (collection, key, doc) VALUES (?, ?, ?)
+		 ON CONFLICT (collection, key) DO NOTHING`,
+		collection, key, string(doc))
+	if err != nil {
+		return fmt.Errorf("store: sqlite tx put-if-absent %s/%s: %w", collection, key, err)
+	}
+	return nil
+}
+
+// GetForUpdate reads inside the transaction. SQLite has no SELECT … FOR UPDATE, but
+// Begin holds the store's global writer lock for the tx's lifetime, so no other
+// transaction can write between this read and the tx's commit — the exclusivity a row
+// lock would give, provided by the writer lock instead.
+func (t *sqliteTx) GetForUpdate(ctx context.Context, collection, key string) (json.RawMessage, bool, error) {
+	return t.Get(ctx, collection, key)
+}
+
 func (t *sqliteTx) Get(ctx context.Context, collection, key string) (json.RawMessage, bool, error) {
 	var doc string
 	err := t.tx.QueryRowContext(ctx,

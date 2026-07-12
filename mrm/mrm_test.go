@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -14,7 +15,10 @@ import (
 	"github.com/e6qu/intraktible/agent-manager/domain"
 	"github.com/e6qu/intraktible/agent-manager/eval"
 	"github.com/e6qu/intraktible/decision-engine/flows"
+	"github.com/e6qu/intraktible/decision-engine/history"
 	"github.com/e6qu/intraktible/decision-engine/models"
+	"github.com/e6qu/intraktible/decision-engine/policy"
+	"github.com/e6qu/intraktible/fairlending"
 	"github.com/e6qu/intraktible/mrm"
 	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/store"
@@ -173,6 +177,62 @@ func TestCSVFormulaInjection(t *testing.T) {
 	}
 	if !strings.Contains(csv, "'=cmd()") {
 		t.Fatalf("formula trigger not neutralized: %q", csv)
+	}
+}
+
+func TestFairLendingRegressionSurfacesAsIssue(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemory()
+	id := identity.Identity{Org: "demo", Workspace: "main"}
+	now := time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC)
+
+	put(t, st, flows.Collection, store.Key("demo", "main", "f1"), flows.FlowView{
+		Org: "demo", Workspace: "main", FlowID: "f1", Name: "Credit", Latest: 1,
+		Versions: []flows.VersionView{{Version: 1, PublishedBy: "alice"}},
+	})
+	// A fair-lending config on the flow makes the MRM report run its screen.
+	put(t, st, fairlending.ConfigCollection, store.Key("demo", "main", "f1"), fairlending.ConfigView{
+		Org: "demo", Workspace: "main", FlowID: "f1", Attribute: "applicant.gender", Favorable: policy.Approve,
+	})
+	// Decisions with a disparate outcome: male 80% approved, female 40% approved.
+	seedDecisions(t, st, "male", policy.Approve, 80)
+	seedDecisions(t, st, "male", policy.Decline, 20)
+	seedDecisions(t, st, "female", policy.Approve, 40)
+	seedDecisions(t, st, "female", policy.Decline, 60)
+
+	rep, err := mrm.Build(ctx, st, id, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var flow mrm.Model
+	for _, m := range rep.Models {
+		if m.ID == "f1" {
+			flow = m
+		}
+	}
+	found := false
+	for _, i := range flow.Issues {
+		if strings.HasPrefix(i, "fair-lending AIR") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected a fair-lending issue, got %v", flow.Issues)
+	}
+}
+
+// seedDecisions writes n completed credit-flow decisions for the given group value
+// and disposition, so the MRM fair-lending screen has a population to fold.
+func seedDecisions(t *testing.T, s store.Store, group string, disp policy.Disposition, n int) {
+	t.Helper()
+	for i := 0; i < n; i++ {
+		did := "f1-" + group + "-" + string(disp) + "-" + strconv.Itoa(i)
+		data, _ := json.Marshal(map[string]any{"applicant": map[string]any{"gender": group}})
+		put(t, s, history.Collection, store.Key("demo", "main", did), history.Record{
+			Org: "demo", Workspace: "main", DecisionID: did, FlowID: "f1",
+			Status: "completed", Data: data, Disposition: string(disp),
+			StartedAt: time.Date(2026, 7, 12, 10, 0, 0, 0, time.UTC),
+		})
 	}
 }
 

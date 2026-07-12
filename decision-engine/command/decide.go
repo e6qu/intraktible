@@ -73,9 +73,14 @@ type AgentProvider interface {
 // ModelProvider evaluates a named predictive model from the registry over the
 // decision input and returns its prediction as JSON. The port lives here so the
 // engine never imports the models registry's command surface; a missing model or a
-// bad feature is returned as an error so the decision fails loudly.
+// bad feature is returned as an error so the decision fails loudly. ApprovedForServing
+// is part of the contract — not an optional capability the decide path feels for —
+// so the four-eyes gate can never be silently skipped by a provider that lacks it.
 type ModelProvider interface {
 	Predict(ctx context.Context, id identity.Identity, model string, features map[string]any) (json.RawMessage, error)
+	// ApprovedForServing reports whether the model's current version has four-eyes
+	// approval; the decide path refuses an unapproved model outside the sandbox.
+	ApprovedForServing(ctx context.Context, id identity.Identity, model string) (bool, error)
 }
 
 // PIISealer crypto-shreds the configured PII fields of a recorded decision under
@@ -288,7 +293,8 @@ func (h *DecideHandler) Decide(ctx context.Context, id identity.Identity, slug, 
 		}
 	}
 
-	data, err = h.prepare(ctx, id, version, ref, data)
+	// A recorded decision outside the sandbox must serve four-eyes-approved models.
+	data, err = h.prepare(ctx, id, env != string(domain.EnvSandbox), version, ref, data)
 	if err != nil {
 		if badProviderRef(err) {
 			return DecideResult{}, fmt.Errorf("%w: %w", ErrBadRequest, err)
@@ -557,7 +563,7 @@ func badProviderRef(err error) bool {
 // into the input — the augmented input the pure core executes. Shared by the
 // recording Decide path and the record-free Preview path so both run identical
 // input preparation.
-func (h *DecideHandler) prepare(ctx context.Context, id identity.Identity, version flows.VersionView, ref EntityRef, data map[string]any) (map[string]any, error) {
+func (h *DecideHandler) prepare(ctx context.Context, id identity.Identity, requireApproval bool, version flows.VersionView, ref EntityRef, data map[string]any) (map[string]any, error) {
 	// Validate the caller's input against the version's contract before anything
 	// is injected or recorded — a contract violation is a bad request, not a
 	// recorded decision.
@@ -590,7 +596,7 @@ func (h *DecideHandler) prepare(ctx context.Context, id identity.Identity, versi
 	if err != nil {
 		return nil, err
 	}
-	data, err = h.injectPredictions(ctx, id, version.Graph, data)
+	data, err = h.injectPredictions(ctx, id, requireApproval, version.Graph, data)
 	if err != nil {
 		return nil, err
 	}
@@ -635,7 +641,9 @@ func (h *DecideHandler) Preview(ctx context.Context, id identity.Identity, slug,
 		return DecideResult{}, fmt.Errorf("%w: flow %q has no version %d", ErrNotFound, slug, versionNo)
 	}
 
-	data, err = h.prepare(ctx, id, version, ref, data)
+	// A preview records nothing — it is the author's test tool, exempt from the model
+	// four-eyes gate so a model can be tried before it is approved.
+	data, err = h.prepare(ctx, id, false, version, ref, data)
 	if err != nil {
 		if badProviderRef(err) {
 			return DecideResult{}, fmt.Errorf("%w: %w", ErrBadRequest, err)
@@ -862,7 +870,7 @@ func (h *DecideHandler) injectAI(ctx context.Context, id identity.Identity, grap
 // above) and injects the predictions under "predict" (keyed by each node's output).
 // Evaluation is the only "effect"; doing it here keeps domain.Execute pure. Without
 // a provider it is a no-op and any Predict node fails loudly during execution.
-func (h *DecideHandler) injectPredictions(ctx context.Context, id identity.Identity, graph events.Graph, data map[string]any) (map[string]any, error) {
+func (h *DecideHandler) injectPredictions(ctx context.Context, id identity.Identity, requireApproval bool, graph events.Graph, data map[string]any) (map[string]any, error) {
 	specs, err := domain.PredictSpecs(graph)
 	if err != nil {
 		return nil, err
@@ -872,6 +880,19 @@ func (h *DecideHandler) injectPredictions(ctx context.Context, id identity.Ident
 	}
 	resolved := make(map[string]any, len(specs))
 	for _, sp := range specs {
+		// A recorded non-sandbox decision may only serve a model whose current version
+		// has four-eyes approval — the model equivalent of "production decide refuses an
+		// un-deployed flow version". The sandbox and previews (which record nothing) are
+		// exempt so authors can test a model before it is approved.
+		if requireApproval {
+			approved, err := h.models.ApprovedForServing(ctx, id, sp.Model)
+			if err != nil {
+				return nil, fmt.Errorf("decision-engine: predict node %q (model %q): %w", sp.NodeID, sp.Model, err)
+			}
+			if !approved {
+				return nil, fmt.Errorf("decision-engine: predict node %q model %q is not approved for serving (needs four-eyes approval)", sp.NodeID, sp.Model)
+			}
+		}
 		callCtx, span := h.tracer.Start(ctx, "engine.predict", trace.WithAttributes(
 			attribute.String("model.name", sp.Model),
 			attribute.String("node.id", sp.NodeID),

@@ -204,6 +204,15 @@ func (w *WAL) rollback() {
 
 // Read returns all events with Seq >= fromSeq, in order, decoding them from disk
 // (one ReadAt for the contiguous tail). A corrupt record fails loudly here.
+// ReadTenantStream reads then filters (the WAL is a sequential file with no index).
+func (w *WAL) ReadTenantStream(ctx context.Context, org, workspace, stream string, fromSeq uint64) ([]Envelope, error) {
+	evs, err := w.Read(ctx, fromSeq)
+	if err != nil {
+		return nil, err
+	}
+	return filterTenantStream(evs, org, workspace, stream), nil
+}
+
 func (w *WAL) Read(_ context.Context, fromSeq uint64) ([]Envelope, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()

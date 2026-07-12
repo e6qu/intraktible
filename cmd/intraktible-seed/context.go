@@ -19,6 +19,16 @@ type modelSpec struct {
 	spec  map[string]any
 }
 
+// modelApprover picks a reviewer who is neither the model's owner nor lacks the
+// approver role — four-eyes requires the checker to differ from the author. Marcus
+// (Risk Approver) reviews everything except his own models, which Ava (admin) takes.
+func modelApprover(owner string) string {
+	if owner == actorMarcus {
+		return actorAva
+	}
+	return actorMarcus
+}
+
 func modelSpecs() []modelSpec {
 	tree := func(feature string, threshold, left, right float64) map[string]any {
 		return map[string]any{
@@ -527,7 +537,24 @@ func (s *seeder) contextConfigActions(cfg *timeCursor) []action {
 	}
 	for _, m := range modelSpecs() {
 		acts = append(acts, action{at: cfg.step(2 * time.Minute), name: "model " + m.name, run: func() {
+			// Define the model, attach validation evidence, then run it through the
+			// four-eyes approval: the owner requests, a different reviewer approves —
+			// so the model is approved for production (an unapproved model is refused
+			// outside the sandbox) and the demo shows the governance working.
 			s.call(m.owner, http.MethodPost, "/v1/models", map[string]any{"name": m.name, "spec": m.spec}, nil)
+			s.call(m.owner, http.MethodPost, "/v1/models/"+m.name+"/validation", map[string]any{
+				"dataset":   "backtest_2026Q1",
+				"metrics":   map[string]any{"auc": 0.81, "ks": 0.42},
+				"validator": m.owner,
+				"notes":     "Backtested on the Q1 hold-out; calibration within tolerance.",
+				"passed":    true,
+			}, nil)
+			var req struct {
+				RequestID string `json:"request_id"`
+			}
+			s.call(m.owner, http.MethodPost, "/v1/models/"+m.name+"/approval-request", nil, &req)
+			s.call(modelApprover(m.owner), http.MethodPost, "/v1/models/"+m.name+"/approve",
+				map[string]any{"request_id": req.RequestID, "reason": "Validation evidence reviewed; approved for production."}, nil)
 		}})
 	}
 	for _, e := range entitySpecs() {
