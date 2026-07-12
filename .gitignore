@@ -3,6 +3,10 @@
 /dist/
 # `go build ./cmd/intraktible` from the module root drops the executable here.
 /intraktible
+# `go build ./cmd/intraktible-wasm` (default output name = the package dir) drops a
+# stray wasm module here — a rebuildable artifact, never the embedded one (the Makefile
+# builds that to web/static/intraktible.wasm, ignored below).
+/intraktible-wasm
 *.test
 *.out
 *.exe
