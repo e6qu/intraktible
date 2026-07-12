@@ -14,7 +14,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -177,17 +176,16 @@ func (Projector) Apply(ctx context.Context, e eventlog.Envelope, s store.Store) 
 	return store.PutDoc(ctx, s, Collection, store.Key(e.Org, e.Workspace, p.DecisionID), v)
 }
 
-// Read returns the review for a decision (false when none exists).
+// Read returns the review for a decision (false when none exists). It reads one doc
+// keyed by decision id — a thin GetDoc bind kept as its own call so handlers, the
+// seeder, and tests share the collection/key convention in one place.
 func Read(ctx context.Context, s store.Store, id identity.Identity, decisionID string) (Review, bool, error) {
-	return store.GetDoc[Review](ctx, s, Collection, store.Key(id.Org, id.Workspace, decisionID))
+	key := store.Key(id.Org, id.Workspace, decisionID)
+	return store.GetDoc[Review](ctx, s, Collection, key)
 }
 
 // List returns the tenant's reviews, most recently reviewed first.
 func List(ctx context.Context, s store.Store, id identity.Identity) ([]Review, error) {
-	out, err := store.ListDocs[Review](ctx, s, Collection, store.Key(id.Org, id.Workspace, ""))
-	if err != nil {
-		return nil, err
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ReviewedAt.After(out[j].ReviewedAt) })
-	return out, nil
+	return store.ListByTime(ctx, s, Collection, store.Key(id.Org, id.Workspace, ""),
+		func(r Review) time.Time { return r.ReviewedAt }, func(r Review) string { return r.DecisionID }, true)
 }

@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -166,10 +165,6 @@ func ReadIssuance(ctx context.Context, s store.Store, id identity.Identity, deci
 
 // ListIssuances returns the tenant's issuance records, most recently issued first.
 func ListIssuances(ctx context.Context, s store.Store, id identity.Identity) ([]IssuanceView, error) {
-	out, err := store.ListDocs[IssuanceView](ctx, s, IssuanceCollection, store.Key(id.Org, id.Workspace, ""))
-	if err != nil {
-		return nil, err
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].IssuedAt.After(out[j].IssuedAt) })
-	return out, nil
+	return store.ListByTime(ctx, s, IssuanceCollection, store.Key(id.Org, id.Workspace, ""),
+		func(v IssuanceView) time.Time { return v.IssuedAt }, func(v IssuanceView) string { return v.DecisionID }, true)
 }
