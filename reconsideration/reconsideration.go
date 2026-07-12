@@ -159,15 +159,25 @@ func (Projector) Name() string { return Collection }
 // Collections lists the store collection this projector owns.
 func (Projector) Collections() []string { return []string{Collection} }
 
+// decode unmarshals an event payload into T, wrapping decode errors with the seq — the
+// one place the projectors decode, so the boilerplate lives once.
+func decode[T any](e eventlog.Envelope) (T, error) {
+	var p T
+	if err := json.Unmarshal(e.Payload, &p); err != nil {
+		return p, fmt.Errorf("reconsideration: decode %s seq %d: %w", e.Type, e.Seq, err)
+	}
+	return p, nil
+}
+
 // Apply maintains the per-decision review record. A re-review overwrites with the
 // latest (the log keeps the full trail).
 func (Projector) Apply(ctx context.Context, e eventlog.Envelope, s store.Store) error {
 	if e.Type != TypeRecorded {
 		return nil
 	}
-	var p Recorded
-	if err := json.Unmarshal(e.Payload, &p); err != nil {
-		return fmt.Errorf("reconsideration: decode recorded seq %d: %w", e.Seq, err)
+	p, err := decode[Recorded](e)
+	if err != nil {
+		return err
 	}
 	v := Review{
 		Org: e.Org, Workspace: e.Workspace, DecisionID: p.DecisionID, Subject: p.Subject,
