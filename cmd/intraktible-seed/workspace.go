@@ -73,15 +73,10 @@ func (s *seeder) reconsiderationActions(anchor time.Time) []action {
 			} `json:"adverse_actions"`
 		}
 		s.call(actorDiego, http.MethodGet, "/v1/adverse-actions", nil, &q)
-		reviews := []map[string]any{
-			{"basis": "applicant_contest", "outcome": "overturned",
-				"rationale": "Applicant supplied a pay stub the automated bureau pull missed; recomputed DTI is within the program limit, so the decline is reversed."},
-			{"basis": "proactive", "outcome": "upheld",
-				"rationale": "Reviewed against the file: the delinquency and utilization drivers are confirmed and material; the automated decline stands."},
-		}
-		i := 0
+		// Collect solely-automated credit declines (the ones eligible for a contest/review).
+		var eligible []string
 		for _, aa := range q.AdverseActions {
-			if i >= len(reviews) || aa.Slug != "credit-decision" {
+			if aa.Slug != "credit-decision" {
 				continue
 			}
 			var dec struct {
@@ -91,11 +86,28 @@ func (s *seeder) reconsiderationActions(anchor time.Time) []action {
 				HumanReviewed bool   `json:"human_reviewed"`
 			}
 			s.call(actorDiego, http.MethodGet, "/v1/decisions/"+url.PathEscape(aa.DecisionID), nil, &dec)
-			if dec.Status != "completed" || dec.Disposition != "decline" || dec.CaseID != "" || dec.HumanReviewed {
-				continue
+			if dec.Status == "completed" && dec.Disposition == "decline" && dec.CaseID == "" && !dec.HumanReviewed {
+				eligible = append(eligible, aa.DecisionID)
 			}
-			s.call(actorDiego, http.MethodPost, "/v1/decisions/"+url.PathEscape(aa.DecisionID)+"/reconsideration", reviews[i], nil)
-			i++
+		}
+		contest := func(id, channel, note string) {
+			s.call(actorDiego, http.MethodPost, "/v1/decisions/"+url.PathEscape(id)+"/contest",
+				map[string]any{"channel": channel, "note": note}, nil)
+		}
+		review := func(id, basis, outcome, rationale string) {
+			s.call(actorDiego, http.MethodPost, "/v1/decisions/"+url.PathEscape(id)+"/reconsideration",
+				map[string]any{"basis": basis, "outcome": outcome, "rationale": rationale}, nil)
+		}
+		if len(eligible) >= 3 {
+			// The applicant contested; the review resolves that contest and overturns the decline.
+			contest(eligible[0], "phone", "Customer called to dispute the decline and asked for a review.")
+			review(eligible[0], "applicant_contest", "overturned",
+				"Applicant supplied a pay stub the automated bureau pull missed; recomputed DTI is within the program limit, so the decline is reversed.")
+			// A proactive review with no contest — the decline stands.
+			review(eligible[1], "proactive", "upheld",
+				"Reviewed against the file: the delinquency and utilization drivers are confirmed and material; the automated decline stands.")
+			// A contest still awaiting a human review (the open work on the compliance surface).
+			contest(eligible[2], "letter", "Applicant wrote in contesting the outcome; awaiting reviewer.")
 		}
 	}}}
 }

@@ -3277,6 +3277,64 @@ export async function recordReconsideration(
     return errorOrStatus(res, 'record reconsideration');
   }
 }
+// Contest is a subject's dispute of an automated decision — opened when logged, and
+// resolved once a human review is recorded for the same decision.
+export interface Contest {
+  decision_id: string;
+  subject?: string;
+  channel: string;
+  note?: string;
+  received_at: string;
+  received_by: string;
+  resolved: boolean;
+  resolved_at?: string;
+}
+// getContest returns the contest for a decision, if one has been logged.
+export async function getContest(
+  key: string,
+  decisionId: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<Contest | null> {
+  const res = await fetcher(`/v1/decisions/${encodeURIComponent(decisionId)}/contest`, {
+    headers: authHeaders(key)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'get contest');
+  }
+  const body = (await res.json()) as { contested: boolean; contest?: Contest };
+  return body.contested ? (body.contest ?? null) : null;
+}
+// recordContest logs that a subject contested an automated decline (their right to
+// contest), by the channel they used. A later human review resolves it.
+export async function recordContest(
+  key: string,
+  decisionId: string,
+  body: { channel: string; note?: string },
+  fetcher: typeof fetch = recordingFetch
+): Promise<void> {
+  const res = await fetcher(`/v1/decisions/${encodeURIComponent(decisionId)}/contest`, {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'record contest');
+  }
+}
+// listContests returns the tenant's contests. status 'open' returns those awaiting a
+// review; 'resolved' those a review has closed.
+export async function listContests(
+  key: string,
+  status: 'open' | 'resolved' | '' = '',
+  fetcher: typeof fetch = recordingFetch
+): Promise<Contest[]> {
+  const q = status ? `?status=${status}` : '';
+  const res = await fetcher(`/v1/contests${q}`, { headers: authHeaders(key) });
+  if (!res.ok) {
+    return errorOrStatus(res, 'list contests');
+  }
+  return ((await res.json()) as { contests: Contest[] }).contests ?? [];
+}
 // listReconsiderations returns every recorded human review for the tenant (the audit
 // trail behind the compliance surface).
 export async function listReconsiderations(

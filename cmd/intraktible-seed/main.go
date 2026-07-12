@@ -342,6 +342,15 @@ func spotCheck(srv *server.Server) string {
 		fatalf("round trip: %d human reviews, want >= 2", len(reconsiderations.Reconsiderations))
 	}
 
+	// Contests: at least one still awaiting review (an open item on the compliance surface).
+	var openContests struct {
+		Contests []json.RawMessage `json:"contests"`
+	}
+	get("/v1/contests?status=open", &openContests)
+	if len(openContests.Contests) == 0 {
+		fatalf("round trip: no contests awaiting review (queue would look empty)")
+	}
+
 	// The adverse-action register exports as CSV with its header and at least one issued row.
 	regReq := httptest.NewRequest("GET", "/v1/compliance/registers/adverse-actions", http.NoBody)
 	regReq.Header.Set("X-Api-Key", devAPIKey)

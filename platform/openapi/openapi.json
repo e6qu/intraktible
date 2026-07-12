@@ -3461,6 +3461,48 @@
         }
       }
     },
+    "/v1/decisions/{decision_id}/contest": {
+      "post": {
+        "tags": ["MRM"],
+        "summary": "Log that a subject contested an automated decision",
+        "description": "Records a data subject's contest of an automated decline (their right to contest under Article 22(3) of the EU General Data Protection Regulation / reconsideration under the US Equal Credit Opportunity Act), by the channel they used. Opens the contest; recording a human review of the same decision resolves it. Rejected (400) unless the decision is a completed, solely-automated decline. Operator only.",
+        "parameters": [{ "name": "decision_id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "required": ["channel"], "properties": {
+            "channel": { "type": "string", "enum": ["phone", "letter", "email", "online_portal", "in_person"] },
+            "note": { "type": "string" }
+          } } } }
+        },
+        "responses": {
+          "200": { "description": "The contest was logged.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventAck" } } } },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "get": {
+        "tags": ["MRM"],
+        "summary": "Get the contest logged against a decision, if any",
+        "parameters": [{ "name": "decision_id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "{ contested: false } or { contested: true, contest }.", "content": { "application/json": { "schema": { "type": "object" } } } },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/contests": {
+      "get": {
+        "tags": ["MRM"],
+        "summary": "List contests of automated decisions",
+        "description": "The tenant's contests. ?status=open returns those awaiting a human review; ?status=resolved those a review has closed.",
+        "parameters": [{ "name": "status", "in": "query", "schema": { "type": "string", "enum": ["open", "resolved"] } }],
+        "responses": {
+          "200": { "description": "The contests.", "content": { "application/json": { "schema": { "type": "object" } } } },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/v1/reconsiderations": {
       "get": {
         "tags": ["MRM"],

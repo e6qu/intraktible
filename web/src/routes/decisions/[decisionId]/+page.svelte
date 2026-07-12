@@ -17,12 +17,15 @@
     getReconsideration,
     recordReconsideration,
     decisionExplanation,
+    getContest,
+    recordContest,
     ApiError,
     type Decision,
     type Counterfactual,
     type RunExportFormat,
     type AdverseActionIssuance,
-    type Reconsideration
+    type Reconsideration,
+    type Contest
   } from '$lib/api';
   import { toast } from '$lib/toast';
   import { appHref } from '$lib/paths';
@@ -128,12 +131,39 @@
   // Eligible only when the decline ran end to end with no person in the loop.
   const solelyAutomated = $derived(!!d && !d.case_id && !d.human_reviewed);
 
+  // A contest the subject lodged against this decision (null = none logged).
+  let contest = $state<Contest | null>(null);
+  let contestChannel = $state('phone');
+  let contestNote = $state('');
+  let contesting = $state(false);
+
   async function loadReview() {
     if (!id) return;
     try {
       review = await getReconsideration(key, id);
     } catch {
       review = null;
+    }
+    try {
+      contest = await getContest(key, id);
+    } catch {
+      contest = null;
+    }
+  }
+  async function submitContest() {
+    contesting = true;
+    try {
+      await recordContest(key, id, {
+        channel: contestChannel,
+        note: contestNote.trim() || undefined
+      });
+      toast.success('Contest logged — awaiting review.');
+      contestNote = '';
+      await loadReview();
+    } catch (e) {
+      toast.error(msg(e));
+    } finally {
+      contesting = false;
     }
   }
   async function submitReview() {
@@ -262,6 +292,7 @@
     cf = null;
     issuance = null;
     review = null;
+    contest = null;
     // Reset the rendered decision too — otherwise a failed sibling load keeps
     // showing the previous decision (including its Resume panel) under the new id.
     d = null;
@@ -458,6 +489,36 @@
           under the US Equal Credit Opportunity Act — the original decision stays immutable.</Hint
         >
       </h2>
+      {#if contest}
+        <p class="muted small">
+          <span class="badge {contest.resolved ? 'ok' : ''}"
+            >{contest.resolved ? 'contest resolved' : 'contest — awaiting review'}</span
+          >
+          Lodged via {contest.channel.replace('_', ' ')} on {contest.received_at?.slice(
+            0,
+            10
+          )}{contest.note ? ` — ${contest.note}` : ''}.
+        </p>
+      {:else if solelyAutomated && !review && canIssue}
+        <div class="aa-issue">
+          <span class="muted small"
+            >Log a contest the subject lodged (a later review resolves it):</span
+          >
+          <div class="aa-controls">
+            <select bind:value={contestChannel} aria-label="contest channel">
+              <option value="phone">phone</option>
+              <option value="letter">letter</option>
+              <option value="email">email</option>
+              <option value="online_portal">online portal</option>
+              <option value="in_person">in person</option>
+            </select>
+            <input bind:value={contestNote} placeholder="note (optional)" />
+            <button class="notice-btn" onclick={submitContest} disabled={contesting}>
+              {contesting ? 'Logging…' : 'Log contest'}
+            </button>
+          </div>
+        </div>
+      {/if}
       {#if review}
         <dl class="issuance">
           <dt>Outcome</dt>
@@ -1010,7 +1071,8 @@
     gap: 0.5rem;
     align-items: center;
   }
-  .aa-controls select {
+  .aa-controls select,
+  .aa-controls input {
     font: inherit;
     padding: 0.35rem 0.5rem;
     border: 1px solid var(--border);

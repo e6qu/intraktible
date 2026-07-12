@@ -669,7 +669,7 @@ func Projectors(modules string) []projection.Projector {
 	// regardless of which modules are enabled (so masking and the audit trail work in
 	// every profile). The audit projector re-indexes every event for tenant-scoped reads.
 	ps := []projection.Projector{privacy.Projector{}, comments.Projector{}, consent.Projector{}, sharing.Projector{}, notifications.Projector{}, audit.Projector{},
-		fairlending.ConfigProjector{}, fairlending.SettingsProjector{}, fairlending.IssuanceProjector{}, reconsideration.Projector{}}
+		fairlending.ConfigProjector{}, fairlending.SettingsProjector{}, fairlending.IssuanceProjector{}, reconsideration.Projector{}, reconsideration.ContestProjector{}}
 	if enabled(modules, "hello") {
 		ps = append(ps, stats.Projector{})
 	}

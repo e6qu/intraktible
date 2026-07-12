@@ -20,13 +20,15 @@
     getRetentionPolicy,
     listErasedSubjects,
     listSharingRecords,
+    listContests,
     exportComplianceRegister,
     type AdverseActionItem,
     type Reconsideration,
     type ConsentRecord,
     type LegalHold,
     type RetentionPolicy,
-    type SharingRecord
+    type SharingRecord,
+    type Contest
   } from '$lib/api';
   import { toast } from '$lib/toast';
 
@@ -59,27 +61,30 @@
   let retention = $state<RetentionPolicy | null>(null);
   let erasedCount = $state(0);
   let sharing = $state<SharingRecord[]>([]);
+  let contests = $state<Contest[]>([]);
 
   onMount(async () => {
     // Every source is best-effort: an admin-only read (holds/retention/erased) 403s
     // for a viewer and simply leaves its section empty rather than failing the page.
-    const [p, r, c, h, ret, er, sh] = await Promise.all([
+    const [p, r, c, h, ret, er, sh, co] = await Promise.all([
       listAdverseActions(key, 'pending').catch(() => []),
       listReconsiderations(key).catch(() => []),
       listConsentRecords(key).catch(() => []),
       listLegalHolds(key).catch(() => []),
       getRetentionPolicy(key).catch(() => null),
       listErasedSubjects(key).catch(() => []),
-      listSharingRecords(key).catch(() => [])
+      listSharingRecords(key).catch(() => []),
+      listContests(key, 'open').catch(() => [])
     ]);
-    [pending, reviews, consents, holds, retention, erasedCount, sharing] = [
+    [pending, reviews, consents, holds, retention, erasedCount, sharing, contests] = [
       p,
       r,
       c,
       h,
       ret,
       er.length,
-      sh
+      sh,
+      co
     ];
     loading = false;
   });
@@ -215,6 +220,12 @@
           Solely-automated declines a person reviewed — Article 22 of the EU General Data Protection
           Regulation, and reconsideration under the US Equal Credit Opportunity Act.
         </p>
+        {#if contests.length > 0}
+          <p class="line">
+            <b class="warn">{contests.length}</b> awaiting review — decisions a subject has contested
+            but no one has reviewed yet.
+          </p>
+        {/if}
         {#if reviews.length === 0}
           <EmptyState
             icon="shield"

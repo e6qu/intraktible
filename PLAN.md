@@ -461,8 +461,12 @@ them hardest-blocker-first; each phase is a direction, not a committed date.
   in any recorded human review, and naming the reconsideration channel. It is distinct from the ECOA
   adverse-action notice (a US decline letter) — this is the GDPR/UK data-subject rights explanation,
   downloadable from the decision page.
-  _Still open:_ a standing subject-facing contest **channel** (today a review is recorded by staff);
-  the UK 22A–22D regime split as first-class config; byte-level WORM artifact storage.
+  A **subject-facing contest channel** now closes the loop: a subject's contest of an automated decline
+  is logged (`POST /v1/decisions/{id}/contest`, by the channel they used) and stays open until a human
+  review of that decision resolves it — surfaced as an "awaiting review" queue on the compliance
+  dashboard, so a contest is tracked from receipt to outcome, not just recorded after the fact.
+  _Still open:_ the UK 22A–22D regime split as first-class per-tenant config; byte-level WORM artifact
+  storage.
 
 **Parallel non-code track (organisational, not code):** SOC 2 Type II, ISO 27001, independent
 penetration testing, data-provider commercial relationships, model-validation staffing, and reference

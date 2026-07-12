@@ -33,6 +33,92 @@ func (s *Service) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/decisions/{decision_id}/reconsideration", s.record)
 	mux.HandleFunc("GET /v1/reconsiderations", s.list)
 	mux.HandleFunc("GET /v1/decisions/{decision_id}/explanation", s.explain)
+	mux.HandleFunc("POST /v1/decisions/{decision_id}/contest", s.contest)
+	mux.HandleFunc("GET /v1/decisions/{decision_id}/contest", s.getContest)
+	mux.HandleFunc("GET /v1/contests", s.contests)
+}
+
+func (s *Service) getContest(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	c, found, err := ReadContest(r.Context(), s.store, id, r.PathValue("decision_id"))
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	if !found {
+		httpx.JSON(w, http.StatusOK, map[string]any{"contested": false})
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"contested": true, "contest": c})
+}
+
+type contestRequest struct {
+	Channel Channel `json:"channel"`
+	Note    string  `json:"note,omitempty"`
+}
+
+// contest records that a subject contested an automated decision — opening the contest
+// that a later human review resolves. It refuses (400) unless the decision is a
+// completed, solely-automated decline: the same eligibility as recording a review, so a
+// contest and its review describe the same class of decision.
+func (s *Service) contest(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	decisionID := r.PathValue("decision_id")
+	var req contestRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	rec, found, err := history.Read(r.Context(), s.store, id, decisionID)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	if !found {
+		httpx.Error(w, http.StatusNotFound, fmt.Errorf("decision %s not found", decisionID))
+		return
+	}
+	if err := eligible(rec); err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	e, err := s.cmd.RecordContest(r.Context(), id, ContestCmd{
+		DecisionID: decisionID, Subject: subjectOf(rec), Channel: req.Channel, Note: req.Note,
+	})
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"event_id": e.ID, "seq": e.Seq})
+}
+
+// contests lists the tenant's contests. ?status=open returns only those awaiting a
+// review; ?status=resolved returns only those a review has closed.
+func (s *Service) contests(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	all, err := ListContests(r.Context(), s.store, id)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	status := r.URL.Query().Get("status")
+	out := make([]Contest, 0, len(all))
+	for _, c := range all {
+		if (status == "open" && c.Resolved) || (status == "resolved" && !c.Resolved) {
+			continue
+		}
+		out = append(out, c)
+	}
+	httpx.WriteList(w, "contests", out, nil)
 }
 
 // explain renders the Art. 22 subject-facing explanation of a decision — how it was
