@@ -9,8 +9,39 @@ package main
 
 import (
 	"net/http"
+	"net/url"
 	"time"
 )
+
+// adverseActionActions serves the ECOA / FCRA adverse-action notice for most of the
+// credit flow's declined decisions — recording who served it, when, how, and a hash
+// of the exact document — and leaves the three most recent pending so the Fair-lending
+// work queue shows real outstanding work. Only credit-decision declines are served:
+// they carry the reason codes (and drew on the bureau) an FCRA notice needs.
+func (s *seeder) adverseActionActions(anchor time.Time) []action {
+	return []action{{at: anchor.Add(2 * time.Hour), name: "issue adverse-action notices", run: func() {
+		var q struct {
+			AdverseActions []struct {
+				DecisionID string `json:"decision_id"`
+				Slug       string `json:"slug"`
+			} `json:"adverse_actions"`
+		}
+		s.call(actorDiego, http.MethodGet, "/v1/adverse-actions?status=pending", nil, &q)
+		var credit []string
+		for _, aa := range q.AdverseActions {
+			if aa.Slug == "credit-decision" {
+				credit = append(credit, aa.DecisionID)
+			}
+		}
+		// Serve all but the last three, so the queue carries both issued and pending.
+		methods := []string{"mail", "email", "in_app"}
+		for i := 0; i < len(credit)-3; i++ {
+			s.call(actorDiego, http.MethodPost,
+				"/v1/decisions/"+url.PathEscape(credit[i])+"/adverse-action/issue",
+				map[string]any{"method": methods[i%len(methods)], "based_on_consumer_report": true}, nil)
+		}
+	}}}
+}
 
 // timeCursor hands out strictly increasing config-phase timestamps.
 type timeCursor struct{ t time.Time }
@@ -557,6 +588,18 @@ func (s *seeder) governanceConfigActions(cfg *timeCursor) []action {
 			map[string]any{"environment": "staging", "version": 1}, nil)
 	}}, action{at: cfg.step(time.Minute), name: "model monitor claim_fraud", run: func() {
 		s.call(actorAva, http.MethodPost, "/v1/models/claim_fraud/monitor", map[string]any{"threshold": 0.1}, nil)
+	}}, action{at: cfg.step(time.Minute), name: "adverse-action settings", run: func() {
+		// Creditor + consumer-reporting-agency identification an ECOA/FCRA notice
+		// must carry (the demo lender pulls Experian, so the CRA is configured).
+		s.call(actorAva, http.MethodPut, "/v1/fairlending/settings", map[string]any{ // #nosec G101 -- public creditor/CRA identification in demo seed content, not credentials
+			"creditor_name":      "Harborview Bank, N.A.",
+			"creditor_address":   "500 Financial Plaza, Columbus, OH 43215",
+			"creditor_phone":     "1-800-555-0142",
+			"enforcement_agency": "Bureau of Consumer Financial Protection, 1700 G Street NW, Washington, DC 20552",
+			"cra_name":           "Experian Information Solutions, Inc.",
+			"cra_address":        "P.O. Box 2002, Allen, TX 75013",
+			"cra_phone":          "1-888-397-3742",
+		}, nil)
 	}})
 	return acts
 }

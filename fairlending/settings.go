@@ -36,6 +36,13 @@ type Settings struct {
 	// EnforcementAgency identifies the federal agency named in the ECOA notice. It
 	// varies by creditor type; an empty value renders the generic FTC reference.
 	EnforcementAgency string `json:"enforcement_agency"`
+	// Consumer-reporting-agency identification, required by FCRA §615(a) when a
+	// decision was based in whole or part on a consumer report: the notice must name
+	// and locate the CRA. Optional here — only a notice marked as report-based needs
+	// it, and that path fails loud if it is missing.
+	CRAName    string `json:"cra_name,omitempty"`
+	CRAAddress string `json:"cra_address,omitempty"`
+	CRAPhone   string `json:"cra_phone,omitempty"`
 }
 
 // SettingsView is the stored settings with its provenance.
@@ -84,6 +91,9 @@ func (h *Handler) SetSettings(ctx context.Context, id identity.Identity, st Sett
 	st.CreditorAddress = strings.TrimSpace(st.CreditorAddress)
 	st.CreditorPhone = strings.TrimSpace(st.CreditorPhone)
 	st.EnforcementAgency = strings.TrimSpace(st.EnforcementAgency)
+	st.CRAName = strings.TrimSpace(st.CRAName)
+	st.CRAAddress = strings.TrimSpace(st.CRAAddress)
+	st.CRAPhone = strings.TrimSpace(st.CRAPhone)
 	if st.CreditorName == "" {
 		return eventlog.Envelope{}, fmt.Errorf("fairlending: creditor_name is required")
 	}

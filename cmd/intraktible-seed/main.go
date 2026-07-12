@@ -168,6 +168,7 @@ func buildSeed() []eventlog.Envelope {
 	acts = append(acts, s.pendingRequestActions(anchor)...)
 	acts = append(acts, s.monitorCheckActions(anchor)...)
 	acts = append(acts, s.inboxActions(anchor)...)
+	acts = append(acts, s.adverseActionActions(anchor)...)
 
 	s.runTimeline(acts)
 
@@ -301,6 +302,20 @@ func spotCheck(srv *server.Server) string {
 	}
 	get("/v1/decisions?limit=1&status=failed", &failed)
 	requireEq("failed decisions", failed.Total, 14)
+
+	// Adverse-action notices: the credit flow's declines split into issued and still-
+	// pending, so both sides of the Fair-lending work queue are populated.
+	var issued, pending struct {
+		AdverseActions []json.RawMessage `json:"adverse_actions"`
+	}
+	get("/v1/adverse-actions?status=issued", &issued)
+	get("/v1/adverse-actions?status=pending", &pending)
+	if len(issued.AdverseActions) == 0 {
+		fatalf("round trip: no adverse-action notices were issued")
+	}
+	if len(pending.AdverseActions) == 0 {
+		fatalf("round trip: no adverse-action notices left pending (queue would look empty)")
+	}
 
 	var cases struct {
 		Cases []struct {

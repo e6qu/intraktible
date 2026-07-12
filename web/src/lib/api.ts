@@ -3094,8 +3094,37 @@ export interface AdverseActionSettings {
   creditor_address?: string;
   creditor_phone?: string;
   enforcement_agency?: string;
+  // Consumer reporting agency, required by FCRA §615(a) for a report-based notice.
+  cra_name?: string;
+  cra_address?: string;
+  cra_phone?: string;
   updated_at?: string;
   updated_by?: string;
+}
+// AdverseActionIssuance is the durable record that a declined applicant was served
+// their notice — proof ECOA/Reg B expects a creditor to keep (who, when, how, citing
+// what, plus a hash of the exact document served).
+export interface AdverseActionIssuance {
+  decision_id: string;
+  subject?: string;
+  method: string;
+  based_on_consumer_report: boolean;
+  principal_reasons: string[];
+  content_hash: string;
+  hash_algo: string;
+  issued_at: string;
+  issued_by: string;
+}
+// AdverseActionItem is one row of the pending/issued work queue.
+export interface AdverseActionItem {
+  decision_id: string;
+  flow_id: string;
+  slug: string;
+  subject?: string;
+  decided_at: string;
+  age_days: number;
+  issued: boolean;
+  issuance?: AdverseActionIssuance;
 }
 // getAdverseActionSettings fetches the workspace creditor identification for notices.
 export async function getAdverseActionSettings(
@@ -3137,6 +3166,54 @@ export async function adverseActionNotice(
     return errorOrStatus(res, 'generate adverse-action notice');
   }
   return res.text();
+}
+// getAdverseAction fetches the rendered notice plus any recorded issuance as JSON. The
+// consumerReport flag adds the FCRA §615(a) disclosures to the rendered preview.
+export async function getAdverseAction(
+  key: string,
+  decisionId: string,
+  consumerReport = false,
+  fetcher: typeof fetch = recordingFetch
+): Promise<{ notice: string; issuance?: AdverseActionIssuance }> {
+  const q = consumerReport ? '&consumer_report=true' : '';
+  const res = await fetcher(
+    `/v1/decisions/${encodeURIComponent(decisionId)}/adverse-action?format=json${q}`,
+    { headers: authHeaders(key) }
+  );
+  if (!res.ok) {
+    return errorOrStatus(res, 'get adverse-action');
+  }
+  return (await res.json()) as { notice: string; issuance?: AdverseActionIssuance };
+}
+// issueAdverseAction records that the notice for a declined decision was served, by a
+// delivery method, optionally marking it as based on a consumer report (FCRA).
+export async function issueAdverseAction(
+  key: string,
+  decisionId: string,
+  body: { method: string; based_on_consumer_report: boolean },
+  fetcher: typeof fetch = recordingFetch
+): Promise<void> {
+  const res = await fetcher(
+    `/v1/decisions/${encodeURIComponent(decisionId)}/adverse-action/issue`,
+    { method: 'POST', headers: jsonHeaders(key), body: JSON.stringify(body) }
+  );
+  if (!res.ok) {
+    return errorOrStatus(res, 'issue adverse-action notice');
+  }
+}
+// listAdverseActions returns the declined decisions and their notice status — the work
+// queue. status 'pending' returns declines not yet served; 'issued' those served.
+export async function listAdverseActions(
+  key: string,
+  status: 'pending' | 'issued' | '' = '',
+  fetcher: typeof fetch = recordingFetch
+): Promise<AdverseActionItem[]> {
+  const q = status ? `?status=${status}` : '';
+  const res = await fetcher(`/v1/adverse-actions${q}`, { headers: authHeaders(key) });
+  if (!res.ok) {
+    return errorOrStatus(res, 'list adverse-actions');
+  }
+  return ((await res.json()) as { adverse_actions: AdverseActionItem[] }).adverse_actions ?? [];
 }
 
 // ConsentEvidence is the proof backing a grant — the document/audit-trail a regulator
