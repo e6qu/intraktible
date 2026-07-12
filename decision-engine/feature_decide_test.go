@@ -29,7 +29,7 @@ func (s stubFeatures) Features(_ context.Context, _ identity.Identity, _ entity.
 
 // publishFlow creates + publishes a flow and rebuilds the flow registry the decide
 // path reads. Shared by the decide/feature tests so the boilerplate lives once.
-func publishFlow(t *testing.T, ctx context.Context, log eventlog.Log, st store.Store, id identity.Identity, slug, name string, graph events.Graph) {
+func publishFlow(t testing.TB, ctx context.Context, log eventlog.Log, st store.Store, id identity.Identity, slug, name string, graph events.Graph) {
 	t.Helper()
 	h := command.NewHandler(log)
 	flowID, _, err := h.CreateFlow(ctx, id, domain.CreateFlow{Slug: slug, Name: name})

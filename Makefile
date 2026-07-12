@@ -44,6 +44,10 @@ test:
 test-short:
 	$(GO) test ./...
 
+## bench: decision-throughput benchmark (serial + parallel scaling across cores)
+bench:
+	$(GO) test ./decision-engine/ -run xxx -bench 'BenchmarkDecide' -benchmem -benchtime 2s -cpu 1,2,4,8
+
 ## fmt: format the tree
 fmt:
 	gofmt -w $(GO_DIRS)
