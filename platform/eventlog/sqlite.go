@@ -76,6 +76,12 @@ func OpenSQLiteLog(dir string, poll time.Duration) (*SQLiteLog, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("eventlog: sqlite add unique_key: %w", err)
 	}
+	// Index the per-tenant, per-stream read (ReadTenantStream) the maker-checker folds
+	// use, so they don't table-scan the decision-dominated log.
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS events_tenant_stream ON events(org, workspace, stream, seq)`); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("eventlog: sqlite tenant-stream index: %w", err)
+	}
 	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS events_unique_key ON events(unique_key) WHERE unique_key IS NOT NULL`); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("eventlog: sqlite unique_key index: %w", err)
@@ -136,6 +142,35 @@ func (l *SQLiteLog) Append(ctx context.Context, e Envelope) (Envelope, error) {
 // Read returns all events with Seq >= fromSeq (0 = all), in order.
 func (l *SQLiteLog) Read(ctx context.Context, fromSeq uint64) ([]Envelope, error) {
 	return l.readFrom(ctx, fromSeq, 0)
+}
+
+// ReadTenantStream returns one tenant's events on one stream with Seq >= fromSeq, in
+// order — the indexed read the maker-checker folds use instead of scanning the whole
+// log.
+func (l *SQLiteLog) ReadTenantStream(ctx context.Context, org, workspace, stream string, fromSeq uint64) ([]Envelope, error) {
+	if fromSeq > math.MaxInt64 {
+		return nil, nil
+	}
+	rows, err := l.db.QueryContext(ctx,
+		`SELECT seq, id, org, workspace, stream, type, time, actor, payload
+		 FROM events WHERE org = ? AND workspace = ? AND stream = ? AND seq >= ? ORDER BY seq`,
+		org, workspace, stream, fromSeq)
+	if err != nil {
+		return nil, fmt.Errorf("eventlog: sqlite read tenant-stream: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []Envelope
+	for rows.Next() {
+		e, err := scanEvent(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("eventlog: sqlite read tenant-stream rows: %w", err)
+	}
+	return out, nil
 }
 
 // readFrom returns events with Seq >= fromSeq in order, capped at limit rows

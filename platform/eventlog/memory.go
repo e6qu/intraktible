@@ -70,6 +70,15 @@ func (l *MemoryLog) Append(_ context.Context, e Envelope) (Envelope, error) {
 
 // Read returns a copy of all events with Seq >= fromSeq, in order — a snapshot,
 // unaffected by later appends.
+// ReadTenantStream reads then filters (the in-memory log has no index).
+func (l *MemoryLog) ReadTenantStream(ctx context.Context, org, workspace, stream string, fromSeq uint64) ([]Envelope, error) {
+	evs, err := l.Read(ctx, fromSeq)
+	if err != nil {
+		return nil, err
+	}
+	return filterTenantStream(evs, org, workspace, stream), nil
+}
+
 func (l *MemoryLog) Read(_ context.Context, fromSeq uint64) ([]Envelope, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()

@@ -145,6 +145,16 @@ type encTx struct {
 func (e *encTx) Commit() error   { return e.tx.Commit() }
 func (e *encTx) Rollback() error { return e.tx.Rollback() }
 
+// PutIfAbsent seals the doc and delegates to the inner tx (GetForUpdate is inherited
+// from the embedded encStore, which row-locks the inner tx and decrypts).
+func (e *encTx) PutIfAbsent(ctx context.Context, collection, key string, doc json.RawMessage) error {
+	sealed, err := e.seal(doc)
+	if err != nil {
+		return err
+	}
+	return e.tx.PutIfAbsent(ctx, collection, key, sealed)
+}
+
 // encEphemeralStore marks the wrapper ephemeral when the inner store is, so the
 // projection runtime keeps treating it as rebuilt-from-the-log on restart.
 type encEphemeralStore struct {

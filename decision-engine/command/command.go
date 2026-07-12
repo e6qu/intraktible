@@ -463,9 +463,9 @@ func (h *Handler) RejectDeployment(ctx context.Context, id identity.Identity, fl
 // log. It is the source of truth for "the previous live version" since the read
 // model only keeps the current one.
 func (h *Handler) deployHistory(ctx context.Context, id identity.Identity, flowID, env string) ([]int, error) {
-	evs, err := h.log.Read(ctx, 0)
+	evs, err := h.log.ReadTenantStream(ctx, id.Org, id.Workspace, events.StreamFlows, 0)
 	if err != nil {
-		return nil, fmt.Errorf("decision-engine: read log: %w", err)
+		return nil, err
 	}
 	var versions []int
 	for _, e := range evs {
@@ -741,9 +741,9 @@ func (h *Handler) RequestEnv(ctx context.Context, id identity.Identity, flowID, 
 
 // foldRequest reconstructs one deployment request from the flow stream.
 func (h *Handler) foldRequest(ctx context.Context, id identity.Identity, flowID, reqID string) (deployReq, bool, error) {
-	evs, err := h.log.Read(ctx, 0)
+	evs, err := h.log.ReadTenantStream(ctx, id.Org, id.Workspace, events.StreamFlows, 0)
 	if err != nil {
-		return deployReq{}, false, fmt.Errorf("decision-engine: read log: %w", err)
+		return deployReq{}, false, err
 	}
 	var req deployReq
 	found := false
@@ -870,9 +870,9 @@ type modelGov struct {
 // the flow maker-checker, it reads the log (not the projection) so a request made in
 // this process is visible to an approval in another before the projector catches up.
 func (h *Handler) foldModelGov(ctx context.Context, id identity.Identity, name string) (modelGov, error) {
-	evs, err := h.log.Read(ctx, 0)
+	evs, err := h.log.ReadTenantStream(ctx, id.Org, id.Workspace, events.StreamModels, 0)
 	if err != nil {
-		return modelGov{}, fmt.Errorf("decision-engine: read log: %w", err)
+		return modelGov{}, err
 	}
 	var g modelGov
 	for _, e := range evs {
@@ -1216,9 +1216,9 @@ func scheduleClaim(transition, scheduleID string) string {
 // foldTenant replays the flow stream for id's tenant into per-flow aggregates,
 // indexed by flow id and by slug. Callers hold h.mu.
 func (h *Handler) foldTenant(ctx context.Context, id identity.Identity) (map[string]*flowAgg, map[string]string, error) {
-	evs, err := h.log.Read(ctx, 0)
+	evs, err := h.log.ReadTenantStream(ctx, id.Org, id.Workspace, events.StreamFlows, 0)
 	if err != nil {
-		return nil, nil, fmt.Errorf("decision-engine: read log: %w", err)
+		return nil, nil, err
 	}
 	byID := make(map[string]*flowAgg)
 	bySlug := make(map[string]string)

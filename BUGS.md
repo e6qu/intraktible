@@ -26,6 +26,13 @@ Format: `ID | severity | component | description | status`.
 - `P9-1 | — | context-layer/connectors | resilience.go: every outbound connector fetch runs through a retry budget (capped exponential backoff, transient-only) + a per-(tenant,connector) circuit breaker (opens after N consecutive transient failures, cooldown → half-open probe), applied once at the InvokeWithSecrets choke point. Transient = timeout / connection failure / upstream 5xx-429 (HTTP, GraphQL, and the shared provider readJSONResponse mark it); permanent = 4xx / bad body (no retry, no trip). Replay-safe (fetch is a recorded effect). Unit tests cover retry/exhaust/permanent/open/half-open/close/isolation/cancel. | shipped`
 - `P9-2 | — | context-layer/connectors | open (data-provider work, not code): breadth of real provider adapters (~9 types today vs ~270/~200 for Alloy/Taktile) — needs commercial relationships + per-API specs. | planned`
 
+## Phase 10 — command-path performance (PARTIAL; see PLAN.md §8b)
+- `P10-1 | — | platform/eventlog + decision-engine/command | the maker-checker folds read the whole log; now eventlog.Log carries ReadTenantStream (indexed WHERE on SQLite/Postgres via a new events_tenant_stream index; filtered scan on memory/WAL/NATS). foldTenant/foldRequest/foldModelGov/deployHistory use it. Required interface method, not an optional capability. | shipped`
+- `P10-2 | — | decision-engine/history | open: history.ListPage still loads a tenant's full decision set to paginate — a paginated index projection is the bigger fix. | planned`
+
+## No-fallbacks hardening (project rule: no fallbacks, fail loud)
+- `NF-1 | — | eventlog/store/decision-engine | removed the optional-interface fallbacks introduced this arc, making the capabilities REQUIRED (compiler-enforced) so no path can silently diverge: eventlog.Log.ReadTenantStream; store.Tx.GetForUpdate + PutIfAbsent (SQLite GetForUpdate = plain read under its Begin writer-lock; encTx delegates); command.ModelProvider.ApprovedForServing (the four-eyes model gate can no longer be silently skipped by a provider lacking it). | shipped`
+
 ## Open — audit round 3 (planned; sequenced into PRs, see PLAN.md roadmap)
 A third audit (code/security, a UI/UX review against screenshots of every page × persona × theme, and a competitive + API study vs. comparable decisioning and BPMN/DMN platforms) produced the backlog below. Grouped into healthy-sized PRs (one open at a time; no anemic PRs).
 

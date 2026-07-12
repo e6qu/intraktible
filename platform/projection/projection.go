@@ -204,31 +204,14 @@ func (r *Runtime) bootstrapDurable(ctx context.Context) (err error) {
 	return nil
 }
 
-// putIfAbsenter is the optional Tx capability to insert a row only when absent
-// (INSERT … ON CONFLICT DO NOTHING) — used to create-if-missing the checkpoint row
-// without a concurrent bootstrap clobbering a value another replica committed.
-type putIfAbsenter interface {
-	PutIfAbsent(ctx context.Context, collection, key string, doc json.RawMessage) error
-}
-
 // ensureCheckpointRow makes the checkpoint row exist (at seq 0 if it did not) so the
-// subsequent lock has a row to hold. It uses insert-if-absent where the backend
-// offers it; otherwise a plain create-if-missing suffices (that path is only reached
-// under a store that already serializes writers, e.g. SQLite's Begin lock).
-func ensureCheckpointRow(ctx context.Context, tx store.Store) error {
+// FOR UPDATE lock below has a row to hold and concurrent bootstraps serialize on it.
+func ensureCheckpointRow(ctx context.Context, tx store.Tx) error {
 	doc, err := json.Marshal(checkpoint{Seq: 0})
 	if err != nil {
 		return err
 	}
-	if pia, ok := tx.(putIfAbsenter); ok {
-		return pia.PutIfAbsent(ctx, checkpointCollection, checkpointKey, doc)
-	}
-	if _, ok, err := tx.Get(ctx, checkpointCollection, checkpointKey); err != nil {
-		return err
-	} else if ok {
-		return nil
-	}
-	return tx.Put(ctx, checkpointCollection, checkpointKey, doc)
+	return tx.PutIfAbsent(ctx, checkpointCollection, checkpointKey, doc)
 }
 
 // applyOne applies a delivered event. Already-applied events are no-ops (the
@@ -336,27 +319,11 @@ func (r *Runtime) applyContiguous(ctx context.Context, e eventlog.Envelope) erro
 	return nil
 }
 
-// forUpdater is the optional Tx capability to read a row under an exclusive lock
-// (Postgres SELECT … FOR UPDATE). A durable store that lacks it (SQLite) already
-// serializes transactions with a global writer lock, so a plain Get inside the tx
-// reads the committed checkpoint just as safely.
-type forUpdater interface {
-	GetForUpdate(ctx context.Context, collection, key string) (json.RawMessage, bool, error)
-}
-
-// readCheckpointLocked reads the durable applied-head inside the current tx, taking a
-// row lock where the backend supports it so concurrent replicas serialize on it.
-func readCheckpointLocked(ctx context.Context, tx store.Store) (uint64, error) {
-	var (
-		raw json.RawMessage
-		ok  bool
-		err error
-	)
-	if fu, isFU := tx.(forUpdater); isFU {
-		raw, ok, err = fu.GetForUpdate(ctx, checkpointCollection, checkpointKey)
-	} else {
-		raw, ok, err = tx.Get(ctx, checkpointCollection, checkpointKey)
-	}
+// readCheckpointLocked reads the durable applied-head inside the current tx under an
+// exclusive lock (GetForUpdate), so concurrent replicas serialize on the checkpoint
+// row — the store.Tx contract guarantees the lock on every backend.
+func readCheckpointLocked(ctx context.Context, tx store.Tx) (uint64, error) {
+	raw, ok, err := tx.GetForUpdate(ctx, checkpointCollection, checkpointKey)
 	if err != nil {
 		return 0, err
 	}

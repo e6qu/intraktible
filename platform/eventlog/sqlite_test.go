@@ -22,6 +22,67 @@ func event(stream, typ string) eventlog.Envelope {
 	}
 }
 
+func TestSQLiteLogReadTenantStream(t *testing.T) {
+	ctx := context.Background()
+	l, err := eventlog.OpenSQLiteLog(t.TempDir(), 10*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = l.Close() }()
+
+	ev := func(org, ws, stream, typ string) eventlog.Envelope {
+		return eventlog.Envelope{
+			Org: org, Workspace: ws, Actor: "d", Stream: stream, Type: typ,
+			Time: time.Unix(0, 0).UTC(), Payload: json.RawMessage(`{}`),
+		}
+	}
+	// Interleave tenants and streams so the filter is doing real work.
+	for _, e := range []eventlog.Envelope{
+		ev("o1", "w", "flows", "a"),
+		ev("o1", "w", "decisions", "x"),
+		ev("o2", "w", "flows", "b"),
+		ev("o1", "w", "flows", "c"),
+		ev("o1", "w2", "flows", "d"),
+	} {
+		if _, err := l.Append(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got, err := l.ReadTenantStream(ctx, "o1", "w", "flows", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Equivalence with a full read + manual filter (the contract the fallback-free
+	// callers rely on).
+	all, err := l.Read(ctx, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var want []eventlog.Envelope
+	for _, e := range all {
+		if e.Org == "o1" && e.Workspace == "w" && e.Stream == "flows" {
+			want = append(want, e)
+		}
+	}
+	if len(got) != len(want) || len(got) != 2 {
+		t.Fatalf("got %d events, want %d (2 for o1/w/flows)", len(got), len(want))
+	}
+	for i := range got {
+		if got[i].Seq != want[i].Seq || got[i].Type != want[i].Type {
+			t.Fatalf("mismatch at %d: got seq=%d type=%s, want seq=%d type=%s", i, got[i].Seq, got[i].Type, want[i].Seq, want[i].Type)
+		}
+	}
+	// The fromSeq bound skips earlier matches.
+	tail, err := l.ReadTenantStream(ctx, "o1", "w", "flows", got[0].Seq+1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tail) != 1 || tail[0].Type != "c" {
+		t.Fatalf("fromSeq bound: got %d events, want 1 (type c)", len(tail))
+	}
+}
+
 func TestSQLiteLogAppendReadHead(t *testing.T) {
 	ctx := context.Background()
 	l, err := eventlog.OpenSQLiteLog(t.TempDir(), 10*time.Millisecond)

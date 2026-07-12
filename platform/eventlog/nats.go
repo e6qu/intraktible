@@ -206,6 +206,16 @@ func (l *NATSLog) Append(ctx context.Context, e Envelope) (Envelope, error) {
 
 // Read returns all events with Seq >= fromSeq (0 = all), in order, by walking
 // the stream sequence range.
+// ReadTenantStream reads then filters (the JetStream consumer has no tenant/stream
+// index of its own; the durable SQL projection stores are where scale reads live).
+func (l *NATSLog) ReadTenantStream(ctx context.Context, org, workspace, stream string, fromSeq uint64) ([]Envelope, error) {
+	evs, err := l.Read(ctx, fromSeq)
+	if err != nil {
+		return nil, err
+	}
+	return filterTenantStream(evs, org, workspace, stream), nil
+}
+
 func (l *NATSLog) Read(_ context.Context, fromSeq uint64) ([]Envelope, error) {
 	l.mu.Lock()
 	closed := l.closed

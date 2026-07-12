@@ -197,6 +197,14 @@ func (t *sqliteTx) PutIfAbsent(ctx context.Context, collection, key string, doc 
 	return nil
 }
 
+// GetForUpdate reads inside the transaction. SQLite has no SELECT … FOR UPDATE, but
+// Begin holds the store's global writer lock for the tx's lifetime, so no other
+// transaction can write between this read and the tx's commit — the exclusivity a row
+// lock would give, provided by the writer lock instead.
+func (t *sqliteTx) GetForUpdate(ctx context.Context, collection, key string) (json.RawMessage, bool, error) {
+	return t.Get(ctx, collection, key)
+}
+
 func (t *sqliteTx) Get(ctx context.Context, collection, key string) (json.RawMessage, bool, error) {
 	var doc string
 	err := t.tx.QueryRowContext(ctx,

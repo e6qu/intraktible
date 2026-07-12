@@ -72,6 +72,10 @@ func OpenPostgresLog(ctx context.Context, dsn string, poll time.Duration) (*Post
 		pool.Close()
 		return nil, fmt.Errorf("eventlog: postgres add unique_key: %w", err)
 	}
+	if _, err := pool.Exec(ctx, `CREATE INDEX IF NOT EXISTS events_tenant_stream ON events(org, workspace, stream, seq)`); err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("eventlog: postgres tenant-stream index: %w", err)
+	}
 	if _, err := pool.Exec(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS events_unique_key ON events(unique_key) WHERE unique_key IS NOT NULL`); err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("eventlog: postgres unique_key index: %w", err)
@@ -179,6 +183,53 @@ func (l *PostgresLog) Append(ctx context.Context, e Envelope) (Envelope, error) 
 // Read returns all events with Seq >= fromSeq (0 = all), in order.
 func (l *PostgresLog) Read(ctx context.Context, fromSeq uint64) ([]Envelope, error) {
 	return l.readFrom(ctx, fromSeq, 0)
+}
+
+// ReadTenantStream returns one tenant's events on one stream with Seq >= fromSeq, in
+// order — the indexed read the maker-checker folds use instead of scanning the whole
+// log.
+func (l *PostgresLog) ReadTenantStream(ctx context.Context, org, workspace, stream string, fromSeq uint64) ([]Envelope, error) {
+	if l.d.isClosed() {
+		return nil, ErrClosed
+	}
+	if fromSeq == 0 {
+		fromSeq = 1
+	}
+	if fromSeq > math.MaxInt64 {
+		return nil, fmt.Errorf("eventlog: postgres fromSeq %d out of range", fromSeq)
+	}
+	rows, err := l.pool.Query(ctx,
+		`SELECT seq, id, org, workspace, stream, type, time, actor, payload
+		 FROM events WHERE org = $1 AND workspace = $2 AND stream = $3 AND seq >= $4 ORDER BY seq`,
+		org, workspace, stream, int64(fromSeq))
+	if err != nil {
+		return nil, fmt.Errorf("eventlog: postgres read tenant-stream: %w", err)
+	}
+	defer rows.Close()
+	var out []Envelope
+	for rows.Next() {
+		var e Envelope
+		var seq int64
+		var ts, payload string
+		if err := rows.Scan(&seq, &e.ID, &e.Org, &e.Workspace, &e.Stream, &e.Type, &ts, &e.Actor, &payload); err != nil {
+			return nil, fmt.Errorf("eventlog: postgres scan tenant-stream: %w", err)
+		}
+		if seq <= 0 {
+			return nil, fmt.Errorf("eventlog: postgres non-positive seq %d", seq)
+		}
+		t, err := time.Parse(time.RFC3339Nano, ts)
+		if err != nil {
+			return nil, fmt.Errorf("eventlog: postgres parse time at seq %d: %w", seq, err)
+		}
+		e.Seq = uint64(seq)
+		e.Time = t
+		e.Payload = []byte(payload)
+		out = append(out, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("eventlog: postgres read tenant-stream rows: %w", err)
+	}
+	return out, nil
 }
 
 // readFrom returns events with Seq >= fromSeq in order, capped at limit rows

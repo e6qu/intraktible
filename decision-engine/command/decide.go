@@ -73,16 +73,13 @@ type AgentProvider interface {
 // ModelProvider evaluates a named predictive model from the registry over the
 // decision input and returns its prediction as JSON. The port lives here so the
 // engine never imports the models registry's command surface; a missing model or a
-// bad feature is returned as an error so the decision fails loudly.
+// bad feature is returned as an error so the decision fails loudly. ApprovedForServing
+// is part of the contract — not an optional capability the decide path feels for —
+// so the four-eyes gate can never be silently skipped by a provider that lacks it.
 type ModelProvider interface {
 	Predict(ctx context.Context, id identity.Identity, model string, features map[string]any) (json.RawMessage, error)
-}
-
-// modelApprovalGate is the optional four-eyes check a ModelProvider may implement:
-// whether a model's current version is approved for serving. The decide path uses it
-// to refuse an unapproved model outside the sandbox; a provider that does not
-// implement it (e.g. a test fake) skips the gate.
-type modelApprovalGate interface {
+	// ApprovedForServing reports whether the model's current version has four-eyes
+	// approval; the decide path refuses an unapproved model outside the sandbox.
 	ApprovedForServing(ctx context.Context, id identity.Identity, model string) (bool, error)
 }
 
@@ -881,12 +878,11 @@ func (h *DecideHandler) injectPredictions(ctx context.Context, id identity.Ident
 	// Outside the sandbox, a Predict node may only serve a model whose current version
 	// has four-eyes approval — the model equivalent of "production decide refuses an
 	// un-deployed flow version". Sandbox is exempt so authors can test freely.
-	gate, gated := h.models.(modelApprovalGate)
-	requireApproval := gated && env != string(domain.EnvSandbox)
+	requireApproval := env != string(domain.EnvSandbox)
 	resolved := make(map[string]any, len(specs))
 	for _, sp := range specs {
 		if requireApproval {
-			approved, err := gate.ApprovedForServing(ctx, id, sp.Model)
+			approved, err := h.models.ApprovedForServing(ctx, id, sp.Model)
 			if err != nil {
 				return nil, fmt.Errorf("decision-engine: predict node %q (model %q): %w", sp.NodeID, sp.Model, err)
 			}

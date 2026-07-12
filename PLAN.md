@@ -377,8 +377,15 @@ them hardest-blocker-first; each phase is a direction, not a committed date.
   real provider adapters — intraktible has ~9 connector types (incl. credit-bureau + sanctions
   normalizers) vs the ~270 / ~200 sources Alloy and Taktile advertise, which is commercial-relationship +
   per-API-spec work.
-- **Phase 10 — Command-path performance.** Replace the O(n) full-log folds in deploy/rollback/approval
-  and `history.ListPage` with indexed projections (the audit-index pattern from GAPS #9, generalized).
+- **Phase 10 — Command-path performance — 🚧 partial.** The flow/model maker-checker folds
+  (`foldTenant`, `foldRequest`, `foldModelGov`, `deployHistory`) read the **entire, decision-dominated
+  log** on every deploy/publish/approve to reconstruct a handful of flow/model events. Fixed: the `Log`
+  interface now carries **`ReadTenantStream`** — an indexed `(org, workspace, stream, seq)` query on the
+  durable SQLite/Postgres logs (a new index), a filtered scan on the index-less logs (memory, WAL, NATS)
+  — so those folds scan the flow/model events, not the whole log. Made a **required** interface method,
+  not an optional capability the caller feels for (see the no-fallbacks note below). _Still open:_
+  `history.ListPage` still loads a tenant's full decision set to paginate (a bigger change — a paginated
+  index projection).
 - **Phase 11 — Regulatory data lifecycle.** FCRA/GLBA-aware retention and disclosure workflows;
   configurable retention over the event log with legal-hold; consent/purpose tracking.
 
