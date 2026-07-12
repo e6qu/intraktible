@@ -364,9 +364,19 @@ them hardest-blocker-first; each phase is a direction, not a committed date.
   (`BenchmarkDurableApply`) and a **Postgres CI job** (runs the DSN-gated store/log/projection tests
   against a live Postgres — no longer skipped everywhere) landed too. _Still open (the ops-heavy tail):_
   load + chaos tests, and compaction/archival/backup automation.
-- **Phase 9 — Connector resilience & data sources.** Retries, circuit breakers, and timeouts on
-  outbound connectors; connectors for real credit-bureau / KYC / KYB / sanctions sources. intraktible
-  has ~9 connector types; Alloy and Taktile advertise ~270 and ~200 sources respectively.
+- **Phase 9 — Connector resilience & data sources — 🚧 partial.** **Resilience done:** every outbound
+  connector call now runs through the retry budget + a per-connector **circuit breaker**
+  (`connectors/resilience.go`), applied once at the `InvokeWithSecrets` choke point so every connector
+  (HTTP, GraphQL, Plaid, Stripe, credit-bureau) gets it. A **transient** error (timeout, connection
+  failure, upstream 5xx/429) is retried with capped exponential backoff; a **permanent** one (4xx, bad
+  config/body) fails immediately and does not trip the breaker. After repeated transient failures the
+  breaker **opens and fails fast** for a cooldown (then half-opens for a probe) — so a down bureau does
+  not make every decision hang through the full timeout×retry budget. The per-call timeout already
+  existed. Replay-safe: a connector fetch is a runtime effect whose response is recorded once, so
+  retries/breaker never touch a replay. _Still open (data-provider work, not pure code):_ the breadth of
+  real provider adapters — intraktible has ~9 connector types (incl. credit-bureau + sanctions
+  normalizers) vs the ~270 / ~200 sources Alloy and Taktile advertise, which is commercial-relationship +
+  per-API-spec work.
 - **Phase 10 — Command-path performance.** Replace the O(n) full-log folds in deploy/rollback/approval
   and `history.ListPage` with indexed projections (the audit-index pattern from GAPS #9, generalized).
 - **Phase 11 — Regulatory data lifecycle.** FCRA/GLBA-aware retention and disclosure workflows;

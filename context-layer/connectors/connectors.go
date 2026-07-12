@@ -375,7 +375,14 @@ func InvokeWithSecrets(ctx context.Context, s store.Store, id identity.Identity,
 	if err != nil {
 		return nil, err
 	}
-	return c.Fetch(ctx, params)
+	// Wrap the fetch in the retry budget + per-connector circuit breaker so a slow or
+	// failing outbound dependency degrades loudly and fast instead of hanging every
+	// decision (Phase 9). Retries and the breaker only fire on transient failures; the
+	// connector's response is still recorded once, by the caller, exactly as before.
+	key := id.Org + "\x00" + id.Workspace + "\x00" + name
+	return resilientFetch(ctx, connectorBreakers, defaultRetry, key, func() (json.RawMessage, error) {
+		return c.Fetch(ctx, params)
+	})
 }
 
 // Provider adapts the connector subsystem to a name+params→response lookup,
@@ -495,15 +502,29 @@ func (h httpConnector) Fetch(ctx context.Context, params json.RawMessage) (json.
 	}
 	resp, err := h.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("context-layer: http connector fetch: %w", err)
+		// A transport error (timeout, connection refused, reset) is transient — worth
+		// a retry — unless the caller's context was cancelled, which a retry can't fix.
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("context-layer: http connector fetch: %w", err)
+		}
+		return nil, transient(fmt.Errorf("context-layer: http connector fetch: %w", err))
 	}
 	defer func() { _ = resp.Body.Close() }()
 	b, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		return nil, fmt.Errorf("context-layer: http connector read: %w", err)
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("context-layer: http connector read: %w", err)
+		}
+		return nil, transient(fmt.Errorf("context-layer: http connector read: %w", err))
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("context-layer: http connector status %d", resp.StatusCode)
+		err := fmt.Errorf("context-layer: http connector status %d", resp.StatusCode)
+		// 5xx and 429 are the server's problem and may pass on retry; other 4xx are
+		// our request's problem and won't.
+		if resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests {
+			return nil, transient(err)
+		}
+		return nil, err
 	}
 	if !json.Valid(b) {
 		return nil, fmt.Errorf("context-layer: http connector returned non-JSON body")
@@ -577,15 +598,25 @@ func (g graphqlConnector) Fetch(ctx context.Context, params json.RawMessage) (js
 	}
 	resp, err := g.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("context-layer: graphql connector fetch: %w", err)
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("context-layer: graphql connector fetch: %w", err)
+		}
+		return nil, transient(fmt.Errorf("context-layer: graphql connector fetch: %w", err))
 	}
 	defer func() { _ = resp.Body.Close() }()
 	b, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		return nil, fmt.Errorf("context-layer: graphql connector read: %w", err)
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("context-layer: graphql connector read: %w", err)
+		}
+		return nil, transient(fmt.Errorf("context-layer: graphql connector read: %w", err))
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("context-layer: graphql connector status %d", resp.StatusCode)
+		err := fmt.Errorf("context-layer: graphql connector status %d", resp.StatusCode)
+		if resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests {
+			return nil, transient(err)
+		}
+		return nil, err
 	}
 	// A GraphQL response must be a JSON object ({data, errors?}); unmarshaling into a
 	// struct also succeeds for a bare array/scalar (it just leaves Errors nil), so

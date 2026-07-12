@@ -272,10 +272,16 @@ func flattenQuery(params json.RawMessage) (url.Values, error) {
 func readJSONResponse(resp *http.Response, who string) (json.RawMessage, error) {
 	b, err := io.ReadAll(io.LimitReader(resp.Body, maxProviderBody))
 	if err != nil {
-		return nil, fmt.Errorf("context-layer: %s read: %w", who, err)
+		return nil, transient(fmt.Errorf("context-layer: %s read: %w", who, err))
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("context-layer: %s status %d", who, resp.StatusCode)
+		err := fmt.Errorf("context-layer: %s status %d", who, resp.StatusCode)
+		// 5xx and 429 are the upstream's problem and may pass on retry; other 4xx are
+		// the request's problem and won't (see the resilience layer).
+		if resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests {
+			return nil, transient(err)
+		}
+		return nil, err
 	}
 	if !json.Valid(b) {
 		return nil, fmt.Errorf("context-layer: %s returned non-JSON body", who)
@@ -356,7 +362,10 @@ func (p plaidConnector) Fetch(ctx context.Context, params json.RawMessage) (json
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := p.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("context-layer: plaid connector fetch: %w", err)
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("context-layer: plaid connector fetch: %w", err)
+		}
+		return nil, transient(fmt.Errorf("context-layer: plaid connector fetch: %w", err))
 	}
 	defer func() { _ = resp.Body.Close() }()
 	return readJSONResponse(resp, "plaid connector")
@@ -415,7 +424,10 @@ func (s stripeConnector) Fetch(ctx context.Context, params json.RawMessage) (jso
 	req.Header.Set("Authorization", "Bearer "+s.secretKey)
 	resp, err := s.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("context-layer: stripe connector fetch: %w", err)
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("context-layer: stripe connector fetch: %w", err)
+		}
+		return nil, transient(fmt.Errorf("context-layer: stripe connector fetch: %w", err))
 	}
 	defer func() { _ = resp.Body.Close() }()
 	return readJSONResponse(resp, "stripe connector")
@@ -514,7 +526,10 @@ func (c creditBureauConnector) Fetch(ctx context.Context, params json.RawMessage
 	}
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("context-layer: credit bureau fetch: %w", err)
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("context-layer: credit bureau fetch: %w", err)
+		}
+		return nil, transient(fmt.Errorf("context-layer: credit bureau fetch: %w", err))
 	}
 	defer func() { _ = resp.Body.Close() }()
 	raw, err := readJSONResponse(resp, "credit bureau")

@@ -22,6 +22,10 @@ Format: `ID | severity | component | description | status`.
 - `P8-4 | MED | platform/projection | CONFIRMED + FIXED: concurrent cold-start bootstrap double-apply. TestConcurrentBootstrapNoDoubleApply reproduced it (two replicas rebuilding a fresh pre-populated store drifted off the count, e.g. 1509 for 1500). Fix: bootstrapDurable runs in ONE tx that create-if-absents the checkpoint row (store.PutIfAbsent → INSERT ON CONFLICT DO NOTHING), locks it (readCheckpointLocked), then resets+replays+advances the checkpoint atomically — concurrent boots serialize, one builds, the rest no-op. Proven on SQLite + real Postgres, race-clean. | shipped`
 - `P8-5 | — | ops | open (ops-heavy tail): load + chaos tests; compaction/archival/backup automation. | planned`
 
+## Phase 9 — connector resilience & data sources (PARTIAL; see PLAN.md §8b)
+- `P9-1 | — | context-layer/connectors | resilience.go: every outbound connector fetch runs through a retry budget (capped exponential backoff, transient-only) + a per-(tenant,connector) circuit breaker (opens after N consecutive transient failures, cooldown → half-open probe), applied once at the InvokeWithSecrets choke point. Transient = timeout / connection failure / upstream 5xx-429 (HTTP, GraphQL, and the shared provider readJSONResponse mark it); permanent = 4xx / bad body (no retry, no trip). Replay-safe (fetch is a recorded effect). Unit tests cover retry/exhaust/permanent/open/half-open/close/isolation/cancel. | shipped`
+- `P9-2 | — | context-layer/connectors | open (data-provider work, not code): breadth of real provider adapters (~9 types today vs ~270/~200 for Alloy/Taktile) — needs commercial relationships + per-API specs. | planned`
+
 ## Open — audit round 3 (planned; sequenced into PRs, see PLAN.md roadmap)
 A third audit (code/security, a UI/UX review against screenshots of every page × persona × theme, and a competitive + API study vs. comparable decisioning and BPMN/DMN platforms) produced the backlog below. Grouped into healthy-sized PRs (one open at a time; no anemic PRs).
 
