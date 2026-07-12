@@ -2952,6 +2952,65 @@
         }
       }
     },
+    "/v1/sharing/opt-out": {
+      "post": {
+        "tags": ["Consent"],
+        "summary": "Record a subject's GLBA opt-out from NPI sharing",
+        "description": "The consumer's election to stop their nonpublic personal information being shared with nonaffiliated third parties (GLBA §6802 / Reg P). Enforced at a Connect node marked shares_npi. Operator only.",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "required": ["subject"], "properties": {
+            "subject": { "type": "string" },
+            "reason": { "type": "string" }
+          } } } }
+        },
+        "responses": {
+          "200": { "description": "The opt-out was recorded.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventAck" } } } },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/sharing/opt-in": {
+      "post": {
+        "tags": ["Consent"],
+        "summary": "Rescind a subject's prior sharing opt-out",
+        "description": "Withdraws a prior opt-out (the subject is opted back in to sharing). Idempotent. Operator only.",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "required": ["subject"], "properties": { "subject": { "type": "string" } } } } }
+        },
+        "responses": {
+          "200": { "description": "The rescission was recorded.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventAck" } } } },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/sharing": {
+      "get": {
+        "tags": ["Consent"],
+        "summary": "Whether a subject has opted out of NPI sharing",
+        "parameters": [
+          { "name": "subject", "in": "query", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "The opted_out flag plus the full record when one exists.", "content": { "application/json": { "schema": { "type": "object" } } } },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/sharing/records": {
+      "get": {
+        "tags": ["Consent"],
+        "summary": "List every sharing opt-out record in the tenant",
+        "responses": {
+          "200": { "description": "Every sharing record in the tenant.", "content": { "application/json": { "schema": { "type": "object" } } } },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/v1/comments/{subject_type}/{subject_id}": {
       "get": {
         "tags": ["Comments"],

@@ -19,12 +19,14 @@
     listLegalHolds,
     getRetentionPolicy,
     listErasedSubjects,
+    listSharingRecords,
     exportComplianceRegister,
     type AdverseActionItem,
     type Reconsideration,
     type ConsentRecord,
     type LegalHold,
-    type RetentionPolicy
+    type RetentionPolicy,
+    type SharingRecord
   } from '$lib/api';
   import { toast } from '$lib/toast';
 
@@ -56,21 +58,33 @@
   let holds = $state<LegalHold[]>([]);
   let retention = $state<RetentionPolicy | null>(null);
   let erasedCount = $state(0);
+  let sharing = $state<SharingRecord[]>([]);
 
   onMount(async () => {
     // Every source is best-effort: an admin-only read (holds/retention/erased) 403s
     // for a viewer and simply leaves its section empty rather than failing the page.
-    const [p, r, c, h, ret, er] = await Promise.all([
+    const [p, r, c, h, ret, er, sh] = await Promise.all([
       listAdverseActions(key, 'pending').catch(() => []),
       listReconsiderations(key).catch(() => []),
       listConsentRecords(key).catch(() => []),
       listLegalHolds(key).catch(() => []),
       getRetentionPolicy(key).catch(() => null),
-      listErasedSubjects(key).catch(() => [])
+      listErasedSubjects(key).catch(() => []),
+      listSharingRecords(key).catch(() => [])
     ]);
-    [pending, reviews, consents, holds, retention, erasedCount] = [p, r, c, h, ret, er.length];
+    [pending, reviews, consents, holds, retention, erasedCount, sharing] = [
+      p,
+      r,
+      c,
+      h,
+      ret,
+      er.length,
+      sh
+    ];
     loading = false;
   });
+
+  const optedOut = $derived(sharing.filter((s) => s.opted_out).length);
 
   const DAY = 86_400_000;
   // "Now" for the age/expiry math. In the browser this is real wall-clock; the demo's
@@ -253,6 +267,10 @@
             <b class={expiringSoon ? 'warn' : ''}>{expiringSoon}</b>
           </p>
         {/if}
+        <p class="line">
+          GLBA sharing opt-outs <b>{optedOut}</b> — subjects who declined NPI sharing with nonaffiliated
+          third parties.
+        </p>
       </section>
 
       {#if isAdmin}

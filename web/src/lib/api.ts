@@ -3421,6 +3421,72 @@ export async function withdrawConsent(
   }
 }
 
+// SharingRecord is a subject's GLBA election to stop (or resume) NPI sharing with
+// nonaffiliated third parties — the opt-out mirror of a consent record.
+export interface SharingRecord {
+  subject: string;
+  opted_out: boolean;
+  reason?: string;
+  opted_out_at?: string;
+  updated_at: string;
+  updated_by: string;
+}
+// getSharingStatus returns a subject's sharing opt-out state.
+export async function getSharingStatus(
+  key: string,
+  subject: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<{ opted_out: boolean; record?: SharingRecord }> {
+  const res = await fetcher(`/v1/sharing?subject=${encodeURIComponent(subject)}`, {
+    headers: authHeaders(key)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'GET /v1/sharing');
+  }
+  return (await res.json()) as { opted_out: boolean; record?: SharingRecord };
+}
+// optOutSharing records a subject's election to stop NPI sharing (GLBA §6802).
+export async function optOutSharing(
+  key: string,
+  body: { subject: string; reason?: string },
+  fetcher: typeof fetch = recordingFetch
+): Promise<void> {
+  const res = await fetcher('/v1/sharing/opt-out', {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'POST /v1/sharing/opt-out');
+  }
+}
+// optInSharing rescinds a subject's prior opt-out (opting back in to sharing).
+export async function optInSharing(
+  key: string,
+  subject: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<void> {
+  const res = await fetcher('/v1/sharing/opt-in', {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify({ subject })
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'POST /v1/sharing/opt-in');
+  }
+}
+// listSharingRecords returns every sharing record in the tenant (the compliance view).
+export async function listSharingRecords(
+  key: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<SharingRecord[]> {
+  const res = await fetcher('/v1/sharing/records', { headers: authHeaders(key) });
+  if (!res.ok) {
+    return errorOrStatus(res, 'list sharing records');
+  }
+  return ((await res.json()) as { records: SharingRecord[] }).records ?? [];
+}
+
 export async function listAgentRuns(
   key: string,
   name: string,

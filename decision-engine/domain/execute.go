@@ -714,6 +714,7 @@ type ConnectSpec struct {
 	Connector       string
 	Output          string
 	RequiresConsent string
+	SharesNPI       bool
 }
 
 // ConnectSpecs extracts the Connect nodes from a graph so the shell can pre-resolve
@@ -724,7 +725,7 @@ func ConnectSpecs(g events.Graph) ([]ConnectSpec, error) {
 		if cfg.Connector == "" || cfg.Output == "" {
 			return ConnectSpec{}, fmt.Errorf("decision-engine: connect node %q needs a connector and an output", n.ID)
 		}
-		return ConnectSpec{NodeID: n.ID, Connector: cfg.Connector, Output: cfg.Output, RequiresConsent: cfg.RequiresConsent}, nil
+		return ConnectSpec{NodeID: n.ID, Connector: cfg.Connector, Output: cfg.Output, RequiresConsent: cfg.RequiresConsent, SharesNPI: cfg.SharesNPI}, nil
 	})
 }
 

@@ -13,6 +13,9 @@
     getConsents,
     grantConsent,
     withdrawConsent,
+    getSharingStatus,
+    optOutSharing,
+    optInSharing,
     ApiError,
     type Entity,
     type EntityEvent,
@@ -26,6 +29,9 @@
   import { toast } from '$lib/toast';
 
   const canManageConsent = $derived(roleAtLeast($user?.role, 'operator'));
+  // GLBA sharing opt-out state for this subject (the opt-out mirror of consent).
+  let sharingOptedOut = $state(false);
+  let sharingBusy = $state(false);
   let consentPurpose = $state('');
   // Default to a non-consent basis: for decisioning, the basis is usually contract or
   // legitimate interest, not "consent" (which is rarely freely given). See the hint.
@@ -92,6 +98,7 @@
     events = [];
     featureValues = [];
     consents = [];
+    sharingOptedOut = false;
     // Drop a stale response when sibling navigation changes type/id mid-flight.
     const reqType = type;
     const reqId = id;
@@ -106,6 +113,7 @@
       ]);
       if (type !== reqType || id !== reqId) return;
       [entity, events, featureValues, consents] = [ent, evs, feats, cons];
+      void reloadSharing();
     } catch (e) {
       if (type === reqType && id === reqId) {
         if (e instanceof ApiError && e.status === 404) notFound = true;
@@ -119,6 +127,27 @@
   const subject = $derived(`${type}/${id}`);
   async function reloadConsents() {
     consents = await getConsents(key, subject).catch(() => []);
+  }
+  async function reloadSharing() {
+    const s = await getSharingStatus(key, subject).catch(() => ({ opted_out: false }));
+    sharingOptedOut = s.opted_out;
+  }
+  async function toggleSharing() {
+    sharingBusy = true;
+    try {
+      if (sharingOptedOut) {
+        await optInSharing(key, subject);
+        toast.success('Sharing opt-out rescinded.');
+      } else {
+        await optOutSharing(key, { subject });
+        toast.success('Recorded: opted out of NPI sharing.');
+      }
+      await reloadSharing();
+    } catch (e) {
+      toast.error(msg(e));
+    } finally {
+      sharingBusy = false;
+    }
   }
   async function recordConsent() {
     if (!consentPurpose.trim()) {
@@ -236,6 +265,25 @@
           <em>contract</em> or <em>legitimate interest</em>, not <em>consent</em> (which is rarely freely
           given given the power imbalance).
         </p>
+        <div class="sharing">
+          <div>
+            <span class="sharing-label">GLBA sharing</span>
+            {#if sharingOptedOut}
+              <span class="badge">opted out of NPI sharing</span>
+            {:else}
+              <span class="badge ok">sharing permitted</span>
+            {/if}
+            <span class="muted small"
+              >— whether this subject's NPI may be shared with nonaffiliated third parties. A
+              decision node marked as sharing NPI is blocked when opted out.</span
+            >
+          </div>
+          {#if canManageConsent}
+            <button class="btn" disabled={sharingBusy} onclick={toggleSharing}>
+              {sharingOptedOut ? 'Rescind opt-out' : 'Record opt-out'}
+            </button>
+          {/if}
+        </div>
         {#if consents.length > 0}
           <div class="table-wrap">
             <table>
@@ -440,6 +488,22 @@
   .badge.ok {
     background: var(--ok-bg, #dcfce7);
     color: var(--ok, #166534);
+  }
+  .sharing {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin: 0.4rem 0 0.9rem;
+    padding: 0.5rem 0.7rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-2);
+  }
+  .sharing-label {
+    font-weight: 600;
+    margin-right: 0.4rem;
   }
   .consent-form {
     display: flex;
