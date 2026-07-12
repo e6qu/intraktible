@@ -381,9 +381,9 @@
         </button>
         <span class="muted small"
           >How this decision was made and the data subject's rights — to obtain human intervention,
-          to contest the outcome, and to an explanation — as required by Article 22 of the General
-          Data Protection Regulation (and Articles 22A to 22D of the United Kingdom Data (Use and
-          Access) Act 2025).</span
+          to contest the outcome, and to an explanation — as required by Article 22 of the European
+          Union's General Data Protection Regulation (and Articles 22A to 22D of the UK Data (Use
+          and Access) Act 2025).</span
         >
       </div>
     {/if}
@@ -391,10 +391,11 @@
       <h2>
         Adverse-action notice
         <Hint label="Adverse action"
-          >A declined applicant must be served an ECOA / Regulation B notice stating the specific
-          principal reasons (and, if a consumer report was used, the FCRA �Section 615 disclosures).
-          Recording the issuance is the durable proof — who served it, when, how, and a hash of the
-          exact document.</Hint
+          >A declined applicant must be served a notice under the US Equal Credit Opportunity Act
+          (Regulation B) stating the specific principal reasons — and, if a consumer report was
+          used, the Section 615 disclosures of the US Fair Credit Reporting Act. Recording the
+          issuance is the durable proof — who served it, when, how, and a hash of the exact
+          document.</Hint
         >
       </h2>
       <div class="aa-row">
@@ -427,7 +428,8 @@
         <div class="aa-issue">
           <label class="aa-check">
             <input type="checkbox" bind:checked={issueConsumerReport} onchange={loadIssuance} />
-            Decision used a consumer / credit report (adds FCRA �Section 615 disclosures)
+            Decision used a consumer / credit report (adds the US Fair Credit Reporting Act, Section 615
+            disclosures)
           </label>
           <div class="aa-controls">
             <select bind:value={issueMethod} aria-label="delivery method">
@@ -449,10 +451,11 @@
 
       <h2>
         Human review
-        <Hint label="Article 22 / reconsideration"
+        <Hint label="Human review"
           >A decline reached with no person in the loop can be contested: a human reviewer upholds
-          or overturns it, with a stated rationale. This is the GDPR Article 22 right to human
-          intervention and the ECOA reconsideration record — the original decision stays immutable.</Hint
+          or overturns it, with a stated rationale. This is the right to human intervention under
+          Article 22 of the EU General Data Protection Regulation, and the reconsideration record
+          under the US Equal Credit Opportunity Act — the original decision stays immutable.</Hint
         >
       </h2>
       {#if review}
@@ -477,7 +480,8 @@
           This decision already had a person in the loop{d.case_id
             ? ' (routed to a review case)'
             : ''}
-          — the Article 22 human-intervention record is for a solely-automated decline.
+          — the human-intervention record (Article 22 of the EU General Data Protection Regulation) is
+          for a solely-automated decline.
         </p>
       {:else if canIssue}
         <div class="aa-issue">

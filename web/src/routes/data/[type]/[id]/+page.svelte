@@ -267,7 +267,8 @@
         <p class="muted small">
           The lawful basis your organization has recorded for processing this subject. A decision
           that pulls data for a purpose requires an active basis here — the permissible-purpose
-          record for GDPR / GLBA. For credit decisioning the basis is usually
+          record for the EU General Data Protection Regulation and the US Gramm-Leach-Bliley Act.
+          For credit decisioning the basis is usually
           <em>contract</em> or <em>legitimate interest</em>, not <em>consent</em> (which is rarely freely
           given given the power imbalance).
         </p>
@@ -281,8 +282,8 @@
             {/if}
             <span class="muted small"
               >— whether this subject's nonpublic personal information may be shared with
-              unaffiliated third parties (under the Gramm-Leach-Bliley Act). A decision that would
-              share it is blocked once the subject has opted out.</span
+              unaffiliated third parties (under the US Gramm-Leach-Bliley Act). A decision that
+              would share it is blocked once the subject has opted out.</span
             >
           </div>
           {#if canManageConsent}
@@ -296,8 +297,9 @@
             <span class="sharing-label">Record retention</span>
             {#if retention.retained}
               <span class="badge">retain until {retention.retain_until?.slice(0, 10)}</span> — a record
-              about this subject must be kept (ECOA / Regulation B, 25 months), so an erasure request
-              is refused until it lapses (Article 17(3)(b) of the General Data Protection Regulation).
+              about this subject must be kept (US Equal Credit Opportunity Act, Regulation B — 25 months),
+              so an erasure request is refused until it lapses (Article 17(3)(b) of the EU General Data
+              Protection Regulation).
             {:else}
               <span class="badge ok">no mandatory retention</span> — no record blocks an erasure request
               for this subject.

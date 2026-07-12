@@ -190,8 +190,8 @@
     Disparate-impact analysis over a flow's recorded decisions: the
     <Hint label="adverse-impact ratio">
       Each protected-class group's favorable-outcome rate divided by the highest group's rate. The
-      <b>four-fifths rule</b> (ECOA / Regulation B) treats a ratio below 0.80 as the conventional trigger
-      for a disparate-impact review — it is a screen, not a legal conclusion.</Hint
+      <b>four-fifths rule</b> (US Equal Credit Opportunity Act, Regulation B) treats a ratio below 0.80
+      as the conventional trigger for a disparate-impact review — it is a screen, not a legal conclusion.</Hint
     >
     across a protected-class attribute. You choose which input field encodes the protected class; the
     system does not infer one. Only completed decisions with a favorable or decline outcome are scored.
@@ -321,9 +321,10 @@
     <div class="settings">
       <h2>Adverse-action notices</h2>
       <p class="lede">
-        The creditor identification an ECOA / Regulation B adverse-action notice must carry. A
-        declined decision's notice is generated on its decision page from its recorded reason codes
-        and these settings. A notice cannot be produced without a creditor name.
+        The creditor identification an adverse-action notice under the US Equal Credit Opportunity
+        Act (Regulation B) must carry. A declined decision's notice is generated on its decision
+        page from its recorded reason codes and these settings. A notice cannot be produced without
+        a creditor name.
       </p>
       <div class="controls">
         <label>
@@ -346,8 +347,8 @@
           />
         </label>
         <p class="lede sub">
-          Consumer reporting agency — required by FCRA �Section 615(a) only when a notice is marked
-          as based on a consumer report.
+          Consumer reporting agency — required by Section 615(a) of the US Fair Credit Reporting Act
+          only when a notice is marked as based on a consumer report.
         </p>
         <label>
           <span>CRA name <em>(optional)</em></span>
@@ -370,8 +371,9 @@
     <div class="settings">
       <h2>Pending adverse-action notices</h2>
       <p class="lede">
-        Declined decisions and whether their notice has been recorded as issued. ECOA / Regulation B
-        expects the notice within 30 days of a completed application — the age column is that clock.
+        Declined decisions and whether their notice has been recorded as issued. The US Equal Credit
+        Opportunity Act (Regulation B) expects the notice within 30 days of a completed application
+        — the age column is that clock.
       </p>
       {#if pending.length === 0}
         <p class="muted">No declined decisions are awaiting a notice.</p>

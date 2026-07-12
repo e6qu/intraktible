@@ -164,8 +164,8 @@
           >
         </h2>
         <p class="hint">
-          Declined decisions awaiting their ECOA / Regulation B notice. The age is the 30-day clock;
-          a row past 30 days is flagged.
+          Declined decisions awaiting their notice under the US Equal Credit Opportunity Act
+          (Regulation B). The age is the 30-day clock; a row past 30 days is flagged.
         </p>
         {#if pending.length === 0}
           <EmptyState
@@ -212,7 +212,8 @@
           >
         </h2>
         <p class="hint">
-          Solely-automated declines a person reviewed (GDPR Article 22 / ECOA reconsideration).
+          Solely-automated declines a person reviewed — Article 22 of the EU General Data Protection
+          Regulation, and reconsideration under the US Equal Credit Opportunity Act.
         </p>
         {#if reviews.length === 0}
           <EmptyState
