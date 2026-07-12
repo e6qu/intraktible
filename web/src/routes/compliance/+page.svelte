@@ -19,14 +19,34 @@
     listLegalHolds,
     getRetentionPolicy,
     listErasedSubjects,
+    exportComplianceRegister,
     type AdverseActionItem,
     type Reconsideration,
     type ConsentRecord,
     type LegalHold,
     type RetentionPolicy
   } from '$lib/api';
+  import { toast } from '$lib/toast';
 
   const key = '';
+
+  // Download a compliance register as a CSV file. Fetched through the app fetch (so the
+  // demo's wasm backend serves it) and wrapped in a Blob — an <a href> would escape the
+  // in-browser backend and 404 on the static host.
+  async function exportRegister(register: 'adverse-actions' | 'reconsiderations' | 'consent') {
+    try {
+      const text = await exportComplianceRegister(key, register, 'csv');
+      const url = URL.createObjectURL(new Blob([text], { type: 'text/csv' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${register}-register.csv`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+      toast.success('Register downloaded.');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    }
+  }
   const isAdmin = $derived(roleAtLeast($user?.role, 'admin'));
 
   let loading = $state(true);
@@ -125,6 +145,9 @@
       <section class="card">
         <h2>
           Adverse-action queue <span class="muted">({pending.length})</span>
+          <button class="export" onclick={() => exportRegister('adverse-actions')}
+            >Export register ↓</button
+          >
         </h2>
         <p class="hint">
           Declined decisions awaiting their ECOA / Reg B notice. The age is the 30-day clock; a row
@@ -168,7 +191,12 @@
       </section>
 
       <section class="card">
-        <h2>Human-review audit <span class="muted">({reviews.length})</span></h2>
+        <h2>
+          Human-review audit <span class="muted">({reviews.length})</span>
+          <button class="export" onclick={() => exportRegister('reconsiderations')}
+            >Export register ↓</button
+          >
+        </h2>
         <p class="hint">
           Solely-automated declines a person reviewed (GDPR Art. 22 / ECOA reconsideration).
         </p>
@@ -197,7 +225,11 @@
       </section>
 
       <section class="card">
-        <h2>Lawful basis <span class="muted">({consents.length})</span></h2>
+        <h2>
+          Lawful basis <span class="muted">({consents.length})</span>
+          <button class="export" onclick={() => exportRegister('consent')}>Export register ↓</button
+          >
+        </h2>
         <p class="hint">
           The basis your organization has recorded for processing each subject. Consent is one
           basis; for decisioning it is usually contract or legitimate interest.
@@ -354,6 +386,21 @@
     border-radius: 4px;
     background: var(--surface-2);
     color: var(--fg-muted);
+  }
+  .export {
+    margin-left: auto;
+    font: inherit;
+    font-size: 0.78rem;
+    padding: 0.2rem 0.55rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface);
+    color: var(--fg-muted);
+    cursor: pointer;
+  }
+  .export:hover {
+    border-color: var(--accent);
+    color: var(--fg);
   }
   .hint {
     color: var(--fg-subtle);

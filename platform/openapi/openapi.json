@@ -3378,6 +3378,25 @@
         }
       }
     },
+    "/v1/compliance/registers/{register}": {
+      "get": {
+        "tags": ["MRM"],
+        "summary": "Export a compliance register (CSV or Markdown)",
+        "description": "The examiner-ready register a lender retains and produces on examination: adverse-actions (ECOA / Reg B record of adverse actions taken), reconsiderations (Art. 22 human reviews), or consent (lawful-basis register). CSV by default; ?format=md returns Markdown. Read-only.",
+        "parameters": [
+          { "name": "register", "in": "path", "required": true, "schema": { "type": "string", "enum": ["adverse-actions", "reconsiderations", "consent"] } },
+          { "name": "format", "in": "query", "schema": { "type": "string", "enum": ["csv", "md", "markdown"] } }
+        ],
+        "responses": {
+          "200": {
+            "description": "The register as CSV (default) or Markdown.",
+            "content": { "text/csv": { "schema": { "type": "string" } }, "text/markdown": { "schema": { "type": "string" } } }
+          },
+          "401": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/v1/webhooks/{webhook_id}": {
       "delete": {
         "tags": ["Notifications"],
