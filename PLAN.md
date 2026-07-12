@@ -321,10 +321,14 @@ delivered, by theme:
 We are far from a production release. What exists is a decision engine with a governance layer
 (deterministic replay, audit/lineage, RBAC, four-eyes on flows, drift, crypto-shred erasure). A
 multi-agent review and a competitor comparison (**[docs/COMPETITIVE.md](docs/COMPETITIVE.md)**) point to
-what is not built: fair-lending testing, adverse-action notices, and independent model validation are
-absent, and nothing has been run at scale (single-node projection; no load or chaos evidence). Nothing
-here is a claim that a competitor is beaten — only a list of gaps to work through. The roadmap orders
-them hardest-blocker-first; each phase is a direction, not a committed date.
+what is not built. Some of that gap list has since been worked through (fair-lending testing and the
+adverse-action arc shipped, see Phase 6 and Phase 11); independent model validation is still absent.
+On scale: there is now a **decision-throughput benchmark** (`make bench`, `decision-engine/decide_bench_test.go`)
+with a recorded baseline (see `docs/PERFORMANCE.md`) — the synchronous decide path is race-free under the
+detector and scales across cores — but the projection runtime is still single-node, and there is no
+failure-injection (chaos) or sustained-soak evidence, and no numbers under a durable log or Postgres.
+Nothing here is a claim that a competitor is beaten — only a list of gaps to work through. The roadmap
+orders them hardest-blocker-first; each phase is a direction, not a committed date.
 
 - **Phase 6 — Fair lending & adverse action — ✅ DONE.** The `fairlending/` package: (1) a read-only
   **disparate-impact report** — the adverse-impact ratio (four-fifths rule, ECOA/Reg B) of
