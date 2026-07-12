@@ -28,7 +28,7 @@ Format: `ID | severity | component | description | status`.
 
 ## Phase 10 — command-path performance (PARTIAL; see PLAN.md §8b)
 - `P10-1 | — | platform/eventlog + decision-engine/command | the maker-checker folds read the whole log; now eventlog.Log carries ReadTenantStream (indexed WHERE on SQLite/Postgres via a new events_tenant_stream index; filtered scan on memory/WAL/NATS). foldTenant/foldRequest/foldModelGov/deployHistory use it. Required interface method, not an optional capability. | shipped`
-- `P10-2 | — | decision-engine/history | open: history.ListPage still loads a tenant's full decision set to paginate — a paginated index projection is the bigger fix. | planned`
+- `P10-2 | — | decision-engine/history | history.ListPage no longer loads every full decision record to paginate: a lightweight per-decision index (decision_history_index — slug/env/status/variant/started_at, maintained by the SAME history.Projector so it can't drift) is scanned/filtered/sorted, then full records are loaded ONLY for the returned window. An index entry with no record fails loud (no silent skip). Tests: pagination+order, filters (slug/env/status/variant/query/since/until), status-transition consistency. | shipped`
 
 ## No-fallbacks hardening (project rule: no fallbacks, fail loud)
 - `NF-1 | — | eventlog/store/decision-engine | removed the optional-interface fallbacks introduced this arc, making the capabilities REQUIRED (compiler-enforced) so no path can silently diverge: eventlog.Log.ReadTenantStream; store.Tx.GetForUpdate + PutIfAbsent (SQLite GetForUpdate = plain read under its Begin writer-lock; encTx delegates); command.ModelProvider.ApprovedForServing (the four-eyes model gate can no longer be silently skipped by a provider lacking it). | shipped`
