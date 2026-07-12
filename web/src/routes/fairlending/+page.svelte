@@ -14,13 +14,16 @@
     setFairLendingConfig,
     getAdverseActionSettings,
     setAdverseActionSettings,
+    listAdverseActions,
     ApiError,
     type Flow,
     type FairLendingReport,
     type FairLendingParams,
-    type AdverseActionSettings
+    type AdverseActionSettings,
+    type AdverseActionItem
   } from '$lib/api';
   import { toast } from '$lib/toast';
+  import { appHref } from '$lib/paths';
 
   const key = '';
   let flows = $state<Flow[]>([]);
@@ -39,6 +42,7 @@
 
   let settings = $state<AdverseActionSettings>({ creditor_name: '' });
   let savingSettings = $state(false);
+  let pending = $state<AdverseActionItem[]>([]);
 
   // The report is admin-gated; probing the flow list surfaces a 403 up-front so the
   // page shows the restricted state instead of an empty form the user can't use.
@@ -53,6 +57,8 @@
         await loadConfig();
       }
       settings = await getAdverseActionSettings(key);
+      // The queue is best-effort — a workspace with no declines yet is normal.
+      pending = await listAdverseActions(key).catch(() => []);
     } catch (e) {
       if (e instanceof ApiError && e.status === 403) forbidden = true;
       else error = e instanceof Error ? e.message : String(e);
@@ -339,10 +345,65 @@
             placeholder="defaults to the FTC reference"
           />
         </label>
+        <p class="lede sub">
+          Consumer reporting agency — required by FCRA §615(a) only when a notice is marked as based
+          on a consumer report.
+        </p>
+        <label>
+          <span>CRA name <em>(optional)</em></span>
+          <input bind:value={settings.cra_name} placeholder="Example Credit Bureau" />
+        </label>
+        <label>
+          <span>CRA address <em>(optional)</em></span>
+          <input bind:value={settings.cra_address} placeholder="PO Box 0, City, ST 00000" />
+        </label>
+        <label>
+          <span>CRA phone <em>(optional)</em></span>
+          <input bind:value={settings.cra_phone} placeholder="1-800-000-0000" />
+        </label>
         <button class="btn primary" onclick={saveSettings} disabled={savingSettings}>
           {savingSettings ? 'Saving…' : 'Save settings'}
         </button>
       </div>
+    </div>
+
+    <div class="settings">
+      <h2>Pending adverse-action notices</h2>
+      <p class="lede">
+        Declined decisions and whether their notice has been recorded as issued. ECOA / Reg B
+        expects the notice within 30 days of a completed application — the age column is that clock.
+      </p>
+      {#if pending.length === 0}
+        <p class="muted">No declined decisions are awaiting a notice.</p>
+      {:else}
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Decision</th><th>Subject</th><th>Age (days)</th><th>Status</th></tr>
+            </thead>
+            <tbody>
+              {#each pending as a (a.decision_id)}
+                <tr>
+                  <td
+                    ><a href={appHref(`/decisions/${a.decision_id}`)}
+                      >{a.decision_id.slice(0, 12)}…</a
+                    ></td
+                  >
+                  <td class="muted">{a.subject || '—'}</td>
+                  <td class:overdue={a.age_days > 30}>{a.age_days}</td>
+                  <td>
+                    {#if a.issued}
+                      <span class="badge ok">issued</span>
+                    {:else}
+                      <span class="badge">pending</span>
+                    {/if}
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+      {/if}
     </div>
   {/if}
 </section>
@@ -469,6 +530,29 @@
   }
   .muted {
     color: var(--fg-subtle);
+  }
+  .lede.sub {
+    font-size: 0.85rem;
+    margin: 0.75rem 0 0;
+  }
+  .table-wrap {
+    overflow-x: auto;
+  }
+  td.overdue {
+    color: var(--danger);
+    font-weight: 600;
+  }
+  .badge {
+    display: inline-block;
+    padding: 0.05rem 0.5rem;
+    border-radius: 999px;
+    font-size: 0.78rem;
+    background: var(--surface-2);
+    color: var(--fg-muted);
+  }
+  .badge.ok {
+    background: var(--ok-bg, #dcfce7);
+    color: var(--ok, #166534);
   }
   .err {
     color: var(--danger);

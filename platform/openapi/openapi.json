@@ -3247,7 +3247,10 @@
             "creditor_name": { "type": "string" },
             "creditor_address": { "type": "string" },
             "creditor_phone": { "type": "string" },
-            "enforcement_agency": { "type": "string" }
+            "enforcement_agency": { "type": "string" },
+            "cra_name": { "type": "string", "description": "Consumer reporting agency, required by FCRA §615(a) only for a report-based notice." },
+            "cra_address": { "type": "string" },
+            "cra_phone": { "type": "string" }
           }, "required": ["creditor_name"] } } }
         },
         "responses": {
@@ -3261,10 +3264,11 @@
       "get": {
         "tags": ["MRM"],
         "summary": "Generate an adverse-action notice for a declined decision",
-        "description": "Renders the ECOA / Reg B notice from the decision's recorded reason codes and the workspace creditor settings. Markdown by default; ?format=json returns { decision_id, notice }. 400 when the decision is not a decline, carries no reason codes, or the workspace has no creditor configured.",
+        "description": "Renders the ECOA / Reg B notice from the decision's recorded reason codes and the workspace creditor settings. Markdown by default; ?format=json returns { decision_id, notice, issuance? }. ?consumer_report=true adds the FCRA §615(a) disclosures (the CRA must be configured). 400 when the decision is not a decline, carries no reason codes, or the workspace has no creditor configured.",
         "parameters": [
           { "name": "decision_id", "in": "path", "required": true, "schema": { "type": "string" } },
-          { "name": "format", "in": "query", "schema": { "type": "string", "enum": ["json", "md", "markdown"] } }
+          { "name": "format", "in": "query", "schema": { "type": "string", "enum": ["json", "md", "markdown"] } },
+          { "name": "consumer_report", "in": "query", "schema": { "type": "string", "enum": ["true"] }, "description": "Include the FCRA §615(a) disclosures (decision was based on a consumer report)." }
         ],
         "responses": {
           "200": {
@@ -3277,6 +3281,43 @@
           "400": { "$ref": "#/components/responses/Error" },
           "401": { "$ref": "#/components/responses/Error" },
           "404": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/decisions/{decision_id}/adverse-action/issue": {
+      "post": {
+        "tags": ["MRM"],
+        "summary": "Record that a declined decision's adverse-action notice was served",
+        "description": "Renders the notice (exactly as the download does), stores its content hash, and records the issuance — the durable ECOA/Reg B proof that the applicant was served (who, when, by what method, citing which reasons). based_on_consumer_report adds the FCRA §615(a) disclosures and requires the CRA to be configured. Operator only.",
+        "parameters": [
+          { "name": "decision_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "properties": {
+            "method": { "type": "string", "enum": ["mail", "email", "in_app", "hand_delivered"] },
+            "based_on_consumer_report": { "type": "boolean" }
+          }, "required": ["method"] } } }
+        },
+        "responses": {
+          "200": { "description": "The issuance was recorded.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventAck" } } } },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/adverse-actions": {
+      "get": {
+        "tags": ["MRM"],
+        "summary": "List declined decisions and their notice status (the work queue)",
+        "description": "The tenant's declined decisions and whether each has had its adverse-action notice issued, with the age of the decision (the 30-day-clock surface). ?status=pending returns only unissued declines; ?status=issued only served ones.",
+        "parameters": [
+          { "name": "status", "in": "query", "schema": { "type": "string", "enum": ["pending", "issued"] } }
+        ],
+        "responses": {
+          "200": { "description": "The declined decisions and their notice status.", "content": { "application/json": { "schema": { "type": "object" } } } },
+          "401": { "$ref": "#/components/responses/Error" }
         }
       }
     },

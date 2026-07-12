@@ -36,6 +36,10 @@ func (s *Service) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/flows/{flow_id}/fairlending", s.getConfig)
 	mux.HandleFunc("PUT /v1/flows/{flow_id}/fairlending", s.setConfig)
 	mux.HandleFunc("GET /v1/decisions/{decision_id}/adverse-action", s.adverseAction)
+	mux.HandleFunc("POST /v1/decisions/{decision_id}/adverse-action/issue", s.issueAdverseAction)
+	// The adverse-action work queue: declines and whether each has had its notice
+	// issued yet (the 30-day-clock surface a compliance operator works from).
+	mux.HandleFunc("GET /v1/adverse-actions", s.adverseActions)
 }
 
 // report builds the disparate-impact report for a flow. flow is required; the
@@ -195,16 +199,155 @@ func (s *Service) adverseAction(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusInternalServerError, err)
 		return
 	}
-	notice, err := Notice(rec, settings.Settings, s.now())
+	opts := NoticeOptions{BasedOnConsumerReport: r.URL.Query().Get("consumer_report") == "true"}
+	notice, err := Notice(rec, settings.Settings, opts, s.now())
 	if err != nil {
 		httpx.Error(w, http.StatusBadRequest, err)
 		return
 	}
 	if r.URL.Query().Get("format") == "json" {
-		httpx.JSON(w, http.StatusOK, map[string]string{"decision_id": decisionID, "notice": notice})
+		issuance, issued, err := ReadIssuance(r.Context(), s.store, id, decisionID)
+		if err != nil {
+			httpx.Error(w, http.StatusInternalServerError, err)
+			return
+		}
+		resp := map[string]any{"decision_id": decisionID, "notice": notice}
+		if issued {
+			resp["issuance"] = issuance
+		}
+		httpx.JSON(w, http.StatusOK, resp)
 		return
 	}
 	httpx.Download(w, "text/markdown; charset=utf-8", "adverse-action-"+sanitize(decisionID)+".md", notice)
+}
+
+type issueRequest struct {
+	Method                DeliveryMethod `json:"method"`
+	BasedOnConsumerReport bool           `json:"based_on_consumer_report"`
+}
+
+// issueAdverseAction records that the adverse-action notice for a declined decision
+// was served. It renders the notice exactly as the download does — so the recorded
+// content hash is of the served document — and refuses (400) if the decision is not
+// a decline, the creditor/CRA is unconfigured, or the notice carries no reasons.
+func (s *Service) issueAdverseAction(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	decisionID := r.PathValue("decision_id")
+	var req issueRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	rec, found, err := history.Read(r.Context(), s.store, id, decisionID)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	if !found {
+		httpx.Error(w, http.StatusNotFound, fmt.Errorf("decision %s not found", decisionID))
+		return
+	}
+	settings, _, err := ReadSettings(r.Context(), s.store, id)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	opts := NoticeOptions{BasedOnConsumerReport: req.BasedOnConsumerReport}
+	notice, err := Notice(rec, settings.Settings, opts, s.now())
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	hash, algo := HashNotice(notice)
+	e, err := s.cmd.Issue(r.Context(), id, IssueCmd{
+		DecisionID:            decisionID,
+		Subject:               subjectOf(rec),
+		Method:                req.Method,
+		BasedOnConsumerReport: req.BasedOnConsumerReport,
+		PrincipalReasons:      principalReasons(rec),
+		ContentHash:           hash,
+		HashAlgo:              algo,
+	})
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"event_id": e.ID, "seq": e.Seq})
+}
+
+// adverseActionItem is one row of the work queue: a declined decision and whether its
+// notice has been issued, with the age of the decision so the 30-day clock is visible.
+type adverseActionItem struct {
+	DecisionID string        `json:"decision_id"`
+	FlowID     string        `json:"flow_id"`
+	Slug       string        `json:"slug"`
+	Subject    string        `json:"subject,omitempty"`
+	DecidedAt  time.Time     `json:"decided_at"`
+	AgeDays    int           `json:"age_days"`
+	Issued     bool          `json:"issued"`
+	Issuance   *IssuanceView `json:"issuance,omitempty"`
+}
+
+// adverseActions lists the tenant's declined decisions and their notice status.
+// ?status=pending returns only declines with no issuance yet (the work to do);
+// ?status=issued returns only those served; default returns both.
+func (s *Service) adverseActions(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	recs, err := history.List(r.Context(), s.store, id)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	issuances, err := ListIssuances(r.Context(), s.store, id)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	byDecision := make(map[string]IssuanceView, len(issuances))
+	for _, iv := range issuances {
+		byDecision[iv.DecisionID] = iv
+	}
+	status := r.URL.Query().Get("status")
+	now := s.now()
+	items := make([]adverseActionItem, 0)
+	for _, rec := range recs {
+		if policy.Disposition(rec.Disposition) != policy.Decline {
+			continue
+		}
+		iv, issued := byDecision[rec.DecisionID]
+		if (status == "pending" && issued) || (status == "issued" && !issued) {
+			continue
+		}
+		decidedAt := rec.EndedAt
+		if decidedAt.IsZero() {
+			decidedAt = rec.StartedAt
+		}
+		item := adverseActionItem{
+			DecisionID: rec.DecisionID, FlowID: rec.FlowID, Slug: rec.Slug, Subject: subjectOf(rec),
+			DecidedAt: decidedAt, AgeDays: int(now.Sub(decidedAt).Hours() / 24), Issued: issued,
+		}
+		if issued {
+			ivCopy := iv
+			item.Issuance = &ivCopy
+		}
+		items = append(items, item)
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"adverse_actions": items, "total": len(items)})
+}
+
+// subjectOf keys a decision's data subject as "type/id" — the same key consent, PII
+// sealing, and erasure use — or "" when the decision referenced no entity.
+func subjectOf(rec history.Record) string {
+	if rec.EntityType == "" || rec.EntityID == "" {
+		return ""
+	}
+	return rec.EntityType + "/" + rec.EntityID
 }
 
 // sanitize keeps a decision id safe for a download filename.

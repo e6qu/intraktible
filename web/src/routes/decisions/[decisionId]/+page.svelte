@@ -12,10 +12,13 @@
     resumeDecision,
     decisionCounterfactual,
     adverseActionNotice,
+    getAdverseAction,
+    issueAdverseAction,
     ApiError,
     type Decision,
     type Counterfactual,
-    type RunExportFormat
+    type RunExportFormat,
+    type AdverseActionIssuance
   } from '$lib/api';
   import { toast } from '$lib/toast';
   import { appHref } from '$lib/paths';
@@ -61,6 +64,38 @@
       notifying = false;
     }
   }
+  // The recorded issuance for this decline (null = not yet served). Loaded best-effort
+  // when the decision is a decline; a missing creditor config just leaves it unloaded.
+  let issuance = $state<AdverseActionIssuance | null>(null);
+  let issueMethod = $state('mail');
+  let issueConsumerReport = $state(false);
+  let issuing = $state(false);
+  const canIssue = $derived(roleAtLeast($user?.role, 'operator'));
+
+  async function loadIssuance() {
+    if (!id) return;
+    try {
+      const res = await getAdverseAction(key, id, issueConsumerReport);
+      issuance = res.issuance ?? null;
+    } catch {
+      issuance = null; // creditor unconfigured or decision not a decline — nothing to show
+    }
+  }
+  async function submitIssue() {
+    issuing = true;
+    try {
+      await issueAdverseAction(key, id, {
+        method: issueMethod,
+        based_on_consumer_report: issueConsumerReport
+      });
+      toast.success('Adverse-action notice recorded as issued.');
+      await loadIssuance();
+    } catch (e) {
+      toast.error(msg(e));
+    } finally {
+      issuing = false;
+    }
+  }
   function pretty(v: unknown): string {
     return v === undefined || v === null ? '—' : JSON.stringify(v, null, 2);
   }
@@ -100,6 +135,7 @@
       const got = await getDecision(key, id);
       if (id !== reqId) return;
       d = got;
+      if (d.disposition === 'decline') void loadIssuance();
     } catch (e) {
       if (id !== reqId) return;
       if (e instanceof ApiError && e.status === 404) notFound = true;
@@ -160,6 +196,7 @@
   $effect(() => {
     void id; // reload on initial mount and sibling navigation
     cf = null;
+    issuance = null;
     // Reset the rendered decision too — otherwise a failed sibling load keeps
     // showing the previous decision (including its Resume panel) under the new id.
     d = null;
@@ -272,13 +309,63 @@
       <p class="muted">No reason codes were emitted for this decision.</p>
     {/if}
     {#if d.disposition === 'decline'}
-      <button class="notice-btn" onclick={downloadNotice} disabled={notifying}>
-        <Icon name="shield" />
-        {notifying ? 'Generating…' : 'Adverse-action notice'}
-      </button>
+      <h2>
+        Adverse-action notice
+        <Hint label="Adverse action"
+          >A declined applicant must be served an ECOA / Reg B notice stating the specific principal
+          reasons (and, if a consumer report was used, the FCRA §615 disclosures). Recording the
+          issuance is the durable proof — who served it, when, how, and a hash of the exact
+          document.</Hint
+        >
+      </h2>
+      <div class="aa-row">
+        <button class="notice-btn" onclick={downloadNotice} disabled={notifying}>
+          <Icon name="shield" />
+          {notifying ? 'Generating…' : 'Download notice'}
+        </button>
+        {#if issuance}
+          <span class="badge ok">issued</span>
+        {:else}
+          <span class="badge">not yet issued</span>
+        {/if}
+      </div>
+      {#if issuance}
+        <dl class="issuance">
+          <dt>Served</dt>
+          <dd>
+            {issuance.method.replace('_', ' ')} · {issuance.issued_at?.slice(0, 10)} · by {issuance.issued_by}
+          </dd>
+          <dt>Consumer report</dt>
+          <dd>{issuance.based_on_consumer_report ? 'yes (FCRA disclosures included)' : 'no'}</dd>
+          <dt>Reasons cited</dt>
+          <dd>{issuance.principal_reasons.join('; ')}</dd>
+          <dt>Document hash</dt>
+          <dd class="mono" title={`${issuance.hash_algo}: ${issuance.content_hash}`}>
+            ⛓ {issuance.content_hash.slice(0, 16)}…
+          </dd>
+        </dl>
+      {:else if canIssue}
+        <div class="aa-issue">
+          <label class="aa-check">
+            <input type="checkbox" bind:checked={issueConsumerReport} onchange={loadIssuance} />
+            Decision used a consumer / credit report (adds FCRA §615 disclosures)
+          </label>
+          <div class="aa-controls">
+            <select bind:value={issueMethod} aria-label="delivery method">
+              <option value="mail">mail</option>
+              <option value="email">email</option>
+              <option value="in_app">in_app</option>
+              <option value="hand_delivered">hand_delivered</option>
+            </select>
+            <button class="notice-btn" onclick={submitIssue} disabled={issuing}>
+              {issuing ? 'Recording…' : 'Record as issued'}
+            </button>
+          </div>
+        </div>
+      {/if}
       <p class="muted small">
-        Renders the ECOA / Reg B notice from these reason codes and the workspace creditor settings
-        (set on the Fair lending page). Requires the operator role.
+        The notice renders from these reason codes and the workspace creditor settings (set on the
+        Fair lending page). Recording an issuance requires the operator role.
       </p>
     {/if}
 
@@ -715,6 +802,67 @@
   .notice-btn:disabled {
     opacity: 0.5;
     cursor: default;
+  }
+  .aa-row {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+  }
+  .badge {
+    display: inline-block;
+    padding: 0.05rem 0.5rem;
+    border-radius: 999px;
+    font-size: 0.78rem;
+    background: var(--surface-2);
+    color: var(--fg-muted);
+  }
+  .badge.ok {
+    background: var(--ok-bg, #dcfce7);
+    color: var(--ok, #166534);
+  }
+  .issuance {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 0.25rem 1rem;
+    margin: 0.6rem 0 0;
+    font-size: 0.9rem;
+  }
+  .issuance dt {
+    color: var(--fg-subtle);
+  }
+  .issuance dd {
+    margin: 0;
+  }
+  .mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.82rem;
+  }
+  .aa-issue {
+    margin-top: 0.6rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  .aa-check {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.85rem;
+    color: var(--fg-muted);
+  }
+  .aa-controls {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+  }
+  .aa-controls select {
+    font: inherit;
+    padding: 0.35rem 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface);
+    color: var(--fg);
   }
   .err {
     color: var(--danger);

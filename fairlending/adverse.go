@@ -16,18 +16,30 @@ import (
 // the regulation's commentary treats disclosing more than four as not meaningful).
 const maxPrincipalReasons = 4
 
+// NoticeOptions parameterizes what a rendered notice must disclose beyond the ECOA
+// core. BasedOnConsumerReport adds the FCRA §615(a) disclosure block — used whenever
+// the decision drew on a consumer report, which the issuer asserts (they know which
+// flow pulled a bureau); it is not inferable from the recorded outcome alone.
+type NoticeOptions struct {
+	BasedOnConsumerReport bool
+}
+
 // Notice renders an adverse-action notice for a declined decision from its recorded
 // reason codes and the workspace creditor settings. It errors rather than emit an
 // incomplete notice: the decision must be a decline, must carry reason codes, and
 // the workspace must have a named creditor. The specific reasons come from the
 // decision's own recorded codes — the notice cites what the flow decided, not a
-// re-derivation.
-func Notice(rec history.Record, st Settings, now time.Time) (string, error) {
+// re-derivation. When opts.BasedOnConsumerReport is set, the FCRA §615(a)
+// disclosures are appended and the consumer reporting agency must be configured.
+func Notice(rec history.Record, st Settings, opts NoticeOptions, now time.Time) (string, error) {
 	if policy.Disposition(rec.Disposition) != policy.Decline {
 		return "", fmt.Errorf("adverse-action notice: decision %s was not declined (disposition %q)", rec.DecisionID, rec.Disposition)
 	}
 	if strings.TrimSpace(st.CreditorName) == "" {
 		return "", fmt.Errorf("adverse-action notice: workspace creditor identification is not configured")
+	}
+	if opts.BasedOnConsumerReport && strings.TrimSpace(st.CRAName) == "" {
+		return "", fmt.Errorf("adverse-action notice: decision %s is marked report-based but no consumer reporting agency is configured (FCRA §615(a))", rec.DecisionID)
 	}
 	reasons := principalReasons(rec)
 	if len(reasons) == 0 {
@@ -51,6 +63,11 @@ func Notice(rec history.Record, st Settings, now time.Time) (string, error) {
 	fmt.Fprintf(&b, "## Principal reason(s) for the decision\n\n")
 	for _, r := range reasons {
 		fmt.Fprintf(&b, "- %s\n", r)
+	}
+
+	if opts.BasedOnConsumerReport {
+		fmt.Fprintf(&b, "\n## Our use of a consumer report\n\n")
+		fmt.Fprintf(&b, "%s\n", fcraNotice(st))
 	}
 
 	fmt.Fprintf(&b, "\n## Your rights under the Equal Credit Opportunity Act\n\n")
@@ -94,6 +111,30 @@ func containsFold(xs []string, s string) bool {
 		}
 	}
 	return false
+}
+
+// fcraNotice is the FCRA §615(a) disclosure block a creditor must include when the
+// adverse action was based in whole or part on a consumer report: it names and
+// locates the reporting agency, states the agency did not make the decision and
+// cannot explain it, and gives the applicant's right to a free report (within 60
+// days) and to dispute. The CRA identity is required by the caller before this runs.
+func fcraNotice(st Settings) string {
+	var b strings.Builder
+	b.WriteString("Our credit decision was based in whole or in part on information obtained in a report " +
+		"from the consumer reporting agency named below. Under the Fair Credit Reporting Act, the " +
+		"reporting agency did not make the decision to take the adverse action and cannot give you the " +
+		"specific reasons why the action was taken.\n\n")
+	fmt.Fprintf(&b, "%s\n", st.CRAName)
+	if st.CRAAddress != "" {
+		fmt.Fprintf(&b, "%s\n", st.CRAAddress)
+	}
+	if st.CRAPhone != "" {
+		fmt.Fprintf(&b, "%s\n", st.CRAPhone)
+	}
+	b.WriteString("\nYou have a right to obtain a free copy of your consumer report from the reporting " +
+		"agency if you request it no later than 60 days after you receive this notice. You have a right " +
+		"to dispute with the reporting agency the accuracy or completeness of any information in your report.")
+	return b.String()
 }
 
 // ecoaNotice is the statutory ECOA notice (Reg B §1002.9(b)(1)). The enforcement
