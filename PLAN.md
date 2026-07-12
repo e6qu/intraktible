@@ -350,11 +350,19 @@ them hardest-blocker-first; each phase is a direction, not a committed date.
   model with no validation evidence as governance gaps (they fire like any other MRM issue), and the
   models page carries the approval status, request/approve/reject, and the validation log. The demo seed
   runs every model through validation + approval, so its production decisions serve approved models.
-- **Phase 8 — Production hardening at scale.** Leader election / single-writer for the projection
-  runtime. Today every replica runs the full projection with in-memory dedup and a non-CAS shared
-  checkpoint; a review flagged this as a suspected multi-replica double-apply — it needs a test to
-  confirm before it is treated as fixed. Also: CAS checkpoints; benchmarks + load + chaos tests in CI;
-  Postgres in CI (today skipped); compaction/archival/backup automation.
+- **Phase 8 — Production hardening at scale — 🚧 partial.** The suspected multi-replica double-apply
+  was **confirmed with a test** (two runtimes sharing one durable store applied each event to a
+  non-idempotent counter twice — count 2N) and **fixed**: the incremental apply now reads the **durable
+  checkpoint under a lock inside the apply tx** (Postgres `SELECT … FOR UPDATE`; SQLite's `Begin` holds
+  a global writer lock) and skips an event another replica already applied — so N replicas fold each
+  event exactly once between them. Proven on both SQLite (writer-mutex path) and **real Postgres**
+  (`FOR UPDATE` path), race-clean. A projection **benchmark** (`BenchmarkDurableApply`) and a **Postgres
+  CI job** (runs the DSN-gated store/log/projection tests against a live Postgres service — no longer
+  skipped) landed too. _Caveat, stated not hidden:_ the fix covers the steady-state incremental apply
+  and the resume catch-up; the initial full rebuild (`RebuildTo`) is not yet lock-coordinated, so two
+  replicas doing their *first-ever* rebuild of a fresh, pre-populated store simultaneously can still
+  race — a cold-start edge, not the flagged bug. _Still open:_ lock-coordinated bootstrap, load + chaos
+  tests, and compaction/archival/backup automation.
 - **Phase 9 — Connector resilience & data sources.** Retries, circuit breakers, and timeouts on
   outbound connectors; connectors for real credit-bureau / KYC / KYB / sanctions sources. intraktible
   has ~9 connector types; Alloy and Taktile advertise ~270 and ~200 sources respectively.

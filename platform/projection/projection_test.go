@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -101,6 +102,128 @@ func readCount(t *testing.T, s store.Store) int {
 		t.Fatal(err)
 	}
 	return n
+}
+
+// TestMultiReplicaNoDoubleApply is the Phase 8 correctness point: two projection
+// runtimes sharing ONE durable store and ONE log (the horizontal-scale / HA case)
+// must apply each event to a non-idempotent counter EXACTLY once between them, not
+// once per replica. Before the checkpoint-lock fix this counted to ~2N.
+func TestMultiReplicaNoDoubleApply(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.NewSQLite(filepath.Join(t.TempDir(), "p.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = st.Close() }()
+	log := eventlog.NewMemory()
+
+	// Two replicas of the same module: both subscribe to the log and both apply into
+	// the shared store.
+	ctxA, cancelA := context.WithCancel(ctx)
+	defer cancelA()
+	ctxB, cancelB := context.WithCancel(ctx)
+	defer cancelB()
+	rtA := projection.New(log, st, counter{})
+	rtB := projection.New(log, st, counter{})
+	if err := rtA.Start(ctxA); err != nil {
+		t.Fatal(err)
+	}
+	if err := rtB.Start(ctxB); err != nil {
+		t.Fatal(err)
+	}
+
+	const n = 25
+	for i := 0; i < n; i++ {
+		appendEvent(t, log, "e")
+	}
+	// Both replicas observe the head (each skips or applies, but the checkpoint
+	// advances once); wait for both to reach it.
+	if !testutil.Eventually(t, func() bool { return rtA.Applied() >= n && rtB.Applied() >= n }) {
+		t.Fatalf("replicas did not both reach head: A=%d B=%d", rtA.Applied(), rtB.Applied())
+	}
+	if got := readCount(t, st); got != n {
+		t.Fatalf("multi-replica double-apply: count=%d, want %d (each event applied once across both replicas)", got, n)
+	}
+}
+
+// BenchmarkDurableApply measures the checkpoint-locked apply throughput on a durable
+// (transactional) store — the path Phase 8 hardened. Each iteration appends an event
+// and the benchmark waits for the runtime to fold it, so the number reflects
+// end-to-end apply (SQLite tx commit + checkpoint advance) per event.
+func BenchmarkDurableApply(b *testing.B) {
+	st, err := store.NewSQLite(filepath.Join(b.TempDir(), "p.db"))
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer func() { _ = st.Close() }()
+	log := eventlog.NewMemory()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	rt := projection.New(log, st, counter{})
+	if err := rt.Start(ctx); err != nil {
+		b.Fatal(err)
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := log.Append(context.Background(), eventlog.Envelope{
+			Org: "demo", Workspace: "main", Actor: "t", Stream: "s", Type: "e",
+		}); err != nil {
+			b.Fatal(err)
+		}
+	}
+	for rt.Applied() < uint64(b.N) {
+		// spin until the live consumer has folded every appended event
+	}
+	b.StopTimer()
+}
+
+// TestMultiReplicaNoDoubleApplyPostgres is the multi-replica correctness proof
+// against a REAL Postgres — the store an HA deployment actually uses, where the
+// single-writer guarantee rests on SELECT … FOR UPDATE row locking (SQLite's
+// variant leans on its global writer mutex instead). Skipped without a DSN.
+func TestMultiReplicaNoDoubleApplyPostgres(t *testing.T) {
+	dsn := os.Getenv("INTRAKTIBLE_TEST_POSTGRES")
+	if dsn == "" {
+		t.Skip("set INTRAKTIBLE_TEST_POSTGRES (a pgx DSN) to run the Postgres multi-replica test")
+	}
+	ctx := context.Background()
+	st, err := store.NewPostgres(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = st.Close() }()
+	// The tables persist across runs; start from a clean checkpoint + counter.
+	if err := st.Reset(ctx, "_projection"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Reset(ctx, countCollection); err != nil {
+		t.Fatal(err)
+	}
+	log := eventlog.NewMemory()
+
+	ctxA, cancelA := context.WithCancel(ctx)
+	defer cancelA()
+	ctxB, cancelB := context.WithCancel(ctx)
+	defer cancelB()
+	rtA := projection.New(log, st, counter{})
+	rtB := projection.New(log, st, counter{})
+	if err := rtA.Start(ctxA); err != nil {
+		t.Fatal(err)
+	}
+	if err := rtB.Start(ctxB); err != nil {
+		t.Fatal(err)
+	}
+
+	const n = 25
+	for i := 0; i < n; i++ {
+		appendEvent(t, log, "e")
+	}
+	if !testutil.Eventually(t, func() bool { return rtA.Applied() >= n && rtB.Applied() >= n }) {
+		t.Fatalf("replicas did not both reach head: A=%d B=%d", rtA.Applied(), rtB.Applied())
+	}
+	if got := readCount(t, st); got != n {
+		t.Fatalf("multi-replica double-apply on Postgres: count=%d, want %d", got, n)
+	}
 }
 
 func TestRebuildThenLive(t *testing.T) {

@@ -7,6 +7,7 @@ package projection
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -182,15 +183,16 @@ func (r *Runtime) applyOne(ctx context.Context, e eventlog.Envelope) error {
 // the incremental read model, so we fail LOUD instead — the runtime surfaces the error
 // (/healthz degraded) and re-applies the range once the lower seq is visible.
 func (r *Runtime) applyContiguous(ctx context.Context, e eventlog.Envelope) error {
-	r.mu.Lock()
-	applied := r.applied
-	r.mu.Unlock()
-	if e.Seq != applied+1 {
-		return fmt.Errorf("projection: refusing to apply seq %d over applied head %d — a lower seq is not yet visible in the log; advancing past it would skip an event", e.Seq, applied)
-	}
 	if r.tx == nil {
-		// Ephemeral store (memory): no atomicity needed — a crash loses everything
-		// and the next boot fully rebuilds.
+		// Ephemeral store (memory): a single process owns it — no cross-replica
+		// sharing — so the in-memory head is authority. No atomicity needed: a crash
+		// loses everything and the next boot fully rebuilds.
+		r.mu.Lock()
+		applied := r.applied
+		r.mu.Unlock()
+		if e.Seq != applied+1 {
+			return fmt.Errorf("projection: refusing to apply seq %d over applied head %d — a lower seq is not yet visible in the log; advancing past it would skip an event", e.Seq, applied)
+		}
 		if err := r.applyAll(ctx, e, r.store); err != nil {
 			return err
 		}
@@ -200,9 +202,31 @@ func (r *Runtime) applyContiguous(ctx context.Context, e eventlog.Envelope) erro
 		r.setApplied(e.Seq)
 		return nil
 	}
+	// Durable, transactional store: the DURABLE checkpoint — read under a lock inside
+	// the tx — is authority, not this process's in-memory head. This makes the apply
+	// single-writer across replicas: when N runtimes share one store, they serialize
+	// on the checkpoint row (SELECT … FOR UPDATE on Postgres; SQLite's Begin already
+	// holds a global writer lock), so each event's non-idempotent projectors run
+	// exactly once between them instead of once per replica.
 	tx, err := r.tx.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("projection: begin tx: %w", err)
+	}
+	durable, err := readCheckpointLocked(ctx, tx)
+	if err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("projection: lock checkpoint: %w", err)
+	}
+	switch {
+	case e.Seq <= durable:
+		// Another replica already applied this event (the durable checkpoint advanced
+		// past it under the lock). Roll back our no-op and resync our in-memory head.
+		_ = tx.Rollback()
+		r.setApplied(durable)
+		return nil
+	case e.Seq != durable+1:
+		_ = tx.Rollback()
+		return fmt.Errorf("projection: refusing to apply seq %d over durable checkpoint %d — a lower seq is not yet visible in the log; advancing past it would skip an event", e.Seq, durable)
 	}
 	if err := r.applyAll(ctx, e, tx); err != nil {
 		_ = tx.Rollback()
@@ -217,6 +241,40 @@ func (r *Runtime) applyContiguous(ctx context.Context, e eventlog.Envelope) erro
 	}
 	r.setApplied(e.Seq)
 	return nil
+}
+
+// forUpdater is the optional Tx capability to read a row under an exclusive lock
+// (Postgres SELECT … FOR UPDATE). A durable store that lacks it (SQLite) already
+// serializes transactions with a global writer lock, so a plain Get inside the tx
+// reads the committed checkpoint just as safely.
+type forUpdater interface {
+	GetForUpdate(ctx context.Context, collection, key string) (json.RawMessage, bool, error)
+}
+
+// readCheckpointLocked reads the durable applied-head inside the current tx, taking a
+// row lock where the backend supports it so concurrent replicas serialize on it.
+func readCheckpointLocked(ctx context.Context, tx store.Store) (uint64, error) {
+	var (
+		raw json.RawMessage
+		ok  bool
+		err error
+	)
+	if fu, isFU := tx.(forUpdater); isFU {
+		raw, ok, err = fu.GetForUpdate(ctx, checkpointCollection, checkpointKey)
+	} else {
+		raw, ok, err = tx.Get(ctx, checkpointCollection, checkpointKey)
+	}
+	if err != nil {
+		return 0, err
+	}
+	if !ok {
+		return 0, nil
+	}
+	var cp checkpoint
+	if err := json.Unmarshal(raw, &cp); err != nil {
+		return 0, fmt.Errorf("decode checkpoint: %w", err)
+	}
+	return cp.Seq, nil
 }
 
 func (r *Runtime) writeCheckpoint(ctx context.Context, s store.Store, seq uint64) error {

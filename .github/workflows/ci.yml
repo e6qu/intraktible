@@ -38,6 +38,36 @@ jobs:
       - name: license compliance (AGPL-compatible only)
         run: make licenses
 
+  # The durable-Postgres path (store, event log, and the multi-replica projection
+  # single-writer test) against a real PostgreSQL. These tests skip when
+  # INTRAKTIBLE_TEST_POSTGRES is unset, so the default `go` job stays hermetic; this
+  # job supplies a Postgres service so they actually run.
+  postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: intraktible
+          POSTGRES_DB: intraktible
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      INTRAKTIBLE_TEST_POSTGRES: postgres://postgres:intraktible@localhost:5432/intraktible
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Postgres store / event log / projection tests
+        run: go test -race ./platform/store/ ./platform/eventlog/ ./platform/projection/
+
   web:
     runs-on: ubuntu-latest
     defaults:

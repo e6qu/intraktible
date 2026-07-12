@@ -15,6 +15,13 @@ Format: `ID | severity | component | description | status`.
 - `P7-3 | — | decision-engine/mrm | validation evidence (ModelValidationRecorded: dataset/metrics/validator/notes/passed) attached per version; MRM flags unapproved + unvalidated models as governance gaps; models page shows approval status + request/approve/reject + validation log. | shipped`
 - `P7-4 | — | cmd/intraktible-seed | the demo seed validates + four-eyes-approves every model before traffic, so production Predict decisions serve approved models. | shipped`
 
+## Phase 8 — production hardening at scale (PARTIAL; see PLAN.md §8b)
+- `P8-1 | HIGH | platform/projection | CONFIRMED + FIXED: multi-replica double-apply. TestMultiReplicaNoDoubleApply reproduced it (two runtimes sharing one durable store counted 2N). Fix: applyContiguous (tx path) reads the durable checkpoint under a lock inside the apply tx (readCheckpointLocked → GetForUpdate on Postgres; SQLite's Begin writer-mutex serializes) and skips an already-applied event — single-writer across replicas. Proven on SQLite + real Postgres, race-clean ×10. | shipped`
+- `P8-2 | — | platform/projection | BenchmarkDurableApply measures the checkpoint-locked apply throughput (~77µs/event on SQLite, fsync-bound). | shipped`
+- `P8-3 | — | ci | new 'postgres' CI job runs the DSN-gated store/eventlog/projection tests against a live Postgres service (previously skipped everywhere); TestMultiReplicaNoDoubleApplyPostgres exercises the FOR UPDATE path. | shipped`
+- `P8-4 | MED | platform/projection | open (cold-start caveat): the initial RebuildTo is not lock-coordinated, so two replicas doing their first-ever rebuild of a fresh, pre-populated store simultaneously can still race. Steady-state incremental apply + resume are safe. | planned`
+- `P8-5 | — | ops | open: load + chaos tests; compaction/archival/backup automation. | planned`
+
 ## Open — audit round 3 (planned; sequenced into PRs, see PLAN.md roadmap)
 A third audit (code/security, a UI/UX review against screenshots of every page × persona × theme, and a competitive + API study vs. comparable decisioning and BPMN/DMN platforms) produced the backlog below. Grouped into healthy-sized PRs (one open at a time; no anemic PRs).
 
