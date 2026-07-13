@@ -55,11 +55,19 @@ Environment: `darwin/arm64`, Apple M4 Pro, Go's default settings.
 - **No projection under load.** The benchmark exercises the synchronous decide (which
   appends events); it does not measure the async projection runtime keeping read models
   current under a sustained write rate, which is single-node today.
-- **Partial failure-injection; no soak.** The decide boundary's fail-loud guarantees are
-  now tested (`decision-engine/decide_resilience_test.go`): a one-nanosecond evaluation
-  budget makes a decision fail quickly instead of hanging, and a failing Connect, AI, or
-  Predict node fails the decision loudly rather than completing with that step's data
-  silently missing. Not yet covered: a dying/slow *store* mid-decide, and sustained
-  multi-hour soak evidence (no leak / no drift under continuous load).
+- **Failure-injection and soak now covered; no multi-hour endurance run.** The decide
+  boundary's fail-loud guarantees are tested (`decision-engine/decide_resilience_test.go`):
+  a one-nanosecond evaluation budget makes a decision fail quickly instead of hanging, and
+  a failing Connect, AI, or Predict node fails the decision loudly rather than completing
+  with that step's data silently missing. A **dying store mid-decide** is now injected too
+  (`decision-engine/decide_soak_test.go`): a decide whose projection store returns errors
+  fails loud rather than completing against a store that dropped its reads (with a positive
+  control and a heal-recovery check). A **soak test** in the same file drives 1,000
+  concurrent decides over the segmented durable WAL with a small segment cap — so segments
+  rotate and gzip-archive continuously under load — then asserts no drift: the log reads
+  back gap-free (seq 1..head, no holes or duplicates), Head matches the record count, and
+  compaction actually engaged. What this is NOT: a multi-hour endurance run measuring
+  resident-memory flatness over time — the soak asserts correctness under sustained load,
+  not a days-long leak profile.
 - **One machine, one run.** Absolute numbers are machine- and run-specific; treat the
   ratios (core scaling) as more durable than the absolute nanoseconds.
