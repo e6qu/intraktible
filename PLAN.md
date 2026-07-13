@@ -325,8 +325,10 @@ what is not built. Some of that gap list has since been worked through (fair-len
 adverse-action arc shipped, see Phase 6 and Phase 11); independent model validation is still absent.
 On scale: there is now a **decision-throughput benchmark** (`make bench`, `decision-engine/decide_bench_test.go`)
 with a recorded baseline (see `docs/PERFORMANCE.md`) — the synchronous decide path is race-free under the
-detector and scales across cores — but the projection runtime is still single-node, and there is no
-failure-injection (chaos) or sustained-soak evidence, and no numbers under a durable log or Postgres.
+detector and scales across cores. Decide-boundary failure injection now covers a failing dependency
+(Connect/AI/Predict) AND a dying store mid-decide, and a soak test drives sustained concurrent load over
+the segmented, self-archiving WAL asserting no drift; still open are the projection runtime's single-node
+ceiling, a multi-hour endurance run, and throughput numbers under a durable log or Postgres.
 Nothing here is a claim that a competitor is beaten — only a list of gaps to work through. The roadmap
 orders them hardest-blocker-first; each phase is a direction, not a committed date.
 
@@ -366,8 +368,11 @@ orders them hardest-blocker-first; each phase is a direction, not a committed da
   insert-if-absent, lock it, then reset+replay+checkpoint atomically), so concurrent boots serialize —
   one builds, the rest see the checkpoint already at head and do nothing. A projection **benchmark**
   (`BenchmarkDurableApply`) and a **Postgres CI job** (runs the DSN-gated store/log/projection tests
-  against a live Postgres — no longer skipped everywhere) landed too. _Still open (the ops-heavy tail):_
-  load + chaos tests, and compaction/archival/backup automation.
+  against a live Postgres — no longer skipped everywhere) landed too. **Log compaction/archival now ships:**
+  the file WAL is segmented — it seals `events.log` at a size cap and gzip-archives older sealed segments
+  in place, bounding on-disk size while every event stays readable and seq stays positionally stable; a
+  soak + store-failure-injection suite backs it. _Still open (the ops-heavy tail):_ backup automation and
+  a multi-hour endurance run.
 - **Phase 9 — Connector resilience & data sources — 🚧 partial.** **Resilience done:** every outbound
   connector call now runs through the retry budget + a per-connector **circuit breaker**
   (`connectors/resilience.go`), applied once at the `InvokeWithSecrets` choke point so every connector
@@ -473,7 +478,8 @@ orders them hardest-blocker-first; each phase is a direction, not a committed da
   decision explanation cites the law that applies rather than hedging across all three — a UK-only
   workspace drops the EU Regulation; a US-only workspace cites the Equal Credit Opportunity Act, not
   Article 22. Editable on the compliance dashboard (admin), defaulting to all three when unset.
-  _Still open:_ byte-level WORM artifact storage; the ops-heavy scale tail (load/chaos, log compaction).
+  _Still open:_ byte-level WORM artifact storage; the ops-heavy scale tail (log compaction now shipped —
+  a segmented, self-archiving WAL with soak + store-failure coverage; backup automation still open).
 
 **Parallel non-code track (organisational, not code):** SOC 2 Type II, ISO 27001, independent
 penetration testing, data-provider commercial relationships, model-validation staffing, and reference
