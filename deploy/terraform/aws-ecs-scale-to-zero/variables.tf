@@ -35,8 +35,14 @@ variable "az_count" {
 }
 
 variable "container_image" {
-  description = "Full image reference for the intraktible backend (e.g. <account>.dkr.ecr.<region>.amazonaws.com/intraktible:<tag>). Build from the repo Dockerfile and push before apply."
+  description = "Full multi-arch image reference for the intraktible backend (e.g. ghcr.io/e6qu/intraktible:main or a pinned :1.4.2, published by the release workflow). Tasks run arm64, which the multi-arch manifest covers."
   type        = string
+}
+
+variable "image_pull_secret_arn" {
+  description = "Secrets Manager ARN of a {username,password} secret for pulling the image from a private registry (e.g. a private GHCR package). Empty means the image is public and no pull secret is used."
+  type        = string
+  default     = ""
 }
 
 variable "container_port" {

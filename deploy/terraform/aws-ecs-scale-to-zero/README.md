@@ -59,13 +59,14 @@ small fck-nat instance plus storage.
 
 ## Prerequisites
 
-1. **Build and push the backend image** (the repo `Dockerfile`) to a registry the ECS
-   task can pull (ECR in the same account is simplest):
-   ```sh
-   aws ecr create-repository --repository-name intraktible
-   docker build -t <account>.dkr.ecr.<region>.amazonaws.com/intraktible:<tag> .
-   docker push  <account>.dkr.ecr.<region>.amazonaws.com/intraktible:<tag>
-   ```
+1. **A published backend image.** The repo's `release` workflow builds and pushes a
+   **multi-arch** image to `ghcr.io/e6qu/intraktible` on every merge to main (`:main`,
+   `:sha-<short>`) and on version tags (`:1.4.2`, `:1.4`, `:1`) — there is no `:latest`.
+   Point `container_image` at one; pin a version in production. Tasks run **arm64**
+   (Graviton, cheaper), which the multi-arch manifest covers. If the GHCR package is
+   **private**, either make it public, set `image_pull_secret_arn` to a Secrets Manager
+   `{username,password}` secret holding a GHCR pull token, or mirror the image to ECR.
+   (To build locally instead: `docker build -t <ref> .` and push to any registry.)
 2. **A remote state backend you control** (the module generates secrets that land in
    state — use S3 + SSE-KMS with locking; see *Secrets and state* below).
 
@@ -74,7 +75,7 @@ small fck-nat instance plus storage.
 ```sh
 terraform init
 terraform apply \
-  -var 'container_image=<account>.dkr.ecr.<region>.amazonaws.com/intraktible:<tag>' \
+  -var 'container_image=ghcr.io/e6qu/intraktible:main' \
   -var 'region=eu-west-1'
 ```
 

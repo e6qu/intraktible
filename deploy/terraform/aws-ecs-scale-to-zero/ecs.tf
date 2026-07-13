@@ -94,6 +94,12 @@ locals {
   # Postgres log + store that lets N stateless tasks share one ordered log.
   app_command = ["serve", "--addr=:${var.container_port}", "--log=postgres", "--store=postgres"]
 
+  # Pull credentials for a private registry (e.g. a private GHCR package). Empty when the
+  # image is public. Merged into each container definition below.
+  pull_credentials = var.image_pull_secret_arn != "" ? {
+    repositoryCredentials = { credentialsParameter = var.image_pull_secret_arn }
+  } : {}
+
   log_options = {
     "awslogs-group"         = aws_cloudwatch_log_group.app.name
     "awslogs-region"        = var.region
@@ -112,10 +118,10 @@ resource "aws_ecs_task_definition" "api" {
 
   runtime_platform {
     operating_system_family = "LINUX"
-    cpu_architecture        = "X86_64"
+    cpu_architecture        = "ARM64" # Graviton/arm64 tasks (cheaper); the image is multi-arch
   }
 
-  container_definitions = jsonencode([{
+  container_definitions = jsonencode([merge({
     name        = "app"
     image       = var.container_image
     essential   = true
@@ -131,7 +137,7 @@ resource "aws_ecs_task_definition" "api" {
       logDriver = "awslogs"
       options   = local.log_options
     }
-  }])
+  }, local.pull_credentials)])
 }
 
 resource "aws_ecs_task_definition" "scheduler" {
@@ -145,10 +151,10 @@ resource "aws_ecs_task_definition" "scheduler" {
 
   runtime_platform {
     operating_system_family = "LINUX"
-    cpu_architecture        = "X86_64"
+    cpu_architecture        = "ARM64" # Graviton/arm64 tasks (cheaper); the image is multi-arch
   }
 
-  container_definitions = jsonencode([{
+  container_definitions = jsonencode([merge({
     name       = "app"
     image      = var.container_image
     essential  = true
@@ -162,7 +168,7 @@ resource "aws_ecs_task_definition" "scheduler" {
       logDriver = "awslogs"
       options   = local.log_options
     }
-  }])
+  }, local.pull_credentials)])
 }
 
 # ---- Services ------------------------------------------------------------------------
