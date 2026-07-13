@@ -85,6 +85,66 @@ cp deploy/.env.example deploy/.env   # fill in — never commit the filled-in fi
 docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env up -d
 ```
 
+## Scale-to-zero on AWS (ECS + API Gateway + S3)
+
+For a deployment that costs almost nothing when idle, the Terraform root module in
+[`deploy/terraform/aws-ecs-scale-to-zero`](../deploy/terraform/aws-ecs-scale-to-zero)
+runs the same image in a **private VPC** with the compute and database scaled to zero when
+there is no traffic. It keeps the same stateless-replicas-behind-one-endpoint posture as
+the topology above; it just removes the always-on pieces.
+
+Design, and why each choice:
+
+- **No always-on load balancer.** An ALB or NLB bills hourly and cannot scale to zero.
+  **API Gateway (HTTP API)** is request-priced and reaches the ECS tasks privately through
+  a **VPC Link → Cloud Map** service discovery integration — no load balancer at all.
+- **CloudFront fronts S3 and the API under one domain.** The web client only ever calls
+  relative `/v1` paths (there is no configurable API base URL), so serving the static site
+  from **S3** and the API from API Gateway under **one CloudFront origin** keeps it
+  same-origin — no code or CORS change. With the backend at zero, the S3 site still loads
+  and runs the **in-browser wasm engine** (the "dehydrated" site).
+- **ECS Fargate `api` service scales 0↔N.** A **waker Lambda** brings it `0→1` on a
+  `POST /wake` request; CPU target-tracking scales `1→N` under load; a **reaper** scales it
+  back to `0` when the edge has been idle. The wake request is the "event" that spins the
+  infra back up.
+- **Aurora Serverless v2 with `min_capacity = 0`** pauses to zero and resumes on the next
+  connection; it backs both `--log=postgres` and `--store=postgres`. A cold replica resumes
+  projections from its durable checkpoint (not a full log replay), so the wake stays
+  incremental.
+- **The singleton scheduler is event-driven.** An always-on scheduler would hold Aurora
+  awake, so by default EventBridge wakes the scheduler service briefly on a cron to run one
+  sweep window, then scales it back to zero (a `warm` always-on mode is also available). See
+  the module README for the trade-off and the clean long-term fix (an idempotent
+  `POST /internal/sweep` endpoint, not yet built).
+- **fck-nat**, not a NAT Gateway, provides egress from the private subnets — a single small
+  instance is the main residual idle cost.
+
+The intended idle floor is roughly the fck-nat instance plus storage: no hourly load
+balancer, no running compute, no database compute. See the module README for prerequisites
+(build/push the image, sync the site to S3), the cost table, and the deploy-time
+verification points.
+
+> **Future direction — instant wasm shell, then hydrate onto the live backend.** Because
+> the full backend already runs in the browser as wasm, the S3 site is an instantly
+> interactive app with the backend at zero — which is exactly what would mask cold-wake
+> latency. Delivering a seamless "load from wasm, then hydrate onto the live durable
+> backend" hand-off is **not built yet**: today the in-browser engine is a local sandbox
+> (in-memory log/store, seeded from a static file, delta saved to `localStorage`) with no
+> client↔server sync. It needs a client-side feature — a configurable API base, a
+> wake/poll/hydrate handoff, and local-delta sync into the durable log. The Terraform
+> provisions the wake path so the app is ready for it; until then the wake is a
+> manual/first-request trigger.
+
+> **Alternative (not implemented) — dqlite for self-hosted HA without a managed database.**
+> [dqlite](https://dqlite.io) (Raft-replicated SQLite) could back the log/store for a
+> fixed-size, self-contained HA cluster with no external database. It does **not** fit
+> scale-to-zero: Raft needs a quorum of always-on nodes (typically three), so it is an
+> always-on HA option, the opposite of pausing to zero. It is also a **new backend to
+> build**: the current SQLite backend is pure-Go (modernc), whereas dqlite is a CGO/C
+> library, and the js/wasm build deliberately excludes native backends — so adding it
+> changes the build and would not run in the browser engine. Worth considering for an
+> always-on, no-managed-DB posture; not for this one.
+
 ## TLS
 
 The binary serves plain HTTP; **terminate TLS at your ingress/load balancer** and
