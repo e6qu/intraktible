@@ -25,11 +25,11 @@ data "aws_iam_policy_document" "task_execution_secrets" {
   statement {
     sid     = "ReadInjectedSecrets"
     actions = ["secretsmanager:GetSecretValue"]
-    resources = [
+    resources = concat([
       aws_secretsmanager_secret.db_dsn.arn,
       aws_secretsmanager_secret.encryption_key.arn,
       aws_secretsmanager_secret.bootstrap_api_key.arn,
-    ]
+    ], var.image_pull_secret_arn != "" ? [var.image_pull_secret_arn] : [])
   }
 }
 

@@ -1,0 +1,160 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Build and publish the backend container image to GitHub Container Registry (GHCR),
+# multi-arch. Versions are derived from Conventional Commits: on every merge to main the
+# next semver is computed from history (feat -> minor, fix -> patch, feat!/BREAKING CHANGE
+# -> major); a matching git tag + GitHub Release are created and the image is tagged with
+# that version. Merges with no releasing commits still publish a rolling `main` +
+# `sha-<short>` image but do not cut a version. A manual `v*` tag push also publishes.
+#
+# Tag scheme, per logical tag T (e.g. 1.4.2, 1.4, 1, main, sha-abc123):
+#   ghcr.io/<repo>:T           -> the multi-arch manifest list (amd64 + arm64)
+#   ghcr.io/<repo>:T-amd64     -> the linux/amd64 image
+#   ghcr.io/<repo>:T-arm64     -> the linux/arm64 image
+# No `latest` tag is published. Auto-created tags don't recurse (GITHUB_TOKEN-pushed tags
+# don't trigger runs), so an auto-cut version's image is built in the same main-branch run.
+
+name: release
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write # create tags + releases
+  packages: write # push to GHCR
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  # Compute the version (creating the git tag on a releasing merge) and the base tag list
+  # that the per-arch builds and the manifest step both consume.
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.tags.outputs.version }}
+      new_tag: ${{ steps.version.outputs.new_tag }}
+      base_tags: ${{ steps.tags.outputs.base_tags }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history + tags for version computation
+
+      - name: Compute version (conventional commits)
+        id: version
+        if: github.ref_type == 'branch'
+        uses: mathieudutour/github-tag-action@v6.2
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          default_bump: false # only releasing commits cut a version
+          release_branches: main
+          tag_prefix: v
+
+      - name: Resolve base image tags
+        id: tags
+        run: |
+          set -euo pipefail
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="${{ steps.version.outputs.new_version }}"
+          fi
+          SHORT_SHA="$(git rev-parse --short HEAD)"
+
+          # Space-separated (image refs contain no spaces). No `latest`.
+          BASE="${IMAGE}:sha-${SHORT_SHA}"
+          if [ "${{ github.ref_type }}" = "branch" ]; then
+            BASE="${BASE} ${IMAGE}:main"
+          fi
+          if [ -n "${VERSION}" ]; then
+            MAJOR="${VERSION%%.*}"
+            MINOR="${VERSION#*.}"; MINOR="${MINOR%%.*}"
+            BASE="${BASE} ${IMAGE}:${VERSION} ${IMAGE}:${MAJOR}.${MINOR} ${IMAGE}:${MAJOR}"
+          fi
+
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "base_tags=${BASE}" >> "$GITHUB_OUTPUT"
+          echo "Base tags: ${BASE}"
+
+  # One native-per-arch build, each pushing the arch-suffixed tags (T-amd64 / T-arm64).
+  build:
+    needs: prepare
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3 # emulation for the non-native arch
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Arch-suffixed tags
+        id: t
+        run: |
+          set -euo pipefail
+          OUT=""
+          for b in ${{ needs.prepare.outputs.base_tags }}; do
+            OUT="${OUT}${b}-${{ matrix.arch }}"$'\n'
+          done
+          { echo "tags<<EOF"; printf '%s' "$OUT"; echo "EOF"; } >> "$GITHUB_OUTPUT"
+
+      - name: Build and push (${{ matrix.arch }})
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/${{ matrix.arch }}
+          push: true
+          tags: ${{ steps.t.outputs.tags }}
+          provenance: false
+          cache-from: type=gha,scope=${{ matrix.arch }}
+          cache-to: type=gha,scope=${{ matrix.arch }},mode=max
+
+  # Assemble the multi-arch manifest list T from T-amd64 + T-arm64 for every base tag.
+  manifest:
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create manifest lists
+        run: |
+          set -euo pipefail
+          for b in ${{ needs.prepare.outputs.base_tags }}; do
+            docker buildx imagetools create -t "${b}" "${b}-amd64" "${b}-arm64"
+          done
+
+  # Publish a GitHub Release for an auto-cut version (branch push that cut a version).
+  release:
+    needs: [prepare, manifest]
+    if: github.ref_type == 'branch' && needs.prepare.outputs.new_tag != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ needs.prepare.outputs.new_tag }}" \
+            --title "${{ needs.prepare.outputs.new_tag }}" \
+            --generate-notes
