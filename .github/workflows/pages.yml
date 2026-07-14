@@ -9,10 +9,13 @@ name: pages
 on:
   push:
     branches: [main]
-    paths:
-      - 'web/**'
-      - 'pages/**'
-      - '.github/workflows/pages.yml'
+    # The demo is the REAL backend compiled to wasm (make wasm) + the UI + seeded data —
+    # the SAME engine production runs natively. So the demo must rebuild whenever that
+    # engine changes, not only on web/ changes. A denylist (rebuild on anything EXCEPT
+    # what provably can't affect the demo or the rendered docs) can't silently drift the
+    # way the old web/**-only allowlist did when backend Go code changed.
+    paths-ignore:
+      - 'deploy/**' # the terraform module can't affect the demo or docs
   workflow_dispatch:
 
 # Allow the deploy job to publish to Pages via OIDC; read-only on the repo otherwise.
