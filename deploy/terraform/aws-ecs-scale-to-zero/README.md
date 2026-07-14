@@ -90,6 +90,20 @@ aws cloudfront create-invalidation --distribution-id $(terraform output -raw clo
 Get the first admin credential from `bootstrap_api_key_secret_arn` (rotate it after minting
 a managed key / configuring SSO, per `docs/DEPLOY.md`).
 
+## Custom domain
+
+Two ways to put the app on your own domain:
+
+- **Managed DNS (recommended)** — set `domain_name` **and** `route53_zone_id` (an existing,
+  already-delegated Route53 hosted zone for that domain). The module then creates the ACM
+  certificate (us-east-1, DNS-validated in that zone) and the CloudFront alias `A`/`AAAA`
+  records itself — no cert or record wiring on your side. **The zone must already be
+  delegated** (its `NS` records live at the parent registrar) before `apply`, or the ACM
+  validation step blocks until it times out. `app_url` output is then `https://<domain>`.
+- **Bring-your-own cert** — set `domain_name` + `acm_certificate_arn` (a validated cert in
+  us-east-1) and leave `route53_zone_id` empty. The module sets the CloudFront alias but
+  does **not** create Route53 records — you point the domain at the distribution yourself.
+
 ## Cost model (idle vs active)
 
 | Component        | Idle (no traffic)                 | Active                          |

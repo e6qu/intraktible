@@ -136,9 +136,11 @@ resource "aws_cloudfront_distribution" "this" {
 
   viewer_certificate {
     cloudfront_default_certificate = local.use_custom_domain ? null : true
-    acm_certificate_arn            = local.use_custom_domain ? var.acm_certificate_arn : null
-    ssl_support_method             = local.use_custom_domain ? "sni-only" : null
-    minimum_protocol_version       = local.use_custom_domain ? "TLSv1.2_2021" : null
+    # Managed-DNS mode uses the cert this module creates+validates; otherwise the BYO ARN.
+    # Referencing the *validation* resource makes CloudFront wait for a validated cert.
+    acm_certificate_arn      = local.manage_dns ? aws_acm_certificate_validation.cdn[0].certificate_arn : (local.use_custom_domain ? var.acm_certificate_arn : null)
+    ssl_support_method       = local.use_custom_domain ? "sni-only" : null
+    minimum_protocol_version = local.use_custom_domain ? "TLSv1.2_2021" : null
   }
 }
 
