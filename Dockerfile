@@ -1,10 +1,17 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Stage 1: build the SvelteKit UI
 FROM node:22-bookworm-slim AS web
+# Build provenance shown in the UI footer. .git is not in this build context, so the
+# values come from build args (the release workflow passes the short SHA + UTC build
+# time); they default to 'dev'/now for a bare `docker build`.
+ARG GIT_SHA=dev
+ARG BUILD_TIME=
 WORKDIR /web
 COPY web/package*.json ./
 RUN npm ci
 COPY web/ ./
+ENV PUBLIC_GIT_SHA=$GIT_SHA
+ENV PUBLIC_BUILD_TIME=$BUILD_TIME
 RUN npm run build
 
 # Stage 2: build the static Go binary with the UI embedded

@@ -28,7 +28,13 @@ export default defineConfig(
   security.configs.recommended,
   {
     languageOptions: {
-      globals: { ...globals.browser, ...globals.node }
+      globals: {
+        ...globals.browser,
+        ...globals.node,
+        // Build provenance, injected by Vite `define` at build time (see vite.config.ts).
+        __APP_GIT_SHA__: 'readonly',
+        __APP_BUILD_TIME__: 'readonly'
+      }
     },
     rules: {
       // Allow intentionally-unused identifiers prefixed with `_` (e.g. typed but

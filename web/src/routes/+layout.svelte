@@ -31,6 +31,7 @@
   import PageGuide from '$lib/PageGuide.svelte';
   import NotificationsBell from '$lib/NotificationsBell.svelte';
   import DemoBanner from '$lib/DemoBanner.svelte';
+  import BuildInfo from '$lib/BuildInfo.svelte';
 
   let { children } = $props();
   let theme = $state<'light' | 'dark'>('light');
@@ -286,6 +287,8 @@
 <div id="main" class="page" tabindex="-1">
   {@render children()}
 </div>
+
+<BuildInfo />
 <CommandPalette />
 <ShortcutsOverlay />
 <PageGuide />

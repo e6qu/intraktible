@@ -1,9 +1,29 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { execSync } from 'node:child_process';
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
 
+// Build provenance, baked in at build time and shown in the footer on every page.
+// Resolution order: an explicit env var (set by the Docker/prod build, where .git is
+// absent) -> the git short SHA (local + the Pages build, which checks out .git) -> 'dev'.
+function gitSha(): string {
+  if (process.env.PUBLIC_GIT_SHA) return process.env.PUBLIC_GIT_SHA;
+  try {
+    return execSync('git rev-parse --short HEAD', { stdio: ['ignore', 'pipe', 'ignore'] })
+      .toString()
+      .trim();
+  } catch {
+    return 'dev';
+  }
+}
+const buildTime = process.env.PUBLIC_BUILD_TIME || new Date().toISOString();
+
 // Dev proxies the API to the Go server; prod is embedded in the binary.
 export default defineConfig({
+  define: {
+    __APP_GIT_SHA__: JSON.stringify(gitSha()),
+    __APP_BUILD_TIME__: JSON.stringify(buildTime)
+  },
   plugins: [sveltekit()],
   // ws:true proxies the streaming WebSocket endpoint to the Go server. The same
   // proxy is configured for `preview` (the production build server) so the e2e

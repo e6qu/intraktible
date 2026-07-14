@@ -47,6 +47,8 @@ jobs:
       version: ${{ steps.tags.outputs.version }}
       new_tag: ${{ steps.version.outputs.new_tag }}
       base_tags: ${{ steps.tags.outputs.base_tags }}
+      short_sha: ${{ steps.tags.outputs.short_sha }}
+      build_time: ${{ steps.tags.outputs.build_time }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -84,8 +86,13 @@ jobs:
             BASE="${BASE} ${IMAGE}:${VERSION} ${IMAGE}:${MAJOR}.${MINOR} ${IMAGE}:${MAJOR}"
           fi
 
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "base_tags=${BASE}" >> "$GITHUB_OUTPUT"
+          # Build provenance passed to the image build (both arches get the same values).
+          {
+            echo "version=${VERSION}"
+            echo "base_tags=${BASE}"
+            echo "short_sha=${SHORT_SHA}"
+            echo "build_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } >> "$GITHUB_OUTPUT"
           echo "Base tags: ${BASE}"
 
   # One native-per-arch build, each pushing the arch-suffixed tags (T-amd64 / T-arm64).
@@ -128,6 +135,9 @@ jobs:
           platforms: linux/${{ matrix.arch }}
           push: true
           tags: ${{ steps.t.outputs.tags }}
+          build-args: |
+            GIT_SHA=${{ needs.prepare.outputs.short_sha }}
+            BUILD_TIME=${{ needs.prepare.outputs.build_time }}
           provenance: false
           cache-from: type=gha,scope=${{ matrix.arch }}
           cache-to: type=gha,scope=${{ matrix.arch }},mode=max
