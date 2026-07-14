@@ -11,7 +11,7 @@
 // full-page error — there is no degraded or mocked mode to fall back to.
 
 import { base } from '$app/paths';
-import { bootEmbeddedBackend, bridgeFetch, clearEmbeddedDelta } from './bridge';
+import { bootEmbeddedBackend, bridgeFetch, clearEmbeddedDelta, hasEmbeddedDelta } from './bridge';
 import { installEmbeddedStreams } from './streams';
 import { createApiKey, login, type Role, type Scope } from '$lib/api';
 
@@ -75,14 +75,27 @@ export async function startEmbeddedDemo(): Promise<void> {
     }
 
     ui.status('Downloading the decision engine…');
-    await bootEmbeddedBackend(
-      {
-        wasmURL: `${base}/intraktible.wasm`,
-        wasmExecURL: `${base}/wasm_exec.js`,
-        seedURL: `${base}/demo-seed.json`
-      },
-      ui.progress
-    );
+    const assets = {
+      wasmURL: `${base}/intraktible.wasm`,
+      wasmExecURL: `${base}/wasm_exec.js`,
+      seedURL: `${base}/demo-seed.json`
+    };
+    try {
+      await bootEmbeddedBackend(assets, ui.progress);
+    } catch (bootErr) {
+      // A saved session (the event-log delta in localStorage) from an earlier demo build
+      // can be incompatible with the current seed/engine and abort the boot. It is
+      // disposable — drop it and boot the clean seed once more, so a returning visitor is
+      // not stuck on a dead demo. A boot failure with no delta is a real error: re-throw.
+      if (!hasEmbeddedDelta()) throw bootErr;
+      console.warn(
+        'intraktible demo: discarding an incompatible saved session and restarting',
+        bootErr
+      );
+      clearEmbeddedDelta();
+      ui.status('Restoring the demo…');
+      await bootEmbeddedBackend(assets, ui.progress);
+    }
 
     ui.status('Signing in the demo team…');
     const roster = await loadRoster();

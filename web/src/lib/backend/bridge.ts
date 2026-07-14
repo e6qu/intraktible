@@ -55,6 +55,7 @@ export function bootEmbeddedBackend(
   assets: BackendAssets,
   onProgress?: (loaded: number, total: number) => void
 ): Promise<void> {
+  worker?.terminate(); // a retry (after clearing an incompatible delta) reboots cleanly
   worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });
   const w = worker;
   const ready = new Promise<void>((resolve, reject) => {
@@ -118,6 +119,11 @@ export function bootEmbeddedBackend(
     delta: localStorage.getItem(DELTA_KEY) ?? ''
   });
   return ready;
+}
+
+/** Whether a persisted user delta is present (a returning visitor's saved session). */
+export function hasEmbeddedDelta(): boolean {
+  return !!localStorage.getItem(DELTA_KEY);
 }
 
 /** Clears the persisted user delta (the demo's Reset). */

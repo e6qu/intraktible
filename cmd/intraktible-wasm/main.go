@@ -60,19 +60,28 @@ func main() {
 
 // boot parses the seed and delta histories, rebuilds the event log, and
 // assembles the backend — the exact code path of a native restart over a WAL.
-func (h *host) boot(_ js.Value, args []js.Value) any {
+// It returns nil on success or an error STRING on failure (e.g. an incompatible
+// delta), which the worker turns into a boot-error. It must NOT panic out of the
+// js.Func: a panic exits the Go runtime, so the failure would only surface on the
+// next call as "Go program has already exited" rather than at the boot call itself.
+func (h *host) boot(_ js.Value, args []js.Value) (result any) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = fmt.Sprintf("wasm boot: %v", r)
+		}
+	}()
 	seed, delta := args[0].String(), args[1].String()
 	events, err := parseHistory(seed, delta)
 	if err != nil {
-		panic(err) // surfaces as a boot-error in the worker
+		return err.Error()
 	}
 	log, err := eventlog.NewMemoryFrom(events)
 	if err != nil {
-		panic(err)
+		return err.Error()
 	}
 	var seedEvents []eventlog.Envelope
 	if err := json.Unmarshal([]byte(seed), &seedEvents); err != nil {
-		panic(fmt.Errorf("wasm boot: seed history: %w", err))
+		return fmt.Errorf("wasm boot: seed history: %w", err).Error()
 	}
 	st := store.NewMemory()
 	srv, err := server.New(context.Background(), server.Config{
@@ -84,7 +93,7 @@ func (h *host) boot(_ js.Value, args []js.Value) any {
 		AIProvider: workspaceProvider{ai.NewJS()},
 	}, log, st)
 	if err != nil {
-		panic(err)
+		return err.Error()
 	}
 	h.log, h.seedHead, h.srv = log, uint64(len(seedEvents)), srv
 	return nil
