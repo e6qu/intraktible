@@ -25,4 +25,6 @@ locals {
   private_subnet_cidrs = [for i in range(var.az_count) : cidrsubnet(var.vpc_cidr, 4, i + 8)]
 
   use_custom_domain = var.domain_name != ""
+  # Managed-DNS mode: the module owns the ACM cert + Route53 alias records for domain_name.
+  manage_dns = var.domain_name != "" && var.route53_zone_id != ""
 }

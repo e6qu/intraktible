@@ -20,6 +20,12 @@ on:
   push:
     branches: [main]
     tags: ['v*']
+    # Skip the image rebuild for changes that can't affect the binary (infra/docs only).
+    # A mixed change (any non-ignored file) still builds.
+    paths-ignore:
+      - 'deploy/**'
+      - 'docs/**'
+      - '**.md'
 
 concurrency:
   group: release-${{ github.ref }}

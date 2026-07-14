@@ -133,8 +133,14 @@ variable "domain_name" {
   default     = ""
 }
 
+variable "route53_zone_id" {
+  description = "Existing Route53 hosted zone ID for domain_name. When set (managed-DNS mode), the module creates the ACM certificate (us-east-1, DNS-validated in this zone) AND the CloudFront alias A/AAAA records itself — you do not supply acm_certificate_arn. The zone must already be delegated (its NS records live at the parent) before apply, or ACM validation blocks until it times out."
+  type        = string
+  default     = ""
+}
+
 variable "acm_certificate_arn" {
-  description = "ACM certificate ARN in us-east-1 for domain_name. Required when domain_name is set."
+  description = "Bring-your-own ACM certificate ARN in us-east-1 for domain_name, used only when route53_zone_id is NOT set. With BYO cert the module sets the CloudFront alias but does not create the Route53 records — you own those. Leave empty when route53_zone_id is set."
   type        = string
   default     = ""
 }
