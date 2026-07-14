@@ -9,8 +9,12 @@ import { registerSimulatedAI } from './ai-sim';
 
 // The contract the Go wasm main registers on the worker's global scope.
 interface GoBackend {
-  /** Replays seed+delta into a memory event log and mounts the handler. */
-  boot(seedEvents: string, deltaEvents: string): void;
+  /**
+   * Replays seed+delta into a memory event log and mounts the handler. Returns null
+   * on success, or an error message string on failure (e.g. an incompatible delta) —
+   * it does NOT throw/panic the runtime, so the caller must check the return.
+   */
+  boot(seedEvents: string, deltaEvents: string): string | null;
   /**
    * Serves one request through the http.Handler. onHeader fires at
    * WriteHeader time (so a streaming response is usable immediately), chunks
@@ -87,7 +91,8 @@ async function boot(
   if (!backend) throw new Error('the wasm backend did not register __intraktible');
   const seedRes = await fetch(seedURL);
   if (!seedRes.ok) throw new Error(`seed event log: HTTP ${seedRes.status}`);
-  backend.boot(await seedRes.text(), delta);
+  const bootErr = backend.boot(await seedRes.text(), delta);
+  if (bootErr) throw new Error(String(bootErr));
 }
 
 self.onmessage = async (e: MessageEvent<WorkerRequest>) => {

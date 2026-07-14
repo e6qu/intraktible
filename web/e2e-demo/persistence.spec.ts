@@ -5,7 +5,7 @@
 // proves both, across several mutation kinds, so "the demo is read-only" can never
 // creep back in.
 import { test, expect, type Page } from '@playwright/test';
-import { forcePersona, gotoReady } from './helpers';
+import { forcePersona, gotoReady, waitForBackend } from './helpers';
 
 // A short unique token so a created row is unambiguous and can't collide with the
 // seed or a parallel worker.
@@ -119,6 +119,24 @@ test('Reset discards the session delta and restores the seed', async ({ page }) 
   await gotoReady(page, 'engine');
   await expect(page.getByRole('cell', { name: slug })).toHaveCount(0);
   await expect(page.getByRole('cell', { name: 'credit-decision' })).toBeVisible();
+});
+
+// A returning visitor whose persisted delta is from an older, incompatible build must
+// not be stuck on a dead demo: the boot discards the disposable saved session and comes
+// up on the clean seed. (Regression: an incompatible delta used to abort the wasm boot —
+// "Go program has already exited" — and dead-end on the failure splash.)
+test('an incompatible saved session self-heals instead of bricking the demo', async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      'intraktible-event-delta',
+      '[{"stale":"incompatible with the current seed"}]'
+    );
+  });
+  await page.goto('');
+  // __demo is set only after a SUCCESSFUL boot, so this resolves only if recovery worked;
+  // the failure splash never sets it (the old behaviour would time out here).
+  await waitForBackend(page);
+  await expect(page.getByText('The demo failed to start')).toHaveCount(0);
 });
 
 // The delta is per-browser-profile: a fresh context (no localStorage) boots on the
