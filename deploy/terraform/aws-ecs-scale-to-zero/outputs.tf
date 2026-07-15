@@ -50,9 +50,9 @@ output "scheduler_service_name" {
   value       = aws_ecs_service.scheduler.name
 }
 
-output "aurora_endpoint" {
-  description = "Aurora Serverless v2 writer endpoint."
-  value       = aws_rds_cluster.this.endpoint
+output "db_endpoint" {
+  description = "Database writer endpoint (Aurora Serverless v2 or the free-tier RDS instance)."
+  value       = local.db_endpoint
 }
 
 output "db_dsn_secret_arn" {
