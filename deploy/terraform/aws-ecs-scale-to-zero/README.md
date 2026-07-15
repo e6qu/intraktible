@@ -50,10 +50,13 @@ small fck-nat instance plus storage.
   - `scheduler` — the singleton timed-sweep runner (monitor/drift alerts, timed deploy
     activation, SLA breach), running the **same image** with `INTRAKTIBLE_MONITOR_INTERVAL`
     set. See *Scheduler modes* below.
-- **Aurora PostgreSQL Serverless v2** with `min_capacity = 0` — pauses to zero when idle,
+- **Database** (`db_serverless`, default `true`): **Aurora PostgreSQL Serverless v2** with
+  `min_capacity = 0` — pauses to zero when idle,
   resumes on the next connection. Used as **both** the event log (`--log=postgres`) and the
   projection store (`--store=postgres`), so N stateless API tasks share one ordered log and
-  durable read models.
+  durable read models. Set `db_serverless = false` for a **free-tier `db.t4g.micro` RDS
+  instance** instead (always-on but free-tier-eligible; the compute + edge still scale to
+  zero) — required on AWS **Free Plan** accounts, which cannot create Aurora via Terraform.
 - **Secrets Manager** for the at-rest encryption key, the bootstrap admin key, and the
   composed Postgres DSN, injected into the task at runtime.
 

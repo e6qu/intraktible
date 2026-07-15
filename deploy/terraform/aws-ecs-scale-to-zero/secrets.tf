@@ -76,7 +76,7 @@ resource "aws_secretsmanager_secret_version" "db_dsn" {
     "postgres://%s:%s@%s:5432/%s?sslmode=require",
     local.db_username,
     random_password.db.result,
-    aws_rds_cluster.this.endpoint,
+    local.db_endpoint,
     local.db_name,
   )
 }
