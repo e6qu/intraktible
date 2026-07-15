@@ -67,7 +67,7 @@ resource "aws_rds_cluster" "this" {
     seconds_until_auto_pause = var.aurora_min_acu == 0 ? var.aurora_seconds_until_auto_pause : null
   }
 
-  backup_retention_period      = 7
+  backup_retention_period      = var.aurora_backup_retention_days
   preferred_backup_window      = "03:00-04:00"
   copy_tags_to_snapshot        = true
   deletion_protection          = true

@@ -115,6 +115,17 @@ variable "aurora_min_acu" {
   default     = 0
 }
 
+variable "aurora_backup_retention_days" {
+  description = "Aurora automated-backup retention in days (1-35). Kept low (e.g. 1) suffices for a demo and stays within AWS Free Plan limits, which cap the retention period; raise it for production."
+  type        = number
+  default     = 7
+
+  validation {
+    condition     = var.aurora_backup_retention_days >= 1 && var.aurora_backup_retention_days <= 35
+    error_message = "aurora_backup_retention_days must be between 1 and 35."
+  }
+}
+
 variable "aurora_max_acu" {
   description = "Aurora Serverless v2 maximum capacity units."
   type        = number
