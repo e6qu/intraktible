@@ -99,6 +99,17 @@
   }
 
   const currentPersona = $derived(personaConfig(persona));
+  // A local, deterministic avatar avoids leaking a user's identity to an external
+  // image host while still making the authenticated account immediately recognizable.
+  function initials(actor: string): string {
+    const words = actor
+      .trim()
+      .split(/[^\p{L}\p{N}]+/u)
+      .filter(Boolean);
+    return (words.length > 1 ? words.slice(0, 2) : words.slice(0, 1))
+      .map((word) => [...word][0]?.toLocaleUpperCase() ?? '')
+      .join('');
+  }
   let personaEl = $state<HTMLDetailsElement | null>(null);
   let menuEl = $state<HTMLDivElement | null>(null);
 
@@ -207,8 +218,15 @@
           ? `Account and view — signed in as ${$user.actor}, viewing as ${currentPersona.label}`
           : `View as — current: ${currentPersona.label}`}
       >
-        <span class="avatar"><Icon name={currentPersona.icon} size={16} /></span>
-        <span class="persona-name">{currentPersona.label}</span>
+        {#if $user}
+          <span class="avatar user-avatar" data-testid="user-avatar" aria-hidden="true"
+            >{initials($user.actor)}</span
+          >
+          <span class="persona-name" data-testid="user-identity">{$user.actor}</span>
+        {:else}
+          <span class="avatar"><Icon name={currentPersona.icon} size={16} /></span>
+          <span class="persona-name">{currentPersona.label}</span>
+        {/if}
         <span class="caret"><Icon name="chevron-down" size={13} /></span>
       </summary>
       <div
@@ -550,6 +568,14 @@
     border-radius: 999px;
     color: var(--on-accent);
     background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  }
+  .user-avatar {
+    /* Use an opaque fill: the accessibility audit can measure it, unlike the
+       transparent computed background of the decorative gradient. */
+    background: var(--accent);
+    font-size: 0.72rem;
+    font-weight: 750;
+    letter-spacing: 0.04em;
   }
   .persona-name {
     font-weight: 550;
