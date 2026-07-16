@@ -67,9 +67,13 @@ locals {
 }
 
 resource "aws_cloudfront_distribution" "this" {
-  enabled             = true
-  comment             = local.name
-  default_root_object = "index.html"
+  enabled = true
+  comment = local.name
+  # CloudFront's default-root rewrite would turn `/` into `/index.html` before
+  # it reaches the embedded UI handler. net/http redirects that file request to
+  # `./`, which loops at the CDN edge. The embedded handler already serves its
+  # SPA shell for `/`, so only the S3 site needs this CloudFront rewrite.
+  default_root_object = var.serve_embedded_ui_from_api ? null : "index.html"
   price_class         = "PriceClass_100"
   aliases             = local.use_custom_domain ? [var.domain_name] : []
 
