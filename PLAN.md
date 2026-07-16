@@ -396,6 +396,11 @@ orders them hardest-blocker-first; each phase is a direction, not a committed da
   single `history.Projector` maintains alongside the record) and loads full records **only for the
   window it returns** — generalizing the audit-index pattern. An index entry with no record fails loud
   (projection inconsistency), never a silent skip.
+- **Deployment — shared Amazon Elastic Container Service environments.** The Amazon ECS Terraform
+  module can reuse an existing VPC, private subnets, and cluster; it configures a generic OpenID
+  Connect provider without exposing the client secret in Terraform state. Its `api_always_on` mode
+  keeps one API task running, sets the autoscaling floor to one, and omits the idle reaper so a shared
+  development environment remains available continuously.
 - **Phase 11 — Regulatory data lifecycle — 🚧 partial.** **Legal hold + automated retention shipped**
   (`platform/erasure`). Legal hold: a subject can be put under a legal/litigation hold, which makes it
   **survive retention** and **blocks erasure** (destroying data under hold is spoliation) — `Erase`

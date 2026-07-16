@@ -82,9 +82,15 @@ variable "task_memory" {
 }
 
 variable "api_max_tasks" {
-  description = "Maximum API tasks when scaled up under load (scales to 0 when idle)."
+  description = "Maximum API tasks when scaled up under load."
   type        = number
   default     = 4
+}
+
+variable "api_always_on" {
+  description = "Keep one API task running continuously. When false, the EventBridge reaper may scale an idle API service to zero."
+  type        = bool
+  default     = false
 }
 
 variable "idle_scale_in_minutes" {

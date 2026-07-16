@@ -6,24 +6,27 @@
 #             let it run its timed sweeps, then scale it back to 0.
 
 resource "aws_cloudwatch_event_rule" "reaper" {
+  count               = var.api_always_on ? 0 : 1
   name                = "${local.name}-reaper"
   description         = "Scale the API service to zero when the edge is idle"
   schedule_expression = "rate(5 minutes)"
 }
 
 resource "aws_cloudwatch_event_target" "reaper" {
-  rule      = aws_cloudwatch_event_rule.reaper.name
+  count     = var.api_always_on ? 0 : 1
+  rule      = aws_cloudwatch_event_rule.reaper[0].name
   target_id = "controller-reap"
   arn       = aws_lambda_function.controller.arn
   input     = jsonencode({ action = "reap" })
 }
 
 resource "aws_lambda_permission" "reaper" {
+  count         = var.api_always_on ? 0 : 1
   statement_id  = "AllowReaperInvoke"
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.controller.function_name
   principal     = "events.amazonaws.com"
-  source_arn    = aws_cloudwatch_event_rule.reaper.arn
+  source_arn    = aws_cloudwatch_event_rule.reaper[0].arn
 }
 
 resource "aws_cloudwatch_event_rule" "sweep" {

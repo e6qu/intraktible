@@ -187,7 +187,7 @@ resource "aws_ecs_service" "api" {
   name                   = "${local.name}-api"
   cluster                = local.ecs_cluster_arn
   task_definition        = aws_ecs_task_definition.api.arn
-  desired_count          = 0 # asleep by default; the waker Lambda brings it to 1 on demand
+  desired_count          = var.api_always_on ? 1 : 0
   launch_type            = "FARGATE"
   enable_execute_command = true
 
@@ -210,6 +210,7 @@ resource "aws_ecs_service" "api" {
 
   lifecycle {
     # desired_count is owned at runtime by the waker/reaper Lambdas and CPU autoscaling.
+    # In always-on mode the reaper is absent and the initial desired count stays at one.
     ignore_changes = [desired_count]
   }
 }
@@ -241,7 +242,7 @@ resource "aws_appautoscaling_target" "api" {
   service_namespace  = "ecs"
   resource_id        = "service/${local.ecs_cluster_name}/${aws_ecs_service.api.name}"
   scalable_dimension = "ecs:service:DesiredCount"
-  min_capacity       = 0
+  min_capacity       = var.api_always_on ? 1 : 0
   max_capacity       = var.api_max_tasks
 }
 
