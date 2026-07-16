@@ -124,6 +124,14 @@ balancer, no running compute, no database compute. See the module README for pre
 (build/push the image, sync the site to S3), the cost table, and the deploy-time
 verification points.
 
+The module can also reuse a shared environment by supplying `existing_vpc_id`,
+`existing_private_subnet_ids`, and `existing_ecs_cluster_arn`. In that mode it
+does not create another VPC, fck-nat instance, or Amazon Elastic Container
+Service cluster. Configure Shauth as the generic OpenID Connect provider with
+`oidc_provider_name`, `oidc_issuer`, `oidc_client_id`,
+`oidc_client_secret`, and `oidc_redirect_url`; the client secret is stored in
+AWS Secrets Manager and injected only into the task.
+
 > **Future direction — instant wasm shell, then hydrate onto the live backend.** Because
 > the full backend already runs in the browser as wasm, the S3 site is an instantly
 > interactive app with the backend at zero — which is exactly what would mask cold-wake

@@ -80,3 +80,16 @@ resource "aws_secretsmanager_secret_version" "db_dsn" {
     local.db_name,
   )
 }
+
+resource "aws_secretsmanager_secret" "oidc_client" {
+  count                   = var.oidc_provider_name == "" ? 0 : 1
+  name_prefix             = "${local.name}/oidc-client-"
+  description             = "intraktible Shauth OpenID Connect client secret"
+  recovery_window_in_days = 7
+}
+
+resource "aws_secretsmanager_secret_version" "oidc_client" {
+  count         = var.oidc_provider_name == "" ? 0 : 1
+  secret_id     = aws_secretsmanager_secret.oidc_client[0].id
+  secret_string = var.oidc_client_secret
+}

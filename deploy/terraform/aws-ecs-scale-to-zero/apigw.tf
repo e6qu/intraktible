@@ -11,7 +11,7 @@
 resource "aws_security_group" "vpc_link" {
   name_prefix = "${local.name}-vpclink-"
   description = "API Gateway VPC Link ENIs: egress to the ECS task port"
-  vpc_id      = aws_vpc.this.id
+  vpc_id      = local.vpc_id
 
   egress {
     description = "to the app port on ECS tasks"
@@ -28,7 +28,7 @@ resource "aws_security_group" "vpc_link" {
 
 resource "aws_apigatewayv2_vpc_link" "this" {
   name               = local.name
-  subnet_ids         = aws_subnet.private[*].id
+  subnet_ids         = local.private_subnet_ids
   security_group_ids = [aws_security_group.vpc_link.id]
 }
 

@@ -23,6 +23,24 @@ variable "vpc_cidr" {
   default     = "10.42.0.0/16"
 }
 
+variable "existing_vpc_id" {
+  description = "Existing VPC ID. When set with existing_private_subnet_ids, the module reuses that VPC and does not create a VPC, subnets, internet gateway, or fck-nat instance."
+  type        = string
+  default     = ""
+}
+
+variable "existing_private_subnet_ids" {
+  description = "Private subnet IDs in existing_vpc_id. Required when existing_vpc_id is set."
+  type        = list(string)
+  default     = []
+}
+
+variable "existing_ecs_cluster_arn" {
+  description = "Existing Amazon Elastic Container Service cluster ARN. When set, the API and scheduler services reuse the cluster instead of creating one."
+  type        = string
+  default     = ""
+}
+
 variable "az_count" {
   description = "Number of Availability Zones to spread private subnets across (>=2 for Aurora)."
   type        = number
@@ -200,6 +218,34 @@ variable "connector_allow_private" {
   description = "Set INTRAKTIBLE_CONNECTOR_ALLOW_PRIVATE=1 (lets connectors reach private hosts). Leave false unless you understand the SSRF surface; the cloud metadata service stays blocked regardless."
   type        = bool
   default     = false
+}
+
+variable "oidc_provider_name" {
+  description = "Configured generic OpenID Connect provider name. Empty disables brokered SSO."
+  type        = string
+  default     = ""
+}
+variable "oidc_issuer" {
+  type    = string
+  default = ""
+}
+variable "oidc_client_id" {
+  type    = string
+  default = ""
+}
+variable "oidc_client_secret" {
+  type      = string
+  sensitive = true
+  default   = ""
+}
+variable "oidc_redirect_url" {
+  type    = string
+  default = ""
+}
+variable "oidc_default_role" {
+  description = "Intraktible role granted to a verified Shauth identity without a mapped group."
+  type        = string
+  default     = "operator"
 }
 
 variable "tags" {

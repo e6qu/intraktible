@@ -26,5 +26,25 @@ locals {
 
   use_custom_domain = var.domain_name != ""
   # Managed-DNS mode: the module owns the ACM cert + Route53 alias records for domain_name.
-  manage_dns = var.domain_name != "" && var.route53_zone_id != ""
+  manage_dns           = var.domain_name != "" && var.route53_zone_id != ""
+  use_existing_network = var.existing_vpc_id != ""
+  use_existing_cluster = var.existing_ecs_cluster_arn != ""
+  vpc_id               = local.use_existing_network ? var.existing_vpc_id : aws_vpc.this[0].id
+  private_subnet_ids   = local.use_existing_network ? var.existing_private_subnet_ids : aws_subnet.private[*].id
+  ecs_cluster_arn      = local.use_existing_cluster ? var.existing_ecs_cluster_arn : aws_ecs_cluster.this[0].arn
+  ecs_cluster_name     = local.use_existing_cluster ? element(split("/", var.existing_ecs_cluster_arn), 1) : aws_ecs_cluster.this[0].name
+}
+
+check "shared_network_coordinates" {
+  assert {
+    condition     = (var.existing_vpc_id == "") == (length(var.existing_private_subnet_ids) == 0)
+    error_message = "existing_vpc_id and existing_private_subnet_ids must be supplied together."
+  }
+}
+
+check "oidc_coordinates" {
+  assert {
+    condition     = var.oidc_provider_name == "" || (var.oidc_issuer != "" && var.oidc_client_id != "" && var.oidc_client_secret != "" && var.oidc_redirect_url != "")
+    error_message = "An OIDC provider requires issuer, client ID, client secret, and redirect URL."
+  }
 }

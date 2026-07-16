@@ -21,14 +21,14 @@ locals {
 
 resource "aws_db_subnet_group" "this" {
   name       = "${local.name}-db"
-  subnet_ids = aws_subnet.private[*].id
+  subnet_ids = local.private_subnet_ids
   tags       = { Name = "${local.name}-db" }
 }
 
 resource "aws_security_group" "db" {
   name_prefix = "${local.name}-db-"
   description = "Database: accept Postgres only from the ECS task security group"
-  vpc_id      = aws_vpc.this.id
+  vpc_id      = local.vpc_id
 
   egress {
     from_port   = 0
