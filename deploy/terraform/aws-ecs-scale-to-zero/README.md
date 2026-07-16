@@ -166,6 +166,10 @@ stay paused except during the brief sweep. Not built yet.
   health check; ECS registers a task in Cloud Map when it reaches RUNNING, slightly before
   `/readyz` is green. For a few seconds after a cold wake, a request may hit a task still
   catching up projections (reads briefly stale; the ordered log is still the source of truth).
+- **Embedded UI origin.** When `serve_embedded_ui_from_api = true`, CloudFront leaves `/`
+  unchanged and forwards it to the embedded UI handler. It must not configure `index.html` as
+  a CloudFront default root object, because that path is a directory-style redirect in Go's
+  file server and would loop at the edge.
 - **Cold-wake latency** = Fargate task start + image pull + Aurora resume-from-zero + the
   projection tail catch-up. Because a durable Postgres store resumes from its stored
   checkpoint (not a full replay), the catch-up is incremental — but the wake is still seconds,
