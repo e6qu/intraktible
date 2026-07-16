@@ -14,6 +14,8 @@ test('sign in with an API key, then sign out', async ({ page }) => {
   // Redirected home; the full chrome returns and identity + sign-out live in the
   // account & view menu.
   await expect(page.getByRole('navigation', { name: 'Primary' })).toBeVisible();
+  await expect(page.getByTestId('user-identity')).toHaveText('dev');
+  await expect(page.getByTestId('user-avatar')).toHaveText('D');
   await page.getByTestId('persona-switch').locator('summary').click();
   const status = page.getByTestId('auth-status');
   await expect(status).toContainText('Signed in as');
