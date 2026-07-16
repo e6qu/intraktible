@@ -404,7 +404,9 @@ orders them hardest-blocker-first; each phase is a direction, not a committed da
   embedded in the production binary through the existing Amazon API Gateway and CloudFront path,
   rather than depending on a separate static-site upload. Amazon ECS service creation waits for
   every injected AWS Secrets Manager secret version, including the database DSN that becomes
-  available only after Amazon RDS has finished provisioning.
+  available only after Amazon RDS has finished provisioning. The generic OpenID Connect
+  deployment coordinates include an explicit organization and workspace, preserving the
+  application’s tenant-bound identity invariant.
 - **Phase 11 — Regulatory data lifecycle — 🚧 partial.** **Legal hold + automated retention shipped**
   (`platform/erasure`). Legal hold: a subject can be put under a legal/litigation hold, which makes it
   **survive retention** and **blocks erasure** (destroying data under hold is spoliation) — `Erase`

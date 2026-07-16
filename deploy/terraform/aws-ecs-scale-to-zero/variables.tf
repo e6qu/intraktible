@@ -254,6 +254,16 @@ variable "oidc_redirect_url" {
   type    = string
   default = ""
 }
+variable "oidc_org" {
+  description = "Intraktible organization that receives identities from the configured OpenID Connect provider."
+  type        = string
+  default     = ""
+}
+variable "oidc_workspace" {
+  description = "Intraktible workspace that receives identities from the configured OpenID Connect provider."
+  type        = string
+  default     = ""
+}
 variable "oidc_default_role" {
   description = "Intraktible role granted to a verified Shauth identity without a mapped group."
   type        = string

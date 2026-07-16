@@ -148,8 +148,10 @@ The module can also reuse a shared environment by supplying `existing_vpc_id`,
 does not create another VPC, fck-nat instance, or Amazon Elastic Container
 Service cluster. Configure Shauth as the generic OpenID Connect provider with
 `oidc_provider_name`, `oidc_issuer`, `oidc_client_id`,
-`oidc_client_secret`, and `oidc_redirect_url`; the client secret is stored in
-AWS Secrets Manager and injected only into the task.
+`oidc_client_secret`, `oidc_redirect_url`, `oidc_org`, and `oidc_workspace`;
+the client secret is stored in AWS Secrets Manager and injected only into the
+task. The organization and workspace bind every authenticated identity to one
+explicit Intraktible tenancy.
 
 > **Future direction — instant wasm shell, then hydrate onto the live backend.** Because
 > the full backend already runs in the browser as wasm, the S3 site is an instantly
