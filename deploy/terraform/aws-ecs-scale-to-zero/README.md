@@ -78,7 +78,7 @@ small fck-nat instance plus storage.
 ```sh
 terraform init
 terraform apply \
-  -var 'container_image=ghcr.io/e6qu/intraktible:main' \
+  -var 'container_image=ghcr.io/e6qu/intraktible:sha-<commit>' \
   -var 'region=eu-west-1'
 ```
 
