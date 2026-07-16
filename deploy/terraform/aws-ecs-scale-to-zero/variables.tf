@@ -12,7 +12,7 @@ variable "name" {
 }
 
 variable "region" {
-  description = "AWS region for the regional resources (VPC, ECS, Aurora, API Gateway)."
+  description = "AWS region for the regional resources (VPC, Amazon Elastic Container Service, Amazon API Gateway)."
   type        = string
   default     = "eu-west-1"
 }
@@ -42,13 +42,13 @@ variable "existing_ecs_cluster_arn" {
 }
 
 variable "az_count" {
-  description = "Number of Availability Zones to spread private subnets across (>=2 for Aurora)."
+  description = "Number of Availability Zones to spread private subnets across."
   type        = number
   default     = 2
 
   validation {
     condition     = var.az_count >= 2 && var.az_count <= 3
-    error_message = "az_count must be 2 or 3 (Aurora requires a subnet group spanning >=2 AZs)."
+    error_message = "az_count must be 2 or 3."
   }
 }
 
@@ -139,61 +139,9 @@ variable "monitor_interval" {
   default     = "1m"
 }
 
-variable "db_serverless" {
-  description = "Database engine. true = Aurora PostgreSQL Serverless v2 (min 0 ACU, scales to zero; needs a standard/paid account). false = a single free-tier RDS instance (db.t4g.micro, always-on but free-tier-eligible) for AWS Free Plan accounts, which cannot create Aurora via Terraform."
-  type        = bool
-  default     = true
-}
-
-variable "db_backup_retention_days" {
-  description = "Automated-backup retention in days (1-35), for either engine. Kept low (e.g. 1) suffices for a demo and stays within AWS Free Plan limits, which cap the retention period; raise it for production."
-  type        = number
-  default     = 7
-
-  validation {
-    condition     = var.db_backup_retention_days >= 1 && var.db_backup_retention_days <= 35
-    error_message = "db_backup_retention_days must be between 1 and 35."
-  }
-}
-
-# --- Aurora Serverless v2 (used when db_serverless = true) ---
-
-variable "aurora_min_acu" {
-  description = "Aurora Serverless v2 minimum capacity. 0 lets the cluster pause to zero when idle (resumes on the next connection)."
-  type        = number
-  default     = 0
-}
-
-variable "aurora_max_acu" {
-  description = "Aurora Serverless v2 maximum capacity units."
-  type        = number
-  default     = 4
-}
-
-variable "aurora_seconds_until_auto_pause" {
-  description = "Idle seconds before Aurora Serverless v2 scales to 0 ACU. Only effective when aurora_min_acu = 0. AWS allows 300-86400."
-  type        = number
-  default     = 300
-}
-
-# --- Free-tier RDS instance (used when db_serverless = false) ---
-
-variable "db_instance_class" {
-  description = "RDS instance class for the free-tier path. db.t4g.micro is free-tier-eligible."
+variable "database_url_secret_arn" {
+  description = "AWS Secrets Manager ARN containing Intraktible's tenant-specific PostgreSQL URL from fck-rds."
   type        = string
-  default     = "db.t4g.micro"
-}
-
-variable "db_allocated_storage" {
-  description = "RDS allocated storage (GiB) for the free-tier path. The free tier includes 20 GiB."
-  type        = number
-  default     = 20
-}
-
-variable "postgres_version" {
-  description = "PostgreSQL engine version for the free-tier RDS instance (an RDS 'postgres' version, distinct from Aurora's). Must offer the chosen instance class in the region."
-  type        = string
-  default     = "16.9"
 }
 
 variable "domain_name" {

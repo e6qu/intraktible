@@ -50,14 +50,9 @@ output "scheduler_service_name" {
   value       = aws_ecs_service.scheduler.name
 }
 
-output "db_endpoint" {
-  description = "Database writer endpoint (Aurora Serverless v2 or the free-tier RDS instance)."
-  value       = local.db_endpoint
-}
-
-output "db_dsn_secret_arn" {
-  description = "Secrets Manager ARN of the composed Postgres DSN."
-  value       = aws_secretsmanager_secret.db_dsn.arn
+output "service_security_group_id" {
+  description = "Security group attached to Intraktible Amazon ECS tasks."
+  value       = aws_security_group.ecs_tasks.id
 }
 
 output "bootstrap_api_key_secret_arn" {

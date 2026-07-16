@@ -8,7 +8,7 @@
 #   - scheduler: the singleton timed-sweep runner (monitor/drift alerts, timed deploy
 #                activation, SLA breach). Runs the SAME image with INTRAKTIBLE_MONITOR_
 #                INTERVAL set. In 'scheduled' mode it sits at 0 and is woken briefly on a
-#                cron so Aurora can stay paused between sweeps; in 'warm' mode it stays 1.
+#                cron to avoid continuous compute; in 'warm' mode it stays 1.
 #                It is NOT in Cloud Map — nothing routes HTTP to it.
 
 resource "aws_ecs_cluster" "this" {
@@ -86,7 +86,7 @@ locals {
   ] : [])
 
   app_secrets = [
-    { name = "INTRAKTIBLE_POSTGRES_DSN", valueFrom = aws_secretsmanager_secret.db_dsn.arn },
+    { name = "INTRAKTIBLE_POSTGRES_DSN", valueFrom = var.database_url_secret_arn },
     { name = "INTRAKTIBLE_ENCRYPTION_KEY", valueFrom = aws_secretsmanager_secret.encryption_key.arn },
     { name = "INTRAKTIBLE_BOOTSTRAP_API_KEY", valueFrom = aws_secretsmanager_secret.bootstrap_api_key.arn },
   ]
@@ -215,7 +215,6 @@ resource "aws_ecs_service" "api" {
   # task initialization, so the service waits for every injected secret version.
   depends_on = [
     aws_secretsmanager_secret_version.bootstrap_api_key,
-    aws_secretsmanager_secret_version.db_dsn,
     aws_secretsmanager_secret_version.encryption_key,
     aws_secretsmanager_secret_version.oidc_client,
   ]
@@ -242,7 +241,6 @@ resource "aws_ecs_service" "scheduler" {
 
   depends_on = [
     aws_secretsmanager_secret_version.bootstrap_api_key,
-    aws_secretsmanager_secret_version.db_dsn,
     aws_secretsmanager_secret_version.encryption_key,
     aws_secretsmanager_secret_version.oidc_client,
   ]
