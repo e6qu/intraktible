@@ -96,6 +96,8 @@ locals {
     { name = "INTRAKTIBLE_OIDC_${upper(var.oidc_provider_name)}_ISSUER", value = var.oidc_issuer },
     { name = "INTRAKTIBLE_OIDC_${upper(var.oidc_provider_name)}_CLIENT_ID", value = var.oidc_client_id },
     { name = "INTRAKTIBLE_OIDC_${upper(var.oidc_provider_name)}_REDIRECT_URL", value = var.oidc_redirect_url },
+    { name = "INTRAKTIBLE_OIDC_${upper(var.oidc_provider_name)}_ORG", value = var.oidc_org },
+    { name = "INTRAKTIBLE_OIDC_${upper(var.oidc_provider_name)}_WORKSPACE", value = var.oidc_workspace },
     { name = "INTRAKTIBLE_OIDC_${upper(var.oidc_provider_name)}_DEFAULT_ROLE", value = var.oidc_default_role },
   ]
   oidc_secrets = var.oidc_provider_name == "" ? [] : [{ name = "INTRAKTIBLE_OIDC_${upper(var.oidc_provider_name)}_CLIENT_SECRET", valueFrom = aws_secretsmanager_secret.oidc_client[0].arn }]
