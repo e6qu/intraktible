@@ -208,6 +208,16 @@ resource "aws_ecs_service" "api" {
     rollback = true
   }
 
+  # The task definition references secret ARNs, which does not create a Terraform
+  # dependency on their values. Starting before AWSCURRENT exists makes Fargate fail
+  # task initialization, so the service waits for every injected secret version.
+  depends_on = [
+    aws_secretsmanager_secret_version.bootstrap_api_key,
+    aws_secretsmanager_secret_version.db_dsn,
+    aws_secretsmanager_secret_version.encryption_key,
+    aws_secretsmanager_secret_version.oidc_client,
+  ]
+
   lifecycle {
     # desired_count is owned at runtime by the waker/reaper Lambdas and CPU autoscaling.
     # In always-on mode the reaper is absent and the initial desired count stays at one.
@@ -227,6 +237,13 @@ resource "aws_ecs_service" "scheduler" {
     security_groups  = [aws_security_group.ecs_tasks.id]
     assign_public_ip = false
   }
+
+  depends_on = [
+    aws_secretsmanager_secret_version.bootstrap_api_key,
+    aws_secretsmanager_secret_version.db_dsn,
+    aws_secretsmanager_secret_version.encryption_key,
+    aws_secretsmanager_secret_version.oidc_client,
+  ]
 
   lifecycle {
     # In 'scheduled' mode the control Lambda toggles desired_count 0<->1 on a cron.

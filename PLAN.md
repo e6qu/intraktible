@@ -402,7 +402,9 @@ orders them hardest-blocker-first; each phase is a direction, not a committed da
   keeps one API task running, sets the autoscaling floor to one, and omits the idle reaper so a shared
   development environment remains available continuously. Always-on deployments can serve the UI
   embedded in the production binary through the existing Amazon API Gateway and CloudFront path,
-  rather than depending on a separate static-site upload.
+  rather than depending on a separate static-site upload. Amazon ECS service creation waits for
+  every injected AWS Secrets Manager secret version, including the database DSN that becomes
+  available only after Amazon RDS has finished provisioning.
 - **Phase 11 — Regulatory data lifecycle — 🚧 partial.** **Legal hold + automated retention shipped**
   (`platform/erasure`). Legal hold: a subject can be put under a legal/litigation hold, which makes it
   **survive retention** and **blocks erasure** (destroying data under hold is spoliation) — `Erase`
