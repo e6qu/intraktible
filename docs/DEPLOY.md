@@ -101,6 +101,11 @@ Gateway and CloudFront path. This is a fully deployed UI without a separate
 S3 asset-upload step. The static-site bucket remains private, encrypted, and
 unversioned so it does not accumulate noncurrent object storage.
 
+The Amazon Elastic Container Service services explicitly depend on the
+`AWSCURRENT` versions of every injected AWS Secrets Manager secret. This keeps
+Fargate from attempting startup while a newly created database DSN is still
+waiting for its Amazon RDS endpoint.
+
 For a deployment that costs almost nothing when idle, the Terraform root module in
 [`deploy/terraform/aws-ecs-scale-to-zero`](../deploy/terraform/aws-ecs-scale-to-zero)
 runs the same image in a **private VPC** with the compute and database scaled to zero when
