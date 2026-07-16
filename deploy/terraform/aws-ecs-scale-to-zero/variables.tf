@@ -93,6 +93,12 @@ variable "api_always_on" {
   default     = false
 }
 
+variable "serve_embedded_ui_from_api" {
+  description = "Serve the UI embedded in the application container through API Gateway and CloudFront. This removes the need for a separate static-site upload and is appropriate when the API service is always on."
+  type        = bool
+  default     = false
+}
+
 variable "idle_scale_in_minutes" {
   description = "Minutes with no requests (per API Gateway CloudWatch metric) before the reaper scales the API service back to 0."
   type        = number

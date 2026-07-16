@@ -48,3 +48,10 @@ check "oidc_coordinates" {
     error_message = "An OIDC provider requires issuer, client ID, client secret, and redirect URL."
   }
 }
+
+check "embedded_ui_requires_always_on_api" {
+  assert {
+    condition     = !var.serve_embedded_ui_from_api || var.api_always_on
+    error_message = "serve_embedded_ui_from_api requires api_always_on because the UI is served by the API task."
+  }
+}

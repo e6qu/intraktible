@@ -21,13 +21,6 @@ resource "aws_s3_bucket_public_access_block" "site" {
   restrict_public_buckets = true
 }
 
-resource "aws_s3_bucket_versioning" "site" {
-  bucket = aws_s3_bucket.site.id
-  versioning_configuration {
-    status = "Enabled"
-  }
-}
-
 resource "aws_s3_bucket_server_side_encryption_configuration" "site" {
   bucket = aws_s3_bucket.site.id
   rule {
@@ -97,19 +90,23 @@ resource "aws_cloudfront_distribution" "this" {
     }
   }
 
-  # Default: the static, cacheable site from S3. The SPA-routing function (attached here
-  # only) rewrites client-side routes to index.html without touching the /v1 behaviors.
+  # The default is the static S3 site. Always-on deployments can instead route all UI
+  # requests to the production binary's embedded UI, avoiding a separate asset upload.
   default_cache_behavior {
-    target_origin_id       = local.s3_origin_id
-    viewer_protocol_policy = "redirect-to-https"
-    allowed_methods        = ["GET", "HEAD", "OPTIONS"]
-    cached_methods         = ["GET", "HEAD"]
-    compress               = true
-    cache_policy_id        = data.aws_cloudfront_cache_policy.caching_optimized.id
+    target_origin_id         = var.serve_embedded_ui_from_api ? local.api_origin_id : local.s3_origin_id
+    viewer_protocol_policy   = "redirect-to-https"
+    allowed_methods          = ["GET", "HEAD", "OPTIONS"]
+    cached_methods           = ["GET", "HEAD"]
+    compress                 = true
+    cache_policy_id          = var.serve_embedded_ui_from_api ? data.aws_cloudfront_cache_policy.caching_disabled.id : data.aws_cloudfront_cache_policy.caching_optimized.id
+    origin_request_policy_id = var.serve_embedded_ui_from_api ? data.aws_cloudfront_origin_request_policy.all_viewer_except_host.id : null
 
-    function_association {
-      event_type   = "viewer-request"
-      function_arn = aws_cloudfront_function.spa_routing.arn
+    dynamic "function_association" {
+      for_each = var.serve_embedded_ui_from_api ? [] : [true]
+      content {
+        event_type   = "viewer-request"
+        function_arn = aws_cloudfront_function.spa_routing.arn
+      }
     }
   }
 
