@@ -87,6 +87,14 @@ docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env up -d
 
 ## Scale-to-zero on AWS (ECS + API Gateway + S3)
 
+### Always-on API service
+
+Set `api_always_on = true` when the application must remain available without a
+warm-up request. The module then creates the API service with one desired task,
+sets the Amazon Elastic Container Service autoscaling floor to one, and omits
+the EventBridge idle reaper. Combine it with `scheduler_mode = "warm"` when
+timed monitoring must also remain continuously active.
+
 For a deployment that costs almost nothing when idle, the Terraform root module in
 [`deploy/terraform/aws-ecs-scale-to-zero`](../deploy/terraform/aws-ecs-scale-to-zero)
 runs the same image in a **private VPC** with the compute and database scaled to zero when
