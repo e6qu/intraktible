@@ -24,7 +24,7 @@ resource "aws_lambda_function" "waker" {
 
   environment {
     variables = {
-      CLUSTER     = aws_ecs_cluster.this.name
+      CLUSTER     = local.ecs_cluster_name
       API_SERVICE = aws_ecs_service.api.name
       WAKE_TO     = "1"
     }
@@ -43,7 +43,7 @@ resource "aws_lambda_function" "controller" {
 
   environment {
     variables = {
-      CLUSTER               = aws_ecs_cluster.this.name
+      CLUSTER               = local.ecs_cluster_name
       API_SERVICE           = aws_ecs_service.api.name
       SCHEDULER_SERVICE     = aws_ecs_service.scheduler.name
       API_ID                = aws_apigatewayv2_api.this.id

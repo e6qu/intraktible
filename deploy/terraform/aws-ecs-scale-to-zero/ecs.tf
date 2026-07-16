@@ -12,7 +12,8 @@
 #                It is NOT in Cloud Map — nothing routes HTTP to it.
 
 resource "aws_ecs_cluster" "this" {
-  name = local.name
+  count = local.use_existing_cluster ? 0 : 1
+  name  = local.name
   setting {
     name  = "containerInsights"
     value = "enabled"
@@ -27,7 +28,7 @@ resource "aws_cloudwatch_log_group" "app" {
 resource "aws_security_group" "ecs_tasks" {
   name_prefix = "${local.name}-ecs-"
   description = "ECS tasks: accept the app port from the API Gateway VPC Link, all egress"
-  vpc_id      = aws_vpc.this.id
+  vpc_id      = local.vpc_id
 
   ingress {
     description     = "app port from the API Gateway VPC Link"
@@ -53,7 +54,7 @@ resource "aws_security_group" "ecs_tasks" {
 resource "aws_service_discovery_private_dns_namespace" "this" {
   name        = "${local.name}.internal"
   description = "Service discovery for intraktible ECS tasks"
-  vpc         = aws_vpc.this.id
+  vpc         = local.vpc_id
 }
 
 resource "aws_service_discovery_service" "api" {
@@ -89,6 +90,15 @@ locals {
     { name = "INTRAKTIBLE_ENCRYPTION_KEY", valueFrom = aws_secretsmanager_secret.encryption_key.arn },
     { name = "INTRAKTIBLE_BOOTSTRAP_API_KEY", valueFrom = aws_secretsmanager_secret.bootstrap_api_key.arn },
   ]
+
+  oidc_environment = var.oidc_provider_name == "" ? [] : [
+    { name = "INTRAKTIBLE_OIDC_PROVIDERS", value = var.oidc_provider_name },
+    { name = "INTRAKTIBLE_OIDC_${upper(var.oidc_provider_name)}_ISSUER", value = var.oidc_issuer },
+    { name = "INTRAKTIBLE_OIDC_${upper(var.oidc_provider_name)}_CLIENT_ID", value = var.oidc_client_id },
+    { name = "INTRAKTIBLE_OIDC_${upper(var.oidc_provider_name)}_REDIRECT_URL", value = var.oidc_redirect_url },
+    { name = "INTRAKTIBLE_OIDC_${upper(var.oidc_provider_name)}_DEFAULT_ROLE", value = var.oidc_default_role },
+  ]
+  oidc_secrets = var.oidc_provider_name == "" ? [] : [{ name = "INTRAKTIBLE_OIDC_${upper(var.oidc_provider_name)}_CLIENT_SECRET", valueFrom = aws_secretsmanager_secret.oidc_client[0].arn }]
 
   # The image's ENTRYPOINT hard-codes --store=sqlite; override it for the networked
   # Postgres log + store that lets N stateless tasks share one ordered log.
@@ -127,8 +137,8 @@ resource "aws_ecs_task_definition" "api" {
     essential   = true
     entryPoint  = ["/intraktible"]
     command     = local.app_command
-    environment = local.base_environment
-    secrets     = local.app_secrets
+    environment = concat(local.base_environment, local.oidc_environment)
+    secrets     = concat(local.app_secrets, local.oidc_secrets)
     portMappings = [{
       containerPort = var.container_port
       protocol      = "tcp"
@@ -160,10 +170,10 @@ resource "aws_ecs_task_definition" "scheduler" {
     essential  = true
     entryPoint = ["/intraktible"]
     command    = local.app_command
-    environment = concat(local.base_environment, [
+    environment = concat(local.base_environment, local.oidc_environment, [
       { name = "INTRAKTIBLE_MONITOR_INTERVAL", value = var.monitor_interval },
     ])
-    secrets = local.app_secrets
+    secrets = concat(local.app_secrets, local.oidc_secrets)
     logConfiguration = {
       logDriver = "awslogs"
       options   = local.log_options
@@ -175,14 +185,14 @@ resource "aws_ecs_task_definition" "scheduler" {
 
 resource "aws_ecs_service" "api" {
   name                   = "${local.name}-api"
-  cluster                = aws_ecs_cluster.this.id
+  cluster                = local.ecs_cluster_arn
   task_definition        = aws_ecs_task_definition.api.arn
   desired_count          = 0 # asleep by default; the waker Lambda brings it to 1 on demand
   launch_type            = "FARGATE"
   enable_execute_command = true
 
   network_configuration {
-    subnets          = aws_subnet.private[*].id
+    subnets          = local.private_subnet_ids
     security_groups  = [aws_security_group.ecs_tasks.id]
     assign_public_ip = false
   }
@@ -206,13 +216,13 @@ resource "aws_ecs_service" "api" {
 
 resource "aws_ecs_service" "scheduler" {
   name            = "${local.name}-scheduler"
-  cluster         = aws_ecs_cluster.this.id
+  cluster         = local.ecs_cluster_arn
   task_definition = aws_ecs_task_definition.scheduler.arn
   desired_count   = var.scheduler_mode == "warm" ? 1 : 0
   launch_type     = "FARGATE"
 
   network_configuration {
-    subnets          = aws_subnet.private[*].id
+    subnets          = local.private_subnet_ids
     security_groups  = [aws_security_group.ecs_tasks.id]
     assign_public_ip = false
   }
@@ -229,7 +239,7 @@ resource "aws_ecs_service" "scheduler" {
 
 resource "aws_appautoscaling_target" "api" {
   service_namespace  = "ecs"
-  resource_id        = "service/${aws_ecs_cluster.this.name}/${aws_ecs_service.api.name}"
+  resource_id        = "service/${local.ecs_cluster_name}/${aws_ecs_service.api.name}"
   scalable_dimension = "ecs:service:DesiredCount"
   min_capacity       = 0
   max_capacity       = var.api_max_tasks
