@@ -1,8 +1,9 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
-# intraktible on AWS — scale-to-zero (ECS + API Gateway + S3 + Aurora)
+# intraktible on AWS — scale-to-zero compute (ECS + API Gateway + S3 + fck-rds)
 
-A Terraform root module that deploys intraktible into a **private VPC** where the compute
-and database **scale to zero when idle** and the app still loads from **S3** in the
+A Terraform root module that deploys intraktible into a **private VPC** where compute
+scales to zero when idle while durable state resides in the shared always-on **fck-rds**
+PostgreSQL service. The app still loads from **S3** in the
 meantime. There is **no always-on load balancer**: API Gateway (request-priced) reaches
 the ECS tasks privately via a VPC Link + Cloud Map, so at idle the fixed cost is a single
 small fck-nat instance plus storage.
@@ -29,11 +30,11 @@ small fck-nat instance plus storage.
      reaper (5m)  ── idle? → API 0                                          └───────┬────────┘
      sweep (cron) ── scheduled scheduler wake/sleep                                 │
                                                                             ┌───────▼────────┐
-   egress: private subnets ──▶ fck-nat (public subnet)                     │ Aurora Svless v2│ min 0 ACU
+   egress: private subnets ──▶ fck-nat (public subnet)                     │ fck-rds Postgres│ EFS-backed
                                                                             └────────────────┘
 ```
 
-- **VPC** with public + private subnets across `az_count` AZs. ECS and Aurora are in
+- **VPC** with public + private subnets across `az_count` AZs. ECS tasks are in
   private subnets with no public IPs. **fck-nat** (a single small instance, not a NAT
   Gateway) provides outbound egress.
 - **S3 + CloudFront** serve the adapter-static SvelteKit build and the wasm engine. With
@@ -50,13 +51,11 @@ small fck-nat instance plus storage.
   - `scheduler` — the singleton timed-sweep runner (monitor/drift alerts, timed deploy
     activation, SLA breach), running the **same image** with `INTRAKTIBLE_MONITOR_INTERVAL`
     set. See *Scheduler modes* below.
-- **Database** (`db_serverless`, default `true`): **Aurora PostgreSQL Serverless v2** with
-  `min_capacity = 0` — pauses to zero when idle,
-  resumes on the next connection. Used as **both** the event log (`--log=postgres`) and the
+- **Database** (`database_url_secret_arn`): a tenant-specific URL supplied by the shared
+  **fck-rds** PostgreSQL service. It is used as both the event log (`--log=postgres`) and
   projection store (`--store=postgres`), so N stateless API tasks share one ordered log and
-  durable read models. Set `db_serverless = false` for a **free-tier `db.t4g.micro` RDS
-  instance** instead (always-on but free-tier-eligible; the compute + edge still scale to
-  zero) — required on AWS **Free Plan** accounts, which cannot create Aurora via Terraform.
+  durable read models. fck-rds owns the isolated database and role; Intraktible can read only
+  its own URL secret and connect from its task security group.
 - **Secrets Manager** for the at-rest encryption key, the bootstrap admin key, and the
   composed Postgres DSN, injected into the task at runtime.
 
@@ -115,12 +114,12 @@ Two ways to put the app on your own domain:
 | S3               | pennies (storage)                 | + per-request                   |
 | API Gateway      | $0 (per-request)                  | per-request                     |
 | ECS Fargate      | **$0 (0 tasks)**                  | per running task-second         |
-| Aurora Svless v2 | **$0 compute** (paused) + storage | per ACU-hour                    |
+| fck-rds          | shared always-on PostgreSQL + EFS  | shared service cost              |
 | fck-nat          | ~$3/mo (one small instance)       | + egress data                   |
 | Secrets/logs     | pennies                           | pennies                         |
 
 The intended idle floor is roughly **fck-nat + storage** — no hourly load balancer, no
-running compute, no database compute.
+running Intraktible compute; fck-rds remains the shared database service.
 
 ## Wake and "hydration" — what works, and the seam
 
@@ -142,20 +141,18 @@ the live, durable, multi-user backend the front end must:
 ## Scheduler modes (`scheduler_mode`)
 
 The timed sweeps must run on exactly one replica (they are not leader-elected — multiple
-would double-deliver alerts). An always-on scheduler would also hold Aurora awake, defeating
-database scale-to-zero. So:
+would double-deliver alerts). The scheduler remains event-driven to avoid needless compute.
 
 - **`scheduled`** (default) — the scheduler service sits at `0`. EventBridge wakes it on
   `scheduler_window_cron`; the controller Lambda scales it to `1`, waits
   `scheduler_run_minutes` (during which it runs sweeps every `monitor_interval`), then scales
-  it back to `0`. Aurora can pause between windows. Trade-off: a sweep fires at most once per
+  it back to `0`. Trade-off: a sweep fires at most once per
   window, not continuously.
-- **`warm`** — one always-on scheduler task. Correct and simple, but its periodic sweeps keep
-  Aurora from pausing, so the database no longer scales to zero.
+- **`warm`** — one always-on scheduler task. Correct and simple, with the corresponding
+  always-on compute cost.
 
 The clean long-term answer is a small backend addition — an idempotent `POST /internal/sweep`
-endpoint — which would let the scheduler be a pure Lambda with no running task and let Aurora
-stay paused except during the brief sweep. Not built yet.
+endpoint — which would let the scheduler be a pure Lambda with no running task. Not built yet.
 
 ## Caveats / deploy-time verification
 
@@ -170,7 +167,7 @@ stay paused except during the brief sweep. Not built yet.
   unchanged and forwards it to the embedded UI handler. It must not configure `index.html` as
   a CloudFront default root object, because that path is a directory-style redirect in Go's
   file server and would loop at the edge.
-- **Cold-wake latency** = Fargate task start + image pull + Aurora resume-from-zero + the
+- **Cold-wake latency** = Fargate task start + image pull + PostgreSQL connection + the
   projection tail catch-up. Because a durable Postgres store resumes from its stored
   checkpoint (not a full replay), the catch-up is incremental — but the wake is still seconds,
   not instant. This is exactly what the S3/wasm dehydrated front end is meant to mask.
@@ -179,15 +176,11 @@ stay paused except during the brief sweep. Not built yet.
 - **Cloud Map SRV + HTTP API.** The VPC Link integration targets a Cloud Map service that ECS
   registers with SRV records (carrying the task port). Confirm end-to-end reachability on
   first deploy — this is the piece with the least offline verifiability.
-- **Secrets and state.** The encryption key, bootstrap key, and DB password are generated by
-  Terraform and therefore stored in state. Use an encrypted, access-controlled remote backend,
-  and rotate the bootstrap key after first use. To keep a secret out of state entirely, create
-  the Secrets Manager secret out-of-band and remove the `random_password` + version here.
-- **RDS Proxy.** Omitted on purpose (it is always-on and would not scale to zero). At the
-  default `api_max_tasks = 4` the connection fan-out is small. Add a proxy only if you raise
-  task counts substantially.
+- **Secrets and state.** The encryption key and bootstrap key are generated by Terraform and
+  therefore stored in state. The database URL belongs to fck-rds. Use an encrypted,
+  access-controlled remote backend and rotate the bootstrap key after first use.
 
 ## Teardown
 
-`aws_rds_cluster` has `deletion_protection = true` and takes a final snapshot. Empty the S3
-bucket, then disable deletion protection before `terraform destroy`.
+Empty the S3 bucket before `terraform destroy`. The shared fck-rds tenant is managed by the
+environment-level fck-rds module rather than by this application module.

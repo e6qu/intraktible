@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# A private VPC: the ECS tasks and Aurora live in private subnets with no public IPs.
+# A private VPC: the ECS tasks live in private subnets with no public IPs.
 # Public subnets exist only to host the fck-nat egress instance. There is no NAT
 # Gateway (an always-on ~$32/mo + data cost) — fck-nat is a single small instance that
 # provides outbound-only egress for the private subnets at a fraction of the cost.

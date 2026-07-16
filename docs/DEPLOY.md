@@ -104,7 +104,7 @@ unversioned so it does not accumulate noncurrent object storage.
 The Amazon Elastic Container Service services explicitly depend on the
 `AWSCURRENT` versions of every injected AWS Secrets Manager secret. This keeps
 Fargate from attempting startup while a newly created database DSN is still
-waiting for its Amazon RDS endpoint.
+waiting for the shared fck-rds PostgreSQL service to publish its tenant secret.
 
 For a deployment that costs almost nothing when idle, the Terraform root module in
 [`deploy/terraform/aws-ecs-scale-to-zero`](../deploy/terraform/aws-ecs-scale-to-zero)
@@ -126,12 +126,11 @@ Design, and why each choice:
   `POST /wake` request; CPU target-tracking scales `1→N` under load; a **reaper** scales it
   back to `0` when the edge has been idle. The wake request is the "event" that spins the
   infra back up.
-- **Aurora Serverless v2 with `min_capacity = 0`** pauses to zero and resumes on the next
-  connection; it backs both `--log=postgres` and `--store=postgres`. A cold replica resumes
-  projections from its durable checkpoint (not a full log replay), so the wake stays
-  incremental.
-- **The singleton scheduler is event-driven.** An always-on scheduler would hold Aurora
-  awake, so by default EventBridge wakes the scheduler service briefly on a cron to run one
+- **Shared fck-rds PostgreSQL** backs both `--log=postgres` and `--store=postgres` through
+  an isolated tenant database. A cold replica resumes projections from its durable checkpoint
+  (not a full log replay), so the wake stays incremental.
+- **The singleton scheduler is event-driven.** By default EventBridge wakes the scheduler
+  service briefly on a cron to run one
   sweep window, then scales it back to zero (a `warm` always-on mode is also available). See
   the module README for the trade-off and the clean long-term fix (an idempotent
   `POST /internal/sweep` endpoint, not yet built).

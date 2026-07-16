@@ -43,44 +43,6 @@ resource "aws_secretsmanager_secret_version" "bootstrap_api_key" {
   secret_string = random_password.bootstrap_api_key.result
 }
 
-# Aurora master password + the composed Postgres DSN the backend consumes
-# (INTRAKTIBLE_POSTGRES_DSN). The DSN points at the Aurora cluster endpoint directly: the
-# API service is capped at a handful of tasks, so a connection pooler (RDS Proxy) — which
-# is itself always-on and would not scale to zero — is not warranted here. Add one if task
-# fan-out grows (see README).
-resource "random_password" "db" {
-  length  = 40
-  special = false # keep the DSN URL-safe without percent-encoding
-}
-
-resource "aws_secretsmanager_secret" "db_password" {
-  name_prefix             = "${local.name}/db-password-"
-  description             = "intraktible Aurora master password"
-  recovery_window_in_days = 7
-}
-
-resource "aws_secretsmanager_secret_version" "db_password" {
-  secret_id     = aws_secretsmanager_secret.db_password.id
-  secret_string = random_password.db.result
-}
-
-resource "aws_secretsmanager_secret" "db_dsn" {
-  name_prefix             = "${local.name}/db-dsn-"
-  description             = "intraktible Postgres DSN (via RDS Proxy)"
-  recovery_window_in_days = 7
-}
-
-resource "aws_secretsmanager_secret_version" "db_dsn" {
-  secret_id = aws_secretsmanager_secret.db_dsn.id
-  secret_string = format(
-    "postgres://%s:%s@%s:5432/%s?sslmode=require",
-    local.db_username,
-    random_password.db.result,
-    local.db_endpoint,
-    local.db_name,
-  )
-}
-
 resource "aws_secretsmanager_secret" "oidc_client" {
   count                   = var.oidc_provider_name == "" ? 0 : 1
   name_prefix             = "${local.name}/oidc-client-"

@@ -6,7 +6,7 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = ">= 5.60" # CloudFront VPC origins, Aurora Serverless v2 min 0 ACU
+      version = ">= 5.60" # CloudFront VPC origins
     }
     archive = {
       source  = "hashicorp/archive"
