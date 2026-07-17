@@ -174,11 +174,12 @@ type Sessions struct {
 }
 
 type session struct {
-	id      identity.Identity
-	role    Role
-	scope   Scope
-	expires time.Time
-	sso     bool
+	id        identity.Identity
+	role      Role
+	scope     Scope
+	expires   time.Time
+	sso       bool
+	logoutURL string
 }
 
 // NewSessions returns an empty session store using DefaultSessionTTL.
@@ -198,20 +199,33 @@ func (s *Sessions) TTL() time.Duration { return s.ttl }
 // to every environment (see SessionStore). The in-memory store never fails; the
 // error is part of the SessionStore contract.
 func (s *Sessions) Issue(id identity.Identity, role Role, scope Scope) (string, error) {
-	return s.issue(id, role, scope, false)
+	return s.issue(id, role, scope, false, "")
 }
 
 // IssueSSO is Issue for an SSO session, which Resolve revalidates each time.
-func (s *Sessions) IssueSSO(id identity.Identity, role Role, scope Scope) (string, error) {
-	return s.issue(id, role, scope, true)
+func (s *Sessions) IssueSSO(id identity.Identity, role Role, scope Scope, logoutURL string) (string, error) {
+	return s.issue(id, role, scope, true, logoutURL)
 }
 
-func (s *Sessions) issue(id identity.Identity, role Role, scope Scope, sso bool) (string, error) {
+func (s *Sessions) issue(id identity.Identity, role Role, scope Scope, sso bool, logoutURL string) (string, error) {
 	tok := newToken()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.sessions[tok] = session{id: id, role: role, scope: scope, expires: s.now().Add(s.ttl), sso: sso}
+	s.sessions[tok] = session{id: id, role: role, scope: scope, expires: s.now().Add(s.ttl), sso: sso, logoutURL: logoutURL}
 	return tok, nil
+}
+
+// LogoutURL returns the front-channel identity-provider logout URL bound to a
+// current SSO session. The URL originated in trusted server configuration, never
+// in a browser request, so returning it cannot create an open redirect.
+func (s *Sessions) LogoutURL(tok string) string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	sess, ok := s.sessions[tok]
+	if !ok || s.now().After(sess.expires) {
+		return ""
+	}
+	return sess.logoutURL
 }
 
 // SetValidator installs the per-Resolve SSO revalidation predicate.

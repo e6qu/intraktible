@@ -22,8 +22,11 @@ type SessionStore interface {
 	// revalidated on every Resolve against the store's validator (e.g. the SCIM
 	// deprovisioning gate), so a deactivated or downgraded user loses access within
 	// the request cycle instead of surviving until the TTL.
-	IssueSSO(id identity.Identity, role Role, scope Scope) (string, error)
+	IssueSSO(id identity.Identity, role Role, scope Scope, logoutURL string) (string, error)
 	Resolve(tok string) (identity.Identity, Role, Scope, bool)
+	// LogoutURL returns the front-channel identity-provider logout URL bound to an
+	// SSO session. An empty result means the session has no provider logout step.
+	LogoutURL(tok string) string
 	Revoke(tok string)
 	// SetValidator installs a predicate consulted on Resolve for SSO sessions; a
 	// false result rejects the session. A nil validator (the default) accepts every
@@ -41,11 +44,12 @@ type SessionValidator func(id identity.Identity) bool
 const sessionCollection = "auth_sessions"
 
 type storedSession struct {
-	Identity identity.Identity `json:"identity"`
-	Role     Role              `json:"role,omitempty"`
-	Scope    Scope             `json:"scope,omitempty"`
-	Expires  time.Time         `json:"expires"`
-	SSO      bool              `json:"sso,omitempty"`
+	Identity  identity.Identity `json:"identity"`
+	Role      Role              `json:"role,omitempty"`
+	Scope     Scope             `json:"scope,omitempty"`
+	Expires   time.Time         `json:"expires"`
+	SSO       bool              `json:"sso,omitempty"`
+	LogoutURL string            `json:"logout_url,omitempty"`
 }
 
 // StoreSessions persists sessions in a store.Store, so they survive a restart when
@@ -80,18 +84,18 @@ func (s *StoreSessions) SetValidator(v SessionValidator) { s.validate = v }
 // returned so the caller can fail the login loudly rather than hand back a token
 // that will never resolve.
 func (s *StoreSessions) Issue(id identity.Identity, role Role, scope Scope) (string, error) {
-	return s.issue(id, role, scope, false)
+	return s.issue(id, role, scope, false, "")
 }
 
 // IssueSSO creates a session marked SSO, so Resolve revalidates it.
-func (s *StoreSessions) IssueSSO(id identity.Identity, role Role, scope Scope) (string, error) {
-	return s.issue(id, role, scope, true)
+func (s *StoreSessions) IssueSSO(id identity.Identity, role Role, scope Scope, logoutURL string) (string, error) {
+	return s.issue(id, role, scope, true, logoutURL)
 }
 
-func (s *StoreSessions) issue(id identity.Identity, role Role, scope Scope, sso bool) (string, error) {
+func (s *StoreSessions) issue(id identity.Identity, role Role, scope Scope, sso bool, logoutURL string) (string, error) {
 	s.sweepExpired()
 	tok := newToken()
-	rec := storedSession{Identity: id, Role: role, Scope: scope, Expires: s.now().Add(s.ttl), SSO: sso}
+	rec := storedSession{Identity: id, Role: role, Scope: scope, Expires: s.now().Add(s.ttl), SSO: sso, LogoutURL: logoutURL}
 	if err := store.PutDoc(context.Background(), s.store, sessionCollection, hash(tok), rec); err != nil {
 		return "", fmt.Errorf("auth: persist session: %w", err)
 	}
@@ -126,6 +130,21 @@ func (s *StoreSessions) Resolve(tok string) (identity.Identity, Role, Scope, boo
 		return identity.Identity{}, "", "", false
 	}
 	return rec.Identity, rec.Role, rec.Scope, true
+}
+
+// LogoutURL returns the identity-provider logout URL saved with a current
+// session. It deliberately does not consult the SCIM validator: a deprovisioned
+// user must still be able to complete identity-provider logout.
+func (s *StoreSessions) LogoutURL(tok string) string {
+	rec, ok, err := store.GetDoc[storedSession](context.Background(), s.store, sessionCollection, hash(tok))
+	if err != nil {
+		slog.Error("auth: resolve session logout URL failed", "err", err)
+		return ""
+	}
+	if !ok || s.now().After(rec.Expires) {
+		return ""
+	}
+	return rec.LogoutURL
 }
 
 // sweepExpired deletes expired session rows on each Issue, bounding the growth

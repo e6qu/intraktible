@@ -150,7 +150,11 @@ Service cluster. Configure Shauth as the generic OpenID Connect provider with
 `oidc_client_secret`, `oidc_redirect_url`, `oidc_org`, and `oidc_workspace`;
 the client secret is stored in AWS Secrets Manager and injected only into the
 task. The organization and workspace bind every authenticated identity to one
-explicit Intraktible tenancy.
+explicit Intraktible tenancy. Set the matching `oidc_logout_url` to the
+provider's front-channel logout endpoint when it supports RP-initiated logout.
+Intraktible stores that trusted endpoint with the SSO session and redirects the
+browser there only after revoking its local session; it never accepts a logout
+redirect URL from the browser.
 
 > **Future direction — instant wasm shell, then hydrate onto the live backend.** Because
 > the full backend already runs in the browser as wasm, the S3 site is an instantly

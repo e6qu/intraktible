@@ -796,8 +796,8 @@ describe('session auth', () => {
   });
 
   it('logout posts to the logout endpoint', async () => {
-    const fetcher = fetcherReturning(200, {});
-    await logout(fetcher);
+    const fetcher = fetcherReturning(200, { logout_url: 'https://auth.example.test/logout' });
+    await expect(logout(fetcher)).resolves.toBe('https://auth.example.test/logout');
     const [url, init] = fetcher.mock.calls[0];
     expect(url).toBe('/v1/logout');
     expect(init?.method).toBe('POST');

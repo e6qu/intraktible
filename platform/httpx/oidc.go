@@ -117,7 +117,7 @@ func (h *OIDCHandler) callback(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusUnauthorized, err)
 		return
 	}
-	if !finishLogin(w, r, h.sessions, h.gate, h.roleAugment, login.Identity, login.Role) {
+	if !finishLogin(w, r, h.sessions, h.gate, h.roleAugment, login.Identity, login.Role, a.LogoutURL()) {
 		return
 	}
 	http.Redirect(w, r, h.postLoginURL, http.StatusFound)
@@ -127,7 +127,7 @@ func (h *OIDCHandler) callback(w http.ResponseWriter, r *http.Request) {
 // session cookie. It returns false (after writing 403) when the gate denies the
 // user — e.g. one deactivated in the IdP via SCIM, even with a valid token.
 // Shared by the OIDC and SAML callbacks.
-func finishLogin(w http.ResponseWriter, r *http.Request, sessions auth.SessionStore, gate LoginGate, aug RoleAugmenter, id identity.Identity, role auth.Role) bool {
+func finishLogin(w http.ResponseWriter, r *http.Request, sessions auth.SessionStore, gate LoginGate, aug RoleAugmenter, id identity.Identity, role auth.Role, logoutURL string) bool {
 	if gate != nil && !gate(r.Context(), id.Org, id.Workspace, id.Actor) {
 		Error(w, http.StatusForbidden, errors.New("sso: user is deactivated"))
 		return false
@@ -138,7 +138,7 @@ func finishLogin(w http.ResponseWriter, r *http.Request, sessions auth.SessionSt
 	// An SSO-authenticated human operates the builder across environments (subject
 	// to their role); scope restriction is an API-key concept, so SSO sessions get
 	// the unrestricted scope rather than no scope (which the env gate denies).
-	tok, err := sessions.IssueSSO(id, role, auth.ScopeAll)
+	tok, err := sessions.IssueSSO(id, role, auth.ScopeAll, logoutURL)
 	if err != nil {
 		Error(w, http.StatusInternalServerError, err)
 		return false

@@ -202,6 +202,11 @@ variable "oidc_redirect_url" {
   type    = string
   default = ""
 }
+variable "oidc_logout_url" {
+  description = "Optional front-channel OpenID Connect provider logout endpoint. It is returned only for sessions created through this provider."
+  type        = string
+  default     = ""
+}
 variable "oidc_org" {
   description = "Intraktible organization that receives identities from the configured OpenID Connect provider."
   type        = string

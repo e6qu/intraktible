@@ -68,7 +68,11 @@
   // confirm it, otherwise the user is stranded on a now-unauthorized page that errors.
   async function doSignOut(): Promise<void> {
     try {
-      await signOut();
+      const logoutURL = await signOut();
+      if (logoutURL) {
+        window.location.assign(logoutURL);
+        return;
+      }
       toast.success('Signed out');
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));

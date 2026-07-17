@@ -58,18 +58,21 @@ func setSessionCookie(w http.ResponseWriter, r *http.Request, tok string, ttl ti
 	})
 }
 
-// LogoutHandler revokes the request's session and clears the cookie. It is public
-// (clearing a cookie needs no auth) and idempotent.
+// LogoutHandler revokes the request's session, clears the cookie, and returns the
+// server-configured identity-provider front-channel logout URL for an SSO session.
+// It is public (clearing a cookie needs no auth) and idempotent.
 func LogoutHandler(sessions auth.SessionStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		logoutURL := ""
 		if c, err := r.Cookie(sessionCookie); err == nil {
+			logoutURL = sessions.LogoutURL(c.Value)
 			sessions.Revoke(c.Value)
 		}
 		http.SetCookie(w, &http.Cookie{ // #nosec G124 -- expiring cookie (MaxAge<0, empty value)
 			Name: sessionCookie, Value: "", Path: "/",
 			HttpOnly: true, Secure: requestIsSecure(r), SameSite: http.SameSiteLaxMode, MaxAge: -1,
 		})
-		w.WriteHeader(http.StatusNoContent)
+		JSON(w, http.StatusOK, map[string]string{"logout_url": logoutURL})
 	}
 }
 

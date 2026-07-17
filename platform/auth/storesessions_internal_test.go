@@ -92,7 +92,7 @@ func TestIssueSweepsExpiredSessions(t *testing.T) {
 	id := identity.Identity{Org: "o", Workspace: "w", Actor: "a"}
 
 	old1, _ := s.Issue(id, RoleEditor, Production)
-	old2, _ := s.IssueSSO(id, RoleEditor, ScopeAll)
+	old2, _ := s.IssueSSO(id, RoleEditor, ScopeAll, "")
 	clock = clock.Add(2 * time.Hour)
 
 	fresh, _ := s.Issue(id, RoleEditor, Production)
@@ -125,9 +125,9 @@ func TestSessionValidatorRevokesSSO(t *testing.T) {
 			ada := identity.Identity{Org: "o", Workspace: "w", Actor: "ada"}
 			grace := identity.Identity{Org: "o", Workspace: "w", Actor: "grace"}
 
-			ssoTok, _ := s.IssueSSO(ada, RoleEditor, ScopeAll)
+			ssoTok, _ := s.IssueSSO(ada, RoleEditor, ScopeAll, "")
 			keyTok, _ := s.Issue(ada, RoleEditor, Production) // non-SSO, never revalidated
-			okTok, _ := s.IssueSSO(grace, RoleEditor, ScopeAll)
+			okTok, _ := s.IssueSSO(grace, RoleEditor, ScopeAll, "")
 
 			if _, _, _, ok := s.Resolve(ssoTok); !ok {
 				t.Fatal("active SSO user should resolve")
@@ -142,6 +142,29 @@ func TestSessionValidatorRevokesSSO(t *testing.T) {
 			}
 			if _, _, _, ok := s.Resolve(okTok); !ok {
 				t.Fatal("still-active SSO user's session should resolve")
+			}
+		})
+	}
+}
+
+func TestSessionLogoutURLRoundTrips(t *testing.T) {
+	stores := map[string]SessionStore{
+		"memory": NewSessions(),
+		"store":  NewStoreSessions(store.NewMemory()),
+	}
+	for name, s := range stores {
+		t.Run(name, func(t *testing.T) {
+			const logoutURL = "https://auth.example.test/oauth2/sessions/logout"
+			token, err := s.IssueSSO(identity.Identity{Org: "o", Workspace: "w", Actor: "a"}, RoleViewer, ScopeAll, logoutURL)
+			if err != nil {
+				t.Fatalf("issue SSO session: %v", err)
+			}
+			if got := s.LogoutURL(token); got != logoutURL {
+				t.Fatalf("logout URL = %q, want %q", got, logoutURL)
+			}
+			s.Revoke(token)
+			if got := s.LogoutURL(token); got != "" {
+				t.Fatalf("revoked session logout URL = %q, want empty", got)
 			}
 		})
 	}
