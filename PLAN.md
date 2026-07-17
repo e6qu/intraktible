@@ -499,7 +499,9 @@ feature.
 
 ## 9. Scope boundaries (current)
 The original MVP non-goals have mostly been overtaken — **SSO (OIDC + SAML) and SCIM shipped** in the
-enterprise track. Still **out of scope** (and why): multi-tenant billing (not a product
+enterprise track. OIDC sessions retain an optional trusted provider front-channel logout endpoint, so
+the browser completes identity-provider logout only after Intraktible has revoked its own session. Still
+**out of scope** (and why): multi-tenant billing (not a product
 goal); exact API/UX parity with any commercial product (we are the open-source, self-hostable analog,
 not a clone). Formerly a non-goal, now **moved into the §8b forward roadmap**: real data-connector
 breadth (Phase 9), production HA/clustering + scale-out correctness (Phase 8), and ONNX model serving at

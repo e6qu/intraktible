@@ -56,7 +56,7 @@ describe('signOut', () => {
     user.set(signedIn);
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => jsonResponse(204, null))
+      vi.fn(async () => jsonResponse(200, { logout_url: '' }))
     );
     await signOut();
     expect(get(user)).toBeNull();

@@ -107,7 +107,7 @@ func (h *SAMLHandler) acs(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusUnauthorized, err)
 		return
 	}
-	if !finishLogin(w, r, h.sessions, h.gate, h.roleAugment, login.Identity, login.Role) {
+	if !finishLogin(w, r, h.sessions, h.gate, h.roleAugment, login.Identity, login.Role, "") {
 		return
 	}
 	http.Redirect(w, r, h.postLoginURL, http.StatusFound)

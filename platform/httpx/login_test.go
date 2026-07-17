@@ -3,6 +3,7 @@
 package httpx_test
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -75,11 +76,50 @@ func TestLoginLogoutFlow(t *testing.T) {
 	logoutReq := httptest.NewRequest(http.MethodPost, "/v1/logout", http.NoBody)
 	logoutReq.AddCookie(&http.Cookie{Name: "session", Value: token})
 	httpx.LogoutHandler(sessions)(out, logoutReq)
-	if out.Code != http.StatusNoContent {
-		t.Fatalf("logout -> %d, want 204", out.Code)
+	if out.Code != http.StatusOK {
+		t.Fatalf("logout -> %d, want 200", out.Code)
+	}
+	var logout struct {
+		URL string `json:"logout_url"`
+	}
+	if err := json.NewDecoder(out.Body).Decode(&logout); err != nil {
+		t.Fatalf("decode logout response: %v", err)
+	}
+	if logout.URL != "" {
+		t.Fatalf("api-key logout URL = %q, want empty", logout.URL)
 	}
 	if _, _, _, ok := sessions.Resolve(token); ok {
 		t.Fatal("session should be revoked after logout")
+	}
+}
+
+func TestLogoutReturnsSessionBoundOIDCFrontChannelURL(t *testing.T) {
+	sessions := auth.NewSessions()
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "dev"}
+	const providerLogoutURL = "https://auth.example.test/oauth2/sessions/logout"
+	token, err := sessions.IssueSSO(id, auth.RoleViewer, auth.ScopeAll, providerLogoutURL)
+	if err != nil {
+		t.Fatalf("issue SSO session: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/logout?redirect=https://attacker.example", http.NoBody)
+	req.AddCookie(&http.Cookie{Name: "session", Value: token})
+	httpx.LogoutHandler(sessions)(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("logout -> %d, want 200", rec.Code)
+	}
+	var logout struct {
+		URL string `json:"logout_url"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&logout); err != nil {
+		t.Fatalf("decode logout response: %v", err)
+	}
+	if logout.URL != providerLogoutURL {
+		t.Fatalf("logout URL = %q, want %q", logout.URL, providerLogoutURL)
+	}
+	if _, _, _, ok := sessions.Resolve(token); ok {
+		t.Fatal("SSO session should be revoked after logout")
 	}
 }
 

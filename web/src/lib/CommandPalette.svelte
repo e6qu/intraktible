@@ -101,7 +101,10 @@
           label: 'Sign out',
           icon: 'signout',
           keywords: 'sign out log out account',
-          run: () => void signOut()
+          run: () =>
+            void signOut().then((logoutURL) =>
+              logoutURL ? window.location.assign(logoutURL) : goto(appHref('/login'))
+            )
         }
       : {
           id: 'signin',

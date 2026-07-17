@@ -21,8 +21,11 @@ type OIDCConfig struct {
 	ClientID     string
 	ClientSecret string
 	RedirectURL  string
-	Org          string
-	Workspace    string
+	// LogoutURL is the provider's front-channel logout endpoint. It is optional
+	// because not every OpenID Connect provider supports RP-initiated logout.
+	LogoutURL string
+	Org       string
+	Workspace string
 	// GroupsClaim is the ID-token claim carrying the user's groups ("groups" for
 	// Google Workspace, "cognito:groups" for AWS Cognito). GroupRoles maps a group
 	// to a role (the highest match wins); DefaultRole applies when none match.
@@ -70,6 +73,9 @@ func NewOIDCAuthenticator(ctx context.Context, cfg OIDCConfig) (*OIDCAuthenticat
 
 // Name is the provider's identifier (used in login/callback URLs).
 func (a *OIDCAuthenticator) Name() string { return a.cfg.Name }
+
+// LogoutURL returns the configured front-channel identity-provider logout endpoint.
+func (a *OIDCAuthenticator) LogoutURL() string { return a.cfg.LogoutURL }
 
 // AuthCodeURL is the IdP URL to redirect the user to, carrying the CSRF state and
 // the nonce that binds the returned ID token to this request.

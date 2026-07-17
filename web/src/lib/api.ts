@@ -3682,12 +3682,18 @@ export async function login(
   return (await res.json()) as Identity;
 }
 
-// logout revokes the current session and clears the cookie.
-export async function logout(fetcher: typeof fetch = recordingFetch): Promise<void> {
+// logout revokes the current application session and returns the configured
+// identity-provider front-channel logout URL for an SSO session, if one exists.
+export async function logout(fetcher: typeof fetch = recordingFetch): Promise<string> {
   const res = await fetcher('/v1/logout', { method: 'POST' });
-  if (!res.ok && res.status !== 204) {
+  if (!res.ok) {
     return errorOrStatus(res, 'POST /v1/logout');
   }
+  const body = (await res.json()) as { logout_url?: unknown };
+  if (typeof body.logout_url !== 'string') {
+    throw new Error('POST /v1/logout returned an invalid logout_url');
+  }
+  return body.logout_url;
 }
 
 // listSsoProviders returns the configured OIDC providers (e.g. ["google","aws"])

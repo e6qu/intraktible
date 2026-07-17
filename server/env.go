@@ -139,6 +139,7 @@ func oidcConfigFromEnv(name string) auth.OIDCConfig {
 		ClientID:     os.Getenv(p + "CLIENT_ID"),
 		ClientSecret: os.Getenv(p + "CLIENT_SECRET"),
 		RedirectURL:  os.Getenv(p + "REDIRECT_URL"),
+		LogoutURL:    os.Getenv(p + "LOGOUT_URL"),
 		Org:          os.Getenv(p + "ORG"),
 		Workspace:    os.Getenv(p + "WORKSPACE"),
 		GroupsClaim:  os.Getenv(p + "GROUPS_CLAIM"),
