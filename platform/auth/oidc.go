@@ -58,6 +58,12 @@ func NewOIDCAuthenticator(ctx context.Context, cfg OIDCConfig) (*OIDCAuthenticat
 	if err != nil {
 		return nil, fmt.Errorf("auth: oidc %q discovery: %w", cfg.Name, err)
 	}
+	endpoint := provider.Endpoint()
+	// Shauth registers confidential relying parties with RFC 6749 client-secret
+	// credentials in the form body. OAuth2 providers may choose a different
+	// registered authentication method, so make the method explicit here rather
+	// than relying on the library's Basic-auth default.
+	endpoint.AuthStyle = oauth2.AuthStyleInParams
 	return &OIDCAuthenticator{
 		cfg:      cfg,
 		verifier: provider.Verifier(&oidc.Config{ClientID: cfg.ClientID}),
@@ -65,7 +71,7 @@ func NewOIDCAuthenticator(ctx context.Context, cfg OIDCConfig) (*OIDCAuthenticat
 			ClientID:     cfg.ClientID,
 			ClientSecret: cfg.ClientSecret,
 			RedirectURL:  cfg.RedirectURL,
-			Endpoint:     provider.Endpoint(),
+			Endpoint:     endpoint,
 			Scopes:       []string{oidc.ScopeOpenID, "email", "profile"},
 		},
 	}, nil

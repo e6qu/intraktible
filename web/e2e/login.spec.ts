@@ -21,9 +21,14 @@ test('sign in with an API key, then sign out', async ({ page }) => {
   await expect(status).toContainText('Signed in as');
   await expect(status).toContainText('dev');
 
+  await page.getByRole('link', { name: 'My account' }).click();
+  await expect(page.getByRole('heading', { name: 'Signed in as dev' })).toBeVisible();
+  await expect(page.getByText('Organization')).toBeVisible();
+  await expect(page.getByText('Workspace')).toBeVisible();
+
   // Signing out returns to the sign-in screen (and drops the full chrome), so the
   // signed-out state is unambiguous rather than a stripped-down dashboard.
-  await page.getByRole('button', { name: 'Sign out' }).click();
+  await page.getByLabel('Current account details').getByRole('button', { name: 'Sign out' }).click();
   await expect(page.getByRole('heading', { name: /Sign in/i })).toBeVisible();
   await expect(page.getByRole('navigation', { name: 'Primary' })).toHaveCount(0);
 });

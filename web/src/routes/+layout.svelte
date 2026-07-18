@@ -243,6 +243,7 @@
       >
         {#if $user}
           <p class="acct-id" data-testid="auth-status">Signed in as <b>{$user.actor}</b></p>
+          <a class="acct-action" href={appHref('/me')}><Icon name="user" size={14} /> My account</a>
         {:else}
           <p class="acct-id muted" data-testid="auth-status">Not signed in</p>
         {/if}
