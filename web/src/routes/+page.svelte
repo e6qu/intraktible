@@ -3,8 +3,12 @@
      composition (a bespoke deck for the original archetypes, else the config-driven
      PersonaHome). The persona is a client-side preference anyone can switch (lib/persona). -->
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { persona, personaConfig } from '$lib/persona';
-  import { user } from '$lib/session';
+  import { get } from 'svelte/store';
+  import { listSsoProviders } from '$lib/api';
+  import { appHref } from '$lib/paths';
+  import { refreshUser, user } from '$lib/session';
   import { loadDashboard, type DashboardData } from '$lib/dashboard';
   import BuilderDeck from '$lib/dashboards/BuilderDeck.svelte';
   import OperatorDeck from '$lib/dashboards/OperatorDeck.svelte';
@@ -46,6 +50,15 @@
     } else {
       loaded = false;
       loading = false;
+    }
+  });
+
+  onMount(async () => {
+    await refreshUser();
+    if (get(user)) return;
+    const providers = await listSsoProviders();
+    if (providers.includes('shauth')) {
+      window.location.assign(appHref('/v1/auth/oidc/shauth/login'));
     }
   });
 </script>
