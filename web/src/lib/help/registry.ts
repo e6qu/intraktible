@@ -870,6 +870,28 @@ export const HELP = new Map<string, PageHelp>([
     }
   ],
   [
+    '/me',
+    {
+      title: 'My account',
+      summary:
+        'Review the identity and access role assigned to this browser session, then sign out when you are finished.',
+      capabilities: [
+        'See the current identity, role, organization, and workspace.',
+        'End this application session and return to sign in.'
+      ],
+      journeys: [
+        {
+          name: 'Review your access',
+          steps: [
+            'Open My account from the account menu in the header.',
+            'Review the identity, role, organization, and workspace shown for this session.',
+            'Click Sign out to end the application session.'
+          ]
+        }
+      ]
+    }
+  ],
+  [
     '/login',
     {
       title: 'Sign in',
