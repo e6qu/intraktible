@@ -26,6 +26,10 @@
   onMount(async () => {
     try {
       const [oidc, saml] = await Promise.all([listSsoProviders(), listSamlProviders()]);
+      if (oidc.includes('shauth')) {
+        window.location.assign(appHref('/v1/auth/oidc/shauth/login'));
+        return;
+      }
       ssoButtons = [
         ...oidc.map((p) => ({ label: providerLabel(p), href: `/v1/auth/oidc/${p}/login` })),
         ...saml.map((p) => ({

@@ -1,6 +1,38 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { test, expect } from '@playwright/test';
 
+async function configureShauthOnly(page: import('@playwright/test').Page): Promise<void> {
+  await page.route('**/v1/auth/oidc/providers', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ providers: ['shauth'] })
+    })
+  );
+  await page.route('**/v1/auth/saml/providers', (route) =>
+    route.fulfill({ contentType: 'application/json', body: JSON.stringify({ providers: [] }) })
+  );
+}
+
+test('direct entry delegates an unauthenticated Shauth deployment to Shauth', async ({ page }) => {
+  await configureShauthOnly(page);
+  const signIn = page.waitForRequest(
+    (request) => new URL(request.url()).pathname === '/v1/auth/oidc/shauth/login'
+  );
+
+  await page.goto('/');
+  await signIn;
+});
+
+test('the sign-in route delegates a Shauth deployment to Shauth', async ({ page }) => {
+  await configureShauthOnly(page);
+  const signIn = page.waitForRequest(
+    (request) => new URL(request.url()).pathname === '/v1/auth/oidc/shauth/login'
+  );
+
+  await page.goto('/login');
+  await signIn;
+});
+
 test('sign in with an API key, then sign out', async ({ page }) => {
   await page.goto('/login');
   await expect(page.getByRole('heading', { name: /Sign in/i })).toBeVisible();

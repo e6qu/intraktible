@@ -141,39 +141,32 @@
 
   let loadSeq = 0;
   let loadError = $state('');
-  async function loadDynamic(): Promise<void> {
+  const dynamicBySource = new Map<string, Cmd[]>();
+  function appendDynamic<T>(
+    seq: number,
+    source: string,
+    request: Promise<T>,
+    commandsFor: (value: T) => Cmd[]
+  ): void {
+    void request.then(
+      (value) => {
+        if (seq !== loadSeq) return;
+        dynamicBySource.set(source, commandsFor(value));
+        dynamic = [...dynamicBySource.values()].flat();
+      },
+      (reason: unknown) => {
+        if (seq !== loadSeq) return;
+        const message = `${source}: ${String(reason)}`;
+        loadError = loadError === '' ? message : `${loadError} · ${message}`;
+      }
+    );
+  }
+
+  function loadDynamic(remainingRefreshes = 2): void {
     const seq = ++loadSeq;
     loadError = '';
-    // Per-source settle: a role-forbidden collection (e.g. policies for a viewer)
-    // must not blank the whole index — but it isn't swallowed either: every failed
-    // source is NAMED in a visible error row under the results.
-    const sources = [
-      ['flows', listFlows('')],
-      ['agents', listAgents('')],
-      ['cases', listCases('', {})],
-      ['policies', listPolicies('')],
-      ['models', listModels('')],
-      ['entities', listEntities('')]
-    ] as const;
-    const settled = await Promise.allSettled(sources.map(([, p]) => p));
-    if (seq !== loadSeq) return;
-    const failures = settled
-      .map((r, i) => (r.status === 'rejected' ? `${sources[i][0]}: ${r.reason}` : ''))
-      .filter(Boolean);
-    loadError = failures.join(' · ');
-    const val = <T,>(i: number): T =>
-      settled[i].status === 'fulfilled'
-        ? ((settled[i] as PromiseFulfilledResult<T>).value as T)
-        : ([] as T);
-    const flows = val<Awaited<ReturnType<typeof listFlows>>>(0);
-    const agents = val<Awaited<ReturnType<typeof listAgents>>>(1);
-    const cases = val<Awaited<ReturnType<typeof listCases>>>(2);
-    const policies = val<Awaited<ReturnType<typeof listPolicies>>>(3);
-    const models = val<Awaited<ReturnType<typeof listModels>>>(4);
-    const entities = val<Awaited<ReturnType<typeof listEntities>>>(5);
-    if (seq !== loadSeq) return; // a newer open superseded this load — drop the stale result
-    dynamic = [
-      ...flows.map(
+    appendDynamic(seq, 'flows', listFlows(''), (flows) =>
+      flows.map(
         (f): Cmd => ({
           id: `flow:${f.flow_id}`,
           section: 'Flows',
@@ -183,8 +176,10 @@
           keywords: `flow ${f.name} ${f.slug}`,
           run: () => goto(appHref(`/engine/${f.flow_id}`))
         })
-      ),
-      ...agents.map(
+      )
+    );
+    appendDynamic(seq, 'agents', listAgents(''), (agents) =>
+      agents.map(
         (a): Cmd => ({
           id: `agent:${a.name}`,
           section: 'Agents',
@@ -193,8 +188,10 @@
           keywords: `agent ${a.name}`,
           run: () => goto(appHref(`/agents/${encodeURIComponent(a.name)}`))
         })
-      ),
-      ...cases.map(
+      )
+    );
+    appendDynamic(seq, 'cases', listCases('', {}), (cases) =>
+      cases.map(
         (c): Cmd => ({
           id: `case:${c.case_id}`,
           section: 'Cases',
@@ -204,8 +201,10 @@
           keywords: `case ${c.company_name} ${c.status}`,
           run: () => goto(appHref(`/cases/${c.case_id}`))
         })
-      ),
-      ...policies.map(
+      )
+    );
+    appendDynamic(seq, 'policies', listPolicies(''), (policies) =>
+      policies.map(
         (p): Cmd => ({
           id: `policy:${p.policy_id}`,
           section: 'Policies',
@@ -215,8 +214,10 @@
           keywords: `policy ${p.name} ${p.flow_slug}`,
           run: () => goto(appHref('/policies'))
         })
-      ),
-      ...models.map(
+      )
+    );
+    appendDynamic(seq, 'models', listModels(''), (models) =>
+      models.map(
         (m): Cmd => ({
           id: `model:${m.name}`,
           section: 'Models',
@@ -226,8 +227,10 @@
           keywords: `model ${m.name} ${m.kind}`,
           run: () => goto(appHref('/models'))
         })
-      ),
-      ...entities.map(
+      )
+    );
+    appendDynamic(seq, 'entities', listEntities(''), (entities) =>
+      entities.map(
         (en): Cmd => ({
           id: `entity:${en.entity_type}/${en.entity_id}`,
           section: 'Context',
@@ -242,7 +245,12 @@
             )
         })
       )
-    ];
+    );
+    if (remainingRefreshes > 0) {
+      window.setTimeout(() => {
+        if (seq === loadSeq && $paletteOpen) loadDynamic(remainingRefreshes - 1);
+      }, 750);
+    }
   }
 
   // Reset query/selection each time the palette opens, focus the input, and
@@ -251,6 +259,8 @@
     if ($paletteOpen) {
       query = '';
       selected = 0;
+      dynamicBySource.clear();
+      dynamic = [];
       restoreFocusEl = document.activeElement as HTMLElement | null;
       queueMicrotask(() => inputEl?.focus());
       if ($user) void loadDynamic();
@@ -258,6 +268,7 @@
       // Drop the stale index so a reopen never flashes old/other-tenant entities,
       // and bump the token so an in-flight loadDynamic can't repopulate it.
       loadSeq++;
+      dynamicBySource.clear();
       dynamic = [];
       restoreFocusEl?.focus();
       restoreFocusEl = null;
