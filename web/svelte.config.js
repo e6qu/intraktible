@@ -17,6 +17,11 @@ export default {
     // under a sub-path for the public GitHub Pages demo (build:demo sets
     // /intraktible/demo — project Pages serve under /<repo>/). Internal links read
     // this via $app/paths `base`, so the same source is portable.
-    paths: { base: process.env.BASE_PATH || '' }
+    paths: { base: process.env.BASE_PATH || '' },
+    // Never expose the shell's entire environment through SvelteKit's generated
+    // $env modules. Besides protecting incidental process coordinates, this
+    // keeps a valid-but-keyword environment variable from generating invalid
+    // TypeScript declarations.
+    env: { publicPrefix: 'PUBLIC_', privatePrefix: 'INTRAKTIBLE_' }
   }
 };
