@@ -58,13 +58,15 @@ var internalRoutes = map[string]string{
 
 	// Browser SSO redirect / assertion flows (OIDC + SAML): user-agent redirects and
 	// IdP callbacks, not JSON API calls an integrator makes with an API key.
-	"GET /v1/auth/oidc/providers":           "browser OIDC discovery for the login page",
-	"GET /v1/auth/oidc/{provider}/login":    "browser OIDC redirect flow",
-	"GET /v1/auth/oidc/{provider}/callback": "browser OIDC redirect callback",
-	"GET /v1/auth/saml/providers":           "browser SAML discovery for the login page",
-	"GET /v1/auth/saml/{provider}/login":    "browser SAML redirect flow",
-	"GET /v1/auth/saml/{provider}/metadata": "SAML SP metadata document consumed by the IdP",
-	"POST /v1/auth/saml/{provider}/acs":     "browser SAML assertion consumer (IdP POST)",
+	"GET /v1/auth/oidc/providers":                      "browser OIDC discovery for the login page",
+	"GET /v1/auth/oidc/{provider}/login":               "browser OIDC redirect flow",
+	"GET /v1/auth/oidc/{provider}/callback":            "browser OIDC redirect callback",
+	"POST /v1/auth/oidc/{provider}/backchannel-logout": "OpenID Connect Back-Channel Logout endpoint consumed by the identity provider",
+	"GET /v1/auth/signed-out":                          "browser OpenID Connect RP-Initiated Logout landing",
+	"GET /v1/auth/saml/providers":                      "browser SAML discovery for the login page",
+	"GET /v1/auth/saml/{provider}/login":               "browser SAML redirect flow",
+	"GET /v1/auth/saml/{provider}/metadata":            "SAML SP metadata document consumed by the IdP",
+	"POST /v1/auth/saml/{provider}/acs":                "browser SAML assertion consumer (IdP POST)",
 
 	// Infra / scaffolding surfaces, not part of the integration contract.
 	"GET /version":        "build-metadata probe, like /healthz",

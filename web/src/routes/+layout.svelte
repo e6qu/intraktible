@@ -4,6 +4,7 @@
 <script lang="ts">
   import '../app.css';
   import { onMount } from 'svelte';
+  import { get } from 'svelte/store';
   import { page } from '$app/stores';
   import { afterNavigate, goto } from '$app/navigation';
   import Icon from '$lib/Icon.svelte';
@@ -17,6 +18,7 @@
     navFor
   } from '$lib/persona';
   import { user, refreshUser, signOut } from '$lib/session';
+  import { listSsoProviders } from '$lib/api';
   import { appHref } from '$lib/paths';
   import { openPalette } from '$lib/palette';
   import { openGuide } from '$lib/guide';
@@ -36,13 +38,45 @@
   let { children } = $props();
   let theme = $state<'light' | 'dark'>('light');
   let persona = $state(initPersona());
+  let authReady = $state(false);
+  let authError = $state('');
+
+  async function initializeAuthentication(): Promise<void> {
+    authReady = false;
+    authError = '';
+    try {
+      await refreshUser();
+    } catch (error) {
+      authError = error instanceof Error ? error.message : String(error);
+      authReady = true;
+      return;
+    }
+    if (get(user) || isLogin) {
+      authReady = true;
+      return;
+    }
+    let providers: string[];
+    try {
+      providers = await listSsoProviders();
+    } catch (error) {
+      authError = error instanceof Error ? error.message : String(error);
+      authReady = true;
+      return;
+    }
+    if (providers.includes('shauth')) {
+      const returnTo = `${window.location.pathname}${window.location.search}`;
+      const query = new URLSearchParams({ return_to: returnTo });
+      window.location.assign(`${appHref('/v1/auth/oidc/shauth/login')}?${query}`);
+      return;
+    }
+    await goto(appHref('/login'));
+    authReady = true;
+  }
 
   onMount(() => {
     theme = initTheme();
     initPersona();
-    // A transient /v1/me failure no longer clears the session (see session.ts); surface
-    // it rather than dropping it, and don't let it reject unhandled.
-    refreshUser().catch((e) => toast.error(e instanceof Error ? e.message : String(e)));
+    void initializeAuthentication();
     const unsubTheme = themeStore.subscribe((t) => (theme = t));
     const unsubPersona = personaStore.subscribe((p) => (persona = p));
     return () => {
@@ -76,6 +110,7 @@
       toast.success('Signed out');
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
+      return;
     }
     await goto(appHref('/login'));
   }
@@ -178,7 +213,7 @@
     <span class="mark"><Icon name="logo" size={20} /></span>
     <span class="wordmark">intraktible</span>
   </a>
-  {#if !isLogin}
+  {#if !isLogin && authReady && !authError && $user}
     <nav aria-label="Primary">
       {#each nav as item (item.href)}
         <a
@@ -308,7 +343,17 @@
 </header>
 
 <div id="main" class="page" tabindex="-1">
-  {@render children()}
+  {#if authReady && !authError}
+    {@render children()}
+  {:else if authReady}
+    <section class="auth-failure" role="alert" aria-labelledby="auth-failure-title">
+      <h1 id="auth-failure-title">Unable to verify your session</h1>
+      <p>{authError}</p>
+      <button type="button" onclick={() => void initializeAuthentication()}>Try again</button>
+    </section>
+  {:else}
+    <div class="auth-loading" role="status" aria-live="polite">Checking your session…</div>
+  {/if}
 </div>
 
 <BuildInfo />
@@ -318,6 +363,36 @@
 <Toasts />
 
 <style>
+  .auth-loading {
+    min-height: 60vh;
+    display: grid;
+    place-items: center;
+    color: var(--fg-subtle);
+  }
+
+  .auth-failure {
+    width: min(34rem, calc(100% - 2rem));
+    margin: 4rem auto;
+    padding: 1.5rem;
+    border: 1px solid var(--danger);
+    border-radius: var(--radius);
+    background: var(--surface);
+  }
+
+  .auth-failure h1 {
+    margin-top: 0;
+  }
+
+  .auth-failure button {
+    padding: 0.55rem 0.8rem;
+    border: 0;
+    border-radius: var(--radius);
+    background: var(--accent);
+    color: white;
+    font: inherit;
+    font-weight: 650;
+  }
+
   header {
     position: sticky;
     top: 0;

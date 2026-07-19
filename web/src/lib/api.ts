@@ -3682,8 +3682,8 @@ export async function login(
   return (await res.json()) as Identity;
 }
 
-// logout revokes the current application session and returns the configured
-// identity-provider front-channel logout URL for an SSO session, if one exists.
+// logout revokes the current application session and returns the server-built
+// RP-Initiated Logout URL for an SSO session, if the provider advertises one.
 export async function logout(fetcher: typeof fetch = recordingFetch): Promise<string> {
   const res = await fetcher('/v1/logout', { method: 'POST' });
   if (!res.ok) {
@@ -3697,32 +3697,39 @@ export async function logout(fetcher: typeof fetch = recordingFetch): Promise<st
 }
 
 // listSsoProviders returns the configured OIDC providers (e.g. ["google","aws"])
-// so the login page can offer a "Sign in with …" button for each. Returns an
-// empty list when SSO is not configured or the endpoint is unavailable.
+// so the login page can offer a "Sign in with …" button for each. A successful
+// empty list means OIDC is not configured; an unavailable or malformed discovery
+// response is an error, because treating it as empty would expose a different
+// sign-in method during an identity-service outage.
 export async function listSsoProviders(fetcher: typeof fetch = recordingFetch): Promise<string[]> {
-  try {
-    const res = await fetcher('/v1/auth/oidc/providers');
-    if (!res.ok) {
-      return [];
-    }
-    return ((await res.json()) as { providers?: string[] }).providers ?? [];
-  } catch {
-    return [];
+  const res = await fetcher('/v1/auth/oidc/providers');
+  if (!res.ok) {
+    return errorOrStatus(res, 'GET /v1/auth/oidc/providers');
   }
+  return providerNames(await res.json(), 'GET /v1/auth/oidc/providers');
 }
 
 // listSamlProviders returns the configured SAML providers, mirroring
-// listSsoProviders. Empty when SAML is not configured.
+// listSsoProviders. A successful empty list means SAML is not configured.
 export async function listSamlProviders(fetcher: typeof fetch = recordingFetch): Promise<string[]> {
-  try {
-    const res = await fetcher('/v1/auth/saml/providers');
-    if (!res.ok) {
-      return [];
-    }
-    return ((await res.json()) as { providers?: string[] }).providers ?? [];
-  } catch {
-    return [];
+  const res = await fetcher('/v1/auth/saml/providers');
+  if (!res.ok) {
+    return errorOrStatus(res, 'GET /v1/auth/saml/providers');
   }
+  return providerNames(await res.json(), 'GET /v1/auth/saml/providers');
+}
+
+function providerNames(body: unknown, endpoint: string): string[] {
+  if (
+    typeof body !== 'object' ||
+    body === null ||
+    !('providers' in body) ||
+    !Array.isArray(body.providers) ||
+    !body.providers.every((provider) => typeof provider === 'string' && provider.length > 0)
+  ) {
+    throw new Error(`${endpoint} returned an invalid provider list`);
+  }
+  return body.providers;
 }
 
 // currentUser returns the signed-in identity from the session cookie, or null

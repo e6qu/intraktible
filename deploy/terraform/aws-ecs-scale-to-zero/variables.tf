@@ -202,8 +202,8 @@ variable "oidc_redirect_url" {
   type    = string
   default = ""
 }
-variable "oidc_logout_url" {
-  description = "Optional front-channel OpenID Connect provider logout endpoint. It is returned only for sessions created through this provider."
+variable "oidc_post_logout_redirect_url" {
+  description = "Exact Intraktible-origin signed-out landing registered with the OpenID Connect provider. Use https://<domain>/v1/auth/signed-out."
   type        = string
   default     = ""
 }

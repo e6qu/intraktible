@@ -97,7 +97,8 @@ func TestLogoutReturnsSessionBoundOIDCFrontChannelURL(t *testing.T) {
 	sessions := auth.NewSessions()
 	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "dev"}
 	const providerLogoutURL = "https://auth.example.test/oauth2/sessions/logout"
-	token, err := sessions.IssueSSO(id, auth.RoleViewer, auth.ScopeAll, providerLogoutURL)
+	sso := auth.SSOSession{Protocol: "oidc", Provider: "shauth", Issuer: "https://auth.example.test", Subject: "subject", SID: "sid", IDToken: "signed.id.token", ClientID: "intraktible", EndSessionEndpoint: providerLogoutURL, PostLogoutRedirectURL: "https://intraktible.example.test/v1/auth/signed-out"}
+	token, err := sessions.IssueSSO(id, auth.RoleViewer, auth.ScopeAll, sso)
 	if err != nil {
 		t.Fatalf("issue SSO session: %v", err)
 	}
@@ -115,11 +116,66 @@ func TestLogoutReturnsSessionBoundOIDCFrontChannelURL(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&logout); err != nil {
 		t.Fatalf("decode logout response: %v", err)
 	}
-	if logout.URL != providerLogoutURL {
-		t.Fatalf("logout URL = %q, want %q", logout.URL, providerLogoutURL)
+	wantURL := providerLogoutURL + "?id_token_hint=signed.id.token&post_logout_redirect_uri=https%3A%2F%2Fintraktible.example.test%2Fv1%2Fauth%2Fsigned-out"
+	if logout.URL != wantURL {
+		t.Fatalf("logout URL = %q, want %q", logout.URL, wantURL)
 	}
 	if _, _, _, ok := sessions.Resolve(token); ok {
 		t.Fatal("SSO session should be revoked after logout")
+	}
+}
+
+func TestLogoutRejectsCrossOriginWithoutRevokingSession(t *testing.T) {
+	sessions := auth.NewSessions()
+	token, err := sessions.Issue(identity.Identity{Org: "demo", Workspace: "main", Actor: "dev"}, auth.RoleViewer, auth.ScopeAll)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "https://intraktible.example.test/v1/logout", http.NoBody)
+	req.Header.Set("Origin", "https://attacker.example")
+	req.AddCookie(&http.Cookie{Name: "session", Value: token})
+	rec := httptest.NewRecorder()
+	httpx.LogoutHandler(sessions)(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("cross-origin logout -> %d, want 403", rec.Code)
+	}
+	if _, _, _, ok := sessions.Resolve(token); !ok {
+		t.Fatal("rejected cross-origin logout revoked the session")
+	}
+}
+
+type failingMetadataSessions struct{ *auth.Sessions }
+
+func (s *failingMetadataSessions) SSOSession(string) (auth.SSOSession, bool, error) {
+	return auth.SSOSession{}, false, errors.New("session store unavailable")
+}
+
+func TestLogoutFailsWithoutRevokingWhenSSOMetadataCannotBeRead(t *testing.T) {
+	base := auth.NewSessions()
+	token, err := base.IssueSSO(
+		identity.Identity{Org: "demo", Workspace: "main", Actor: "dev"},
+		auth.RoleViewer,
+		auth.ScopeAll,
+		auth.SSOSession{Protocol: "oidc", EndSessionEndpoint: "https://auth.example.test/logout"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessions := &failingMetadataSessions{Sessions: base}
+	req := httptest.NewRequest(http.MethodPost, "/v1/logout", http.NoBody)
+	req.AddCookie(&http.Cookie{Name: "session", Value: token})
+	rec := httptest.NewRecorder()
+	httpx.LogoutHandler(sessions)(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("logout with unavailable SSO metadata -> %d, want 503", rec.Code)
+	}
+	if _, _, _, ok := base.Resolve(token); !ok {
+		t.Fatal("failed logout revoked the still-active local session")
+	}
+	for _, cookie := range rec.Result().Cookies() {
+		if cookie.Name == "session" && cookie.MaxAge < 0 {
+			t.Fatal("failed logout cleared the browser session cookie")
+		}
 	}
 }
 

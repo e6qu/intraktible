@@ -12,6 +12,9 @@
   let apiKey = $state(import.meta.env.VITE_DEMO ? 'dev-sandbox-key' : '');
   let error = $state('');
   let busy = $state(false);
+  let loadingProviders = $state(true);
+  let providerError = $state('');
+  let delegatingToShauth = $state(false);
   // Each entry is a provider to render a "Sign in with …" button for, with the
   // login path for its protocol.
   let ssoButtons = $state<{ label: string; href: string }[]>([]);
@@ -27,6 +30,7 @@
     try {
       const [oidc, saml] = await Promise.all([listSsoProviders(), listSamlProviders()]);
       if (oidc.includes('shauth')) {
+        delegatingToShauth = true;
         window.location.assign(appHref('/v1/auth/oidc/shauth/login'));
         return;
       }
@@ -37,9 +41,10 @@
           href: `/v1/auth/saml/${p}/login`
         }))
       ];
-    } catch {
-      // SSO is optional; a discovery failure must not break the password form.
-      ssoButtons = [];
+    } catch (cause) {
+      providerError = cause instanceof Error ? cause.message : String(cause);
+    } finally {
+      loadingProviders = false;
     }
   });
 
@@ -60,20 +65,32 @@
 
 <main>
   <h1>Sign in</h1>
-  <p>Exchange an API key for a session — then the UI authenticates with a cookie.</p>
-  <form
-    class="row"
-    onsubmit={(e) => {
-      e.preventDefault();
-      submit();
-    }}
-  >
-    <input bind:value={apiKey} type="password" placeholder="API key" aria-label="API key" />
-    <button type="submit" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</button>
-  </form>
-  {#if error}<p class="err" data-testid="login-error">{error}</p>{/if}
+  {#if loadingProviders || delegatingToShauth}
+    <p role="status" aria-live="polite">
+      {delegatingToShauth ? 'Continuing to Shauth…' : 'Checking available sign-in methods…'}
+    </p>
+  {:else if providerError}
+    <section class="provider-error" role="alert" aria-labelledby="provider-error-title">
+      <h2 id="provider-error-title">Sign-in methods are unavailable</h2>
+      <p>{providerError}</p>
+      <button type="button" onclick={() => window.location.reload()}>Try again</button>
+    </section>
+  {:else}
+    <p>Exchange an API key for a session — then the UI authenticates with a cookie.</p>
+    <form
+      class="row"
+      onsubmit={(e) => {
+        e.preventDefault();
+        submit();
+      }}
+    >
+      <input bind:value={apiKey} type="password" placeholder="API key" aria-label="API key" />
+      <button type="submit" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</button>
+    </form>
+    {#if error}<p class="err" data-testid="login-error">{error}</p>{/if}
+  {/if}
 
-  {#if ssoButtons.length > 0}
+  {#if !loadingProviders && !delegatingToShauth && ssoButtons.length > 0}
     <div class="sso" data-testid="sso-providers">
       <div class="divider"><span>or</span></div>
       {#each ssoButtons as b (b.href)}
@@ -103,6 +120,16 @@
   }
   .err {
     color: var(--danger);
+  }
+  .provider-error {
+    padding: 1rem;
+    border: 1px solid var(--danger);
+    border-radius: var(--radius);
+    background: var(--surface);
+  }
+  .provider-error h2 {
+    margin-top: 0;
+    font-size: 1.1rem;
   }
   .sso {
     margin-top: 1.25rem;

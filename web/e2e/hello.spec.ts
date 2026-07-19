@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { test, expect } from '@playwright/test';
 
+test.beforeEach(async ({ page }) => {
+  await page.context().request.post('/v1/login', { data: { api_key: 'dev-sandbox-key' } });
+});
+
 // The Phase-0 backbone (command → event log → projection → API → UI) lives on the
 // /hello slice, which is dev scaffolding — not a product surface. It is kept only
 // for the interactive wasm demo and is compiled out of the product build, where it

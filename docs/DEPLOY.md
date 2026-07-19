@@ -147,14 +147,20 @@ The module can also reuse a shared environment by supplying `existing_vpc_id`,
 does not create another VPC, fck-nat instance, or Amazon Elastic Container
 Service cluster. Configure Shauth as the generic OpenID Connect provider with
 `oidc_provider_name`, `oidc_issuer`, `oidc_client_id`,
-`oidc_client_secret`, `oidc_redirect_url`, `oidc_org`, and `oidc_workspace`;
+`oidc_client_secret`, `oidc_redirect_url`,
+`oidc_post_logout_redirect_url`, `oidc_org`, and `oidc_workspace`;
 the client secret is stored in AWS Secrets Manager and injected only into the
 task. The organization and workspace bind every authenticated identity to one
-explicit Intraktible tenancy. Set the matching `oidc_logout_url` to the
-provider's front-channel logout endpoint when it supports RP-initiated logout.
-Intraktible stores that trusted endpoint with the SSO session and redirects the
-browser there only after revoking its local session; it never accepts a logout
-redirect URL from the browser.
+explicit Intraktible tenancy. Register the callback
+`https://<domain>/v1/auth/oidc/<provider>/callback`, the app-origin post-logout
+landing `https://<domain>/v1/auth/signed-out`, and the Back-Channel Logout URI
+`https://<domain>/v1/auth/oidc/<provider>/backchannel-logout`. Intraktible
+discovers the provider's RP-Initiated Logout endpoint and stores the verified
+issuer, subject, `sid`, and ID token with the server-side session. Sign-out
+revokes the local session before navigating to the discovered endpoint with an
+ID-token hint and the exact registered landing URI. Signed OpenID Connect
+Back-Channel Logout tokens revoke the matching `sid`, or all sessions for the
+subject when `sid` is absent.
 
 > **Future direction — instant wasm shell, then hydrate onto the live backend.** Because
 > the full backend already runs in the browser as wasm, the S3 site is an instantly

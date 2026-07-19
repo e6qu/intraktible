@@ -499,8 +499,10 @@ feature.
 
 ## 9. Scope boundaries (current)
 The original MVP non-goals have mostly been overtaken — **SSO (OIDC + SAML) and SCIM shipped** in the
-enterprise track. OIDC sessions retain an optional trusted provider front-channel logout endpoint, so
-the browser completes identity-provider logout only after Intraktible has revoked its own session. Still
+enterprise track. OIDC sessions retain the verified issuer, subject, session identifier, and raw ID
+token server-side. Intraktible completes OpenID Connect RP-Initiated Logout through the provider's
+discovered end-session endpoint and accepts signed Back-Channel Logout tokens to revoke one provider
+session or every Intraktible session for a subject. Still
 **out of scope** (and why): multi-tenant billing (not a product
 goal); exact API/UX parity with any commercial product (we are the open-source, self-hostable analog,
 not a clone). Formerly a non-goal, now **moved into the §8b forward roadmap**: real data-connector

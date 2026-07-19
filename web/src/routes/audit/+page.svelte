@@ -289,9 +289,7 @@
   }
   onMount(loadKeys);
 
-  // The URL drives the view: afterNavigate fires on mount, on Apply (goto), and on
-  // back/forward — hydrate the inputs from the query string and fetch.
-  afterNavigate(() => {
+  function hydrateFromURL(): void {
     const sp = get(page).url.searchParams;
     fStream = sp.get('stream') ?? '';
     fActor = sp.get('actor') ?? '';
@@ -304,6 +302,11 @@
     // CSV export tracks the applied filter (rows on screen) but not the page window.
     applied = { ...filter(), limit: undefined, offset: undefined };
     void load();
+  }
+
+  onMount(hydrateFromURL);
+  afterNavigate((navigation) => {
+    if (navigation.type !== 'enter') hydrateFromURL();
   });
 
   // Re-gate when the demo user switches mid-page (DemoBanner changes $user without
