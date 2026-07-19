@@ -365,7 +365,7 @@ test('journey: export a flow and re-import it as a new flow', async ({ page }) =
   await page.getByTestId('import-flow').click();
   await page.getByLabel('flow document').fill(rewritten);
   await page.getByTestId('import-submit').click();
-  await expect(page.getByText(new RegExp(`Created ${newSlug}`))).toBeVisible();
+  await expect(page.getByText(`Created ${newSlug}`)).toBeVisible();
   await gotoReady(page, 'engine');
   await expect(page.getByRole('cell', { name: newSlug })).toBeVisible();
 });

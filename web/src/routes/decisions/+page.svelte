@@ -1,6 +1,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   import { goto, afterNavigate } from '$app/navigation';
+  import { onMount } from 'svelte';
   import { page } from '$app/stores';
   import { get } from 'svelte/store';
   import Icon from '$lib/Icon.svelte';
@@ -202,10 +203,7 @@
   const emptyHint = $derived(
     total === 0 && noFilters ? DEFAULT_EMPTY_HINT : (lens.empty?.hint ?? NO_MATCH_HINT)
   );
-  // The URL drives the view: afterNavigate fires on mount, on Apply (goto), and on
-  // back/forward — hydrate the inputs from the query string, falling back to the
-  // persona lens defaults when a given filter is absent, then fetch.
-  afterNavigate(() => {
+  function hydrateFromURL(): void {
     const sp = get(page).url.searchParams;
     // The persona lens only seeds a pristine URL (no filter params). Once any filter
     // is in the URL, an absent param means "explicitly cleared", not "use the default".
@@ -224,6 +222,13 @@
       q: fQuery.trim() || undefined
     };
     void load();
+  }
+
+  // onMount covers layouts that deliberately hold protected content until session
+  // verification finishes; later URL changes are driven by afterNavigate.
+  onMount(hydrateFromURL);
+  afterNavigate((navigation) => {
+    if (navigation.type !== 'enter') hydrateFromURL();
   });
 </script>
 

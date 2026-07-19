@@ -401,8 +401,10 @@
       for (let i = 0; i < path.length; i++) {
         if (flowId !== requested) return;
         const m = new Map<string, 'head' | 'trail'>();
-        for (let j = 0; j < i; j++) m.set(path[j], 'trail');
-        m.set(path[i], 'head');
+        for (const nodeId of path.slice(0, i)) m.set(nodeId, 'trail');
+        const head = path.at(i);
+        if (head === undefined) throw new Error('replay path changed during playback');
+        m.set(head, 'head');
         replayState = m;
         syncCanvas();
         await sleep(480);
@@ -1068,7 +1070,7 @@
     syncCanvas();
   }
   const selectedEdge = $derived(
-    selectedEdgeIdx !== null ? (editEdges[selectedEdgeIdx] ?? null) : null
+    selectedEdgeIdx !== null ? (editEdges.at(selectedEdgeIdx) ?? null) : null
   );
   function updateSelectedEdgeBranch(branch: string) {
     const i = selectedEdgeIdx;

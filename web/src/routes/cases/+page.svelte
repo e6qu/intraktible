@@ -1,6 +1,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   import { goto, afterNavigate } from '$app/navigation';
+  import { onMount } from 'svelte';
   import { page } from '$app/stores';
   import { get } from 'svelte/store';
   import { toast } from '$lib/toast';
@@ -255,15 +256,17 @@
       noScroll: true
     });
   }
-  // The URL drives the view: afterNavigate fires on mount, on filter change (goto),
-  // and on back/forward — hydrate the status from the query string, falling back to
-  // the persona lens default only when the URL is pristine, then fetch.
-  afterNavigate(() => {
+  function hydrateFromURL(): void {
     const sp = get(page).url.searchParams;
     statusFilter = sp.has('status')
       ? ((sp.get('status') as CaseStatus | '') ?? '')
       : (casesLens.status ?? '');
     void load();
+  }
+
+  onMount(hydrateFromURL);
+  afterNavigate((navigation) => {
+    if (navigation.type !== 'enter') hydrateFromURL();
   });
 </script>
 

@@ -2,6 +2,10 @@
 // Keyboard shortcuts: the ? overlay, theme toggle (t), and g-then-key navigation.
 import { test, expect } from '@playwright/test';
 
+test.beforeEach(async ({ page }) => {
+  await page.context().request.post('/v1/login', { data: { api_key: 'dev-sandbox-key' } });
+});
+
 // Wait for the layout to hydrate (its window keydown listener attaches on mount)
 // before pressing keys. The header ⌘K trigger is the hydration signal.
 async function ready(page: import('@playwright/test').Page) {

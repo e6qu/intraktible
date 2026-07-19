@@ -171,15 +171,16 @@ type Sessions struct {
 	ttl      time.Duration
 	now      func() time.Time
 	validate SessionValidator
+	logout   map[string]time.Time
 }
 
 type session struct {
-	id        identity.Identity
-	role      Role
-	scope     Scope
-	expires   time.Time
-	sso       bool
-	logoutURL string
+	id      identity.Identity
+	role    Role
+	scope   Scope
+	expires time.Time
+	sso     bool
+	ssoData SSOSession
 }
 
 // NewSessions returns an empty session store using DefaultSessionTTL.
@@ -188,6 +189,7 @@ func NewSessions() *Sessions {
 		sessions: make(map[string]session),
 		ttl:      DefaultSessionTTL,
 		now:      time.Now,
+		logout:   make(map[string]time.Time),
 	}
 }
 
@@ -199,33 +201,63 @@ func (s *Sessions) TTL() time.Duration { return s.ttl }
 // to every environment (see SessionStore). The in-memory store never fails; the
 // error is part of the SessionStore contract.
 func (s *Sessions) Issue(id identity.Identity, role Role, scope Scope) (string, error) {
-	return s.issue(id, role, scope, false, "")
+	return s.issue(id, role, scope, false, SSOSession{})
 }
 
 // IssueSSO is Issue for an SSO session, which Resolve revalidates each time.
-func (s *Sessions) IssueSSO(id identity.Identity, role Role, scope Scope, logoutURL string) (string, error) {
-	return s.issue(id, role, scope, true, logoutURL)
+func (s *Sessions) IssueSSO(id identity.Identity, role Role, scope Scope, sso SSOSession) (string, error) {
+	return s.issue(id, role, scope, true, sso)
 }
 
-func (s *Sessions) issue(id identity.Identity, role Role, scope Scope, sso bool, logoutURL string) (string, error) {
+func (s *Sessions) issue(id identity.Identity, role Role, scope Scope, sso bool, ssoData SSOSession) (string, error) {
 	tok := newToken()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.sessions[tok] = session{id: id, role: role, scope: scope, expires: s.now().Add(s.ttl), sso: sso, logoutURL: logoutURL}
+	s.sessions[tok] = session{id: id, role: role, scope: scope, expires: s.now().Add(s.ttl), sso: sso, ssoData: ssoData}
 	return tok, nil
 }
 
-// LogoutURL returns the front-channel identity-provider logout URL bound to a
-// current SSO session. The URL originated in trusted server configuration, never
-// in a browser request, so returning it cannot create an open redirect.
-func (s *Sessions) LogoutURL(tok string) string {
+// SSOSession returns the identity-provider state bound to a current SSO session.
+func (s *Sessions) SSOSession(tok string) (SSOSession, bool, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	sess, ok := s.sessions[tok]
 	if !ok || s.now().After(sess.expires) {
-		return ""
+		return SSOSession{}, false, nil
 	}
-	return sess.logoutURL
+	return sess.ssoData, sess.sso, nil
+}
+
+// RevokeOIDCSessions removes the session identified by sid, or every session
+// for subject when sid is absent, after a verified Back-Channel Logout request.
+func (s *Sessions) RevokeOIDCSessions(provider, issuer, clientID, jti, sid, subject string, replayExpires time.Time) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := s.now()
+	for key, expires := range s.logout {
+		if !expires.After(now) {
+			delete(s.logout, key)
+		}
+	}
+	key := oidcLogoutTokenKey(provider, issuer, clientID, jti)
+	if _, replayed := s.logout[key]; replayed {
+		return false, nil
+	}
+	for token, sess := range s.sessions {
+		data := sess.ssoData
+		if !sess.sso || data.Protocol != "oidc" || data.Provider != provider || data.Issuer != issuer {
+			continue
+		}
+		matches := sid != "" && data.SID == sid
+		if sid == "" {
+			matches = subject != "" && data.Subject == subject
+		}
+		if matches {
+			delete(s.sessions, token)
+		}
+	}
+	s.logout[key] = replayExpires
+	return true, nil
 }
 
 // SetValidator installs the per-Resolve SSO revalidation predicate.
@@ -252,10 +284,11 @@ func (s *Sessions) Resolve(tok string) (identity.Identity, Role, Scope, bool) {
 }
 
 // Revoke invalidates a session token (logout); unknown tokens are a no-op.
-func (s *Sessions) Revoke(tok string) {
+func (s *Sessions) Revoke(tok string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.sessions, tok)
+	return nil
 }
 
 func hash(s string) string {

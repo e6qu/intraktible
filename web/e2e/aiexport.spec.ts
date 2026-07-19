@@ -13,7 +13,11 @@ test.beforeEach(async ({ page }) => {
 });
 
 test('Copy for AI in the page guide exports /decisions with its API calls', async ({ page }) => {
+  const decisions = page.waitForResponse(
+    (response) => new URL(response.url()).pathname === '/v1/decisions'
+  );
   await page.goto('/decisions');
+  await decisions;
   await expect(page.getByRole('heading', { name: 'Decisions' })).toBeVisible();
 
   await page.getByTestId('guide-trigger').click();
@@ -31,7 +35,11 @@ test('Copy for AI in the page guide exports /decisions with its API calls', asyn
 });
 
 test('the header copy-for-AI button exports the page in one click', async ({ page }) => {
+  const decisions = page.waitForResponse(
+    (response) => new URL(response.url()).pathname === '/v1/decisions'
+  );
   await page.goto('/decisions');
+  await decisions;
   await expect(page.getByRole('heading', { name: 'Decisions' })).toBeVisible();
 
   await page.getByTestId('ai-copy-trigger').click();

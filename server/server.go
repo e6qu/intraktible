@@ -551,22 +551,22 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 	if err != nil {
 		return nil, err
 	}
+	oh := httpx.NewOIDCHandler(sessions, authers...)
+	oh.SetGate(ssoGate)
+	oh.SetRoleAugmenter(ssoAugment)
+	oh.Routes(root)
 	if len(authers) > 0 {
-		oh := httpx.NewOIDCHandler(sessions, authers...)
-		oh.SetGate(ssoGate)
-		oh.SetRoleAugmenter(ssoAugment)
-		oh.Routes(root)
 		slog.Info("sso: OIDC enabled", "providers", oidcNames(authers))
 	}
 	samlers, err := samlAuthenticators()
 	if err != nil {
 		return nil, err
 	}
+	sh := httpx.NewSAMLHandler(sessions, samlers...)
+	sh.SetGate(ssoGate)
+	sh.SetRoleAugmenter(ssoAugment)
+	sh.Routes(root)
 	if len(samlers) > 0 {
-		sh := httpx.NewSAMLHandler(sessions, samlers...)
-		sh.SetGate(ssoGate)
-		sh.SetRoleAugmenter(ssoAugment)
-		sh.Routes(root)
 		slog.Info("sso: SAML enabled", "providers", samlNames(samlers))
 	}
 	root.Handle("/v1/", httpx.Chain(api, httpx.Authenticate(keyring, sessions), httpx.AuthorizeRoutes(api)))

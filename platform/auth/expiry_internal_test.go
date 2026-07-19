@@ -31,7 +31,7 @@ func TestSessionExpiryAndRevoke(t *testing.T) {
 	if _, _, _, ok := s.Resolve(tok2); !ok {
 		t.Fatal("a freshly issued session should resolve")
 	}
-	s.Revoke(tok2)
+	_ = s.Revoke(tok2)
 	if _, _, _, ok := s.Resolve(tok2); ok {
 		t.Fatal("a revoked session should not resolve")
 	}

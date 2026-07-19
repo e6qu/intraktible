@@ -14,8 +14,8 @@
     "format:check": "prettier --check .",
     "lint": "eslint .",
     "test:unit": "vitest run",
-    "test:e2e": "NODE_OPTIONS=\"${NODE_OPTIONS:-} --disable-warning=DEP0205\" playwright test",
-    "test:e2e:embedded": "NODE_OPTIONS=\"${NODE_OPTIONS:-} --disable-warning=DEP0205\" playwright test --config=playwright.embedded.config.ts"
+    "test:e2e": "env -u NO_COLOR NODE_OPTIONS=\"${NODE_OPTIONS:-} --disable-warning=DEP0205\" playwright test",
+    "test:e2e:embedded": "env -u NO_COLOR NODE_OPTIONS=\"${NODE_OPTIONS:-} --disable-warning=DEP0205\" playwright test --config=playwright.embedded.config.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9.18.0",

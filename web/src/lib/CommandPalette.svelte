@@ -20,6 +20,7 @@
     listEntities
   } from '$lib/api';
   import { appHref } from '$lib/paths';
+  import { toast } from '$lib/toast';
 
   type Cmd = {
     id: string;
@@ -64,6 +65,19 @@
       .map((item) => navCmd(item.href, item.label, item.icon))
   ]);
 
+  async function signOutFromPalette(): Promise<void> {
+    try {
+      const logoutURL = await signOut();
+      if (logoutURL) {
+        window.location.assign(logoutURL);
+        return;
+      }
+      await goto(appHref('/login'));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error));
+    }
+  }
+
   const commands = $derived<Cmd[]>([
     ...navCommands,
     {
@@ -101,10 +115,7 @@
           label: 'Sign out',
           icon: 'signout',
           keywords: 'sign out log out account',
-          run: () =>
-            void signOut().then((logoutURL) =>
-              logoutURL ? window.location.assign(logoutURL) : goto(appHref('/login'))
-            )
+          run: () => void signOutFromPalette()
         }
       : {
           id: 'signin',

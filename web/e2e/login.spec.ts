@@ -23,6 +23,20 @@ test('direct entry delegates an unauthenticated Shauth deployment to Shauth', as
   await signIn;
 });
 
+test('a direct protected deep link delegates to Shauth without rendering an API-key prompt', async ({
+  page
+}) => {
+  await configureShauthOnly(page);
+  const signIn = page.waitForRequest(
+    (request) => new URL(request.url()).pathname === '/v1/auth/oidc/shauth/login'
+  );
+
+  await page.goto('/engine');
+  await expect(page.getByLabel('API key')).toHaveCount(0);
+  const request = await signIn;
+  expect(new URL(request.url()).searchParams.get('return_to')).toBe('/engine');
+});
+
 test('the sign-in route delegates a Shauth deployment to Shauth', async ({ page }) => {
   await configureShauthOnly(page);
   const signIn = page.waitForRequest(
@@ -30,6 +44,7 @@ test('the sign-in route delegates a Shauth deployment to Shauth', async ({ page 
   );
 
   await page.goto('/login');
+  await expect(page.getByLabel('API key')).toHaveCount(0);
   await signIn;
 });
 
@@ -73,4 +88,59 @@ test('a bad API key surfaces an error and does not sign in', async ({ page }) =>
   await page.getByLabel('API key').fill('not-a-real-key');
   await page.getByRole('button', { name: 'Sign in' }).click();
   await expect(page.getByTestId('login-error')).toContainText('invalid api key');
+});
+
+test('provider discovery failures fail closed without exposing API-key login', async ({ page }) => {
+  await page.route('**/v1/auth/oidc/providers', (route) =>
+    route.fulfill({
+      status: 503,
+      contentType: 'application/json',
+      body: JSON.stringify({ error: 'identity service unavailable' })
+    })
+  );
+
+  await page.goto('/engine');
+  await expect(page.getByRole('heading', { name: 'Unable to verify your session' })).toBeVisible();
+  await expect(page.getByText('identity service unavailable')).toBeVisible();
+  await expect(page.getByLabel('API key')).toHaveCount(0);
+
+  await page.goto('/login');
+  await expect(
+    page.getByRole('heading', { name: 'Sign-in methods are unavailable' })
+  ).toBeVisible();
+  await expect(page.getByLabel('API key')).toHaveCount(0);
+});
+
+test('every sign-out surface retains the identity and reports server revocation failure', async ({
+  page
+}) => {
+  await page.goto('/login');
+  await page.getByLabel('API key').fill('dev-sandbox-key');
+  await page.getByRole('button', { name: 'Sign in' }).click();
+  await expect(page.getByTestId('user-identity')).toHaveText('dev');
+  await page.route('**/v1/logout', (route) =>
+    route.fulfill({
+      status: 503,
+      contentType: 'application/json',
+      body: JSON.stringify({ error: 'session store unavailable' })
+    })
+  );
+
+  await page.goto('/me');
+  await page
+    .getByLabel('Current account details')
+    .getByRole('button', { name: 'Sign out' })
+    .click();
+  await expect(page.getByRole('heading', { name: 'Signed in as dev' })).toBeVisible();
+  await expect(
+    page.getByRole('alert').filter({ hasText: 'session store unavailable' })
+  ).toBeVisible();
+
+  await page.getByTestId('persona-switch').locator('summary').click();
+  await page.getByTestId('persona-switch').getByRole('button', { name: 'Sign out' }).click();
+  await expect(page.getByTestId('user-identity')).toHaveText('dev');
+
+  await page.keyboard.press('Control+k');
+  await page.getByRole('option', { name: /Sign out/ }).click();
+  await expect(page.getByTestId('user-identity')).toHaveText('dev');
 });

@@ -135,13 +135,13 @@ async function monitorStates(page: Page, slug: string): Promise<Record<string, b
   // but have no state), so this selects exactly the flow's monitors.
   const rows = panel.locator('.mon-list li:has(.mon-state)');
   await expect(rows.first()).toBeVisible();
-  const out: Record<string, boolean> = {};
+  const states: [string, boolean][] = [];
   for (let i = 0; i < (await rows.count()); i++) {
     const row = rows.nth(i);
     const metric = (await row.locator('.mon-rule b').innerText()).trim();
-    out[metric] = (await row.locator('.mon-state').innerText()).trim() === 'firing';
+    states.push([metric, (await row.locator('.mon-state').innerText()).trim() === 'firing']);
   }
-  return out;
+  return Object.fromEntries(states);
 }
 
 test('firing monitors reflect the real computed engine state', async ({ page }) => {
@@ -211,9 +211,8 @@ test('the pending-approvals callout equals the real pending request count', asyn
     return n;
   });
   expect(pending).toBeGreaterThan(0);
-  await expect(
-    page.getByText(new RegExp(`${pending} production deploys? awaiting four-eyes`))
-  ).toBeVisible();
+  const noun = pending === 1 ? 'deploy' : 'deploys';
+  await expect(page.getByText(`${pending} production ${noun} awaiting four-eyes`)).toBeVisible();
 });
 
 // A guard so the switchRole/import stays used and the suite exercises the API under a

@@ -18,6 +18,21 @@ export const DEMO_USERS = {
 
 export type DemoRole = keyof typeof DEMO_USERS;
 
+function demoUser(role: DemoRole): (typeof DEMO_USERS)[DemoRole] {
+  switch (role) {
+    case 'admin':
+      return DEMO_USERS.admin;
+    case 'approver':
+      return DEMO_USERS.approver;
+    case 'editor':
+      return DEMO_USERS.editor;
+    case 'operator':
+      return DEMO_USERS.operator;
+    case 'viewer':
+      return DEMO_USERS.viewer;
+  }
+}
+
 type DemoBridge = {
   current(): string;
   setUser(actor: string): Promise<void>;
@@ -77,7 +92,7 @@ export async function openFlow(page: Page, slug: string): Promise<void> {
 // /v1/login to commit (the select flips optimistically before the login lands), so a
 // following assertion/reload sees the new role's gating. Returns the actor.
 export async function switchRole(page: Page, role: DemoRole): Promise<string> {
-  const { actor, label } = DEMO_USERS[role];
+  const { actor, label } = demoUser(role);
   await page.getByLabel('Demo user (switch acting identity)').selectOption({ label });
   await page.waitForFunction(
     (a) => (window as unknown as { __demo?: DemoBridge }).__demo?.current() === a,

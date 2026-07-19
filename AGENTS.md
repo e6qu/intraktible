@@ -71,7 +71,9 @@ store contract, and the items deliberately left undone so they aren't "finished"
 - **Deterministic core** (prereq for replay): no wall-clock/random in core except via injected, recorded effects.
 - **Fail loudly** — no silent fallbacks / empty catches / "log & continue" in logic (network retries are fine).
 - **License**: `AGPL-3.0-or-later`; SPDX header on every file (`SPDX-License-Identifier: AGPL-3.0-or-later`); deps must pass the license gate ([docs/LICENSING.md](docs/LICENSING.md)).
+- **Announce external dependencies first**: before adding or replacing any library, runtime, build tool, service, or container-image dependency, tell the user what is proposed, why it is needed, who owns it, its license and security implications, and the in-repo alternative. Do not change dependencies until that announcement has been made.
 - **One open PR at a time**: never keep more than one pull request open on this repo simultaneously. Land (or close) the current PR before opening the next; serialize work into a single review queue.
+- **Remote state is authoritative**: before editing or pushing, fetch the freshest `origin/main` and any existing remote PR head, compare them deliberately with the local branch and worktree, and reconcile or rebase without discarding uncommitted work. Never assume a local branch is current.
 - **Fat PRs over anemic ones**: prefer one large PR that bundles substantial, related work over a trail of tiny PRs — explicitly fine even against the usual "small, focused PR" norm. Fold incidental changes (CI tweaks, doc lines, drive-by fixes) into the next substantial PR rather than opening a PR just for them.
 - **Docs cadence**: update [PLAN.md](PLAN.md) and [BUGS.md](BUGS.md) in the **same PR** that ends a phase.
 - **No phase/issue refs in source** — keep the "why" in commit messages, not code comments.

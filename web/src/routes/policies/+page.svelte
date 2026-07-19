@@ -61,22 +61,78 @@
   // Rows that exercise every band: for each field, values just below / at /
   // above every numeric threshold its rules compare against (plus quoted string
   // literals verbatim) — so a preview shows the full disposition mix.
+  function isIdentifierStart(char: string): boolean {
+    const code = char.charCodeAt(0);
+    return code === 95 || (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
+  }
+  function isIdentifierPart(char: string): boolean {
+    const code = char.charCodeAt(0);
+    return isIdentifierStart(char) || (code >= 48 && code <= 57);
+  }
+  function isWhitespace(char: string): boolean {
+    const code = char.charCodeAt(0);
+    return code === 9 || code === 10 || code === 13 || code === 32;
+  }
+  function isDigit(char: string): boolean {
+    const code = char.charCodeAt(0);
+    return code >= 48 && code <= 57;
+  }
+  function comparisonLiterals(
+    expression: string
+  ): { field: string; literal: string; quoted: boolean }[] {
+    const found: { field: string; literal: string; quoted: boolean }[] = [];
+    let cursor = 0;
+    while (cursor < expression.length) {
+      while (cursor < expression.length && !isIdentifierStart(expression.charAt(cursor))) cursor++;
+      if (cursor >= expression.length) break;
+
+      const fieldStart = cursor++;
+      while (cursor < expression.length && isIdentifierPart(expression.charAt(cursor))) cursor++;
+      const field = expression.slice(fieldStart, cursor);
+      while (cursor < expression.length && isWhitespace(expression.charAt(cursor))) cursor++;
+
+      const pair = expression.slice(cursor, cursor + 2);
+      if (pair === '<=' || pair === '>=' || pair === '==' || pair === '!=') cursor += 2;
+      else if (expression.charAt(cursor) === '<' || expression.charAt(cursor) === '>') cursor++;
+      else continue;
+      while (cursor < expression.length && isWhitespace(expression.charAt(cursor))) cursor++;
+
+      const quote = expression.charAt(cursor);
+      if (quote === '"' || quote === "'") {
+        const literalStart = ++cursor;
+        const literalEnd = expression.indexOf(quote, cursor);
+        if (literalEnd === -1) break;
+        found.push({ field, literal: expression.slice(literalStart, literalEnd), quoted: true });
+        cursor = literalEnd + 1;
+        continue;
+      }
+
+      const literalStart = cursor;
+      if (expression.charAt(cursor) === '-') cursor++;
+      const integerStart = cursor;
+      while (cursor < expression.length && isDigit(expression.charAt(cursor))) cursor++;
+      if (cursor === integerStart) continue;
+      if (expression.charAt(cursor) === '.') {
+        const fractionStart = ++cursor;
+        while (cursor < expression.length && isDigit(expression.charAt(cursor))) cursor++;
+        if (cursor === fractionStart) continue;
+      }
+      found.push({ field, literal: expression.slice(literalStart, cursor), quoted: false });
+    }
+    return found;
+  }
   function sampleImpactDataset(): string {
     const perField = new Map<string, Set<number | string>>();
     for (const r of rules) {
-      for (const m of r.when.matchAll(
-        /([A-Za-z_][A-Za-z0-9_]*)\s*(?:[<>]=?|[!=]=)\s*(-?\d+(?:\.\d+)?|"[^"]*"|'[^']*')/g
-      )) {
-        const set = perField.get(m[1]) ?? new Set();
-        const lit = m[2];
-        if (lit.startsWith('"') || lit.startsWith("'")) set.add(lit.slice(1, -1));
-        else {
-          const n = Number(lit);
+      for (const { field, literal, quoted } of comparisonLiterals(r.when)) {
+        const set = perField.get(field) ?? new Set();
+        const n = Number(literal);
+        if (!quoted && Number.isFinite(n)) {
           set.add(Math.round((n - Math.max(1, Math.abs(n) * 0.15)) * 100) / 100);
           set.add(n);
           set.add(Math.round((n + Math.max(1, Math.abs(n) * 0.15)) * 100) / 100);
-        }
-        perField.set(m[1], set);
+        } else set.add(literal);
+        perField.set(field, set);
       }
     }
     if (perField.size === 0) throw new Error('sample dataset requires bands with comparisons');

@@ -134,17 +134,17 @@ func oidcAuthenticators(ctx context.Context) ([]*auth.OIDCAuthenticator, error) 
 func oidcConfigFromEnv(name string) auth.OIDCConfig {
 	p := "INTRAKTIBLE_OIDC_" + strings.ToUpper(name) + "_"
 	cfg := auth.OIDCConfig{
-		Name:         name,
-		Issuer:       os.Getenv(p + "ISSUER"),
-		ClientID:     os.Getenv(p + "CLIENT_ID"),
-		ClientSecret: os.Getenv(p + "CLIENT_SECRET"),
-		RedirectURL:  os.Getenv(p + "REDIRECT_URL"),
-		LogoutURL:    os.Getenv(p + "LOGOUT_URL"),
-		Org:          os.Getenv(p + "ORG"),
-		Workspace:    os.Getenv(p + "WORKSPACE"),
-		GroupsClaim:  os.Getenv(p + "GROUPS_CLAIM"),
-		GroupRoles:   parseGroupRoles(os.Getenv(p + "GROUP_ROLES")),
-		DefaultRole:  auth.Role(os.Getenv(p + "DEFAULT_ROLE")),
+		Name:                  name,
+		Issuer:                os.Getenv(p + "ISSUER"),
+		ClientID:              os.Getenv(p + "CLIENT_ID"),
+		ClientSecret:          os.Getenv(p + "CLIENT_SECRET"),
+		RedirectURL:           os.Getenv(p + "REDIRECT_URL"),
+		PostLogoutRedirectURL: os.Getenv(p + "POST_LOGOUT_REDIRECT_URL"),
+		Org:                   os.Getenv(p + "ORG"),
+		Workspace:             os.Getenv(p + "WORKSPACE"),
+		GroupsClaim:           os.Getenv(p + "GROUPS_CLAIM"),
+		GroupRoles:            parseGroupRoles(os.Getenv(p + "GROUP_ROLES")),
+		DefaultRole:           auth.Role(os.Getenv(p + "DEFAULT_ROLE")),
 	}
 	// Sensible per-provider defaults so operators set the minimum.
 	if cfg.Issuer == "" && name == "google" {

@@ -774,18 +774,25 @@ describe('session auth', () => {
     expect(await currentUser(fetcherReturning(401, {}))).toBeNull();
   });
 
-  it('listSsoProviders unwraps the provider list and degrades to empty', async () => {
+  it('listSsoProviders distinguishes a valid empty list from discovery failure', async () => {
     expect(await listSsoProviders(fetcherReturning(200, { providers: ['google', 'aws'] }))).toEqual(
       ['google', 'aws']
     );
-    expect(await listSsoProviders(fetcherReturning(404, {}))).toEqual([]);
+    expect(await listSsoProviders(fetcherReturning(200, { providers: [] }))).toEqual([]);
+    await expect(
+      listSsoProviders(fetcherReturning(503, { error: 'identity unavailable' }))
+    ).rejects.toThrow(/identity unavailable/);
+    await expect(listSsoProviders(fetcherReturning(200, {}))).rejects.toThrow(
+      /invalid provider list/
+    );
   });
 
-  it('listSamlProviders unwraps the provider list and degrades to empty', async () => {
+  it('listSamlProviders distinguishes a valid empty list from discovery failure', async () => {
     expect(await listSamlProviders(fetcherReturning(200, { providers: ['okta'] }))).toEqual([
       'okta'
     ]);
-    expect(await listSamlProviders(fetcherReturning(500, {}))).toEqual([]);
+    expect(await listSamlProviders(fetcherReturning(200, { providers: [] }))).toEqual([]);
+    await expect(listSamlProviders(fetcherReturning(500, {}))).rejects.toThrow();
   });
 
   it('currentUser returns the identity when signed in', async () => {

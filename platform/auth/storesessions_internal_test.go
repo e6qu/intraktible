@@ -4,6 +4,7 @@ package auth
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -53,7 +54,7 @@ func TestStoreSessions(t *testing.T) {
 	if _, _, _, ok := s.Resolve(tok2); !ok {
 		t.Fatal("fresh session should resolve")
 	}
-	s.Revoke(tok2)
+	_ = s.Revoke(tok2)
 	if _, _, _, ok := s.Resolve(tok2); ok {
 		t.Fatal("revoked session should not resolve")
 	}
@@ -92,7 +93,7 @@ func TestIssueSweepsExpiredSessions(t *testing.T) {
 	id := identity.Identity{Org: "o", Workspace: "w", Actor: "a"}
 
 	old1, _ := s.Issue(id, RoleEditor, Production)
-	old2, _ := s.IssueSSO(id, RoleEditor, ScopeAll, "")
+	old2, _ := s.IssueSSO(id, RoleEditor, ScopeAll, SSOSession{})
 	clock = clock.Add(2 * time.Hour)
 
 	fresh, _ := s.Issue(id, RoleEditor, Production)
@@ -125,9 +126,9 @@ func TestSessionValidatorRevokesSSO(t *testing.T) {
 			ada := identity.Identity{Org: "o", Workspace: "w", Actor: "ada"}
 			grace := identity.Identity{Org: "o", Workspace: "w", Actor: "grace"}
 
-			ssoTok, _ := s.IssueSSO(ada, RoleEditor, ScopeAll, "")
+			ssoTok, _ := s.IssueSSO(ada, RoleEditor, ScopeAll, SSOSession{})
 			keyTok, _ := s.Issue(ada, RoleEditor, Production) // non-SSO, never revalidated
-			okTok, _ := s.IssueSSO(grace, RoleEditor, ScopeAll, "")
+			okTok, _ := s.IssueSSO(grace, RoleEditor, ScopeAll, SSOSession{})
 
 			if _, _, _, ok := s.Resolve(ssoTok); !ok {
 				t.Fatal("active SSO user should resolve")
@@ -147,25 +148,125 @@ func TestSessionValidatorRevokesSSO(t *testing.T) {
 	}
 }
 
-func TestSessionLogoutURLRoundTrips(t *testing.T) {
+func TestSSOSessionRoundTrips(t *testing.T) {
 	stores := map[string]SessionStore{
 		"memory": NewSessions(),
 		"store":  NewStoreSessions(store.NewMemory()),
 	}
 	for name, s := range stores {
 		t.Run(name, func(t *testing.T) {
-			const logoutURL = "https://auth.example.test/oauth2/sessions/logout"
-			token, err := s.IssueSSO(identity.Identity{Org: "o", Workspace: "w", Actor: "a"}, RoleViewer, ScopeAll, logoutURL)
+			want := SSOSession{Protocol: "oidc", Provider: "shauth", Issuer: "https://auth.example.test", Subject: "subject", SID: "sid", IDToken: "signed.id.token", ClientID: "intraktible", EndSessionEndpoint: "https://auth.example.test/oauth2/sessions/logout", PostLogoutRedirectURL: "https://intraktible.example.test/v1/auth/signed-out"}
+			token, err := s.IssueSSO(identity.Identity{Org: "o", Workspace: "w", Actor: "a"}, RoleViewer, ScopeAll, want)
 			if err != nil {
 				t.Fatalf("issue SSO session: %v", err)
 			}
-			if got := s.LogoutURL(token); got != logoutURL {
-				t.Fatalf("logout URL = %q, want %q", got, logoutURL)
+			if got, ok, err := s.SSOSession(token); err != nil || !ok || got != want {
+				t.Fatalf("SSO session = %#v ok=%v, want %#v", got, ok, want)
 			}
-			s.Revoke(token)
-			if got := s.LogoutURL(token); got != "" {
-				t.Fatalf("revoked session logout URL = %q, want empty", got)
+			_ = s.Revoke(token)
+			if got, ok, err := s.SSOSession(token); err != nil || ok || got != (SSOSession{}) {
+				t.Fatalf("revoked SSO session = %#v ok=%v", got, ok)
 			}
 		})
+	}
+}
+
+func TestRevokeOIDCSessionsScopesByProviderIssuerSIDAndSubject(t *testing.T) {
+	stores := map[string]SessionStore{
+		"memory": NewSessions(),
+		"store":  NewStoreSessions(store.NewMemory()),
+	}
+	for name, sessions := range stores {
+		t.Run(name, func(t *testing.T) {
+			id := identity.Identity{Org: "o", Workspace: "w", Actor: "a"}
+			base := SSOSession{Protocol: "oidc", Provider: "shauth", Issuer: "https://auth.example.test", Subject: "subject"}
+			first := base
+			first.SID = "sid-1"
+			second := base
+			second.SID = "sid-2"
+			other := base
+			other.Provider = "other"
+			firstToken, _ := sessions.IssueSSO(id, RoleViewer, ScopeAll, first)
+			secondToken, _ := sessions.IssueSSO(id, RoleViewer, ScopeAll, second)
+			otherToken, _ := sessions.IssueSSO(id, RoleViewer, ScopeAll, other)
+			if accepted, err := sessions.RevokeOIDCSessions("shauth", base.Issuer, "client", "jti-1", "sid-1", base.Subject, time.Now().Add(time.Hour)); err != nil || !accepted {
+				t.Fatal(err)
+			}
+			if _, _, _, ok := sessions.Resolve(firstToken); ok {
+				t.Fatal("sid-matched session remained")
+			}
+			if _, _, _, ok := sessions.Resolve(secondToken); !ok {
+				t.Fatal("unrelated sid session was revoked")
+			}
+			if accepted, err := sessions.RevokeOIDCSessions("shauth", base.Issuer, "client", "jti-2", "", base.Subject, time.Now().Add(time.Hour)); err != nil || !accepted {
+				t.Fatal(err)
+			}
+			if _, _, _, ok := sessions.Resolve(secondToken); ok {
+				t.Fatal("subject-matched session remained")
+			}
+			if _, _, _, ok := sessions.Resolve(otherToken); !ok {
+				t.Fatal("different provider session was revoked")
+			}
+		})
+	}
+}
+
+func TestStoreSessionsReadsLegacyTopLevelLogoutURL(t *testing.T) {
+	st := store.NewMemory()
+	const token = "legacy-session-token"
+	const logoutURL = "https://auth.example.test/logout"
+	legacy := map[string]any{
+		"identity":   identity.Identity{Org: "o", Workspace: "w", Actor: "a"},
+		"role":       RoleViewer,
+		"scope":      ScopeAll,
+		"expires":    time.Now().Add(time.Hour),
+		"sso":        true,
+		"logout_url": logoutURL,
+	}
+	if err := store.PutDoc(context.Background(), st, sessionCollection, hash(token), legacy); err != nil {
+		t.Fatal(err)
+	}
+	sessions := NewStoreSessions(st)
+	sso, ok, err := sessions.SSOSession(token)
+	if err != nil || !ok || sso.LogoutURL != logoutURL {
+		t.Fatalf("legacy SSO metadata = %#v ok=%v err=%v", sso, ok, err)
+	}
+}
+
+func TestOIDCLogoutReplayClaimSurvivesStoreRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sessions.db")
+	st, err := store.NewSQLite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := identity.Identity{Org: "o", Workspace: "w", Actor: "a"}
+	sso := SSOSession{Protocol: "oidc", Provider: "shauth", Issuer: "https://auth.example.test/", Subject: "subject", SID: "sid"}
+	sessions := NewStoreSessions(st)
+	first, _ := sessions.IssueSSO(id, RoleViewer, ScopeAll, sso)
+	expires := time.Now().Add(time.Hour)
+	accepted, err := sessions.RevokeOIDCSessions("shauth", sso.Issuer, "client", "jti", sso.SID, sso.Subject, expires)
+	if err != nil || !accepted {
+		t.Fatalf("first logout accepted=%v err=%v", accepted, err)
+	}
+	if _, _, _, ok := sessions.Resolve(first); ok {
+		t.Fatal("first matching session remained")
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	st, err = store.NewSQLite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	sessions = NewStoreSessions(st)
+	newSession, _ := sessions.IssueSSO(id, RoleViewer, ScopeAll, sso)
+	accepted, err = sessions.RevokeOIDCSessions("shauth", sso.Issuer, "client", "jti", sso.SID, sso.Subject, expires)
+	if err != nil || accepted {
+		t.Fatalf("replayed logout accepted=%v err=%v", accepted, err)
+	}
+	if _, _, _, ok := sessions.Resolve(newSession); !ok {
+		t.Fatal("replayed logout revoked a session created after the first logout")
 	}
 }
