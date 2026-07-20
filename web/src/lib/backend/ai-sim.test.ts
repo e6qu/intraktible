@@ -127,4 +127,38 @@ describe('the registered __intraktible_ai hook', () => {
     expect(resp.model).toBe('simulated-llm');
     assertPublishable(resp.structured);
   });
+
+  it('honors every declared JSON Schema field type in a structured agent response', async () => {
+    registerSimulatedAI();
+    const hook = (globalThis as Record<string, unknown>).__intraktible_ai as (
+      s: string
+    ) => Promise<string>;
+    const raw = await hook(
+      JSON.stringify({
+        prompt: 'Income dropped after a medical hardship.',
+        schema: {
+          type: 'object',
+          required: ['plan_months', 'rate_relief', 'summary', 'eligible', 'actions', 'details'],
+          properties: {
+            plan_months: { type: 'number', minimum: 1, maximum: 24 },
+            rate_relief: { type: 'number', minimum: 0, maximum: 1 },
+            summary: { type: 'string' },
+            eligible: { type: 'boolean' },
+            actions: { type: 'array', minItems: 1, items: { type: 'string' } },
+            details: {
+              type: 'object',
+              properties: { review_days: { type: 'integer', minimum: 1 } }
+            }
+          }
+        }
+      })
+    );
+    const { structured } = JSON.parse(raw) as { structured: Record<string, unknown> };
+    expect(structured.plan_months).toBeTypeOf('number');
+    expect(structured.rate_relief).toBeTypeOf('number');
+    expect(structured.summary).toBeTypeOf('string');
+    expect(structured.eligible).toBeTypeOf('boolean');
+    expect(structured.actions).toEqual([expect.any(String)]);
+    expect(structured.details).toEqual({ review_days: expect.any(Number) });
+  });
 });

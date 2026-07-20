@@ -7,14 +7,22 @@
 // an output schema, else an analyst-style narrative shaped by the prompt.
 
 interface SchemaProp {
-  type?: string;
+  type?: string | string[];
+  const?: unknown;
+  enum?: unknown[];
+  minimum?: number;
+  maximum?: number;
+  properties?: Record<string, SchemaProp>;
+  required?: string[];
+  items?: SchemaProp;
+  minItems?: number;
 }
 
 interface AIRequest {
   model?: string;
   system?: string;
   prompt: string;
-  schema?: { properties?: Record<string, SchemaProp>; required?: string[] };
+  schema?: SchemaProp;
 }
 
 interface GraphNode {
@@ -45,8 +53,8 @@ export function registerSimulatedAI(): void {
     const req = JSON.parse(reqJSON) as AIRequest;
     const context = contextOf(req.prompt);
     const fields = req.schema?.properties
-      ? Object.keys(req.schema.properties)
-      : (req.schema?.required ?? []);
+      ? Object.entries(req.schema.properties)
+      : (req.schema?.required ?? []).map((name) => [name, {} as SchemaProp] as const);
     let text: string;
     let structured: Record<string, unknown> | undefined;
     if (isGraphSchema(req.schema)) {
@@ -54,7 +62,7 @@ export function registerSimulatedAI(): void {
       text = JSON.stringify(structured, null, 2);
     } else if (fields.length > 0) {
       structured = Object.fromEntries(
-        fields.map((k) => [k, plausibleField(k, req.prompt, context)])
+        fields.map(([name, schema]) => [name, plausibleField(name, schema, req.prompt, context)])
       );
       text = JSON.stringify(structured, null, 2);
     } else {
@@ -124,10 +132,54 @@ function narrative(prompt: string, context?: Record<string, unknown>): string {
   return 'Reviewed the input; no disqualifying signals were identified. Recommend referring for a final decision.';
 }
 
-function plausibleField(name: string, prompt: string, context?: Record<string, unknown>): unknown {
+function plausibleField(
+  name: string,
+  schema: SchemaProp,
+  prompt: string,
+  context?: Record<string, unknown>
+): unknown {
+  if (schema.const !== undefined) return schema.const;
+  if (schema.enum && schema.enum.length > 0) return schema.enum[0];
+
   const n = name.toLowerCase();
   const p = prompt.toLowerCase();
   const disp = dispositionOf(context);
+  const declared = Array.isArray(schema.type)
+    ? schema.type.find((kind) => kind !== 'null')
+    : schema.type;
+
+  if (declared === 'number' || declared === 'integer') {
+    let value = 1;
+    if (/months?|term/.test(n)) value = 6;
+    else if (/days?|years?|count|number|quantity/.test(n)) value = 3;
+    else if (/prob/.test(n)) value = 0.62;
+    else if (/rate|ratio|relief|percent|confidence/.test(n)) value = 0.5;
+    else if (/risk|score/.test(n)) value = 58;
+    if (schema.minimum != null) value = Math.max(value, schema.minimum);
+    if (schema.maximum != null) value = Math.min(value, schema.maximum);
+    return declared === 'integer' ? Math.round(value) : value;
+  }
+  if (declared === 'boolean') {
+    return /flag|hit|match|suspicious|blocked/.test(n)
+      ? /sanction|watchlist|fraud|pep/.test(p)
+      : false;
+  }
+  if (declared === 'array') {
+    const count = Math.max(0, schema.minItems ?? 0);
+    return Array.from({ length: count }, (_, index) =>
+      plausibleField(`${name}_${index + 1}`, schema.items ?? {}, prompt, context)
+    );
+  }
+  if (declared === 'object') {
+    return Object.fromEntries(
+      Object.entries(schema.properties ?? {}).map(([child, childSchema]) => [
+        child,
+        plausibleField(child, childSchema, prompt, context)
+      ])
+    );
+  }
+  if (declared === 'null') return null;
+
   if (/prob/.test(n)) return 0.62;
   if (/risk|score/.test(n)) return 58;
   if (/decision|disposition|recommendation|outcome/.test(n))

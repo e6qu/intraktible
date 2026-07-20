@@ -539,3 +539,11 @@ during requirements gathering and unchanged: Go + SvelteKit/Svelte Flow, pure-Go
 backbone, hybrid ES purity, build sequence (core→engine→cases→context→agents), multi-tenancy
 (org+workspace from day 1), web delivery embedded in the Go binary, API keys + session auth, pluggable
 AI provider. New open questions now live in the §8b roadmap phases, not here.
+
+## 11. GitHub Pages demo reliability
+The browser-hosted WebAssembly backend used a schema-aware local AI provider for its public,
+network-independent product journeys. Structured agent completions honored JSON Schema constants,
+enums, primitive types, nested objects, arrays, and numeric bounds before the real agent runtime
+validated and recorded them. The GitHub Pages browser gate exercised the Collections Hardship Program
+explicitly, including its numeric structured-agent output, and required both a rendered preview verdict
+and the absence of an execution error.
