@@ -92,6 +92,18 @@ aws cloudfront create-invalidation --distribution-id $(terraform output -raw clo
 Get the first admin credential from `bootstrap_api_key_secret_arn` (rotate it after minting
 a managed key / configuring SSO, per `docs/DEPLOY.md`).
 
+For Shauth or another OpenID Connect provider, register all four application
+coordinates on the same app origin:
+
+- callback: `https://<domain>/v1/auth/oidc/<provider>/callback`
+- post-logout landing: `https://<domain>/v1/auth/signed-out`
+- Front-Channel Logout URI: `https://<domain>/v1/auth/oidc/<provider>/frontchannel-logout`
+- Back-Channel Logout URI: `https://<domain>/v1/auth/oidc/<provider>/backchannel-logout`
+
+The provider must include a session identifier in front-channel notifications.
+Intraktible authenticates confidential-client token exchanges using the method
+advertised by discovery, including `client_secret_post` for Shauth.
+
 ## Custom domain
 
 Two ways to put the app on your own domain:

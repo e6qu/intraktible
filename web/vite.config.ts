@@ -17,6 +17,7 @@ function gitSha(): string {
   }
 }
 const buildTime = process.env.PUBLIC_BUILD_TIME || new Date().toISOString();
+const apiTarget = process.env.INTRAKTIBLE_DEV_API_URL || 'http://localhost:8080';
 
 // Dev proxies the API to the Go server; prod is embedded in the binary.
 export default defineConfig({
@@ -31,14 +32,14 @@ export default defineConfig({
   // optimize/HMR transients — reaches the backend identically.
   server: {
     proxy: {
-      '/v1': { target: 'http://localhost:8080', ws: true },
-      '/healthz': 'http://localhost:8080'
+      '/v1': { target: apiTarget, ws: true },
+      '/healthz': apiTarget
     }
   },
   preview: {
     proxy: {
-      '/v1': { target: 'http://localhost:8080', ws: true },
-      '/healthz': 'http://localhost:8080'
+      '/v1': { target: apiTarget, ws: true },
+      '/healthz': apiTarget
     }
   }
 });

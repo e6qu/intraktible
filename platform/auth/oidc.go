@@ -42,6 +42,7 @@ type OIDCConfig struct {
 // safe for concurrent use after construction.
 type OIDCAuthenticator struct {
 	cfg      OIDCConfig
+	provider *oidc.Provider
 	verifier *oidc.IDTokenVerifier
 	oauth    *oauth2.Config
 	logout   SSOSession
@@ -106,6 +107,7 @@ func NewOIDCAuthenticator(ctx context.Context, cfg OIDCConfig) (*OIDCAuthenticat
 	endpoint.AuthStyle = discoveredAuthStyle(metadata.TokenEndpointAuthMethodsSupported)
 	return &OIDCAuthenticator{
 		cfg:      cfg,
+		provider: provider,
 		verifier: provider.Verifier(&oidc.Config{ClientID: cfg.ClientID}),
 		oauth: &oauth2.Config{
 			ClientID:     cfg.ClientID,
@@ -180,12 +182,21 @@ func (a *OIDCAuthenticator) Exchange(ctx context.Context, code, nonce, verifier 
 	if err := idTok.Claims(&claims); err != nil {
 		return OIDCLogin{}, fmt.Errorf("auth: oidc %q claims: %w", a.cfg.Name, err)
 	}
-	// Only adopt the email as identity when the IdP marks it verified; an absent or
-	// unverified email falls back to the provider-controlled subject (which a user
-	// cannot self-assert as someone else's). A token with neither is rejected rather
-	// than minting a session for an empty actor.
+	// The email scope does not require providers to copy email claims into the ID
+	// token. Resolve the standard UserInfo response before falling back to the
+	// pairwise subject, while only trusting an email explicitly marked verified.
 	email, _ := claims["email"].(string)
 	verified, _ := claims["email_verified"].(bool)
+	if email == "" || !verified {
+		info, infoErr := a.provider.UserInfo(ctx, oauth2.StaticTokenSource(tok))
+		if infoErr != nil {
+			return OIDCLogin{}, fmt.Errorf("auth: oidc %q userinfo: %w", a.cfg.Name, infoErr)
+		}
+		if info.Subject != idTok.Subject {
+			return OIDCLogin{}, fmt.Errorf("auth: oidc %q userinfo subject mismatch", a.cfg.Name)
+		}
+		email, verified = info.Email, info.EmailVerified
+	}
 	actor := email
 	if email == "" || !verified {
 		actor = idTok.Subject

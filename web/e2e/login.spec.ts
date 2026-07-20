@@ -111,13 +111,9 @@ test('provider discovery failures fail closed without exposing API-key login', a
   await expect(page.getByLabel('API key')).toHaveCount(0);
 });
 
-test('every sign-out surface retains the identity and reports server revocation failure', async ({
+test('every sign-out surface fails closed when the logout request reports an error', async ({
   page
 }) => {
-  await page.goto('/login');
-  await page.getByLabel('API key').fill('dev-sandbox-key');
-  await page.getByRole('button', { name: 'Sign in' }).click();
-  await expect(page.getByTestId('user-identity')).toHaveText('dev');
   await page.route('**/v1/logout', (route) =>
     route.fulfill({
       status: 503,
@@ -126,21 +122,34 @@ test('every sign-out surface retains the identity and reports server revocation 
     })
   );
 
+  async function signIn(): Promise<void> {
+    await page.goto('/login');
+    await page.getByLabel('API key').fill('dev-sandbox-key');
+    await page.getByRole('button', { name: 'Sign in' }).click();
+    await expect(page.getByTestId('user-identity')).toHaveText('dev');
+  }
+
+  async function expectSignedOut(): Promise<void> {
+    await expect(page).toHaveURL(/\/v1\/auth\/signed-out$/);
+    await expect(page.getByRole('heading', { name: 'You are signed out' })).toBeVisible();
+    await expect(page.getByTestId('user-identity')).toHaveCount(0);
+  }
+
+  await signIn();
   await page.goto('/me');
   await page
     .getByLabel('Current account details')
     .getByRole('button', { name: 'Sign out' })
     .click();
-  await expect(page.getByRole('heading', { name: 'Signed in as dev' })).toBeVisible();
-  await expect(
-    page.getByRole('alert').filter({ hasText: 'session store unavailable' })
-  ).toBeVisible();
+  await expectSignedOut();
 
+  await signIn();
   await page.getByTestId('persona-switch').locator('summary').click();
   await page.getByTestId('persona-switch').getByRole('button', { name: 'Sign out' }).click();
-  await expect(page.getByTestId('user-identity')).toHaveText('dev');
+  await expectSignedOut();
 
+  await signIn();
   await page.keyboard.press('Control+k');
   await page.getByRole('option', { name: /Sign out/ }).click();
-  await expect(page.getByTestId('user-identity')).toHaveText('dev');
+  await expectSignedOut();
 });

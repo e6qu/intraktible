@@ -69,6 +69,7 @@ func (h *OIDCHandler) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/auth/oidc/providers", h.providers)
 	mux.HandleFunc("GET /v1/auth/oidc/{provider}/login", h.login)
 	mux.HandleFunc("GET /v1/auth/oidc/{provider}/callback", h.callback)
+	mux.HandleFunc("GET /v1/auth/oidc/{provider}/frontchannel-logout", h.frontChannelLogout)
 	mux.HandleFunc("POST /v1/auth/oidc/{provider}/backchannel-logout", h.backChannelLogout)
 	mux.HandleFunc("GET /v1/auth/signed-out", h.signedOut)
 }
@@ -227,17 +228,34 @@ func (h *OIDCHandler) backChannelLogout(w http.ResponseWriter, r *http.Request) 
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (h *OIDCHandler) frontChannelLogout(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	a, ok := h.authers[r.PathValue("provider")]
+	if !ok {
+		Error(w, http.StatusNotFound, errors.New("unknown sso provider"))
+		return
+	}
+	issuer := r.URL.Query().Get("iss")
+	sid := r.URL.Query().Get("sid")
+	if issuer == "" || sid == "" || issuer != a.Issuer() {
+		Error(w, http.StatusBadRequest, errors.New("sso: invalid front-channel logout request"))
+		return
+	}
+	if err := h.sessions.RevokeOIDCFrontChannelSessions(a.Name(), issuer, sid); err != nil {
+		Error(w, http.StatusServiceUnavailable, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (h *OIDCHandler) signedOut(w http.ResponseWriter, r *http.Request) {
+	clearSessionCookie(w, r)
 	if cookie, err := r.Cookie(sessionCookie); err == nil {
 		if err := h.sessions.Revoke(cookie.Value); err != nil {
 			Error(w, http.StatusServiceUnavailable, err)
 			return
 		}
 	}
-	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- expiring cookie (MaxAge<0, empty value)
-		Name: sessionCookie, Value: "", Path: "/",
-		HttpOnly: true, Secure: requestIsSecure(r), SameSite: http.SameSiteLaxMode, MaxAge: -1,
-	})
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)

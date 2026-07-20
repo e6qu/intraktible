@@ -228,6 +228,35 @@ func (s *Sessions) SSOSession(tok string) (SSOSession, bool, error) {
 	return sess.ssoData, sess.sso, nil
 }
 
+// RevokeWithSSO atomically removes tok and returns its provider coordinates.
+func (s *Sessions) RevokeWithSSO(tok string) (SSOSession, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess, ok := s.sessions[tok]
+	if !ok {
+		return SSOSession{}, false, nil
+	}
+	delete(s.sessions, tok)
+	if s.now().After(sess.expires) || !sess.sso {
+		return SSOSession{}, false, nil
+	}
+	return sess.ssoData, true, nil
+}
+
+// RevokeOIDCFrontChannelSessions removes the session named by the provider's
+// issuer-bound sid.
+func (s *Sessions) RevokeOIDCFrontChannelSessions(provider, issuer, sid string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for token, sess := range s.sessions {
+		data := sess.ssoData
+		if sess.sso && data.Protocol == "oidc" && data.Provider == provider && data.Issuer == issuer && data.SID == sid {
+			delete(s.sessions, token)
+		}
+	}
+	return nil
+}
+
 // RevokeOIDCSessions removes the session identified by sid, or every session
 // for subject when sid is absent, after a verified Back-Channel Logout request.
 func (s *Sessions) RevokeOIDCSessions(provider, issuer, clientID, jti, sid, subject string, replayExpires time.Time) (bool, error) {

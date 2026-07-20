@@ -26,6 +26,11 @@ type SessionStore interface {
 	IssueSSO(id identity.Identity, role Role, scope Scope, sso SSOSession) (string, error)
 	Resolve(tok string) (identity.Identity, Role, Scope, bool)
 	SSOSession(tok string) (SSOSession, bool, error)
+	// RevokeWithSSO atomically revokes tok and returns the identity-provider
+	// coordinates that were bound to it. A successful return means the local
+	// session is already unusable before the caller starts provider logout.
+	RevokeWithSSO(tok string) (SSOSession, bool, error)
+	RevokeOIDCFrontChannelSessions(provider, issuer, sid string) error
 	RevokeOIDCSessions(provider, issuer, clientID, jti, sid, subject string, replayExpires time.Time) (bool, error)
 	Revoke(tok string) error
 	// SetValidator installs a predicate consulted on Resolve for SSO sessions; a
@@ -174,6 +179,77 @@ func (s *StoreSessions) SSOSession(tok string) (SSOSession, bool, error) {
 		return SSOSession{LogoutURL: rec.LogoutURL}, rec.SSO, nil
 	}
 	return rec.SSOData, rec.SSO, nil
+}
+
+// RevokeWithSSO removes a browser session and returns its provider logout
+// coordinates in one store operation. Durable stores use a transaction so two
+// replicas cannot both observe the same live session during logout.
+func (s *StoreSessions) RevokeWithSSO(tok string) (SSOSession, bool, error) {
+	ctx := context.Background()
+	key := hash(tok)
+	if txStore, ok := s.store.(store.TxStore); ok {
+		tx, err := txStore.Begin(ctx)
+		if err != nil {
+			return SSOSession{}, false, fmt.Errorf("auth: begin session logout transaction: %w", err)
+		}
+		defer func() { _ = tx.Rollback() }()
+		sso, isSSO, err := revokeSessionWithSSO(ctx, tx, key, s.now())
+		if err != nil {
+			return SSOSession{}, false, err
+		}
+		if err := tx.Commit(); err != nil {
+			return SSOSession{}, false, fmt.Errorf("auth: commit session logout: %w", err)
+		}
+		return sso, isSSO, nil
+	}
+
+	s.logoutMu.Lock()
+	defer s.logoutMu.Unlock()
+	return revokeSessionWithSSO(ctx, s.store, key, s.now())
+}
+
+func revokeSessionWithSSO(ctx context.Context, target store.Store, key string, now time.Time) (SSOSession, bool, error) {
+	rec, ok, err := store.GetDoc[storedSession](ctx, target, sessionCollection, key)
+	if err != nil {
+		return SSOSession{}, false, fmt.Errorf("auth: resolve session for logout: %w", err)
+	}
+	if !ok {
+		return SSOSession{}, false, nil
+	}
+	if err := target.Delete(ctx, sessionCollection, key); err != nil {
+		return SSOSession{}, false, fmt.Errorf("auth: revoke session: %w", err)
+	}
+	if now.After(rec.Expires) || !rec.SSO {
+		return SSOSession{}, false, nil
+	}
+	if rec.SSOData == (SSOSession{}) && rec.LogoutURL != "" {
+		return SSOSession{LogoutURL: rec.LogoutURL}, true, nil
+	}
+	return rec.SSOData, true, nil
+}
+
+// RevokeOIDCFrontChannelSessions removes the session named by an issuer-bound
+// sid received through OpenID Connect Front-Channel Logout.
+func (s *StoreSessions) RevokeOIDCFrontChannelSessions(provider, issuer, sid string) error {
+	ctx := context.Background()
+	if txStore, ok := s.store.(store.TxStore); ok {
+		tx, err := txStore.Begin(ctx)
+		if err != nil {
+			return fmt.Errorf("auth: begin OpenID Connect front-channel logout transaction: %w", err)
+		}
+		defer func() { _ = tx.Rollback() }()
+		if err := revokeOIDCSessions(ctx, tx, provider, issuer, sid, ""); err != nil {
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("auth: commit OpenID Connect front-channel logout: %w", err)
+		}
+		return nil
+	}
+
+	s.logoutMu.Lock()
+	defer s.logoutMu.Unlock()
+	return revokeOIDCSessions(ctx, s.store, provider, issuer, sid, "")
 }
 
 // RevokeOIDCSessions removes the session identified by sid, or every session

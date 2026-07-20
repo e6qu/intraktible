@@ -171,6 +171,70 @@ func TestSSOSessionRoundTrips(t *testing.T) {
 	}
 }
 
+func TestRevokeWithSSOReturnsMetadataAfterRemovingSession(t *testing.T) {
+	stores := map[string]SessionStore{
+		"memory": NewSessions(),
+		"store":  NewStoreSessions(store.NewMemory()),
+	}
+	for name, sessions := range stores {
+		t.Run(name, func(t *testing.T) {
+			want := SSOSession{
+				Protocol: "oidc", Provider: "shauth", Issuer: "https://auth.example.test",
+				Subject: "subject", SID: "sid", ClientID: "intraktible",
+				EndSessionEndpoint:    "https://auth.example.test/oauth2/sessions/logout",
+				PostLogoutRedirectURL: "https://intraktible.example.test/v1/auth/signed-out",
+			}
+			token, err := sessions.IssueSSO(identity.Identity{Org: "o", Workspace: "w", Actor: "a"}, RoleViewer, ScopeAll, want)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, ok, err := sessions.RevokeWithSSO(token)
+			if err != nil || !ok || got != want {
+				t.Fatalf("RevokeWithSSO = %#v ok=%v err=%v, want %#v", got, ok, err, want)
+			}
+			if _, _, _, ok := sessions.Resolve(token); ok {
+				t.Fatal("RevokeWithSSO returned before removing the session")
+			}
+			if got, ok, err := sessions.RevokeWithSSO(token); err != nil || ok || got != (SSOSession{}) {
+				t.Fatalf("idempotent RevokeWithSSO = %#v ok=%v err=%v", got, ok, err)
+			}
+		})
+	}
+}
+
+func TestRevokeOIDCFrontChannelSessionsScopesByProviderIssuerAndSID(t *testing.T) {
+	stores := map[string]SessionStore{
+		"memory": NewSessions(),
+		"store":  NewStoreSessions(store.NewMemory()),
+	}
+	for name, sessions := range stores {
+		t.Run(name, func(t *testing.T) {
+			id := identity.Identity{Org: "o", Workspace: "w", Actor: "a"}
+			base := SSOSession{Protocol: "oidc", Provider: "shauth", Issuer: "https://auth.example.test", Subject: "subject", SID: "sid-1"}
+			matched, _ := sessions.IssueSSO(id, RoleViewer, ScopeAll, base)
+			otherSID := base
+			otherSID.SID = "sid-2"
+			otherSIDToken, _ := sessions.IssueSSO(id, RoleViewer, ScopeAll, otherSID)
+			otherProvider := base
+			otherProvider.Provider = "other"
+			otherProviderToken, _ := sessions.IssueSSO(id, RoleViewer, ScopeAll, otherProvider)
+
+			if err := sessions.RevokeOIDCFrontChannelSessions("shauth", base.Issuer, base.SID); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, _, ok := sessions.Resolve(matched); ok {
+				t.Fatal("front-channel sid-matched session remained")
+			}
+			if _, _, _, ok := sessions.Resolve(otherSIDToken); !ok {
+				t.Fatal("front-channel logout revoked a different sid")
+			}
+			if _, _, _, ok := sessions.Resolve(otherProviderToken); !ok {
+				t.Fatal("front-channel logout revoked a different provider")
+			}
+		})
+	}
+}
+
 func TestRevokeOIDCSessionsScopesByProviderIssuerSIDAndSubject(t *testing.T) {
 	stores := map[string]SessionStore{
 		"memory": NewSessions(),

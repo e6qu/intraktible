@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { defineConfig, devices } from '@playwright/test';
 
+const executablePath = process.env.PLAYWRIGHT_EXECUTABLE_PATH;
+
 // Runs the embedded-binary smoke (web/e2e-embedded) against the single
 // `intraktible serve` artifact — the binary with the real SvelteKit UI embedded,
 // serving API + UI on :8080. The binary must already be built with the real UI
@@ -15,6 +17,7 @@ export default defineConfig({
   reporter: process.env.CI ? 'github' : 'list',
   use: {
     baseURL: 'http://localhost:8080',
+    launchOptions: executablePath ? { executablePath } : undefined,
     trace: 'on-first-retry'
   },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],

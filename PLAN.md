@@ -406,7 +406,11 @@ orders them hardest-blocker-first; each phase is a direction, not a committed da
   every injected AWS Secrets Manager secret version, including the database DSN that becomes
   available only after Amazon RDS has finished provisioning. The generic OpenID Connect
   deployment coordinates include an explicit organization and workspace, preserving the
-  application’s tenant-bound identity invariant.
+  application’s tenant-bound identity invariant. Every merged `main` commit publishes one
+  immutable 12-character commit-SHA release group: a multi-architecture manifest plus directly
+  selectable `-amd64` and `-arm64` images. Mutable branch tags and semantic-version tags were
+  removed, and GitHub Container Registry retention keeps the newest 20 complete release groups while
+  deleting untagged, malformed, and obsolete versions and enforcing a 60-version package ceiling.
 - **Phase 11 — Regulatory data lifecycle — 🚧 partial.** **Legal hold + automated retention shipped**
   (`platform/erasure`). Legal hold: a subject can be put under a legal/litigation hold, which makes it
   **survive retention** and **blocks erasure** (destroying data under hold is spoliation) — `Erase`
@@ -501,8 +505,16 @@ feature.
 The original MVP non-goals have mostly been overtaken — **SSO (OIDC + SAML) and SCIM shipped** in the
 enterprise track. OIDC sessions retain the verified issuer, subject, session identifier, and raw ID
 token server-side. Intraktible completes OpenID Connect RP-Initiated Logout through the provider's
-discovered end-session endpoint and accepts signed Back-Channel Logout tokens to revoke one provider
-session or every Intraktible session for a subject. Still
+discovered end-session endpoint, accepts signed Back-Channel Logout tokens to revoke one provider
+session or every Intraktible session for a subject, and accepts issuer-bound Front-Channel Logout
+notifications for the exact provider session. Local revocation and browser-cookie expiry were completed
+before provider navigation, including provider-metadata and durable-store error paths, so every UI
+logout surface failed closed and returned to Intraktible's own signed-out page. OIDC identity mapping
+resolved a verified email through the standard UserInfo endpoint when the ID token omitted it. A real
+Shauth + Ory Hydra + PostgreSQL + browser CI stack covered direct protected entry, catalog SSO without
+a second credential prompt, `client_secret_post`, identity display, all logout surfaces, global logout,
+local revocation, verified Back-Channel Logout delivery from the exact production provider artifact,
+strict missing/expired `exp` rejection, and protected-route re-entry. Still
 **out of scope** (and why): multi-tenant billing (not a product
 goal); exact API/UX parity with any commercial product (we are the open-source, self-hostable analog,
 not a clone). Formerly a non-goal, now **moved into the §8b forward roadmap**: real data-connector

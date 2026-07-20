@@ -1,179 +1,112 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-#
-# Build and publish the backend container image to GitHub Container Registry (GHCR),
-# multi-arch. Versions are derived from Conventional Commits: on every merge to main the
-# next semver is computed from history (feat -> minor, fix -> patch, feat!/BREAKING CHANGE
-# -> major); a matching git tag + GitHub Release are created and the image is tagged with
-# that version. Merges with no releasing commits still publish a rolling `main` +
-# `sha-<short>` image but do not cut a version. A manual `v*` tag push also publishes.
-#
-# Tag scheme, per logical tag T (e.g. 1.4.2, 1.4, 1, main, sha-abc123):
-#   ghcr.io/<repo>:T           -> the multi-arch manifest list (amd64 + arm64)
-#   ghcr.io/<repo>:T-amd64     -> the linux/amd64 image
-#   ghcr.io/<repo>:T-arm64     -> the linux/arm64 image
-# No `latest` tag is published. Auto-created tags don't recurse (GITHUB_TOKEN-pushed tags
-# don't trigger runs), so an auto-cut version's image is built in the same main-branch run.
-
-name: release
+name: Release container
 
 on:
   push:
     branches: [main]
-    tags: ['v*']
-    # Skip the image rebuild for changes that can't affect the binary (infra/docs only).
-    # A mixed change (any non-ignored file) still builds.
-    paths-ignore:
-      - 'deploy/**'
-      - 'docs/**'
-      - '**.md'
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-container
   cancel-in-progress: false
 
 permissions:
-  contents: write # create tags + releases
-  packages: write # push to GHCR
+  contents: read
+  packages: write
 
 env:
-  IMAGE: ghcr.io/${{ github.repository }}
+  IMAGE: ghcr.io/e6qu/intraktible
 
 jobs:
-  # Compute the version (creating the git tag on a releasing merge) and the base tag list
-  # that the per-arch builds and the manifest step both consume.
-  prepare:
-    runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.tags.outputs.version }}
-      new_tag: ${{ steps.version.outputs.new_tag }}
-      base_tags: ${{ steps.tags.outputs.base_tags }}
-      short_sha: ${{ steps.tags.outputs.short_sha }}
-      build_time: ${{ steps.tags.outputs.build_time }}
+  contract:
+    name: Validate publication contract
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0 # full history + tags for version computation
-
-      - name: Compute version (conventional commits)
-        id: version
-        if: github.ref_type == 'branch'
-        uses: mathieudutour/github-tag-action@v6.2
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          default_bump: false # only releasing commits cut a version
-          release_branches: main
-          tag_prefix: v
-
-      - name: Resolve base image tags
-        id: tags
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Validate immutable tags and retention
         run: |
-          set -euo pipefail
-          if [ "${{ github.ref_type }}" = "tag" ]; then
-            VERSION="${GITHUB_REF_NAME#v}"
-          else
-            VERSION="${{ steps.version.outputs.new_version }}"
-          fi
-          SHORT_SHA="$(git rev-parse --short HEAD)"
+          shellcheck scripts/check-container-publication.sh scripts/prune-ghcr-images.sh scripts/test-container-retention.sh
+          ./scripts/check-container-publication.sh
 
-          # Space-separated (image refs contain no spaces). No `latest`.
-          BASE="${IMAGE}:sha-${SHORT_SHA}"
-          if [ "${{ github.ref_type }}" = "branch" ]; then
-            BASE="${BASE} ${IMAGE}:main"
+  metadata:
+    name: Resolve immutable tag
+    needs: contract
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.revision.outputs.tag }}
+    steps:
+      - id: revision
+        env:
+          REVISION: ${{ github.sha }}
+        run: |
+          tag="${REVISION:0:12}"
+          if [[ ! "$tag" =~ ^[0-9a-f]{12}$ ]]; then
+            echo "invalid immutable image tag: $tag" >&2
+            exit 1
           fi
-          if [ -n "${VERSION}" ]; then
-            MAJOR="${VERSION%%.*}"
-            MINOR="${VERSION#*.}"; MINOR="${MINOR%%.*}"
-            BASE="${BASE} ${IMAGE}:${VERSION} ${IMAGE}:${MAJOR}.${MINOR} ${IMAGE}:${MAJOR}"
-          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
-          # Build provenance passed to the image build (both arches get the same values).
-          {
-            echo "version=${VERSION}"
-            echo "base_tags=${BASE}"
-            echo "short_sha=${SHORT_SHA}"
-            echo "build_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          } >> "$GITHUB_OUTPUT"
-          echo "Base tags: ${BASE}"
-
-  # One native-per-arch build, each pushing the arch-suffixed tags (T-amd64 / T-arm64).
   build:
-    needs: prepare
+    name: Build (${{ matrix.arch }})
+    needs: metadata
     runs-on: ${{ matrix.runner }}
     strategy:
+      fail-fast: true
       matrix:
         include:
           - arch: amd64
+            platform: linux/amd64
             runner: ubuntu-24.04
           - arch: arm64
-            runner: ubuntu-24.04-arm # native arm64 hosted runner (no QEMU emulation)
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Arch-suffixed tags
-        id: t
-        run: |
-          set -euo pipefail
-          OUT=""
-          for b in ${{ needs.prepare.outputs.base_tags }}; do
-            OUT="${OUT}${b}-${{ matrix.arch }}"$'\n'
-          done
-          { echo "tags<<EOF"; printf '%s' "$OUT"; echo "EOF"; } >> "$GITHUB_OUTPUT"
-
-      - name: Build and push (${{ matrix.arch }})
-        uses: docker/build-push-action@v6
+      - name: Build and publish architecture image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
-          platforms: linux/${{ matrix.arch }}
+          platforms: ${{ matrix.platform }}
           push: true
-          tags: ${{ steps.t.outputs.tags }}
-          build-args: |
-            GIT_SHA=${{ needs.prepare.outputs.short_sha }}
-            BUILD_TIME=${{ needs.prepare.outputs.build_time }}
           provenance: false
-          cache-from: type=gha,scope=${{ matrix.arch }}
-          cache-to: type=gha,scope=${{ matrix.arch }},mode=max
+          sbom: false
+          tags: ${{ env.IMAGE }}:${{ needs.metadata.outputs.tag }}-${{ matrix.arch }}
+          build-args: |
+            GIT_SHA=${{ needs.metadata.outputs.tag }}
+            BUILD_TIME=${{ github.event.head_commit.timestamp }}
+          cache-from: type=gha,scope=intraktible-${{ matrix.arch }}
+          cache-to: type=gha,scope=intraktible-${{ matrix.arch }},mode=max
 
-  # Assemble the multi-arch manifest list T from T-amd64 + T-arm64 for every base tag.
   manifest:
-    needs: [prepare, build]
-    runs-on: ubuntu-latest
+    name: Publish multi-architecture manifest
+    needs: [metadata, build]
+    runs-on: ubuntu-24.04
     steps:
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Create manifest lists
+      - name: Assemble multi-architecture manifest
         run: |
-          set -euo pipefail
-          for b in ${{ needs.prepare.outputs.base_tags }}; do
-            docker buildx imagetools create -t "${b}" "${b}-amd64" "${b}-arm64"
-          done
+          docker buildx imagetools create \
+            --tag "${IMAGE}:${{ needs.metadata.outputs.tag }}" \
+            "${IMAGE}:${{ needs.metadata.outputs.tag }}-amd64" \
+            "${IMAGE}:${{ needs.metadata.outputs.tag }}-arm64"
 
-  # Publish a GitHub Release for an auto-cut version (branch push that cut a version).
-  release:
-    needs: [prepare, manifest]
-    if: github.ref_type == 'branch' && needs.prepare.outputs.new_tag != ''
-    runs-on: ubuntu-latest
+  retention:
+    name: Retain 20 release groups
+    needs: [metadata, manifest]
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Create GitHub Release
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Delete obsolete GitHub Container Registry versions
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release create "${{ needs.prepare.outputs.new_tag }}" \
-            --title "${{ needs.prepare.outputs.new_tag }}" \
-            --generate-notes
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/prune-ghcr-images.sh "${{ github.repository_owner }}" "${{ github.event.repository.name }}" "${{ needs.metadata.outputs.tag }}" 20

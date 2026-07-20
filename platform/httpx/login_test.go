@@ -116,7 +116,7 @@ func TestLogoutReturnsSessionBoundOIDCFrontChannelURL(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&logout); err != nil {
 		t.Fatalf("decode logout response: %v", err)
 	}
-	wantURL := providerLogoutURL + "?id_token_hint=signed.id.token&post_logout_redirect_uri=https%3A%2F%2Fintraktible.example.test%2Fv1%2Fauth%2Fsigned-out"
+	wantURL := providerLogoutURL + "?client_id=intraktible&id_token_hint=signed.id.token&post_logout_redirect_uri=https%3A%2F%2Fintraktible.example.test%2Fv1%2Fauth%2Fsigned-out"
 	if logout.URL != wantURL {
 		t.Fatalf("logout URL = %q, want %q", logout.URL, wantURL)
 	}
@@ -144,38 +144,42 @@ func TestLogoutRejectsCrossOriginWithoutRevokingSession(t *testing.T) {
 	}
 }
 
-type failingMetadataSessions struct{ *auth.Sessions }
-
-func (s *failingMetadataSessions) SSOSession(string) (auth.SSOSession, bool, error) {
-	return auth.SSOSession{}, false, errors.New("session store unavailable")
-}
-
-func TestLogoutFailsWithoutRevokingWhenSSOMetadataCannotBeRead(t *testing.T) {
-	base := auth.NewSessions()
-	token, err := base.IssueSSO(
+func TestLogoutRevokesBeforeRejectingInvalidProviderMetadata(t *testing.T) {
+	sessions := auth.NewSessions()
+	token, err := sessions.IssueSSO(
 		identity.Identity{Org: "demo", Workspace: "main", Actor: "dev"},
 		auth.RoleViewer,
 		auth.ScopeAll,
-		auth.SSOSession{Protocol: "oidc", EndSessionEndpoint: "https://auth.example.test/logout"},
+		auth.SSOSession{
+			Protocol: "oidc", ClientID: "intraktible", IDToken: "signed.id.token",
+			EndSessionEndpoint:    "https://auth.example.test/logout",
+			PostLogoutRedirectURL: "https://attacker.example.test/not-the-app-landing",
+		},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sessions := &failingMetadataSessions{Sessions: base}
 	req := httptest.NewRequest(http.MethodPost, "/v1/logout", http.NoBody)
 	req.AddCookie(&http.Cookie{Name: "session", Value: token})
 	rec := httptest.NewRecorder()
 	httpx.LogoutHandler(sessions)(rec, req)
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("logout with unavailable SSO metadata -> %d, want 503", rec.Code)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("logout with invalid SSO metadata -> %d, want 500", rec.Code)
 	}
-	if _, _, _, ok := base.Resolve(token); !ok {
-		t.Fatal("failed logout revoked the still-active local session")
+	if _, _, _, ok := sessions.Resolve(token); ok {
+		t.Fatal("provider logout failure retained the local session")
 	}
+	cleared := false
 	for _, cookie := range rec.Result().Cookies() {
 		if cookie.Name == "session" && cookie.MaxAge < 0 {
-			t.Fatal("failed logout cleared the browser session cookie")
+			cleared = true
 		}
+	}
+	if !cleared {
+		t.Fatal("provider logout failure did not clear the browser session cookie")
+	}
+	if rec.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("logout Cache-Control = %q, want no-store", rec.Header().Get("Cache-Control"))
 	}
 }
 
