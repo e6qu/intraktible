@@ -406,7 +406,11 @@ orders them hardest-blocker-first; each phase is a direction, not a committed da
   every injected AWS Secrets Manager secret version, including the database DSN that becomes
   available only after Amazon RDS has finished provisioning. The generic OpenID Connect
   deployment coordinates include an explicit organization and workspace, preserving the
-  application’s tenant-bound identity invariant.
+  application’s tenant-bound identity invariant. Every merged `main` commit publishes one
+  immutable 12-character commit-SHA release group: a multi-architecture manifest plus directly
+  selectable `-amd64` and `-arm64` images. Mutable branch tags and semantic-version tags were
+  removed, and GitHub Container Registry retention keeps the newest 20 complete release groups while
+  deleting untagged, malformed, and obsolete versions and enforcing a 60-version package ceiling.
 - **Phase 11 — Regulatory data lifecycle — 🚧 partial.** **Legal hold + automated retention shipped**
   (`platform/erasure`). Legal hold: a subject can be put under a legal/litigation hold, which makes it
   **survive retention** and **blocks erasure** (destroying data under hold is spoliation) — `Erase`

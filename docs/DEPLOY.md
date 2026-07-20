@@ -6,6 +6,14 @@ is the runbook for a real, hardened, highly-available deployment. For the flag/e
 reference see [LAUNCH.md](./LAUNCH.md); for backups and disaster recovery see
 [DR.md](./DR.md).
 
+Every commit merged to `main` publishes one immutable GitHub Container Registry
+release group at `ghcr.io/e6qu/intraktible:<12-character-commit-SHA>`. The
+unsuffixed tag is the multi-architecture manifest; the directly selectable
+images use the same tag with `-amd64` and `-arm64`. The workflow publishes no
+`latest`, `main`, semantic-version, or `sha-` tags and retains only the newest
+20 complete release groups. Retention also removes untagged, malformed, and
+obsolete package versions and verifies that no more than 60 versions remain.
+
 ## The production posture, in one place
 
 `INTRAKTIBLE_ENV=production` (or `--env=production`) turns on a **preflight** that

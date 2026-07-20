@@ -9,10 +9,10 @@ PostgreSQL,LGPL-2.1,LGPL-3.0,GPL-2.0,GPL-3.0,AGPL-3.0
 # Our Go packages/dirs, excluding any vendored .go files under web/node_modules
 # (npm deps such as `flatted` ship a Go port that is not ours). Go tooling
 # descends into node_modules, so we filter it out of every analysis target.
-GO_PKGS := $(shell $(GO) list ./... | grep -v /node_modules)
-GO_DIRS := $(shell $(GO) list -f '{{.Dir}}' ./... | grep -v /node_modules)
+GO_PKGS = $(shell $(GO) list ./... | grep -v /node_modules)
+GO_DIRS = $(shell $(GO) list -f '{{.Dir}}' ./... | grep -v /node_modules)
 
-.PHONY: all build run dev test test-short test-shauth-sso fmt fmtcheck vet typecheck tsenums lint sast deadcode dupl vuln licenses check ci precommit web dist e2e-embedded demo-seed clean
+.PHONY: all build run dev test test-short test-shauth-sso container-release-check fmt fmtcheck vet typecheck tsenums lint sast deadcode dupl vuln licenses check ci precommit web dist e2e-embedded demo-seed clean
 
 all: build
 
@@ -50,6 +50,11 @@ test-short:
 test-shauth-sso:
 	@[ -n "$(SHAUTH_SOURCE_DIR)" ] || { echo "SHAUTH_SOURCE_DIR must point to a Shauth checkout"; exit 1; }
 	SHAUTH_SOURCE_DIR="$(SHAUTH_SOURCE_DIR)" ./scripts/test-shauth-sso.sh
+
+## container-release-check: validate immutable multi-architecture publication and retention
+container-release-check:
+	shellcheck scripts/check-container-publication.sh scripts/prune-ghcr-images.sh scripts/test-container-retention.sh
+	./scripts/check-container-publication.sh
 
 ## bench: decision-throughput benchmark (serial + parallel scaling across cores)
 bench:
