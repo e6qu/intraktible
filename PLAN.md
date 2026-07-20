@@ -509,7 +509,8 @@ logout surface failed closed and returned to Intraktible's own signed-out page. 
 resolved a verified email through the standard UserInfo endpoint when the ID token omitted it. A real
 Shauth + Ory Hydra + PostgreSQL + browser CI stack covered direct protected entry, catalog SSO without
 a second credential prompt, `client_secret_post`, identity display, all logout surfaces, global logout,
-local revocation, and protected-route re-entry. Still
+local revocation, verified Back-Channel Logout delivery from the exact production provider artifact,
+strict missing/expired `exp` rejection, and protected-route re-entry. Still
 **out of scope** (and why): multi-tenant billing (not a product
 goal); exact API/UX parity with any commercial product (we are the open-source, self-hostable analog,
 not a clone). Formerly a non-goal, now **moved into the §8b forward roadmap**: real data-connector

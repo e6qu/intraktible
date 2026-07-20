@@ -385,6 +385,7 @@ func TestOIDCBackChannelLogoutValidatesRequiredClaimsAndEventObject(t *testing.T
 	}
 	for name, claims := range map[string]string{
 		"missing expiry": fmt.Sprintf(`{"iss":%q,"aud":%q,"sub":"u-1","iat":%d,"jti":"missing-expiry","events":{"http://schemas.openid.net/event/backchannel-logout":{}}}`, provider.URL, oidcClientID, now.Unix()),
+		"expired":        fmt.Sprintf(`{"iss":%q,"aud":%q,"sub":"u-1","iat":%d,"exp":%d,"jti":"expired","events":{"http://schemas.openid.net/event/backchannel-logout":{}}}`, provider.URL, oidcClientID, now.Add(-2*time.Minute).Unix(), now.Add(-time.Minute).Unix()),
 		"empty nonce":    fmt.Sprintf(`{"iss":%q,"aud":%q,"sub":"u-1","iat":%d,"exp":%d,"jti":"empty-nonce","nonce":"","events":{"http://schemas.openid.net/event/backchannel-logout":{}}}`, provider.URL, oidcClientID, now.Unix(), now.Add(time.Minute).Unix()),
 	} {
 		rec := httptest.NewRecorder()

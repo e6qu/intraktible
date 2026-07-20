@@ -96,5 +96,8 @@ Playwright. The pre-push gate additionally runs the embedded-binary smoke.
 `SHAUTH_SOURCE_DIR=/path/to/shauth make test-shauth-sso`
 additionally builds a real Shauth + Ory Hydra + PostgreSQL stack and drives
 direct login, app-catalog SSO, identity display, every logout surface, local
-revocation, global provider logout, and protected-route re-entry in a browser.
+revocation, global provider logout, verified Back-Channel Logout delivery, and
+protected-route re-entry in a browser. The exact pinned Shauth artifact supplies
+the production Ory Hydra build, including its audited short-lived `exp` claim on
+logout tokens; the relying party rejects missing and expired claims.
 Pre-commit + pre-push hooks run the same project-local targets.

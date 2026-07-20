@@ -9,6 +9,7 @@ project="intraktible-shauth-${$}"
 network="${project}-network"
 postgres="${project}-postgres"
 hydra="${project}-hydra"
+provider_image="${project}-provider"
 port_base=$((38000 + ($$ % 1000) * 10))
 postgres_port=$((port_base + 1))
 hydra_public_port=$((port_base + 2))
@@ -45,6 +46,7 @@ cleanup() {
 	fi
 	docker rm -f "$hydra" "$postgres" >/dev/null 2>&1 || true
 	docker network rm "$network" >/dev/null 2>&1 || true
+	docker image rm "$provider_image" >/dev/null 2>&1 || true
 	rm -rf "$work"
 	trap - EXIT INT TERM
 	exit "$status"
@@ -79,10 +81,16 @@ docker exec "$postgres" pg_isready -U shauth -d shauth >/dev/null
 docker exec "$postgres" createdb -U shauth hydra
 docker exec "$postgres" createdb -U shauth intraktible
 
+# Build the exact Shauth revision under test. Its immutable artifact includes the
+# audited Ory Hydra provider build used in production, so this relying-party gate
+# exercises the provider's signed Back-Channel Logout token contract rather than
+# an unpatched upstream container with different claims.
+docker build --load --tag "$provider_image" "$shauth_root" >"$work/provider-build.log" 2>&1
 hydra_dsn="postgres://shauth:${postgres_password}@postgres:5432/hydra?sslmode=disable"
-docker run --rm --network "$network" --env "DSN=${hydra_dsn}" oryd/hydra:v26.2.0 \
+docker run --rm --network "$network" --entrypoint /hydra --env "DSN=${hydra_dsn}" "$provider_image" \
 	migrate sql up --read-from-env --yes >"$work/hydra-migrate.log" 2>&1
 docker run --detach --name "$hydra" --network "$network" \
+	--add-host host.docker.internal:host-gateway --entrypoint /hydra \
 	--publish "127.0.0.1:${hydra_public_port}:4444" --publish "127.0.0.1:${hydra_admin_port}:4445" \
 	--volume "${shauth_root}/config/hydra.yaml:/etc/config/hydra.yaml:ro" \
 	--env "DSN=${hydra_dsn}" --env "HYDRA_DSN=${hydra_dsn}" \
@@ -92,13 +100,13 @@ docker run --detach --name "$hydra" --network "$network" \
 	--env "URLS_LOGOUT=http://localhost:${shauth_port}/oauth/logout" \
 	--env "URLS_POST_LOGOUT_REDIRECT=http://localhost:${shauth_port}/" \
 	--env "SECRETS_SYSTEM_0=${hydra_secret}" \
-	oryd/hydra:v26.2.0 serve all --dev --config /etc/config/hydra.yaml >/dev/null
+	"$provider_image" serve all --dev --config /etc/config/hydra.yaml >/dev/null
 wait_http "http://localhost:${hydra_public_port}/health/ready" "Ory Hydra"
 
 (cd "$shauth_root" && go build -o "$work/shauth" ./cmd/shauth && go build -o "$work/shauth-migrate" ./cmd/shauth-migrate)
 shauth_dsn="postgres://shauth:${postgres_password}@localhost:${postgres_port}/shauth?sslmode=disable"
 DATABASE_URL="$shauth_dsn" SHAUTH_MIGRATIONS_DIR="$shauth_root/migrations" "$work/shauth-migrate"
-bootstrap_apps=$(printf '[{"slug":"intraktible","name":"Intraktible","description":"Agentic decision platform.","launch_url":"http://localhost:%s/","oidc_client_id":"%s","oidc_client_secret":"%s","redirect_uris":["http://localhost:%s/v1/auth/oidc/shauth/callback"],"post_logout_redirect_uris":["http://localhost:%s/v1/auth/signed-out"],"frontchannel_logout_uri":"http://localhost:%s/v1/auth/oidc/shauth/frontchannel-logout","health_url":"http://localhost:%s/healthz","monitoring_url":""}]' "$app_port" "$client_id" "$client_secret" "$app_port" "$app_port" "$app_port" "$app_port")
+bootstrap_apps=$(printf '[{"slug":"intraktible","name":"Intraktible","description":"Agentic decision platform.","launch_url":"http://localhost:%s/","oidc_client_id":"%s","oidc_client_secret":"%s","redirect_uris":["http://localhost:%s/v1/auth/oidc/shauth/callback"],"post_logout_redirect_uris":["http://localhost:%s/v1/auth/signed-out"],"frontchannel_logout_uri":"http://localhost:%s/v1/auth/oidc/shauth/frontchannel-logout","backchannel_logout_uri":"http://localhost:%s/v1/auth/oidc/shauth/backchannel-logout","health_url":"http://localhost:%s/healthz","monitoring_url":""}]' "$app_port" "$client_id" "$client_secret" "$app_port" "$app_port" "$app_port" "$app_port" "$app_port")
 SHAUTH_LISTEN_ADDRESS="127.0.0.1:${shauth_port}" \
 	SHAUTH_PUBLIC_URL="http://localhost:${shauth_port}" SHAUTH_ALLOW_INSECURE_COOKIES=true \
 	DATABASE_URL="$shauth_dsn" HYDRA_ADMIN_URL="http://localhost:${hydra_admin_port}" \
@@ -110,6 +118,14 @@ SHAUTH_LISTEN_ADDRESS="127.0.0.1:${shauth_port}" \
 	SHAUTH_BOOTSTRAP_APPS_JSON="$bootstrap_apps" "$work/shauth" >"$work/shauth.log" 2>&1 &
 shauth_pid=$!
 wait_http "http://localhost:${shauth_port}/healthz" "Shauth"
+
+# The browser uses the public localhost coordinate. Ory Hydra runs in a Docker
+# network, so only its delivery coordinate is rewritten to the same host service
+# through Docker's host gateway.
+client_registration=$(curl --fail --silent --show-error "http://localhost:${hydra_admin_port}/admin/clients/${client_id}")
+client_registration=$(printf '%s' "$client_registration" | sed "s#http://localhost:${app_port}/v1/auth/oidc/shauth/backchannel-logout#http://host.docker.internal:${api_port}/v1/auth/oidc/shauth/backchannel-logout#")
+curl --fail --silent --show-error --request PUT --header 'Content-Type: application/json' \
+	--data "$client_registration" "http://localhost:${hydra_admin_port}/admin/clients/${client_id}" >/dev/null
 
 (cd "$repo_root" && go build -o "$work/intraktible" ./cmd/intraktible)
 intraktible_dsn="postgres://shauth:${postgres_password}@localhost:${postgres_port}/intraktible?sslmode=disable"
@@ -135,3 +151,10 @@ SHAUTH_URL="http://localhost:${shauth_port}" INTRAKTIBLE_URL="http://localhost:$
 	SHAUTH_BOOTSTRAP_ADMIN_PASSWORD="$admin_password" \
 	PLAYWRIGHT_EXECUTABLE_PATH="${PLAYWRIGHT_EXECUTABLE_PATH:-}" \
 	node "$repo_root/web/e2e-shauth.mjs"
+
+logout_tokens=$(docker exec "$postgres" psql -U shauth -d intraktible -Atc \
+	"SELECT count(*) FROM docs WHERE collection='auth_oidc_logout_replays'")
+if [ "$logout_tokens" -lt 1 ]; then
+	echo 'Ory Hydra did not deliver a verified Back-Channel Logout token to Intraktible' >&2
+	exit 1
+fi
