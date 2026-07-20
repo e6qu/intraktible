@@ -61,6 +61,13 @@ repos:
         files: ^(\.github/workflows/release\.yml|scripts/(check-container-publication\.sh|prune-ghcr-images\.sh|select-obsolete-container-versions\.jq|test-container-retention\.sh)|Makefile)$
         pass_filenames: false
 
+      - id: terraform
+        name: 'terraform · format + validate + plan contracts'
+        entry: make terraform-check
+        language: system
+        files: ^deploy/terraform/aws-ecs-scale-to-zero/
+        pass_filenames: false
+
       # ---------------- Web — every commit ----------------
       - id: web-format
         name: 'web · autoformat (prettier)'

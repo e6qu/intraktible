@@ -35,7 +35,7 @@ resource "aws_security_group" "ecs_tasks" {
     from_port       = var.container_port
     to_port         = var.container_port
     protocol        = "tcp"
-    security_groups = [aws_security_group.vpc_link.id]
+    security_groups = [local.api_gateway_vpc_link_security_group_id]
   }
   egress {
     from_port   = 0

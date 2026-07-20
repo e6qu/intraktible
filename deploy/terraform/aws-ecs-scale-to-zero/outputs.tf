@@ -30,6 +30,21 @@ output "api_gateway_endpoint" {
   value       = aws_apigatewayv2_api.this.api_endpoint
 }
 
+output "api_gateway_vpc_link_id" {
+  description = "Amazon API Gateway VPC Link used by the private application integration, whether reused or dedicated."
+  value       = local.api_gateway_vpc_link_id
+}
+
+output "creates_api_gateway_vpc_link" {
+  description = "Whether this module owns a dedicated Amazon API Gateway VPC Link and its security group."
+  value       = var.create_api_gateway_vpc_link
+}
+
+output "api_gateway_vpc_link_security_group_id" {
+  description = "Security group attached to the Amazon API Gateway VPC Link and admitted by the Intraktible task security group."
+  value       = local.api_gateway_vpc_link_security_group_id
+}
+
 output "wake_endpoint" {
   description = "POST here (through CloudFront) to wake the backend from zero."
   value       = "${local.use_custom_domain ? "https://${var.domain_name}" : "https://${aws_cloudfront_distribution.this.domain_name}"}/wake"

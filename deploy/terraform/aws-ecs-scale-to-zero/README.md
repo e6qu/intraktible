@@ -43,7 +43,12 @@ small fck-nat instance plus storage.
   stay same-origin (no CORS / no configurable API base URL needed).
 - **API Gateway HTTP API** replaces an ALB/NLB (both bill hourly, neither scales to zero).
   A **VPC Link → Cloud Map** private integration reaches the ECS tasks with no load
-  balancer.
+  balancer. By default the module owns a dedicated VPC Link and security group. In a
+  shared VPC, set `create_api_gateway_vpc_link = false` and supply both
+  `existing_api_gateway_vpc_link_id` and
+  `existing_api_gateway_vpc_link_security_group_id` to reuse an environment-level link;
+  the module then creates neither dedicated resource and admits that security group on
+  the Intraktible task port.
 - **ECS Fargate**, two services on one cluster:
   - `api` — stateless, `desired=0` at idle, woken `0→1` by the **waker Lambda** on
     `POST /wake`, scaled `1→N` by CPU target-tracking, scaled back to `0` by the **reaper**
@@ -62,24 +67,49 @@ small fck-nat instance plus storage.
 ## Prerequisites
 
 1. **A published backend image.** The repo's `release` workflow builds and pushes a
-   **multi-arch** image to `ghcr.io/e6qu/intraktible` on every merge to main (`:main`,
-   `:sha-<short>`) and on version tags (`:1.4.2`, `:1.4`, `:1`) — there is no `:latest`.
-   Point `container_image` at one; pin a version in production. Tasks run **arm64**
-   (Graviton, cheaper), which the multi-arch manifest covers. If the GHCR package is
+   **multi-arch** image to `ghcr.io/e6qu/intraktible` on every merge to main. The manifest
+   tag is the 12-character commit SHA; its architecture-specific images use the same tag
+   with `-arm64` and `-amd64` suffixes. Point `container_image` at an immutable commit tag.
+   Tasks run **arm64** (Graviton, cheaper), which the multi-arch manifest covers. If the GHCR package is
    **private**, either make it public, set `image_pull_secret_arn` to a Secrets Manager
    `{username,password}` secret holding a GHCR pull token, or mirror the image to ECR.
    (To build locally instead: `docker build -t <ref> .` and push to any registry.)
 2. **A remote state backend you control** (the module generates secrets that land in
    state — use S3 + SSE-KMS with locking; see *Secrets and state* below).
 
-## Apply
+## Call the module
 
-```sh
-terraform init
-terraform apply \
-  -var 'container_image=ghcr.io/e6qu/intraktible:sha-<commit>' \
-  -var 'region=eu-west-1'
+The calling root owns provider configuration. Pass both the regional provider and a
+`us-east-1` alias, which the module uses for CloudFront's ACM certificate:
+
+```hcl
+provider "aws" {
+  region = "eu-west-1"
+}
+
+provider "aws" {
+  alias  = "us_east_1"
+  region = "us-east-1"
+}
+
+module "intraktible" {
+  source = "git::https://github.com/e6qu/intraktible.git//deploy/terraform/aws-ecs-scale-to-zero?ref=<immutable-commit>"
+
+  providers = {
+    aws           = aws
+    aws.us_east_1 = aws.us_east_1
+  }
+
+  container_image         = "ghcr.io/e6qu/intraktible:<12-character-commit-sha>"
+  database_url_secret_arn = "arn:aws:secretsmanager:eu-west-1:123456789012:secret:intraktible-database"
+  region                  = "eu-west-1"
+}
 ```
+
+The repository validates formatting, provider schemas, the standalone topology, shared-link
+reuse (including plan-time-unknown IDs produced by environment-level resources), and
+incomplete-coordinate rejection with `make terraform-check`. The same target runs in pre-commit
+and CI.
 
 Then publish the static site (build it first — `make web` / `npm --prefix web run build`):
 

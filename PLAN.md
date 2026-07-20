@@ -313,6 +313,15 @@ delivered, by theme:
   Experimentation, Executive, Evaluator) over an API-first design — OpenAPI 3.1 + Go/TypeScript SDKs.
 - **Hardening:** eleven+ multi-agent audit rounds (correctness, security, fake-hunting,
   accessibility/WCAG-AA-in-CI, live-UI walkthroughs) — see the R-/DR-/BF- blocks in `BUGS.md`.
+- **Shared-VPC deployment:** the Amazon Elastic Container Service Terraform module preserved its
+  standalone dedicated Amazon API Gateway VPC Link while also accepting an existing link and its
+  security group as an inseparable pair under an explicit plan-known ownership switch. Shared
+  environments created neither duplicate resource even when both coordinates came from resources
+  whose IDs were unknown during planning, and the task ingress and API integration used the same
+  supplied coordinates. Explicit state moves preserved standalone installations across the
+  resource-address change. The reusable module declared, rather than embedded, its default and
+  `us-east-1` provider requirements so environment roots supplied both configurations explicitly;
+  plan-contract tests ran without AWS credentials in pre-commit and CI.
 
 ---
 
