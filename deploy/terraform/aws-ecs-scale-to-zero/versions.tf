@@ -5,8 +5,9 @@ terraform {
 
   required_providers {
     aws = {
-      source  = "hashicorp/aws"
-      version = ">= 5.60" # CloudFront VPC origins
+      source                = "hashicorp/aws"
+      version               = ">= 5.60" # CloudFront VPC origins
+      configuration_aliases = [aws.us_east_1]
     }
     archive = {
       source  = "hashicorp/archive"
@@ -17,11 +18,4 @@ terraform {
       version = ">= 3.5"
     }
   }
-}
-
-# CloudFront is a global service; its ACM certificate MUST live in us-east-1. This
-# aliased provider is used only for the CloudFront cert + distribution-scoped lookups.
-provider "aws" {
-  alias  = "us_east_1"
-  region = "us-east-1"
 }

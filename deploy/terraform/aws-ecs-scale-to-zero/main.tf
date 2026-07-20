@@ -1,17 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-provider "aws" {
-  region = var.region
-
-  default_tags {
-    tags = merge({
-      "app"        = var.name
-      "managed-by" = "terraform"
-      "module"     = "aws-ecs-scale-to-zero"
-    }, var.tags)
-  }
-}
-
 data "aws_availability_zones" "available" {
   state = "available"
 }
@@ -26,13 +14,15 @@ locals {
 
   use_custom_domain = var.domain_name != ""
   # Managed-DNS mode: the module owns the ACM cert + Route53 alias records for domain_name.
-  manage_dns           = var.domain_name != "" && var.route53_zone_id != ""
-  use_existing_network = var.existing_vpc_id != ""
-  use_existing_cluster = var.existing_ecs_cluster_arn != ""
-  vpc_id               = local.use_existing_network ? var.existing_vpc_id : aws_vpc.this[0].id
-  private_subnet_ids   = local.use_existing_network ? var.existing_private_subnet_ids : aws_subnet.private[*].id
-  ecs_cluster_arn      = local.use_existing_cluster ? var.existing_ecs_cluster_arn : aws_ecs_cluster.this[0].arn
-  ecs_cluster_name     = local.use_existing_cluster ? element(split("/", var.existing_ecs_cluster_arn), 1) : aws_ecs_cluster.this[0].name
+  manage_dns                             = var.domain_name != "" && var.route53_zone_id != ""
+  use_existing_network                   = var.existing_vpc_id != ""
+  use_existing_cluster                   = var.existing_ecs_cluster_arn != ""
+  vpc_id                                 = local.use_existing_network ? var.existing_vpc_id : aws_vpc.this[0].id
+  private_subnet_ids                     = local.use_existing_network ? var.existing_private_subnet_ids : aws_subnet.private[*].id
+  ecs_cluster_arn                        = local.use_existing_cluster ? var.existing_ecs_cluster_arn : aws_ecs_cluster.this[0].arn
+  ecs_cluster_name                       = local.use_existing_cluster ? element(split("/", var.existing_ecs_cluster_arn), 1) : aws_ecs_cluster.this[0].name
+  api_gateway_vpc_link_id                = var.create_api_gateway_vpc_link ? aws_apigatewayv2_vpc_link.dedicated[0].id : var.existing_api_gateway_vpc_link_id
+  api_gateway_vpc_link_security_group_id = var.create_api_gateway_vpc_link ? aws_security_group.dedicated_vpc_link[0].id : var.existing_api_gateway_vpc_link_security_group_id
 }
 
 check "shared_network_coordinates" {

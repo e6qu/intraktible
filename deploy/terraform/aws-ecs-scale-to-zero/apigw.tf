@@ -8,7 +8,9 @@
 #   CloudFront ──/v1,/healthz,/readyz──▶ HTTP API ──VPC Link──▶ Cloud Map ──▶ ECS tasks
 #              └─POST /wake──▶ waker Lambda (scales the API service 0->1)
 
-resource "aws_security_group" "vpc_link" {
+resource "aws_security_group" "dedicated_vpc_link" {
+  count = var.create_api_gateway_vpc_link ? 1 : 0
+
   name_prefix = "${local.name}-vpclink-"
   description = "API Gateway VPC Link ENIs: egress to the ECS task port"
   vpc_id      = local.vpc_id
@@ -26,10 +28,22 @@ resource "aws_security_group" "vpc_link" {
   tags = { Name = "${local.name}-vpclink" }
 }
 
-resource "aws_apigatewayv2_vpc_link" "this" {
+resource "aws_apigatewayv2_vpc_link" "dedicated" {
+  count = var.create_api_gateway_vpc_link ? 1 : 0
+
   name               = local.name
   subnet_ids         = local.private_subnet_ids
-  security_group_ids = [aws_security_group.vpc_link.id]
+  security_group_ids = [aws_security_group.dedicated_vpc_link[0].id]
+}
+
+moved {
+  from = aws_security_group.vpc_link
+  to   = aws_security_group.dedicated_vpc_link[0]
+}
+
+moved {
+  from = aws_apigatewayv2_vpc_link.this
+  to   = aws_apigatewayv2_vpc_link.dedicated[0]
 }
 
 resource "aws_apigatewayv2_api" "this" {
@@ -45,8 +59,19 @@ resource "aws_apigatewayv2_integration" "app" {
   integration_type   = "HTTP_PROXY"
   integration_method = "ANY"
   connection_type    = "VPC_LINK"
-  connection_id      = aws_apigatewayv2_vpc_link.this.id
+  connection_id      = local.api_gateway_vpc_link_id
   integration_uri    = aws_service_discovery_service.api.arn
+
+  lifecycle {
+    precondition {
+      condition = var.create_api_gateway_vpc_link ? (
+        var.existing_api_gateway_vpc_link_id == "" && var.existing_api_gateway_vpc_link_security_group_id == ""
+        ) : (
+        var.existing_api_gateway_vpc_link_id != "" && var.existing_api_gateway_vpc_link_security_group_id != ""
+      )
+      error_message = "Set create_api_gateway_vpc_link=true without existing coordinates, or set it false and supply both existing_api_gateway_vpc_link_id and existing_api_gateway_vpc_link_security_group_id."
+    }
+  }
 }
 
 resource "aws_apigatewayv2_route" "default" {

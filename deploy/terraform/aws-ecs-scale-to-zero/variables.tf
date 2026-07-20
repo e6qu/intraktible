@@ -41,6 +41,24 @@ variable "existing_ecs_cluster_arn" {
   default     = ""
 }
 
+variable "create_api_gateway_vpc_link" {
+  description = "Create a dedicated Amazon API Gateway VPC Link and security group. Set false when supplying both existing VPC Link coordinates from an environment-level link."
+  type        = bool
+  default     = true
+}
+
+variable "existing_api_gateway_vpc_link_id" {
+  description = "Existing Amazon API Gateway VPC Link ID. Required with existing_api_gateway_vpc_link_security_group_id when create_api_gateway_vpc_link is false."
+  type        = string
+  default     = ""
+}
+
+variable "existing_api_gateway_vpc_link_security_group_id" {
+  description = "Security group ID attached to existing_api_gateway_vpc_link_id. Required when create_api_gateway_vpc_link is false so Intraktible task ingress admits traffic from the reused link."
+  type        = string
+  default     = ""
+}
+
 variable "az_count" {
   description = "Number of Availability Zones to spread private subnets across."
   type        = number
@@ -53,7 +71,7 @@ variable "az_count" {
 }
 
 variable "container_image" {
-  description = "Full multi-arch image reference for the intraktible backend (e.g. ghcr.io/e6qu/intraktible:main or a pinned :1.4.2, published by the release workflow). Tasks run arm64, which the multi-arch manifest covers."
+  description = "Immutable multi-arch image reference for the Intraktible backend, using the release workflow's 12-character commit-SHA manifest tag. Tasks run arm64, which the manifest covers."
   type        = string
 }
 

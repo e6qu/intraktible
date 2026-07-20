@@ -7,7 +7,7 @@
 # (see docs/DEPLOY.md). TLS terminates at a reverse proxy in front of :8080.
 services:
   app:
-    image: intraktible:${INTRAKTIBLE_TAG:-latest}
+    image: intraktible:${INTRAKTIBLE_TAG:?set INTRAKTIBLE_TAG to an immutable release tag}
     build:
       context: ..
       dockerfile: Dockerfile

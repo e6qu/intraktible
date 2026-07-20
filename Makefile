@@ -12,7 +12,7 @@ PostgreSQL,LGPL-2.1,LGPL-3.0,GPL-2.0,GPL-3.0,AGPL-3.0
 GO_PKGS = $(shell $(GO) list ./... | grep -v /node_modules)
 GO_DIRS = $(shell $(GO) list -f '{{.Dir}}' ./... | grep -v /node_modules)
 
-.PHONY: all build run dev test test-short test-shauth-sso container-release-check fmt fmtcheck vet typecheck tsenums lint sast deadcode dupl vuln licenses check ci precommit web dist e2e-embedded demo-seed clean
+.PHONY: all build run dev test test-short test-shauth-sso container-release-check terraform-check fmt fmtcheck vet typecheck tsenums lint sast deadcode dupl vuln licenses check ci precommit web dist e2e-embedded demo-seed clean
 
 all: build
 
@@ -55,6 +55,14 @@ test-shauth-sso:
 container-release-check:
 	shellcheck scripts/check-container-publication.sh scripts/prune-ghcr-images.sh scripts/test-container-retention.sh
 	./scripts/check-container-publication.sh
+
+## terraform-check: validate the Amazon ECS deployment module and its plan contracts
+terraform-check:
+	terraform -chdir=deploy/terraform/aws-ecs-scale-to-zero fmt -check -recursive
+	terraform -chdir=deploy/terraform/aws-ecs-scale-to-zero init -backend=false
+	terraform -chdir=deploy/terraform/aws-ecs-scale-to-zero/tests/fixtures/shared-unknown init -backend=false
+	terraform -chdir=deploy/terraform/aws-ecs-scale-to-zero/tests/fixtures/shared-unknown validate
+	terraform -chdir=deploy/terraform/aws-ecs-scale-to-zero test -test-directory=tests
 
 ## bench: decision-throughput benchmark (serial + parallel scaling across cores)
 bench:
