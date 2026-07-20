@@ -72,12 +72,12 @@ docker run --detach --name "$postgres" --network "$network" --network-alias post
 	--env POSTGRES_DB=shauth --env POSTGRES_USER=shauth --env "POSTGRES_PASSWORD=${postgres_password}" \
 	postgres:17.5-alpine >/dev/null
 for _ in $(seq 1 60); do
-	if docker exec "$postgres" pg_isready -U shauth -d shauth >/dev/null 2>&1; then
+	if docker exec "$postgres" psql -U shauth -d shauth -Atc 'SELECT 1' 2>/dev/null | grep -qx 1; then
 		break
 	fi
 	sleep 1
 done
-docker exec "$postgres" pg_isready -U shauth -d shauth >/dev/null
+docker exec "$postgres" psql -U shauth -d shauth -Atc 'SELECT 1' | grep -qx 1
 docker exec "$postgres" createdb -U shauth hydra
 docker exec "$postgres" createdb -U shauth intraktible
 
