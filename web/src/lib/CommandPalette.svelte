@@ -75,6 +75,7 @@
       await goto(appHref('/login'));
     } catch (error) {
       toast.error(error instanceof Error ? error.message : String(error));
+      window.location.assign(appHref('/v1/auth/signed-out'));
     }
   }
 

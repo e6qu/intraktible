@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -37,6 +38,14 @@ type oidcTestProvider struct {
 	privateKey *rsa.PrivateKey
 }
 
+type revokeFailSessions struct {
+	auth.SessionStore
+}
+
+func (revokeFailSessions) Revoke(string) error {
+	return errors.New("session store unavailable")
+}
+
 // testOIDCProvider stands up an OIDC provider: oidctest serves JWKS, and a
 // /token endpoint returns an ID token signed with the test key carrying fixed
 // claims (email + groups + the nonce the callback test will present).
@@ -54,7 +63,7 @@ func testOIDCProvider(t *testing.T) *oidcTestProvider {
 	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"issuer": issuer, "authorization_endpoint": issuer + "/auth", "token_endpoint": issuer + "/token",
+			"issuer": issuer, "authorization_endpoint": issuer + "/auth", "token_endpoint": issuer + "/token", "userinfo_endpoint": issuer + "/userinfo",
 			"jwks_uri": issuer + "/keys", "response_types_supported": []string{"code"},
 			"subject_types_supported": []string{"public"}, "id_token_signing_alg_values_supported": []string{oidc.RS256},
 			"token_endpoint_auth_methods_supported": []string{"client_secret_post"}, "end_session_endpoint": issuer + "/oauth2/sessions/logout",
@@ -66,12 +75,22 @@ func testOIDCProvider(t *testing.T) *oidcTestProvider {
 			return
 		}
 		claims := fmt.Sprintf(
-			`{"iss":%q,"aud":%q,"sub":"u-1","sid":"session-1","email":"ada@acme.com","email_verified":true,"groups":["admins","staff"],"nonce":%q,"exp":%d,"iat":%d}`,
+			`{"iss":%q,"aud":%q,"sub":"u-1","sid":"session-1","groups":["admins","staff"],"nonce":%q,"exp":%d,"iat":%d}`,
 			issuer, oidcClientID, oidcNonce, time.Now().Add(time.Hour).Unix(), time.Now().Unix())
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"access_token": "a", "token_type": "Bearer",
 			"id_token": oidctest.SignIDToken(priv, "k1", oidc.RS256, claims),
+		})
+	})
+	mux.HandleFunc("/userinfo", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer a" {
+			http.Error(w, "invalid bearer token", http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"sub": "u-1", "email": "ada@acme.com", "email_verified": true,
 		})
 	})
 	mux.Handle("/", srv) // discovery + keys
@@ -420,6 +439,42 @@ func backChannelRequest(token string) *http.Request {
 	return req
 }
 
+func TestOIDCFrontChannelLogoutRequiresExactIssuerAndSID(t *testing.T) {
+	h, sessions, provider := oidcFixture(t)
+	mux := http.NewServeMux()
+	h.Routes(mux)
+	sso := auth.SSOSession{Protocol: "oidc", Provider: "test", Issuer: provider.URL, Subject: "u-1", SID: "session-1"}
+	matched, _ := sessions.IssueSSO(testIdentity(), auth.RoleViewer, auth.ScopeAll, sso)
+
+	for name, target := range map[string]string{
+		"missing issuer": "/v1/auth/oidc/test/frontchannel-logout?sid=session-1",
+		"missing sid":    "/v1/auth/oidc/test/frontchannel-logout?iss=" + url.QueryEscape(provider.URL),
+		"wrong issuer":   "/v1/auth/oidc/test/frontchannel-logout?iss=https%3A%2F%2Fattacker.example&sid=session-1",
+	} {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, http.NoBody))
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("%s -> %d, want 400", name, rec.Code)
+		}
+		if _, _, _, ok := sessions.Resolve(matched); !ok {
+			t.Fatalf("%s revoked the session", name)
+		}
+	}
+
+	target := "/v1/auth/oidc/test/frontchannel-logout?iss=" + url.QueryEscape(provider.URL) + "&sid=session-1"
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, http.NoBody))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("valid front-channel logout -> %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("front-channel Cache-Control = %q", rec.Header().Get("Cache-Control"))
+	}
+	if _, _, _, ok := sessions.Resolve(matched); ok {
+		t.Fatal("valid front-channel logout retained the session")
+	}
+}
+
 func TestOIDCSignedOutLandingClearsSessionWithoutStartingLogin(t *testing.T) {
 	h, sessions := oidcHandler(t)
 	mux := http.NewServeMux()
@@ -438,6 +493,26 @@ func TestOIDCSignedOutLandingClearsSessionWithoutStartingLogin(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "You are signed out") || strings.Contains(rec.Body.String(), "window.location") {
 		t.Fatalf("signed-out landing unexpectedly starts sign-in: %s", rec.Body.String())
 	}
+}
+
+func TestOIDCSignedOutLandingClearsCookieWhenDurableRevocationFails(t *testing.T) {
+	base := auth.NewSessions()
+	h := httpx.NewOIDCHandler(revokeFailSessions{SessionStore: base})
+	mux := http.NewServeMux()
+	h.Routes(mux)
+	req := httptest.NewRequest(http.MethodGet, "/v1/auth/signed-out", http.NoBody)
+	req.AddCookie(&http.Cookie{Name: "session", Value: "unavailable-token"})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("signed-out landing with unavailable store -> %d, want 503", rec.Code)
+	}
+	for _, cookie := range rec.Result().Cookies() {
+		if cookie.Name == "session" && cookie.MaxAge < 0 {
+			return
+		}
+	}
+	t.Fatal("signed-out landing did not clear the browser cookie before reporting the store failure")
 }
 
 func testIdentity() identity.Identity {

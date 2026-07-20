@@ -1,14 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Design review helper: seeds a little data, then captures every route in light
-// and dark mode to /tmp/itk-shots for visual review. Not a correctness test.
+// and dark mode to /tmp/itk-shots for visual review. Its dedicated Playwright
+// config keeps this utility separate from the correctness suite.
 import { test, expect } from '@playwright/test';
 
 const KEY = 'dev-sandbox-key';
 const SHOTS = process.env.ITK_SHOTS_DIR ?? '/tmp/itk-shots';
-
-// Opt-in: this is a design-review helper, not a correctness test, so it stays out
-// of the normal suite (and CI). Run it with: ITK_SHOTS=1 npx playwright test screenshots
-test.skip(!process.env.ITK_SHOTS, 'set ITK_SHOTS=1 to capture design-review screenshots');
 
 // Run on a single worker so beforeAll seeds the (slug-unique) fixtures exactly
 // once — parallel workers would collide on the flow slugs and leave ids unset.

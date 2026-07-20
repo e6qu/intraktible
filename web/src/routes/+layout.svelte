@@ -110,6 +110,7 @@
       toast.success('Signed out');
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
+      window.location.assign(appHref('/v1/auth/signed-out'));
       return;
     }
     await goto(appHref('/login'));

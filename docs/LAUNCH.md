@@ -88,7 +88,13 @@ store always full-rebuilds from the log.
 
 ## Quality gate (CI parity)
 
-`make ci` runs the full gate locally — go (gofmt, vet, golangci-lint, gosec, dupl, deadcode,
-govulncheck, AGPL licenses, `-race` tests) and web (prettier, eslint+security, svelte-check,
-vitest, Playwright + an embedded-binary smoke). `make check` is the fast subset (fmt, vet,
-typecheck, test). Pre-commit + pre-push hooks run the same targets.
+`make ci` runs the complete Go gate locally: gofmt, vet, golangci-lint, gosec,
+dupl, deadcode, govulncheck, AGPL licenses, and race tests. The `web` and `e2e`
+CI jobs run Prettier, ESLint security rules, Svelte typechecking, Vitest, and
+Playwright. The pre-push gate additionally runs the embedded-binary smoke.
+`make check` is the fast Go subset.
+`SHAUTH_SOURCE_DIR=/path/to/shauth make test-shauth-sso`
+additionally builds a real Shauth + Ory Hydra + PostgreSQL stack and drives
+direct login, app-catalog SSO, identity display, every logout surface, local
+revocation, global provider logout, and protected-route re-entry in a browser.
+Pre-commit + pre-push hooks run the same project-local targets.

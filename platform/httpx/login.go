@@ -65,6 +65,7 @@ func setSessionCookie(w http.ResponseWriter, r *http.Request, tok string, ttl ti
 // It is public (clearing a cookie needs no auth) and idempotent.
 func LogoutHandler(sessions auth.SessionStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
 		if origin := strings.TrimSpace(r.Header.Get("Origin")); origin != "" && !sameRequestOrigin(r, origin) {
 			Error(w, http.StatusForbidden, errors.New("cross-origin logout denied"))
 			return
@@ -75,35 +76,43 @@ func LogoutHandler(sessions auth.SessionStore) http.HandlerFunc {
 		}
 		logoutURL := ""
 		if c, err := r.Cookie(sessionCookie); err == nil {
-			sso, ok, err := sessions.SSOSession(c.Value)
+			sso, ok, err := sessions.RevokeWithSSO(c.Value)
+			clearSessionCookie(w, r)
 			if err != nil {
 				Error(w, http.StatusServiceUnavailable, err)
 				return
 			}
 			if ok {
-				var buildErr error
-				logoutURL, buildErr = ssoLogoutURL(sso)
-				if buildErr != nil {
-					Error(w, http.StatusInternalServerError, buildErr)
+				logoutURL, err = ssoLogoutURL(sso)
+				if err != nil {
+					Error(w, http.StatusInternalServerError, err)
 					return
 				}
 			}
-			if err := sessions.Revoke(c.Value); err != nil {
-				Error(w, http.StatusServiceUnavailable, err)
-				return
-			}
+		} else {
+			clearSessionCookie(w, r)
 		}
-		http.SetCookie(w, &http.Cookie{ // #nosec G124 -- expiring cookie (MaxAge<0, empty value)
-			Name: sessionCookie, Value: "", Path: "/",
-			HttpOnly: true, Secure: requestIsSecure(r), SameSite: http.SameSiteLaxMode, MaxAge: -1,
-		})
 		JSON(w, http.StatusOK, map[string]string{"logout_url": logoutURL})
 	}
 }
 
+func clearSessionCookie(w http.ResponseWriter, r *http.Request) {
+	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- expiring cookie (MaxAge<0, empty value)
+		Name: sessionCookie, Value: "", Path: "/",
+		HttpOnly: true, Secure: requestIsSecure(r), SameSite: http.SameSiteLaxMode, MaxAge: -1,
+	})
+}
+
 func ssoLogoutURL(sso auth.SSOSession) (string, error) {
 	if sso.Protocol != "oidc" {
-		return sso.LogoutURL, nil
+		if sso.LogoutURL == "" {
+			return "", nil
+		}
+		legacy, err := url.Parse(sso.LogoutURL)
+		if err != nil || legacy.Scheme == "" || legacy.Host == "" || legacy.User != nil {
+			return "", errors.New("sso: stored logout URL is invalid")
+		}
+		return legacy.String(), nil
 	}
 	if sso.EndSessionEndpoint == "" {
 		return "", nil
@@ -113,14 +122,15 @@ func ssoLogoutURL(sso auth.SSOSession) (string, error) {
 		return "", errors.New("sso: stored end-session endpoint is invalid")
 	}
 	postLogout, err := url.Parse(sso.PostLogoutRedirectURL)
-	if err != nil || postLogout.Scheme == "" || postLogout.Host == "" || postLogout.User != nil {
+	if err != nil || postLogout.Scheme == "" || postLogout.Host == "" || postLogout.User != nil || postLogout.Path != "/v1/auth/signed-out" || postLogout.RawQuery != "" || postLogout.Fragment != "" {
 		return "", errors.New("sso: stored post-logout redirect URL is invalid")
 	}
 	query := endpoint.Query()
+	if sso.ClientID != "" {
+		query.Set("client_id", sso.ClientID)
+	}
 	if sso.IDToken != "" {
 		query.Set("id_token_hint", sso.IDToken)
-	} else if sso.ClientID != "" {
-		query.Set("client_id", sso.ClientID)
 	}
 	query.Set("post_logout_redirect_uri", sso.PostLogoutRedirectURL)
 	endpoint.RawQuery = query.Encode()

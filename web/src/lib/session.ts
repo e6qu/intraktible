@@ -25,12 +25,14 @@ export async function refreshUser(): Promise<void> {
   }
 }
 
-// signOut clears the local identity only after the server confirms revocation,
-// then returns the identity-provider logout URL when this was an SSO session.
-// Keeping the identity on failure prevents the browser from presenting a false
-// signed-out state while its still-valid cookie can access the application.
+// signOut clears the browser identity as soon as logout is requested, even when
+// the provider step fails. The server expires the HttpOnly cookie before it
+// attempts provider logout, so retaining a rendered authenticated identity here
+// would be a fail-open UI state.
 export async function signOut(): Promise<string> {
-  const logoutURL = await apiLogout();
-  user.set(null);
-  return logoutURL;
+  try {
+    return await apiLogout();
+  } finally {
+    user.set(null);
+  }
 }

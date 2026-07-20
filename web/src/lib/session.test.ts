@@ -62,13 +62,13 @@ describe('signOut', () => {
     expect(get(user)).toBeNull();
   });
 
-  it('keeps the client identity when the server does not confirm revocation', async () => {
+  it('clears the client identity when logout fails so protected UI cannot fail open', async () => {
     user.set(signedIn);
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => jsonResponse(503, { error: 'session store unavailable' }))
     );
     await expect(signOut()).rejects.toThrow(/session store unavailable/);
-    expect(get(user)).toEqual(signedIn);
+    expect(get(user)).toBeNull();
   });
 });

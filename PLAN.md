@@ -501,8 +501,15 @@ feature.
 The original MVP non-goals have mostly been overtaken — **SSO (OIDC + SAML) and SCIM shipped** in the
 enterprise track. OIDC sessions retain the verified issuer, subject, session identifier, and raw ID
 token server-side. Intraktible completes OpenID Connect RP-Initiated Logout through the provider's
-discovered end-session endpoint and accepts signed Back-Channel Logout tokens to revoke one provider
-session or every Intraktible session for a subject. Still
+discovered end-session endpoint, accepts signed Back-Channel Logout tokens to revoke one provider
+session or every Intraktible session for a subject, and accepts issuer-bound Front-Channel Logout
+notifications for the exact provider session. Local revocation and browser-cookie expiry were completed
+before provider navigation, including provider-metadata and durable-store error paths, so every UI
+logout surface failed closed and returned to Intraktible's own signed-out page. OIDC identity mapping
+resolved a verified email through the standard UserInfo endpoint when the ID token omitted it. A real
+Shauth + Ory Hydra + PostgreSQL + browser CI stack covered direct protected entry, catalog SSO without
+a second credential prompt, `client_secret_post`, identity display, all logout surfaces, global logout,
+local revocation, and protected-route re-entry. Still
 **out of scope** (and why): multi-tenant billing (not a product
 goal); exact API/UX parity with any commercial product (we are the open-source, self-hostable analog,
 not a clone). Formerly a non-goal, now **moved into the §8b forward roadmap**: real data-connector

@@ -154,13 +154,17 @@ task. The organization and workspace bind every authenticated identity to one
 explicit Intraktible tenancy. Register the callback
 `https://<domain>/v1/auth/oidc/<provider>/callback`, the app-origin post-logout
 landing `https://<domain>/v1/auth/signed-out`, and the Back-Channel Logout URI
-`https://<domain>/v1/auth/oidc/<provider>/backchannel-logout`. Intraktible
+`https://<domain>/v1/auth/oidc/<provider>/backchannel-logout`. Also register the
+Front-Channel Logout URI
+`https://<domain>/v1/auth/oidc/<provider>/frontchannel-logout` and require a
+provider session identifier. Intraktible
 discovers the provider's RP-Initiated Logout endpoint and stores the verified
 issuer, subject, `sid`, and ID token with the server-side session. Sign-out
 revokes the local session before navigating to the discovered endpoint with an
 ID-token hint and the exact registered landing URI. Signed OpenID Connect
 Back-Channel Logout tokens revoke the matching `sid`, or all sessions for the
-subject when `sid` is absent.
+subject when `sid` is absent. Front-Channel Logout revokes only the session
+identified by the exact verified issuer and `sid` pair.
 
 > **Future direction — instant wasm shell, then hydrate onto the live backend.** Because
 > the full backend already runs in the browser as wasm, the S3 site is an instantly
