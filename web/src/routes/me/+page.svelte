@@ -1,6 +1,5 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
-  import { goto } from '$app/navigation';
   import Icon from '$lib/Icon.svelte';
   import { appHref } from '$lib/paths';
   import { user, signOut } from '$lib/session';
@@ -17,7 +16,7 @@
         window.location.assign(logoutURL);
         return;
       }
-      await goto(appHref('/login'));
+      window.location.assign(appHref('/v1/auth/signed-out'));
     } catch (error) {
       toast.error(error instanceof Error ? error.message : String(error));
       window.location.assign(appHref('/v1/auth/signed-out'));

@@ -1,0 +1,35 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f7f3ff">
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#130d20">
+    <title>Signed out · Intraktible</title>
+    <link rel="stylesheet" href="/v1/auth/signed-out.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">Skip to content</a>
+    <header class="site-header" aria-label="Intraktible">
+      <a class="brand" href="/" aria-label="Intraktible home">
+        <span class="brand-mark" aria-hidden="true">i</span>
+        <span>intraktible</span>
+      </a>
+    </header>
+    <main id="main-content" tabindex="-1">
+      <section class="signed-out-card" aria-labelledby="signed-out-title">
+        <p class="eyebrow">Session complete</p>
+        <h1 id="signed-out-title">You are signed out</h1>
+        <p class="lede">
+          You are no longer signed in to Intraktible. This page stays signed out until you choose to
+          authenticate again.
+        </p>
+        <a class="primary-action" href="{{.SignInURL}}">{{.SignInLabel}}</a>
+        <p class="privacy-note">A new session starts only when you use the sign-in control.</p>
+      </section>
+    </main>
+    <footer>Intraktible · Agentic decision platform</footer>
+  </body>
+</html>

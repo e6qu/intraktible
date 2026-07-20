@@ -33,13 +33,15 @@ export default defineConfig({
   server: {
     proxy: {
       '/v1': { target: apiTarget, ws: true },
-      '/healthz': apiTarget
+      '/healthz': apiTarget,
+      '/version': apiTarget
     }
   },
   preview: {
     proxy: {
       '/v1': { target: apiTarget, ws: true },
-      '/healthz': apiTarget
+      '/healthz': apiTarget,
+      '/version': apiTarget
     }
   }
 });

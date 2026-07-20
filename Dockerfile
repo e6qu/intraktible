@@ -16,10 +16,14 @@ RUN npm run build
 
 # Stage 2: build the static Go binary with the UI embedded
 FROM golang:1.26-bookworm AS build
+ARG GIT_SHA=dev
+ARG BUILD_TIME=
 WORKDIR /src
 COPY . .
 COPY --from=web /web/build ./platform/web/assets
-RUN CGO_ENABLED=0 go build -trimpath -o /out/intraktible ./cmd/intraktible
+RUN CGO_ENABLED=0 go build -trimpath \
+    -ldflags="-X github.com/e6qu/intraktible/platform/httpx.releaseRevision=${GIT_SHA} -X github.com/e6qu/intraktible/platform/httpx.releaseBuiltAt=${BUILD_TIME}" \
+    -o /out/intraktible ./cmd/intraktible
 
 # Stage 3: minimal runtime (single self-contained artifact)
 FROM gcr.io/distroless/static-debian12:nonroot

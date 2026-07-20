@@ -3,6 +3,7 @@
 package httpx_test
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -70,8 +71,18 @@ func TestVersionHandler(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d", w.Code)
 	}
-	if !strings.Contains(w.Body.String(), `"go"`) {
-		t.Fatalf("version body missing go toolchain: %s", w.Body.String())
+	if got := w.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control = %q, want no-store", got)
+	}
+	var metadata map[string]string
+	if err := json.Unmarshal(w.Body.Bytes(), &metadata); err != nil {
+		t.Fatalf("decode version body: %v", err)
+	}
+	if metadata["service"] != "intraktible" || metadata["revision"] == "" || metadata["go"] == "" {
+		t.Fatalf("incomplete version metadata: %#v", metadata)
+	}
+	if _, ok := metadata["built_at"]; !ok {
+		t.Fatalf("version metadata missing built_at: %#v", metadata)
 	}
 }
 

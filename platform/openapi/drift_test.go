@@ -64,6 +64,7 @@ var internalRoutes = map[string]string{
 	"GET /v1/auth/oidc/{provider}/frontchannel-logout": "OpenID Connect Front-Channel Logout endpoint consumed by the identity provider",
 	"POST /v1/auth/oidc/{provider}/backchannel-logout": "OpenID Connect Back-Channel Logout endpoint consumed by the identity provider",
 	"GET /v1/auth/signed-out":                          "browser OpenID Connect RP-Initiated Logout landing",
+	"GET /v1/auth/signed-out.css":                      "app-local signed-out stylesheet",
 	"GET /v1/auth/saml/providers":                      "browser SAML discovery for the login page",
 	"GET /v1/auth/saml/{provider}/login":               "browser SAML redirect flow",
 	"GET /v1/auth/saml/{provider}/metadata":            "SAML SP metadata document consumed by the IdP",

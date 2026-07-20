@@ -98,8 +98,9 @@
     await copyText(buildCurrentPageExport($page.route.id, $page.url.pathname), 'Copied for AI');
   }
 
-  // Signing out clears the session server-side and in the store; redirect to /login and
-  // confirm it, otherwise the user is stranded on a now-unauthorized page that errors.
+  // Signing out clears the session server-side and in the store. Every path ends
+  // at the persistent app-local landing; /login would immediately start silent
+  // SSO when Shauth is configured and make a deliberate sign-out look ineffective.
   async function doSignOut(): Promise<void> {
     try {
       const logoutURL = await signOut();
@@ -107,13 +108,13 @@
         window.location.assign(logoutURL);
         return;
       }
-      toast.success('Signed out');
+      window.location.assign(appHref('/v1/auth/signed-out'));
+      return;
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
       window.location.assign(appHref('/v1/auth/signed-out'));
       return;
     }
-    await goto(appHref('/login'));
   }
 
   // Navigation is the current persona's ordered (and optionally relabelled) subset

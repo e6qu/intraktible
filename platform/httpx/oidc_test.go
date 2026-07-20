@@ -74,9 +74,13 @@ func testOIDCProvider(t *testing.T) *oidcTestProvider {
 			http.Error(w, "invalid PKCE verifier", http.StatusBadRequest)
 			return
 		}
+		tokenIssuer := issuer
+		if r.Form.Get("code") == "wrong-issuer" {
+			tokenIssuer += "/not-the-configured-issuer"
+		}
 		claims := fmt.Sprintf(
 			`{"iss":%q,"aud":%q,"sub":"u-1","sid":"session-1","groups":["admins","staff"],"nonce":%q,"exp":%d,"iat":%d}`,
-			issuer, oidcClientID, oidcNonce, time.Now().Add(time.Hour).Unix(), time.Now().Unix())
+			tokenIssuer, oidcClientID, oidcNonce, time.Now().Add(time.Hour).Unix(), time.Now().Unix())
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"access_token": "a", "token_type": "Bearer",
@@ -242,6 +246,28 @@ func TestOIDCCallbackVerifiesAndIssuesSession(t *testing.T) {
 	}
 }
 
+func TestOIDCCallbackRejectsTokenFromNonExactIssuer(t *testing.T) {
+	h, _ := oidcHandler(t)
+	mux := http.NewServeMux()
+	h.Routes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/auth/oidc/test/callback?state=s1&code=wrong-issuer", http.NoBody)
+	req.AddCookie(&http.Cookie{Name: "oidc_state", Value: "s1"})
+	req.AddCookie(&http.Cookie{Name: "oidc_nonce", Value: oidcNonce})
+	req.AddCookie(&http.Cookie{Name: "oidc_pkce", Value: oidcVerifier})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("non-exact issuer callback -> %d, want 401", rec.Code)
+	}
+	for _, cookie := range rec.Result().Cookies() {
+		if cookie.Name == "session" && cookie.Value != "" {
+			t.Fatal("a token from a non-exact issuer created an application session")
+		}
+	}
+}
+
 func TestOIDCCallbackHonorsLoginGate(t *testing.T) {
 	h, _ := oidcHandler(t)
 	// A gate that denies the verified user (as SCIM would for a deactivated user).
@@ -387,6 +413,7 @@ func TestOIDCBackChannelLogoutValidatesRequiredClaimsAndEventObject(t *testing.T
 		"missing expiry": fmt.Sprintf(`{"iss":%q,"aud":%q,"sub":"u-1","iat":%d,"jti":"missing-expiry","events":{"http://schemas.openid.net/event/backchannel-logout":{}}}`, provider.URL, oidcClientID, now.Unix()),
 		"expired":        fmt.Sprintf(`{"iss":%q,"aud":%q,"sub":"u-1","iat":%d,"exp":%d,"jti":"expired","events":{"http://schemas.openid.net/event/backchannel-logout":{}}}`, provider.URL, oidcClientID, now.Add(-2*time.Minute).Unix(), now.Add(-time.Minute).Unix()),
 		"empty nonce":    fmt.Sprintf(`{"iss":%q,"aud":%q,"sub":"u-1","iat":%d,"exp":%d,"jti":"empty-nonce","nonce":"","events":{"http://schemas.openid.net/event/backchannel-logout":{}}}`, provider.URL, oidcClientID, now.Unix(), now.Add(time.Minute).Unix()),
+		"wrong issuer":   fmt.Sprintf(`{"iss":%q,"aud":%q,"sub":"u-1","iat":%d,"exp":%d,"jti":"wrong-issuer","events":{"http://schemas.openid.net/event/backchannel-logout":{}}}`, provider.URL+"/not-the-configured-issuer", oidcClientID, now.Unix(), now.Add(time.Minute).Unix()),
 	} {
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, backChannelRequest(provider.sign(claims)))
@@ -491,8 +518,52 @@ func TestOIDCSignedOutLandingClearsSessionWithoutStartingLogin(t *testing.T) {
 	if _, _, _, ok := sessions.Resolve(token); ok {
 		t.Fatal("signed-out landing retained local session")
 	}
-	if !strings.Contains(rec.Body.String(), "You are signed out") || strings.Contains(rec.Body.String(), "window.location") {
+	body := rec.Body.String()
+	if !strings.Contains(body, "You are signed out") || !strings.Contains(body, `href="/login"`) || !strings.Contains(body, ">Sign in to Intraktible</a>") || strings.Contains(body, "window.location") || strings.Contains(body, "<style") {
 		t.Fatalf("signed-out landing unexpectedly starts sign-in: %s", rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Security-Policy"); got != "default-src 'none'; style-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'" {
+		t.Fatalf("signed-out Content-Security-Policy = %q", got)
+	}
+	for header, want := range map[string]string{
+		"Cache-Control":          "no-store",
+		"Permissions-Policy":     "camera=(), microphone=(), geolocation=()",
+		"Referrer-Policy":        "no-referrer",
+		"X-Content-Type-Options": "nosniff",
+		"X-Frame-Options":        "DENY",
+	} {
+		if got := rec.Header().Get(header); got != want {
+			t.Errorf("signed-out %s = %q, want %q", header, got, want)
+		}
+	}
+
+	css := httptest.NewRecorder()
+	mux.ServeHTTP(css, httptest.NewRequest(http.MethodGet, "/v1/auth/signed-out.css", http.NoBody))
+	if css.Code != http.StatusOK || css.Header().Get("Content-Type") != "text/css; charset=utf-8" {
+		t.Fatalf("signed-out stylesheet -> %d content-type=%q", css.Code, css.Header().Get("Content-Type"))
+	}
+	styles := css.Body.String()
+	for _, contract := range []string{"prefers-color-scheme: dark", "prefers-reduced-motion: no-preference", ":focus-visible", "--brand: #6d28d9", "--brand: #a855f7"} {
+		if !strings.Contains(styles, contract) {
+			t.Errorf("signed-out stylesheet omitted %q", contract)
+		}
+	}
+
+	idp := testOIDCProvider(t)
+	shauth, err := auth.NewOIDCAuthenticator(context.Background(), auth.OIDCConfig{
+		Name: "shauth", Issuer: idp.URL, ClientID: oidcClientID, RedirectURL: "https://app/cb",
+		PostLogoutRedirectURL: "https://app/v1/auth/signed-out",
+		Org:                   "demo", Workspace: "main", DefaultRole: auth.RoleViewer,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	shauthMux := http.NewServeMux()
+	httpx.NewOIDCHandler(sessions, shauth).Routes(shauthMux)
+	shauthPage := httptest.NewRecorder()
+	shauthMux.ServeHTTP(shauthPage, httptest.NewRequest(http.MethodGet, "/v1/auth/signed-out", http.NoBody))
+	if body := shauthPage.Body.String(); !strings.Contains(body, `href="/v1/auth/oidc/shauth/login?return_to=%2F"`) || !strings.Contains(body, ">Sign in with Shauth</a>") {
+		t.Fatalf("Shauth signed-out landing omitted explicit recovery: %s", body)
 	}
 }
 

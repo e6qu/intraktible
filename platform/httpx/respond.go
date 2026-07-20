@@ -19,6 +19,11 @@ import (
 	"github.com/e6qu/intraktible/platform/identity"
 )
 
+var (
+	releaseRevision string
+	releaseBuiltAt  string
+)
+
 // JSON writes v as an application/json response with the given status.
 func JSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -132,7 +137,7 @@ func Ready(applied, head func() uint64, check func() error) http.HandlerFunc {
 // Go toolchain) from the embedded build info — so ops can confirm exactly what is
 // running. Read once at construction; unauthenticated, like /healthz.
 func Version() http.HandlerFunc {
-	rev, gover := "unknown", runtime.Version()
+	rev, builtAt, gover := "unknown", releaseBuiltAt, runtime.Version()
 	if bi, ok := debug.ReadBuildInfo(); ok {
 		gover = bi.GoVersion
 		for _, s := range bi.Settings {
@@ -141,8 +146,17 @@ func Version() http.HandlerFunc {
 			}
 		}
 	}
+	if releaseRevision != "" {
+		rev = releaseRevision
+	}
 	return func(w http.ResponseWriter, _ *http.Request) {
-		JSON(w, http.StatusOK, map[string]string{"revision": rev, "go": gover})
+		w.Header().Set("Cache-Control", "no-store")
+		JSON(w, http.StatusOK, map[string]string{
+			"service":  "intraktible",
+			"revision": rev,
+			"built_at": builtAt,
+			"go":       gover,
+		})
 	}
 }
 

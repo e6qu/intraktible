@@ -4,8 +4,11 @@ set -euo pipefail
 
 root="$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)"
 workflow="$root/.github/workflows/release.yml"
+dockerfile="$root/Dockerfile"
 gha='$'
 continuation="\\"
+git_sha_ldflag="releaseRevision=${gha}{GIT_SHA}"
+build_time_ldflag="releaseBuiltAt=${gha}{BUILD_TIME}"
 
 expect_count() {
 	local expected="$1" literal="$2" actual
@@ -47,6 +50,11 @@ if grep -Fq 'mathieudutour/github-tag-action' "$workflow"; then
 	echo 'publication must not create an independent semantic release stream' >&2
 	exit 1
 fi
+
+grep -Fq 'ARG GIT_SHA=dev' "$dockerfile"
+grep -Fq 'ARG BUILD_TIME=' "$dockerfile"
+grep -Fq "$git_sha_ldflag" "$dockerfile"
+grep -Fq "$build_time_ldflag" "$dockerfile"
 
 "$root/scripts/test-container-retention.sh"
 echo 'container publication contract passed'

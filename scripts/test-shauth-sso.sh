@@ -19,7 +19,13 @@ app_port=$((port_base + 5))
 api_port=$((port_base + 6))
 client_id=intraktible-integration
 client_secret=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
-admin_password=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
+validation_username='admin'
+validation_password=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
+relying_party_rejection_sentinel=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
+if [ "$relying_party_rejection_sentinel" = "$validation_password" ]; then
+	echo "The relying-party rejection sentinel matched the Shauth validation password." >&2
+	exit 1
+fi
 postgres_password=$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')
 hydra_secret=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
 shauth_pid=
@@ -114,7 +120,7 @@ SHAUTH_LISTEN_ADDRESS="127.0.0.1:${shauth_port}" \
 	GITHUB_CLIENT_ID=test-client GITHUB_CLIENT_SECRET=test-client-secret-not-used \
 	GITHUB_DEVELOPER_TEAM=e6qu-org/e6qu-org-members GITHUB_ADMIN_TEAM=e6qu-org/e6qu-org-admins \
 	SHAUTH_SES_REGION=eu-west-1 SHAUTH_INVITATION_EMAIL_FROM=no-reply@localhost.test \
-	SHAUTH_BOOTSTRAP_ADMIN_EMAIL=admin@localhost.test SHAUTH_BOOTSTRAP_ADMIN_PASSWORD="$admin_password" \
+	SHAUTH_BOOTSTRAP_ADMIN_EMAIL=admin@localhost.test SHAUTH_BOOTSTRAP_ADMIN_PASSWORD="$validation_password" \
 	SHAUTH_BOOTSTRAP_APPS_JSON="$bootstrap_apps" "$work/shauth" >"$work/shauth.log" 2>&1 &
 shauth_pid=$!
 wait_http "http://localhost:${shauth_port}/healthz" "Shauth"
@@ -129,7 +135,8 @@ curl --fail --silent --show-error --request PUT --header 'Content-Type: applicat
 
 (cd "$repo_root" && go build -o "$work/intraktible" ./cmd/intraktible)
 intraktible_dsn="postgres://shauth:${postgres_password}@localhost:${postgres_port}/intraktible?sslmode=disable"
-INTRAKTIBLE_POSTGRES_DSN="$intraktible_dsn" INTRAKTIBLE_OIDC_PROVIDERS=shauth \
+env -i PATH="$PATH" HOME="${HOME:-/tmp}" TMPDIR="${TMPDIR:-/tmp}" \
+	INTRAKTIBLE_POSTGRES_DSN="$intraktible_dsn" INTRAKTIBLE_OIDC_PROVIDERS=shauth \
 	INTRAKTIBLE_OIDC_SHAUTH_ISSUER="http://localhost:${hydra_public_port}" \
 	INTRAKTIBLE_OIDC_SHAUTH_CLIENT_ID="$client_id" INTRAKTIBLE_OIDC_SHAUTH_CLIENT_SECRET="$client_secret" \
 	INTRAKTIBLE_OIDC_SHAUTH_REDIRECT_URL="http://localhost:${app_port}/v1/auth/oidc/shauth/callback" \
@@ -140,6 +147,15 @@ INTRAKTIBLE_POSTGRES_DSN="$intraktible_dsn" INTRAKTIBLE_OIDC_PROVIDERS=shauth \
 	--log=postgres --store=postgres --modules=all >"$work/intraktible.log" 2>&1 &
 api_pid=$!
 wait_http "http://localhost:${api_port}/healthz" "Intraktible API"
+intraktible_process=$(ps eww -p "$api_pid" -o command=)
+for forbidden in SHAUTH_VALIDATION_USERNAME= SHAUTH_VALIDATION_PASSWORD= "$validation_password"; do
+	case $intraktible_process in
+	*"$forbidden"*)
+		echo "Intraktible received a Shauth validation credential or variable." >&2
+		exit 1
+		;;
+	esac
+done
 
 (cd "$repo_root/web" && INTRAKTIBLE_DEV_API_URL="http://localhost:${api_port}" npm run build >/dev/null && \
 	INTRAKTIBLE_DEV_API_URL="http://localhost:${api_port}" npx vite preview --port "$app_port" --strictPort) \
@@ -148,13 +164,14 @@ web_pid=$!
 wait_http "http://localhost:${app_port}/healthz" "Intraktible web UI"
 
 SHAUTH_URL="http://localhost:${shauth_port}" INTRAKTIBLE_URL="http://localhost:${app_port}" \
-	SHAUTH_BOOTSTRAP_ADMIN_PASSWORD="$admin_password" \
+	SHAUTH_VALIDATION_USERNAME="$validation_username" SHAUTH_VALIDATION_PASSWORD="$validation_password" \
+	INTRAKTIBLE_REJECTION_SENTINEL="$relying_party_rejection_sentinel" \
 	PLAYWRIGHT_EXECUTABLE_PATH="${PLAYWRIGHT_EXECUTABLE_PATH:-}" \
 	node "$repo_root/web/e2e-shauth.mjs"
 
 logout_tokens=$(docker exec "$postgres" psql -U shauth -d intraktible -Atc \
 	"SELECT count(*) FROM docs WHERE collection='auth_oidc_logout_replays'")
-if [ "$logout_tokens" -lt 1 ]; then
-	echo 'Ory Hydra did not deliver a verified Back-Channel Logout token to Intraktible' >&2
+if [ "$logout_tokens" -lt 4 ]; then
+	echo "Ory Hydra delivered ${logout_tokens} verified Back-Channel Logout tokens to Intraktible, want at least 4" >&2
 	exit 1
 fi

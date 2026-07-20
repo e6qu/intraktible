@@ -175,6 +175,9 @@ func (a *OIDCAuthenticator) Exchange(ctx context.Context, code, nonce, verifier 
 	if err != nil {
 		return OIDCLogin{}, fmt.Errorf("auth: oidc %q verify id_token: %w", a.cfg.Name, err)
 	}
+	if idTok.Issuer != a.cfg.Issuer {
+		return OIDCLogin{}, fmt.Errorf("auth: oidc %q id_token issuer mismatch", a.cfg.Name)
+	}
 	if idTok.Nonce != nonce {
 		return OIDCLogin{}, fmt.Errorf("auth: oidc %q nonce mismatch", a.cfg.Name)
 	}
@@ -223,6 +226,9 @@ func (a *OIDCAuthenticator) VerifyLogoutToken(ctx context.Context, raw string) (
 	token, err := a.verifier.Verify(ctx, raw)
 	if err != nil {
 		return OIDCLogout{}, fmt.Errorf("auth: oidc %q verify logout token: %w", a.cfg.Name, err)
+	}
+	if token.Issuer != a.cfg.Issuer {
+		return OIDCLogout{}, fmt.Errorf("auth: oidc %q logout token issuer mismatch", a.cfg.Name)
 	}
 	var claims struct {
 		Subject string                     `json:"sub"`

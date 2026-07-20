@@ -73,13 +73,18 @@ test('sign in with an API key, then sign out', async ({ page }) => {
   await expect(page.getByText('Organization')).toBeVisible();
   await expect(page.getByText('Workspace')).toBeVisible();
 
-  // Signing out returns to the sign-in screen (and drops the full chrome), so the
-  // signed-out state is unambiguous rather than a stripped-down dashboard.
+  // Signing out returns to the persistent app-local landing. It never enters the
+  // automatic login route, which would silently recreate a Shauth session.
   await page
     .getByLabel('Current account details')
     .getByRole('button', { name: 'Sign out' })
     .click();
-  await expect(page.getByRole('heading', { name: /Sign in/i })).toBeVisible();
+  await expect(page).toHaveURL(/\/v1\/auth\/signed-out$/);
+  await expect(page.getByRole('heading', { name: 'You are signed out' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Sign in to Intraktible' })).toHaveAttribute(
+    'href',
+    '/login'
+  );
   await expect(page.getByRole('navigation', { name: 'Primary' })).toHaveCount(0);
 });
 
