@@ -79,14 +79,15 @@ test('a builder preview run shows a verdict but records no decision', async ({ p
   // (its size grows as the demo does) before running — so the timed assertion below
   // measures only the decide, not the one-time cold boot + replay.
   await page.waitForFunction(() => '__demo' in window, undefined, { timeout: 90_000 });
-  await page.locator('a[href*="/engine/"]').first().click();
+  // Exercise the structured-agent path explicitly: the Collections flow asks the
+  // embedded provider for numeric plan terms before the decision engine runs.
+  // Selecting a named product journey also prevents list-order changes from
+  // silently changing which backend path this regression covers.
+  await page.getByRole('link', { name: 'Collections Hardship Program' }).click();
   await page.getByLabel("preview (don't record)").check();
   await page.getByRole('button', { name: 'Run', exact: true }).click();
-  // Even warm, the FIRST decide JIT-compiles the flow's expression/rule VMs; on a
-  // slow, loaded CI runner that can take tens of seconds. Give this one assertion a
-  // generous ceiling so the cold path doesn't flake; the follow-up assertions are
-  // then instant. A genuinely broken preview still fails, just later.
-  await expect(page.getByTestId('run-verdict')).toBeVisible({ timeout: 90_000 });
+  await expect(page.getByTestId('run-verdict')).toBeVisible();
+  await expect(page.getByTestId('run-error')).toHaveCount(0);
   await expect(page.getByText('preview · not recorded')).toBeVisible();
   await expect(page.getByText('View the recorded decision')).toHaveCount(0);
 });
