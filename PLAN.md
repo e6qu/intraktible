@@ -518,12 +518,32 @@ discovered end-session endpoint, accepts signed Back-Channel Logout tokens to re
 session or every Intraktible session for a subject, and accepts issuer-bound Front-Channel Logout
 notifications for the exact provider session. Local revocation and browser-cookie expiry were completed
 before provider navigation, including provider-metadata and durable-store error paths, so every UI
-logout surface failed closed and returned to Intraktible's own signed-out page. OIDC identity mapping
-resolved a verified email through the standard UserInfo endpoint when the ID token omitted it. A real
-Shauth + Ory Hydra + PostgreSQL + browser CI stack covered direct protected entry, catalog SSO without
-a second credential prompt, `client_secret_post`, identity display, all logout surfaces, global logout,
-local revocation, verified Back-Channel Logout delivery from the exact production provider artifact,
-strict missing/expired `exp` rejection, and protected-route re-entry. Still
+logout surface failed closed and returned to Intraktible's durable, app-local signed-out page. That
+accessible light/dark page never initiated login automatically and offered an explicit Shauth recovery
+action when Shauth was configured. OIDC identity mapping resolved a verified email through the standard
+UserInfo endpoint when the ID token omitted it. A real Shauth + Ory Hydra + PostgreSQL + browser CI stack,
+pinned to merged Shauth commit `6d06480e2ec26250c12b88af3e36ab83787f6cf3`, covered direct protected
+entry, direct and catalog silent SSO without a second credential prompt, `client_secret_post`, identity
+display, every Intraktible logout surface returning to Intraktible, explicit recovery, provider-global
+logout, local revocation, verified Back-Channel Logout delivery from the exact production provider
+artifact, strict missing/expired `exp` rejection, stale-cookie rejection by identity and core APIs, and
+protected-route re-entry. The gate also proved that a separately generated non-authentic sentinel was
+rejected by Intraktible's JSON password, API-key exchange, HTTP Basic, Bearer, and `X-Api-Key` surfaces
+without creating a session. A browser request boundary allowed the real validator password only in the
+exact form-encoded Shauth `POST /login`, rejected mutated methods, paths, origins, headers, and return
+coordinates, and required exactly one approved submission per credentialed login. An empty inherited
+environment plus live-process inspection kept the validator variable names and password out of the
+application process. Login and logout tokens were accepted
+only from the exact configured issuer, including when a near-match issuer used the trusted signing key.
+Shauth's deployment-neutral validator used `/auth/validation` as Intraktible's cookie-only authenticated
+validation URL and `/v1/auth/signed-out` as its persistent signed-out URL. The validation page exposed
+the verified OpenID Connect username and email, normalized `developer`/`admin` role, ordinary logout,
+and the exact immutable `APPLICATION_RELEASE_REVISION` through stable accessible markers. Anonymous,
+API-key, HTTP Basic, and Bearer entry failed closed to the app-local recovery page. The Amazon Elastic
+Container Service Terraform module required the generic release coordinate, validated it as a 12–64
+character lowercase hexadecimal commit or SHA-256 digest, and injected it into both application task
+shapes; neither cloud-orchestrator detail nor validator credentials entered the app. `/version` exposed
+the same generic revision with the binary's immutable build revision as its fallback. Still
 **out of scope** (and why): multi-tenant billing (not a product
 goal); exact API/UX parity with any commercial product (we are the open-source, self-hostable analog,
 not a clone). Formerly a non-goal, now **moved into the §8b forward roadmap**: real data-connector

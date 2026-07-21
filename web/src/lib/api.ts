@@ -3662,6 +3662,8 @@ export interface Identity {
   org: string;
   workspace: string;
   actor: string;
+  username?: string;
+  email?: string;
   role?: string; // viewer|operator|editor|approver|admin — present from /v1/me
   scope?: string;
 }
@@ -3685,7 +3687,10 @@ export async function login(
 // logout revokes the current application session and returns the server-built
 // RP-Initiated Logout URL for an SSO session, if the provider advertises one.
 export async function logout(fetcher: typeof fetch = recordingFetch): Promise<string> {
-  const res = await fetcher('/v1/logout', { method: 'POST' });
+  const res = await fetcher('/v1/logout', {
+    method: 'POST',
+    headers: { 'X-Requested-With': 'intraktible' }
+  });
   if (!res.ok) {
     return errorOrStatus(res, 'POST /v1/logout');
   }

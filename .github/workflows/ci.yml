@@ -10,6 +10,7 @@ permissions:
 
 jobs:
   terraform:
+    timeout-minutes: 15
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -20,13 +21,17 @@ jobs:
         run: make terraform-check
 
   container-release:
+    timeout-minutes: 15
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Bounded workflow jobs
+        run: ./scripts/check-workflow-timeouts.sh
       - name: Immutable multi-architecture publication contract
         run: make container-release-check
 
   go:
+    timeout-minutes: 15
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -60,6 +65,7 @@ jobs:
   # INTRAKTIBLE_TEST_POSTGRES is unset, so the default `go` job stays hermetic; this
   # job supplies a Postgres service so they actually run.
   postgres:
+    timeout-minutes: 15
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -86,6 +92,7 @@ jobs:
         run: go test -race ./platform/store/ ./platform/eventlog/ ./platform/projection/
 
   web:
+    timeout-minutes: 15
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -111,6 +118,7 @@ jobs:
         run: npx --yes license-checker --production --onlyAllow "MIT;BSD-2-Clause;BSD-3-Clause;ISC;0BSD;Apache-2.0;MPL-2.0;Unlicense;CC0-1.0"
 
   e2e:
+    timeout-minutes: 15
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -132,13 +140,14 @@ jobs:
         run: npm run test:e2e
 
   shauth-sso:
+    timeout-minutes: 15
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           repository: e6qu/shauth
-          ref: 15302f47330fd531536e366b2befc1d370ed7e0d
+          ref: 74735a1710fa69d472e7eb27ae95ce317c7c1a3d
           path: .test-deps/shauth
       - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
@@ -165,6 +174,7 @@ jobs:
   # every route renders from it, and writes mutate real projections. Guards the demo
   # on PRs; the `pages` workflow runs the same gate before deploying on main.
   demo:
+    timeout-minutes: 15
     runs-on: ubuntu-latest
     defaults:
       run:

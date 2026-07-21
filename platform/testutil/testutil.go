@@ -20,5 +20,8 @@ func Eventually(t *testing.T, cond func() bool) bool {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	return false
+	// The goroutine can be descheduled after the last poll until just beyond the
+	// deadline, especially under the race detector. Observe the condition once at
+	// the boundary so a completed asynchronous operation cannot be reported stale.
+	return cond()
 }

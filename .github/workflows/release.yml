@@ -18,6 +18,7 @@ env:
 
 jobs:
   contract:
+    timeout-minutes: 15
     name: Validate publication contract
     runs-on: ubuntu-24.04
     steps:
@@ -28,6 +29,7 @@ jobs:
           ./scripts/check-container-publication.sh
 
   metadata:
+    timeout-minutes: 15
     name: Resolve immutable tag
     needs: contract
     runs-on: ubuntu-24.04
@@ -46,6 +48,7 @@ jobs:
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
   build:
+    timeout-minutes: 15
     name: Build (${{ matrix.arch }})
     needs: metadata
     runs-on: ${{ matrix.runner }}
@@ -83,6 +86,7 @@ jobs:
           cache-to: type=gha,scope=intraktible-${{ matrix.arch }},mode=max
 
   manifest:
+    timeout-minutes: 15
     name: Publish multi-architecture manifest
     needs: [metadata, build]
     runs-on: ubuntu-24.04
@@ -101,6 +105,7 @@ jobs:
             "${IMAGE}:${{ needs.metadata.outputs.tag }}-arm64"
 
   retention:
+    timeout-minutes: 15
     name: Retain 20 release groups
     needs: [metadata, manifest]
     runs-on: ubuntu-24.04

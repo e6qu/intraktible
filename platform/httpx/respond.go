@@ -10,6 +10,8 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"os"
+	"regexp"
 	"runtime"
 	"runtime/debug"
 	"strings"
@@ -17,6 +19,12 @@ import (
 
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/identity"
+)
+
+var (
+	releaseRevision          string
+	releaseBuiltAt           string
+	immutableReleaseRevision = regexp.MustCompile(`^([0-9a-f]{12,64}|sha256:[0-9a-f]{64})$`)
 )
 
 // JSON writes v as an application/json response with the given status.
@@ -29,6 +37,10 @@ func JSON(w http.ResponseWriter, status int, v any) {
 	if err := json.NewEncoder(w).Encode(v); err != nil {
 		slog.Error("httpx: encode response", "err", err)
 	}
+}
+
+func validImmutableReleaseRevision(revision string) bool {
+	return immutableReleaseRevision.MatchString(revision)
 }
 
 // Error writes a structured JSON error. A 4xx is the caller's own fault, so its
@@ -132,18 +144,40 @@ func Ready(applied, head func() uint64, check func() error) http.HandlerFunc {
 // Go toolchain) from the embedded build info — so ops can confirm exactly what is
 // running. Read once at construction; unauthenticated, like /healthz.
 func Version() http.HandlerFunc {
-	rev, gover := "unknown", runtime.Version()
+	rev, builtAt, gover := applicationBuildMetadata()
+	return func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		JSON(w, http.StatusOK, map[string]string{
+			"service":  "intraktible",
+			"revision": rev,
+			"built_at": builtAt,
+			"go":       gover,
+		})
+	}
+}
+
+// applicationBuildMetadata reports the generic deployment revision when one was
+// injected, falling back to the immutable revision baked into the application
+// artifact. The generic coordinate keeps the application independent of any
+// particular container orchestrator while letting post-deploy validation prove
+// the exact artifact it exercised.
+func applicationBuildMetadata() (revision, builtAt, goVersion string) {
+	revision, builtAt, goVersion = "unknown", releaseBuiltAt, runtime.Version()
 	if bi, ok := debug.ReadBuildInfo(); ok {
-		gover = bi.GoVersion
+		goVersion = bi.GoVersion
 		for _, s := range bi.Settings {
 			if s.Key == "vcs.revision" {
-				rev = s.Value
+				revision = s.Value
 			}
 		}
 	}
-	return func(w http.ResponseWriter, _ *http.Request) {
-		JSON(w, http.StatusOK, map[string]string{"revision": rev, "go": gover})
+	if releaseRevision != "" {
+		revision = releaseRevision
 	}
+	if configured := strings.TrimSpace(os.Getenv("APPLICATION_RELEASE_REVISION")); configured != "" {
+		revision = configured
+	}
+	return revision, builtAt, goVersion
 }
 
 // Route is one declarative endpoint: an HTTP method, a 1.22-mux pattern, and its

@@ -75,6 +75,16 @@ variable "container_image" {
   type        = string
 }
 
+variable "application_release_revision" {
+  description = "Immutable application release revision exposed to app-owned post-deploy validation. Use the 12-64 character lowercase hexadecimal commit or SHA-256 digest that identifies container_image."
+  type        = string
+
+  validation {
+    condition     = can(regex("^([0-9a-f]{12,64}|sha256:[0-9a-f]{64})$", var.application_release_revision))
+    error_message = "application_release_revision must be 12-64 lowercase hexadecimal characters or a SHA-256 digest with the sha256: prefix."
+  }
+}
+
 variable "image_pull_secret_arn" {
   description = "Secrets Manager ARN of a {username,password} secret for pulling the image from a private registry (e.g. a private GHCR package). Empty means the image is public and no pull secret is used."
   type        = string
@@ -221,7 +231,7 @@ variable "oidc_redirect_url" {
   default = ""
 }
 variable "oidc_post_logout_redirect_url" {
-  description = "Exact Intraktible-origin signed-out landing registered with the OpenID Connect provider. Use https://<domain>/v1/auth/signed-out."
+  description = "Exact Intraktible-origin logout bridge registered with Shauth. Use https://<domain>/auth/shauth/logout/complete; Shauth returns the browser to Intraktible's signed-out page after global revocation."
   type        = string
   default     = ""
 }

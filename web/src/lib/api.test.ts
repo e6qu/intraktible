@@ -808,5 +808,6 @@ describe('session auth', () => {
     const [url, init] = fetcher.mock.calls[0];
     expect(url).toBe('/v1/logout');
     expect(init?.method).toBe('POST');
+    expect(init?.headers).toEqual({ 'X-Requested-With': 'intraktible' });
   });
 });

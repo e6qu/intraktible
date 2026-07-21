@@ -72,7 +72,7 @@
         window.location.assign(logoutURL);
         return;
       }
-      await goto(appHref('/login'));
+      window.location.assign(appHref('/v1/auth/signed-out'));
     } catch (error) {
       toast.error(error instanceof Error ? error.message : String(error));
       window.location.assign(appHref('/v1/auth/signed-out'));
@@ -362,6 +362,7 @@
             class="cp-item"
             class:sel={i === selected}
             role="option"
+            aria-label={c.label}
             aria-selected={i === selected}
             onmousemove={() => (selected = i)}
             onclick={() => run(c)}

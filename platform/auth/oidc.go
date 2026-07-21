@@ -5,9 +5,12 @@ package auth
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
@@ -25,8 +28,9 @@ type OIDCConfig struct {
 	ClientID     string
 	ClientSecret string
 	RedirectURL  string
-	// PostLogoutRedirectURL is this application's registered, same-origin signed-out
-	// landing page. It is required when discovery advertises RP-Initiated Logout.
+	// PostLogoutRedirectURL is this application's registered, same-origin logout
+	// completion endpoint. It is required when discovery advertises RP-Initiated
+	// Logout. Shauth uses its fixed first-party completion bridge.
 	PostLogoutRedirectURL string
 	Org                   string
 	Workspace             string
@@ -46,9 +50,19 @@ type OIDCAuthenticator struct {
 	verifier *oidc.IDTokenVerifier
 	oauth    *oauth2.Config
 	logout   SSOSession
+
+	logoutVerifyMu        sync.Mutex
+	logoutVerifyNotBefore time.Time
+	logoutVerifyCooldown  time.Duration
 }
 
 const backChannelLogoutEvent = "http://schemas.openid.net/event/backchannel-logout"
+
+const (
+	oidcDiscoveryTimeout = 10 * time.Second
+	oidcRequestTimeout   = 10 * time.Second
+	logoutVerifyCooldown = time.Second
+)
 
 type oidcProviderMetadata struct {
 	EndSessionEndpoint                string   `json:"end_session_endpoint"`
@@ -66,6 +80,10 @@ type OIDCLogout struct {
 // NewOIDCAuthenticator performs OIDC discovery against the issuer (a network
 // call) and builds the flow. It fails loudly on missing required config.
 func NewOIDCAuthenticator(ctx context.Context, cfg OIDCConfig) (*OIDCAuthenticator, error) {
+	return newOIDCAuthenticator(ctx, cfg, oidcDiscoveryTimeout)
+}
+
+func newOIDCAuthenticator(ctx context.Context, cfg OIDCConfig, discoveryTimeout time.Duration) (*OIDCAuthenticator, error) {
 	if cfg.Name == "" || cfg.Issuer == "" || cfg.ClientID == "" || cfg.RedirectURL == "" {
 		return nil, fmt.Errorf("auth: oidc provider needs name, issuer, client_id, redirect_url")
 	}
@@ -75,7 +93,23 @@ func NewOIDCAuthenticator(ctx context.Context, cfg OIDCConfig) (*OIDCAuthenticat
 	if cfg.DefaultRole.Rank() == 0 {
 		cfg.DefaultRole = RoleViewer
 	}
-	provider, err := oidc.NewProvider(ctx, cfg.Issuer)
+	issuer, err := absoluteURL(cfg.Issuer)
+	if err != nil || issuer.RawQuery != "" || issuer.Fragment != "" {
+		return nil, fmt.Errorf("auth: oidc %q issuer must be an absolute URL without query or fragment", cfg.Name)
+	}
+	redirect, err := absoluteURL(cfg.RedirectURL)
+	if err != nil {
+		return nil, fmt.Errorf("auth: oidc %q redirect_url must be absolute", cfg.Name)
+	}
+	// go-oidc's shared remote key set intentionally detaches from each caller's
+	// context. Supplying a timeout-bearing client during discovery is therefore
+	// what bounds every later JWKS refresh and lets verification recover after a
+	// provider stalls.
+	httpClient := &http.Client{Timeout: discoveryTimeout}
+	discoveryCtx := oidc.ClientContext(ctx, httpClient)
+	discoveryCtx, cancelDiscovery := context.WithTimeout(discoveryCtx, discoveryTimeout)
+	defer cancelDiscovery()
+	provider, err := oidc.NewProvider(discoveryCtx, cfg.Issuer)
 	if err != nil {
 		return nil, fmt.Errorf("auth: oidc %q discovery: %w", cfg.Name, err)
 	}
@@ -88,19 +122,19 @@ func NewOIDCAuthenticator(ctx context.Context, cfg OIDCConfig) (*OIDCAuthenticat
 		if cfg.PostLogoutRedirectURL == "" {
 			return nil, fmt.Errorf("auth: oidc %q requires a post-logout redirect URL", cfg.Name)
 		}
-		redirect, err := url.Parse(cfg.RedirectURL)
-		if err != nil || redirect.Scheme == "" || redirect.Host == "" {
-			return nil, fmt.Errorf("auth: oidc %q redirect_url must be absolute", cfg.Name)
+		postLogout, err := absoluteURL(cfg.PostLogoutRedirectURL)
+		expectedPath := "/v1/auth/signed-out"
+		if cfg.Name == "shauth" {
+			expectedPath = "/auth/shauth/logout/complete"
 		}
-		postLogout, err := url.Parse(cfg.PostLogoutRedirectURL)
-		if err != nil || postLogout.Scheme == "" || postLogout.Host == "" || postLogout.User != nil || postLogout.Path != "/v1/auth/signed-out" || postLogout.RawQuery != "" || postLogout.Fragment != "" {
-			return nil, fmt.Errorf("auth: oidc %q post-logout redirect URL must use /v1/auth/signed-out without query or fragment", cfg.Name)
+		if err != nil || postLogout.Path != expectedPath || postLogout.RawQuery != "" || postLogout.Fragment != "" {
+			return nil, fmt.Errorf("auth: oidc %q post-logout redirect URL must use %s without query or fragment", cfg.Name, expectedPath)
 		}
-		if !strings.EqualFold(redirect.Scheme, postLogout.Scheme) || !strings.EqualFold(redirect.Host, postLogout.Host) {
+		if !sameURLOrigin(redirect, postLogout) {
 			return nil, fmt.Errorf("auth: oidc %q post-logout redirect URL must use the application redirect origin", cfg.Name)
 		}
-		logoutEndpoint, err := url.Parse(metadata.EndSessionEndpoint)
-		if err != nil || logoutEndpoint.Scheme == "" || logoutEndpoint.Host == "" || logoutEndpoint.User != nil {
+		logoutEndpoint, err := absoluteURL(metadata.EndSessionEndpoint)
+		if err != nil || !sameURLOrigin(issuer, logoutEndpoint) {
 			return nil, fmt.Errorf("auth: oidc %q discovery returned an invalid end-session endpoint", cfg.Name)
 		}
 	}
@@ -116,8 +150,21 @@ func NewOIDCAuthenticator(ctx context.Context, cfg OIDCConfig) (*OIDCAuthenticat
 			Endpoint:     endpoint,
 			Scopes:       []string{oidc.ScopeOpenID, "email", "profile"},
 		},
-		logout: SSOSession{Protocol: "oidc", Provider: cfg.Name, Issuer: cfg.Issuer, ClientID: cfg.ClientID, EndSessionEndpoint: metadata.EndSessionEndpoint, PostLogoutRedirectURL: cfg.PostLogoutRedirectURL},
+		logout:               SSOSession{Protocol: "oidc", Provider: cfg.Name, Issuer: cfg.Issuer, ClientID: cfg.ClientID, EndSessionEndpoint: metadata.EndSessionEndpoint, PostLogoutRedirectURL: cfg.PostLogoutRedirectURL},
+		logoutVerifyCooldown: logoutVerifyCooldown,
 	}, nil
+}
+
+func absoluteURL(raw string) (*url.URL, error) {
+	parsed, err := url.Parse(raw)
+	if err != nil || (!strings.EqualFold(parsed.Scheme, "https") && !strings.EqualFold(parsed.Scheme, "http")) || parsed.Host == "" || parsed.User != nil {
+		return nil, errors.New("URL must be absolute")
+	}
+	return parsed, nil
+}
+
+func sameURLOrigin(left, right *url.URL) bool {
+	return strings.EqualFold(left.Scheme, right.Scheme) && strings.EqualFold(left.Host, right.Host)
 }
 
 func discoveredAuthStyle(methods []string) oauth2.AuthStyle {
@@ -160,10 +207,16 @@ type OIDCLogin struct {
 // (signature via the issuer's JWKS, issuer, audience, expiry) and the nonce,
 // then maps the verified claims to an identity + role.
 func (a *OIDCAuthenticator) Exchange(ctx context.Context, code, nonce, verifier string) (OIDCLogin, error) {
+	return a.exchange(ctx, code, nonce, verifier, oidcRequestTimeout)
+}
+
+func (a *OIDCAuthenticator) exchange(ctx context.Context, code, nonce, verifier string, requestTimeout time.Duration) (OIDCLogin, error) {
 	if verifier == "" {
 		return OIDCLogin{}, fmt.Errorf("auth: oidc %q missing PKCE verifier", a.cfg.Name)
 	}
-	tok, err := a.oauth.Exchange(ctx, code, oauth2.VerifierOption(verifier))
+	requestCtx, cancelRequest := context.WithTimeout(ctx, requestTimeout)
+	defer cancelRequest()
+	tok, err := a.oauth.Exchange(requestCtx, code, oauth2.VerifierOption(verifier))
 	if err != nil {
 		return OIDCLogin{}, fmt.Errorf("auth: oidc %q token exchange: %w", a.cfg.Name, err)
 	}
@@ -171,9 +224,12 @@ func (a *OIDCAuthenticator) Exchange(ctx context.Context, code, nonce, verifier 
 	if !ok {
 		return OIDCLogin{}, fmt.Errorf("auth: oidc %q response missing id_token", a.cfg.Name)
 	}
-	idTok, err := a.verifier.Verify(ctx, rawID)
+	idTok, err := a.verifier.Verify(requestCtx, rawID)
 	if err != nil {
 		return OIDCLogin{}, fmt.Errorf("auth: oidc %q verify id_token: %w", a.cfg.Name, err)
+	}
+	if idTok.Issuer != a.cfg.Issuer {
+		return OIDCLogin{}, fmt.Errorf("auth: oidc %q id_token issuer mismatch", a.cfg.Name)
 	}
 	if idTok.Nonce != nonce {
 		return OIDCLogin{}, fmt.Errorf("auth: oidc %q nonce mismatch", a.cfg.Name)
@@ -186,9 +242,10 @@ func (a *OIDCAuthenticator) Exchange(ctx context.Context, code, nonce, verifier 
 	// token. Resolve the standard UserInfo response before falling back to the
 	// pairwise subject, while only trusting an email explicitly marked verified.
 	email, _ := claims["email"].(string)
+	username, _ := claims["preferred_username"].(string)
 	verified, _ := claims["email_verified"].(bool)
 	if email == "" || !verified {
-		info, infoErr := a.provider.UserInfo(ctx, oauth2.StaticTokenSource(tok))
+		info, infoErr := a.provider.UserInfo(requestCtx, oauth2.StaticTokenSource(tok))
 		if infoErr != nil {
 			return OIDCLogin{}, fmt.Errorf("auth: oidc %q userinfo: %w", a.cfg.Name, infoErr)
 		}
@@ -196,6 +253,15 @@ func (a *OIDCAuthenticator) Exchange(ctx context.Context, code, nonce, verifier 
 			return OIDCLogin{}, fmt.Errorf("auth: oidc %q userinfo subject mismatch", a.cfg.Name)
 		}
 		email, verified = info.Email, info.EmailVerified
+		var infoClaims struct {
+			PreferredUsername string `json:"preferred_username"`
+		}
+		if err := info.Claims(&infoClaims); err != nil {
+			return OIDCLogin{}, fmt.Errorf("auth: oidc %q userinfo claims: %w", a.cfg.Name, err)
+		}
+		if username == "" {
+			username = infoClaims.PreferredUsername
+		}
 	}
 	actor := email
 	if email == "" || !verified {
@@ -207,6 +273,10 @@ func (a *OIDCAuthenticator) Exchange(ctx context.Context, code, nonce, verifier 
 	id, err := identity.New(a.cfg.Org, a.cfg.Workspace, actor)
 	if err != nil {
 		return OIDCLogin{}, fmt.Errorf("auth: oidc %q: %w", a.cfg.Name, err)
+	}
+	id.Username = strings.TrimSpace(username)
+	if verified {
+		id.Email = strings.TrimSpace(email)
 	}
 	session := a.logout
 	session.Issuer = idTok.Issuer
@@ -220,9 +290,25 @@ func (a *OIDCAuthenticator) Exchange(ctx context.Context, code, nonce, verifier 
 // with the same signature, issuer, audience, and expiry checks used for ID
 // tokens, followed by the Back-Channel Logout-specific claim checks.
 func (a *OIDCAuthenticator) VerifyLogoutToken(ctx context.Context, raw string) (OIDCLogout, error) {
-	token, err := a.verifier.Verify(ctx, raw)
+	a.logoutVerifyMu.Lock()
+	defer a.logoutVerifyMu.Unlock()
+	if wait := time.Until(a.logoutVerifyNotBefore); wait > 0 {
+		return OIDCLogout{}, fmt.Errorf("auth: oidc %q logout verification cooling down for %s", a.cfg.Name, wait.Round(time.Millisecond))
+	}
+	requestCtx, cancelRequest := context.WithTimeout(ctx, oidcRequestTimeout)
+	defer cancelRequest()
+	token, err := a.verifier.Verify(requestCtx, raw)
 	if err != nil {
+		// Only signature/key failures can force go-oidc to refresh JWKS. Claim
+		// failures (expiry, issuer, audience) are rejected locally and must not let
+		// an attacker delay a subsequent legitimate provider logout.
+		if oidcVerificationMayRefreshKeys(err) {
+			a.logoutVerifyNotBefore = time.Now().Add(a.logoutVerifyCooldown)
+		}
 		return OIDCLogout{}, fmt.Errorf("auth: oidc %q verify logout token: %w", a.cfg.Name, err)
+	}
+	if token.Issuer != a.cfg.Issuer {
+		return OIDCLogout{}, fmt.Errorf("auth: oidc %q logout token issuer mismatch", a.cfg.Name)
 	}
 	var claims struct {
 		Subject string                     `json:"sub"`
@@ -248,6 +334,11 @@ func (a *OIDCAuthenticator) VerifyLogoutToken(ctx context.Context, raw string) (
 		return OIDCLogout{}, fmt.Errorf("auth: oidc %q logout token is stale", a.cfg.Name)
 	}
 	return OIDCLogout{Subject: claims.Subject, SID: claims.SID, JTI: claims.JTI, Issued: issued}, nil
+}
+
+func oidcVerificationMayRefreshKeys(err error) bool {
+	message := err.Error()
+	return strings.Contains(message, "failed to verify id token signature") || strings.Contains(message, "fetching keys")
 }
 
 func jsonObject(raw json.RawMessage) bool {

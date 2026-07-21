@@ -22,13 +22,126 @@ mock_provider "archive" {}
 mock_provider "random" {}
 
 variables {
-  name                        = "intraktible-test"
-  region                      = "eu-west-1"
-  existing_vpc_id             = "vpc-00000000000000000"
-  existing_private_subnet_ids = ["subnet-00000000000000001", "subnet-00000000000000002"]
-  existing_ecs_cluster_arn    = "arn:aws:ecs:eu-west-1:000000000000:cluster/dev"
-  container_image             = "ghcr.io/e6qu/intraktible:0123456789ab"
-  database_url_secret_arn     = "arn:aws:secretsmanager:eu-west-1:000000000000:secret:intraktible-database"
+  name                         = "intraktible-test"
+  region                       = "eu-west-1"
+  existing_vpc_id              = "vpc-00000000000000000"
+  existing_private_subnet_ids  = ["subnet-00000000000000001", "subnet-00000000000000002"]
+  existing_ecs_cluster_arn     = "arn:aws:ecs:eu-west-1:000000000000:cluster/dev"
+  container_image              = "ghcr.io/e6qu/intraktible:0123456789ab"
+  application_release_revision = "0123456789ab"
+  database_url_secret_arn      = "arn:aws:secretsmanager:eu-west-1:000000000000:secret:intraktible-database"
+}
+
+run "reject_mutable_application_release_revision" {
+  command = plan
+
+  variables {
+    application_release_revision = "latest"
+  }
+
+  expect_failures = [var.application_release_revision]
+}
+
+run "reject_short_application_release_revision" {
+  command = plan
+
+  variables {
+    application_release_revision = "0123456789a"
+  }
+
+  expect_failures = [var.application_release_revision]
+}
+
+run "reject_long_application_release_revision" {
+  command = plan
+
+  variables {
+    application_release_revision = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0"
+  }
+
+  expect_failures = [var.application_release_revision]
+}
+
+run "reject_uppercase_application_release_revision" {
+  command = plan
+
+  variables {
+    application_release_revision = "ABCDEF012345"
+  }
+
+  expect_failures = [var.application_release_revision]
+}
+
+run "inject_application_release_revision_into_shared_task_environment" {
+  command = plan
+
+  assert {
+    condition = one([
+      for item in local.base_environment : item.value
+      if item.name == "APPLICATION_RELEASE_REVISION"
+    ]) == "0123456789ab"
+    error_message = "Every application task must receive the exact immutable application release revision through its shared environment."
+  }
+}
+
+run "accept_maximum_length_application_release_revision" {
+  command = plan
+
+  variables {
+    application_release_revision = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  }
+}
+
+run "accept_application_release_digest" {
+  command = plan
+
+  variables {
+    application_release_revision = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
+
+  assert {
+    condition = one([
+      for item in local.base_environment : item.value
+      if item.name == "APPLICATION_RELEASE_REVISION"
+    ]) == "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    error_message = "Every application task must receive the exact immutable SHA-256 application release digest through its shared environment."
+  }
+}
+
+run "accept_exact_shauth_logout_bridge" {
+  command = plan
+
+  variables {
+    domain_name                   = "intraktible.example.test"
+    acm_certificate_arn           = "arn:aws:acm:us-east-1:000000000000:certificate/00000000-0000-0000-0000-000000000000"
+    oidc_provider_name            = "shauth"
+    oidc_issuer                   = "https://auth.example.test"
+    oidc_client_id                = "intraktible"
+    oidc_client_secret            = "test-only-secret"
+    oidc_redirect_url             = "https://intraktible.example.test/v1/auth/oidc/shauth/callback"
+    oidc_post_logout_redirect_url = "https://intraktible.example.test/auth/shauth/logout/complete"
+    oidc_org                      = "e6qu"
+    oidc_workspace                = "dev"
+  }
+}
+
+run "reject_signed_out_page_as_shauth_logout_bridge" {
+  command = plan
+
+  variables {
+    domain_name                   = "intraktible.example.test"
+    acm_certificate_arn           = "arn:aws:acm:us-east-1:000000000000:certificate/00000000-0000-0000-0000-000000000000"
+    oidc_provider_name            = "shauth"
+    oidc_issuer                   = "https://auth.example.test"
+    oidc_client_id                = "intraktible"
+    oidc_client_secret            = "test-only-secret"
+    oidc_redirect_url             = "https://intraktible.example.test/v1/auth/oidc/shauth/callback"
+    oidc_post_logout_redirect_url = "https://intraktible.example.test/v1/auth/signed-out"
+    oidc_org                      = "e6qu"
+    oidc_workspace                = "dev"
+  }
+
+  expect_failures = [check.oidc_coordinates]
 }
 
 run "create_dedicated_vpc_link_by_default" {

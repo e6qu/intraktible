@@ -3,11 +3,14 @@
 package httpx
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
+	"embed"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"html/template"
 	"io"
 	"net/http"
 	"net/url"
@@ -35,6 +38,11 @@ const (
 	oidcReturnCookie = "oidc_return"
 	oidcCookiePath   = "/v1/auth/oidc/"
 )
+
+//go:embed assets/signed-out.html assets/signed-out.css
+var signedOutAssets embed.FS
+
+var signedOutTemplate = template.Must(template.ParseFS(signedOutAssets, "assets/signed-out.html"))
 
 // OIDCHandler serves SSO login for the configured OIDC providers: a redirect to
 // the IdP and a callback that verifies the result and issues a session. It is
@@ -71,7 +79,32 @@ func (h *OIDCHandler) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/auth/oidc/{provider}/callback", h.callback)
 	mux.HandleFunc("GET /v1/auth/oidc/{provider}/frontchannel-logout", h.frontChannelLogout)
 	mux.HandleFunc("POST /v1/auth/oidc/{provider}/backchannel-logout", h.backChannelLogout)
+	mux.HandleFunc("GET /auth/shauth/logout/complete", h.shauthLogoutComplete)
 	mux.HandleFunc("GET /v1/auth/signed-out", h.signedOut)
+	mux.HandleFunc("GET /v1/auth/signed-out.css", signedOutStyles)
+}
+
+// shauthLogoutComplete is the fixed first-party bridge registered with Shauth.
+// It never reflects request data across origins: Shauth owns the one-time
+// completion grant and resolves the final application-local signed-out target.
+func (h *OIDCHandler) shauthLogoutComplete(w http.ResponseWriter, r *http.Request) {
+	a, ok := h.authers["shauth"]
+	if !ok {
+		Error(w, http.StatusNotFound, errors.New("shauth is not configured"))
+		return
+	}
+	issuer, err := url.Parse(a.Issuer())
+	if err != nil || issuer.Scheme == "" || issuer.Host == "" || issuer.User != nil || issuer.RawQuery != "" || issuer.Fragment != "" {
+		Error(w, http.StatusInternalServerError, errors.New("shauth issuer is invalid"))
+		return
+	}
+	issuer.Path = "/oauth/logout/complete"
+	issuer.RawPath = ""
+	issuer.ForceQuery = false
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	http.Redirect(w, r, issuer.String(), http.StatusSeeOther)
 }
 
 // providers lists the configured provider names so the login UI can render a
@@ -171,8 +204,7 @@ func safeReturnTarget(raw string) (string, bool) {
 }
 
 // finishLogin applies the deprovisioning gate and role augmenter, then issues a
-// session cookie. It returns false (after writing 403) when the gate denies the
-// user — e.g. one deactivated in the IdP via SCIM, even with a valid token.
+// session cookie. It returns false after writing a response when login fails.
 // Shared by the OIDC and SAML callbacks.
 func finishLogin(w http.ResponseWriter, r *http.Request, sessions auth.SessionStore, gate LoginGate, aug RoleAugmenter, id identity.Identity, role auth.Role, sso auth.SSOSession) bool {
 	if gate != nil && !gate(r.Context(), id.Org, id.Workspace, id.Actor) {
@@ -256,10 +288,46 @@ func (h *OIDCHandler) signedOut(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	w.Header().Set("Cache-Control", "no-store")
+	signInLabel := "Sign in to Intraktible"
+	signInURL := "/login"
+	if _, ok := h.authers["shauth"]; ok {
+		signInLabel = "Sign in with Shauth"
+		signInURL = "/v1/auth/oidc/shauth/login?return_to=%2F"
+	}
+	var page bytes.Buffer
+	if err := signedOutTemplate.ExecuteTemplate(&page, "signed-out.html", map[string]string{
+		"SignInLabel": signInLabel,
+		"SignInURL":   signInURL,
+	}); err != nil {
+		Error(w, http.StatusInternalServerError, errors.New("render signed-out page"))
+		return
+	}
+	setSignedOutHeaders(w)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>Signed out · Intraktible</title><style>:root{font:16px system-ui,sans-serif;color-scheme:light dark}body{min-height:100vh;margin:0;display:grid;place-items:center;background:#f7f7fb;color:#161524}main{width:min(28rem,calc(100% - 3rem));padding:2rem;border:1px solid #d8d6e6;border-radius:1rem;background:#fff;box-shadow:0 1rem 3rem #1615241f}h1{margin-top:0}a{display:inline-block;padding:.7rem 1rem;border-radius:.5rem;background:#6d28d9;color:#fff;font-weight:700;text-decoration:none}a:focus-visible{outline:3px solid #0891b2;outline-offset:3px}@media(prefers-color-scheme:dark){body{background:#11101b;color:#f5f3ff}main{background:#1c192b;border-color:#3d3756}}</style></head><body><main><h1>You are signed out</h1><p>Your Intraktible browser session and shared identity-provider session have ended.</p><a href="/">Return to Intraktible</a></main></body></html>`))
+	_, _ = w.Write(page.Bytes())
+}
+
+func signedOutStyles(w http.ResponseWriter, _ *http.Request) {
+	setSignedOutHeaders(w)
+	w.Header().Set("Content-Type", "text/css; charset=utf-8")
+	_, _ = w.Write(mustSignedOutAsset("assets/signed-out.css"))
+}
+
+func setSignedOutHeaders(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
+	w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("X-Frame-Options", "DENY")
+}
+
+func mustSignedOutAsset(name string) []byte {
+	asset, err := signedOutAssets.ReadFile(name)
+	if err != nil {
+		panic("httpx: embedded signed-out asset is unavailable: " + err.Error())
+	}
+	return asset
 }
 
 // setFlowCookie writes a short-lived, path-scoped cookie that carries SSO

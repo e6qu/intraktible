@@ -1,6 +1,5 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
-  import { goto } from '$app/navigation';
   import Icon from '$lib/Icon.svelte';
   import { appHref } from '$lib/paths';
   import { user, signOut } from '$lib/session';
@@ -17,7 +16,7 @@
         window.location.assign(logoutURL);
         return;
       }
-      await goto(appHref('/login'));
+      window.location.assign(appHref('/v1/auth/signed-out'));
     } catch (error) {
       toast.error(error instanceof Error ? error.message : String(error));
       window.location.assign(appHref('/v1/auth/signed-out'));
@@ -30,11 +29,23 @@
 <main class="account-page">
   {#if $user}
     <p class="eyebrow">Your account</p>
-    <h1>Signed in as {$user.actor}</h1>
+    <h1>Signed in as {$user.username || $user.actor}</h1>
     <p class="lede">This session is managed by your configured identity provider.</p>
 
     <section class="account-card" aria-label="Current account details">
       <dl>
+        {#if $user.username}
+          <div>
+            <dt>Username</dt>
+            <dd>{$user.username}</dd>
+          </div>
+        {/if}
+        {#if $user.email}
+          <div>
+            <dt>Email</dt>
+            <dd data-testid="account-email">{$user.email}</dd>
+          </div>
+        {/if}
         <div>
           <dt>Identity</dt>
           <dd>{$user.actor}</dd>

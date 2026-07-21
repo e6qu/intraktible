@@ -66,16 +66,13 @@ func setSessionCookie(w http.ResponseWriter, r *http.Request, tok string, ttl ti
 func LogoutHandler(sessions auth.SessionStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
-		if origin := strings.TrimSpace(r.Header.Get("Origin")); origin != "" && !sameRequestOrigin(r, origin) {
-			Error(w, http.StatusForbidden, errors.New("cross-origin logout denied"))
-			return
-		}
-		if strings.EqualFold(strings.TrimSpace(r.Header.Get("Sec-Fetch-Site")), "cross-site") {
-			Error(w, http.StatusForbidden, errors.New("cross-origin logout denied"))
-			return
-		}
 		logoutURL := ""
 		if c, err := r.Cookie(sessionCookie); err == nil {
+			origin := strings.TrimSpace(r.Header.Get("Origin"))
+			if !sameRequestOrigin(r, origin) || r.Header.Get("X-Requested-With") != "intraktible" || !strings.EqualFold(strings.TrimSpace(r.Header.Get("Sec-Fetch-Site")), "same-origin") {
+				Error(w, http.StatusForbidden, errors.New("same-origin logout proof required"))
+				return
+			}
 			sso, ok, err := sessions.RevokeWithSSO(c.Value)
 			clearSessionCookie(w, r)
 			if err != nil {
@@ -117,12 +114,20 @@ func ssoLogoutURL(sso auth.SSOSession) (string, error) {
 	if sso.EndSessionEndpoint == "" {
 		return "", nil
 	}
+	issuer, err := url.Parse(sso.Issuer)
+	if err != nil || issuer.Scheme == "" || issuer.Host == "" || issuer.User != nil || issuer.RawQuery != "" || issuer.Fragment != "" {
+		return "", errors.New("sso: stored issuer is invalid")
+	}
 	endpoint, err := url.Parse(sso.EndSessionEndpoint)
-	if err != nil || endpoint.Scheme == "" || endpoint.Host == "" || endpoint.User != nil {
+	if err != nil || endpoint.Scheme == "" || endpoint.Host == "" || endpoint.User != nil || !sameURLOrigin(issuer, endpoint) {
 		return "", errors.New("sso: stored end-session endpoint is invalid")
 	}
 	postLogout, err := url.Parse(sso.PostLogoutRedirectURL)
-	if err != nil || postLogout.Scheme == "" || postLogout.Host == "" || postLogout.User != nil || postLogout.Path != "/v1/auth/signed-out" || postLogout.RawQuery != "" || postLogout.Fragment != "" {
+	expectedPath := "/v1/auth/signed-out"
+	if sso.Provider == "shauth" {
+		expectedPath = "/auth/shauth/logout/complete"
+	}
+	if err != nil || postLogout.Scheme == "" || postLogout.Host == "" || postLogout.User != nil || postLogout.Path != expectedPath || postLogout.RawQuery != "" || postLogout.Fragment != "" {
 		return "", errors.New("sso: stored post-logout redirect URL is invalid")
 	}
 	query := endpoint.Query()
@@ -149,6 +154,10 @@ func sameRequestOrigin(r *http.Request, origin string) bool {
 	return strings.EqualFold(parsed.Scheme, scheme) && strings.EqualFold(parsed.Host, r.Host)
 }
 
+func sameURLOrigin(left, right *url.URL) bool {
+	return strings.EqualFold(left.Scheme, right.Scheme) && strings.EqualFold(left.Host, right.Host)
+}
+
 // MeHandler returns the authenticated caller's identity. It is mounted inside the
 // authenticated chain, so the identity is always present.
 func MeHandler() http.HandlerFunc {
@@ -166,6 +175,7 @@ func MeHandler() http.HandlerFunc {
 		}
 		JSON(w, http.StatusOK, map[string]string{
 			"org": id.Org, "workspace": id.Workspace, "actor": id.Actor,
+			"username": id.Username, "email": id.Email,
 			"role": string(role), "scope": scope,
 		})
 	}
@@ -174,5 +184,6 @@ func MeHandler() http.HandlerFunc {
 func writeIdentity(w http.ResponseWriter, id identity.Identity) {
 	JSON(w, http.StatusOK, map[string]string{
 		"org": id.Org, "workspace": id.Workspace, "actor": id.Actor,
+		"username": id.Username, "email": id.Email,
 	})
 }
