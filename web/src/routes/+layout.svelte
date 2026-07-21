@@ -263,7 +263,9 @@
           <span class="avatar user-avatar" data-testid="user-avatar" aria-hidden="true"
             >{initials($user.actor)}</span
           >
-          <span class="persona-name" data-testid="user-identity">{$user.actor}</span>
+          <span class="persona-name" data-testid="user-identity" data-shauth-user={$user.actor}
+            >{$user.actor}</span
+          >
         {:else}
           <span class="avatar"><Icon name={currentPersona.icon} size={16} /></span>
           <span class="persona-name">{currentPersona.label}</span>
@@ -303,7 +305,7 @@
           </button>
         {/each}
         {#if $user}
-          <button class="acct-action" onclick={doSignOut}>
+          <button class="acct-action" data-shauth-sign-out onclick={doSignOut}>
             <Icon name="signout" size={14} /> Sign out
           </button>
         {:else}
