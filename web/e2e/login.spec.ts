@@ -63,9 +63,11 @@ test('sign in with an API key, then sign out', async ({ page }) => {
   await expect(page.getByRole('navigation', { name: 'Primary' })).toBeVisible();
   await expect(page.getByTestId('user-identity')).toHaveText('dev');
   await expect(page.getByTestId('user-avatar')).toHaveText('D');
-  // Post-deployment qualification reads the signed-in user from the always
-  // visible trigger, opens this menu, and clicks the real sign-out control.
-  await expect(page.locator('[data-shauth-user]')).toHaveAttribute('data-shauth-user', 'dev');
+  // Post-deployment qualification opens this menu from the account trigger and
+  // clicks the real sign-out control. The identity marker carries the username
+  // the provider asserted, so an API-key session — which has no provider
+  // username — publishes no marker rather than substituting its actor.
+  await expect(page.locator('[data-shauth-user]')).toHaveCount(0);
   await page.getByTestId('persona-switch').locator('summary').click();
   await expect(page.locator('[data-shauth-sign-out]')).toBeVisible();
   const status = page.getByTestId('auth-status');

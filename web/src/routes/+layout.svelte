@@ -263,7 +263,7 @@
           <span class="avatar user-avatar" data-testid="user-avatar" aria-hidden="true"
             >{initials($user.actor)}</span
           >
-          <span class="persona-name" data-testid="user-identity" data-shauth-user={$user.actor}
+          <span class="persona-name" data-testid="user-identity" data-shauth-user={$user.username}
             >{$user.actor}</span
           >
         {:else}
