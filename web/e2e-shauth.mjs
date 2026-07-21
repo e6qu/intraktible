@@ -246,6 +246,13 @@ try {
       (await page.getByTestId('user-identity').textContent())?.trim(),
       'admin@localhost.test'
     );
+    // Post-deployment qualification matches this marker against the username
+    // Shauth issued, which is distinct from the actor shown above.
+    assert.equal(
+      (await page.getByTestId('user-identity').getAttribute('data-shauth-user'))?.trim(),
+      validationUsername,
+      'the account trigger did not publish the exact Shauth username'
+    );
   }
 
   async function currentAppSessionCookie() {
