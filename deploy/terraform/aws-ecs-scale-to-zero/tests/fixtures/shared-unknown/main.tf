@@ -34,13 +34,14 @@ module "intraktible" {
     aws.us_east_1 = aws.us_east_1
   }
 
-  name                        = "intraktible-unknown-test"
-  region                      = "eu-west-1"
-  existing_vpc_id             = "vpc-00000000000000000"
-  existing_private_subnet_ids = ["subnet-00000000000000001", "subnet-00000000000000002"]
-  existing_ecs_cluster_arn    = "arn:aws:ecs:eu-west-1:000000000000:cluster/dev"
-  container_image             = "ghcr.io/e6qu/intraktible:0123456789ab"
-  database_url_secret_arn     = "arn:aws:secretsmanager:eu-west-1:000000000000:secret:intraktible-database"
+  name                         = "intraktible-unknown-test"
+  region                       = "eu-west-1"
+  existing_vpc_id              = "vpc-00000000000000000"
+  existing_private_subnet_ids  = ["subnet-00000000000000001", "subnet-00000000000000002"]
+  existing_ecs_cluster_arn     = "arn:aws:ecs:eu-west-1:000000000000:cluster/dev"
+  container_image              = "ghcr.io/e6qu/intraktible:0123456789ab"
+  application_release_revision = "0123456789ab"
+  database_url_secret_arn      = "arn:aws:secretsmanager:eu-west-1:000000000000:secret:intraktible-database"
 
   create_api_gateway_vpc_link                     = false
   existing_api_gateway_vpc_link_id                = terraform_data.api_gateway_vpc_link.id

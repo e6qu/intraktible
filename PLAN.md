@@ -534,10 +534,16 @@ exact form-encoded Shauth `POST /login`, rejected mutated methods, paths, origin
 coordinates, and required exactly one approved submission per credentialed login. An empty inherited
 environment plus live-process inspection kept the validator variable names and password out of the
 application process. Login and logout tokens were accepted
-only from the exact configured issuer, including when a near-match issuer used the trusted signing key. Shauth's
-deployment-neutral validator used `/me` as Intraktible's same-origin authenticated validation URL,
-`/v1/auth/signed-out` as its persistent signed-out URL, and the immutable release revision exposed by
-`/version`; neither cloud-orchestrator detail nor validator credentials entered the app. Still
+only from the exact configured issuer, including when a near-match issuer used the trusted signing key.
+Shauth's deployment-neutral validator used `/auth/validation` as Intraktible's cookie-only authenticated
+validation URL and `/v1/auth/signed-out` as its persistent signed-out URL. The validation page exposed
+the verified OpenID Connect username and email, normalized `developer`/`admin` role, ordinary logout,
+and the exact immutable `APPLICATION_RELEASE_REVISION` through stable accessible markers. Anonymous,
+API-key, HTTP Basic, and Bearer entry failed closed to the app-local recovery page. The Amazon Elastic
+Container Service Terraform module required the generic release coordinate, validated it as a 12–64
+character lowercase hexadecimal commit or SHA-256 digest, and injected it into both application task
+shapes; neither cloud-orchestrator detail nor validator credentials entered the app. `/version` exposed
+the same generic revision with the binary's immutable build revision as its fallback. Still
 **out of scope** (and why): multi-tenant billing (not a product
 goal); exact API/UX parity with any commercial product (we are the open-source, self-hostable analog,
 not a clone). Formerly a non-goal, now **moved into the §8b forward roadmap**: real data-connector

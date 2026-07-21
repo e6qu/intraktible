@@ -66,6 +66,8 @@ func TestDecodeJSON(t *testing.T) {
 }
 
 func TestVersionHandler(t *testing.T) {
+	const deployedRevision = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	t.Setenv("APPLICATION_RELEASE_REVISION", deployedRevision)
 	w := httptest.NewRecorder()
 	httpx.Version()(w, httptest.NewRequest(http.MethodGet, "/version", http.NoBody))
 	if w.Code != http.StatusOK {
@@ -80,6 +82,9 @@ func TestVersionHandler(t *testing.T) {
 	}
 	if metadata["service"] != "intraktible" || metadata["revision"] == "" || metadata["go"] == "" {
 		t.Fatalf("incomplete version metadata: %#v", metadata)
+	}
+	if metadata["revision"] != deployedRevision {
+		t.Fatalf("revision = %q, want generic deployment revision", metadata["revision"])
 	}
 	if _, ok := metadata["built_at"]; !ok {
 		t.Fatalf("version metadata missing built_at: %#v", metadata)

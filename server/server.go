@@ -494,6 +494,10 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 	root.HandleFunc("GET /readyz", httpx.Ready(rt.Applied, log.Head, rt.Err))
 	// /version reports the build (VCS revision + Go) so ops can confirm what's live.
 	root.HandleFunc("GET /version", httpx.Version())
+	// /auth/validation is the app-owned, deployment-neutral SSO validation
+	// surface. It accepts only a real application session cookie and exposes the
+	// verified identity, normalized role, release revision, and ordinary logout.
+	root.HandleFunc("GET /auth/validation", httpx.ValidationHandler(sessions))
 	// /metrics is the Prometheus scrape endpoint (unauthenticated like /healthz —
 	// aggregate operational counters only, no tenant data).
 	root.Handle("GET /metrics", metrics.Handler())

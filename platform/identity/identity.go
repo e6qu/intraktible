@@ -15,6 +15,12 @@ type Identity struct {
 	Org       string `json:"org"`
 	Workspace string `json:"workspace"`
 	Actor     string `json:"actor"`
+	// Username and Email are verified display claims carried by an SSO session.
+	// Actor remains the stable authorization/audit identifier; these fields let
+	// browser account surfaces render the identity provider's exact user-facing
+	// identity without deriving or guessing it from Actor.
+	Username string `json:"username,omitempty"`
+	Email    string `json:"email,omitempty"`
 }
 
 // New builds a validated Identity — the smart constructor for the points where an

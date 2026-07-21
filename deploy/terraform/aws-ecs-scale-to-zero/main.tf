@@ -38,8 +38,8 @@ check "oidc_coordinates" {
     error_message = "An OIDC provider requires issuer, client ID, client secret, redirect URL, app-origin post-logout redirect URL, organization, and workspace."
   }
   assert {
-    condition     = var.oidc_provider_name == "" || var.domain_name == "" || (var.oidc_redirect_url == "https://${var.domain_name}/v1/auth/oidc/${var.oidc_provider_name}/callback" && var.oidc_post_logout_redirect_url == "https://${var.domain_name}/v1/auth/signed-out")
-    error_message = "OIDC redirect coordinates must use the module domain and the standard callback and signed-out routes."
+    condition     = var.oidc_provider_name == "" || var.domain_name == "" || (var.oidc_redirect_url == "https://${var.domain_name}/v1/auth/oidc/${var.oidc_provider_name}/callback" && var.oidc_post_logout_redirect_url == "https://${var.domain_name}/auth/shauth/logout/complete")
+    error_message = "OIDC redirect coordinates must use the module domain, the standard callback, and the fixed Shauth logout-completion bridge."
   }
 }
 

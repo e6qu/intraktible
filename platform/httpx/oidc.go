@@ -79,8 +79,32 @@ func (h *OIDCHandler) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/auth/oidc/{provider}/callback", h.callback)
 	mux.HandleFunc("GET /v1/auth/oidc/{provider}/frontchannel-logout", h.frontChannelLogout)
 	mux.HandleFunc("POST /v1/auth/oidc/{provider}/backchannel-logout", h.backChannelLogout)
+	mux.HandleFunc("GET /auth/shauth/logout/complete", h.shauthLogoutComplete)
 	mux.HandleFunc("GET /v1/auth/signed-out", h.signedOut)
 	mux.HandleFunc("GET /v1/auth/signed-out.css", signedOutStyles)
+}
+
+// shauthLogoutComplete is the fixed first-party bridge registered with Shauth.
+// It never reflects request data across origins: Shauth owns the one-time
+// completion grant and resolves the final application-local signed-out target.
+func (h *OIDCHandler) shauthLogoutComplete(w http.ResponseWriter, r *http.Request) {
+	a, ok := h.authers["shauth"]
+	if !ok {
+		Error(w, http.StatusNotFound, errors.New("shauth is not configured"))
+		return
+	}
+	issuer, err := url.Parse(a.Issuer())
+	if err != nil || issuer.Scheme == "" || issuer.Host == "" || issuer.User != nil || issuer.RawQuery != "" || issuer.Fragment != "" {
+		Error(w, http.StatusInternalServerError, errors.New("shauth issuer is invalid"))
+		return
+	}
+	issuer.Path = "/oauth/logout/complete"
+	issuer.RawPath = ""
+	issuer.ForceQuery = false
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	http.Redirect(w, r, issuer.String(), http.StatusSeeOther)
 }
 
 // providers lists the configured provider names so the login UI can render a

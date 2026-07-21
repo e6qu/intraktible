@@ -31,6 +31,7 @@ concurrency:
 
 jobs:
   build:
+    timeout-minutes: 15
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -77,6 +78,7 @@ jobs:
           path: _site
 
   deploy:
+    timeout-minutes: 15
     needs: build
     runs-on: ubuntu-latest
     environment:
@@ -91,6 +93,7 @@ jobs:
   # broken deploy (base paths, missing assets) AND a returning visitor with an
   # incompatible saved session; fails the workflow so a bad demo deploy is loud.
   live-smoke:
+    timeout-minutes: 15
     needs: deploy
     runs-on: ubuntu-latest
     steps:

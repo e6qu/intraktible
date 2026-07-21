@@ -6,19 +6,29 @@ import { chromium } from 'playwright';
 const shauthURL = process.env.SHAUTH_URL;
 const intraktibleURL = process.env.INTRAKTIBLE_URL;
 const validationUsername = process.env.SHAUTH_VALIDATION_USERNAME;
+const validationEmail = process.env.SHAUTH_VALIDATION_EMAIL;
 const validationPassword = process.env.SHAUTH_VALIDATION_PASSWORD;
+const applicationReleaseRevision = process.env.APPLICATION_RELEASE_REVISION;
 const rejectionSentinel = process.env.INTRAKTIBLE_REJECTION_SENTINEL;
 assert.ok(shauthURL, 'SHAUTH_URL is required');
 assert.ok(intraktibleURL, 'INTRAKTIBLE_URL is required');
 assert.ok(validationUsername, 'SHAUTH_VALIDATION_USERNAME is required');
+assert.ok(validationEmail, 'SHAUTH_VALIDATION_EMAIL is required');
 assert.ok(validationPassword, 'SHAUTH_VALIDATION_PASSWORD is required');
+assert.match(
+  applicationReleaseRevision ?? '',
+  /^[0-9a-f]{40}$/,
+  'APPLICATION_RELEASE_REVISION must be an immutable commit'
+);
 assert.ok(rejectionSentinel, 'INTRAKTIBLE_REJECTION_SENTINEL is required');
 assert.notEqual(
   rejectionSentinel,
   validationPassword,
   'the relying-party rejection sentinel must not be a real Shauth credential'
 );
-const validationURL = `${intraktibleURL}/me`;
+const validationURL = `${intraktibleURL}/auth/validation`;
+const accountURL = `${intraktibleURL}/me`;
+const logoutBridgeURL = `${intraktibleURL}/auth/shauth/logout/complete`;
 const signedOutURL = `${intraktibleURL}/v1/auth/signed-out`;
 const shauthOrigin = new URL(shauthURL).origin;
 const exactShauthLoginURL = new URL('/login', shauthOrigin).href;
@@ -246,6 +256,31 @@ try {
     return session;
   }
 
+  async function assertValidationContract() {
+    const response = await page.goto(validationURL);
+    assert.equal(response?.status(), 200, 'the app validation page did not load');
+    assert.match(
+      response?.headers()['content-security-policy'] ?? '',
+      /frame-ancestors 'none'/,
+      'the app validation page omitted clickjacking protection'
+    );
+    await page.getByRole('heading', { name: 'Intraktible account', exact: true }).waitFor();
+    assert.equal(
+      (await page.getByTestId('validation-username').textContent())?.trim(),
+      validationUsername
+    );
+    assert.equal(
+      (await page.getByTestId('validation-email').textContent())?.trim(),
+      validationEmail
+    );
+    assert.equal((await page.getByTestId('validation-role').textContent())?.trim(), 'admin');
+    assert.equal(
+      (await page.getByTestId('validation-release').textContent())?.trim(),
+      applicationReleaseRevision
+    );
+    await page.getByRole('button', { name: 'Sign out', exact: true }).waitFor();
+  }
+
   async function assertProtectedAPIsRejectStaleCookie(label, staleCookie) {
     await context.addCookies([staleCookie]);
     for (const path of ['/v1/me', '/v1/flows']) {
@@ -260,7 +295,10 @@ try {
     await page.getByRole('heading', { name: 'You are signed out' }).waitFor();
     const signIn = page.getByRole('link', { name: 'Sign in with Shauth', exact: true });
     assert.equal(await signIn.getAttribute('href'), '/v1/auth/oidc/shauth/login?return_to=%2F');
-    await page.reload();
+    const response = await page.reload();
+    assert.equal(response?.status(), 200, 'the durable app-local signed-out page did not reload');
+    assert.equal(response?.headers()['cache-control'], 'no-store');
+    assert.match(response?.headers()['content-security-policy'] ?? '', /default-src 'none'/);
     assert.equal(page.url(), signedOutURL);
     await page.getByRole('heading', { name: 'You are signed out' }).waitFor();
   }
@@ -272,13 +310,23 @@ try {
 
   async function assertRelyingPartyLogout(surface) {
     const staleSession = await currentAppSessionCookie();
+    const bridgeResponse = page.waitForResponse(
+      (response) => response.url() === logoutBridgeURL && response.request().method() === 'GET'
+    );
     if (surface === 'account') {
-      await page.goto(validationURL);
-      const signOut = page
-        .getByLabel('Current account details')
-        .getByRole('button', { name: 'Sign out', exact: true });
+      await page.goto(accountURL);
+      await page.getByRole('heading', { name: `Signed in as ${validationUsername}` }).waitFor();
+      const accountDetails = page.getByLabel('Current account details');
+      assert.equal(
+        (await accountDetails.getByTestId('account-email').textContent())?.trim(),
+        validationEmail
+      );
+      const signOut = accountDetails.getByRole('button', { name: 'Sign out', exact: true });
       await signOut.waitFor();
       await signOut.click();
+    } else if (surface === 'validation') {
+      await assertValidationContract();
+      await page.getByRole('button', { name: 'Sign out', exact: true }).click();
     } else if (surface === 'palette') {
       await page.keyboard.press('Control+k');
       await page.getByRole('option', { name: 'Sign out', exact: true }).click();
@@ -290,6 +338,10 @@ try {
         .click();
     }
 
+    const completion = await bridgeResponse;
+    assert.equal(completion.status(), 303, `${surface} logout did not traverse the app bridge`);
+    assert.equal(completion.headers()['cache-control'], 'no-store');
+    assert.equal(completion.headers()['referrer-policy'], 'no-referrer');
     await assertAppSignedOutLanding();
     await assertProtectedAPIsRejectStaleCookie(`${surface} relying-party logout`, staleSession);
     await page.goto(signedOutURL);
@@ -350,16 +402,31 @@ try {
   assert.equal(versionResponse.headers()['cache-control'], 'no-store');
   const version = await versionResponse.json();
   assert.equal(version.service, 'intraktible');
-  assert.match(version.revision, /^[0-9a-f]{40}$/);
+  assert.equal(version.revision, applicationReleaseRevision);
   assert.ok(version.go, 'Intraktible build metadata omitted the Go toolchain');
 
   await assertRelyingPartyCredentialSurfacesRejectSentinel();
+
+  const hostileBridge = await context.request.get(
+    `${logoutBridgeURL}?target=${encodeURIComponent('https://attacker.example/')}&state=secret`,
+    { maxRedirects: 0 }
+  );
+  assert.equal(hostileBridge.status(), 303);
+  assert.equal(hostileBridge.headers().location, `${shauthURL}/oauth/logout/complete`);
+  assert.equal(hostileBridge.headers()['cache-control'], 'no-store');
+  assert.equal(hostileBridge.headers()['referrer-policy'], 'no-referrer');
+
+  // The standard validation coordinate accepts only a real Intraktible session
+  // and fails closed to the exact app-local recovery page.
+  await page.goto(validationURL);
+  await assertAppSignedOutLanding();
 
   // Direct protected entry uses the real Authorization Code + PKCE flow with a
   // confidential client authenticated through client_secret_post.
   await page.goto(`${intraktibleURL}/engine`);
   await completeShauthLogin();
   assert.ok(page.url().startsWith(`${intraktibleURL}/engine`));
+  await assertValidationContract();
 
   // Remove only Intraktible's application cookie while preserving Shauth's
   // browser session, then enter directly again. The protected app route must
@@ -377,22 +444,65 @@ try {
   await page.waitForURL(`${intraktibleURL}/**`);
   await page.getByTestId('user-identity').waitFor();
 
-  for (const surface of ['header', 'account', 'palette']) {
+  for (const surface of ['header', 'account', 'palette', 'validation']) {
     await assertRelyingPartyLogout(surface);
   }
 
-  // Provider-global logout starts at Shauth, not Intraktible. Its signed
-  // Back-Channel Logout token must invalidate the still-present app cookie and
-  // every protected API before the browser returns to Intraktible.
+  // Provider-global logout starts at Shauth, not Intraktible, so its own durable
+  // landing belongs to Shauth. The signed Back-Channel Logout token must still
+  // invalidate the app cookie and require a new provider login on the next direct
+  // protected-app entry. App-owned logout above separately proves the registered
+  // RP-Initiated Logout return reaches Intraktible without test-driven navigation.
   const providerStaleSession = await currentAppSessionCookie();
   await page.goto(`${shauthURL}/logout`);
-  await page.getByRole('button', { name: 'Sign out everywhere', exact: true }).click();
-  await page.waitForURL(`${shauthURL}/signed-out`);
+  const providerLogoutNavigations = [];
+  const providerLogoutRequests = [];
+  const providerLogoutFailures = [];
+  const recordProviderLogoutNavigation = (frame) => {
+    if (frame === page.mainFrame()) providerLogoutNavigations.push(frame.url());
+  };
+  const recordProviderLogoutRequest = (request) => {
+    if (request.url().startsWith(shauthURL)) {
+      providerLogoutRequests.push(
+        `${request.method()} ${request.url()} [${request.resourceType()} navigation=${request.isNavigationRequest()}]`
+      );
+    }
+  };
+  const recordProviderLogoutFailure = (request) => {
+    if (request.url().startsWith(shauthURL)) {
+      providerLogoutFailures.push(`${request.url()}: ${request.failure()?.errorText ?? 'unknown'}`);
+    }
+  };
+  page.on('framenavigated', recordProviderLogoutNavigation);
+  page.on('request', recordProviderLogoutRequest);
+  page.on('requestfailed', recordProviderLogoutFailure);
+  const [providerLogoutResponse] = await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        response.url() === `${shauthURL}/logout` && response.request().method() === 'POST'
+    ),
+    page.getByRole('button', { name: 'Sign out of all apps', exact: true }).click()
+  ]);
+  await page.waitForURL(`${shauthURL}/signed-out`, { timeout: 60_000 });
+  page.off('framenavigated', recordProviderLogoutNavigation);
+  page.off('request', recordProviderLogoutRequest);
+  page.off('requestfailed', recordProviderLogoutFailure);
+  assert.equal(
+    providerLogoutResponse.status(),
+    303,
+    `Shauth provider-global logout returned HTTP ${providerLogoutResponse.status()}`
+  );
+  assert.equal(
+    page.url(),
+    `${shauthURL}/signed-out`,
+    `provider-global logout did not reach Shauth's durable signed-out page; Location=${providerLogoutResponse.headers().location ?? ''}; navigations=${providerLogoutNavigations.join(' -> ')}; requests=${providerLogoutRequests.join(' -> ')}; failures=${providerLogoutFailures.join(' -> ')}`
+  );
   await page.getByRole('heading', { name: 'You are signed out' }).waitFor();
   await assertProtectedAPIsRejectStaleCookie('Shauth provider-global logout', providerStaleSession);
-  await page.goto(signedOutURL);
-  await assertAppSignedOutLanding();
-  await recoverFromAppSignedOut();
+  await page.goto(`${intraktibleURL}/engine`);
+  await completeShauthLogin();
+  await page.waitForURL(`${intraktibleURL}/engine`);
+  await page.getByTestId('user-identity').waitFor();
   assert.ok(allowedCredentialSubmissions > 0, 'the browser did not exercise Shauth password login');
   assert.deepEqual(
     credentialBoundaryViolations,

@@ -33,6 +33,7 @@ export default defineConfig({
   server: {
     proxy: {
       '/v1': { target: apiTarget, ws: true },
+      '/auth': apiTarget,
       '/healthz': apiTarget,
       '/version': apiTarget
     }
@@ -40,6 +41,7 @@ export default defineConfig({
   preview: {
     proxy: {
       '/v1': { target: apiTarget, ws: true },
+      '/auth': apiTarget,
       '/healthz': apiTarget,
       '/version': apiTarget
     }

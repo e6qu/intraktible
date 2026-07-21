@@ -29,11 +29,23 @@
 <main class="account-page">
   {#if $user}
     <p class="eyebrow">Your account</p>
-    <h1>Signed in as {$user.actor}</h1>
+    <h1>Signed in as {$user.username || $user.actor}</h1>
     <p class="lede">This session is managed by your configured identity provider.</p>
 
     <section class="account-card" aria-label="Current account details">
       <dl>
+        {#if $user.username}
+          <div>
+            <dt>Username</dt>
+            <dd>{$user.username}</dd>
+          </div>
+        {/if}
+        {#if $user.email}
+          <div>
+            <dt>Email</dt>
+            <dd data-testid="account-email">{$user.email}</dd>
+          </div>
+        {/if}
         <div>
           <dt>Identity</dt>
           <dd>{$user.actor}</dd>

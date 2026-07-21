@@ -94,7 +94,7 @@ func testOIDCProvider(t *testing.T) *oidcTestProvider {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"sub": "u-1", "email": "ada@acme.com", "email_verified": true,
+			"sub": "u-1", "preferred_username": "ada", "email": "ada@acme.com", "email_verified": true,
 		})
 	})
 	mux.Handle("/", srv) // discovery + keys
@@ -192,17 +192,60 @@ func TestOIDCLoginRejectsUnsafeReturnTargets(t *testing.T) {
 
 func TestOIDCRejectsCrossOriginOrAutoLoginPostLogoutRedirect(t *testing.T) {
 	idp := testOIDCProvider(t)
-	base := auth.OIDCConfig{Name: "test", Issuer: idp.URL, ClientID: oidcClientID, RedirectURL: "https://app.example.test/v1/auth/oidc/test/callback", Org: "demo", Workspace: "main"}
-	for _, value := range []string{"https://auth.example.test/apps", "https://app.example.test/v1/auth/oidc/test/login", "https://app.example.test/v1/auth/signed-out?next=/"} {
+	base := auth.OIDCConfig{Name: "shauth", Issuer: idp.URL, ClientID: oidcClientID, RedirectURL: "https://app.example.test/v1/auth/oidc/shauth/callback", Org: "demo", Workspace: "main"}
+	for _, value := range []string{"https://auth.example.test/apps", "https://app.example.test/v1/auth/oidc/shauth/login", "https://app.example.test/auth/shauth/logout/complete?next=/", "https://app.example.test/v1/auth/signed-out"} {
 		config := base
 		config.PostLogoutRedirectURL = value
 		if _, err := auth.NewOIDCAuthenticator(context.Background(), config); err == nil {
 			t.Errorf("post-logout redirect %q was accepted", value)
 		}
 	}
-	base.PostLogoutRedirectURL = "https://app.example.test/v1/auth/signed-out"
+	base.PostLogoutRedirectURL = "https://app.example.test/auth/shauth/logout/complete"
 	if _, err := auth.NewOIDCAuthenticator(context.Background(), base); err != nil {
-		t.Fatalf("same-origin signed-out landing was rejected: %v", err)
+		t.Fatalf("same-origin Shauth logout bridge was rejected: %v", err)
+	}
+}
+
+func TestShauthLogoutBridgeIgnoresRequestDataAndUsesIssuer(t *testing.T) {
+	idp := testOIDCProvider(t)
+	a, err := auth.NewOIDCAuthenticator(context.Background(), auth.OIDCConfig{
+		Name: "shauth", Issuer: idp.URL, ClientID: oidcClientID,
+		RedirectURL:           "https://app.example.test/v1/auth/oidc/shauth/callback",
+		PostLogoutRedirectURL: "https://app.example.test/auth/shauth/logout/complete",
+		Org:                   "demo", Workspace: "main",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	httpx.NewOIDCHandler(auth.NewSessions(), a).Routes(mux)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "https://app.example.test/auth/shauth/logout/complete?target=https%3A%2F%2Fattacker.example&state=secret", http.NoBody)
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != idp.URL+"/oauth/logout/complete" {
+		t.Fatalf("logout bridge -> %d location=%q", rec.Code, rec.Header().Get("Location"))
+	}
+	for name, want := range map[string]string{
+		"Cache-Control":   "no-store",
+		"Pragma":          "no-cache",
+		"Referrer-Policy": "no-referrer",
+	} {
+		if got := rec.Header().Get(name); got != want {
+			t.Errorf("logout bridge %s = %q, want %q", name, got, want)
+		}
+	}
+	if strings.Contains(rec.Header().Get("Location"), "attacker") || strings.Contains(rec.Header().Get("Location"), "secret") {
+		t.Fatal("logout bridge reflected untrusted request data")
+	}
+}
+
+func TestShauthLogoutBridgeRequiresConfiguredProvider(t *testing.T) {
+	mux := http.NewServeMux()
+	httpx.NewOIDCHandler(auth.NewSessions()).Routes(mux)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/auth/shauth/logout/complete", http.NoBody))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("logout bridge without Shauth -> %d, want 404", rec.Code)
 	}
 }
 
@@ -233,7 +276,7 @@ func TestOIDCCallbackVerifiesAndIssuesSession(t *testing.T) {
 	}
 	// The session maps to the OIDC identity, and the "admins" group → admin role.
 	id, role, scope, ok := sessions.Resolve(session)
-	if !ok || id.Actor != "ada@acme.com" || id.Org != "demo" || role != auth.RoleAdmin {
+	if !ok || id.Actor != "ada@acme.com" || id.Username != "ada" || id.Email != "ada@acme.com" || id.Org != "demo" || role != auth.RoleAdmin {
 		t.Fatalf("session resolves to %+v role=%q ok=%v", id, role, ok)
 	}
 	// An SSO session operates the builder across environments.
@@ -552,7 +595,7 @@ func TestOIDCSignedOutLandingClearsSessionWithoutStartingLogin(t *testing.T) {
 	idp := testOIDCProvider(t)
 	shauth, err := auth.NewOIDCAuthenticator(context.Background(), auth.OIDCConfig{
 		Name: "shauth", Issuer: idp.URL, ClientID: oidcClientID, RedirectURL: "https://app/cb",
-		PostLogoutRedirectURL: "https://app/v1/auth/signed-out",
+		PostLogoutRedirectURL: "https://app/auth/shauth/logout/complete",
 		Org:                   "demo", Workspace: "main", DefaultRole: auth.RoleViewer,
 	})
 	if err != nil {

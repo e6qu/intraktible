@@ -78,6 +78,7 @@ resource "aws_service_discovery_service" "api" {
 
 locals {
   base_environment = concat([
+    { name = "APPLICATION_RELEASE_REVISION", value = var.application_release_revision },
     { name = "INTRAKTIBLE_ENV", value = "production" },
     { name = "INTRAKTIBLE_SECURE_COOKIES", value = "1" },
     { name = "INTRAKTIBLE_TRUST_PROXY", value = "1" }, # X-Forwarded-Proto from CloudFront/API GW

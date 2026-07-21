@@ -1,8 +1,29 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { defineConfig, devices } from '@playwright/test';
 
+function configuredPort(value: string | undefined, name: string, fallback: number): number {
+  const port = Number.parseInt(value ?? String(fallback), 10);
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+    throw new Error(`${name} must be a TCP port from 1 through 65535`);
+  }
+  return port;
+}
+
+const apiPort = configuredPort(
+  process.env.INTRAKTIBLE_E2E_API_PORT,
+  'INTRAKTIBLE_E2E_API_PORT',
+  8080
+);
+const webPort = configuredPort(
+  process.env.INTRAKTIBLE_E2E_WEB_PORT,
+  'INTRAKTIBLE_E2E_WEB_PORT',
+  5173
+);
+const apiOrigin = `http://127.0.0.1:${apiPort}`;
+const webOrigin = `http://127.0.0.1:${webPort}`;
+
 // End-to-end UI tests. Two servers are started: the Go backend (API + seeded dev
-// key) on :8080, and the Vite dev server on :5173 which proxies /v1 and /healthz
+// key) on a loopback API port, and the Vite server on a loopback web port which proxies /v1 and /healthz
 // to the backend. Tests drive a real browser against the SvelteKit app.
 //
 // The `test:e2e` npm script sets NODE_OPTIONS=--disable-warning=DEP0205 to silence
@@ -26,7 +47,7 @@ export default defineConfig({
   // for debugging rather than streamed.
   reporter: process.env.CI ? 'github' : [['dot'], ['html', { open: 'never' }]],
   use: {
-    baseURL: 'http://localhost:5173',
+    baseURL: webOrigin,
     trace: 'on-first-retry',
     launchOptions: process.env.PLAYWRIGHT_EXECUTABLE_PATH
       ? { executablePath: process.env.PLAYWRIGHT_EXECUTABLE_PATH }
@@ -42,12 +63,11 @@ export default defineConfig({
       // each run's read models bounded and deterministic.
       //
       // Run a BUILT BINARY, not `go run`: `go run` execs a child that survives the
-      // parent's teardown signal, orphaning a server on :8080 that the next run would
+      // parent's teardown signal, orphaning a server on the API port that the next run would
       // silently reuse (stale/half-dead → mass toBeVisible failures across unrelated
       // specs). The binary is killed cleanly, so reuseExistingServer:false below
       // always gets a fresh, empty backend.
-      command:
-        'rm -rf web/.pw-data && go build -o bin/intraktible-e2e ./cmd/intraktible && ./bin/intraktible-e2e serve --addr=:8080 --data-dir=web/.pw-data --modules=all',
+      command: `rm -rf web/.pw-data && go build -o bin/intraktible-e2e ./cmd/intraktible && ./bin/intraktible-e2e serve --addr=127.0.0.1:${apiPort} --data-dir=web/.pw-data --modules=all`,
       cwd: '..',
       // The AI stub is opt-in now (a server without it fails AI operations loudly
       // instead of serving canned text); tests opt in explicitly.
@@ -59,7 +79,7 @@ export default defineConfig({
         INTRAKTIBLE_LOGIN_RATE_LIMIT_RPS: '1000',
         INTRAKTIBLE_LOGIN_RATE_LIMIT_BURST: '2000'
       },
-      url: 'http://localhost:8080/healthz',
+      url: `${apiOrigin}/healthz`,
       reuseExistingServer: false,
       // The backend logs a line per request at INFO on stdout. Piping that to the
       // test runner floods pre-commit's captured (non-blocking) stdout and aborts
@@ -74,8 +94,9 @@ export default defineConfig({
       // where partially-initialized modules throw transient client errors under the
       // parallel suite. The preview server has no such window, so the run is
       // deterministic and exercises the artifact that actually ships.
-      command: 'vite build && vite preview --port 5173 --strictPort',
-      url: 'http://localhost:5173',
+      command: `vite build && vite preview --host 127.0.0.1 --port ${webPort} --strictPort`,
+      env: { INTRAKTIBLE_DEV_API_URL: apiOrigin },
+      url: webOrigin,
       reuseExistingServer: !process.env.CI,
       // `vite build` is verbose; like the backend above, keep it off the pre-push
       // hook's non-blocking pipe (stderr still surfaces a real build failure).

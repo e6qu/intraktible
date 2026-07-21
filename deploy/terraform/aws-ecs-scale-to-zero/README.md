@@ -100,9 +100,10 @@ module "intraktible" {
     aws.us_east_1 = aws.us_east_1
   }
 
-  container_image         = "ghcr.io/e6qu/intraktible:<12-character-commit-sha>"
-  database_url_secret_arn = "arn:aws:secretsmanager:eu-west-1:123456789012:secret:intraktible-database"
-  region                  = "eu-west-1"
+  container_image              = "ghcr.io/e6qu/intraktible:<12-character-commit-sha>"
+  application_release_revision = "<12-character-commit-sha>"
+  database_url_secret_arn      = "arn:aws:secretsmanager:eu-west-1:123456789012:secret:intraktible-database"
+  region                       = "eu-west-1"
 }
 ```
 
@@ -126,13 +127,17 @@ For Shauth or another OpenID Connect provider, register all four application
 coordinates on the same app origin:
 
 - callback: `https://<domain>/v1/auth/oidc/<provider>/callback`
-- post-logout landing: `https://<domain>/v1/auth/signed-out`
+- registered post-logout bridge: `https://<domain>/auth/shauth/logout/complete`
+- final application-local signed-out page: `https://<domain>/v1/auth/signed-out`
 - Front-Channel Logout URI: `https://<domain>/v1/auth/oidc/<provider>/frontchannel-logout`
 - Back-Channel Logout URI: `https://<domain>/v1/auth/oidc/<provider>/backchannel-logout`
 
 The provider must include a session identifier in front-channel notifications.
 Intraktible authenticates confidential-client token exchanges using the method
 advertised by discovery, including `client_secret_post` for Shauth.
+The bridge ignores request parameters and returns only to Shauth's fixed logout
+completion endpoint. Shauth validates its one-time completion grant before it
+returns the browser to Intraktible's application-local signed-out page.
 
 ## Custom domain
 
