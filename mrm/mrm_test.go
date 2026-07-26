@@ -251,3 +251,64 @@ func hasIssue(issues []string, want string) bool {
 	}
 	return false
 }
+
+// breakingStore serves every read normally until one named collection is asked
+// for, which then fails — standing in for a partially-unavailable backend.
+type breakingStore struct {
+	store.Store
+	broken string
+}
+
+func (s breakingStore) Get(ctx context.Context, collection, key string) (json.RawMessage, bool, error) {
+	if collection == s.broken {
+		return nil, false, fmt.Errorf("backend unavailable for %s", collection)
+	}
+	return s.Store.Get(ctx, collection, key)
+}
+
+func (s breakingStore) List(ctx context.Context, collection, keyPrefix string) ([]store.Record, error) {
+	if collection == s.broken {
+		return nil, fmt.Errorf("backend unavailable for %s", collection)
+	}
+	return s.Store.List(ctx, collection, keyPrefix)
+}
+
+// The model-risk report is the artifact that asserts governance was checked, so a
+// read it could not perform must fail the build rather than render as a flow with
+// nothing to report. Those two outcomes are identical on the page and opposite in
+// meaning, and the silent one understates risk in the one document whose purpose
+// is to state it.
+func TestBuildFailsWhenGovernanceEvidenceCannotBeRead(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 6, 22, 12, 0, 0, 0, time.UTC)
+	id := identity.Identity{Org: "demo", Workspace: "main"}
+
+	seed := func(t *testing.T) store.Store {
+		t.Helper()
+		st := store.NewMemory()
+		put(t, st, flows.Collection, store.Key("demo", "main", "f1"), flows.FlowView{
+			Org: "demo", Workspace: "main", FlowID: "f1", Name: "KYC", Latest: 1,
+			Versions:    []flows.VersionView{{Version: 1, PublishedBy: "alice"}},
+			Deployments: map[string]flows.DeploymentView{"production": {Version: 1}},
+		})
+		return st
+	}
+
+	// A healthy build is the control: without it, a test asserting failure would
+	// pass even if Build were broken for an unrelated reason.
+	if _, err := mrm.Build(ctx, seed(t), id, now); err != nil {
+		t.Fatalf("control build should succeed: %v", err)
+	}
+
+	for _, collection := range []string{
+		flows.Collection,
+		fairlending.ConfigCollection,
+	} {
+		t.Run(collection, func(t *testing.T) {
+			broken := breakingStore{Store: seed(t), broken: collection}
+			if _, err := mrm.Build(ctx, broken, id, now); err == nil {
+				t.Fatalf("Build succeeded while %s was unreadable — the report would understate risk", collection)
+			}
+		})
+	}
+}
