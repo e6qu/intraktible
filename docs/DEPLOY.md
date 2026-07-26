@@ -29,9 +29,14 @@ in an unsafe state:
 - the well-known dev API key is never seeded (it only seeds with `--store=memory`,
   which production refuses).
 
-It also **warns** on a single-process `--log=file` (not HA) and on
-`INTRAKTIBLE_CONNECTOR_ALLOW_PRIVATE` (lets connectors reach private hosts; the cloud
-metadata service stays blocked regardless).
+It also **refuses** a single-process `--log=file`, because every replica would keep
+its own divergent copy of the event log — the system of record — and nothing would
+report the fork. If exactly one replica will ever run, say so explicitly with
+`INTRAKTIBLE_SINGLE_REPLICA=1` and it boots (with a warning that the deployment must
+never be scaled).
+
+It still **warns** on `INTRAKTIBLE_CONNECTOR_ALLOW_PRIVATE` (lets connectors reach
+private hosts; the cloud metadata service stays blocked regardless).
 
 ## Topology
 
@@ -231,8 +236,22 @@ A durable-store install seeds no key. Get the first admin credential one of two 
 
 ## Graceful shutdown
 
-On `SIGTERM` the server stops accepting connections and drains in-flight requests for
-`INTRAKTIBLE_SHUTDOWN_TIMEOUT` (default 30s); set your orchestrator's
-`terminationGracePeriodSeconds` a little higher (the chart uses 60s). Long-lived SSE
-streams (`/decide/stream`, agent run streams) are cut at the deadline; clients
-reconnect to a healthy replica.
+Shutdown happens in two stages, and the first one exists because endpoint removal
+behind a load balancer is asynchronous.
+
+1. **Drain.** On `SIGTERM` the replica immediately fails `/readyz` (503 `draining`)
+   while it *keeps serving* for `INTRAKTIBLE_DRAIN_DELAY` (default 5s). The load
+   balancer sees the failing probe and stops routing here. Skipping this stage means
+   traffic is still being sent to a replica that has already closed its listener —
+   a burst of 502s on every rolling deploy. `/healthz` deliberately stays 200: the
+   process is stopping on purpose, not sick, and a failing liveness probe would
+   invite a kill mid-drain.
+2. **Shut down.** The listener closes and in-flight requests finish within
+   `INTRAKTIBLE_SHUTDOWN_TIMEOUT` (default 30s). Long-lived SSE streams
+   (`/decide/stream`, agent run streams) are cut at the deadline; clients reconnect
+   to a healthy replica.
+
+Set `terminationGracePeriodSeconds` above the **sum** of the two (the chart uses 60s
+against a 5s + 30s default). Both variables are parsed at startup, so a malformed
+duration refuses to boot rather than silently reverting to the default at the one
+moment nobody is watching.
