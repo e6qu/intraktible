@@ -139,9 +139,11 @@
 
   onMount(() => {
     void load();
+    // The catalog drives which connector types can be created at all, so an empty
+    // one is indistinguishable from "this deployment supports none". Report instead.
     listConnectorCatalog(key)
       .then((c) => (catalog = c))
-      .catch(() => (catalog = []));
+      .catch((e) => toast.error(e instanceof Error ? e.message : String(e)));
   });
 </script>
 

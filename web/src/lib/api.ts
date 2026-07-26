@@ -1656,6 +1656,26 @@ export class ApiError extends Error {
   }
 }
 
+// whenPermitted resolves an admin-gated read to `absent` when the caller is not
+// allowed to make it, and lets every other failure through.
+//
+// A 403 is a fact about the viewer's role, not a failure: a page that composes
+// several sections of differing sensitivity should render the ones this viewer may
+// see rather than collapsing entirely. Nothing else qualifies. Catching everything
+// — which these call sites used to do with `.catch(() => [])` — renders a 500, a
+// dropped connection, or a bad gateway as an empty section, telling an operator
+// "there is nothing here" when the truth is "we could not find out". On a
+// compliance surface (pending adverse actions, legal holds, consent records) those
+// two readings are not close to equivalent.
+export async function whenPermitted<T>(read: Promise<T>, absent: T): Promise<T> {
+  try {
+    return await read;
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 403) return absent;
+    throw e;
+  }
+}
+
 // errorOrStatus throws the backend's error message (or a status fallback).
 async function errorOrStatus(res: Response, label: string): Promise<never> {
   const body = (await res.json().catch(() => ({}))) as { error?: string };

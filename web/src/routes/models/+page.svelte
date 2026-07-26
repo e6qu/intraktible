@@ -14,6 +14,7 @@
     trainModel,
     modelDrift,
     getModelPerformance,
+    whenPermitted,
     captureModelBaseline,
     setModelMonitor,
     requestModelApproval,
@@ -241,8 +242,10 @@
     try {
       const [got, gotPerf] = await Promise.all([
         modelDrift(key, m, driftWindow),
-        // Performance is best-effort (a model with no recorded actuals is fine).
-        getModelPerformance(key, m).catch(() => null)
+        // A model with no recorded actuals comes back as an empty performance record
+        // with a 200, so only a 403 blanks this panel; a real failure reaches the
+        // handler below rather than reading as "this model has no measured outcomes".
+        whenPermitted(getModelPerformance(key, m), null)
       ]);
       if (driftOpen !== reqModel || driftWindow !== reqWindow) return;
       drift = got;
