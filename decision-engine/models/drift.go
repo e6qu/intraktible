@@ -254,11 +254,16 @@ func applyPredictNode(ctx context.Context, e eventlog.Envelope, s store.Store) e
 	if p.NodeType != events.NodePredict || len(p.Output) == 0 {
 		return nil
 	}
-	// The predict output is a map of output-key to a prediction object. Best-effort:
-	// an output we can't read that way simply yields no buckets (it must not fail the
-	// whole projection stream — drift is observability, not the system of record).
+	// The predict output is a map of output-key to a prediction object, written by
+	// the engine's own Predict node — so an output that will not decode that way is
+	// a corrupt or mis-shaped event, not an input variation to absorb. Swallowing it
+	// left drift monitoring silently blind: no buckets means "no drift detected",
+	// which is indistinguishable from a healthy model and strictly worse than an
+	// error. It fails loudly, exactly as the envelope decode above does.
 	out := map[string]map[string]any{}
-	_ = json.Unmarshal(p.Output, &out)
+	if err := json.Unmarshal(p.Output, &out); err != nil {
+		return fmt.Errorf("models: decode predict output at seq %d: %w", e.Seq, err)
+	}
 	for _, pred := range out {
 		model, _ := pred["model"].(string)
 		// Read via toFloat (handles json.Number) rather than a bare float64 assertion,
