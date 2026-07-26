@@ -160,9 +160,15 @@ func (p EgressPolicy) Client(timeout time.Duration) *http.Client {
 var extraBlockedRanges = func() []*net.IPNet {
 	var nets []*net.IPNet
 	for _, cidr := range []string{"100.64.0.0/10", "198.18.0.0/15"} {
-		if _, n, err := net.ParseCIDR(cidr); err == nil {
-			nets = append(nets, n)
+		_, n, err := net.ParseCIDR(cidr)
+		if err != nil {
+			// These are compile-time constants, so a parse failure is a typo in this
+			// very list. Skipping it silently would quietly widen what the SSRF guard
+			// permits — the failure mode is a connector that can suddenly reach the
+			// range someone thought was blocked.
+			panic("connectors: unparseable blocked range " + cidr + ": " + err.Error())
 		}
+		nets = append(nets, n)
 	}
 	return nets
 }()

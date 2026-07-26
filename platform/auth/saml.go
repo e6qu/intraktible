@@ -75,11 +75,17 @@ func NewSAMLAuthenticator(cfg SAMLConfig) (*SAMLAuthenticator, error) {
 	if err != nil {
 		return nil, fmt.Errorf("auth: saml %q acs url: %w", cfg.Name, err)
 	}
+	// Every other URL here refuses a malformed value; this one used to swallow it and
+	// leave the SP advertising its ACS URL as its metadata location instead — a
+	// misconfiguration that surfaces later as a federation that will not establish,
+	// with nothing pointing at the typo that caused it.
 	meta := acs
 	if cfg.MetadataURL != "" {
-		if m, err := url.Parse(cfg.MetadataURL); err == nil {
-			meta = m
+		m, err := url.Parse(cfg.MetadataURL)
+		if err != nil {
+			return nil, fmt.Errorf("auth: saml %q metadata url: %w", cfg.Name, err)
 		}
+		meta = m
 	}
 	sp := &saml.ServiceProvider{
 		Key:         rsaKey,
