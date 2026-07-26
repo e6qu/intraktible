@@ -4,6 +4,8 @@ Entry point for any agent (or human) picking up **intraktible**: an open-source,
 reimplementation of a commercial Agentic Decision Platform.
 
 ## Where to read, in order
+0. **[STATUS.md](STATUS.md)** → **[DO_NEXT.md](DO_NEXT.md)** — the continuity files: what is in flight
+   right now and what to pick up next. Always read these first (see *Continuity files* below).
 1. **[PLAN.md](PLAN.md)** — architecture, locked decisions, component scope, phased roadmap. Source of truth.
 2. **[docs/LICENSING.md](docs/LICENSING.md)** — AGPL policy + the dependency allow/deny rules (CI-enforced).
 3. Component subplans: [decision-engine](decision-engine/README.md) · [case-manager](case-manager/README.md) · [context-layer](context-layer/README.md) · [agent-manager](agent-manager/README.md) · shared [platform](platform/README.md).
@@ -107,6 +109,26 @@ store contract, and the items deliberately left undone so they aren't "finished"
   svelte-check), strict SAST (gosec / eslint-security), unit+integration+API-e2e tests. **Push**
   stage: race tests, dead-code, copy-paste, vuln, license, Playwright UI e2e. Hooks call the same
   `make` targets / npm scripts as CI, so local == CI. Go tooling excludes `web/node_modules`.
+
+## Continuity files (read these before doing anything)
+Long tasks outlive a single session: context gets compacted, sessions end, a different agent picks
+the work up. Four root-level files carry that state, and keeping them current is part of the work —
+not bookkeeping done at the end.
+- **[STATUS.md](STATUS.md)** — where the work stands *right now*: the task, the standing rules the
+  user has issued, the current phase, and the ground truth already established (what has been
+  verified, with evidence). **Read this first.**
+- **[DO_NEXT.md](DO_NEXT.md)** — the ordered live queue. Each entry carries enough evidence
+  (`file:line`, the failure mode, the chosen fix) that it can be actioned cold, without re-deriving
+  it. Also records `CONFIRMED-OK` items so settled questions are not re-investigated. Keep it short:
+  it is the queue, not the history.
+- **[WHAT_WE_DID.md](WHAT_WE_DID.md)** — completed work, newest last, one line each with the
+  evidence that proves it done (a passing gate, a test name, a `file:line`).
+- **[PLAN.md](PLAN.md)** — the architectural plan-of-record (§8 delivered, §8b forward roadmap).
+  Long-lived, unlike the three above; the docs cadence below still applies to it.
+
+Update them **as you go**, not at the end — the whole point is surviving an interruption you did not
+plan for. When an item in `DO_NEXT.md` is finished, move a one-line entry to `WHAT_WE_DID.md` and
+delete it from the queue. `CLAUDE.md` is a symlink to this file, so both entry points stay identical.
 
 ## Git / identity (this repo)
 Author **Adrian Mârza**, committer email `2966430+e6qu@users.noreply.github.com`, pushes use the
