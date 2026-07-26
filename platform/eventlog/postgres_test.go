@@ -7,6 +7,7 @@ package eventlog_test
 import (
 	"context"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -147,5 +148,96 @@ func TestPostgresLogNotifyFastPath(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("NOTIFY fast path did not deliver within 5s (poll interval is 30s)")
+	}
+}
+
+// TestPostgresLogConcurrentAppendsPreserveCommitOrder is the regression test for
+// silent event loss under concurrent appends.
+//
+// BIGSERIAL assigns a seq at INSERT but the row only becomes visible at COMMIT, so
+// without serialization two concurrent appends can be assigned 4 and 5 and commit
+// as 5 then 4. The delivery poller advances its watermark to the highest seq it
+// has read, so seq 4 — committed after 5 was already published — would never reach
+// the live bus, and every replica's read model would silently miss that event.
+//
+// The assertion is on delivery, not on the table: a row that exists but is never
+// delivered is precisely the failure being guarded against. Every seq from 1..N
+// must arrive, in order, with none skipped.
+func TestPostgresLogConcurrentAppendsPreserveCommitOrder(t *testing.T) {
+	dsn := os.Getenv("INTRAKTIBLE_TEST_POSTGRES")
+	if dsn == "" {
+		t.Skip("set INTRAKTIBLE_TEST_POSTGRES (a pgx DSN) to run the Postgres log test")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `DROP TABLE IF EXISTS events`); err != nil {
+		t.Fatal(err)
+	}
+	pool.Close()
+
+	// Two logs over one database stand in for two HA nodes appending at once.
+	node1, err := eventlog.OpenPostgresLog(ctx, dsn, 20*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = node1.Close() }()
+	node2, err := eventlog.OpenPostgresLog(ctx, dsn, 20*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = node2.Close() }()
+
+	reader, err := eventlog.OpenPostgresLog(ctx, dsn, 20*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = reader.Close() }()
+	ch, cancel := reader.Subscribe()
+	defer cancel()
+
+	const perNode = 25
+	const total = perNode * 2
+
+	var wg sync.WaitGroup
+	errs := make(chan error, total)
+	start := make(chan struct{})
+	for _, node := range []*eventlog.PostgresLog{node1, node2} {
+		for i := 0; i < perNode; i++ {
+			wg.Add(1)
+			go func(n *eventlog.PostgresLog) {
+				defer wg.Done()
+				<-start // release them together, to maximise interleaving
+				if _, err := n.Append(ctx, eventlog.Envelope{
+					Org: "o", Workspace: "w", Actor: "a", Stream: "s", Type: "evt", Time: time.Unix(1, 0).UTC(),
+				}); err != nil {
+					errs <- err
+				}
+			}(node)
+		}
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatalf("concurrent append: %v", err)
+	}
+
+	deadline := time.After(30 * time.Second)
+	seen := make([]uint64, 0, total)
+	for len(seen) < total {
+		select {
+		case e := <-ch:
+			seen = append(seen, e.Seq)
+		case <-deadline:
+			t.Fatalf("delivered only %d/%d events before timeout; got seqs %v (a gap here is the silent loss this guards)", len(seen), total, seen)
+		}
+	}
+	for i, s := range seen {
+		if s != uint64(i+1) {
+			t.Fatalf("delivered seq at position %d = %d, want %d (full: %v)", i, s, i+1, seen)
+		}
 	}
 }

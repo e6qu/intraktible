@@ -160,9 +160,15 @@ func (p EgressPolicy) Client(timeout time.Duration) *http.Client {
 var extraBlockedRanges = func() []*net.IPNet {
 	var nets []*net.IPNet
 	for _, cidr := range []string{"100.64.0.0/10", "198.18.0.0/15"} {
-		if _, n, err := net.ParseCIDR(cidr); err == nil {
-			nets = append(nets, n)
+		_, n, err := net.ParseCIDR(cidr)
+		if err != nil {
+			// These are compile-time constants, so a parse failure is a typo in this
+			// very list. Skipping it silently would quietly widen what the SSRF guard
+			// permits — the failure mode is a connector that can suddenly reach the
+			// range someone thought was blocked.
+			panic("connectors: unparseable blocked range " + cidr + ": " + err.Error())
 		}
+		nets = append(nets, n)
 	}
 	return nets
 }()
@@ -684,11 +690,14 @@ func (mockBureau) Fetch(_ context.Context, params json.RawMessage) (json.RawMess
 	var p struct {
 		Subject string `json:"subject"`
 	}
-	if json.Valid(params) {
-		_ = json.Unmarshal(params, &p)
-		if p.Subject != "" {
-			subject = p.Subject
-		}
+	// Params may legitimately be a bare JSON scalar rather than a {"subject":…}
+	// object, so a decode that does not fit the struct is an accepted shape, not an
+	// error — the raw text is the subject in that case. Only malformed JSON is a
+	// failure, and it is reported rather than quietly hashed into a risk score.
+	if err := json.Unmarshal(params, &p); err == nil && p.Subject != "" {
+		subject = p.Subject
+	} else if !json.Valid(params) {
+		return nil, fmt.Errorf("connectors: mock_bureau params are not valid JSON")
 	}
 	sum := sha256.Sum256([]byte(subject))
 	score := int(binary.BigEndian.Uint32(sum[:4]) % 101) // 0..100, deterministic

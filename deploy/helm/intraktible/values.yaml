@@ -79,4 +79,10 @@ podDisruptionBudget:
 networkPolicy:
   enabled: false # enable and set the ingress/metrics selectors for your cluster
 
+# Must exceed INTRAKTIBLE_DRAIN_DELAY + INTRAKTIBLE_SHUTDOWN_TIMEOUT (5s + 30s by
+# default). On SIGTERM a replica fails /readyz but keeps serving for the drain
+# delay, so the load balancer depools it before the listener closes — without that
+# window a rolling deploy sends traffic to a replica that has already stopped
+# listening. Raise the drain delay if your ingress reacts to probe failures slowly,
+# and raise this to match.
 terminationGracePeriodSeconds: 60

@@ -5,6 +5,7 @@ package httpx_test
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/e6qu/intraktible/platform/httpx"
@@ -13,7 +14,7 @@ import (
 func TestReadyGatesUntilCaughtUp(t *testing.T) {
 	var applied uint64
 	const head = 100
-	h := httpx.Ready(func() uint64 { return applied }, func() uint64 { return head }, func() error { return nil })
+	h := httpx.Ready(func() uint64 { return applied }, func() uint64 { return head }, func() error { return nil }, func() bool { return false })
 
 	// Rebuilding: applied < head → 503.
 	rec := httptest.NewRecorder()
@@ -38,11 +39,36 @@ func TestReadyGatesUntilCaughtUp(t *testing.T) {
 }
 
 func TestReadyReportsProjectionStall(t *testing.T) {
-	h := httpx.Ready(func() uint64 { return 10 }, func() uint64 { return 10 }, func() error { return errStall })
+	h := httpx.Ready(func() uint64 { return 10 }, func() uint64 { return 10 }, func() error { return errStall }, func() bool { return false })
 	rec := httptest.NewRecorder()
 	h(rec, httptest.NewRequest(http.MethodGet, "/readyz", http.NoBody))
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("stalled readiness = %d, want 503", rec.Code)
+	}
+}
+
+// A draining replica must fail readiness even though its projections are healthy
+// and caught up — that is precisely the state a rolling deploy shuts down in, and
+// staying ready through it is what makes a load balancer keep routing to a
+// listener that is about to close.
+func TestReadyFailsWhileDraining(t *testing.T) {
+	draining := false
+	h := httpx.Ready(func() uint64 { return 10 }, func() uint64 { return 10 }, func() error { return nil }, func() bool { return draining })
+
+	rec := httptest.NewRecorder()
+	h(rec, httptest.NewRequest(http.MethodGet, "/readyz", http.NoBody))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("healthy readiness = %d, want 200", rec.Code)
+	}
+
+	draining = true
+	rec = httptest.NewRecorder()
+	h(rec, httptest.NewRequest(http.MethodGet, "/readyz", http.NoBody))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("draining readiness = %d, want 503", rec.Code)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, `"draining"`) {
+		t.Fatalf("draining body = %s, want a draining status", body)
 	}
 }
 

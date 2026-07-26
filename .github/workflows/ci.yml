@@ -60,10 +60,17 @@ jobs:
       - name: license compliance (AGPL-compatible only)
         run: make licenses
 
-  # The durable-Postgres path (store, event log, and the multi-replica projection
-  # single-writer test) against a real PostgreSQL. These tests skip when
-  # INTRAKTIBLE_TEST_POSTGRES is unset, so the default `go` job stays hermetic; this
-  # job supplies a Postgres service so they actually run.
+  # The durable-Postgres path (store, event log, the multi-replica projection
+  # single-writer test, and the SQL connector) against a real PostgreSQL. These
+  # tests skip when INTRAKTIBLE_TEST_POSTGRES is unset, so the default `go` job
+  # stays hermetic; this job supplies a Postgres service so they actually run.
+  #
+  # It runs the WHOLE suite rather than a list of packages. A hand-maintained list
+  # silently stops covering a package the moment someone adds a Postgres-gated test
+  # elsewhere — which had already happened: context-layer/connectors' Postgres test
+  # skipped in the `go` job for want of a server and was absent from the list here,
+  # so it never executed in CI at all. A test that cannot fail is not a gate, and
+  # the way to keep this one honest is to give it nothing to drift from.
   postgres:
     timeout-minutes: 15
     runs-on: ubuntu-latest
@@ -88,8 +95,8 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: Postgres store / event log / projection tests
-        run: go test -race ./platform/store/ ./platform/eventlog/ ./platform/projection/
+      - name: Postgres-backed tests (whole suite, real PostgreSQL)
+        run: go test -race ./...
 
   web:
     timeout-minutes: 15
@@ -138,6 +145,33 @@ jobs:
       - name: e2e (Playwright — all UI flows)
         working-directory: web
         run: npm run test:e2e
+
+  # The single binary with the real UI embedded — the artifact `release.yml`
+  # actually publishes. Everything else exercises the UI through Vite, which
+  # cannot see embedded-only breakage: a //go:embed that drops _app once shipped a
+  # blank page, and the anonymous-browser gate lives on this serving path too.
+  # This was previously a local pre-commit push hook only, which gates nobody who
+  # has not run `pre-commit install`.
+  e2e-embedded:
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '22'
+      - name: install
+        working-directory: web
+        run: npm ci
+      - name: install Playwright browser
+        working-directory: web
+        run: npx playwright install --with-deps chromium
+      - name: smoke the shipping artifact (embedded UI + real binary)
+        run: make e2e-embedded
 
   shauth-sso:
     timeout-minutes: 15

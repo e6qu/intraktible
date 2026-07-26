@@ -338,6 +338,15 @@ detector and scales across cores. Decide-boundary failure injection now covers a
 (Connect/AI/Predict) AND a dying store mid-decide, and a soak test drives sustained concurrent load over
 the segmented, self-archiving WAL asserting no drift; still open are the projection runtime's single-node
 ceiling, a multi-hour endurance run, and throughput numbers under a durable log or Postgres.
+A **production-readiness audit** (2026-07-27, BUGS.md) then closed the load-balancer/multi-replica gaps
+that only appear in the deployment shape this project recommends: the Postgres log lost events under
+concurrent appends (seq assigned at INSERT, visible at COMMIT — appends now serialize on an advisory
+lock so commit order is seq order), the launch origin served the app shell to anonymous browsers instead
+of failing closed, `--log=file` in production warned rather than refused, and SIGTERM closed the listener
+without first failing readiness, so every rolling deploy dropped requests. Note the cost that buys the
+first of those: **appends to the Postgres log are now globally serialized**, so write throughput under a
+networked log is bounded by that lock — measuring it is part of the still-open durable-log throughput
+work above.
 Nothing here is a claim that a competitor is beaten — only a list of gaps to work through. The roadmap
 orders them hardest-blocker-first; each phase is a direction, not a committed date.
 

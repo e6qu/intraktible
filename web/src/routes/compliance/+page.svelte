@@ -24,6 +24,7 @@
     getJurisdiction,
     setJurisdiction,
     exportComplianceRegister,
+    whenPermitted,
     type AdverseActionItem,
     type Reconsideration,
     type ConsentRecord,
@@ -57,6 +58,7 @@
   const isAdmin = $derived(roleAtLeast($user?.role, 'admin'));
 
   let loading = $state(true);
+  let loadError = $state('');
   let pending = $state<AdverseActionItem[]>([]);
   let reviews = $state<Reconsideration[]>([]);
   let consents = $state<ConsentRecord[]>([]);
@@ -97,30 +99,39 @@
   }
 
   onMount(async () => {
-    // Every source is best-effort: an admin-only read (holds/retention/erased) 403s
-    // for a viewer and simply leaves its section empty rather than failing the page.
-    const [p, r, c, h, ret, er, sh, co] = await Promise.all([
-      listAdverseActions(key, 'pending').catch(() => []),
-      listReconsiderations(key).catch(() => []),
-      listConsentRecords(key).catch(() => []),
-      listLegalHolds(key).catch(() => []),
-      getRetentionPolicy(key).catch(() => null),
-      listErasedSubjects(key).catch(() => []),
-      listSharingRecords(key).catch(() => []),
-      listContests(key, 'open').catch(() => [])
-    ]);
-    [pending, reviews, consents, holds, retention, erasedCount, sharing, contests] = [
-      p,
-      r,
-      c,
-      h,
-      ret,
-      er.length,
-      sh,
-      co
-    ];
-    jurisdiction = await getJurisdiction(key).catch(() => null);
-    loading = false;
+    // An admin-only read (holds/retention/erased) 403s for a viewer, which is a fact
+    // about their role: that section is left empty and the rest of the page renders.
+    // Anything else — a 500, a dropped connection — is surfaced. Showing an empty
+    // "pending adverse actions" or "legal holds" table because a request failed would
+    // report "nothing outstanding" to someone whose job is to act on what is.
+    try {
+      const [p, r, c, h, ret, er, sh, co] = await Promise.all([
+        whenPermitted(listAdverseActions(key, 'pending'), []),
+        whenPermitted(listReconsiderations(key), []),
+        whenPermitted(listConsentRecords(key), []),
+        whenPermitted(listLegalHolds(key), []),
+        whenPermitted(getRetentionPolicy(key), null),
+        whenPermitted(listErasedSubjects(key), []),
+        whenPermitted(listSharingRecords(key), []),
+        whenPermitted(listContests(key, 'open'), [])
+      ]);
+      [pending, reviews, consents, holds, retention, erasedCount, sharing, contests] = [
+        p,
+        r,
+        c,
+        h,
+        ret,
+        er.length,
+        sh,
+        co
+      ];
+      jurisdiction = await whenPermitted(getJurisdiction(key), null);
+    } catch (e) {
+      loadError = e instanceof Error ? e.message : String(e);
+      toast.error(loadError);
+    } finally {
+      loading = false;
+    }
   });
 
   const optedOut = $derived(sharing.filter((s) => s.opted_out).length);
@@ -164,6 +175,11 @@
 
   {#if loading}
     <Skeleton rows={6} />
+  {:else if loadError}
+    <EmptyState
+      title="Compliance data could not be loaded"
+      hint="{loadError} — this page reports regulatory obligations, so it shows nothing rather than an empty register that could be mistaken for having none."
+    />
   {:else}
     <section class="kpis">
       <div class="kpi">

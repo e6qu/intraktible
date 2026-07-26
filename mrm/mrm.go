@@ -150,10 +150,18 @@ func buildFlows(ctx context.Context, s store.Store, id identity.Identity, rep *R
 				m.Deployments[env] = d.Version
 			}
 		}
-		m.Validation = flowValidation(ctx, s, id, fv)
-		m.Monitoring = flowMonitoring(ctx, s, id, fv)
+		if m.Validation, err = flowValidation(ctx, s, id, fv); err != nil {
+			return fmt.Errorf("mrm: validation for flow %s: %w", fv.FlowID, err)
+		}
+		if m.Monitoring, err = flowMonitoring(ctx, s, id, fv); err != nil {
+			return fmt.Errorf("mrm: monitoring for flow %s: %w", fv.FlowID, err)
+		}
 		m.Issues = flowIssues(fv, m)
-		if issue := fairLendingIssue(ctx, s, id, fv.FlowID, rep.GeneratedAt); issue != "" {
+		issue, err := fairLendingIssue(ctx, s, id, fv.FlowID, rep.GeneratedAt)
+		if err != nil {
+			return fmt.Errorf("mrm: fair-lending screen for flow %s: %w", fv.FlowID, err)
+		}
+		if issue != "" {
 			m.Issues = append(m.Issues, issue)
 		}
 		rep.Models = append(rep.Models, m)
@@ -161,26 +169,48 @@ func buildFlows(ctx context.Context, s store.Store, id identity.Identity, rep *R
 	return nil
 }
 
-func flowValidation(ctx context.Context, s store.Store, id identity.Identity, fv flows.FlowView) Validation {
+// flowValidation gathers a flow's validation evidence. Every read propagates its
+// error rather than yielding a zero value: this feeds an SR 11-7 governance report,
+// where "no assertions defined" and "could not read the assertions" render as the
+// same clean row, and the second one silently understates risk in the document
+// whose whole purpose is to state it.
+func flowValidation(ctx context.Context, s store.Store, id identity.Identity, fv flows.FlowView) (Validation, error) {
 	var v Validation
-	if av, ok, _ := assertions.Read(ctx, s, id, fv.FlowID); ok && len(av.Cases) > 0 {
-		v.HasAssertions = true
-		if rep, err := assertions.RunForFlow(ctx, s, id, fv.FlowID, fv.Latest); err == nil {
-			v.AssertionsTotal, v.AssertionsPassed = rep.Total, rep.Passed
-		}
+	av, ok, err := assertions.Read(ctx, s, id, fv.FlowID)
+	if err != nil {
+		return Validation{}, fmt.Errorf("read assertions: %w", err)
 	}
-	if sr, ok, _ := shadow.Read(ctx, s, id, fv.FlowID); ok {
+	if ok && len(av.Cases) > 0 {
+		v.HasAssertions = true
+		rep, err := assertions.RunForFlow(ctx, s, id, fv.FlowID, fv.Latest)
+		if err != nil {
+			return Validation{}, fmt.Errorf("run assertions: %w", err)
+		}
+		v.AssertionsTotal, v.AssertionsPassed = rep.Total, rep.Passed
+	}
+	sr, ok, err := shadow.Read(ctx, s, id, fv.FlowID)
+	if err != nil {
+		return Validation{}, fmt.Errorf("read shadow report: %w", err)
+	}
+	if ok {
 		for _, env := range sr.ByEnv {
 			v.ShadowDiverged += env.Diverged
 		}
 	}
 	v.Coverage = coverage(v.HasAssertions, v.AssertionsTotal, v.AssertionsPassed)
-	return v
+	return v, nil
 }
 
-func flowMonitoring(ctx context.Context, s store.Store, id identity.Identity, fv flows.FlowView) Monitoring {
+// flowMonitoring gathers a flow's live monitoring posture. As with flowValidation,
+// a failed read is an error rather than an empty section — a dropped firing monitor
+// is the difference between a report that says "escalate" and one that says nothing.
+func flowMonitoring(ctx context.Context, s store.Store, id identity.Identity, fv flows.FlowView) (Monitoring, error) {
 	var mon Monitoring
-	if m, ok, _ := analytics.Read(ctx, s, id, fv.FlowID); ok {
+	m, ok, err := analytics.Read(ctx, s, id, fv.FlowID)
+	if err != nil {
+		return Monitoring{}, fmt.Errorf("read analytics: %w", err)
+	}
+	if ok {
 		resolved := m.Completed + m.Failed
 		mon.Decisions = resolved
 		if resolved > 0 {
@@ -193,20 +223,23 @@ func flowMonitoring(ctx context.Context, s store.Store, id identity.Identity, fv
 		}
 	}
 	snap, err := monitor.LoadSnapshot(ctx, s, id, fv.FlowID)
-	if err == nil {
-		if rules, err := monitor.ListByFlow(ctx, s, id, fv.FlowID); err == nil {
-			for _, r := range rules {
-				if monitor.Evaluate(snap, r.Rule()).Firing {
-					mon.FiringMonitors = append(mon.FiringMonitors, r.Metric)
-				}
-			}
-		}
-		if d := monitor.ComputeDrift(snap); d.HasBaseline && d.HasCurrent {
-			psi := d.PSI
-			mon.DriftPSI = &psi
+	if err != nil {
+		return Monitoring{}, fmt.Errorf("load monitor snapshot: %w", err)
+	}
+	rules, err := monitor.ListByFlow(ctx, s, id, fv.FlowID)
+	if err != nil {
+		return Monitoring{}, fmt.Errorf("list monitors: %w", err)
+	}
+	for _, r := range rules {
+		if monitor.Evaluate(snap, r.Rule()).Firing {
+			mon.FiringMonitors = append(mon.FiringMonitors, r.Metric)
 		}
 	}
-	return mon
+	if d := monitor.ComputeDrift(snap); d.HasBaseline && d.HasCurrent {
+		psi := d.PSI
+		mon.DriftPSI = &psi
+	}
+	return mon, nil
 }
 
 func flowIssues(fv flows.FlowView, m Model) []string {
@@ -233,24 +266,28 @@ func flowIssues(fv flows.FlowView, m Model) []string {
 
 // fairLendingIssue runs the flow's disparate-impact screen when a fair-lending
 // config is set and reports a governance gap if the four-fifths threshold fails. A
-// flow with no config is silent (nothing to check); a build error is silent here so
-// the whole MRM report does not fail on one flow's screen — the dedicated
-// /fairlending surface is where the error would show.
-func fairLendingIssue(ctx context.Context, s store.Store, id identity.Identity, flowID string, now time.Time) string {
+// flow with no config is silent — there is genuinely nothing to check. A screen
+// that cannot be run is NOT silent: suppressing it produced a report showing no
+// fair-lending gap for a flow whose adverse-impact ratio was never computed, which
+// is the one thing this line of the report exists to rule out.
+func fairLendingIssue(ctx context.Context, s store.Store, id identity.Identity, flowID string, now time.Time) (string, error) {
 	cfg, found, err := fairlending.ReadConfig(ctx, s, id, flowID)
-	if err != nil || !found {
-		return ""
+	if err != nil {
+		return "", fmt.Errorf("read fair-lending config: %w", err)
+	}
+	if !found {
+		return "", nil
 	}
 	report, err := fairlending.Build(ctx, s, id, fairlending.Params{
 		FlowID: flowID, Attribute: cfg.Attribute, Favorable: cfg.Favorable, Threshold: cfg.Threshold,
 	}, now)
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("build disparate-impact report: %w", err)
 	}
 	if report.Groups2Plus && !report.Passes {
-		return fmt.Sprintf("fair-lending AIR %.2f below %.2f for %q", report.MinAIR, report.Threshold, cfg.Attribute)
+		return fmt.Sprintf("fair-lending AIR %.2f below %.2f for %q", report.MinAIR, report.Threshold, cfg.Attribute), nil
 	}
-	return ""
+	return "", nil
 }
 
 func buildModels(ctx context.Context, s store.Store, id identity.Identity, rep *Report) error {
@@ -260,9 +297,11 @@ func buildModels(ctx context.Context, s store.Store, id identity.Identity, rep *
 	}
 	for _, mv := range mvs {
 		m := Model{Kind: KindPredictive, ID: mv.Name, Name: mv.Name, Owner: mv.Owner, Version: mv.Version}
-		if t, err := time.Parse(time.RFC3339, mv.UpdatedAt); err == nil {
-			m.UpdatedAt = t
+		t, err := time.Parse(time.RFC3339, mv.UpdatedAt)
+		if err != nil {
+			return fmt.Errorf("mrm: model %s has an unparseable UpdatedAt %q: %w", mv.Name, mv.UpdatedAt, err)
 		}
+		m.UpdatedAt = t
 		// Four-eyes governance parity with flows: an unapproved model version is a
 		// governance gap (it cannot serve production decisions), and a model with no
 		// validation evidence is another — both surface like any other MRM issue.
@@ -277,11 +316,12 @@ func buildModels(ctx context.Context, s store.Store, id identity.Identity, rep *
 			m.Issues = append(m.Issues, "no validation evidence recorded")
 		}
 		d, err := models.Drift(ctx, s, id, mv.Name, 0)
-		if err == nil {
-			m.Validation.HasBaseline = d.HasBaseline
-			m.Monitoring.DriftPSI = d.PSI
-			m.Monitoring.DriftFiring = d.Firing
+		if err != nil {
+			return fmt.Errorf("mrm: drift for model %s: %w", mv.Name, err)
 		}
+		m.Validation.HasBaseline = d.HasBaseline
+		m.Monitoring.DriftPSI = d.PSI
+		m.Monitoring.DriftFiring = d.Firing
 		// A predictive model's validation reference is its captured baseline.
 		if m.Validation.HasBaseline {
 			m.Validation.Coverage = CoverageTested

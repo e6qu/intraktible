@@ -24,6 +24,7 @@ import (
 	"path/filepath"
 	"runtime/debug"
 	"sort"
+	"strings"
 	"syscall"
 	"time"
 
@@ -91,6 +92,18 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind, env string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// Parse the shutdown knobs up front: a malformed duration is a configuration
+	// error, and reporting it at shutdown — the one moment nobody is reading logs
+	// and nothing can be corrected — is far too late to be useful.
+	drainDelay, err := envDuration("INTRAKTIBLE_DRAIN_DELAY", 5*time.Second)
+	if err != nil {
+		return err
+	}
+	shutdownTimeout, err := envDuration("INTRAKTIBLE_SHUTDOWN_TIMEOUT", 30*time.Second)
+	if err != nil {
+		return err
+	}
+
 	// Distributed tracing. Off unless INTRAKTIBLE_OTEL_EXPORTER is set; the shutdown
 	// flushes buffered spans on a bounded context so a clean exit doesn't drop them.
 	shutdownTracing, err := telemetry.Init(ctx, buildRevision())
@@ -150,18 +163,48 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind, env string) error {
 	case err := <-errc:
 		return err
 	}
-	// Give in-flight requests (a decide fanning out to connectors/AI, a draining SSE
-	// stream) time to finish before the listener closes. Tunable so an operator can
-	// match it to the orchestrator's terminationGracePeriod.
-	timeout := 30 * time.Second
-	if v := os.Getenv("INTRAKTIBLE_SHUTDOWN_TIMEOUT"); v != "" {
-		if d, err := time.ParseDuration(v); err == nil {
-			timeout = d
+	// Fail readiness FIRST, then keep serving for the drain window. Endpoint removal
+	// behind a load balancer is asynchronous: a replica that closed its listener the
+	// moment it caught SIGTERM would still be routed to for a few seconds and would
+	// refuse those connections, turning every rolling deploy into a burst of 502s.
+	// Draining inverts that — the LB observes the failing probe and depools this
+	// replica while it is still answering, so the listener closes only once traffic
+	// has moved away. Liveness stays 200 throughout: the process is deliberately
+	// stopping, not sick.
+	backend.BeginDrain()
+	if drainDelay > 0 {
+		slog.Info("draining: readiness now fails, still serving", "for", drainDelay)
+		select {
+		case <-time.After(drainDelay):
+		case err := <-errc:
+			return err
 		}
 	}
-	shutCtx, cancel := context.WithTimeout(context.Background(), timeout)
+	// Then give in-flight requests (a decide fanning out to connectors/AI, a
+	// draining SSE stream) time to finish before the listener closes. Tunable so an
+	// operator can match drain + shutdown to the orchestrator's grace period.
+	shutCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 	return srv.Shutdown(shutCtx)
+}
+
+// envDuration reads an optional duration-valued environment variable. A malformed
+// or negative value is a hard error rather than a silent reversion to def: a
+// deployment that meant to set a 60s drain and typo'd it must be told, not quietly
+// given 5s and left to discover the difference during an incident.
+func envDuration(key string, def time.Duration) (time.Duration, error) {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return def, nil
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		return 0, fmt.Errorf("%s %q: %w", key, v, err)
+	}
+	if d < 0 {
+		return 0, fmt.Errorf("%s %q: must not be negative", key, v)
+	}
+	return d, nil
 }
 
 // buildRevision returns the VCS revision embedded at build time (matching what

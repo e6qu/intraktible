@@ -14,6 +14,7 @@
     grantConsent,
     withdrawConsent,
     getSharingStatus,
+    whenPermitted,
     optOutSharing,
     optInSharing,
     getRetentionStatus,
@@ -111,10 +112,11 @@
       const [ent, evs, feats, cons] = await Promise.all([
         getEntity(key, type, id),
         listEntityEvents(key, type, id),
-        // Computed features are best-effort (none defined for this type is fine).
-        getEntityFeatures(key, type, id).catch(() => []),
-        // Consents are best-effort (a subject with none is normal).
-        getConsents(key, `${type}/${id}`).catch(() => [])
+        // "None defined" and "none recorded" both come back as an empty list with a
+        // 200, so only a 403 leaves these sections blank. Anything else reaches the
+        // handler below instead of rendering as an entity that simply has no features.
+        whenPermitted(getEntityFeatures(key, type, id), []),
+        whenPermitted(getConsents(key, `${type}/${id}`), [])
       ]);
       if (type !== reqType || id !== reqId) return;
       [entity, events, featureValues, consents] = [ent, evs, feats, cons];
@@ -131,12 +133,23 @@
   // The subject key matches the decide integration + seeder convention: "<type>/<id>".
   const subject = $derived(`${type}/${id}`);
   async function reloadConsents() {
-    consents = await getConsents(key, subject).catch(() => []);
+    try {
+      consents = await whenPermitted(getConsents(key, subject), []);
+    } catch (e) {
+      error = msg(e);
+    }
   }
   async function reloadSharing() {
-    const s = await getSharingStatus(key, subject).catch(() => ({ opted_out: false }));
-    sharingOptedOut = s.opted_out;
-    retention = await getRetentionStatus(key, subject).catch(() => null);
+    // A failed sharing read must not render as opted-in: this drives whether the
+    // subject's data may be shared with third parties, so guessing the permissive
+    // value is the one outcome that cannot be allowed to happen quietly.
+    try {
+      const s = await whenPermitted(getSharingStatus(key, subject), { opted_out: false });
+      sharingOptedOut = s.opted_out;
+      retention = await whenPermitted(getRetentionStatus(key, subject), null);
+    } catch (e) {
+      error = msg(e);
+    }
   }
   async function toggleSharing() {
     sharingBusy = true;

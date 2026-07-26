@@ -42,3 +42,22 @@ test('the embedded UI boots in a browser and logs in', async ({ page }) => {
   await expect(page.getByRole('link', { name: 'intraktible' })).toBeVisible();
   await expect(page.getByRole('heading', { name: /Flows/i })).toBeVisible();
 });
+
+// The launch origin must fail closed for a browser with no session. This asserts
+// it the way an external SSO validator observes it — the response to a real
+// navigation, before any client JS runs — because a client-side redirect looks
+// identical to a user and completely different to anything reading the wire.
+test('an anonymous browser navigation is redirected, not handed the app shell', async ({
+  page
+}) => {
+  const response = await page.goto('/');
+
+  // The redirect is server-side, so the navigation's own response chain contains
+  // it rather than a 200 that later rewrites the location from script.
+  const chain = response?.request().redirectedFrom();
+  expect(chain, 'GET / must redirect server-side for an anonymous browser').toBeTruthy();
+  expect(page.url()).not.toMatch(/\/$/);
+
+  // And the landed page is the sign-in surface, not the application.
+  await expect(page.getByRole('heading', { name: 'intraktible' })).toHaveCount(0);
+});

@@ -13,6 +13,7 @@
     getFairLendingConfig,
     setFairLendingConfig,
     getAdverseActionSettings,
+    whenPermitted,
     setAdverseActionSettings,
     listAdverseActions,
     ApiError,
@@ -57,8 +58,10 @@
         await loadConfig();
       }
       settings = await getAdverseActionSettings(key);
-      // The queue is best-effort — a workspace with no declines yet is normal.
-      pending = await listAdverseActions(key).catch(() => []);
+      // A workspace with no declines yet returns an empty list with a 200, so only a
+      // 403 (this viewer may not read the queue) yields an empty section here. A real
+      // failure falls through to the handler below rather than posing as "none".
+      pending = await whenPermitted(listAdverseActions(key), []);
     } catch (e) {
       if (e instanceof ApiError && e.status === 403) forbidden = true;
       else error = e instanceof Error ? e.message : String(e);

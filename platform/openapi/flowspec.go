@@ -2,7 +2,10 @@
 
 package openapi
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"fmt"
+)
 
 // ForFlow builds a self-contained OpenAPI 3.1 document for a single flow's decision
 // API: the per-environment decide and decide/batch endpoints, with the flow's
@@ -16,11 +19,16 @@ func ForFlow(slug, name string, inputSchema json.RawMessage) ([]byte, error) {
 		"type":        "object",
 		"description": "The decision input fields for this flow.",
 	}
+	// A published schema that will not decode is not a reason to fall back to the
+	// permissive object: this document is a contract that integrators point codegen
+	// at, and quietly advertising "any object" for a flow whose real schema is
+	// unreadable generates clients that compile and then fail against the API.
 	if len(inputSchema) > 0 {
 		var s any
-		if err := json.Unmarshal(inputSchema, &s); err == nil {
-			dataSchema = s
+		if err := json.Unmarshal(inputSchema, &s); err != nil {
+			return nil, fmt.Errorf("openapi: flow %q has an undecodable input schema: %w", slug, err)
 		}
+		dataSchema = s
 	}
 
 	// The per-flow contract is a view of the same API, so it carries the same
