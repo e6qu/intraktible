@@ -29,11 +29,6 @@ recorded in the `Append` doc comment (gate the poller watermark on
 
 ## Not yet swept (do these before declaring the audit complete)
 
-- Remaining fake/stub hunt across the four components. Done so far: `platform/ai`
-  Stub (opt-in, honest), `mock_bureau` (explicitly named, honest), drift decode,
-  three swallowed unmarshals, seventeen frontend `.catch(() => [])` sites.
-  Not yet swept: `agent-manager/`, `case-manager/`, `mrm/`, `registers/`,
-  `reconsideration/`, `retention/` for the same patterns.
 - `docs/` claim-vs-code sweep beyond DEPLOY.md/DR.md (COMPETITIVE, ENTERPRISE,
   GAPS, JOURNEYS, LAUNCH make product claims that were not checked).
 - `deploy/docker-compose.yml` (non-prod) and the split profile under the new
@@ -43,6 +38,15 @@ recorded in the `Append` doc comment (gate the poller watermark on
 ---
 
 ## CONFIRMED-OK (do not re-investigate)
+
+- The swallowed-error sweep is **complete** across `agent-manager/`,
+  `case-manager/`, `mrm/`, `registers/`, `reconsideration/`, `retention/`,
+  `context-layer/`, `platform/`, `decision-engine/` and `web/src/`. Remaining
+  `silently`/`best-effort` matches in those trees are comments documenting
+  fallbacks already removed, not live ones.
+- `context-layer/connectors/resilience.go` retry loop and
+  `platform/secretbox` multi-key decrypt attempt are legitimate control flow —
+  both fail loudly when every attempt is exhausted.
 
 - The `shauth-sso` CI job **passes with the browser gate in place** (run
   30223404990, 4m19s). This was the highest-risk interaction in the change: that

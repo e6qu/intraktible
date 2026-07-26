@@ -61,3 +61,31 @@ Branch `hardening/production-readiness-audit`, off `292d882`.
   claim that a projection gap recovers "on the next poll" (the consumer
   goroutine has already exited), and "LISTEN/NOTIFY is a future optimization"
   (it is implemented).
+
+### Second fix pass — commits `648e17c`, `977d62f`, `ecb01c7`
+- **MRM under-reporting.** Every governance read in `mrm/` swallowed its error —
+  assertions, shadow divergence, analytics, monitor snapshot/rules, model drift,
+  and the fair-lending screen — so a flow whose evidence could not be read
+  rendered as a flow with nothing to report, in the document whose purpose is to
+  assert governance was checked. All now propagate. Evidence:
+  `TestBuildFailsWhenGovernanceEvidenceCannotBeRead` (with a healthy-build
+  control), **verified to fail without the fix**.
+- **SSRF blocked-range list** silently skipped a range that failed to parse; the
+  entries are compile-time constants, so it panics at init instead.
+- **Malformed SAML MetadataURL** was swallowed, leaving the SP advertising its
+  ACS URL as its metadata location. Now refused, like every other URL there.
+- **Undecodable flow input schema** made the per-flow OpenAPI document fall back
+  to a permissive "any object" — a contract integrators point codegen at, so the
+  fallback produced clients that compile and then fail. Now refused.
+
+### Sweep completed
+`agent-manager/`, `case-manager/`, `registers/`, `reconsideration/`,
+`retention/` swept for the same swallowed-error patterns: **clean**. The
+remaining `silently`/`best-effort` matches in those trees are comments
+documenting fallbacks that were already removed.
+
+### CI evidence
+- `shauth-sso` **passes with the browser gate in place** (run 30223404990,
+  4m19s) — the highest-risk interaction in this branch.
+- `postgres` passes with the whole-suite change (3m1s).
+- `e2e-embedded`, the new job, passes (1m3s).
