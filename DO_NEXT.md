@@ -16,28 +16,37 @@ DOC (a claim not backed by code).
 
 ## Queue
 
-### PERF-1 — measure Postgres append throughput under the new advisory lock `OPEN`
-Appends to the Postgres event log now serialize on `pg_advisory_xact_lock`
-(correct, and the only way the poller's watermark is sound), but that bounds
-write throughput on the networked log and nothing measures it. `docs/PERFORMANCE.md`
-already lists "throughput numbers under a durable log or Postgres" as open; this
-makes it concrete. If the ceiling turns out too low, the alternative design is
-recorded in the `Append` doc comment (gate the poller watermark on
-`pg_snapshot_xmin` instead, leaving appends concurrent).
+### PERF-2 — the ~650 appends/sec ceiling is a Docker-on-macOS floor `OPEN`
+`BenchmarkPostgresAppend` now measures the append lock (see docs/PERFORMANCE.md):
+free when uncontended, ~2.6x of concurrent throughput at eight appenders. The
+absolute number (~650/sec) was taken through a macOS Docker VM's fsync and is
+pessimistic. Re-run it on a Linux host or a managed PostgreSQL before treating it
+as the system's write ceiling — the ratio is the portable part.
 
----
-
-## Not yet swept (do these before declaring the audit complete)
-
-- `docs/` claim-vs-code sweep beyond DEPLOY.md/DR.md (COMPETITIVE, ENTERPRISE,
-  GAPS, JOURNEYS, LAUNCH make product claims that were not checked).
-- `deploy/docker-compose.yml` (non-prod) and the split profile under the new
-  `--log=file` refusal — the refusal is production-only, so the split profile's
-  shared-SQLite log is unaffected, but this was reasoned about, not executed.
+### PROD-5 — the split profile was reasoned about, not executed `OPEN`
+`deploy/docker-compose.yml --profile split` shares a SQLite log across per-module
+containers. The new `--log=file` refusal is production-only so it cannot affect
+that profile, but the reasoning was never confirmed by running it. `docker compose
+--profile split up` and check all four modules come up and share the log.
 
 ---
 
 ## CONFIRMED-OK (do not re-investigate)
+
+- **Every documented `/v1` endpoint exists.** All 50 `/v1` paths mentioned across
+  `docs/`, `README.md` and `AGENTS.md` were diffed against the 157 routes actually
+  registered in Go (both the `mux.HandleFunc("GET /v1/…")` and the table-style
+  `{Method:…, Pattern:…}` registrations — miss the second and you get false
+  positives). Everything resolves; the only non-matches are concrete examples with
+  real names substituted for path params. No documented endpoint is a facade.
+- **`docs/GAPS.md`'s "verified in code, not marketing" claims hold.** The
+  expression evaluator is expr-lang v1.17.8 (a real compiled VM); Predict
+  implements logistic / gbm / expression / egress-guarded external; the decision
+  table has five DMN hit policies (first, unique, any, rule_order, collect) plus
+  COLLECT aggregation.
+- The NATS backend has **no** equivalent of the Postgres commit-order inversion:
+  JetStream assigns the sequence at publish-ack and the push consumer delivers
+  every message in stream order, so there is no watermark to skip past.
 
 - The swallowed-error sweep is **complete** across `agent-manager/`,
   `case-manager/`, `mrm/`, `registers/`, `reconsideration/`, `retention/`,
