@@ -110,7 +110,7 @@ func TestPreflightRefusesInsecureProduction(t *testing.T) {
 		{"prod + memory log refused", Config{Env: "production", StoreKind: "postgres", LogKind: "memory"}, true, true},
 		{"prod without encryption refused", Config{Env: "production", StoreKind: "postgres", LogKind: "postgres"}, false, true},
 		{"prod + durable + encryption ok", Config{Env: "production", StoreKind: "postgres", LogKind: "postgres"}, true, false},
-		{"prod + file log ok (warns)", Config{Env: "production", StoreKind: "sqlite", LogKind: "file"}, true, false},
+		{"prod + file log refused (would diverge across replicas)", Config{Env: "production", StoreKind: "sqlite", LogKind: "file"}, true, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -122,6 +122,22 @@ func TestPreflightRefusesInsecureProduction(t *testing.T) {
 				t.Fatalf("unexpected refusal: %v", err)
 			}
 		})
+	}
+}
+
+// The single-process WAL is only safe when exactly one replica ever runs, which
+// the server cannot observe for itself. It refuses by default and boots only on an
+// explicit declaration — so the dangerous combination is unreachable by omission.
+func TestPreflightFileLogNeedsSingleReplicaDeclaration(t *testing.T) {
+	cfg := Config{Env: "production", StoreKind: "sqlite", LogKind: "file"}
+
+	if err := preflight(cfg, true); err == nil {
+		t.Fatal("--log=file in production must be refused without an explicit single-replica declaration")
+	}
+
+	t.Setenv("INTRAKTIBLE_SINGLE_REPLICA", "1")
+	if err := preflight(cfg, true); err != nil {
+		t.Fatalf("an explicit single-replica declaration should allow boot: %v", err)
 	}
 }
 

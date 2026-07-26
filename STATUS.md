@@ -14,6 +14,10 @@ backend), does CI actually gate. Plus GitHub issue **#144**.
 1. **ONE BIG FAT PR.** Branch `hardening/production-readiness-audit`, one PR at
    the end. Phased work internally is fine; splitting into several PRs is not.
    No mid-work checkpoint that waits for approval.
+   **Never open a second PR.** While that PR is open and unmerged, every further
+   change — including anything the user asks for next, related or not — is a new
+   commit on the SAME branch, which updates the SAME PR. Do not ask whether to
+   open another one; the answer is always no until the open PR is merged.
 2. **NO FALLBACKS.** No `catch{}` / log-and-continue / degraded mode / backup
    path. A branch that only runs when something is already broken is banned —
    fail loudly, as early as possible. NOT fallbacks: network retries, explicit

@@ -31,7 +31,8 @@ const pgNotifyChannel = "intraktible_events"
 // Postgres has the same no-native-pubsub constraint as SQLite, so live delivery
 // to in-process subscribers is via a polling delivery (see delivery.go): the
 // poller reads newly-committed rows from any node and publishes them to the bus.
-// A LISTEN/NOTIFY fast path is a future optimization; the poller is the floor.
+// LISTEN/NOTIFY (startListener) cuts the latency; the poller remains the
+// correctness floor, so losing the listener costs speed and nothing else.
 type PostgresLog struct {
 	pool *pgxpool.Pool
 	d    *delivery
@@ -126,25 +127,33 @@ func (l *PostgresLog) listenLoop(ctx context.Context) {
 	}
 }
 
-// Append assigns the next global Seq (BIGSERIAL) and commits durably. The poller
-// — not Append — publishes to the bus, so local and cross-node events arrive by
-// the same path and are never delivered twice.
+// appendLockKey is the advisory-lock key every append serializes on. The value is
+// arbitrary but must be stable across nodes and versions — it is what makes them
+// the same lock.
+const appendLockKey = 0x1D7A_C71B_1E00_0001
+
+// Append assigns the next global Seq and commits durably. The poller — not Append
+// — publishes to the bus, so local and cross-node events arrive by the same path
+// and are never delivered twice.
 //
-// KNOWN LIMITATION (concurrent appends — multi-node HA, or a single node under
-// concurrent request load): BIGSERIAL is assigned at INSERT but a row is visible only
-// at COMMIT, so a higher seq can commit before a lower one. The poller advances its
-// watermark by the max seq it has read, so a lower seq that commits late can be
-// missed on the LIVE bus. The projection runtime now REFUSES to advance its checkpoint
-// past such a gap (projection.applyContiguous fails loud rather than skipping the
-// missing seq — previously it advanced past it, which permanently dropped the event
-// from the incremental read model, not merely a latency gap): the projection surfaces
-// the error via /healthz and re-applies the range once the lower seq is visible (on
-// the next poll or a restart, which resumes from the intact checkpoint). The complete
-// fix gates the POLLER watermark on the transaction-visibility horizon
-// (pg_snapshot_xmin) so the gap never reaches the runtime; it is deliberately not
-// shipped untested here (it needs a live multi-node Postgres to validate, and a naive
-// contiguous watermark would deadlock on seqs burned by rolled-back transactions).
-// Single-node file/sqlite/memory logs serialize appends and are unaffected.
+// The insert runs inside a transaction that first takes a session-wide advisory
+// lock, which makes commit order and seq order the same order. Without it they are
+// only *usually* the same: BIGSERIAL is assigned at INSERT but a row becomes
+// visible at COMMIT, so two concurrent appends can be assigned 4 and 5 and commit
+// as 5 then 4. The poller advances its watermark to the highest seq it has read,
+// so 4 — committed after 5 was already published — would never be delivered on the
+// live bus at all. That is silent event loss in the read model of every replica,
+// on the exact configuration recommended for multi-replica HA.
+//
+// Serializing appends is a real cost: writes to the log no longer proceed in
+// parallel. It buys a total order that is actually total, which for a log that is
+// the system of record is not an optimization to trade away. The alternative
+// considered was gating the poller's watermark on the transaction-visibility
+// horizon (pg_snapshot_xmin) instead, leaving appends concurrent; it moves the
+// same guarantee to the read side at the price of xid arithmetic that is
+// substantially harder to prove correct, and it leaves Append itself still capable
+// of handing out a seq that commits out of order to anything else reading the
+// table.
 func (l *PostgresLog) Append(ctx context.Context, e Envelope) (Envelope, error) {
 	if l.d.isClosed() {
 		return Envelope{}, ErrClosed
@@ -155,8 +164,26 @@ func (l *PostgresLog) Append(ctx context.Context, e Envelope) (Envelope, error) 
 	if e.ID == "" {
 		e.ID = newID()
 	}
+
+	tx, err := l.pool.Begin(ctx)
+	if err != nil {
+		return Envelope{}, fmt.Errorf("eventlog: postgres begin append: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	// Held until COMMIT, so the next appender cannot be assigned its seq until this
+	// one is durable and visible.
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, int64(appendLockKey)); err != nil {
+		return Envelope{}, fmt.Errorf("eventlog: postgres append lock: %w", err)
+	}
+
 	var seq int64
-	err := l.pool.QueryRow(ctx,
+	err = tx.QueryRow(ctx,
 		`INSERT INTO events (id, org, workspace, stream, type, time, actor, payload, unique_key)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING seq`,
 		e.ID, e.Org, e.Workspace, e.Stream, e.Type, e.Time.Format(time.RFC3339Nano), e.Actor, string(e.Payload), nullableKey(e.Unique),
@@ -172,6 +199,11 @@ func (l *PostgresLog) Append(ctx context.Context, e Envelope) (Envelope, error) 
 	if seq <= 0 {
 		return Envelope{}, fmt.Errorf("eventlog: postgres returned non-positive seq %d", seq)
 	}
+	if err := tx.Commit(ctx); err != nil {
+		return Envelope{}, fmt.Errorf("eventlog: postgres commit append: %w", err)
+	}
+	committed = true
+
 	e.Seq = uint64(seq)
 	// Best-effort push so other nodes' subscribers don't wait out the poll
 	// interval. The poller is the correctness guarantee, so a NOTIFY error is not

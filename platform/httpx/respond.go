@@ -119,10 +119,23 @@ func Health(check func() error) http.HandlerFunc {
 // deploy. `applied` and `head` report progress in the body for ops. Once caught up
 // a replica stays ready under steady-state write lag (it is depooled only if the
 // projection actually stalls, which Health/check surfaces).
-func Ready(applied, head func() uint64, check func() error) http.HandlerFunc {
+//
+// draining reports that shutdown has begun. It is checked FIRST and answers 503
+// while the process still serves traffic, which is the whole point: a load
+// balancer removes an endpoint asynchronously, so a replica that stopped
+// listening the instant it caught SIGTERM would still be routed to for a while
+// and would refuse those connections. Failing readiness first, then continuing to
+// serve for a drain window, lets the LB depool the replica before the listener
+// closes. Liveness (Health) stays 200 throughout — the process is alive and
+// deliberately shutting down, not sick, and a 503 there would invite a kill.
+func Ready(applied, head func() uint64, check func() error, draining func() bool) http.HandlerFunc {
 	var caughtUp atomic.Bool
 	return func(w http.ResponseWriter, _ *http.Request) {
 		a, h := applied(), head()
+		if draining != nil && draining() {
+			JSON(w, http.StatusServiceUnavailable, map[string]any{"status": "draining", "applied": a, "head": h})
+			return
+		}
 		if check != nil {
 			if err := check(); err != nil {
 				JSON(w, http.StatusServiceUnavailable, map[string]any{"status": "degraded", "error": err.Error(), "applied": a, "head": h})

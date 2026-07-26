@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/e6qu/intraktible/agent-manager/agents"
@@ -128,7 +129,21 @@ type Server struct {
 	Projections *projection.Runtime
 
 	agents *agentcmd.Handler
+	// draining latches on BeginDrain and makes /readyz report 503 while the
+	// process still serves traffic, so a load balancer depools this replica
+	// before the listener closes.
+	draining atomic.Bool
 }
+
+// BeginDrain marks this replica as shutting down: /readyz starts answering 503
+// while the listener stays open. The caller is expected to keep serving for a
+// drain window afterwards, long enough for the load balancer to observe the
+// failed probe and stop routing here, and only then shut the listener down.
+// Idempotent, and safe to call from a signal handler.
+func (s *Server) BeginDrain() { s.draining.Store(true) }
+
+// Draining reports whether BeginDrain has been called.
+func (s *Server) Draining() bool { return s.draining.Load() }
 
 // Close waits for the Agent Manager's async-run workers to finish. The workers
 // stop on ctx cancellation, so cancel the ctx passed to New first (an in-flight
@@ -202,8 +217,6 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 	}
 
 	root := http.NewServeMux()
-	root.Handle("/", web.Handler())
-
 	api := http.NewServeMux()
 
 	// The AI provider registry is shared by the Agent Manager and the decision
@@ -491,7 +504,7 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 	// /readyz gates traffic during a rolling deploy: 503 until this replica's
 	// projections have caught up to the log head, so a freshly-started pod does not
 	// serve empty read models while it rebuilds. Liveness (/healthz) vs readiness.
-	root.HandleFunc("GET /readyz", httpx.Ready(rt.Applied, log.Head, rt.Err))
+	root.HandleFunc("GET /readyz", httpx.Ready(rt.Applied, log.Head, rt.Err, srv.Draining))
 	// /version reports the build (VCS revision + Go) so ops can confirm what's live.
 	root.HandleFunc("GET /version", httpx.Version())
 	// /auth/validation is the app-owned, deployment-neutral SSO validation
@@ -573,6 +586,25 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 	if len(samlers) > 0 {
 		slog.Info("sso: SAML enabled", "providers", samlNames(samlers))
 	}
+	// The embedded UI is mounted last, behind the browser gate, because the gate's
+	// sign-in entry point is decided by which browser-authentication mechanism this
+	// deployment actually configured — which is only known now that the SSO
+	// providers above have been resolved. An anonymous browser navigating to a
+	// protected route is redirected here rather than handed the SPA shell, so the
+	// application fails closed on the wire instead of after client JS has run.
+	//
+	// With SSO configured the entry point is the signed-out page, whose control
+	// links into the provider's authorization endpoint. Without it, the deployment's
+	// browser credential is an API key, so the entry point is the UI's own login
+	// route. /login stays reachable either way: an operator bootstrapping a fresh
+	// install has an API key and no identity provider yet.
+	signIn := httpx.SignInEntry{Path: "/login", Exempt: []string{"/login"}}
+	if len(authers) > 0 || len(samlers) > 0 {
+		signIn.Path = "/v1/auth/signed-out"
+	}
+	slog.Info("browser sign-in entry point", "path", signIn.Path)
+	root.Handle("/", httpx.BrowserGate(web.Handler(), sessions, signIn))
+
 	root.Handle("/v1/", httpx.Chain(api, httpx.Authenticate(keyring, sessions), httpx.AuthorizeRoutes(api)))
 	srv.Handler = httpx.Chain(root, httpx.SecurityHeaders, httpx.Recover, httpx.RequestID, httpx.Tracing, httpx.Logger, httpx.Metrics)
 	return srv, nil
@@ -623,12 +655,22 @@ func preflight(cfg Config, encryptionEnabled bool) error {
 	if !encryptionEnabled && os.Getenv("INTRAKTIBLE_ALLOW_PLAINTEXT_AT_REST") == "" {
 		problems = append(problems, "INTRAKTIBLE_ENCRYPTION_KEY is unset, so PII/event payloads would be written in plaintext at rest; set it, or set INTRAKTIBLE_ALLOW_PLAINTEXT_AT_REST=1 to accept that risk")
 	}
+	// A single-process WAL behind a load balancer is silent data divergence: each
+	// replica appends to its own file and none of them sees the others' events, so
+	// the "system of record" quietly forks. This used to be a warning, which is the
+	// wrong shape for a failure mode nobody notices until the logs disagree. It is
+	// now a refusal that the operator must consciously opt out of by declaring the
+	// deployment single-replica — so the unsafe combination can never be reached by
+	// omission, only by an explicit statement that turns out to be false.
+	if cfg.LogKind == "file" && !truthy(os.Getenv("INTRAKTIBLE_SINGLE_REPLICA")) {
+		problems = append(problems, "--log=file is a single-process WAL: every replica would keep its own divergent copy of the event log. Use --log=postgres or --log=nats for a multi-replica deployment, or set INTRAKTIBLE_SINGLE_REPLICA=1 to declare that exactly one replica ever runs")
+	}
 	if len(problems) > 0 {
 		return fmt.Errorf("server: refusing to start with INTRAKTIBLE_ENV=production and insecure config:\n  - %s", strings.Join(problems, "\n  - "))
 	}
 	// Non-fatal production advisories.
 	if cfg.LogKind == "file" {
-		slog.Warn("--log=file is a single-process WAL; use --log=postgres or --log=nats for multi-replica HA")
+		slog.Warn("--log=file with INTRAKTIBLE_SINGLE_REPLICA=1: this deployment must never be scaled beyond one replica")
 	}
 	if os.Getenv("INTRAKTIBLE_CONNECTOR_ALLOW_PRIVATE") != "" {
 		slog.Warn("INTRAKTIBLE_CONNECTOR_ALLOW_PRIVATE is set: flow connectors may reach private/internal hosts (the cloud metadata service stays blocked)")
