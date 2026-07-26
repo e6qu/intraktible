@@ -499,8 +499,12 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 
 	// /healthz reflects projection health: degraded (503) if a live apply error
 	// stopped the consumer, so an orchestrator does not keep routing to a node
-	// serving stale read models.
-	root.HandleFunc("GET /healthz", httpx.Health(rt.Err))
+	// serving stale read models. It also reflects the event log's own delivery
+	// health where the backend reports it — a log whose live feed has died leaves
+	// this replica just as stale as a stopped projector, and the NATS backend has no
+	// poller behind its subscription to notice on its own.
+	health := readModelHealth(rt.Err, log)
+	root.HandleFunc("GET /healthz", httpx.Health(health))
 	// /readyz gates traffic during a rolling deploy: 503 until this replica's
 	// projections have caught up to the log head, so a freshly-started pod does not
 	// serve empty read models while it rebuilds. Liveness (/healthz) vs readiness.
@@ -608,6 +612,23 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 	root.Handle("/v1/", httpx.Chain(api, httpx.Authenticate(keyring, sessions), httpx.AuthorizeRoutes(api)))
 	srv.Handler = httpx.Chain(root, httpx.SecurityHeaders, httpx.Recover, httpx.RequestID, httpx.Tracing, httpx.Logger, httpx.Metrics)
 	return srv, nil
+}
+
+// readModelHealth combines the projection runtime's health with the event log's
+// live-delivery health, when the backend reports any. Both mean the same thing to a
+// caller — this replica's read models are no longer tracking the log — so they
+// belong behind one probe rather than one of them going unnoticed.
+func readModelHealth(projection func() error, log eventlog.Log) func() error {
+	reporter, ok := log.(interface{ Err() error })
+	if !ok {
+		return projection
+	}
+	return func() error {
+		if err := projection(); err != nil {
+			return err
+		}
+		return reporter.Err()
+	}
 }
 
 // timedSweeper is the shared shape of the module schedulers (monitor, drift,

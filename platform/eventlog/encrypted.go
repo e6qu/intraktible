@@ -32,6 +32,15 @@ type encLog struct {
 	kr    *secretbox.Keyring
 }
 
+// Err forwards the inner log's live-delivery health when it reports any, so
+// wrapping a log for encryption cannot quietly hide it from the health probe.
+func (l *encLog) Err() error {
+	if inner, ok := l.inner.(interface{ Err() error }); ok {
+		return inner.Err()
+	}
+	return nil
+}
+
 // undecodablePayload is deliberately invalid JSON, substituted for a payload that
 // failed to decrypt on the live bus so the owning projector errors loudly (rather
 // than decoding a sealed envelope into a zero-value struct).

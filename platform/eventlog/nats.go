@@ -37,9 +37,14 @@ type NATSLog struct {
 	bus *bus
 	sub *nats.Subscription
 
-	mu      sync.Mutex
-	closed  bool
-	lastSeq uint64 // highest stream seq delivered to the bus (reconnect resume point)
+	mu sync.Mutex
+	// deliverErr latches the first live-delivery failure. The push subscription is
+	// the ONLY path onto the bus for this backend — there is no poller behind it —
+	// so a message that cannot be delivered is not a hiccup to log past: it leaves
+	// this replica's read models permanently behind with nothing else to notice.
+	deliverErr error
+	closed     bool
+	lastSeq    uint64 // highest stream seq delivered to the bus (reconnect resume point)
 }
 
 // OpenNATSLog connects to a NATS server (JetStream enabled), ensures the event
@@ -151,12 +156,12 @@ func (l *NATSLog) onReconnect() {
 func (l *NATSLog) onMessage(m *nats.Msg) {
 	e, err := decodeEnvelope(m.Data)
 	if err != nil {
-		slog.Error("eventlog: nats decode", "err", err)
+		l.failDelivery(fmt.Errorf("decode delivered event: %w", err))
 		return
 	}
 	meta, err := m.Metadata()
 	if err != nil {
-		slog.Error("eventlog: nats metadata", "err", err)
+		l.failDelivery(fmt.Errorf("read delivered event metadata: %w", err))
 		return
 	}
 	e.Seq = meta.Sequence.Stream
@@ -259,6 +264,31 @@ func (l *NATSLog) Read(_ context.Context, fromSeq uint64) ([]Envelope, error) {
 		out = append(out, e)
 	}
 	return out, nil
+}
+
+// failDelivery latches a live-delivery failure and logs it.
+//
+// Skipping the message and carrying on was the previous behavior, and it hid the
+// worst case rather than the rarest: a message that will not decode almost always
+// means a producer/version mismatch, so every following message fails the same way,
+// nothing ever reaches the bus, and the replica serves indefinitely stale read
+// models while /healthz and /readyz both report fine. Latching it lets the health
+// probe say what is actually true.
+func (l *NATSLog) failDelivery(err error) {
+	l.mu.Lock()
+	if l.deliverErr == nil {
+		l.deliverErr = err
+	}
+	l.mu.Unlock()
+	slog.Error("eventlog: nats live delivery failed; this replica's read models will fall behind", "err", err)
+}
+
+// Err reports the first live-delivery failure, if any. The composition root folds it
+// into /healthz so an orchestrator can replace a replica whose bus has gone silent.
+func (l *NATSLog) Err() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.deliverErr
 }
 
 // Subscribe returns events the push consumer delivers after the call.

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/nats-io/nats-server/v2/server"
+	"github.com/nats-io/nats.go"
 
 	"github.com/e6qu/intraktible/platform/eventlog"
 )
@@ -100,5 +101,51 @@ func TestNATSLog(t *testing.T) {
 	_ = node1.Close()
 	if _, err := node1.Append(ctx, env(3)); err == nil {
 		t.Fatal("append after close should fail")
+	}
+}
+
+// A message the log cannot decode used to be logged and skipped. The push
+// subscription is the ONLY path onto the bus for this backend — unlike the SQL
+// backends there is no poller behind it — so skipping meant the replica's read
+// models stopped advancing with nothing to notice.
+//
+// The rare reading of that is "one corrupt message"; the common one is a
+// producer/version mismatch, where every subsequent message fails identically,
+// nothing ever reaches the bus, and the node serves indefinitely stale data while
+// reporting healthy. Err must surface it so /healthz can say so.
+func TestNATSLogReportsUndecodableDelivery(t *testing.T) {
+	url := runNATS(t)
+	log, err := eventlog.OpenNATSLog(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = log.Close() }()
+
+	if err := log.Err(); err != nil {
+		t.Fatalf("a healthy log should report no delivery error, got %v", err)
+	}
+
+	// Publish straight onto the stream, bypassing Append's encoding, so the
+	// subscription receives something it cannot decode.
+	nc, err := nats.Connect(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer nc.Close()
+	js, err := nc.JetStream()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := js.Publish("intraktible.events", []byte("not an envelope")); err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.After(5 * time.Second)
+	for log.Err() == nil {
+		select {
+		case <-deadline:
+			t.Fatal("undecodable delivery was skipped silently — the replica would fall behind unnoticed")
+		case <-time.After(10 * time.Millisecond):
+		}
 	}
 }
