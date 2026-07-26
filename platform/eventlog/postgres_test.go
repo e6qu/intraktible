@@ -241,3 +241,67 @@ func TestPostgresLogConcurrentAppendsPreserveCommitOrder(t *testing.T) {
 		}
 	}
 }
+
+// BenchmarkPostgresAppend measures append throughput on the networked log, which
+// serializes every append on an advisory lock held to COMMIT so that commit order
+// equals seq order (see PostgresLog.Append). That guarantee is what makes the
+// delivery poller's watermark sound, and it is bought with concurrency: this is
+// the benchmark that says how much.
+//
+// Run it against a real server, since the number is meaningless otherwise:
+//
+//	INTRAKTIBLE_TEST_POSTGRES='postgres://…' go test ./platform/eventlog/ \
+//	  -run xxx -bench BenchmarkPostgresAppend -benchtime 2s -cpu 1,2,4,8
+//
+// The parallel variant is the one that matters. Serial throughput is bounded by
+// round-trip plus fsync and the lock is uncontended; under concurrency the lock is
+// the whole story, and flat-or-better scaling there is the expected shape rather
+// than a regression — the work is serialized by design.
+func BenchmarkPostgresAppend(b *testing.B) {
+	dsn := os.Getenv("INTRAKTIBLE_TEST_POSTGRES")
+	if dsn == "" {
+		b.Skip("set INTRAKTIBLE_TEST_POSTGRES (a pgx DSN) to benchmark the Postgres log")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		b.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `DROP TABLE IF EXISTS events`); err != nil {
+		b.Fatal(err)
+	}
+	pool.Close()
+
+	// A long poll interval keeps the delivery poller from competing for the same
+	// connections: this measures the append path, not delivery.
+	log, err := eventlog.OpenPostgresLog(ctx, dsn, time.Hour)
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer func() { _ = log.Close() }()
+
+	env := eventlog.Envelope{
+		Org: "demo", Workspace: "main", Actor: "bench", Stream: "s", Type: "e",
+		Time: time.Unix(1, 0).UTC(), Payload: []byte(`{"k":"v"}`),
+	}
+
+	b.Run("serial", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			if _, err := log.Append(ctx, env); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+
+	b.Run("parallel", func(b *testing.B) {
+		b.ReportAllocs()
+		b.RunParallel(func(pb *testing.PB) {
+			for pb.Next() {
+				if _, err := log.Append(ctx, env); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	})
+}

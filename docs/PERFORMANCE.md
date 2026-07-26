@@ -42,6 +42,53 @@ Environment: `darwin/arm64`, Apple M4 Pro, Go's default settings.
   decisions/sec on this machine.
 - **No data race**: the concurrent path passes `go test -race`.
 
+## The Postgres event log: what serialized appends cost
+
+The numbers above measure the decide path against an **in-memory** log. The networked
+log is a different regime, and one with a deliberate ceiling in it.
+
+`PostgresLog.Append` serializes every append on an advisory lock held to COMMIT, so
+that commit order equals seq order. That is not a tuning choice: `BIGSERIAL` assigns a
+seq at INSERT but a row becomes visible at COMMIT, so concurrent appends could be
+assigned 4 and 5 and commit as 5 then 4 — and the delivery poller, which advances to
+the highest seq it has read, would never deliver seq 4 to any replica. (Reproduced by
+`TestPostgresLogConcurrentAppendsPreserveCommitOrder`, which without the lock loses
+events on every run.)
+
+```
+INTRAKTIBLE_TEST_POSTGRES='postgres://…' go test ./platform/eventlog/ \
+  -run xxx -bench BenchmarkPostgresAppend -benchtime 3s -cpu 8 -count 5
+```
+
+Median of 5 runs, PostgreSQL 16 in Docker on `darwin/arm64` (Apple M4 Pro), against a
+build with and without the lock:
+
+| | with the lock | without | cost |
+|---|---|---|---|
+| serial (one appender) | ~1.77 ms/op · ~565 appends/sec | ~1.71 ms/op · ~585/sec | none — uncontended |
+| parallel, 8 appenders | ~1.54 ms/op · ~650 appends/sec | ~0.60 ms/op · ~1,670/sec | **~2.6× throughput** |
+
+**Reading it.** The lock is free when one appender is active and costs about 2.6× of
+concurrent append throughput when eight are. That is the expected shape — the work is
+serialized by design — and the honest way to state it is that the networked log's write
+ceiling is roughly *flat* in the number of appenders rather than scaling with them.
+
+Two things to keep in view before treating ~650/sec as the system's limit. It is an
+**event** rate, not a decision rate, and one decision emits several events (started, one
+per node, completed). And these are Docker-on-macOS numbers, where fsync goes through a
+VM — a Linux host on local NVMe, or a managed PostgreSQL, should do considerably better.
+The **ratio** is the portable finding; the absolute figure is a floor, not a forecast.
+
+**The alternative, and why it is not shipped.** Appends could stay concurrent if the
+poller instead withheld any row whose transaction might still be in flight, gating its
+watermark on the visibility horizon (`pg_snapshot_xmin`). That would recover the 2.6×.
+It is not here because it turns on 32-bit `xid` versus 64-bit `xid8` comparison and is
+therefore only correct if it handles transaction-id wraparound — a condition that cannot
+be exercised without on the order of 2^31 transactions, so shipping it would mean
+shipping a correctness argument no test in this repo can check. The lock is the design
+that is provably right with the tools available. If the ceiling starts to bind, that is
+the direction, and `BenchmarkPostgresAppend` is the measurement to beat.
+
 ## Caveats — what this is NOT
 
 - **In-memory log and store.** This isolates the decision core from disk. A durable WAL
