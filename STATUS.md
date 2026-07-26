@@ -34,8 +34,17 @@ backend), does CI actually gate. Plus GitHub issue **#144**.
 
 ## Phase
 
-**Phase 1 — audit sweep, in progress.** No production code changed yet.
-Findings so far are in `DO_NEXT.md`. Nothing fixed yet.
+**Phase 2 — fixing, largely done.** Nine defects found and fixed across the
+production path, CI, and the frontend; see `WHAT_WE_DID.md`. Two items remain in
+`DO_NEXT.md` (the shauth-sso gate has not been run locally; the new append lock
+is unmeasured), plus an unfinished sweep list.
+
+**Gates run locally, all green:** `go build`, `go test ./...`, `go test -race`
+against real PostgreSQL 16 (whole suite), lint, gosec, deadcode, dupl,
+govulncheck, licenses, prettier, eslint, svelte-check, vitest (207),
+Playwright e2e (97), Playwright wasm demo (80), `make e2e-embedded` (3),
+`make terraform-check` (16), `make container-release-check`.
+**Not run locally:** the `shauth-sso` job — needs a Shauth checkout + Ory Hydra.
 
 ## Ground truth established so far
 
@@ -56,8 +65,15 @@ Findings so far are in `DO_NEXT.md`. Nothing fixed yet.
   client that throws on non-2xx via `errorOrStatus` rather than returning empty
   data. The `mock` hits under `web/src/routes/` are comments about the *wasm
   demo's* fetch bridge, not mocks in the served app.
-- **Production/multi-replica?** PARTLY. Real design work is there (single-writer
+- **Production/multi-replica?** Real design work was already there (single-writer
   projection checkpoint, Helm API tier + singleton scheduler with
-  `strategy: Recreate`, HPA/PDB, probes). But there are genuine correctness
-  gaps — see `DO_NEXT.md` PROD-1/3/4.
-- **CI?** Comprehensive on paper and currently green; gap analysis not finished.
+  `strategy: Recreate`, HPA/PDB, probes) — but four defects sat on exactly the
+  recommended deployment shape and all four are now fixed: the Postgres log lost
+  events under concurrent appends, the launch origin did not fail closed,
+  `--log=file` warned instead of refusing, and SIGTERM dropped requests for want
+  of a readiness drain. See `WHAT_WE_DID.md`.
+- **CI?** Comprehensive on paper, and two of its gates were not gating: the
+  `postgres` job ran a hand-written package list that omitted a Postgres test
+  which had therefore never executed in CI, and `make e2e-embedded` — the only
+  check of the artifact `release.yml` publishes — was a local pre-commit hook
+  only. Both fixed.
