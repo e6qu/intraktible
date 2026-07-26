@@ -16,15 +16,6 @@ DOC (a claim not backed by code).
 
 ## Queue
 
-### GATE-1 — the shauth-sso CI job has not been run locally `OPEN`
-It needs a checkout of `e6qu/shauth` at the pin in `.github/workflows/ci.yml`
-(`74735a1710fa69d472e7eb27ae95ce317c7c1a3d`) plus Ory Hydra and PostgreSQL, via
-`make test-shauth-sso SHAUTH_SOURCE_DIR=…`. Every other gate has been run
-locally and is green. This one is being left to CI on the PR — **check it**,
-because the browser gate (`platform/httpx/browsergate.go`) changes exactly the
-serving path that job exercises. Highest-risk interaction: the harness may
-navigate to `/` anonymously and now receive a 303 where it expected the shell.
-
 ### PERF-1 — measure Postgres append throughput under the new advisory lock `OPEN`
 Appends to the Postgres event log now serialize on `pg_advisory_xact_lock`
 (correct, and the only way the poller's watermark is sound), but that bounds
@@ -52,6 +43,12 @@ recorded in the `Append` doc comment (gate the poller watermark on
 ---
 
 ## CONFIRMED-OK (do not re-investigate)
+
+- The `shauth-sso` CI job **passes with the browser gate in place** (run
+  30223404990, 4m19s). This was the highest-risk interaction in the change: that
+  job drives a real Shauth + Ory Hydra + PostgreSQL stack through a browser, over
+  exactly the serving path `platform/httpx/browsergate.go` now gates. It does not
+  need re-running locally.
 
 - `web/src/lib/api.ts` `normalizeFlow`'s `f.versions ?? []` — absorbs Go
   `omitempty` on a 200 OK; non-2xx throws via `errorOrStatus`. Contract
