@@ -126,7 +126,10 @@ func (svc *Service) create(w http.ResponseWriter, r *http.Request) {
 	var probe struct {
 		Active *bool `json:"active"`
 	}
-	_ = json.Unmarshal(body, &probe)
+	if err := json.Unmarshal(body, &probe); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid SCIM user body")
+		return
+	}
 	if probe.Active == nil {
 		u.Active = true
 	}

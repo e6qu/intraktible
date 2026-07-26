@@ -113,9 +113,14 @@ func (n *Notifier) Deliver(ctx context.Context, id identity.Identity, reason str
 	if err != nil {
 		return DeliverySummary{}, fmt.Errorf("notify: marshal payload: %w", err)
 	}
-	// Decode once for any per-channel template to render against.
+	// Decode once for any per-channel template to render against. defaultBody came
+	// straight out of Marshal above, so a failure here means the two disagree about
+	// their own encoding — not a payload variation to shrug off. Swallowing it left
+	// data nil and every template silently rendering against nothing.
 	var data any
-	_ = json.Unmarshal(defaultBody, &data)
+	if err := json.Unmarshal(defaultBody, &data); err != nil {
+		return DeliverySummary{}, fmt.Errorf("notify: decode payload for templating: %w", err)
+	}
 
 	sum := DeliverySummary{Results: make([]DeliveryResult, 0, len(hooks))}
 	for _, h := range hooks {

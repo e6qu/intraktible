@@ -684,11 +684,14 @@ func (mockBureau) Fetch(_ context.Context, params json.RawMessage) (json.RawMess
 	var p struct {
 		Subject string `json:"subject"`
 	}
-	if json.Valid(params) {
-		_ = json.Unmarshal(params, &p)
-		if p.Subject != "" {
-			subject = p.Subject
-		}
+	// Params may legitimately be a bare JSON scalar rather than a {"subject":…}
+	// object, so a decode that does not fit the struct is an accepted shape, not an
+	// error — the raw text is the subject in that case. Only malformed JSON is a
+	// failure, and it is reported rather than quietly hashed into a risk score.
+	if err := json.Unmarshal(params, &p); err == nil && p.Subject != "" {
+		subject = p.Subject
+	} else if !json.Valid(params) {
+		return nil, fmt.Errorf("connectors: mock_bureau params are not valid JSON")
 	}
 	sum := sha256.Sum256([]byte(subject))
 	score := int(binary.BigEndian.Uint32(sum[:4]) % 101) // 0..100, deterministic
