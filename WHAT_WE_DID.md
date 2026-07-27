@@ -164,3 +164,37 @@ Verified by breaking it both ways.
   `/mrm`, `/me`.
 
 All new tests were verified by breaking the code they cover.
+
+## Session 1 (cont.) — the networked log could not author anything
+
+### CRITICAL — `--log=postgres` returned 400 on every flow creation
+The optimistic-concurrency claims this repo mints use a **NUL separator**, and
+Postgres rejects NUL in a TEXT column. Every append carrying a claim failed, so
+the backend documented for multi-replica HA — selected by the Helm chart, the
+ECS module and `docker-compose.prod.yml` — could not create a flow or publish a
+version. Verified end to end against a real Postgres-backed server before
+(`400 invalid byte sequence ... 0x00`) and after (`201`, duplicates still
+conflict, distinct slugs still accepted).
+
+Fixed by encoding the claim at the **Postgres boundary only** with
+`strconv.Quote`: injective, so uniqueness semantics are identical. Not applied to
+SQLite, which stores NUL correctly and has real rows in the raw form that
+re-encoding would orphan.
+
+**Why nothing caught it:** the Postgres log tests appended envelopes carrying no
+claim, and every decision-engine test builds its own in-memory or WAL log — so
+although CI ran the whole suite against a live PostgreSQL, the two never met.
+`decision-engine/postgres_log_e2e_test.go` now runs the real authoring commands
+over a real Postgres log. Both new tests verified to fail against the unfixed
+encoding.
+
+### Durable decide throughput, measured (Linux)
+| backend | decisions/sec | vs in-memory |
+|---|---|---|
+| memory | ~16,700 | — |
+| file WAL | ~9,460 | ~1.8x |
+| SQLite | ~4,100 | ~4x |
+| **Postgres (HA)** | **~104** | **~160x** |
+
+Do NOT benchmark the file WAL on Docker for macOS: ~34/sec there vs ~9,460 on
+Linux, entirely that VM's fsync path.
