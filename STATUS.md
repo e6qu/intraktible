@@ -34,11 +34,13 @@ backend), does CI actually gate. Plus GitHub issue **#144**.
 
 ## Phase
 
-**Production-readiness audit follow-up — complete.** The backend-parity round
-that Claude started on `audit/backend-parity` is finished: every event-log
-backend now runs the same optimistic-claim contract, and NATS refuses startup
-when it cannot enforce the required duplicate window. PR #153 is the sole open
-PR, all nine CI jobs passed in run 30282326320, and `DO_NEXT.md` is empty.
+**Production-readiness audit follow-up — NATS claim lifetime and stream
+durability complete.** The five-minute `Msg-Id` cache no longer defines claim
+lifetime: claimed events use a permanent per-subject CAS, legacy claims are
+indexed at open, and live base/claim subjects share one ordered consumer.
+Existing streams are normalized to the same unbounded durable configuration as
+new ones; memory storage and already-discarded history are startup errors.
+`DO_NEXT.md` is empty.
 
 **Gates run locally, all green:** `go build`, `go test ./...`, `go test -race`
 against real PostgreSQL 16 (whole suite), lint, gosec, deadcode, dupl,
@@ -51,11 +53,14 @@ against ephemeral real PostgreSQL 15. The `shauth-sso` CI job passed in run
 
 ## Ground truth established so far
 
-- Current branch `audit/backend-parity` is based on `5e03f6f` (`origin/main`).
-- PR #153 (`audit/backend-parity`) is the sole open PR — satisfies the
-  one-open-PR rule.
+- Current branch `audit/nats-claim-lifetime` is based on `6e9662b`
+  (`origin/main`).
+- PR #153 is merged and `gh pr list` is empty — satisfies the one-open-PR rule.
 - `make check` and `make lint` pass; the real-Postgres claim contract and full
   event-log race suite pass.
+- This round passes `make check`, `make lint`, and a dedicated complete
+  `platform/eventlog` race run. The expiry regression was verified to fail
+  before the fix (`re-claim ... returned <nil>, want ErrConflict`).
 - Toolchain present locally: Go 1.26.5, Node v26.5.0, Docker 29.6.1.
 
 ## Verdicts on the user's headline questions (evidence-backed)

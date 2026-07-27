@@ -21,8 +21,11 @@ story — back up the log, and everything else is rebuildable.
 
 - **Postgres log** (`--log=postgres`): `pg_dump` (or continuous WAL archiving / a
   managed PITR snapshot) of the log database. This is the primary artifact.
-- **NATS/JetStream log** (`--log=nats`): snapshot the events stream (JetStream backup)
-  and the KV/consumer state per your NATS operator's runbook.
+- **NATS/JetStream log** (`--log=nats`): snapshot the `INTRAKTIBLE_EVENTS` stream
+  per your NATS operator's runbook. The permanent optimistic-claim index is the
+  retained event's injectively encoded subject in that same stream; live
+  consumers are ephemeral, so there is no separate KV or consumer state needed
+  for restore.
 - **File WAL** (`--log=file`): copy `<data-dir>/events.log` while the process is
   quiesced (or filesystem-snapshot it).
 - **SQLite log** (`--log=sqlite`): back up `<data-dir>/events-log.db` (use the SQLite

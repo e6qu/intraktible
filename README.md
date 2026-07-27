@@ -111,7 +111,7 @@ runbook: [docs/DEPLOY.md](docs/DEPLOY.md); backups/DR: [docs/DR.md](docs/DR.md).
 | `INTRAKTIBLE_AI_STUB` | Opt in to the deterministic canned Stub provider (dev/tests only — never silently substituted) |
 | `INTRAKTIBLE_AI_PRICES` | Per-model token prices (e.g. `gpt-4o=2.5/10`, USD per million input/output tokens) to derive AI run cost on the Observability page |
 | `INTRAKTIBLE_POSTGRES_DSN` | Postgres DSN for `--store=postgres` / `--log=postgres` |
-| `INTRAKTIBLE_NATS_URL` | NATS server URL for `--log=nats` (JetStream) |
+| `INTRAKTIBLE_NATS_URL` | NATS server URL for `--log=nats` (JetStream; the account must create/update the event stream, publish `intraktible.events` + `intraktible.events.claim.*`, and support multi-filter consumers) |
 | `INTRAKTIBLE_CONNECTOR_ALLOW_PRIVATE` | Let HTTP connectors reach private/loopback hosts (off by default — SSRF guard) |
 | `INTRAKTIBLE_OTEL_EXPORTER` · `_SAMPLE_RATIO` | OpenTelemetry tracing: `stdout` or `otlp` (off by default; OTLP endpoint via the standard `OTEL_EXPORTER_OTLP_*` vars) |
 | `INTRAKTIBLE_AI_RATE_LIMIT_RPS` · `_BURST` | Per-provider AI rate limit (token bucket; off by default) |
