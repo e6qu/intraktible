@@ -23,7 +23,7 @@ const scheduleActor = "deploy-scheduler"
 // command↔schedule import cycle and to make the scheduler testable with a fake).
 type Cmd interface {
 	ActivateSchedule(ctx context.Context, id identity.Identity, scheduleID, flowID, env string, version, priorVersion int) error
-	RevertSchedule(ctx context.Context, id identity.Identity, scheduleID, flowID, env string, priorVersion int) error
+	RevertSchedule(ctx context.Context, id identity.Identity, scheduleID, flowID, env string, version, priorVersion int) error
 }
 
 // Scheduler activates due scheduled deploys and reverts expired time-boxed ones.
@@ -80,7 +80,7 @@ func (s *Scheduler) Tick(ctx context.Context) (TickSummary, error) {
 			if v.Until == nil || v.Until.After(now) {
 				continue // not time-boxed, or window still open
 			}
-			if err := s.cmd.RevertSchedule(ctx, id, v.ScheduleID, v.FlowID, v.Environment, v.PriorVersion); err != nil {
+			if err := s.cmd.RevertSchedule(ctx, id, v.ScheduleID, v.FlowID, v.Environment, v.Version, v.PriorVersion); err != nil {
 				return sum, err
 			}
 			sum.Reverted++
@@ -105,8 +105,9 @@ func (s *Scheduler) currentLive(ctx context.Context, id identity.Identity, flowI
 	return fv.Deployments[env].Version, nil
 }
 
-// Run sweeps on a timer until ctx is cancelled (errors are logged, not fatal).
-func (s *Scheduler) Run(ctx context.Context, interval time.Duration) {
+// Run sweeps on a timer until ctx is cancelled. Failed ticks remain visible in
+// operational health until a later tick completes successfully.
+func (s *Scheduler) Run(ctx context.Context, interval time.Duration, report func(error)) {
 	t := time.NewTicker(interval)
 	defer t.Stop()
 	for {
@@ -116,10 +117,12 @@ func (s *Scheduler) Run(ctx context.Context, interval time.Duration) {
 		case <-t.C:
 			summary, err := s.Tick(ctx)
 			if err != nil {
+				report(err)
 				slog.Error("deploy scheduler: tick", "err", err)
 				metrics.RecordSchedulerTick("deploy_schedule", "error")
 				continue
 			}
+			report(nil)
 			if summary.Activated > 0 || summary.Reverted > 0 {
 				slog.Info("deploy scheduler", "activated", summary.Activated, "reverted", summary.Reverted)
 			}

@@ -9,7 +9,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"sort"
 	"time"
 
@@ -44,23 +43,24 @@ type AuditEntry struct {
 // zero (the stored model stays clock-free + replay-stable) and the read layer fills
 // them via AnnotateSLA against the current time.
 type CaseView struct {
-	Org         string            `json:"org"`
-	Workspace   string            `json:"workspace"`
-	CaseID      string            `json:"case_id"`
-	CompanyName string            `json:"company_name"`
-	CaseType    string            `json:"case_type"`
-	Status      domain.CaseStatus `json:"status"`
-	Assignee    string            `json:"assignee,omitempty"`
-	SLADays     int               `json:"sla_days"`
-	DaysLeft    int               `json:"days_left"`
-	SLAState    domain.SLAStatus  `json:"sla_state,omitempty"`
-	SLABreached bool              `json:"sla_breached,omitempty"`
-	Context     json.RawMessage   `json:"context,omitempty"`
-	SourceID    string            `json:"source_decision_id,omitempty"`
-	Notes       []Note            `json:"notes"`
-	Audit       []AuditEntry      `json:"audit"`
-	CreatedAt   time.Time         `json:"created_at"`
-	UpdatedAt   time.Time         `json:"updated_at"`
+	Org                 string                     `json:"org"`
+	Workspace           string                     `json:"workspace"`
+	CaseID              string                     `json:"case_id"`
+	CompanyName         string                     `json:"company_name"`
+	CaseType            string                     `json:"case_type"`
+	Status              domain.CaseStatus          `json:"status"`
+	Assignee            string                     `json:"assignee,omitempty"`
+	SLADays             int                        `json:"sla_days"`
+	DaysLeft            int                        `json:"days_left"`
+	SLAState            domain.SLAStatus           `json:"sla_state,omitempty"`
+	SLABreached         bool                       `json:"sla_breached,omitempty"`
+	SLAEscalationStatus events.SLAEscalationStatus `json:"sla_escalation_status,omitempty"`
+	Context             json.RawMessage            `json:"context,omitempty"`
+	SourceID            string                     `json:"source_decision_id,omitempty"`
+	Notes               []Note                     `json:"notes"`
+	Audit               []AuditEntry               `json:"audit"`
+	CreatedAt           time.Time                  `json:"created_at"`
+	UpdatedAt           time.Time                  `json:"updated_at"`
 }
 
 // AnnotateSLA fills a view's clock-derived SLA fields from now. The read layer
@@ -127,6 +127,8 @@ func (Projector) Apply(ctx context.Context, e eventlog.Envelope, s store.Store) 
 		return applyRequested(ctx, e, s)
 	case decisionevents.TypeManualReviewRequested:
 		return applyEscalated(ctx, e, s)
+	case decisionevents.TypeDecisionResumed:
+		return applyDecisionResumed(ctx, e, s)
 	case events.TypeCaseAssigned:
 		return applyAssigned(ctx, e, s)
 	case events.TypeCaseStatusChanged:
@@ -135,9 +137,42 @@ func (Projector) Apply(ctx context.Context, e eventlog.Envelope, s store.Store) 
 		return applyNote(ctx, e, s)
 	case events.TypeCaseSLABreached:
 		return applySLABreached(ctx, e, s)
+	case events.TypeCaseSLAEscalated:
+		return applySLAEscalated(ctx, e, s)
 	default:
 		return nil
 	}
+}
+
+// applyDecisionResumed closes the exact human-review case whose recorded outcome
+// unpaused the source decision. The decision event is the cross-component contract:
+// Case Manager remains decoupled from the Decision Engine command handler while
+// replay reconstructs both terminal states from the same human action.
+func applyDecisionResumed(ctx context.Context, e eventlog.Envelope, s store.Store) error {
+	var p decisionevents.DecisionResumed
+	if err := decode(e, &p); err != nil {
+		return err
+	}
+	if p.CaseID == "" {
+		return nil // historical events pre-dating the explicit case link
+	}
+	c, ok, err := store.GetDoc[CaseView](ctx, s, Collection, store.Key(e.Org, e.Workspace, p.CaseID))
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("cases: decision_resumed seq %d for unknown case %q", e.Seq, p.CaseID)
+	}
+	if c.SourceID != p.DecisionID {
+		return fmt.Errorf(
+			"cases: decision_resumed seq %d case %q belongs to decision %q, not %q",
+			e.Seq, p.CaseID, c.SourceID, p.DecisionID,
+		)
+	}
+	return update(ctx, s, e, p.CaseID, func(c *CaseView) {
+		c.Status = domain.StatusCompleted
+		c.Audit = append(c.Audit, audit(e, "decision_resumed", "human outcome recorded; source decision resumed"))
+	})
 }
 
 // applySLABreached marks a case breached and audits it. It is idempotent: a case
@@ -152,7 +187,22 @@ func applySLABreached(ctx context.Context, e eventlog.Envelope, s store.Store) e
 			return
 		}
 		c.SLABreached = true
+		c.SLAEscalationStatus = events.SLAEscalationPending
 		c.Audit = append(c.Audit, audit(e, "sla_breached", "SLA deadline passed"))
+	})
+}
+
+func applySLAEscalated(ctx context.Context, e eventlog.Envelope, s store.Store) error {
+	var p events.CaseSLAEscalated
+	if err := decode(e, &p); err != nil {
+		return err
+	}
+	if !p.Status.Terminal() {
+		return fmt.Errorf("cases: SLA escalation seq %d has invalid terminal status %q", e.Seq, p.Status)
+	}
+	return update(ctx, s, e, p.CaseID, func(c *CaseView) {
+		c.SLAEscalationStatus = p.Status
+		c.Audit = append(c.Audit, audit(e, "sla_escalated", "external escalation → "+string(p.Status)))
 	})
 }
 
@@ -209,11 +259,7 @@ func applyStatus(ctx context.Context, e eventlog.Envelope, s store.Store) error 
 	}
 	status, ok := domain.ParseStatus(p.Status)
 	if !ok {
-		// Commands validate status, so this only guards a hand-crafted/legacy event.
-		// Skip rather than write an invalid status into the read model (or halt the
-		// whole projection on one poison event).
-		slog.Warn("case-manager: ignoring status_changed with unknown status", "status", p.Status, "seq", e.Seq)
-		return nil
+		return fmt.Errorf("cases: status_changed seq %d has unknown status %q", e.Seq, p.Status)
 	}
 	return update(ctx, s, e, p.CaseID, func(c *CaseView) {
 		c.Status = status

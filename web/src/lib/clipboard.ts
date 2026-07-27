@@ -1,40 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Copy text to the clipboard, failing loudly via a toast. Falls back to a hidden
-// textarea + execCommand for non-secure contexts (e.g. plain-http self-hosting)
-// where the async Clipboard API is unavailable.
+// Copy text through the browser Clipboard API, failing loudly via a toast when
+// the context or permissions do not support it.
 
 import { toast } from '$lib/toast';
 
 export async function copyText(text: string, label = 'Copied'): Promise<boolean> {
   try {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(text);
-      toast.success(label);
-      return true;
+    if (!navigator.clipboard?.writeText) {
+      throw new Error('Clipboard access is unavailable in this browser context');
     }
-  } catch {
-    // fall through to the legacy path
+    await navigator.clipboard.writeText(text);
+    toast.success(label);
+    return true;
+  } catch (e) {
+    toast.error(e instanceof Error ? e.message : 'Couldn’t copy to clipboard');
+    return false;
   }
-  try {
-    const ta = document.createElement('textarea');
-    ta.value = text;
-    ta.style.position = 'fixed';
-    ta.style.opacity = '0';
-    document.body.appendChild(ta);
-    ta.select();
-    // execCommand is deprecated but is the only copy path in a non-secure context
-    // (plain-http self-hosting); cast through a local type to use it without the
-    // deprecated-overload diagnostic.
-    const legacy = document as unknown as { execCommand(cmd: string): boolean };
-    const ok = legacy.execCommand('copy');
-    document.body.removeChild(ta);
-    if (ok) {
-      toast.success(label);
-      return true;
-    }
-  } catch {
-    // fall through to the error toast
-  }
-  toast.error('Couldn’t copy to clipboard');
-  return false;
 }

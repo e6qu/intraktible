@@ -52,6 +52,11 @@ func Catalog() []Template {
 			Config:      json.RawMessage(`{"provider":"experian","path":"/v1/creditreport","auth":{"type":"bearer","token":"…"},"score_field":"riskModel.score","band_field":"grade","reasons_field":"reasonCodes"}`),
 		},
 		{
+			ID: "mock-bureau", Name: "Deterministic mock bureau", Category: "Development", Type: "mock_bureau",
+			Description: "An in-process deterministic credit score for local development, tests, and demos. It performs no network request and is explicitly identified as mock data.",
+			Config:      json.RawMessage(`{}`),
+		},
+		{
 			ID: "kyc-aml", Name: "KYC / AML", Category: "Identity", Type: "http",
 			Description: "Identity-verification / sanctions-screening endpoint. POST the entity, read the verdict.",
 			Config:      json.RawMessage(`{"url":"https://kyc.example.com/v1/verify","method":"POST"}`),

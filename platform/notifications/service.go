@@ -3,12 +3,11 @@
 package notifications
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/e6qu/intraktible/platform/auth"
-	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/httpx"
-	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/store"
 )
 
@@ -34,14 +33,44 @@ func (s *Service) list(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// A review-capable caller (operator+) also sees unassigned tasks in the shared queue.
-	canReview := httpx.RoleOf(r.Context()).AtLeast(auth.RoleOperator)
-	vs, err := List(r.Context(), s.store, id, canReview)
+	vs, err := List(r.Context(), s.store, id, accessForRole(httpx.RoleOf(r.Context())))
 	httpx.WriteList(w, "notifications", vs, err)
 }
 
+func accessForRole(role auth.Role) Access {
+	return Access{
+		ReviewTasks:    role.AtLeast(auth.RoleOperator),
+		OperatorAlerts: role.AtLeast(auth.RoleOperator),
+		Approvals:      role.AtLeast(auth.RoleApprover),
+	}
+}
+
 func (s *Service) markRead(w http.ResponseWriter, r *http.Request) {
-	httpx.Act(w, r, func(id identity.Identity) (eventlog.Envelope, error) {
-		return s.cmd.MarkRead(r.Context(), id, r.PathValue("notification_id"))
-	})
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	notificationID := r.PathValue("notification_id")
+	visible, err := List(r.Context(), s.store, id, accessForRole(httpx.RoleOf(r.Context())))
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	found := false
+	for _, v := range visible {
+		if v.NotificationID == notificationID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		httpx.Error(w, http.StatusBadRequest, fmt.Errorf("notifications: unknown or inaccessible notification"))
+		return
+	}
+	e, err := s.cmd.MarkRead(r.Context(), id, notificationID)
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"event_id": e.ID, "seq": e.Seq})
 }

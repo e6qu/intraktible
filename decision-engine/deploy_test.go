@@ -5,12 +5,15 @@ package decisionengine_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/e6qu/intraktible/decision-engine/command"
 	"github.com/e6qu/intraktible/decision-engine/domain"
+	"github.com/e6qu/intraktible/decision-engine/events"
 	"github.com/e6qu/intraktible/decision-engine/flows"
 	"github.com/e6qu/intraktible/decision-engine/history"
 	"github.com/e6qu/intraktible/decision-engine/internal/flowtest"
+	"github.com/e6qu/intraktible/decision-engine/schedule"
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/projection"
@@ -382,5 +385,227 @@ func TestMakerCheckerConcurrentDecision(t *testing.T) {
 	}
 	if st := fv.DeploymentRequests[0].Status; st != "approved" && st != "rejected" {
 		t.Fatalf("request not in a terminal state: %q", st)
+	}
+}
+
+func TestScheduledProductionDeploymentIsGovernedAndAtomic(t *testing.T) {
+	ctx := context.Background()
+	log, err := eventlog.OpenWAL(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = log.Close() }()
+	maker := identity.Identity{Org: "demo", Workspace: "main", Actor: "maker"}
+	checker := identity.Identity{Org: "demo", Workspace: "main", Actor: "checker"}
+	scheduler := identity.Identity{Org: "demo", Workspace: "main", Actor: "deploy-scheduler"}
+	now := time.Date(2026, 7, 27, 10, 0, 0, 0, time.UTC)
+	at, until := now.Add(time.Hour), now.Add(2*time.Hour)
+	h := command.NewHandler(log).WithNow(func() time.Time { return now })
+
+	flowID, _, err := h.CreateFlow(ctx, maker, domain.CreateFlow{Slug: "scheduled-prod", Name: "Scheduled production"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, result := range []string{"v1", "v2"} {
+		if _, _, _, err := h.PublishVersion(ctx, maker, domain.PublishVersion{FlowID: flowID, Graph: flowtest.ConstGraph(result)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Establish v1 as the currently approved production version.
+	baseReq, _, err := h.RequestDeployment(ctx, maker, domain.DeployVersion{FlowID: flowID, Environment: "production", Version: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.ApproveDeployment(ctx, checker, flowID, baseReq, "baseline"); err != nil {
+		t.Fatal(err)
+	}
+
+	// The direct schedule path cannot evade production governance.
+	if _, _, err := h.ScheduleDeploy(ctx, maker, flowID, "production", 2, at, &until); err == nil {
+		t.Fatal("direct production scheduling must require maker-checker")
+	}
+	reqID, _, err := h.RequestScheduledDeployment(ctx, maker,
+		domain.DeployVersion{FlowID: flowID, Environment: "production", Version: 2}, at, &until)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.ApproveDeployment(ctx, maker, flowID, reqID, "self approval"); err == nil {
+		t.Fatal("scheduled production request allowed self-approval")
+	}
+	if _, err := h.ApproveDeployment(ctx, checker, flowID, reqID, "approved window"); err != nil {
+		t.Fatal(err)
+	}
+
+	rebuild := func() store.Store {
+		st := store.NewMemory()
+		if err := projection.New(log, st, flows.Projector{}, schedule.Projector{}).Start(ctx); err != nil {
+			t.Fatal(err)
+		}
+		return st
+	}
+	st := rebuild()
+	fv, _, err := flows.Read(ctx, st, maker, flowID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fv.Deployments["production"].Version; got != 1 {
+		t.Fatalf("approval must schedule rather than deploy immediately: got v%d", got)
+	}
+	if len(fv.DeploymentRequests) != 2 || fv.DeploymentRequests[1].ScheduleID == "" ||
+		fv.DeploymentRequests[1].At == nil || !fv.DeploymentRequests[1].At.Equal(at) {
+		t.Fatalf("scheduled approval not visible on request: %+v", fv.DeploymentRequests)
+	}
+	schedules, err := schedule.List(ctx, st, maker, flowID)
+	if err != nil || len(schedules) != 1 || schedules[0].Status != schedule.StatusPending {
+		t.Fatalf("approved schedule not projected: %+v err=%v", schedules, err)
+	}
+	scheduleID := schedules[0].ScheduleID
+
+	if err := h.ActivateSchedule(ctx, scheduler, scheduleID, flowID, "production", 2, 1); err != nil {
+		t.Fatal(err)
+	}
+	st = rebuild()
+	fv, _, _ = flows.Read(ctx, st, maker, flowID)
+	schedules, _ = schedule.List(ctx, st, maker, flowID)
+	if fv.Deployments["production"].Version != 2 || schedules[0].Status != schedule.StatusActive ||
+		schedules[0].PriorVersion != 1 {
+		t.Fatalf("activation was not atomic across projections: deployment=%+v schedule=%+v", fv.Deployments, schedules[0])
+	}
+
+	if err := h.RevertSchedule(ctx, scheduler, scheduleID, flowID, "production", 2, 1); err != nil {
+		t.Fatal(err)
+	}
+	st = rebuild()
+	fv, _, _ = flows.Read(ctx, st, maker, flowID)
+	schedules, _ = schedule.List(ctx, st, maker, flowID)
+	if fv.Deployments["production"].Version != 1 || schedules[0].Status != schedule.StatusReverted {
+		t.Fatalf("revert was not atomic across projections: deployment=%+v schedule=%+v", fv.Deployments, schedules[0])
+	}
+
+	evs, err := log.Read(ctx, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var activations, reverts, companionDeploys, companionRollbacks int
+	for _, e := range evs {
+		switch e.Type {
+		case events.TypeDeployScheduleActivated:
+			activations++
+		case events.TypeDeployScheduleReverted:
+			reverts++
+		case events.TypeFlowVersionDeployed:
+			companionDeploys++
+		case events.TypeFlowVersionRolledBack:
+			companionRollbacks++
+		}
+	}
+	if activations != 1 || reverts != 1 || companionDeploys != 0 || companionRollbacks != 0 {
+		t.Fatalf("schedule transitions must be one event each: activate=%d revert=%d deploy companions=%d rollback companions=%d",
+			activations, reverts, companionDeploys, companionRollbacks)
+	}
+}
+
+func TestCancelScheduledDeploymentIsStateAwareAndAtomic(t *testing.T) {
+	ctx := context.Background()
+	log, err := eventlog.OpenWAL(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = log.Close() }()
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "editor"}
+	scheduler := identity.Identity{Org: "demo", Workspace: "main", Actor: "deploy-scheduler"}
+	now := time.Date(2026, 7, 27, 10, 0, 0, 0, time.UTC)
+	h := command.NewHandler(log).WithNow(func() time.Time { return now })
+
+	flowID, _, err := h.CreateFlow(ctx, id, domain.CreateFlow{Slug: "cancel-window", Name: "Cancel window"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, result := range []string{"v1", "v2", "v3"} {
+		if _, _, _, err := h.PublishVersion(ctx, id, domain.PublishVersion{
+			FlowID: flowID, Graph: flowtest.ConstGraph(result),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := h.Deploy(ctx, id, domain.DeployVersion{
+		FlowID: flowID, Environment: "sandbox", Version: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	rebuild := func() (flows.FlowView, []schedule.View) {
+		st := store.NewMemory()
+		if err := projection.New(log, st, flows.Projector{}, schedule.Projector{}).Start(ctx); err != nil {
+			t.Fatal(err)
+		}
+		fv, ok, err := flows.Read(ctx, st, id, flowID)
+		if err != nil || !ok {
+			t.Fatalf("read flow: ok=%v err=%v", ok, err)
+		}
+		schedules, err := schedule.List(ctx, st, id, flowID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return fv, schedules
+	}
+
+	// Canceling an active time-box restores the version captured at activation,
+	// in the same event that closes the lifecycle.
+	activeID, _, err := h.ScheduleDeploy(ctx, id, flowID, "sandbox", 2, now.Add(time.Hour), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.ActivateSchedule(ctx, scheduler, activeID, flowID, "sandbox", 2, 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.CancelSchedule(ctx, id, flowID, activeID, "maintenance ended early"); err != nil {
+		t.Fatal(err)
+	}
+	fv, schedules := rebuild()
+	if fv.Deployments["sandbox"].Version != 1 || schedules[0].Status != schedule.StatusCanceled {
+		t.Fatalf("active cancel was not atomic: deployments=%+v schedule=%+v", fv.Deployments, schedules[0])
+	}
+	if _, err := h.CancelSchedule(ctx, id, flowID, activeID, "again"); err == nil {
+		t.Fatal("terminal schedule accepted a second cancellation")
+	}
+
+	// With no pre-existing deployment, canceling an active schedule undeploys the
+	// environment instead of leaving the supposedly temporary version live.
+	emptyID, _, err := h.ScheduleDeploy(ctx, id, flowID, "staging", 1, now.Add(time.Hour), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.ActivateSchedule(ctx, scheduler, emptyID, flowID, "staging", 1, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.CancelSchedule(ctx, id, flowID, emptyID, "remove temporary staging"); err != nil {
+		t.Fatal(err)
+	}
+	fv, _ = rebuild()
+	if _, live := fv.Deployments["staging"]; live {
+		t.Fatalf("active cancel with no prior version left staging deployed: %+v", fv.Deployments)
+	}
+
+	// A later deliberate deployment owns the environment. Closing the older
+	// schedule must not overwrite it with the schedule's captured baseline.
+	supersededID, _, err := h.ScheduleDeploy(ctx, id, flowID, "sandbox", 2, now.Add(time.Hour), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.ActivateSchedule(ctx, scheduler, supersededID, flowID, "sandbox", 2, 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.Deploy(ctx, id, domain.DeployVersion{
+		FlowID: flowID, Environment: "sandbox", Version: 3,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.CancelSchedule(ctx, id, flowID, supersededID, "superseded"); err != nil {
+		t.Fatal(err)
+	}
+	fv, schedules = rebuild()
+	if fv.Deployments["sandbox"].Version != 3 || schedules[0].Status != schedule.StatusCanceled {
+		t.Fatalf("cancel overwrote a newer deployment: deployments=%+v schedule=%+v", fv.Deployments, schedules[0])
 	}
 }

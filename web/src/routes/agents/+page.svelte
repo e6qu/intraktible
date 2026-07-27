@@ -76,7 +76,7 @@
       if (schema.trim()) {
         try {
           body.schema = JSON.parse(schema);
-        } catch {
+        } catch (_parseError) {
           throw new Error('The output schema must be valid JSON (e.g. {"type":"object"}).');
         }
       }

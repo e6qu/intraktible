@@ -173,6 +173,9 @@ export interface DeploymentRequest {
   version: number;
   challenger_version?: number;
   challenger_pct?: number;
+  schedule_id?: string;
+  at?: string;
+  until?: string;
   status: DeploymentRequestStatus;
   reason?: string;
   requested_by: string;
@@ -1411,7 +1414,7 @@ export async function setShadow(
 export async function requestDeployment(
   key: string,
   flowId: string,
-  body: DeployInput,
+  body: DeployInput & { at?: string; until?: string },
   fetcher: typeof fetch = recordingFetch
 ): Promise<{ request_id: string }> {
   const res = await fetcher(`/v1/flows/${flowId}/deployment-requests`, {
@@ -1613,6 +1616,8 @@ export interface Case {
   sla_days: number;
   days_left: number;
   sla_state?: SLAState;
+  sla_breached?: boolean;
+  sla_escalation_status?: 'pending' | 'delivered' | 'no_channel' | 'permanent_failure';
   source_decision_id?: string;
   context?: unknown;
   notes: CaseNote[];
@@ -2730,6 +2735,7 @@ export interface AgentRun {
   text?: string;
   structured?: unknown;
   error?: string;
+  case_id?: string;
   at: string;
 }
 
@@ -3383,6 +3389,20 @@ export interface LegalHold {
 export interface RetentionPolicy {
   retention_days: number;
 }
+// ErasureStatus reports the independent crypto-shred and legal-hold states for
+// one subject. Statutory retention is served by getRetentionStatus below because
+// it is derived from regulatory records rather than the key vault.
+export interface ErasureStatus {
+  subject: string;
+  erased: boolean;
+  held: boolean;
+}
+export interface RetentionSweepResult {
+  erased: number;
+  held: number;
+  statutory_retained: number;
+  max_age_days: number;
+}
 // exportComplianceRegister fetches a compliance register (adverse-actions,
 // reconsiderations, or consent) as CSV or Markdown text, for the caller to download
 // as a Blob — the examiner-ready artifact behind the compliance dashboard.
@@ -3432,6 +3452,98 @@ export async function listErasedSubjects(
     return errorOrStatus(res, 'list erased subjects');
   }
   return ((await res.json()) as { erased: string[] }).erased ?? [];
+}
+// getErasureStatus returns whether one subject has been crypto-shredded or is
+// protected by a manual legal hold (admin).
+export async function getErasureStatus(
+  key: string,
+  subject: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<ErasureStatus> {
+  const res = await fetcher(`/v1/erasure/subjects/${encodeURIComponent(subject)}`, {
+    headers: authHeaders(key)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'get erasure status');
+  }
+  return (await res.json()) as ErasureStatus;
+}
+// holdErasureSubject places a legal hold on an existing subject key (admin).
+export async function holdErasureSubject(
+  key: string,
+  subject: string,
+  reason: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<void> {
+  const res = await fetcher(`/v1/erasure/subjects/${encodeURIComponent(subject)}/hold`, {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify({ reason })
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'place legal hold');
+  }
+}
+// releaseErasureSubject deliberately lifts a legal hold (admin).
+export async function releaseErasureSubject(
+  key: string,
+  subject: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<void> {
+  const res = await fetcher(`/v1/erasure/subjects/${encodeURIComponent(subject)}/release`, {
+    method: 'POST',
+    headers: jsonHeaders(key)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'release legal hold');
+  }
+}
+// eraseSubject permanently destroys a subject's encryption key (admin).
+export async function eraseSubject(
+  key: string,
+  subject: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<void> {
+  const res = await fetcher(`/v1/erasure/subjects/${encodeURIComponent(subject)}`, {
+    method: 'POST',
+    headers: jsonHeaders(key)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'erase subject');
+  }
+}
+// setRetentionPolicy stores the scheduled retention window. Zero disables it;
+// this call never performs an erasure itself.
+export async function setRetentionPolicy(
+  key: string,
+  retentionDays: number,
+  fetcher: typeof fetch = recordingFetch
+): Promise<RetentionPolicy> {
+  const res = await fetcher('/v1/erasure/retention-policy', {
+    method: 'PUT',
+    headers: jsonHeaders(key),
+    body: JSON.stringify({ retention_days: retentionDays })
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'set retention policy');
+  }
+  return (await res.json()) as RetentionPolicy;
+}
+// runRetentionSweep immediately crypto-shreds every eligible subject older than
+// the requested window, while preserving manual holds and statutory retention.
+export async function runRetentionSweep(
+  key: string,
+  maxAgeDays: number,
+  fetcher: typeof fetch = recordingFetch
+): Promise<RetentionSweepResult> {
+  const res = await fetcher(`/v1/erasure/retention?max_age_days=${maxAgeDays}`, {
+    method: 'POST',
+    headers: jsonHeaders(key)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'run retention sweep');
+  }
+  return (await res.json()) as RetentionSweepResult;
 }
 
 // ConsentEvidence is the proof backing a grant — the document/audit-trail a regulator
@@ -3530,19 +3642,23 @@ export interface SharingRecord {
   updated_at: string;
   updated_by: string;
 }
+export interface SharingStatus {
+  opted_out: boolean;
+  record?: SharingRecord;
+}
 // getSharingStatus returns a subject's sharing opt-out state.
 export async function getSharingStatus(
   key: string,
   subject: string,
   fetcher: typeof fetch = recordingFetch
-): Promise<{ opted_out: boolean; record?: SharingRecord }> {
+): Promise<SharingStatus> {
   const res = await fetcher(`/v1/sharing?subject=${encodeURIComponent(subject)}`, {
     headers: authHeaders(key)
   });
   if (!res.ok) {
     return errorOrStatus(res, 'GET /v1/sharing');
   }
-  return (await res.json()) as { opted_out: boolean; record?: SharingRecord };
+  return (await res.json()) as SharingStatus;
 }
 // optOutSharing records a subject's election to stop NPI sharing (GLBA §6802).
 export async function optOutSharing(

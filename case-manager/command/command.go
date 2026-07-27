@@ -153,6 +153,12 @@ func (h *Handler) SetStatus(ctx context.Context, id identity.Identity, cmd domai
 		if !st.status.CanTransitionTo(cmd.Status) {
 			return eventlog.Envelope{}, fmt.Errorf("case-manager: cannot transition case %q from %s to %s", cmd.CaseID, st.status, cmd.Status)
 		}
+		if cmd.Status == domain.StatusCompleted && st.sourceDecisionSuspended {
+			return eventlog.Envelope{}, fmt.Errorf(
+				"case-manager: case %q belongs to suspended decision %q — record its review outcome to complete the case",
+				cmd.CaseID, st.sourceDecisionID,
+			)
+		}
 		e, err := h.appendUnique(ctx, id, events.TypeCaseStatusChanged, b, statusClaim(cmd.CaseID, st.statusCount))
 		if errors.Is(err, eventlog.ErrConflict) && attempt < maxClaimRetries {
 			continue
@@ -196,6 +202,8 @@ func slaBreachClaim(caseID string) string { return "case.sla_breach\x00" + caseI
 
 func slaReminderClaim(caseID string) string { return "case.sla_reminder\x00" + caseID }
 
+func slaEscalationClaim(caseID string) string { return "case.sla_escalation\x00" + caseID }
+
 // AddNote appends a note to an existing case.
 func (h *Handler) AddNote(ctx context.Context, id identity.Identity, cmd domain.AddNote) (eventlog.Envelope, error) {
 	return h.onExisting(ctx, id, cmd.CaseID, cmd.Validate, events.TypeCaseNoteAdded,
@@ -210,9 +218,12 @@ type slaCaseState struct {
 	status    domain.CaseStatus
 	breached  bool
 	reminded  bool
+	escalated events.SLAEscalationStatus
 
 	assignee                 string
 	assignCount, statusCount int
+	sourceDecisionID         string
+	sourceDecisionSuspended  bool
 }
 
 // SweepSLA finds the tenant's open cases whose SLA deadline has passed as of now
@@ -282,6 +293,64 @@ func (h *Handler) SweepSLA(ctx context.Context, id identity.Identity, now time.T
 	return breached, nil
 }
 
+// PendingSLAEscalations returns breached cases whose external escalation has no
+// terminal outcome yet. It folds the log, rather than the eventually consistent
+// projection, so a breach emitted earlier in the same tick is immediately visible
+// and retry state survives restart/replay.
+func (h *Handler) PendingSLAEscalations(ctx context.Context, id identity.Identity) ([]string, error) {
+	if err := id.Valid(); err != nil {
+		return nil, err
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	states, err := h.caseStates(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	var pending []string
+	for caseID, st := range states {
+		if st.breached && !st.escalated.Terminal() {
+			pending = append(pending, caseID)
+		}
+	}
+	sort.Strings(pending)
+	return pending, nil
+}
+
+// RecordSLAEscalation records a terminal external-delivery outcome exactly once.
+// Retryable outcomes are not passed here: they remain pending for a later tick.
+func (h *Handler) RecordSLAEscalation(ctx context.Context, id identity.Identity, caseID string, status events.SLAEscalationStatus) error {
+	if err := id.Valid(); err != nil {
+		return err
+	}
+	if !status.Terminal() {
+		return fmt.Errorf("case-manager: SLA escalation status %q is not terminal", status)
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	st, err := h.caseState(ctx, id, caseID)
+	if err != nil {
+		return err
+	}
+	if !st.breached {
+		return fmt.Errorf("case-manager: case %q has not breached its SLA", caseID)
+	}
+	if st.escalated.Terminal() {
+		return nil
+	}
+	b, err := json.Marshal(events.CaseSLAEscalated{CaseID: caseID, Status: status})
+	if err != nil {
+		return fmt.Errorf("case-manager: marshal sla_escalated: %w", err)
+	}
+	if _, err := h.appendUnique(ctx, id, events.TypeCaseSLAEscalated, b, slaEscalationClaim(caseID)); err != nil {
+		if errors.Is(err, eventlog.ErrConflict) {
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
 // caseStates folds the tenant's case stream into current per-case SLA state,
 // covering both open paths (manual ReviewRequested and decision-escalated
 // ManualReviewRequested), status changes, and prior breaches.
@@ -291,6 +360,7 @@ func (h *Handler) caseStates(ctx context.Context, id identity.Identity) (map[str
 		return nil, fmt.Errorf("case-manager: read log: %w", err)
 	}
 	states := make(map[string]slaCaseState)
+	suspendedDecisions := make(map[string]bool)
 	for _, e := range evs {
 		if e.Org != id.Org || e.Workspace != id.Workspace {
 			continue
@@ -307,7 +377,40 @@ func (h *Handler) caseStates(ctx context.Context, id identity.Identity) (map[str
 			if err := json.Unmarshal(e.Payload, &p); err != nil {
 				return nil, fmt.Errorf("case-manager: decode escalated seq %d: %w", e.Seq, err)
 			}
-			states[p.CaseID] = slaCaseState{createdAt: e.Time, slaDays: domain.NormalizeSLADays(p.SLADays), status: domain.StatusNeedsReview}
+			states[p.CaseID] = slaCaseState{
+				createdAt: e.Time, slaDays: domain.NormalizeSLADays(p.SLADays),
+				status: domain.StatusNeedsReview, sourceDecisionID: p.DecisionID,
+				sourceDecisionSuspended: suspendedDecisions[p.DecisionID],
+			}
+		case decisionevents.TypeDecisionSuspended:
+			var p decisionevents.DecisionSuspended
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				return nil, fmt.Errorf("case-manager: decode decision suspended seq %d: %w", e.Seq, err)
+			}
+			suspendedDecisions[p.DecisionID] = true
+			// New events carry the case id before ManualReviewRequested opens it;
+			// this branch also handles a later suspension in an existing decision.
+			if st, ok := states[p.CaseID]; ok {
+				st.sourceDecisionSuspended = true
+				states[p.CaseID] = st
+			}
+		case decisionevents.TypeDecisionResumed:
+			var p decisionevents.DecisionResumed
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				return nil, fmt.Errorf("case-manager: decode decision resumed seq %d: %w", e.Seq, err)
+			}
+			suspendedDecisions[p.DecisionID] = false
+			if st, ok := states[p.CaseID]; ok {
+				if st.sourceDecisionID != p.DecisionID {
+					return nil, fmt.Errorf(
+						"case-manager: case %q belongs to decision %q, not resumed decision %q at seq %d",
+						p.CaseID, st.sourceDecisionID, p.DecisionID, e.Seq,
+					)
+				}
+				st.status = domain.StatusCompleted
+				st.sourceDecisionSuspended = false
+				states[p.CaseID] = st
+			}
 		case events.TypeCaseAssigned:
 			var p events.CaseAssigned
 			if err := json.Unmarshal(e.Payload, &p); err != nil {
@@ -350,6 +453,18 @@ func (h *Handler) caseStates(ctx context.Context, id identity.Identity) (map[str
 			}
 			if st, ok := states[p.CaseID]; ok {
 				st.reminded = true
+				states[p.CaseID] = st
+			}
+		case events.TypeCaseSLAEscalated:
+			var p events.CaseSLAEscalated
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				return nil, fmt.Errorf("case-manager: decode SLA escalation seq %d: %w", e.Seq, err)
+			}
+			if !p.Status.Terminal() {
+				return nil, fmt.Errorf("case-manager: case %q has invalid SLA escalation status %q at seq %d", p.CaseID, p.Status, e.Seq)
+			}
+			if st, ok := states[p.CaseID]; ok {
+				st.escalated = p.Status
 				states[p.CaseID] = st
 			}
 		}

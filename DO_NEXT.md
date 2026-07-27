@@ -16,8 +16,9 @@ DOC (a claim not backed by code).
 
 ## Queue
 
-_Empty._ Every item in the NATS claim-lifetime and stream-durability round has
-been fixed and verified — see `WHAT_WE_DID.md` for the evidence.
+No open implementation or local-validation items. Commit, push, open the single
+fat PR, and babysit its CI; the branch was reconciled with fresh `origin/main`
+immediately before release preparation.
 
 **The honest edges** — not defects, but the limits of what was checked:
 
@@ -26,12 +27,14 @@ been fixed and verified — see `WHAT_WE_DID.md` for the evidence.
   nanoseconds do not.
 - `docs/COMPETITIVE.md` was not verified, by design — AGENTS.md already states
   its competitor entries are vendor claims rather than tested behavior.
-- `docs/JOURNEYS.md` and `docs/LAUNCH.md` were checked only through the endpoint
-  diff (every `/v1` path they mention exists). Their narrative claims about *how
-  a journey feels* were not walked through in a browser.
-- The audit swept for swallowed errors, fake data, and multi-replica correctness.
-  It was not a performance audit of the decide path, nor a security review — the
-  repo has `/security-review` for the latter.
+- `docs/JOURNEYS.md` and `docs/LAUNCH.md` are reconciled against the fixed
+  retention, scheduler, durable-task, maker-checker, and execution-target
+  behavior. Every corrected governance/collaboration handoff has a real browser
+  journey on both applicable native and wasm surfaces.
+- This was a whole-product journey/correctness pass, not a new decide-path
+  performance study or a replacement for the dedicated security review. The
+  full required vulnerability gate was run and reports zero reachable
+  vulnerabilities after the approved gRPC security update.
 
 ---
 
@@ -63,11 +66,9 @@ been fixed and verified — see `WHAT_WE_DID.md` for the evidence.
   JetStream assigns the sequence at publish-ack and the push consumer delivers
   every message in stream order, so there is no watermark to skip past.
 
-- The swallowed-error sweep is **complete** across `agent-manager/`,
-  `case-manager/`, `mrm/`, `registers/`, `reconsideration/`, `retention/`,
-  `context-layer/`, `platform/`, `decision-engine/` and `web/src/`. Remaining
-  `silently`/`best-effort` matches in those trees are comments documenting
-  fallbacks already removed, not live ones.
+- The swallowed-error sweep is complete across the Go backend packages. The
+  journey-level `web/src/` pass is still active; do not treat its earlier
+  completion claim as settled.
 - `context-layer/connectors/resilience.go` retry loop and
   `platform/secretbox` multi-key decrypt attempt are legitimate control flow —
   both fail loudly when every attempt is exhausted.

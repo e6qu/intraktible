@@ -11,6 +11,7 @@ import (
 	"github.com/e6qu/intraktible/agent-manager/command"
 	"github.com/e6qu/intraktible/agent-manager/domain"
 	"github.com/e6qu/intraktible/case-manager/cases"
+	caseevents "github.com/e6qu/intraktible/case-manager/events"
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/projection"
@@ -48,11 +49,20 @@ func TestEscalateRunOpensCase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	again, _, err := h.EscalateRun(ctx, id, domain.EscalateRun{
+		RunID: run.RunID, CompanyName: "Different retry payload", CaseType: "fraud", SLADays: 9,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again != caseID {
+		t.Fatalf("retry opened case %q, want existing %q", again, caseID)
+	}
 
 	// The Case Manager's projector — which does NOT import agent-manager — opens
 	// the case purely from the event stream.
 	caseStore := store.NewMemory()
-	if err := projection.New(log, caseStore, cases.Projector{}).Start(ctx); err != nil {
+	if err := projection.New(log, caseStore, agents.Projector{}, cases.Projector{}).Start(ctx); err != nil {
 		t.Fatal(err)
 	}
 	c, ok, err := cases.Read(ctx, caseStore, id, caseID)
@@ -69,6 +79,23 @@ func TestEscalateRunOpensCase(t *testing.T) {
 	}
 	if srcCtx["source"] != "agent" || srcCtx["run_id"] != run.RunID || srcCtx["agent"] != "triage" {
 		t.Fatalf("escalation context not linked to the run: %v", srcCtx)
+	}
+	projectedRun, ok, err := agents.GetRun(ctx, caseStore, id, run.RunID)
+	if err != nil || !ok || projectedRun.CaseID != caseID {
+		t.Fatalf("run did not retain projected case link: %+v ok=%v err=%v", projectedRun, ok, err)
+	}
+	evs, err := log.Read(ctx, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var opened int
+	for _, e := range evs {
+		if e.Type == caseevents.TypeReviewRequested {
+			opened++
+		}
+	}
+	if opened != 1 {
+		t.Fatalf("idempotent retry recorded %d cases, want 1", opened)
 	}
 }
 
@@ -132,6 +159,67 @@ func TestEscalateRunUnknownRun(t *testing.T) {
 		RunID: "does-not-exist", CompanyName: "Acme", CaseType: "aml", SLADays: 3,
 	}); err == nil {
 		t.Fatal("escalating an unknown run should fail")
+	}
+}
+
+func TestEscalateRunIsGloballyIdempotentAcrossHandlers(t *testing.T) {
+	ctx := context.Background()
+	log, err := eventlog.OpenWAL(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = log.Close() }()
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "dev"}
+	st := store.NewMemory()
+	nodeA := command.NewHandler(log, st, registry())
+	nodeB := command.NewHandler(log, st, registry())
+	if _, err := nodeA.DefineAgent(ctx, id, domain.DefineAgent{Name: "triage"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := projection.New(log, st, agents.Projector{}).Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	run, err := nodeA.RunAgent(ctx, id, "triage", "review this", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	type result struct {
+		caseID string
+		err    error
+	}
+	start := make(chan struct{})
+	results := make(chan result, 2)
+	for _, node := range []*command.Handler{nodeA, nodeB} {
+		go func() {
+			<-start
+			caseID, _, err := node.EscalateRun(ctx, id, domain.EscalateRun{
+				RunID: run.RunID, CompanyName: "Acme", CaseType: "agent_review", SLADays: 3,
+			})
+			results <- result{caseID: caseID, err: err}
+		}()
+	}
+	close(start)
+	a, b := <-results, <-results
+	if a.err != nil || b.err != nil {
+		t.Fatalf("concurrent escalation errors: %v / %v", a.err, b.err)
+	}
+	if a.caseID == "" || a.caseID != b.caseID {
+		t.Fatalf("concurrent escalations returned different cases: %q / %q", a.caseID, b.caseID)
+	}
+
+	evs, err := log.Read(ctx, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var opened int
+	for _, e := range evs {
+		if e.Type == caseevents.TypeReviewRequested {
+			opened++
+		}
+	}
+	if opened != 1 {
+		t.Fatalf("concurrent escalation recorded %d cases, want 1", opened)
 	}
 }
 

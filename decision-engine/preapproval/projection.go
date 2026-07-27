@@ -85,20 +85,61 @@ func (Projector) Apply(ctx context.Context, e eventlog.Envelope, s store.Store) 
 		if err := json.Unmarshal(e.Payload, &p); err != nil {
 			return fmt.Errorf("decision_preapprovals: decode revoked seq %d: %w", e.Seq, err)
 		}
-		_, err := store.UpdateDoc(ctx, s, Collection, store.Key(e.Org, e.Workspace, entityID(p.EntityType, p.EntityID)), func(v *View) {
+		var transitionErr error
+		ok, err := store.UpdateDoc(ctx, s, Collection, store.Key(e.Org, e.Workspace, entityID(p.EntityType, p.EntityID)), func(v *View) {
+			if p.PreApprovalID != "" && v.PreApprovalID != p.PreApprovalID {
+				transitionErr = fmt.Errorf(
+					"decision_preapprovals: revoked seq %d targets %q but current pre-approval is %q",
+					e.Seq, p.PreApprovalID, v.PreApprovalID,
+				)
+				return
+			}
+			if v.Status != StatusActive {
+				transitionErr = fmt.Errorf(
+					"decision_preapprovals: revoked seq %d for pre-approval %q already %s",
+					e.Seq, v.PreApprovalID, v.Status,
+				)
+				return
+			}
 			v.Status, v.RevokedReason, v.UpdatedAt = StatusRevoked, p.Reason, e.Time
 		})
-		return err // a revoke for an unknown entity is a no-op
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return fmt.Errorf(
+				"decision_preapprovals: revoked seq %d for unknown entity %q",
+				e.Seq, entityID(p.EntityType, p.EntityID),
+			)
+		}
+		return transitionErr
 	case TypeHonored:
 		var p Honored
 		if err := json.Unmarshal(e.Payload, &p); err != nil {
 			return fmt.Errorf("decision_preapprovals: decode honored seq %d: %w", e.Seq, err)
 		}
-		_, err := store.UpdateDoc(ctx, s, Collection, store.Key(e.Org, e.Workspace, entityID(p.EntityType, p.EntityID)), func(v *View) {
+		var transitionErr error
+		ok, err := store.UpdateDoc(ctx, s, Collection, store.Key(e.Org, e.Workspace, entityID(p.EntityType, p.EntityID)), func(v *View) {
+			if v.PreApprovalID != p.PreApprovalID {
+				transitionErr = fmt.Errorf(
+					"decision_preapprovals: honored seq %d targets %q but current pre-approval is %q",
+					e.Seq, p.PreApprovalID, v.PreApprovalID,
+				)
+				return
+			}
 			v.HonoredCount++
 			v.UpdatedAt = e.Time
 		})
-		return err
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return fmt.Errorf(
+				"decision_preapprovals: honored seq %d for unknown entity %q",
+				e.Seq, entityID(p.EntityType, p.EntityID),
+			)
+		}
+		return transitionErr
 	}
 	return nil
 }

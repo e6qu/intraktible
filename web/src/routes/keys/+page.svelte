@@ -11,6 +11,7 @@
   import CodeSnippet from '$lib/CodeSnippet.svelte';
   import { lifecycleTone } from '$lib/badge';
   import { user } from '$lib/session';
+  import { copyText } from '$lib/clipboard';
   import {
     listApiKeys,
     createApiKey,
@@ -143,11 +144,7 @@
   }
 
   async function copy(secret: string) {
-    try {
-      await navigator.clipboard.writeText(secret);
-    } catch {
-      // Clipboard may be unavailable (no permission); the secret is selectable anyway.
-    }
+    await copyText(secret, 'Copied API secret');
   }
 
   onMount(load);

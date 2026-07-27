@@ -36,7 +36,7 @@ test('journey: run a test decision on a deployed flow', async ({ page }) => {
   // credit-decision is seeded, deployed, and its connectors resolve against the demo
   // sample data, so a builder test run lands on a real verdict.
   await openFlow(page, 'credit-decision');
-  await page.getByRole('button', { name: 'Run', exact: true }).click();
+  await page.getByRole('button', { name: 'Run published version', exact: true }).click();
   const verdict = page.getByTestId('run-verdict');
   await expect(verdict).toBeVisible();
   // A recorded (non-preview) run links to its decision of record.

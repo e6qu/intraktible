@@ -3,7 +3,6 @@
 package erasure
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -11,16 +10,7 @@ import (
 	"time"
 
 	"github.com/e6qu/intraktible/platform/httpx"
-	"github.com/e6qu/intraktible/platform/identity"
 )
-
-// RetentionGate reports whether a subject must be retained because a record about them
-// is still within its statutory mandatory-retention window — the automatic, rule-driven
-// counterpart to a manual legal hold. The composition root supplies the adapter so the
-// vault stays free of the compliance-record packages.
-type RetentionGate interface {
-	Retained(ctx context.Context, id identity.Identity, subject string) (retained bool, reason string, err error)
-}
 
 // Service exposes admin-only erasure operations: fulfilling a right-to-erasure
 // request (crypto-shred a subject), listing fulfilled erasures, and running a
@@ -113,7 +103,12 @@ func (s *Service) status(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusInternalServerError, err)
 		return
 	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"subject": subj, "erased": erased})
+	held, err := s.vault.OnHold(r.Context(), id, subj)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"subject": subj, "erased": erased, "held": held})
 }
 
 // erase fulfills a right-to-erasure request: it destroys the subject's key, so
@@ -232,10 +227,13 @@ func (s *Service) retention(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, fmt.Errorf("max_age_days must be a positive integer"))
 		return
 	}
-	n, err := s.vault.RetentionSweep(r.Context(), id, time.Duration(days)*24*time.Hour)
+	summary, err := s.vault.RetentionSweep(r.Context(), id, time.Duration(days)*24*time.Hour, s.retentionGate)
 	if err != nil {
 		httpx.Error(w, http.StatusInternalServerError, err)
 		return
 	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"erased": n, "max_age_days": days})
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"erased": summary.Erased, "held": summary.Held,
+		"statutory_retained": summary.StatutoryRetained, "max_age_days": days,
+	})
 }

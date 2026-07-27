@@ -55,6 +55,18 @@ test('gates the governance card on the admin role', async ({ page }) => {
   for (const label of ['Notices pending', 'Human reviews', 'Active lawful basis']) {
     await expect(page.getByText(label, { exact: true })).toBeVisible();
   }
+
+  // The card is operational, not a read-only report: saving zero explicitly
+  // disables scheduled erasure, and a high-age manual sweep safely exercises the
+  // irreversible endpoint without making any fresh parallel-test subject eligible.
+  await page.getByLabel('retention days').fill('0');
+  await page.getByRole('button', { name: 'Save policy' }).click();
+  await expect(page.getByText('Automatic retention erasure disabled.')).toBeVisible();
+
+  await page.getByLabel('retention sweep age').fill('36500');
+  page.once('dialog', (dialog) => dialog.accept());
+  await page.getByRole('button', { name: 'Run irreversible sweep' }).click();
+  await expect(page.getByText(/Last run:/)).toContainText('statutorily retained');
 });
 
 test('a failed read reports itself instead of rendering an empty register', async ({ page }) => {

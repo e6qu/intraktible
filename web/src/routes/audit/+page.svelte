@@ -14,6 +14,7 @@
   import { appHref } from '$lib/paths';
   import { withOffset } from '$lib/paging';
   import { user } from '$lib/session';
+  import { roleAtLeast } from '$lib/roles';
   import {
     listAuditPage,
     auditCsvText,
@@ -159,18 +160,25 @@
   let maskFields = $state('');
   let maskSaving = $state(false);
   let maskNote = $state('');
+  let privacyError = $state('');
   // Gate Save on a successful load: without this, a failed/never-completed load
   // leaves the field empty, and saving would silently wipe the existing config.
   let privacyLoaded = $state(false);
   async function loadPrivacy() {
+    privacyLoaded = false;
+    privacyError = '';
+    if (!roleAtLeast($user?.role, 'admin')) {
+      maskFields = '';
+      maskNote = '';
+      return;
+    }
     try {
       const cfg = await getPrivacy(key);
       maskFields = (cfg.fields ?? []).join(', ');
       maskNote = cfg.updated_by ? `last set by ${cfg.updated_by}` : '';
       privacyLoaded = true;
-    } catch {
-      /* non-admins simply do not see the editor populated */
-      privacyLoaded = false;
+    } catch (e) {
+      privacyError = msg(e);
     }
   }
   async function savePrivacy() {
@@ -203,6 +211,8 @@
   let kScope = $state<Scope>('sandbox');
   let kExpires = $state('');
   let kCreating = $state(false);
+  let keysLoaded = $state(false);
+  let keysError = $state('');
   // The generated secret is shown once, right after creation/rotation, and never
   // again. secretNote explains how long a rotated-away secret keeps working.
   let newSecret = $state('');
@@ -211,10 +221,18 @@
   // one keeps authenticating until the operator finishes redeploying.
   const ROTATE_GRACE_SECONDS = 3600;
   async function loadKeys() {
+    keysLoaded = false;
+    keysError = '';
+    if (!roleAtLeast($user?.role, 'admin')) {
+      keys = [];
+      return;
+    }
     try {
       keys = await listApiKeys(key);
-    } catch {
-      /* non-admins simply do not see the token list populated */
+      keysLoaded = true;
+    } catch (e) {
+      keys = [];
+      keysError = msg(e);
     }
   }
   async function createKey() {
@@ -340,121 +358,135 @@
     immutable event log.
   </p>
 
-  <details class="masking" data-testid="masking-config">
-    <summary
-      ><Icon name="shield" size={14} /> PII masking
-      <span class="muted">— field-level redaction</span></summary
-    >
-    <p class="muted">
-      Comma- or space-separated field names (case-insensitive). Their values are redacted in
-      decision input/output and exports at the read boundary — the raw event log is untouched.
-    </p>
-    <div class="mask-row">
-      <input
-        bind:value={maskFields}
-        aria-label="masked fields"
-        placeholder="ssn, dob, email, phone"
-      />
-      <button
-        onclick={savePrivacy}
-        disabled={maskSaving || !privacyLoaded}
-        data-testid="save-masking"
+  {#if roleAtLeast($user?.role, 'admin')}
+    <details class="masking" data-testid="masking-config">
+      <summary
+        ><Icon name="shield" size={14} /> PII masking
+        <span class="muted">— field-level redaction</span></summary
       >
-        {maskSaving ? 'Saving…' : 'Save'}
-      </button>
-    </div>
-    {#if maskNote}<p class="muted note">{maskNote}</p>{/if}
-  </details>
-
-  <details class="tokens" data-testid="api-keys-config">
-    <summary
-      ><Icon name="shield" size={14} /> API tokens
-      <span class="muted">— durable keys for the decide/data APIs</span></summary
-    >
-    <p class="muted">
-      Each token is generated once and stored hashed — the secret below is shown a single time.
-      Scope and role bound what the token can do; revoke takes effect immediately.
-    </p>
-    <div class="token-form">
-      <input bind:value={kName} aria-label="token name" placeholder="name (e.g. CI bot)" />
-      <input bind:value={kActor} aria-label="token actor" placeholder="actor (e.g. ci@acme)" />
-      <select bind:value={kRole} aria-label="token role">
-        <option value="viewer">viewer</option>
-        <option value="operator">operator</option>
-        <option value="editor">editor</option>
-        <option value="approver">approver</option>
-        <option value="admin">admin</option>
-      </select>
-      <select bind:value={kScope} aria-label="token scope">
-        <option value="sandbox">sandbox</option>
-        <option value="production">production</option>
-      </select>
-      <input
-        type="datetime-local"
-        bind:value={kExpires}
-        aria-label="token expiry"
-        title="optional expiry"
-      />
-      <button onclick={createKey} disabled={kCreating} data-testid="create-token">
-        {kCreating ? 'Creating…' : 'Create token'}
-      </button>
-    </div>
-    {#if newSecret}
-      <div class="secret" data-testid="new-secret">
-        <span class="muted">Copy this secret now — it will not be shown again:</span>
-        <code>{newSecret}</code>
+      <p class="muted">
+        Comma- or space-separated field names (case-insensitive). Their values are redacted in
+        decision input/output and exports at the read boundary — the raw event log is untouched.
+      </p>
+      <div class="mask-row">
+        <input
+          bind:value={maskFields}
+          aria-label="masked fields"
+          placeholder="ssn, dob, email, phone"
+        />
         <button
-          class="dismiss"
-          onclick={() => {
-            newSecret = '';
-            secretNote = '';
-          }}
-          aria-label="dismiss secret">Done</button
+          onclick={savePrivacy}
+          disabled={maskSaving || !privacyLoaded}
+          data-testid="save-masking"
         >
-        {#if secretNote}<p class="muted note secret-note">{secretNote}</p>{/if}
+          {maskSaving ? 'Saving…' : 'Save'}
+        </button>
       </div>
-    {/if}
-    {#if keys.length > 0}
-      <div class="table-wrap">
-        <table class="token-table">
-          <thead>
-            <tr><th>Name</th><th>Actor</th><th>Role</th><th>Scope</th><th>Status</th><th></th></tr>
-          </thead>
-          <tbody>
-            {#each keys as k (k.id)}
-              <tr>
-                <td>{k.name}</td>
-                <td class="muted">{k.identity.actor}</td>
-                <td>{k.role}</td>
-                <td><span class="badge">{k.scope}</span></td>
-                <td><Badge tone={lifecycleTone(keyStatus(k))}>{keyStatus(k)}</Badge></td>
-                <td>
-                  <div class="row-actions">
-                    <a
-                      class="audit-link"
-                      href={appHref(`/audit?resource=${encodeURIComponent(k.id)}`)}>Audit</a
-                    >
-                    {#if keyStatus(k) === 'active'}
-                      <button
-                        class="rotate"
-                        onclick={() => rotateKey(k.id)}
-                        disabled={mutating !== null}>Rotate</button
-                      >
-                      <button
-                        class="revoke"
-                        onclick={() => revokeKey(k.id)}
-                        disabled={mutating !== null}>Revoke</button
-                      >
-                    {/if}
-                  </div>
-                </td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
+      {#if privacyError}
+        <p class="err" data-testid="privacy-error">
+          Masking configuration unavailable: {privacyError}
+          <button class="linkbtn" onclick={loadPrivacy}>Retry</button>
+        </p>
+      {:else if maskNote}<p class="muted note">{maskNote}</p>{/if}
+    </details>
+
+    <details class="tokens" data-testid="api-keys-config">
+      <summary
+        ><Icon name="shield" size={14} /> API tokens
+        <span class="muted">— durable keys for the decide/data APIs</span></summary
+      >
+      <p class="muted">
+        Each token is generated once and stored hashed — the secret below is shown a single time.
+        Scope and role bound what the token can do; revoke takes effect immediately.
+      </p>
+      <div class="token-form">
+        <input bind:value={kName} aria-label="token name" placeholder="name (e.g. CI bot)" />
+        <input bind:value={kActor} aria-label="token actor" placeholder="actor (e.g. ci@acme)" />
+        <select bind:value={kRole} aria-label="token role">
+          <option value="viewer">viewer</option>
+          <option value="operator">operator</option>
+          <option value="editor">editor</option>
+          <option value="approver">approver</option>
+          <option value="admin">admin</option>
+        </select>
+        <select bind:value={kScope} aria-label="token scope">
+          <option value="sandbox">sandbox</option>
+          <option value="production">production</option>
+        </select>
+        <input
+          type="datetime-local"
+          bind:value={kExpires}
+          aria-label="token expiry"
+          title="optional expiry"
+        />
+        <button onclick={createKey} disabled={kCreating || !keysLoaded} data-testid="create-token">
+          {kCreating ? 'Creating…' : 'Create token'}
+        </button>
       </div>
-    {/if}
-  </details>
+      {#if keysError}
+        <p class="err" data-testid="keys-error">
+          API tokens unavailable: {keysError}
+          <button class="linkbtn" onclick={loadKeys}>Retry</button>
+        </p>
+      {/if}
+      {#if newSecret}
+        <div class="secret" data-testid="new-secret">
+          <span class="muted">Copy this secret now — it will not be shown again:</span>
+          <code>{newSecret}</code>
+          <button
+            class="dismiss"
+            onclick={() => {
+              newSecret = '';
+              secretNote = '';
+            }}
+            aria-label="dismiss secret">Done</button
+          >
+          {#if secretNote}<p class="muted note secret-note">{secretNote}</p>{/if}
+        </div>
+      {/if}
+      {#if keys.length > 0}
+        <div class="table-wrap">
+          <table class="token-table">
+            <thead>
+              <tr><th>Name</th><th>Actor</th><th>Role</th><th>Scope</th><th>Status</th><th></th></tr
+              >
+            </thead>
+            <tbody>
+              {#each keys as k (k.id)}
+                <tr>
+                  <td>{k.name}</td>
+                  <td class="muted">{k.identity.actor}</td>
+                  <td>{k.role}</td>
+                  <td><span class="badge">{k.scope}</span></td>
+                  <td><Badge tone={lifecycleTone(keyStatus(k))}>{keyStatus(k)}</Badge></td>
+                  <td>
+                    <div class="row-actions">
+                      <a
+                        class="audit-link"
+                        href={appHref(`/audit?resource=${encodeURIComponent(k.id)}`)}>Audit</a
+                      >
+                      {#if keyStatus(k) === 'active'}
+                        <button
+                          class="rotate"
+                          onclick={() => rotateKey(k.id)}
+                          disabled={mutating !== null}>Rotate</button
+                        >
+                        <button
+                          class="revoke"
+                          onclick={() => revokeKey(k.id)}
+                          disabled={mutating !== null}>Revoke</button
+                        >
+                      {/if}
+                    </div>
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+      {/if}
+    </details>
+  {/if}
 
   <form
     class="filters"

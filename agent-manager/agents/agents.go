@@ -15,6 +15,7 @@ import (
 
 	"github.com/e6qu/intraktible/agent-manager/domain"
 	"github.com/e6qu/intraktible/agent-manager/events"
+	caseevents "github.com/e6qu/intraktible/case-manager/events"
 	"github.com/e6qu/intraktible/platform/ai"
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/identity"
@@ -88,6 +89,7 @@ type RunView struct {
 	Error            string            `json:"error,omitempty"`
 	PromptTokens     int               `json:"prompt_tokens,omitempty"`
 	CompletionTokens int               `json:"completion_tokens,omitempty"`
+	CaseID           string            `json:"case_id,omitempty"`
 	Seq              uint64            `json:"seq"`
 	At               time.Time         `json:"at"`
 }
@@ -110,6 +112,8 @@ func (Projector) Apply(ctx context.Context, e eventlog.Envelope, s store.Store) 
 		return applyRunStarted(ctx, e, s)
 	case events.TypeAgentRunRecorded:
 		return applyRun(ctx, e, s)
+	case caseevents.TypeReviewRequested:
+		return applyRunEscalated(ctx, e, s)
 	default:
 		return nil
 	}
@@ -147,7 +151,10 @@ func applyDefined(ctx context.Context, e eventlog.Envelope, s store.Store) error
 	out.UpdatedAt = e.Time
 	// Append an immutable version unless this exact config already is the latest —
 	// an idempotent redefine (same etag) does not create a new version.
-	etag := agentEtag(cfg)
+	etag, err := agentEtag(cfg)
+	if err != nil {
+		return fmt.Errorf("agents: hash config: %w", err)
+	}
 	if n := len(out.Versions); n == 0 || out.Versions[n-1].Etag != etag {
 		next := out.Latest + 1
 		out.Versions = append(out.Versions, AgentVersionView{
@@ -160,13 +167,13 @@ func applyDefined(ctx context.Context, e eventlog.Envelope, s store.Store) error
 
 // agentEtag is the content hash of a config (sorted-key canonical JSON), so an
 // identical redefine is detectable and won't create a redundant version.
-func agentEtag(cfg AgentConfig) string {
+func agentEtag(cfg AgentConfig) (string, error) {
 	b, err := json.Marshal(cfg)
 	if err != nil {
-		return ""
+		return "", err
 	}
 	sum := sha256.Sum256(b)
-	return hex.EncodeToString(sum[:])
+	return hex.EncodeToString(sum[:]), nil
 }
 
 func applyRun(ctx context.Context, e eventlog.Envelope, s store.Store) error {
@@ -183,20 +190,16 @@ func applyRun(ctx context.Context, e eventlog.Envelope, s store.Store) error {
 	if err != nil {
 		return err
 	}
-	// Parse-guard the status at the decode boundary (like case-manager's projector):
-	// an unknown value from a legacy/hand-crafted event must not land in the read
-	// model where SummarizeRuns would miscount it. An unrecognized status records as
-	// RunFailed — the safe terminal interpretation for an unparseable outcome.
 	status, ok := domain.ParseRunStatus(p.Status)
 	if !ok {
-		status = domain.RunFailed
+		return fmt.Errorf("agents: run_recorded seq %d has unknown status %q", e.Seq, p.Status)
 	}
 	run := RunView{
 		Org: e.Org, Workspace: e.Workspace,
 		RunID: p.RunID, Agent: p.Agent, Model: p.Model, Prompt: p.Prompt,
 		Status: status, Text: p.Text, Structured: p.Structured, ToolCalls: p.ToolCalls, Error: p.Error,
 		PromptTokens: p.PromptTokens, CompletionTokens: p.CompletionTokens,
-		Seq: e.Seq, At: p.At,
+		CaseID: prev.CaseID, Seq: e.Seq, At: p.At,
 	}
 	if err := store.PutDoc(ctx, s, CollectionRuns, runKey, run); err != nil {
 		return err
@@ -216,6 +219,49 @@ func applyRun(ctx context.Context, e eventlog.Envelope, s store.Store) error {
 	}
 	c.Runs++
 	return store.PutDoc(ctx, s, CollectionAgents, key, c)
+}
+
+// applyRunEscalated projects the case link back onto the originating run. The
+// Case Manager event remains the source of truth, so reload and replay retain the
+// link without a second agent-specific marker event.
+func applyRunEscalated(ctx context.Context, e eventlog.Envelope, s store.Store) error {
+	var p caseevents.ReviewRequested
+	if err := json.Unmarshal(e.Payload, &p); err != nil {
+		return fmt.Errorf("agents: decode review_requested seq %d: %w", e.Seq, err)
+	}
+	if len(p.Context) == 0 {
+		return nil
+	}
+	var source struct {
+		Source string `json:"source"`
+		Agent  string `json:"agent"`
+		RunID  string `json:"run_id"`
+	}
+	if err := json.Unmarshal(p.Context, &source); err != nil {
+		return fmt.Errorf("agents: decode review context seq %d: %w", e.Seq, err)
+	}
+	if source.Source != "agent" {
+		return nil
+	}
+	if source.RunID == "" || source.Agent == "" {
+		return fmt.Errorf("agents: agent review seq %d is missing agent/run_id", e.Seq)
+	}
+	key := store.Key(e.Org, e.Workspace, source.RunID)
+	run, ok, err := store.GetDoc[RunView](ctx, s, CollectionRuns, key)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("agents: review seq %d references unknown run %q", e.Seq, source.RunID)
+	}
+	if run.Agent != source.Agent {
+		return fmt.Errorf("agents: review seq %d agent %q does not own run %q", e.Seq, source.Agent, source.RunID)
+	}
+	if run.CaseID != "" && run.CaseID != p.CaseID {
+		return fmt.Errorf("agents: run %q already links to case %q, cannot link %q", source.RunID, run.CaseID, p.CaseID)
+	}
+	run.CaseID = p.CaseID
+	return store.PutDoc(ctx, s, CollectionRuns, key, run)
 }
 
 // Read returns one agent definition for id's tenant.

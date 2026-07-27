@@ -116,11 +116,17 @@ runbook: [docs/DEPLOY.md](docs/DEPLOY.md); backups/DR: [docs/DR.md](docs/DR.md).
 | `INTRAKTIBLE_OTEL_EXPORTER` · `_SAMPLE_RATIO` | OpenTelemetry tracing: `stdout` or `otlp` (off by default; OTLP endpoint via the standard `OTEL_EXPORTER_OTLP_*` vars) |
 | `INTRAKTIBLE_AI_RATE_LIMIT_RPS` · `_BURST` | Per-provider AI rate limit (token bucket; off by default) |
 | `INTRAKTIBLE_AI_GUARDRAIL_PII` · `_REDACT_FIELDS` · `_BLOCK_INJECTION` | AI guardrails: redact PII in prompts/output, mask structured fields (CSV), block prompt-injection (off by default) |
+| `INTRAKTIBLE_LOGIN_RATE_LIMIT_RPS` · `_BURST` | Per-client login token bucket (defaults 10 requests/s, burst 30; RPS `0` disables). Invalid/negative values, or a zero burst while enabled, refuse startup |
+| `INTRAKTIBLE_MONITOR_INTERVAL` · `INTRAKTIBLE_MODEL_DRIFT_WINDOW` | Scheduler cadence (e.g. `1m`) and optional recent model-drift window in non-negative days; malformed values refuse startup |
+| `INTRAKTIBLE_DECIDE_EVAL_TIMEOUT` | Positive Go duration limiting expression/Code evaluation per decision (for example `2s`); malformed/non-positive values refuse startup |
 | `INTRAKTIBLE_ENCRYPTION_KEY` · `_KEYS_PREVIOUS` | Encryption at rest for event payloads + projection store (base64/hex 32-byte key; previous keys retained for zero-downtime rotation; off by default) |
 | `INTRAKTIBLE_KMS_PROVIDER` · `_KEY` | Seal connector credentials via an external KMS (`aws`\|`gcp`) so the key never leaves the provider |
 | `INTRAKTIBLE_BOOTSTRAP_API_KEY` | Seed an operator-chosen admin key on **any** store (≥16 chars), so a self-hosted install can get its first credential without SSO. Re-added each boot; rotate to a managed key and unset it |
 | `INTRAKTIBLE_SINGLE_REPLICA` | Declare that exactly one replica runs, permitting `--log=file` in production. Without it a production boot with the single-process WAL is **refused** — each replica would keep a divergent copy of the event log |
 | `INTRAKTIBLE_DRAIN_DELAY` · `_SHUTDOWN_TIMEOUT` | Shutdown timing (defaults 5s · 30s). On `SIGTERM` the replica fails `/readyz` but keeps serving for the drain delay — so the load balancer depools it before the listener closes — then finishes in-flight requests within the timeout. Both are validated at startup |
+
+Explicit boolean switches accept only `1/0`, `true/false`, `yes/no`, or `on/off`;
+typos refuse startup rather than silently changing security or runtime behavior.
 
 ### See it end-to-end
 

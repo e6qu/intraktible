@@ -6,9 +6,12 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
+	"sync"
 	"time"
 
 	"github.com/e6qu/intraktible/platform/eventlog"
@@ -20,6 +23,7 @@ type Handler struct {
 	log   eventlog.Log
 	now   func() time.Time
 	newID func() string
+	mu    sync.Mutex
 }
 
 // NewHandler builds a Handler using the system clock and a random id source.
@@ -74,7 +78,67 @@ func (h *Handler) Unsubscribe(ctx context.Context, id identity.Identity, webhook
 	if webhookID == "" {
 		return eventlog.Envelope{}, fmt.Errorf("notify: webhook_id is required")
 	}
-	return h.append(ctx, id, TypeUnsubscribed, Unsubscribed{WebhookID: webhookID})
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	active, err := h.isActive(ctx, id, webhookID)
+	if err != nil {
+		return eventlog.Envelope{}, err
+	}
+	if !active {
+		return eventlog.Envelope{}, fmt.Errorf("notify: active webhook %q not found", webhookID)
+	}
+	raw, err := json.Marshal(Unsubscribed{WebhookID: webhookID})
+	if err != nil {
+		return eventlog.Envelope{}, fmt.Errorf("notify: marshal unsubscribe: %w", err)
+	}
+	e, err := h.log.Append(ctx, eventlog.Envelope{
+		Org: id.Org, Workspace: id.Workspace, Actor: id.Actor,
+		Stream: StreamWebhooks, Type: TypeUnsubscribed, Time: h.now(), Payload: raw,
+		Unique: "webhook.unsubscribe\x00" + id.Org + "\x00" + id.Workspace + "\x00" + webhookID,
+	})
+	if errors.Is(err, eventlog.ErrConflict) {
+		return eventlog.Envelope{}, fmt.Errorf("notify: active webhook %q not found", webhookID)
+	}
+	return e, err
+}
+
+func (h *Handler) isActive(
+	ctx context.Context,
+	id identity.Identity,
+	webhookID string,
+) (bool, error) {
+	evs, err := h.log.ReadTenantStream(ctx, id.Org, id.Workspace, StreamWebhooks, 0)
+	if err != nil {
+		return false, fmt.Errorf("notify: read webhook lifecycle: %w", err)
+	}
+	active := false
+	found := false
+	for _, e := range evs {
+		switch e.Type {
+		case TypeSubscribed:
+			var p Subscribed
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				return false, fmt.Errorf("notify: decode subscribed seq %d: %w", e.Seq, err)
+			}
+			if p.WebhookID == webhookID {
+				found, active = true, true
+			}
+		case TypeUnsubscribed:
+			var p Unsubscribed
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				return false, fmt.Errorf("notify: decode unsubscribed seq %d: %w", e.Seq, err)
+			}
+			if p.WebhookID == webhookID {
+				found, active = true, false
+			}
+		case TypeDelivered:
+			var p Delivered
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				return false, fmt.Errorf("notify: decode delivered seq %d: %w", e.Seq, err)
+			}
+		}
+	}
+	return found && active, nil
 }
 
 func (h *Handler) append(ctx context.Context, id identity.Identity, typ string, payload any) (eventlog.Envelope, error) {

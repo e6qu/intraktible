@@ -132,6 +132,9 @@ func applySuspended(ctx context.Context, e eventlog.Envelope, s store.Store) err
 		r.Status = "suspended"
 		r.SuspendNode = p.NodeID
 		r.SuspendState = p.State
+		if p.CaseID != "" {
+			r.CaseID = p.CaseID
+		}
 	})
 }
 

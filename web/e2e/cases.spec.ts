@@ -101,6 +101,100 @@ test('assigns, transitions, and notes a case', async ({ page, request }) => {
   }).toPass({ timeout: 5000 });
 });
 
+test('resumes a suspended decision from its case and closes both', async ({ page, request }) => {
+  const suffix = Math.random().toString(36).slice(2, 8);
+  const slug = `human-task-${suffix}`;
+  const created = await request.post('/v1/flows', {
+    headers: { 'X-Api-Key': KEY },
+    data: { slug, name: `Human task ${suffix}` }
+  });
+  expect(created.ok()).toBeTruthy();
+  const { flow_id } = await created.json();
+  const published = await request.post(`/v1/flows/${flow_id}/versions`, {
+    headers: { 'X-Api-Key': KEY },
+    data: {
+      graph: {
+        nodes: [
+          { id: 'in', type: 'input' },
+          {
+            id: 'review',
+            type: 'manual_review',
+            config: {
+              company_name: "'Acme'",
+              case_type: "'underwriting'",
+              suspend: true,
+              output_key: 'review'
+            }
+          },
+          { id: 'out', type: 'output', config: { fields: ['review'] } }
+        ],
+        edges: [
+          { from: 'in', to: 'review' },
+          { from: 'review', to: 'out' }
+        ]
+      }
+    }
+  });
+  expect(published.ok()).toBeTruthy();
+
+  let decisionId = '';
+  let caseId = '';
+  await expect(async () => {
+    const decided = await request.post(`/v1/flows/${slug}/sandbox/decide`, {
+      headers: { 'X-Api-Key': KEY },
+      data: { data: { applicant: `A-${suffix}` } }
+    });
+    const result = await decided.json();
+    expect(result.status).toBe('suspended');
+    decisionId = result.decision_id;
+  }).toPass({ timeout: 5000 });
+  await expect(async () => {
+    const detail = await request.get(`/v1/decisions/${decisionId}`, {
+      headers: { 'X-Api-Key': KEY }
+    });
+    const record = await detail.json();
+    expect(record.status).toBe('suspended');
+    expect(record.case_id).toBeTruthy();
+    caseId = record.case_id;
+  }).toPass({ timeout: 5000 });
+
+  // The API also refuses the misleading terminal action: this task owns a
+  // still-suspended decision and needs an actual review outcome.
+  const premature = await request.post(`/v1/cases/${caseId}/status`, {
+    headers: { 'X-Api-Key': KEY },
+    data: { status: 'completed' }
+  });
+  expect(premature.status()).toBe(400);
+  expect(await premature.text()).toContain('record its review outcome');
+
+  await page.goto(`/cases/${caseId}`);
+  await expect(page.getByTestId('case-status')).toHaveText('needs_review');
+  const reviewDecision = page.getByTestId('case-resume-decision');
+  await expect(reviewDecision).toBeVisible();
+  await reviewDecision.click();
+  await expect(page).toHaveURL((url) => url.pathname === `/decisions/${decisionId}`);
+  const resume = page.getByTestId('resume-panel');
+  await resume.getByRole('button', { name: 'Approve' }).click();
+  await expect(resume).toBeHidden();
+  await expect(page.getByRole('heading', { name: slug })).toContainText('completed');
+
+  await page.goto(`/cases/${caseId}`);
+  await expect(page.getByTestId('case-status')).toHaveText('completed');
+  await expect(page.getByTestId('audit')).toContainText('decision_resumed');
+  await expect(page.getByText('This case is resolved.')).toBeVisible();
+
+  const inbox = await request.get('/v1/notifications', {
+    headers: { 'X-Api-Key': KEY }
+  });
+  expect(inbox.ok()).toBeTruthy();
+  const body = await inbox.json();
+  expect(
+    (body.notifications as { subject_type: string; subject_id: string }[]).some(
+      (item) => item.subject_type === 'case' && item.subject_id === caseId
+    )
+  ).toBeFalsy();
+});
+
 test('case detail renders the context as a key-value view', async ({ page, request }) => {
   // Seed a case with context (as a decision/agent escalation would carry).
   const created = await request.post('/v1/cases', {

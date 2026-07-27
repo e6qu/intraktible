@@ -257,7 +257,8 @@ func (s *Service) escalateRun(w http.ResponseWriter, r *http.Request) {
 		caseType = "agent_review"
 	}
 	caseID, _, err := s.cmd.EscalateRun(r.Context(), id, domain.EscalateRun{
-		RunID: r.PathValue("run_id"), CompanyName: req.CompanyName, CaseType: caseType, SLADays: req.SLADays,
+		Agent: r.PathValue("name"), RunID: r.PathValue("run_id"),
+		CompanyName: req.CompanyName, CaseType: caseType, SLADays: req.SLADays,
 	})
 	if err != nil {
 		httpx.Error(w, http.StatusBadRequest, err)

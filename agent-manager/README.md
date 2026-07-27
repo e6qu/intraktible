@@ -66,5 +66,6 @@ layer.
 
 A schema-constrained agent's structured output is validated against its schema (a mismatch is a
 recorded failed run). A real OpenAI-compatible HTTP provider exists (`ai.NewHTTP`, configured via
-`INTRAKTIBLE_AI_*` env vars); the Stub is the default fallback. Runs can be **synchronous**, **async**
+`INTRAKTIBLE_AI_*` env vars); with no provider, runs fail loudly. The deterministic Stub is
+opt-in for development/tests only (`INTRAKTIBLE_AI_STUB=1`). Runs can be **synchronous**, **async**
 (queued), or **streamed** token-by-token over SSE or WebSocket.

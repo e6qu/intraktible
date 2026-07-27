@@ -6,12 +6,12 @@
 
 Research basis: the reverse-engineered understanding of the reference platform lives one level up
 (`../products/`, `../specs/`, `../ENDPOINTS.md`, `../docs/`). `intraktible` is an
-independent open-source reimplementation of the *concepts*, not a copy of any vendor's code or assets.
+independent open-source reimplementation of the _concepts_, not a copy of any vendor's code or assets.
 
 **License: `AGPL-3.0-or-later`** ([`LICENSE`](LICENSE), policy in [`docs/LICENSING.md`](docs/LICENSING.md)).
 **Every dependency must be AGPL-compatible** — permissive (MIT/BSD/ISC/Apache-2.0/MPL-2.0) or
 compatible copyleft (LGPL, GPL-2.0-or-later, GPL-3.0+, AGPL). **Disallowed:** SSPL, BUSL/BSL,
-Elastic License, Commons Clause, GPL-2.0-*only*, and any proprietary/source-available license.
+Elastic License, Commons Clause, GPL-2.0-_only_, and any proprietary/source-available license.
 Enforced in CI via `go-licenses` (Go) and `license-checker` (web); a disallowed dep fails the build.
 As a network service, **AGPL §13** applies — hosted instances expose a source offer (UI + `/source`).
 
@@ -19,12 +19,12 @@ As a network service, **AGPL §13** applies — hosted instances expose a source
 
 ## 1. The four components (each a subdirectory; MVPs)
 
-| Dir | Component | One-liner |
-|---|---|---|
+| Dir                | Component           | One-liner                                                              |
+| ------------------ | ------------------- | ---------------------------------------------------------------------- |
 | `decision-engine/` | **Decision Engine** | Drag-and-drop builder + execution runtime for versioned decision flows |
-| `case-manager/` | **Case Manager** | Queues + dashboards for human review of escalated decisions |
-| `context-layer/` | **Context Layer** | Entities/events/features data model + connectors (data marketplace) |
-| `agent-manager/` | **Agent Manager** | Configure/run/monitor task agents (LLM + tools) inside flows |
+| `case-manager/`    | **Case Manager**    | Queues + dashboards for human review of escalated decisions            |
+| `context-layer/`   | **Context Layer**   | Entities/events/features data model + connectors (data marketplace)    |
+| `agent-manager/`   | **Agent Manager**   | Configure/run/monitor task agents (LLM + tools) inside flows           |
 
 Plus shared infrastructure in `platform/`, the binary in `cmd/intraktible/`, and the UI in `web/`.
 
@@ -56,6 +56,7 @@ Plus shared infrastructure in `platform/`, the binary in `cmd/intraktible/`, and
   login** for the builder UI. Pluggable SSO/OIDC later.
 
 ### Engineering principles
+
 - **Fail loudly** in logic — no silent fallbacks, empty catches, or "log & continue" in core logic
   (retries/backoff for genuine network unreliability are fine).
 - **Deterministic core** — decision execution must be reproducible from recorded inputs (prerequisite
@@ -67,6 +68,7 @@ Plus shared infrastructure in `platform/`, the binary in `cmd/intraktible/`, and
 ## 3. Architecture
 
 ### 3.1 The log/stream backbone (`platform/eventlog`)
+
 An append-only, ordered, partitioned **event log** with a small interface:
 
 ```
@@ -80,26 +82,29 @@ Subscribe(stream, fromOffset) -> channel        // in-process bus for the monoli
 - The interface is **pluggable** so a distributed backend (NATS JetStream / Kafka / Redpanda) can be
   dropped in for the split-services deployment without touching domain code.
 - Events are immutable JSON envelopes: `{id, org_id, workspace_id, stream, type, time, actor, seq,
-  payload(JSON)}`. Streams are partitioned per `(org_id, workspace_id)` so replay/rollback is
+payload(JSON)}`. Streams are partitioned per `(org_id, workspace_id)` so replay/rollback is
   per-tenant.
 
 ### 3.2 CQRS / hybrid event sourcing
+
 - **Commands** (write side) validate against the functional core, then **emit events** to the log.
 - **Projections** (read side) consume the log and maintain **materialized JSONB state** in the
   pluggable store (SQLite JSON1 / Postgres JSONB). Projections are **rebuildable** from offset 0.
 - **Replay** = re-fold events (rebuild a projection) or **re-run a decision** from its recorded
   input event (deterministic core ⇒ identical result, or a diff if logic changed).
 - **Rollback** = move a projection/aggregate to a prior offset (the log is never mutated; we roll the
-  *view*), or compensating events.
+  _view_), or compensating events.
 
 ### 3.3 Decision execution as a logged stream
+
 Each `/decide` call becomes a **DecisionStarted** event; every node execution emits a
 **NodeEvaluated** event (inputs, output, duration); completion emits **DecisionCompleted** (or
-**DecisionFailed**). This *is* the Decision History (replayable node-by-node), mirroring the
+**DecisionFailed**). This _is_ the Decision History (replayable node-by-node), mirroring the
 `DecisionRecord` shape we documented (`flow{slug,version}`, `node_results.time_ordered`, etc. — see
 `../specs/data-models.md`).
 
 ### 3.4 Functional core / imperative shell (per component)
+
 ```
 <component>/
   domain/      # PURE: types, decision logic, fold/reduce, validation. No I/O.
@@ -110,6 +115,7 @@ Each `/decide` call becomes a **DecisionStarted** event; every node execution em
 ```
 
 ### 3.5 Deployment shapes
+
 - **Monolith:** one process; in-process event bus; one embedded log; SQLite by default.
 - **Split:** each module its own process; shared distributed log; Postgres. Same code, different
   wiring in `cmd/`.
@@ -119,6 +125,7 @@ Each `/decide` call becomes a **DecisionStarted** event; every node execution em
 ## 4. Component MVP scope
 
 ### 4.1 Decision Engine (`decision-engine/`) — built first, end-to-end
+
 - **Flow model:** a flow = DAG of typed **nodes** + edges; **versioned** (immutable versions, etag),
   each version carries an `input_schema` (JSON Schema) — the per-flow decide contract.
 - **Node types (MVP):** Input/Start, **Rule**, **Split**, **Assignment**, **Scorecard**,
@@ -133,18 +140,21 @@ Each `/decide` call becomes a **DecisionStarted** event; every node execution em
 - **Optimization (lite):** A/B (champion/challenger) routing + a simple analytics projection.
 
 ### 4.2 Case Manager (`case-manager/`)
+
 - Cases created when a flow emits **ManualReviewRequested**; queues filtered by type/status/assignee.
 - Case object (dynamic JSONB): `company_name, assignee, status(needs_review|in_progress|completed),
-  sla_days_left, case_type, created_at, updated_at, context`. Dashboard + case detail + audit log
+sla_days_left, case_type, created_at, updated_at, context`. Dashboard + case detail + audit log
   (all from events). Assignment, status transitions, notes — all emit events.
 
 ### 4.3 Context Layer (`context-layer/`)
+
 - **Custom Entities / Events / Features** (dynamic JSONB schema). A **feature engine** computing
   real-time signals from the event stream (windowed counts/sums) consumed by Rule nodes.
 - **Connectors:** a `Connect` interface + a few reference connectors (HTTP/REST, SQL, a mock bureau)
   and a **Custom Connect Node** for arbitrary HTTP APIs. Connector results recorded as events.
 
 ### 4.4 Agent Manager (`agent-manager/`)
+
 - An **agent** = config over the pluggable **AI provider** + a tool set + a **structured-output
   schema** (name/type/description), invoked by the flow's **AI node**. Run logs, human-in-the-loop
   escalation (→ Case Manager), monitoring projection. Bring-your-own model via the provider iface.
@@ -152,9 +162,10 @@ Each `/decide` call becomes a **DecisionStarted** event; every node execution em
 ---
 
 ## 5. Cross-cutting (`platform/`)
-- `eventlog/` — append-only log + bus (§3.1).  `projection/` — projection runtime + rebuild.
-- `store/` — pluggable KV/JSONB store (SQLite, Postgres adapters).  `schema/` — JSON Schema
-  validation, dynamic types.  `ai/` — provider interface + adapters (Claude/OpenAI/Gemini/Ollama).
+
+- `eventlog/` — append-only log + bus (§3.1). `projection/` — projection runtime + rebuild.
+- `store/` — pluggable KV/JSONB store (SQLite, Postgres adapters). `schema/` — JSON Schema
+  validation, dynamic types. `ai/` — provider interface + adapters (Claude/OpenAI/Gemini/Ollama).
 - `httpx/` — server, routing (std `net/http` 1.22 mux or chi), middleware (auth, request-id).
 - `auth/` — **API keys (sandbox/production scopes)** for the decide/data APIs + a **minimal session
   login** for the builder UI; **org/workspace** identity on every request; pluggable SSO/OIDC later.
@@ -163,6 +174,7 @@ Each `/decide` call becomes a **DecisionStarted** event; every node execution em
 ---
 
 ## 6. Candidate tech (validate in Phase 0)
+
 Go: BadgerDB (log), `cel-go`, `expr-lang/expr`, `starlark-go`, `pgx` + `modernc.org/sqlite`,
 std `net/http`/`chi`. Frontend: SvelteKit, `@xyflow/svelte`, TypeScript, Vitest/Playwright.
 Tooling: `golangci-lint`, `golang.org/x/tools/cmd/deadcode`, `dupl` (Go) + `jscpd` (web) for
@@ -173,6 +185,7 @@ MIT/BSD/Apache-2.0); see the vetted table in [`docs/LICENSING.md`](docs/LICENSIN
 ---
 
 ## 7. Repository layout
+
 ```
 intraktible/
   PLAN.md  BUGS.md  README.md  go.work
@@ -191,18 +204,19 @@ intraktible/
 ---
 
 ## 8. Phased roadmap
+
 - **Phase 0 — Core & scaffolding — ✅ DONE.** Shipped: AGPL `LICENSE` + SPDX headers on every file
-  + license CI (`go-licenses`/`license-checker`); single Go module; `platform/eventlog` (pure-Go
-  file WAL + in-proc bus, durable & replayable); `platform/store` (in-memory JSONB projection store);
-  `platform/projection` (rebuild-from-offset-0 + live consumer); `platform/identity` (org/workspace
-  scoping); `platform/auth` (API keys sandbox/prod + minimal sessions); `platform/httpx` (server,
-  request-id, recover, logger, auth middleware); `platform/ai` (pluggable provider + Stub);
-  `platform/web` (`embed.FS` UI); the **`hello`** vertical slice (domain/events/command/stats/service)
-  proving command→event→projection→API→UI with restart-replay; tests (race) green; `cmd/intraktible
-  serve --modules`; Makefile + golangci-lint + CI workflow; Dockerfile + docker-compose; SvelteKit
-  scaffold. **Deferred from Phase 0** (tracked in `BUGS.md`): Badger backend (WAL used instead — open
-  Q1), durable SQLite/Postgres projection stores, JSON-Schema validation lib, Claude AI adapter
-  (Stub only), and running the SvelteKit build into the embed dir (Go placeholder UI serves for now).
+  - license CI (`go-licenses`/`license-checker`); single Go module; `platform/eventlog` (pure-Go
+    file WAL + in-proc bus, durable & replayable); `platform/store` (in-memory JSONB projection store);
+    `platform/projection` (rebuild-from-offset-0 + live consumer); `platform/identity` (org/workspace
+    scoping); `platform/auth` (API keys sandbox/prod + minimal sessions); `platform/httpx` (server,
+    request-id, recover, logger, auth middleware); `platform/ai` (pluggable provider + Stub);
+    `platform/web` (`embed.FS` UI); the **`hello`** vertical slice (domain/events/command/stats/service)
+    proving command→event→projection→API→UI with restart-replay; tests (race) green; `cmd/intraktible
+serve --modules`; Makefile + golangci-lint + CI workflow; Dockerfile + docker-compose; SvelteKit
+    scaffold. **Deferred from Phase 0** (tracked in `BUGS.md`): Badger backend (WAL used instead — open
+    Q1), durable SQLite/Postgres projection stores, JSON-Schema validation lib, Claude AI adapter
+    (Stub only), and running the SvelteKit build into the embed dir (Go placeholder UI serves for now).
 - **Phase 1 — Decision Engine — ✅ DONE.** Shipped: flow model + immutable etag'd versioning; a
   deterministic execution runtime over nine node engines (Input/Assignment/Rule/Split/Scorecard/
   Decision Table/2D Matrix/Code/Output — expr-lang for expressions, Starlark for the Code node)
@@ -247,13 +261,13 @@ intraktible/
   reference connectors (an arbitrary-HTTP one and a deterministic `mock_bureau`); a definition is
   `{name, type, config}` and invoking a connector is an effect recorded as a `ConnectorFetched`
   event (the stored response, not a re-fetch, is what replay reads) — API `/v1/context/connectors`
-  + `…/{name}/fetch` + `…/{name}/fetches`. A flow's **Connect node** is wired the same way as features:
-  the shell pre-resolves each connector (params = the current input), injects the response under
-  `connect.<output>`, and records it in `DecisionStarted` — via a `ConnectorProvider` port +
-  `connectors.Provider` adapter, so the pure core does no I/O and the engine never imports the Context
-  Layer. Full test pyramid (unit/integration/API-e2e); all CI gates green. **Deferred from Phase 3**
-  (in `BUGS.md`): a **SQL** reference connector (D14); an SSRF/egress policy for the HTTP connector
-  (D15).
+  - `…/{name}/fetch` + `…/{name}/fetches`. A flow's **Connect node** is wired the same way as features:
+    the shell pre-resolves each connector (params = the current input), injects the response under
+    `connect.<output>`, and records it in `DecisionStarted` — via a `ConnectorProvider` port +
+    `connectors.Provider` adapter, so the pure core does no I/O and the engine never imports the Context
+    Layer. Full test pyramid (unit/integration/API-e2e); all CI gates green. **Deferred from Phase 3**
+    (in `BUGS.md`): a **SQL** reference connector (D14); an SSRF/egress policy for the HTTP connector
+    (D15).
 - **Phase 4 — Agent Manager — ✅ DONE.** Shipped: **agent definitions** (a config over the
   pluggable AI provider — `name`, optional `provider`/`model`, `system` prompt, optional
   structured-output JSON `schema`, declared `tools`) and **agent runs** (invoking the provider with
@@ -278,7 +292,7 @@ intraktible/
   **Deferred from Phase 4** (in `BUGS.md`): tools are declared but not executed (D16); runs are
   synchronous and structured output is not schema-validated (D17); real (non-Stub) AI providers (D5).
 - **Phase 5 — Harden — ✅ DONE.** Shipped: **replay/rollback operator tooling** — `intraktible
-  log` prints the durable event log (one line per event) + a per-stream summary (the audit view), and
+log` prints the durable event log (one line per event) + a per-stream summary (the audit view), and
   `intraktible replay [--modules] [--as-of <seq>]` rebuilds the enabled modules' projections from the
   log into a fresh store and reports the rebuilt collections. `--as-of` is a read-only **log-based
   rollback** (rebuild as of an earlier seq), backed by `projection.RebuildTo(ctx, upTo)`; the
@@ -349,6 +363,15 @@ without first failing readiness, so every rolling deploy dropped requests. Note 
 first of those: **appends to the Postgres log are now globally serialized**, so write throughput under a
 networked log is bounded by that lock — measuring it is part of the still-open durable-log throughput
 work above.
+A **whole-product journey audit** (2026-07-27, BUGS.md) then followed every core journey across its
+UI control, HTTP command, event/projection fold, background scheduler, notification handoff, and
+restart/replay behavior. It closed statutory-retention bypasses, scheduled-deployment races and
+maker-checker gaps, non-durable SLA/agent escalations, disconnected model/approval/actuals and
+erasure surfaces, stale shared approval tasks, and suspended decisions whose case could terminate
+independently. The scheduler now participates in health, operational reads fail visibly instead of
+becoming reassuring empty states, Test names and enforces the published/deployed version it runs,
+and every documented discussion subject deep-links from an inbox notification to the exact thread.
+`docs/JOURNEYS.md` remains the executable product contract for these cross-component seams.
 Nothing here is a claim that a competitor is beaten — only a list of gaps to work through. The roadmap
 orders them hardest-blocker-first; each phase is a direction, not a committed date.
 
@@ -454,8 +477,8 @@ orders them hardest-blocker-first; each phase is a direction, not a committed da
   page** (grant/withdraw/review), and the demo seed records consent for its applicant/customer entities.
   **Records now carry evidence and are reframed as a lawful-basis record** (research: US/UK/EU +
   ISO 27560/Kantara, see `docs/CONSENT.md`). Cross-jurisdiction research found consent is usually the
-  *wrong* basis for credit decisioning (power imbalance → not freely given; the ICO's own worked example
-  is a credit-reference pull) — so a grant records the Art. 6 basis (contract/legitimate_interest for
+  _wrong_ basis for credit decisioning (power imbalance → not freely given; the ICO's own worked example
+  is a credit-reference pull) — so a grant records the Art. 6 basis (contract/legitimate*interest for
   decisioning, not consent) plus optional **`Evidence`**: how it was obtained (a controlled vocabulary),
   a reference to the signed artifact in the controller's own store, a **content hash** for tamper-
   evidence, and the **notice version** shown. The subject's data page lets an operator attach a file that
@@ -513,7 +536,7 @@ orders them hardest-blocker-first; each phase is a direction, not a committed da
   decision explanation cites the law that applies rather than hedging across all three — a UK-only
   workspace drops the EU Regulation; a US-only workspace cites the Equal Credit Opportunity Act, not
   Article 22. Editable on the compliance dashboard (admin), defaulting to all three when unset.
-  _Still open:_ byte-level WORM artifact storage; the ops-heavy scale tail (log compaction now shipped —
+  \_Still open:* byte-level WORM artifact storage; the ops-heavy scale tail (log compaction now shipped —
   a segmented, self-archiving WAL with soak + store-failure coverage; backup automation still open).
 
 **Parallel non-code track (organisational, not code):** SOC 2 Type II, ISO 27001, independent
@@ -522,6 +545,7 @@ deployments. Code does not produce these, and they gate a regulated rollout as m
 feature.
 
 ## 9. Scope boundaries (current)
+
 The original MVP non-goals have mostly been overtaken — **SSO (OIDC + SAML) and SCIM shipped** in the
 enterprise track. OIDC sessions retain the verified issuer, subject, session identifier, and raw ID
 token server-side. Intraktible completes OpenID Connect RP-Initiated Logout through the provider's
@@ -560,9 +584,10 @@ goal); exact API/UX parity with any commercial product (we are the open-source, 
 not a clone). Formerly a non-goal, now **moved into the §8b forward roadmap**: real data-connector
 breadth (Phase 9), production HA/clustering + scale-out correctness (Phase 8), and ONNX model serving at
 scale (a Phase 8/9 candidate). The **non-code work** (SOC 2 / ISO, pen tests, bureau relationships,
-model-validation staffing) is out of scope *for code* but tracked as the parallel track.
+model-validation staffing) is out of scope _for code_ but tracked as the parallel track.
 
 ## 10. Open questions
+
 All original backbone questions are **resolved and shipped**: log storage — a pluggable interface with
 file WAL / SQLite / Postgres / NATS JetStream backends (no single BadgerDB bet needed); code-node
 language — Starlark for the Code node + expr-lang for expressions (JS/WASM never required). Also locked
@@ -572,6 +597,7 @@ backbone, hybrid ES purity, build sequence (core→engine→cases→context→ag
 AI provider. New open questions now live in the §8b roadmap phases, not here.
 
 ## 11. GitHub Pages demo reliability
+
 The browser-hosted WebAssembly backend used a schema-aware local AI provider for its public,
 network-independent product journeys. Structured agent completions honored JSON Schema constants,
 enums, primitive types, nested objects, arrays, and numeric bounds before the real agent runtime

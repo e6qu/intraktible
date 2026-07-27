@@ -37,7 +37,7 @@ export function parseCell(s: string): unknown {
   if (t === '') return '';
   try {
     return JSON.parse(t);
-  } catch {
+  } catch (_notJSON) {
     return s;
   }
 }

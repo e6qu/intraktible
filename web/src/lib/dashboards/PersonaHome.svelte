@@ -44,15 +44,38 @@
   );
   const challengerCount = $derived(data.decisions.filter((d) => d.variant === 'challenger').length);
   const championCount = $derived(data.decisions.length - challengerCount);
-  // approvals — production changes awaiting four-eyes sign-off across flows (manager).
+  // approvals — production changes and model versions awaiting four-eyes sign-off
+  // (the manager's complete governance queue, not entity pre-approvals).
   const approvals = $derived(
-    data.flows
-      .flatMap((f) =>
-        (f.deployment_requests ?? [])
-          .filter((r) => r.status === 'pending')
-          .map((r) => ({ flow: f, req: r }))
+    [
+      ...data.flows.flatMap((flow) =>
+        (flow.deployment_requests ?? [])
+          .filter((request) => request.status === 'pending')
+          .map((request) => ({
+            key: `flow:${request.request_id}`,
+            badge: request.environment,
+            label: flow.name,
+            href: `/engine/${flow.flow_id}?tab=deploy`,
+            detail: `v${request.version} · ${request.requested_by.split('@')[0]}`,
+            requestedAt: request.requested_at
+          }))
+      ),
+      ...data.models.flatMap((model) =>
+        model.pending
+          ? [
+              {
+                key: `model:${model.pending.request_id}`,
+                badge: 'model',
+                label: model.name,
+                href: `/models?governance=${encodeURIComponent(model.name)}`,
+                detail: `v${model.pending.version} · ${model.pending.requested_by.split('@')[0]}`,
+                requestedAt: model.pending.requested_at
+              }
+            ]
+          : []
       )
-      .sort((a, b) => b.req.requested_at.localeCompare(a.req.requested_at))
+    ]
+      .sort((a, b) => b.requestedAt.localeCompare(a.requestedAt))
       .slice(0, 6)
   );
 </script>
@@ -95,24 +118,25 @@
     </section>
 
     {#if panel === 'approvals'}
-      <section aria-label="Pending approvals">
+      <section id="pending-approvals" aria-label="Pending approvals">
         <h2>Pending approvals</h2>
         {#if approvals.length === 0}
-          <p class="empty">No approvals pending — production changes are all signed off.</p>
+          <p class="empty">No flow or model approvals are pending.</p>
         {:else}
           <ul class="recent">
-            {#each approvals as a (a.req.request_id)}
+            {#each approvals as approval (approval.key)}
               <li>
-                <Badge tone="warn">{a.req.environment}</Badge>
-                <a class="slug" href={appHref(`/engine/${a.flow.flow_id}?tab=deploy`)}
-                  >{a.flow.name}</a
-                >
-                <span class="env">v{a.req.version} · {a.req.requested_by.split('@')[0]}</span>
-                <span class="when"><RelativeTime value={a.req.requested_at} /></span>
+                <Badge tone="warn">{approval.badge}</Badge>
+                <a class="slug" href={appHref(approval.href)}>{approval.label}</a>
+                <span class="env">{approval.detail}</span>
+                <span class="when"><RelativeTime value={approval.requestedAt} /></span>
               </li>
             {/each}
           </ul>
-          <a class="more" href={appHref('/engine')}>All flows →</a>
+          <p class="more">
+            <a href={appHref('/engine')}>Flow approvals</a> ·
+            <a href={appHref('/models')}>Model approvals</a>
+          </p>
         {/if}
       </section>
     {:else if panel === 'failing'}

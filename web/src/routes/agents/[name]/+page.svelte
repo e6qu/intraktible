@@ -148,19 +148,13 @@
   }
 
   // The run currently being escalated (per-run, so the spinner only disables that
-  // run's button — not every button on the page) and the set of runs already
-  // escalated this session (the API doesn't flag a run as escalated, so we hide
-  // the button after a successful open to stop duplicate-case spam).
+  // run's button — not every button on the page). The durable run.case_id is the
+  // escalation state; it survives reload/replay and the backend returns it
+  // idempotently if a request is retried.
   let escalating = $state('');
-  let escalated = $state<Set<string>>(new Set());
-  // run_id → the case opened for it, so each escalated run can surface a clickable
-  // "Open case" link (not just a transient toast) straight to the new case.
-  let escalatedCase = $state<Map<string, string>>(new Map());
-  // A completed run that hasn't been escalated yet is the only one worth
-  // escalating — a failed run has nothing to review, and re-escalating opens a
-  // duplicate case.
+  // A completed run that has no linked case is the only one worth escalating.
   function canEscalate(r: AgentRun): boolean {
-    return r.status === 'completed' && !escalated.has(r.run_id);
+    return r.status === 'completed' && !r.case_id;
   }
   async function escalate(r: AgentRun) {
     if (escalating === r.run_id) return; // guard against double-click on this run
@@ -178,10 +172,10 @@
         case_type: 'agent_review',
         sla_days: 3
       });
-      escalated = new Set(escalated).add(r.run_id);
-      escalatedCase = new Map(escalatedCase).set(r.run_id, case_id);
+      runs = runs.map((existing) =>
+        existing.run_id === r.run_id ? { ...existing, case_id } : existing
+      );
       toast.success(`Opened review case ${case_id.slice(0, 8)} (see Cases)`);
-      await load();
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     } finally {
@@ -220,7 +214,7 @@
       const parsed: unknown = JSON.parse(raw);
       const t = (parsed as { text?: unknown })?.text;
       return typeof t === 'string' ? t : null;
-    } catch {
+    } catch (_parseError) {
       return null;
     }
   }
@@ -261,7 +255,7 @@
       let m: { type?: unknown; text?: unknown };
       try {
         m = JSON.parse(e.data);
-      } catch {
+      } catch (_parseError) {
         failStream('stream returned a malformed message');
         return;
       }
@@ -479,7 +473,7 @@
           <div class="run-card-head">
             <Badge tone={statusTone(r.status)}>{r.status}</Badge>
             <span class="muted"><RelativeTime value={r.at} /></span>
-            {#if escalated.has(r.run_id)}<span class="muted">· escalated</span>{/if}
+            {#if r.case_id}<span class="muted">· escalated</span>{/if}
             {#if canEscalate(r)}
               <button
                 class="escalate"
@@ -494,11 +488,9 @@
               </button>
             {/if}
           </div>
-          {#if escalatedCase.has(r.run_id)}
+          {#if r.case_id}
             <p class="run-case">
-              <a href={appHref(`/cases/${escalatedCase.get(r.run_id)}`)}
-                >→ Open case {escalatedCase.get(r.run_id)}</a
-              >
+              <a href={appHref(`/cases/${r.case_id}`)}>→ Open case {r.case_id}</a>
             </p>
           {/if}
           {#if r.prompt}<p class="run-prompt" title={r.prompt}>{truncate(r.prompt, 120)}</p>{/if}

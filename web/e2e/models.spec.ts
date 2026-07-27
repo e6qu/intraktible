@@ -25,6 +25,120 @@ test('defines a predictive model from the registry page', async ({ page }) => {
   const driftRow = page.getByTestId('model-drift');
   await expect(driftRow).toBeVisible();
   await expect(driftRow).toContainText('No predictions recorded yet');
+
+  // Ground truth can arrive before this deployment has produced an in-platform
+  // prediction. Recording it through the real UI must preserve it and immediately
+  // turn the previously read-only performance panel into measured evidence.
+  await page.getByLabel('actual predicted probability').fill('0.9');
+  await page.getByLabel('actual outcome').selectOption('1');
+  await page.getByLabel('actual decision id').fill('decision-lineage-1');
+  await page.getByRole('button', { name: 'Record actual' }).click();
+  await expect(page.getByTestId('model-performance')).toContainText(
+    'Live performance (from 1 recorded actual)'
+  );
+
+  // The author can request review but cannot approve their own model.
+  await row.getByRole('button', { name: 'Governance' }).click();
+  const governance = page.getByTestId('model-governance');
+  await governance.getByRole('button', { name: 'Request approval' }).click();
+  const selfApprove = governance.getByRole('button', { name: 'Approve' });
+  await expect(selfApprove).toBeDisabled();
+  await expect(selfApprove).toHaveAttribute('title', /four-eyes/i);
+});
+
+test('a failed model drift summary is visibly unavailable', async ({ page, request }) => {
+  const name = 'drift-read-' + Math.random().toString(36).slice(2, 8);
+  const defined = await request.post('/v1/models', {
+    headers: { 'X-Api-Key': KEY },
+    data: {
+      name,
+      spec: { kind: 'logistic', intercept: -3, coefficients: { fico: 0.005 } }
+    }
+  });
+  expect(defined.ok()).toBeTruthy();
+  await page.route(`**/v1/models/${name}/drift`, (route) =>
+    route.fulfill({
+      status: 500,
+      contentType: 'application/json',
+      body: '{"error":"drift projection offline"}'
+    })
+  );
+
+  await page.goto('/models');
+  const row = page.locator('tbody tr').filter({ hasText: name }).first();
+  const unavailable = row.getByText('unavailable');
+  await expect(unavailable).toBeVisible();
+  await expect(unavailable).toHaveAttribute('title', 'drift projection offline');
+});
+
+test('a different actor approves a model with recorded reasoning', async ({ page, request }) => {
+  const suffix = Math.random().toString(36).slice(2, 8);
+  const keyResponse = await request.post('/v1/api-keys', {
+    headers: { 'X-Api-Key': KEY },
+    data: { name: `model-maker-${suffix}`, actor: `maker-${suffix}`, role: 'editor', scope: '*' }
+  });
+  expect(keyResponse.ok()).toBeTruthy();
+  const { secret } = await keyResponse.json();
+  const makerHeaders = { 'X-Api-Key': secret };
+  const name = `approved-${suffix}`;
+  const defined = await request.post('/v1/models', {
+    headers: makerHeaders,
+    data: {
+      name,
+      spec: { kind: 'logistic', intercept: -3, coefficients: { fico: 0.005 } }
+    }
+  });
+  expect(defined.ok()).toBeTruthy();
+  const requested = await request.post(`/v1/models/${name}/approval-request`, {
+    headers: makerHeaders
+  });
+  expect(requested.ok()).toBeTruthy();
+
+  // The manager cockpit includes model (not only flow) approvals and exposes both
+  // governance surfaces in its navigation.
+  await page.goto('/');
+  await page.evaluate(() => localStorage.setItem('intraktible-persona', 'manager'));
+  await page.reload();
+  const primary = page.getByRole('navigation', { name: 'Primary' });
+  await expect(primary.getByText('Flows')).toBeVisible();
+  await expect(primary.getByText('Models')).toBeVisible();
+  const pending = page.getByRole('region', { name: 'Pending approvals' });
+  await expect(pending).toContainText(name);
+  await expect(pending).toContainText('model');
+
+  // The shared approver notification lands directly in this model's Governance
+  // panel, so the checker does not have to rediscover the pending request.
+  const bell = page.getByTestId('notifications-bell');
+  await bell.locator('summary').click();
+  const notification = bell.locator('button.item').filter({
+    hasText: `Approval requested: model ${name} v1`
+  });
+  await expect(notification).toBeVisible();
+  await notification.click();
+  await expect(page).toHaveURL(
+    (url) =>
+      url.pathname === '/models' &&
+      url.searchParams.get('governance') === name &&
+      url.hash === '#model-governance'
+  );
+  const governance = page.getByTestId('model-governance');
+  await expect(governance).toBeVisible();
+  await governance.getByRole('button', { name: 'Approve' }).click();
+  await page.getByLabel('model decision reason').fill('Independent validation passed.');
+  const approvalRequest = page.waitForRequest(
+    (req) => req.url().endsWith(`/v1/models/${name}/approve`) && req.method() === 'POST'
+  );
+  await governance.getByRole('button', { name: 'Confirm approval' }).click();
+  expect((await approvalRequest).postDataJSON()).toMatchObject({
+    reason: 'Independent validation passed.'
+  });
+  await expect(governance.getByText('approved v1')).toBeVisible();
+
+  // Another approver must not keep seeing already-decided work as actionable.
+  await bell.locator('summary').click();
+  await expect(
+    bell.locator('button.item').filter({ hasText: `Approval requested: model ${name} v1` })
+  ).toHaveCount(0);
 });
 
 test('trains a logistic model from a dataset and shows the report', async ({ page }) => {

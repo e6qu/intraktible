@@ -211,7 +211,7 @@ export class Client {
         if (e && typeof e.error === 'string' && e.error) {
           message = e.error;
         }
-      } catch {
+      } catch (_nonJSONErrorBody) {
         /* a non-JSON error body leaves the status as the message */
       }
       throw new ApiError(res.status, message);

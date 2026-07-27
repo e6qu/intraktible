@@ -7,8 +7,10 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"sync"
 	"time"
 
 	"github.com/e6qu/intraktible/decision-engine/policy"
@@ -22,6 +24,7 @@ type Handler struct {
 	log   eventlog.Log
 	now   func() time.Time
 	newID func() string
+	mu    sync.Mutex
 }
 
 // NewHandler builds a Handler using the system clock and a random id source.
@@ -105,7 +108,84 @@ func (h *Handler) Revoke(ctx context.Context, id identity.Identity, ref entity.R
 	if ref.Empty() {
 		return eventlog.Envelope{}, fmt.Errorf("preapproval: entity_type and entity_id are required")
 	}
-	return h.append(ctx, id, TypeRevoked, Revoked{EntityType: string(ref.Type), EntityID: string(ref.ID), Reason: reason})
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	currentID, active, err := h.current(ctx, id, ref)
+	if err != nil {
+		return eventlog.Envelope{}, err
+	}
+	if currentID == "" {
+		return eventlog.Envelope{}, fmt.Errorf("preapproval: no pre-approval for %s:%s", ref.Type, ref.ID)
+	}
+	if !active {
+		return eventlog.Envelope{}, fmt.Errorf("preapproval: pre-approval %q is already revoked", currentID)
+	}
+	payload := Revoked{
+		PreApprovalID: currentID,
+		EntityType:    string(ref.Type),
+		EntityID:      string(ref.ID),
+		Reason:        reason,
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return eventlog.Envelope{}, fmt.Errorf("preapproval: marshal revoke: %w", err)
+	}
+	e, err := h.log.Append(ctx, eventlog.Envelope{
+		Org: id.Org, Workspace: id.Workspace, Actor: id.Actor,
+		Stream: StreamPreApprovals, Type: TypeRevoked, Time: h.now(), Payload: raw,
+		Unique: "preapproval.revoke\x00" + id.Org + "\x00" + id.Workspace + "\x00" + currentID,
+	})
+	if errors.Is(err, eventlog.ErrConflict) {
+		return eventlog.Envelope{}, fmt.Errorf("preapproval: pre-approval %q is already revoked", currentID)
+	}
+	return e, err
+}
+
+// current folds the entity's lifecycle from the authoritative log. The unique
+// revoke claim below resolves cross-process races; this fold supplies the
+// operator-facing validation and the exact grant id the revoke must target.
+func (h *Handler) current(
+	ctx context.Context,
+	id identity.Identity,
+	ref entity.Ref,
+) (preApprovalID string, active bool, err error) {
+	evs, err := h.log.ReadTenantStream(ctx, id.Org, id.Workspace, StreamPreApprovals, 0)
+	if err != nil {
+		return "", false, fmt.Errorf("preapproval: read lifecycle: %w", err)
+	}
+	for _, e := range evs {
+		switch e.Type {
+		case TypeGranted:
+			var p Granted
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				return "", false, fmt.Errorf("preapproval: decode granted seq %d: %w", e.Seq, err)
+			}
+			if p.EntityType == string(ref.Type) && p.EntityID == string(ref.ID) {
+				preApprovalID, active = p.PreApprovalID, true
+			}
+		case TypeRevoked:
+			var p Revoked
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				return "", false, fmt.Errorf("preapproval: decode revoked seq %d: %w", e.Seq, err)
+			}
+			if p.EntityType != string(ref.Type) || p.EntityID != string(ref.ID) {
+				continue
+			}
+			if p.PreApprovalID != "" && p.PreApprovalID != preApprovalID {
+				return "", false, fmt.Errorf(
+					"preapproval: revoke seq %d targets %q but current pre-approval is %q",
+					e.Seq, p.PreApprovalID, preApprovalID,
+				)
+			}
+			active = false
+		case TypeHonored:
+			var p Honored
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				return "", false, fmt.Errorf("preapproval: decode honored seq %d: %w", e.Seq, err)
+			}
+		}
+	}
+	return preApprovalID, active, nil
 }
 
 func (h *Handler) append(ctx context.Context, id identity.Identity, typ string, payload any) (eventlog.Envelope, error) {

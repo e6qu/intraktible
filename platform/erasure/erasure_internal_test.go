@@ -223,9 +223,9 @@ func TestVaultRetentionSweep(t *testing.T) {
 	}
 
 	// Sweep at +48h with a 24h limit erases "old" (created at T0) but not "new".
-	n, err := v.RetentionSweep(ctx, id, 24*time.Hour)
-	if err != nil || n != 1 {
-		t.Fatalf("sweep erased %d err=%v, want 1", n, err)
+	result, err := v.RetentionSweep(ctx, id, 24*time.Hour, nil)
+	if err != nil || result.Erased != 1 {
+		t.Fatalf("sweep result %+v err=%v, want one erased", result, err)
 	}
 	if erased, _ := v.Erased(ctx, id, "old"); !erased {
 		t.Fatal("old subject should be erased by retention")
@@ -284,12 +284,12 @@ func TestLegalHoldExemptsRetention(t *testing.T) {
 	}
 	// Now is a year later; a 30-day retention makes both "expired".
 	v.now = func() time.Time { return base.Add(365 * 24 * time.Hour) }
-	n, err := v.RetentionSweep(ctx, id, 30*24*time.Hour)
+	result, err := v.RetentionSweep(ctx, id, 30*24*time.Hour, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n != 1 {
-		t.Fatalf("swept %d, want 1 (the held subject is exempt)", n)
+	if result.Erased != 1 || result.Held != 1 {
+		t.Fatalf("sweep result %+v, want one erased and one held", result)
 	}
 	if erased, _ := v.Erased(ctx, id, "keep"); erased {
 		t.Fatal("held subject must survive retention")

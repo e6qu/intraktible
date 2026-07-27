@@ -418,7 +418,12 @@
                 {#if isClosed(c.status)}
                   <span class="muted">—</span>
                 {:else if c.sla_state && c.sla_state !== 'on_track'}
-                  <Badge tone={slaTone(c.sla_state)}>{c.days_left}d</Badge>
+                  <Badge
+                    tone={slaTone(c.sla_state)}
+                    title={c.sla_breached
+                      ? `external alert: ${c.sla_escalation_status ?? 'pending'}`
+                      : undefined}>{c.days_left}d</Badge
+                  >
                 {:else}
                   {c.days_left}d
                 {/if}

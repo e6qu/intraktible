@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"strconv"
 	"strings"
 	"sync"
@@ -340,11 +341,36 @@ func (h *Handler) Deploy(ctx context.Context, id identity.Identity, cmd domain.D
 // maker-checker). It validates the target version is published and records a
 // DeploymentRequested; a different user must ApproveDeployment to make it live.
 func (h *Handler) RequestDeployment(ctx context.Context, id identity.Identity, cmd domain.DeployVersion) (string, eventlog.Envelope, error) {
+	return h.requestDeployment(ctx, id, cmd, nil, nil)
+}
+
+// RequestScheduledDeployment proposes a future deployment for maker-checker
+// review. Approval creates the schedule; production never bypasses four-eyes.
+func (h *Handler) RequestScheduledDeployment(ctx context.Context, id identity.Identity, cmd domain.DeployVersion, at time.Time, until *time.Time) (string, eventlog.Envelope, error) {
+	at = at.UTC()
+	return h.requestDeployment(ctx, id, cmd, &at, until)
+}
+
+func (h *Handler) requestDeployment(ctx context.Context, id identity.Identity, cmd domain.DeployVersion, at, until *time.Time) (string, eventlog.Envelope, error) {
 	if err := id.Valid(); err != nil {
 		return "", eventlog.Envelope{}, err
 	}
 	if err := cmd.Validate(); err != nil {
 		return "", eventlog.Envelope{}, err
+	}
+	if at == nil && until != nil {
+		return "", eventlog.Envelope{}, fmt.Errorf("decision-engine: until requires a scheduled deployment time")
+	}
+	if at != nil {
+		if !at.After(h.now()) {
+			return "", eventlog.Envelope{}, fmt.Errorf("decision-engine: scheduled deployment time must be in the future")
+		}
+		if until != nil && !until.After(*at) {
+			return "", eventlog.Envelope{}, fmt.Errorf("decision-engine: until must be after at")
+		}
+		if cmd.ChallengerVersion != 0 || cmd.ChallengerPct != 0 {
+			return "", eventlog.Envelope{}, fmt.Errorf("decision-engine: scheduled deployments do not support a challenger")
+		}
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -363,6 +389,7 @@ func (h *Handler) RequestDeployment(ctx context.Context, id identity.Identity, c
 	payload, err := json.Marshal(events.DeploymentRequested{
 		RequestID: reqID, FlowID: cmd.FlowID, Environment: cmd.Environment,
 		Version: cmd.Version, ChallengerVersion: cmd.ChallengerVersion, ChallengerPct: cmd.ChallengerPct,
+		At: at, Until: until,
 	})
 	if err != nil {
 		return "", eventlog.Envelope{}, fmt.Errorf("decision-engine: marshal requested: %w", err)
@@ -404,10 +431,14 @@ func (h *Handler) ApproveDeployment(ctx context.Context, id identity.Identity, f
 		if req.superseded {
 			return eventlog.Envelope{}, fmt.Errorf("decision-engine: deployment request %q is stale — %s has been deployed since it was raised; reject it and request again", reqID, req.env)
 		}
+		var scheduleID string
+		if req.at != nil {
+			scheduleID = h.newID()
+		}
 		payload, err := json.Marshal(events.DeploymentApproved{
 			RequestID: reqID, FlowID: flowID, Environment: req.env,
 			Version: req.version, ChallengerVersion: req.challengerVersion, ChallengerPct: req.challengerPct,
-			Reason: reason,
+			Reason: reason, ScheduleID: scheduleID, At: req.at, Until: req.until,
 		})
 		if err != nil {
 			return eventlog.Envelope{}, fmt.Errorf("decision-engine: marshal approved: %w", err)
@@ -486,7 +517,7 @@ func (h *Handler) deployHistory(ctx context.Context, id identity.Identity, flowI
 			if err := json.Unmarshal(e.Payload, &p); err != nil {
 				return nil, fmt.Errorf("decision-engine: decode approved seq %d: %w", e.Seq, err)
 			}
-			if p.FlowID == flowID && p.Environment == env {
+			if p.FlowID == flowID && p.Environment == env && p.ScheduleID == "" {
 				versions = append(versions, p.Version)
 			}
 		case events.TypeFlowVersionRolledBack:
@@ -496,6 +527,38 @@ func (h *Handler) deployHistory(ctx context.Context, id identity.Identity, flowI
 			}
 			if p.FlowID == flowID && p.Environment == env {
 				versions = append(versions, p.Version)
+			}
+		case events.TypeDeployScheduleActivated:
+			var p events.DeployScheduleActivated
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				return nil, fmt.Errorf("decision-engine: decode schedule activated seq %d: %w", e.Seq, err)
+			}
+			if p.FlowID == flowID && p.Environment == env && p.Version > 0 {
+				versions = append(versions, p.Version)
+			}
+		case events.TypeDeployScheduleReverted:
+			var p events.DeployScheduleReverted
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				return nil, fmt.Errorf("decision-engine: decode schedule reverted seq %d: %w", e.Seq, err)
+			}
+			if p.FlowID == flowID && p.Environment == env && !p.Superseded {
+				if p.Version > 0 {
+					versions = append(versions, p.Version)
+				} else {
+					versions = nil
+				}
+			}
+		case events.TypeDeployScheduleCanceled:
+			var p events.DeployScheduleCanceled
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				return nil, fmt.Errorf("decision-engine: decode schedule canceled seq %d: %w", e.Seq, err)
+			}
+			if p.Active && p.FlowID == flowID && p.Environment == env && !p.Superseded {
+				if p.Version > 0 {
+					versions = append(versions, p.Version)
+				} else {
+					versions = nil
+				}
 			}
 		}
 	}
@@ -541,11 +604,17 @@ func (h *Handler) ScheduleDeploy(ctx context.Context, id identity.Identity, flow
 	if !domain.ValidEnvironment(env) {
 		return "", eventlog.Envelope{}, fmt.Errorf("%w: invalid environment %q", ErrBadRequest, env)
 	}
+	if domain.Environment(env) == domain.EnvProduction {
+		return "", eventlog.Envelope{}, fmt.Errorf("%w: production schedules require a deployment request and four-eyes approval", ErrBadRequest)
+	}
 	if version < 1 {
 		return "", eventlog.Envelope{}, fmt.Errorf("%w: version must be >= 1", ErrBadRequest)
 	}
 	if until != nil && !until.After(at) {
 		return "", eventlog.Envelope{}, fmt.Errorf("%w: until must be after at", ErrBadRequest)
+	}
+	if !at.After(h.now()) {
+		return "", eventlog.Envelope{}, fmt.Errorf("%w: scheduled deployment time must be in the future", ErrBadRequest)
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -582,65 +651,248 @@ func (h *Handler) CancelSchedule(ctx context.Context, id identity.Identity, flow
 	if scheduleID == "" {
 		return eventlog.Envelope{}, fmt.Errorf("%w: schedule_id is required", ErrBadRequest)
 	}
-	payload, err := json.Marshal(events.DeployScheduleCanceled{ScheduleID: scheduleID, FlowID: flowID, Reason: reason})
-	if err != nil {
-		return eventlog.Envelope{}, fmt.Errorf("decision-engine: marshal deploy_schedule_canceled: %w", err)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for attempt := 0; ; attempt++ {
+		state, ok, err := h.foldSchedule(ctx, id, scheduleID)
+		if err != nil {
+			return eventlog.Envelope{}, err
+		}
+		if !ok || state.flowID != flowID {
+			return eventlog.Envelope{}, fmt.Errorf("%w: unknown schedule %q for flow %q", ErrNotFound, scheduleID, flowID)
+		}
+		if state.status != schedulePending && state.status != scheduleActive {
+			return eventlog.Envelope{}, fmt.Errorf(
+				"%w: schedule %q is already %s", ErrBadRequest, scheduleID, state.status,
+			)
+		}
+		active := state.status == scheduleActive
+		superseded := false
+		if active {
+			history, err := h.deployHistory(ctx, id, state.flowID, state.environment)
+			if err != nil {
+				return eventlog.Envelope{}, err
+			}
+			current := 0
+			if len(history) > 0 {
+				current = history[len(history)-1]
+			}
+			superseded = current != state.version
+		}
+		payload, err := json.Marshal(events.DeployScheduleCanceled{
+			ScheduleID: state.scheduleID, FlowID: state.flowID, Environment: state.environment,
+			Version: state.priorVersion, FromVersion: state.version, Active: active,
+			Superseded: superseded, Reason: reason,
+		})
+		if err != nil {
+			return eventlog.Envelope{}, fmt.Errorf("decision-engine: marshal deploy_schedule_canceled: %w", err)
+		}
+		e, err := h.appendFlowEventUnique(
+			ctx, id, events.TypeDeployScheduleCanceled, payload, scheduleStateClaim(state.status, scheduleID),
+		)
+		if errors.Is(err, eventlog.ErrConflict) && attempt < maxClaimRetries {
+			continue
+		}
+		return e, err
 	}
-	return h.appendFlowEvent(ctx, id, events.TypeDeployScheduleCanceled, payload)
 }
 
-// ActivateSchedule is called by the deploy scheduler when a schedule's time has
-// arrived: it marks the schedule active (recording the prior live version for a
-// later revert) and deploys the scheduled version. The marker is recorded first so
-// a crash mid-activation cannot leave the schedule pending and re-deploy forever.
+// ActivateSchedule atomically marks a due schedule active and makes its version
+// live. Both projections fold this one claimed event, so a crash cannot leave the
+// lifecycle marker committed without the deployment.
 func (h *Handler) ActivateSchedule(ctx context.Context, id identity.Identity, scheduleID, flowID, env string, version, priorVersion int) error {
-	marker, err := json.Marshal(events.DeployScheduleActivated{ScheduleID: scheduleID, FlowID: flowID, PriorVersion: priorVersion})
+	if err := id.Valid(); err != nil {
+		return err
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	state, ok, err := h.foldSchedule(ctx, id, scheduleID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("decision-engine: unknown schedule %q", scheduleID)
+	}
+	if state.status != schedulePending {
+		return nil // another scheduler/canceler already completed the pending transition
+	}
+	if state.flowID != flowID || state.environment != env || state.version != version {
+		return fmt.Errorf("decision-engine: activation details do not match schedule %q", scheduleID)
+	}
+	history, err := h.deployHistory(ctx, id, flowID, env)
+	if err != nil {
+		return err
+	}
+	current := 0
+	if len(history) > 0 {
+		current = history[len(history)-1]
+	}
+	if current != priorVersion {
+		return fmt.Errorf(
+			"decision-engine: activation prior version for schedule %q is stale: got v%d, current is v%d",
+			scheduleID, priorVersion, current,
+		)
+	}
+	marker, err := json.Marshal(events.DeployScheduleActivated{
+		ScheduleID: scheduleID, FlowID: flowID, Environment: env, Version: version, PriorVersion: priorVersion,
+	})
 	if err != nil {
 		return fmt.Errorf("decision-engine: marshal deploy_schedule_activated: %w", err)
 	}
-	// The activation marker is claimed per schedule so two scheduler replicas ticking
-	// together can't both activate: the loser conflicts and skips (returns nil), which
-	// also prevents the PriorVersion-capture race that would strand the boxed version
-	// live forever. The claim gates the deploy below because we return on conflict.
-	if _, err := h.appendFlowEventUnique(ctx, id, events.TypeDeployScheduleActivated, marker, scheduleClaim("activate", scheduleID)); err != nil {
-		if errors.Is(err, eventlog.ErrConflict) {
-			return nil // another replica already activated this schedule
-		}
-		return err
-	}
-	deployed, err := json.Marshal(events.FlowVersionDeployed{FlowID: flowID, Environment: env, Version: version})
-	if err != nil {
-		return fmt.Errorf("decision-engine: marshal deployed: %w", err)
-	}
-	_, err = h.appendFlowEvent(ctx, id, events.TypeFlowVersionDeployed, deployed)
-	return err
-}
-
-// RevertSchedule is called by the scheduler when a time-boxed schedule's window
-// elapses: it marks the schedule reverted and (when a prior version existed)
-// re-deploys it. With no prior version the deployment is left in place (there is no
-// un-deploy), recorded only as reverted.
-func (h *Handler) RevertSchedule(ctx context.Context, id identity.Identity, scheduleID, flowID, env string, priorVersion int) error {
-	marker, err := json.Marshal(events.DeployScheduleReverted{ScheduleID: scheduleID, FlowID: flowID})
-	if err != nil {
-		return fmt.Errorf("decision-engine: marshal deploy_schedule_reverted: %w", err)
-	}
-	// Claimed per schedule so two replicas can't both revert (double rollback).
-	if _, err := h.appendFlowEventUnique(ctx, id, events.TypeDeployScheduleReverted, marker, scheduleClaim("revert", scheduleID)); err != nil {
+	// Activation races cancellation for the pending state's single transition.
+	if _, err := h.appendFlowEventUnique(ctx, id, events.TypeDeployScheduleActivated, marker, scheduleStateClaim(schedulePending, scheduleID)); err != nil {
 		if errors.Is(err, eventlog.ErrConflict) {
 			return nil
 		}
 		return err
 	}
-	if priorVersion < 1 {
-		return nil
+	return nil
+}
+
+// RevertSchedule atomically closes a time-boxed schedule and restores its prior
+// version when one existed. With no prior deployment, it records only the close.
+func (h *Handler) RevertSchedule(ctx context.Context, id identity.Identity, scheduleID, flowID, env string, version, priorVersion int) error {
+	if err := id.Valid(); err != nil {
+		return err
 	}
-	reverted, err := json.Marshal(events.FlowVersionRolledBack{FlowID: flowID, Environment: env, Version: priorVersion})
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	state, ok, err := h.foldSchedule(ctx, id, scheduleID)
 	if err != nil {
-		return fmt.Errorf("decision-engine: marshal rolled_back: %w", err)
+		return err
 	}
-	_, err = h.appendFlowEvent(ctx, id, events.TypeFlowVersionRolledBack, reverted)
-	return err
+	if !ok {
+		return fmt.Errorf("decision-engine: unknown schedule %q", scheduleID)
+	}
+	if state.status != scheduleActive {
+		return nil // another scheduler/canceler already completed the active transition
+	}
+	if state.flowID != flowID || state.environment != env || state.version != version || state.priorVersion != priorVersion {
+		return fmt.Errorf("decision-engine: revert details do not match schedule %q", scheduleID)
+	}
+	history, err := h.deployHistory(ctx, id, flowID, env)
+	if err != nil {
+		return err
+	}
+	current := 0
+	if len(history) > 0 {
+		current = history[len(history)-1]
+	}
+	marker, err := json.Marshal(events.DeployScheduleReverted{
+		ScheduleID: scheduleID, FlowID: flowID, Environment: env, Version: priorVersion,
+		FromVersion: version, Superseded: current != version,
+	})
+	if err != nil {
+		return fmt.Errorf("decision-engine: marshal deploy_schedule_reverted: %w", err)
+	}
+	// Revert races cancellation for the active state's single transition.
+	if _, err := h.appendFlowEventUnique(ctx, id, events.TypeDeployScheduleReverted, marker, scheduleStateClaim(scheduleActive, scheduleID)); err != nil {
+		if errors.Is(err, eventlog.ErrConflict) {
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
+type scheduleStatus string
+
+const (
+	schedulePending  scheduleStatus = "pending"
+	scheduleActive   scheduleStatus = "active"
+	scheduleReverted scheduleStatus = "reverted"
+	scheduleCanceled scheduleStatus = "canceled"
+)
+
+type scheduleState struct {
+	scheduleID, flowID, environment string
+	version, priorVersion           int
+	status                          scheduleStatus
+}
+
+func beginSchedule(state *scheduleState, found *bool, scheduleID, flowID, environment string, version int, seq uint64) error {
+	if *found {
+		return fmt.Errorf("decision-engine: duplicate schedule %q at seq %d", scheduleID, seq)
+	}
+	*state = scheduleState{
+		scheduleID: scheduleID, flowID: flowID, environment: environment,
+		version: version, status: schedulePending,
+	}
+	*found = true
+	return nil
+}
+
+// foldSchedule reconstructs one schedule from the event log, the command-side
+// source of truth used before every lifecycle transition.
+func (h *Handler) foldSchedule(ctx context.Context, id identity.Identity, scheduleID string) (scheduleState, bool, error) {
+	evs, err := h.log.ReadTenantStream(ctx, id.Org, id.Workspace, events.StreamFlows, 0)
+	if err != nil {
+		return scheduleState{}, false, err
+	}
+	var state scheduleState
+	found := false
+	for _, e := range evs {
+		switch e.Type {
+		case events.TypeDeployScheduled:
+			var p events.DeployScheduled
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				return scheduleState{}, false, fmt.Errorf("decision-engine: decode scheduled seq %d: %w", e.Seq, err)
+			}
+			if p.ScheduleID == scheduleID {
+				if err := beginSchedule(
+					&state, &found, p.ScheduleID, p.FlowID, p.Environment, p.Version, e.Seq,
+				); err != nil {
+					return scheduleState{}, false, err
+				}
+			}
+		case events.TypeDeploymentApproved:
+			var p events.DeploymentApproved
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				return scheduleState{}, false, fmt.Errorf("decision-engine: decode approved seq %d: %w", e.Seq, err)
+			}
+			if p.ScheduleID == scheduleID {
+				if err := beginSchedule(
+					&state, &found, p.ScheduleID, p.FlowID, p.Environment, p.Version, e.Seq,
+				); err != nil {
+					return scheduleState{}, false, err
+				}
+			}
+		case events.TypeDeployScheduleActivated:
+			var p events.DeployScheduleActivated
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				return scheduleState{}, false, fmt.Errorf("decision-engine: decode schedule activated seq %d: %w", e.Seq, err)
+			}
+			if p.ScheduleID == scheduleID {
+				if !found || state.status != schedulePending {
+					return scheduleState{}, false, fmt.Errorf("decision-engine: invalid activation for schedule %q at seq %d", scheduleID, e.Seq)
+				}
+				state.status, state.priorVersion = scheduleActive, p.PriorVersion
+			}
+		case events.TypeDeployScheduleReverted:
+			var p events.DeployScheduleReverted
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				return scheduleState{}, false, fmt.Errorf("decision-engine: decode schedule reverted seq %d: %w", e.Seq, err)
+			}
+			if p.ScheduleID == scheduleID {
+				if !found || state.status != scheduleActive {
+					return scheduleState{}, false, fmt.Errorf("decision-engine: invalid revert for schedule %q at seq %d", scheduleID, e.Seq)
+				}
+				state.status = scheduleReverted
+			}
+		case events.TypeDeployScheduleCanceled:
+			var p events.DeployScheduleCanceled
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				return scheduleState{}, false, fmt.Errorf("decision-engine: decode schedule canceled seq %d: %w", e.Seq, err)
+			}
+			if p.ScheduleID == scheduleID {
+				if !found || (state.status != schedulePending && state.status != scheduleActive) {
+					return scheduleState{}, false, fmt.Errorf("decision-engine: invalid cancellation for schedule %q at seq %d", scheduleID, e.Seq)
+				}
+				state.status = scheduleCanceled
+			}
+		}
+	}
+	return state, found, nil
 }
 
 // SetSLO records a flow's service-level objectives (success-rate + latency
@@ -719,6 +971,7 @@ type deployReq struct {
 	version, challengerVersion, challengerPct int
 	requestedBy                               string
 	status                                    flows.RequestStatus
+	at, until                                 *time.Time
 	// superseded records that the request's environment was deployed, rolled back,
 	// or approved onto by someone else after the request was raised. Approving then
 	// would silently revert live traffic to this request's older version.
@@ -759,7 +1012,8 @@ func (h *Handler) foldRequest(ctx context.Context, id identity.Identity, flowID,
 			}
 			if p.FlowID == flowID && p.RequestID == reqID {
 				req = deployReq{env: p.Environment, version: p.Version, challengerVersion: p.ChallengerVersion,
-					challengerPct: p.ChallengerPct, requestedBy: e.Actor, status: flows.RequestPending}
+					challengerPct: p.ChallengerPct, requestedBy: e.Actor, status: flows.RequestPending,
+					at: p.At, until: p.Until}
 				found = true
 			}
 		case events.TypeDeploymentApproved:
@@ -769,7 +1023,7 @@ func (h *Handler) foldRequest(ctx context.Context, id identity.Identity, flowID,
 			}
 			if p.RequestID == reqID {
 				req.status = flows.RequestApproved
-			} else if found && p.FlowID == flowID && p.Environment == req.env {
+			} else if found && p.FlowID == flowID && p.Environment == req.env && p.ScheduleID == "" {
 				req.superseded = true
 			}
 		case events.TypeDeploymentRejected:
@@ -792,6 +1046,14 @@ func (h *Handler) foldRequest(ctx context.Context, id identity.Identity, flowID,
 			var p events.FlowVersionRolledBack
 			if err := json.Unmarshal(e.Payload, &p); err != nil {
 				return deployReq{}, false, fmt.Errorf("decision-engine: decode rolled back seq %d: %w", e.Seq, err)
+			}
+			if found && p.FlowID == flowID && p.Environment == req.env {
+				req.superseded = true
+			}
+		case events.TypeDeployScheduleActivated:
+			var p events.DeployScheduleActivated
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				return deployReq{}, false, fmt.Errorf("decision-engine: decode schedule activated seq %d: %w", e.Seq, err)
 			}
 			if found && p.FlowID == flowID && p.Environment == req.env {
 				req.superseded = true
@@ -1063,6 +1325,11 @@ func (h *Handler) CaptureModelBaseline(ctx context.Context, id identity.Identity
 	if strings.TrimSpace(name) == "" {
 		return eventlog.Envelope{}, fmt.Errorf("decision-engine: model name is required")
 	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if err := h.requireModel(ctx, id, name); err != nil {
+		return eventlog.Envelope{}, err
+	}
 	payload, err := json.Marshal(events.ModelBaselineCaptured{Name: name})
 	if err != nil {
 		return eventlog.Envelope{}, fmt.Errorf("decision-engine: marshal model baseline: %w", err)
@@ -1080,8 +1347,7 @@ func (h *Handler) CaptureModelBaseline(ctx context.Context, id identity.Identity
 
 // RecordModelOutcome records a realized ground-truth outcome (label 0/1) for a
 // prediction a model made (probability in [0,1]), so live performance is measured
-// against actuals. decisionID is optional lineage. Recording an outcome for a model
-// with no folded predictions is a no-op in the projector (nothing to reconcile).
+// against actuals. decisionID is optional lineage.
 func (h *Handler) RecordModelOutcome(ctx context.Context, id identity.Identity, name string, probability, label float64, decisionID string) (eventlog.Envelope, error) {
 	if err := id.Valid(); err != nil {
 		return eventlog.Envelope{}, err
@@ -1089,11 +1355,16 @@ func (h *Handler) RecordModelOutcome(ctx context.Context, id identity.Identity, 
 	if strings.TrimSpace(name) == "" {
 		return eventlog.Envelope{}, fmt.Errorf("decision-engine: model name is required")
 	}
-	if probability < 0 || probability > 1 {
+	if math.IsNaN(probability) || math.IsInf(probability, 0) || probability < 0 || probability > 1 {
 		return eventlog.Envelope{}, fmt.Errorf("decision-engine: outcome probability %v: want a fraction in [0,1]", probability)
 	}
 	if label != 0 && label != 1 {
 		return eventlog.Envelope{}, fmt.Errorf("decision-engine: outcome label %v is not binary (0 or 1)", label)
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if err := h.requireModel(ctx, id, name); err != nil {
+		return eventlog.Envelope{}, err
 	}
 	payload, err := json.Marshal(events.ModelOutcomeRecorded{Name: name, Probability: probability, Label: label, DecisionID: decisionID})
 	if err != nil {
@@ -1119,6 +1390,11 @@ func (h *Handler) SetModelMonitor(ctx context.Context, id identity.Identity, nam
 	if strings.TrimSpace(name) == "" {
 		return eventlog.Envelope{}, fmt.Errorf("decision-engine: model name is required")
 	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if err := h.requireModel(ctx, id, name); err != nil {
+		return eventlog.Envelope{}, err
+	}
 	payload, err := json.Marshal(events.ModelMonitorSet{Name: name, Threshold: threshold})
 	if err != nil {
 		return eventlog.Envelope{}, fmt.Errorf("decision-engine: marshal model monitor: %w", err)
@@ -1132,6 +1408,21 @@ func (h *Handler) SetModelMonitor(ctx context.Context, id identity.Identity, nam
 		Time:      h.now(),
 		Payload:   payload,
 	})
+}
+
+// requireModel checks the command-side log aggregate, not the eventually
+// consistent projection, so a definition immediately followed by governance or
+// actuals reconciliation works without a projection race.
+// h.mu must be held by the caller.
+func (h *Handler) requireModel(ctx context.Context, id identity.Identity, name string) error {
+	g, err := h.foldModelGov(ctx, id, name)
+	if err != nil {
+		return err
+	}
+	if !g.exists {
+		return fmt.Errorf("decision-engine: unknown model %q", name)
+	}
+	return nil
 }
 
 // MarkModelDriftAlerted records that a model's PSI crossed its threshold (the
@@ -1207,10 +1498,10 @@ func decisionClaim(flowID, reqID string) string {
 	return "deployment.decision\x00" + flowID + "\x00" + reqID
 }
 
-// scheduleClaim reserves a schedule's one-shot activate/revert transition, so two
-// scheduler replicas sweeping the same due schedule cannot both fire it.
-func scheduleClaim(transition, scheduleID string) string {
-	return "deploy.schedule." + transition + "\x00" + scheduleID
+// scheduleStateClaim reserves the single exit from one lifecycle state:
+// activation races pending cancellation, while expiry races active cancellation.
+func scheduleStateClaim(status scheduleStatus, scheduleID string) string {
+	return "deploy.schedule." + string(status) + "\x00" + scheduleID
 }
 
 // foldTenant replays the flow stream for id's tenant into per-flow aggregates,

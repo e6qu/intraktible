@@ -18,7 +18,13 @@
     optOutSharing,
     optInSharing,
     getRetentionStatus,
+    getErasureStatus,
+    holdErasureSubject,
+    releaseErasureSubject,
+    eraseSubject,
     type RetentionStatus,
+    type ErasureStatus,
+    type SharingStatus,
     ApiError,
     type Entity,
     type EntityEvent,
@@ -32,11 +38,16 @@
   import { toast } from '$lib/toast';
 
   const canManageConsent = $derived(roleAtLeast($user?.role, 'operator'));
+  const canAdmin = $derived(roleAtLeast($user?.role, 'admin'));
   // GLBA sharing opt-out state for this subject (the opt-out mirror of consent).
-  let sharingOptedOut = $state(false);
+  let sharingOptedOut = $state<boolean | null>(null);
   let sharingBusy = $state(false);
   // Statutory record-retention status — whether the subject may be erased yet.
   let retention = $state<RetentionStatus | null>(null);
+  let erasureStatus = $state<ErasureStatus | null>(null);
+  let governanceBusy = $state('');
+  let holdReason = $state('');
+  let eraseAcknowledged = $state(false);
   let consentPurpose = $state('');
   // Default to a non-consent basis: for decisioning, the basis is usually contract or
   // legitimate interest, not "consent" (which is rarely freely given). See the hint.
@@ -77,6 +88,8 @@
   // Derive from the route params so navigating between sibling entities reloads.
   const type = $derived($page.params.type ?? '');
   const id = $derived($page.params.id ?? '');
+  // The subject key matches the decide integration + seeder convention: "<type>/<id>".
+  const subject = $derived(`${type}/${id}`);
 
   let entity = $state<Entity | null>(null);
   let events = $state<EntityEvent[]>([]);
@@ -103,24 +116,36 @@
     events = [];
     featureValues = [];
     consents = [];
-    sharingOptedOut = false;
+    sharingOptedOut = null;
     retention = null;
+    erasureStatus = null;
+    eraseAcknowledged = false;
     // Drop a stale response when sibling navigation changes type/id mid-flight.
     const reqType = type;
     const reqId = id;
     try {
-      const [ent, evs, feats, cons] = await Promise.all([
+      const [ent, evs, feats, cons, share, retained, erased] = await Promise.all([
         getEntity(key, type, id),
         listEntityEvents(key, type, id),
         // "None defined" and "none recorded" both come back as an empty list with a
         // 200, so only a 403 leaves these sections blank. Anything else reaches the
         // handler below instead of rendering as an entity that simply has no features.
         whenPermitted(getEntityFeatures(key, type, id), []),
-        whenPermitted(getConsents(key, `${type}/${id}`), [])
+        whenPermitted(getConsents(key, subject), []),
+        whenPermitted<SharingStatus | null>(getSharingStatus(key, subject), null),
+        whenPermitted<RetentionStatus | null>(getRetentionStatus(key, subject), null),
+        whenPermitted<ErasureStatus | null>(getErasureStatus(key, subject), null)
       ]);
       if (type !== reqType || id !== reqId) return;
-      [entity, events, featureValues, consents] = [ent, evs, feats, cons];
-      void reloadSharing();
+      [entity, events, featureValues, consents, retention, erasureStatus] = [
+        ent,
+        evs,
+        feats,
+        cons,
+        retained,
+        erased
+      ];
+      sharingOptedOut = share?.opted_out ?? null;
     } catch (e) {
       if (type === reqType && id === reqId) {
         if (e instanceof ApiError && e.status === 404) notFound = true;
@@ -130,8 +155,6 @@
       if (type === reqType && id === reqId) loading = false;
     }
   }
-  // The subject key matches the decide integration + seeder convention: "<type>/<id>".
-  const subject = $derived(`${type}/${id}`);
   async function reloadConsents() {
     try {
       consents = await whenPermitted(getConsents(key, subject), []);
@@ -139,19 +162,28 @@
       error = msg(e);
     }
   }
-  async function reloadSharing() {
+  async function reloadSubjectControls() {
     // A failed sharing read must not render as opted-in: this drives whether the
     // subject's data may be shared with third parties, so guessing the permissive
     // value is the one outcome that cannot be allowed to happen quietly.
     try {
-      const s = await whenPermitted(getSharingStatus(key, subject), { opted_out: false });
-      sharingOptedOut = s.opted_out;
-      retention = await whenPermitted(getRetentionStatus(key, subject), null);
+      const [share, retained, erased] = await Promise.all([
+        whenPermitted<SharingStatus | null>(getSharingStatus(key, subject), null),
+        whenPermitted<RetentionStatus | null>(getRetentionStatus(key, subject), null),
+        whenPermitted<ErasureStatus | null>(getErasureStatus(key, subject), null)
+      ]);
+      sharingOptedOut = share?.opted_out ?? null;
+      retention = retained;
+      erasureStatus = erased;
     } catch (e) {
       error = msg(e);
     }
   }
   async function toggleSharing() {
+    if (sharingOptedOut === null) {
+      toast.error('Sharing status is not available for this role.');
+      return;
+    }
     sharingBusy = true;
     try {
       if (sharingOptedOut) {
@@ -161,11 +193,73 @@
         await optOutSharing(key, { subject });
         toast.success('Recorded: opted out of information sharing.');
       }
-      await reloadSharing();
+      await reloadSubjectControls();
     } catch (e) {
       toast.error(msg(e));
     } finally {
       sharingBusy = false;
+    }
+  }
+
+  async function placeHold() {
+    if (!holdReason.trim()) {
+      toast.error('Record why this legal hold is required.');
+      return;
+    }
+    governanceBusy = 'hold';
+    try {
+      await holdErasureSubject(key, subject, holdReason.trim());
+      holdReason = '';
+      await reloadSubjectControls();
+      toast.success(`Legal hold placed on ${subject}.`);
+    } catch (e) {
+      toast.error(msg(e));
+    } finally {
+      governanceBusy = '';
+    }
+  }
+
+  async function releaseHold() {
+    if (
+      !confirm(
+        `Release the legal hold on ${subject}? An erasure request or retention sweep may then permanently destroy its encryption key.`
+      )
+    )
+      return;
+    governanceBusy = 'release';
+    try {
+      await releaseErasureSubject(key, subject);
+      await reloadSubjectControls();
+      toast.success(`Legal hold released for ${subject}.`);
+    } catch (e) {
+      toast.error(msg(e));
+    } finally {
+      governanceBusy = '';
+    }
+  }
+
+  async function eraseSubjectData() {
+    if (!eraseAcknowledged) {
+      toast.error('Acknowledge that crypto-shredding cannot be undone.');
+      return;
+    }
+    if (
+      !confirm(
+        `Permanently erase protected data for ${subject}? Its encryption key will be destroyed and cannot be recovered.`
+      )
+    )
+      return;
+    governanceBusy = 'erase';
+    try {
+      await eraseSubject(key, subject);
+      // Reload the event timeline too: protected values already held in browser
+      // memory must be replaced immediately by the backend's "[erased]" view.
+      await load();
+      toast.success(`Protected data for ${subject} was crypto-shredded.`);
+    } catch (e) {
+      toast.error(msg(e));
+    } finally {
+      governanceBusy = '';
     }
   }
   async function recordConsent() {
@@ -283,15 +377,17 @@
           record for the EU General Data Protection Regulation and the US Gramm-Leach-Bliley Act.
           For credit decisioning the basis is usually
           <em>contract</em> or <em>legitimate interest</em>, not <em>consent</em> (which is rarely freely
-          given given the power imbalance).
+          given because of the power imbalance).
         </p>
         <div class="sharing">
           <div>
             <span class="sharing-label">Information sharing</span>
-            {#if sharingOptedOut}
+            {#if sharingOptedOut === true}
               <span class="badge">opted out of sharing</span>
-            {:else}
+            {:else if sharingOptedOut === false}
               <span class="badge ok">sharing permitted</span>
+            {:else}
+              <span class="badge">status unavailable for this role</span>
             {/if}
             <span class="muted small"
               >— whether this subject's nonpublic personal information may be shared with
@@ -300,7 +396,11 @@
             >
           </div>
           {#if canManageConsent}
-            <button class="btn" disabled={sharingBusy} onclick={toggleSharing}>
+            <button
+              class="btn"
+              disabled={sharingBusy || sharingOptedOut === null}
+              onclick={toggleSharing}
+            >
               {sharingOptedOut ? 'Rescind opt-out' : 'Record opt-out'}
             </button>
           {/if}
@@ -420,6 +520,98 @@
       </section>
     {/if}
 
+    {#if canAdmin}
+      <section class="governance">
+        <h2>Data governance <span class="badge">Admin</span></h2>
+        <p class="muted small">
+          Manage the encryption key for <b>{subject}</b>. Erasure destroys protected field values
+          while retaining the append-only audit record.
+        </p>
+        {#if erasureStatus}
+          <div class="governance-status">
+            <span class="sharing-label">Subject key</span>
+            {#if erasureStatus.erased}
+              <span class="badge danger">crypto-shredded</span>
+            {:else if erasureStatus.held}
+              <span class="badge">legal hold active</span>
+            {:else}
+              <span class="badge ok">eligible when obligations allow</span>
+            {/if}
+          </div>
+
+          {#if erasureStatus.held}
+            <button
+              class="btn danger-outline"
+              disabled={governanceBusy !== ''}
+              onclick={releaseHold}
+            >
+              {governanceBusy === 'release' ? 'Releasing…' : 'Release legal hold'}
+            </button>
+          {:else if !erasureStatus.erased}
+            <div class="governance-form">
+              <input
+                aria-label="legal hold reason"
+                bind:value={holdReason}
+                placeholder="legal hold reason"
+                disabled={governanceBusy !== ''}
+              />
+              <button class="btn" disabled={governanceBusy !== ''} onclick={placeHold}>
+                {governanceBusy === 'hold' ? 'Placing…' : 'Place legal hold'}
+              </button>
+            </div>
+            <p class="muted small">
+              A hold can only protect a subject whose encryption key already exists. The backend
+              will reject an unknown or already-erased subject rather than record a meaningless
+              hold.
+            </p>
+          {/if}
+
+          {#if !erasureStatus.erased}
+            <div class="erase-panel">
+              <p>
+                <b>Right-to-erasure request</b><br />
+                <span class="muted small">
+                  This permanently destroys the subject's encryption key. It cannot be undone.
+                </span>
+              </p>
+              {#if erasureStatus.held}
+                <p class="blocked">Blocked by the active legal hold.</p>
+              {:else if retention?.retained}
+                <p class="blocked">
+                  Blocked by statutory retention until {retention.retain_until?.slice(0, 10)}.
+                </p>
+              {/if}
+              <label class="acknowledge">
+                <input
+                  type="checkbox"
+                  bind:checked={eraseAcknowledged}
+                  disabled={governanceBusy !== '' || erasureStatus.held || retention?.retained}
+                />
+                I understand that the protected data cannot be recovered.
+              </label>
+              <button
+                class="btn danger-fill"
+                disabled={governanceBusy !== '' ||
+                  erasureStatus.held ||
+                  retention?.retained ||
+                  !eraseAcknowledged}
+                onclick={eraseSubjectData}
+              >
+                {governanceBusy === 'erase' ? 'Erasing…' : 'Permanently erase protected data'}
+              </button>
+            </div>
+          {:else}
+            <p class="muted small">
+              This subject is tombstoned: future attempts to record protected fields are refused,
+              and encrypted values in the event timeline are irrecoverable.
+            </p>
+          {/if}
+        {:else}
+          <p class="muted">Erasure status is not available for this role.</p>
+        {/if}
+      </section>
+    {/if}
+
     <section>
       <h2>Event timeline <span class="muted">({events.length})</span></h2>
       {#if events.length === 0}
@@ -524,6 +716,10 @@
     background: var(--ok-bg, #dcfce7);
     color: var(--ok, #166534);
   }
+  .badge.danger {
+    background: color-mix(in srgb, var(--danger) 14%, transparent);
+    color: var(--danger);
+  }
   .sharing {
     display: flex;
     align-items: center;
@@ -592,6 +788,65 @@
   .btn:disabled {
     opacity: 0.5;
     cursor: default;
+  }
+  .governance {
+    padding: 0.9rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+  }
+  .governance-status {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin: 0.7rem 0;
+  }
+  .governance-form {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 0.7rem;
+  }
+  .governance-form input {
+    flex: 1 1 16rem;
+    min-width: 0;
+    padding: 0.35rem 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface);
+    color: var(--fg);
+    font: inherit;
+  }
+  .btn.danger-outline {
+    border-color: var(--danger);
+    color: var(--danger);
+  }
+  .erase-panel {
+    margin-top: 1rem;
+    padding: 0.8rem;
+    border: 1px solid color-mix(in srgb, var(--danger) 45%, var(--border));
+    border-radius: var(--radius);
+    background: color-mix(in srgb, var(--danger) 6%, var(--surface));
+  }
+  .erase-panel p {
+    margin: 0 0 0.6rem;
+  }
+  .blocked {
+    color: var(--danger);
+    font-size: 0.85rem;
+  }
+  .acknowledge {
+    display: flex;
+    align-items: start;
+    gap: 0.45rem;
+    margin: 0.7rem 0;
+    color: var(--fg-muted);
+    font-size: 0.85rem;
+  }
+  .btn.danger-fill {
+    border-color: var(--danger);
+    background: var(--danger);
+    color: var(--on-danger, white);
   }
   .timeline {
     list-style: none;

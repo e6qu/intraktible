@@ -22,11 +22,11 @@ credential with `INTRAKTIBLE_BOOTSTRAP_API_KEY` (a real secret, ≥16 chars) or 
 
 ## Durability (pick per environment)
 
-| Concern | Dev default | Production |
-| --- | --- | --- |
+| Concern          | Dev default                              | Production                                                                                         |
+| ---------------- | ---------------------------------------- | -------------------------------------------------------------------------------------------------- |
 | Projection store | in-memory (rebuilt from the log at boot) | `--store=sqlite` (single node) or `--store=postgres` (`INTRAKTIBLE_POSTGRES_DSN`) for shared/large |
-| Event log | file WAL | `--log=sqlite` (cross-process) — the system of record; back it up |
-| Modules | `--modules=all` | split per service with a shared `--log`/`--store` volume |
+| Event log        | file WAL                                 | `--log=sqlite` (cross-process) — the system of record; back it up                                  |
+| Modules          | `--modules=all`                          | split per service with a shared `--log`/`--store` volume                                           |
 
 A durable store **resumes from a checkpoint** at boot (no full rebuild); the in-memory
 store always full-rebuilds from the log.
@@ -50,7 +50,7 @@ store always full-rebuilds from the log.
   `basic` | `query` | `oauth2`) plus custom `headers`; `oauth2` is the client-credentials grant
   (token fetched from `token_url`, cached by its expiry, sent as a bearer). `plaid` and `stripe`
   are first-class provider adapters (preconfigured base URL + auth scheme — supply only credentials
-  + the request).
+  - the request).
 - **SQL connector files** — `ITK_SQL_CONNECTOR_DIR` confines sqlite-connector databases to a
   directory (always read-only).
 - **PII erasure** — configure erasure fields so recorded decision PII is crypto-shreddable.
@@ -62,8 +62,9 @@ store always full-rebuilds from the log.
 
 ## Health & introspection
 
-- `GET /healthz` — **liveness** + projection health (503 `degraded` if a projection stalled, so an
-  orchestrator can depool/restart).
+- `GET /healthz` — **liveness** + projection/log/scheduler health (503 `degraded`
+  if projection consumption, the live log, or any configured background sweep
+  failed; a later successful tick clears only that scheduler's latched failure).
 - `GET /readyz` — **readiness**: 503 (`rebuilding`) until this replica's projections have caught
   up to the log head, then 200 (`ready`). Wire it as the readiness probe so a rolling deploy never
   routes traffic to a pod still rebuilding its read models. Reports `{applied, head}`.
@@ -81,10 +82,12 @@ store always full-rebuilds from the log.
 - Flow monitors (`distribution_drift` etc.) + the immutable audit log (`GET /v1/audit`).
 - **Model drift** — `GET /v1/models/{name}/drift` (PSI vs a captured baseline; `?window=Nd`),
   with a `POST …/monitor` PSI threshold.
-- Optional schedulers: `INTRAKTIBLE_MONITOR_INTERVAL` (e.g. `1m`) sweeps on that cadence and
-  pushes both firing **flow monitors** and **model-drift** crossings to webhooks — on the
-  ok→firing edge only (deduped), resetting on firing→ok. `INTRAKTIBLE_MODEL_DRIFT_WINDOW` (days)
-  narrows the drift window the scheduler fires on (default: all-time cumulative).
+- Optional schedulers: `INTRAKTIBLE_MONITOR_INTERVAL` (e.g. `1m`) drives every
+  enabled timed sweep on that cadence: flow monitors, model drift, scheduled
+  deployment activation/revert, case SLA reminders/breaches/retryable delivery,
+  and retention policy. Monitor/drift notifications fire on state edges rather
+  than every tick. `INTRAKTIBLE_MODEL_DRIFT_WINDOW` (days) narrows the drift
+  window (default: all-time cumulative).
 
 ## Quality gate (CI parity)
 

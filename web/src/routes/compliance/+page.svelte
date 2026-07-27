@@ -19,6 +19,9 @@
     listLegalHolds,
     getRetentionPolicy,
     listErasedSubjects,
+    releaseErasureSubject,
+    setRetentionPolicy,
+    runRetentionSweep,
     listSharingRecords,
     listContests,
     getJurisdiction,
@@ -30,6 +33,7 @@
     type ConsentRecord,
     type LegalHold,
     type RetentionPolicy,
+    type RetentionSweepResult,
     type SharingRecord,
     type Contest,
     type JurisdictionSetting
@@ -69,6 +73,10 @@
   let contests = $state<Contest[]>([]);
   let jurisdiction = $state<JurisdictionSetting | null>(null);
   let savingJurisdiction = $state(false);
+  let retentionDays = $state(0);
+  let sweepDays = $state(30);
+  let governanceBusy = $state('');
+  let sweepResult = $state<RetentionSweepResult | null>(null);
 
   const REGIMES = [
     { code: 'eu', label: 'EU (General Data Protection Regulation)' },
@@ -95,6 +103,80 @@
       toast.error(e instanceof Error ? e.message : String(e));
     } finally {
       savingJurisdiction = false;
+    }
+  }
+
+  async function reloadGovernance() {
+    const [nextHolds, nextRetention, erased] = await Promise.all([
+      listLegalHolds(key),
+      getRetentionPolicy(key),
+      listErasedSubjects(key)
+    ]);
+    holds = nextHolds;
+    retention = nextRetention;
+    retentionDays = nextRetention.retention_days;
+    erasedCount = erased.length;
+  }
+
+  async function saveRetentionPolicy() {
+    if (!Number.isInteger(retentionDays) || retentionDays < 0) {
+      toast.error('Retention days must be a whole number of zero or greater.');
+      return;
+    }
+    governanceBusy = 'policy';
+    try {
+      retention = await setRetentionPolicy(key, retentionDays);
+      toast.success(
+        retentionDays === 0
+          ? 'Automatic retention erasure disabled.'
+          : `Retention window set to ${retentionDays} days.`
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      governanceBusy = '';
+    }
+  }
+
+  async function releaseHold(subject: string) {
+    if (
+      !confirm(
+        `Release the legal hold on ${subject}? Future erasure requests and retention sweeps may then destroy its encryption key.`
+      )
+    )
+      return;
+    governanceBusy = `release:${subject}`;
+    try {
+      await releaseErasureSubject(key, subject);
+      await reloadGovernance();
+      toast.success(`Legal hold released for ${subject}.`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      governanceBusy = '';
+    }
+  }
+
+  async function sweepRetention() {
+    if (!Number.isInteger(sweepDays) || sweepDays <= 0) {
+      toast.error('Sweep age must be a positive whole number of days.');
+      return;
+    }
+    if (
+      !confirm(
+        `Run retention now for subjects older than ${sweepDays} days? Eligible encryption keys will be permanently destroyed. Legal holds and statutory retention remain protected.`
+      )
+    )
+      return;
+    governanceBusy = 'sweep';
+    try {
+      sweepResult = await runRetentionSweep(key, sweepDays);
+      await reloadGovernance();
+      toast.success(`Retention sweep completed: ${sweepResult.erased} subject(s) erased.`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      governanceBusy = '';
     }
   }
 
@@ -125,6 +207,7 @@
         sh,
         co
       ];
+      retentionDays = ret?.retention_days ?? 0;
       jurisdiction = await whenPermitted(getJurisdiction(key), null);
     } catch (e) {
       loadError = e instanceof Error ? e.message : String(e);
@@ -357,6 +440,29 @@
               <dd>{erasedCount}</dd>
             </div>
           </dl>
+          <div class="governance-form">
+            <label>
+              Scheduled retention window
+              <span>
+                <input
+                  aria-label="retention days"
+                  type="number"
+                  min="0"
+                  step="1"
+                  bind:value={retentionDays}
+                  disabled={governanceBusy !== ''}
+                />
+                days
+              </span>
+            </label>
+            <button class="action" disabled={governanceBusy !== ''} onclick={saveRetentionPolicy}>
+              {governanceBusy === 'policy' ? 'Saving…' : 'Save policy'}
+            </button>
+          </div>
+          <p class="hint">
+            Zero disables automatic erasure. Saving changes the scheduler policy; it does not erase
+            anything immediately.
+          </p>
           {#if holds.length > 0}
             <ul class="holds">
               {#each holds.slice(0, 5) as h (h.subject)}
@@ -367,9 +473,51 @@
                     <span>{h.subject}</span>
                   {/if}
                   <span class="muted small">{h.reason || 'held'}</span>
+                  <button
+                    class="link danger"
+                    disabled={governanceBusy !== ''}
+                    onclick={() => releaseHold(h.subject)}
+                  >
+                    {governanceBusy === `release:${h.subject}` ? 'Releasing…' : 'Release hold'}
+                  </button>
                 </li>
               {/each}
             </ul>
+          {/if}
+
+          <h3 class="sub-h">Run retention now</h3>
+          <p class="hint">
+            Permanently crypto-shred eligible subject keys older than this age. Manual holds and
+            statutory record-retention obligations are always preserved.
+          </p>
+          <div class="governance-form">
+            <label>
+              Maximum age
+              <span>
+                <input
+                  aria-label="retention sweep age"
+                  type="number"
+                  min="1"
+                  step="1"
+                  bind:value={sweepDays}
+                  disabled={governanceBusy !== ''}
+                />
+                days
+              </span>
+            </label>
+            <button
+              class="action danger-outline"
+              disabled={governanceBusy !== ''}
+              onclick={sweepRetention}
+            >
+              {governanceBusy === 'sweep' ? 'Running…' : 'Run irreversible sweep'}
+            </button>
+          </div>
+          {#if sweepResult}
+            <p class="sweep-result" aria-live="polite">
+              Last run: {sweepResult.erased} erased · {sweepResult.held} held ·
+              {sweepResult.statutory_retained} statutorily retained.
+            </p>
           {/if}
 
           {#if jurisdiction}
@@ -572,6 +720,9 @@
   .reviews .ago {
     margin-left: auto;
   }
+  .holds .link {
+    margin-left: auto;
+  }
   .badge {
     display: inline-block;
     padding: 0.05rem 0.5rem;
@@ -643,6 +794,68 @@
   }
   .stats dd.warn {
     color: var(--warn);
+  }
+  .governance-form {
+    display: flex;
+    align-items: end;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+    margin-top: 0.9rem;
+  }
+  .governance-form label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    color: var(--fg-muted);
+    font-size: 0.8rem;
+  }
+  .governance-form label span {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+  }
+  .governance-form input {
+    width: 7rem;
+    padding: 0.35rem 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface);
+    color: var(--fg);
+    font: inherit;
+  }
+  .action {
+    padding: 0.4rem 0.7rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface-2);
+    color: var(--fg);
+    font: inherit;
+    cursor: pointer;
+  }
+  .action.danger-outline {
+    border-color: var(--danger);
+    color: var(--danger);
+  }
+  .action:disabled,
+  .link:disabled {
+    cursor: default;
+    opacity: 0.55;
+  }
+  button.link {
+    padding: 0.2rem;
+    border: 0;
+    background: none;
+    color: var(--accent);
+    font: inherit;
+    cursor: pointer;
+  }
+  button.link.danger {
+    color: var(--danger);
+  }
+  .sweep-result {
+    margin: 0.7rem 0 0;
+    color: var(--fg-muted);
+    font-size: 0.82rem;
   }
   a {
     color: var(--accent-ink);

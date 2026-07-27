@@ -89,6 +89,26 @@ func TestAgentAPIEndToEnd(t *testing.T) {
 	if esc.CaseID == "" {
 		t.Fatal("escalation returned no case id")
 	}
+	var retry struct {
+		CaseID string `json:"case_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/agents/triage/runs/"+run.RunID+"/escalate",
+		map[string]any{"company_name": "Acme retry", "case_type": "fraud", "sla_days": 9},
+		http.StatusAccepted, &retry)
+	if retry.CaseID != esc.CaseID {
+		t.Fatalf("retry returned case %q, want %q", retry.CaseID, esc.CaseID)
+	}
+	if !testutil.Eventually(t, func() bool {
+		var projected agents.RunView
+		api.Request(t, http.MethodGet, "/v1/agent-runs/"+run.RunID, nil, http.StatusOK, &projected)
+		return projected.CaseID == esc.CaseID
+	}) {
+		t.Fatal("run never exposed its durable case link")
+	}
+	// The agent path is part of the target: a run cannot be escalated through a
+	// different agent's URL.
+	api.Request(t, http.MethodPost, "/v1/agents/other/runs/"+run.RunID+"/escalate",
+		map[string]any{"company_name": "Acme", "sla_days": 3}, http.StatusBadRequest, nil)
 
 	// Run monitoring summary.
 	var sum agents.RunSummary

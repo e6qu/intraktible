@@ -125,6 +125,7 @@ type DecisionSuspended struct {
 // The outcome is injected into the record and the flow runs on to a terminal event.
 type DecisionResumed struct {
 	DecisionID string          `json:"decision_id"`
+	CaseID     string          `json:"case_id,omitempty"`
 	Actor      string          `json:"actor"`
 	Outcome    json.RawMessage `json:"outcome"`
 }

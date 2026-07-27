@@ -17,6 +17,26 @@ test('shows AI usage and the SLO surface', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Request tracing' })).toBeVisible();
 });
 
+test('a failed SLO read is an error, not an unset objective', async ({ page, request }) => {
+  const created = await request.post('/v1/flows', {
+    headers: { 'X-Api-Key': KEY },
+    data: { slug: uniqueSlug(), name: 'Unknown SLO State' }
+  });
+  const { flow_id } = await created.json();
+  await page.route(`**/v1/flows/${flow_id}/slo`, (route) =>
+    route.fulfill({
+      status: 500,
+      contentType: 'application/json',
+      body: '{"error":"SLO projection offline"}'
+    })
+  );
+
+  await page.goto('/observability');
+  await expect(page.getByText('SLO projection offline')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Set objective' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Retry' })).toBeVisible();
+});
+
 test('sets and clears a per-flow SLO objective', async ({ page, request }) => {
   // Clearing an objective asks for confirmation — accept it.
   page.on('dialog', (d) => d.accept());

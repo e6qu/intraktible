@@ -7,9 +7,11 @@
     assignCase,
     setCaseStatus,
     addCaseNote,
+    getDecision,
     ApiError,
     type Case,
-    type CaseStatus
+    type CaseStatus,
+    type Decision
   } from '$lib/api';
   import { displayEntries } from '$lib/kv';
   import Breadcrumb from '$lib/Breadcrumb.svelte';
@@ -18,7 +20,7 @@
   import Skeleton from '$lib/Skeleton.svelte';
   import EmptyState from '$lib/EmptyState.svelte';
   import Badge from '$lib/Badge.svelte';
-  import { caseStatusTone, slaTone } from '$lib/badge';
+  import { caseStatusTone, slaTone, statusTone } from '$lib/badge';
   import { roleAtLeast } from '$lib/roles';
   import { user } from '$lib/session';
   import { appHref } from '$lib/paths';
@@ -27,6 +29,7 @@
   // API calls authenticate via the session cookie (empty key -> no X-Api-Key header).
   const key = '';
   let c = $state<Case | null>(null);
+  let sourceDecision = $state<Decision | null>(null);
   let error = $state('');
   // A 404 is a distinct, expected state — a mistyped/stale id — and gets a polished
   // EmptyState rather than the raw red error string used for real failures (network,
@@ -51,6 +54,7 @@
   // guarded for forward-compat.)
   const TERMINAL = new Set(['completed', 'resolved', 'cancelled']);
   const closed = $derived(c != null && TERMINAL.has(c.status));
+  const sourceSuspended = $derived(sourceDecision?.status === 'suspended');
 
   // The SLA state is a wire enum (on_track/due_soon/overdue) — render it as a
   // human label, not the raw underscored value.
@@ -67,8 +71,12 @@
       // Only refresh the displayed case; the action inputs are user-controlled
       // (resetting them on every reload would race with the user's selection).
       const got = await getCase(key, caseID);
+      const decision = got.source_decision_id
+        ? await getDecision(key, got.source_decision_id)
+        : null;
       if (caseID !== reqID) return;
       c = got;
+      sourceDecision = decision;
       if (!statusSeeded) {
         newStatus = got.status;
         statusSeeded = true;
@@ -129,6 +137,7 @@
     // Reset the rendered case and the status seed — otherwise a failed sibling
     // load keeps showing the previous case (and its status in the select).
     c = null;
+    sourceDecision = null;
     statusSeeded = false;
     void load();
   });
@@ -168,9 +177,26 @@
               class="muted">{' ('}{slaLabel(c.sla_state)})</span
             >{/if}{/if}
       </dd>
+      {#if c.sla_breached}
+        <dt>external SLA alert</dt>
+        <dd>
+          {#if c.sla_escalation_status === 'delivered'}
+            delivered
+          {:else if c.sla_escalation_status === 'no_channel'}
+            <span class="muted">not sent — no matching webhook is configured</span>
+          {:else if c.sla_escalation_status === 'permanent_failure'}
+            <span class="error">not sent — webhook rejected the alert permanently</span>
+          {:else}
+            <span class="muted">delivery pending · retry scheduled</span>
+          {/if}
+        </dd>
+      {/if}
       {#if c.source_decision_id}<dt>source decision</dt>
         <dd>
           <a href={appHref(`/decisions/${c.source_decision_id}`)}>{c.source_decision_id} →</a>
+          {#if sourceDecision}
+            <Badge tone={statusTone(sourceDecision.status)}>{sourceDecision.status}</Badge>
+          {/if}
         </dd>
       {/if}
     </dl>
@@ -204,7 +230,22 @@
   {/if}
   {#if error && !notFound}<p class="err">{error}</p>{/if}
 
-  {#if c && c.status !== 'completed'}
+  {#if c && c.status !== 'completed' && sourceSuspended}
+    <div class="resolve-bar resume-required">
+      <div>
+        <strong>Record the human outcome to finish this task</strong>
+        <p class="muted">
+          This case owns a suspended decision. Approve, decline, or refer it on the decision trace;
+          the same recorded action resumes the flow and completes this case.
+        </p>
+      </div>
+      <a
+        class="resolve"
+        data-testid="case-resume-decision"
+        href={appHref(`/decisions/${c.source_decision_id}`)}>Review decision →</a
+      >
+    </div>
+  {:else if c && c.status !== 'completed'}
     <div class="resolve-bar">
       <button
         class="resolve"
@@ -252,13 +293,18 @@
         <select bind:value={newStatus} aria-label="set status">
           <option value="needs_review">needs_review</option>
           <option value="in_progress">in_progress</option>
-          <option value="completed">completed</option>
+          <option value="completed" disabled={sourceSuspended}>completed</option>
         </select>
         <button
           onclick={() => run(() => setCaseStatus(key, caseID, newStatus), 'Status updated')}
-          disabled={busy || !roleAtLeast($user?.role, 'operator')}
-          title={!roleAtLeast($user?.role, 'operator') ? 'Requires the operator role' : undefined}
-          >Set status</button
+          disabled={busy ||
+            (sourceSuspended && newStatus === 'completed') ||
+            !roleAtLeast($user?.role, 'operator')}
+          title={!roleAtLeast($user?.role, 'operator')
+            ? 'Requires the operator role'
+            : sourceSuspended && newStatus === 'completed'
+              ? 'Record the outcome on the suspended decision to complete this case'
+              : undefined}>Set status</button
         >
       </div>
       <div class="row">
@@ -401,6 +447,17 @@
     align-items: center;
     gap: 0.6rem;
     margin: 1rem 0;
+  }
+  .resume-required {
+    justify-content: space-between;
+  }
+  .resume-required p {
+    margin: 0.3rem 0 0;
+    max-width: 38rem;
+  }
+  .resume-required a.resolve {
+    text-decoration: none;
+    white-space: nowrap;
   }
   .resolve {
     font: inherit;

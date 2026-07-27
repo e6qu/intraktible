@@ -64,7 +64,7 @@ func FuzzCaseProjector(f *testing.F) {
 			_ = proj.Apply(ctx, e, s)
 		}
 		// The fold must leave the store in a listable state for any recipient.
-		if _, err := notifications.List(ctx, s, identity.Identity{Org: "demo", Workspace: "main", Actor: "alice"}, true); err != nil {
+		if _, err := notifications.List(ctx, s, identity.Identity{Org: "demo", Workspace: "main", Actor: "alice"}, notifications.Access{ReviewTasks: true}); err != nil {
 			t.Fatalf("List after fold: %v", err)
 		}
 	})

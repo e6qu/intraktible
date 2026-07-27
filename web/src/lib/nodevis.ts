@@ -85,13 +85,13 @@ export function nodeAccent(type: string): string {
   return isNodeType(type) ? `var(--node-${type})` : 'var(--accent)';
 }
 
-function parse(config: string): Record<string, unknown> {
+function parse(config: string): Record<string, unknown> | null {
   if (!config.trim()) return {};
   try {
     const v = JSON.parse(config);
-    return v && typeof v === 'object' ? (v as Record<string, unknown>) : {};
-  } catch {
-    return {};
+    return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+  } catch (_parseError) {
+    return null;
   }
 }
 
@@ -108,6 +108,7 @@ function plural(n: number, one: string): string {
 export function nodeSummary(type: string, config: string): string {
   if (!isNodeType(type)) return type; // tolerant: a partial/unknown type shows itself
   const c = parse(config);
+  if (c === null) return 'invalid config';
   switch (type) {
     case 'input':
       return 'flow entry';

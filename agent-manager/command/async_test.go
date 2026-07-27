@@ -78,10 +78,10 @@ func TestStartRunCompletesAsynchronously(t *testing.T) {
 	}
 }
 
-// TestStartRunFullQueueFallbackStaysAsync proves the full-queue fallback runs the
-// agent off the request goroutine: StartRun returns promptly (the 202 contract)
-// even with no workers draining the queue, and the overflow run still completes.
-func TestStartRunFullQueueFallbackStaysAsync(t *testing.T) {
+// TestStartRunRejectsFullQueue proves admission stays bounded: saturation is
+// reported before an accepted/running event is recorded, and no overflow
+// goroutine is created outside the worker pool.
+func TestStartRunRejectsFullQueue(t *testing.T) {
 	log, st := testutil.NewLogStore(t)
 	reg := ai.NewRegistry()
 	reg.Register(ai.Stub{})
@@ -98,32 +98,22 @@ func TestStartRunFullQueueFallbackStaysAsync(t *testing.T) {
 		}
 	}
 
-	type res struct {
-		id  string
-		err error
+	if runID, err := h.StartRun(context.Background(), id, "echo", "overflow"); err == nil || runID != "" {
+		t.Fatalf("full queue accepted overflow run: id=%q err=%v", runID, err)
 	}
-	done := make(chan res, 1)
-	go func() {
-		runID, err := h.StartRun(context.Background(), id, "echo", "overflow")
-		done <- res{runID, err}
-	}()
-
-	var r res
-	select {
-	case r = <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("StartRun blocked on the full-queue fallback instead of returning immediately")
+	evs, err := log.Read(context.Background(), 0)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if r.err != nil || r.id == "" {
-		t.Fatalf("fallback StartRun: id=%q err=%v", r.id, r.err)
+	var started int
+	for _, e := range evs {
+		if e.Type == events.TypeAgentRunStarted {
+			started++
+		}
 	}
-	if !testutil.Eventually(t, func() bool {
-		s, ok := terminalStatus(t, log, r.id)
-		return ok && s == "completed"
-	}) {
-		t.Fatal("full-queue fallback run never completed")
+	if started != queueSize {
+		t.Fatalf("recorded %d accepted runs, want exactly queue capacity %d", started, queueSize)
 	}
-	h.DrainWorkers() // waits out the tracked fallback goroutine
 }
 
 func TestStartRunRejectsUnknownAgent(t *testing.T) {

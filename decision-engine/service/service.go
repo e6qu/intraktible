@@ -716,6 +716,8 @@ type deployRequest struct {
 	Version           int    `json:"version"`
 	ChallengerVersion int    `json:"challenger_version,omitempty"`
 	ChallengerPct     int    `json:"challenger_pct,omitempty"`
+	At                string `json:"at,omitempty"`
+	Until             string `json:"until,omitempty"`
 }
 
 // deploy makes a flow version (and optional A/B challenger) live in an environment.
@@ -1151,13 +1153,30 @@ func (s *Service) requestDeployment(w http.ResponseWriter, r *http.Request) {
 	// Raising a request is not deploying, so the promotion gates do not run here: a
 	// flow whose live version is unhealthy is exactly the one whose fix must be
 	// proposable. The gates run on the approval, which is the write that goes live.
-	reqID, e, err := s.cmd.RequestDeployment(r.Context(), id, domain.DeployVersion{
+	cmd := domain.DeployVersion{
 		FlowID:            r.PathValue("flow_id"),
 		Environment:       req.Environment,
 		Version:           req.Version,
 		ChallengerVersion: req.ChallengerVersion,
 		ChallengerPct:     req.ChallengerPct,
-	})
+	}
+	var reqID string
+	var e eventlog.Envelope
+	var err error
+	if req.At == "" {
+		if req.Until != "" {
+			httpx.Error(w, http.StatusBadRequest, fmt.Errorf("until requires at"))
+			return
+		}
+		reqID, e, err = s.cmd.RequestDeployment(r.Context(), id, cmd)
+	} else {
+		at, until, parseErr := parseScheduleTimes(req.At, req.Until)
+		if parseErr != nil {
+			httpx.Error(w, http.StatusBadRequest, parseErr)
+			return
+		}
+		reqID, e, err = s.cmd.RequestScheduledDeployment(r.Context(), id, cmd, at, until)
+	}
 	if err != nil {
 		httpx.Error(w, http.StatusBadRequest, err)
 		return
@@ -1165,6 +1184,22 @@ func (s *Service) requestDeployment(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusCreated, map[string]any{
 		"request_id": reqID, "status": "pending", "event_id": e.ID, "seq": e.Seq,
 	})
+}
+
+func parseScheduleTimes(atRaw, untilRaw string) (time.Time, *time.Time, error) {
+	at, err := time.Parse(time.RFC3339, atRaw)
+	if err != nil {
+		return time.Time{}, nil, fmt.Errorf("at must be an RFC3339 timestamp: %w", err)
+	}
+	var until *time.Time
+	if untilRaw != "" {
+		u, err := time.Parse(time.RFC3339, untilRaw)
+		if err != nil {
+			return time.Time{}, nil, fmt.Errorf("until must be an RFC3339 timestamp: %w", err)
+		}
+		until = &u
+	}
+	return at, until, nil
 }
 
 // approveDeployment is the checker side: a *different* user approves a pending

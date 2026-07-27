@@ -84,7 +84,8 @@
     type Disposition,
     type MonitorOp,
     type MonitorMetric,
-    type Environment
+    type Environment,
+    ApiError
   } from '$lib/api';
   import { toast } from '$lib/toast';
   import { appHref } from '$lib/paths';
@@ -139,16 +140,22 @@
   let error = $state('');
   let loading = $state(true);
   let metrics = $state<FlowMetrics | null>(null);
+  let metricsError = $state('');
 
-  // loadMetrics fetches the flow's analytics roll-up (non-fatal if none yet).
+  // loadMetrics fetches the flow's analytics roll-up. A real empty roll-up is a
+  // successful zero-valued response; a failed read must stay visibly distinct.
   async function loadMetrics() {
     const requested = flowId;
+    metricsError = '';
     try {
       const m = await getFlowMetrics(key, flowId);
       if (flowId !== requested) return; // dropped: a newer flow loaded mid-request
       metrics = m;
-    } catch {
-      if (flowId === requested) metrics = null;
+    } catch (e) {
+      if (flowId === requested) {
+        metrics = null;
+        metricsError = msg(e);
+      }
     }
   }
 
@@ -439,6 +446,13 @@
   // Default the test run to sandbox — you'd never test directly against production,
   // and it keeps experimental runs out of the production decisions/cases surfaces.
   let env = $state<Environment>('sandbox');
+  const testVersion = $derived.by(() => {
+    if (!flow || flow.versions.length === 0) return 0;
+    const deployed =
+      Object.entries(flow.deployments ?? {}).find(([environment]) => environment === env)?.[1]
+        .version ?? 0;
+    return deployed || (env === 'sandbox' ? flow.latest : 0);
+  });
   let dataText = $state('{}');
   // Live JSON validity for the test-run input, and a one-click skeleton built from
   // the flow's input schema so you don't have to hand-write the shape.
@@ -446,7 +460,7 @@
     try {
       JSON.parse(dataText);
       return true;
-    } catch {
+    } catch (_parseError) {
       return false;
     }
   });
@@ -530,18 +544,17 @@
   // The exact API call this test run is — so a developer can copy/paste the same
   // decision against the deployed flow (the "API-first" claim, shown not just stated).
   const apiSnippet = $derived.by(() => {
-    let body: string;
     try {
-      body = JSON.stringify({ data: JSON.parse(dataText) });
-    } catch {
-      body = '{"data": {}}';
+      const body = JSON.stringify({ data: JSON.parse(dataText) });
+      return [
+        `curl -X POST https://YOUR_HOST/v1/flows/${flow?.slug ?? flowId}/${env}/decide \\`,
+        `  -H "X-Api-Key: YOUR_API_KEY" \\`,
+        `  -H "Content-Type: application/json" \\`,
+        `  -d '${body}'`
+      ].join('\n');
+    } catch (_parseError) {
+      return '# Fix the invalid JSON in Test input before copying this API request.';
     }
-    return [
-      `curl -X POST https://YOUR_HOST/v1/flows/${flow?.slug ?? flowId}/${env}/decide \\`,
-      `  -H "X-Api-Key: YOUR_API_KEY" \\`,
-      `  -H "Content-Type: application/json" \\`,
-      `  -d '${body}'`
-    ].join('\n');
   });
   let result = $state('');
 
@@ -1013,18 +1026,38 @@
     patchCfg({ assignments: assignmentRows().filter((_, j) => j !== i) });
   }
 
-  // The selected node's config as an object (empty on blank/invalid JSON).
+  // The selected node's config as an object for read-only structured rendering.
+  // Invalid JSON stays visibly invalid on the card; patchCfg refuses to replace it.
   function nodeCfg(): Record<string, unknown> {
     if (!selected || !selected.config.trim()) return {};
     try {
-      return JSON.parse(selected.config) as Record<string, unknown>;
-    } catch {
+      const parsed = JSON.parse(selected.config) as unknown;
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : {};
+    } catch (_parseError) {
       return {};
     }
   }
   // Merge a patch into the config and write it back (empty fields are dropped).
   function patchCfg(patch: Record<string, unknown>) {
-    updateSelected({ config: JSON.stringify(cleanConfig({ ...nodeCfg(), ...patch })) });
+    if (!selected) return;
+    let current: Record<string, unknown> = {};
+    if (selected.config.trim()) {
+      try {
+        const parsed = JSON.parse(selected.config) as unknown;
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+          throw new Error('config must be a JSON object');
+        }
+        current = parsed as Record<string, unknown>;
+      } catch (e) {
+        toast.error(
+          `Fix this node’s raw JSON config before using the structured editor: ${msg(e)}`
+        );
+        return;
+      }
+    }
+    updateSelected({ config: JSON.stringify(cleanConfig({ ...current, ...patch })) });
   }
   function addEdge() {
     if (!edgeFrom || !edgeTo) {
@@ -1109,7 +1142,7 @@
       if (n.config.trim()) {
         try {
           config = JSON.parse(n.config);
-        } catch {
+        } catch (_parseError) {
           // Name the offending node so the author can fix it, instead of a bare
           // "Unexpected token" with no clue which card is broken.
           throw new Error(`Node "${n.name || n.id}" has invalid JSON config`);
@@ -1421,8 +1454,9 @@
     // flow's canvas (stale async closure writing shared $state after navigation).
     const requested = flowId;
     const gen = telemetryGen;
-    // The history projection lags the just-appended decision, so retry a few times
-    // until its node trace is available (best-effort; the run result still shows).
+    // The history projection can lag the just-appended decision, so retry only a
+    // genuine 404. Any other read failure is immediately actionable.
+    let lastNotFound = '';
     for (let attempt = 0; attempt < 5; attempt++) {
       if (flowId !== requested || telemetryGen !== gen) return; // navigated away or edited — abandon
       try {
@@ -1436,11 +1470,16 @@
           syncCanvas();
           return;
         }
-      } catch {
-        /* not available yet — retry */
+      } catch (e) {
+        if (!(e instanceof ApiError) || e.status !== 404) {
+          toast.error(`Node trace unavailable: ${msg(e)}`);
+          return;
+        }
+        lastNotFound = msg(e);
       }
       await new Promise((r) => setTimeout(r, 200));
     }
+    toast.error(`Node trace did not become available: ${lastNotFound || 'not found'}`);
   }
   async function downloadTrace() {
     try {
@@ -1713,15 +1752,27 @@
     error = '';
     schBusy = true;
     try {
-      await scheduleDeploy(key, flowId, {
+      const body = {
         environment: schEnv,
         version: parseInt(schVersion, 10) || flow?.latest || 1,
         at: new Date(schAt).toISOString(),
         until: schUntil ? new Date(schUntil).toISOString() : undefined
-      });
+      };
+      if (schEnv === 'production') {
+        const r = await requestDeployment(key, flowId, {
+          ...body,
+          environment: 'production'
+        });
+        toast.success(
+          `Proposed scheduled production deploy for review (request ${r.request_id.slice(0, 8)})`
+        );
+        await load();
+      } else {
+        await scheduleDeploy(key, flowId, body);
+        toast.success('Deploy scheduled');
+      }
       schAt = '';
       schUntil = '';
-      toast.success('Deploy scheduled');
       await loadSchedules();
     } catch (e) {
       toast.error(msg(e));
@@ -1745,14 +1796,29 @@
   let grantActor = $state('');
   let grantEnv = $state('*');
   let grantBusy = $state(false);
+  let grantsLoaded = $state(false);
+  let grantsForbidden = $state(false);
+  let grantsError = $state('');
   async function loadGrants() {
     const requested = flowId;
+    grantsLoaded = false;
+    grantsForbidden = false;
+    grantsError = '';
+    if (!roleAtLeast($user?.role, 'admin')) {
+      grants = [];
+      grantsForbidden = true;
+      return;
+    }
     try {
       const g = await listGrants(key, flowId);
       if (flowId !== requested) return; // dropped: a newer flow loaded mid-request
       grants = g;
-    } catch {
-      if (flowId === requested) grants = []; // non-admins can't list — leave empty
+      grantsLoaded = true;
+    } catch (e) {
+      if (flowId !== requested) return;
+      grants = [];
+      if (e instanceof ApiError && e.status === 403) grantsForbidden = true;
+      else grantsError = msg(e);
     }
   }
   async function grant() {
@@ -1826,14 +1892,22 @@
   // --- Shadow deploys (evaluate a candidate version alongside live decisions) ---
   let shadow = $state<ShadowState>({ shadows: {}, report: {} });
   let shadowSaving = $state(false);
+  let shadowLoaded = $state(false);
+  let shadowError = $state('');
   async function loadShadow() {
     const requested = flowId;
+    shadowLoaded = false;
+    shadowError = '';
     try {
       const s = await getShadow(key, flowId);
       if (flowId !== requested) return; // dropped: a newer flow loaded mid-request
       shadow = s;
-    } catch {
-      /* a viewer with no shadow data simply sees none */
+      shadowLoaded = true;
+    } catch (e) {
+      if (flowId === requested) {
+        shadow = { shadows: {}, report: {} };
+        shadowError = msg(e);
+      }
     }
   }
   // Entries lookups (not computed indexing) to stay clear of detect-object-injection.
@@ -1898,17 +1972,24 @@
   async function confirmDecide() {
     if (!deciding) return;
     const { reqId, verb } = deciding;
+    const request = flow?.deployment_requests?.find((r) => r.request_id === reqId);
     error = '';
     try {
       if (verb === 'approve') {
         await approveDeployment(key, flowId, reqId, decideReason.trim());
-        toast.success('Deployment approved and live');
+        toast.success(
+          request?.at ? 'Scheduled deployment approved' : 'Deployment approved and live'
+        );
       } else {
         await rejectDeployment(key, flowId, reqId, decideReason.trim());
         toast.success('Deployment request rejected');
       }
       deciding = null;
       await load();
+      // Approving a future production request creates its schedule in a separate
+      // projection. Refresh that panel in the same action so the checker sees the
+      // governed result immediately rather than a stale "(0)" count.
+      if (verb === 'approve' && request?.at) await loadSchedules();
     } catch (e) {
       toast.error(msg(e));
     }
@@ -2053,14 +2134,22 @@
   }
 
   let drift = $state<DriftReport | null>(null);
+  let driftLoaded = $state(false);
+  let driftError = $state('');
   async function loadDrift() {
     const requested = flowId;
+    driftLoaded = false;
+    driftError = '';
     try {
       const d = await getDrift(key, flowId);
       if (flowId !== requested) return; // dropped: a newer flow loaded mid-request
       drift = d;
-    } catch {
-      if (flowId === requested) drift = null;
+      driftLoaded = true;
+    } catch (e) {
+      if (flowId === requested) {
+        drift = null;
+        driftError = msg(e);
+      }
     }
   }
   async function captureBaselineNow() {
@@ -2161,6 +2250,14 @@
     void loadAssertions();
     void loadShadow();
     void loadSchedules();
+  });
+
+  // Grants are role-gated and the demo can switch actors without navigating.
+  // Re-evaluate both flow and role so a promotion to admin loads the real state,
+  // while a downgrade clears previously visible grants immediately.
+  $effect(() => {
+    void flowId;
+    void $user?.role;
     void loadGrants();
   });
 </script>
@@ -2346,7 +2443,12 @@
         </div>
       </details>
     </details>
-    {#if metrics && metrics.total > 0}
+    {#if metricsError}
+      <div class="metrics err" data-testid="metrics-error">
+        Analytics unavailable: {metricsError}
+        <button class="linkbtn" onclick={loadMetrics}>Retry</button>
+      </div>
+    {:else if metrics && metrics.total > 0}
       <div class="metrics">
         <span class="exportlabel"><Icon name="diagram" size={15} /> Analytics</span>
         <span><b>{metrics.total}</b> decision{metrics.total === 1 ? '' : 's'}</span>
@@ -2380,9 +2482,11 @@
               class="ghost"
               onclick={captureBaselineNow}
               data-testid="capture-baseline"
-              disabled={!roleAtLeast($user?.role, 'editor')}
+              disabled={!driftLoaded || !roleAtLeast($user?.role, 'editor')}
               title={roleAtLeast($user?.role, 'editor')
-                ? 'Snapshot the current disposition mix as the drift baseline'
+                ? driftLoaded
+                  ? 'Snapshot the current disposition mix as the drift baseline'
+                  : 'Drift state has not loaded'
                 : 'Requires the editor role'}
             >
               <Icon name="scorecard" size={14} /> Capture baseline
@@ -2464,7 +2568,12 @@
           <p class="muted">No monitors yet.</p>
         {/if}
 
-        {#if drift}
+        {#if driftError}
+          <p class="err" data-testid="drift-error">
+            Drift state unavailable: {driftError}
+            <button class="linkbtn" onclick={loadDrift}>Retry</button>
+          </p>
+        {:else if drift}
           <div class="drift" data-testid="drift-panel">
             <span class="exportlabel"><Icon name="scorecard" size={15} /> Distribution drift</span>
             {#if !drift.has_baseline}
@@ -2736,6 +2845,12 @@
             Run a candidate version alongside live decisions to measure how often it would diverge —
             its result is never returned to callers.
           </p>
+          {#if shadowError}
+            <p class="err" data-testid="shadow-error">
+              Shadow state unavailable: {shadowError}
+              <button class="linkbtn" onclick={loadShadow}>Retry</button>
+            </p>
+          {/if}
           <div class="shadow-grid">
             {#each ENVIRONMENTS as e (e)}
               {@const rep = shadowReportFor(e)}
@@ -2743,10 +2858,12 @@
                 <b>{e}</b>
                 <select
                   value={shadowVersionFor(e)}
-                  disabled={shadowSaving || !roleAtLeast($user?.role, 'editor')}
+                  disabled={shadowSaving || !shadowLoaded || !roleAtLeast($user?.role, 'editor')}
                   title={!roleAtLeast($user?.role, 'editor')
                     ? 'Requires the editor role'
-                    : undefined}
+                    : !shadowLoaded
+                      ? 'Shadow state has not loaded'
+                      : undefined}
                   onchange={(ev) => updateShadow(e, parseInt(ev.currentTarget.value, 10))}
                   aria-label={`shadow version for ${e}`}
                 >
@@ -2775,7 +2892,10 @@
             <div class="table-wrap">
               <table>
                 <thead>
-                  <tr><th>Env</th><th>Version</th><th>Status</th><th>Proposed by</th><th></th></tr>
+                  <tr
+                    ><th>Env</th><th>Version / timing</th><th>Status</th><th>Proposed by</th><th
+                    ></th></tr
+                  >
                 </thead>
                 <tbody>
                   {#each allRequests as r (r.request_id)}
@@ -2783,7 +2903,13 @@
                       <td>{r.environment}</td>
                       <td
                         >v{r.version}{#if r.challenger_version}
-                          + v{r.challenger_version} @ {r.challenger_pct ?? 0}%{/if}</td
+                          + v{r.challenger_version} @ {r.challenger_pct ?? 0}%{/if}
+                        {#if r.at}
+                          <span class="muted">
+                            scheduled {new Date(r.at).toLocaleString()}{#if r.until}
+                              → {new Date(r.until).toLocaleString()}{/if}</span
+                          >
+                        {/if}</td
                       >
                       <td><span class="reqstatus {r.status}">{r.status}</span></td>
                       <td>{r.requested_by}</td>
@@ -2844,17 +2970,27 @@
 
         <details class="schedules" data-testid="schedules-panel">
           <summary>Scheduled deploys <span class="muted">({schedules.length})</span></summary>
+          <p class="hint">
+            Production schedules enter the deployment approval queue above; a different approver
+            must approve before the scheduler can activate them.
+          </p>
           <div class="row mon-form">
             <label
               >Env
-              <select bind:value={schEnv}>
+              <select bind:value={schEnv} aria-label="schedule environment">
                 <option value="sandbox">sandbox</option>
                 <option value="staging">staging</option>
                 <option value="production">production</option>
               </select></label
             >
-            <label>Version <input bind:value={schVersion} placeholder="latest" /></label>
-            <label>At <input type="datetime-local" bind:value={schAt} /></label>
+            <label
+              >Version
+              <input bind:value={schVersion} placeholder="latest" aria-label="schedule version" />
+            </label>
+            <label
+              >At
+              <input type="datetime-local" bind:value={schAt} aria-label="schedule at" />
+            </label>
             <label
               >Until <input
                 type="datetime-local"
@@ -2900,6 +3036,16 @@
             deploy / roll back / schedule / promote this flow (per environment, or <code>*</code> for
             all).
           </p>
+          {#if grantsForbidden}
+            <p class="muted" data-testid="grants-forbidden">
+              Access grants are restricted to the <strong>admin</strong> role.
+            </p>
+          {:else if grantsError}
+            <p class="err" data-testid="grants-error">
+              Access grants unavailable: {grantsError}
+              <button class="linkbtn" onclick={loadGrants}>Retry</button>
+            </p>
+          {/if}
           <div class="row mon-form">
             <label class="grow"
               >Actor <input bind:value={grantActor} placeholder="user id / email" /></label
@@ -2915,7 +3061,10 @@
             >
             <button
               onclick={grant}
-              disabled={grantBusy || !grantActor.trim() || !roleAtLeast($user?.role, 'admin')}
+              disabled={grantBusy ||
+                !grantsLoaded ||
+                !grantActor.trim() ||
+                !roleAtLeast($user?.role, 'admin')}
               title={!roleAtLeast($user?.role, 'admin') ? 'Requires the admin role' : undefined}
               >Grant</button
             >
@@ -3900,18 +4049,31 @@
         <h2>
           Test run
           <Hint label="Test run"
-            >Executes this flow's graph against your input on the same engine production uses —
-            walking nodes, taking the matching branch at each split, and applying the policy to
-            produce a disposition. The result links to the recorded trace (or tick Preview to record
-            nothing).</Hint
+            >Executes the version published/deployed in the selected environment on the same engine
+            production uses. Canvas edits are an in-memory draft until Publish. The result links to
+            the recorded trace (or tick Preview to record nothing).</Hint
           >
         </h2>
+        {#if dirty}
+          <p class="warn" data-testid="published-test-warning">
+            Unpublished canvas changes are not part of this run. Publish the draft first to test its
+            logic; this panel always exercises the selected environment's published/deployed
+            version.
+          </p>
+        {/if}
         <div class="row">
           <select bind:value={env} aria-label="environment">
             {#each ENVIRONMENTS as e (e)}<option value={e}>{e}</option>{/each}
           </select>
-          <button onclick={run} disabled={!flow || running || !dataValid}
-            >{running ? 'Running…' : 'Run'}</button
+          <button
+            onclick={run}
+            disabled={!flow || running || !dataValid || testVersion === 0}
+            title={testVersion === 0
+              ? env === 'sandbox'
+                ? 'Publish a version before running it'
+                : `Deploy a version to ${env} before running it`
+              : `Runs v${testVersion} in ${env}`}
+            >{running ? 'Running…' : 'Run published version'}</button
           >
           <button
             type="button"
@@ -3923,6 +4085,13 @@
               : 'This version has no input schema — publish one to generate a sample'}
             >Sample input</button
           >
+          {#if testVersion > 0}
+            <span class="muted" data-testid="test-target">v{testVersion} in {env}</span>
+          {:else}
+            <span class="warn" data-testid="test-target">
+              {env === 'sandbox' ? 'Publish first' : `No ${env} deployment`}
+            </span>
+          {/if}
           <label class="preview-toggle" title="Run the flow without recording a decision">
             <input type="checkbox" bind:checked={preview} aria-label="preview (don't record)" />
             Preview (don't record)

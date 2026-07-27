@@ -11,6 +11,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -45,12 +46,13 @@ type Handler struct {
 	now   func() time.Time
 	newID func() string
 
-	jobs chan asyncJob // async run queue (drained by workers)
-	wg   sync.WaitGroup
+	jobs       chan asyncJob // async run queue (drained by workers)
+	queueSlots chan struct{} // reserved before a run is accepted
+	wg         sync.WaitGroup
 }
 
-// asyncQueueSize bounds the in-flight async run queue; a full queue makes
-// StartRun fall back to running the agent synchronously rather than dropping it.
+// asyncQueueSize bounds accepted work waiting for a worker. Saturation is a loud
+// admission error; it never creates an unbounded side channel of goroutines.
 const asyncQueueSize = 256
 
 // Option configures a Handler.
@@ -72,9 +74,10 @@ func WithNow(now func() time.Time) Option {
 func NewHandler(log eventlog.Log, st store.Store, reg *ai.Registry, opts ...Option) *Handler {
 	h := &Handler{
 		log: log, store: st, reg: reg,
-		now:   func() time.Time { return time.Now().UTC() },
-		newID: newID,
-		jobs:  make(chan asyncJob, asyncQueueSize),
+		now:        func() time.Time { return time.Now().UTC() },
+		newID:      newID,
+		jobs:       make(chan asyncJob, asyncQueueSize),
+		queueSlots: make(chan struct{}, asyncQueueSize),
 	}
 	for _, o := range opts {
 		o(h)
@@ -199,30 +202,21 @@ func (h *Handler) StartRun(ctx context.Context, id identity.Identity, agent, pro
 	} else if !ok {
 		return "", fmt.Errorf("agent-manager: unknown agent %q", agent)
 	}
+	select {
+	case h.queueSlots <- struct{}{}:
+		// Capacity is reserved before acceptance is recorded.
+	default:
+		return "", fmt.Errorf("agent-manager: async run queue is full")
+	}
 	runID := h.newID()
 	if _, err := h.append(ctx, id, events.TypeAgentRunStarted, events.AgentRunStarted{
 		RunID: runID, Agent: agent, Prompt: prompt, At: h.now(),
 	}); err != nil {
+		<-h.queueSlots
 		return "", err
 	}
 	job := asyncJob{id: id, runID: runID, agent: agent, prompt: prompt}
-	select {
-	case h.jobs <- job:
-		// queued for a worker
-	default:
-		// Queue full: run it rather than drop it (never lost), but in a tracked
-		// goroutine — not inline — so StartRun still returns immediately and keeps
-		// the 202 async contract. A background context (like the worker path) means
-		// a client disconnect mid-call doesn't abort the run into a spurious failure;
-		// h.wg lets DrainWorkers wait it out on shutdown.
-		h.wg.Add(1)
-		// #nosec G118 -- intentional: background ctx so a client disconnect doesn't
-		// abort the run; DrainWorkers bounds the wait via h.wg.
-		go func() {
-			defer h.wg.Done()
-			h.process(context.Background(), job)
-		}()
-	}
+	h.jobs <- job // the reserved slot guarantees this send cannot exceed capacity
 	return runID, nil
 }
 
@@ -251,6 +245,7 @@ func (h *Handler) worker(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case job := <-h.jobs:
+			<-h.queueSlots
 			// Process with a background context so a shutdown signal does not abort
 			// (and thus fail) a run already in flight.
 			h.process(context.Background(), job)
@@ -316,12 +311,15 @@ func (h *Handler) RecoverRunning(ctx context.Context) (int, error) {
 	for runID, p := range started {
 		job := asyncJob{id: p.id, runID: runID, agent: p.agent, prompt: p.prompt}
 		select {
-		case h.jobs <- job:
-			enqueued++
+		case h.queueSlots <- struct{}{}:
+			select {
+			case h.jobs <- job:
+				enqueued++
+			case <-ctx.Done():
+				<-h.queueSlots
+				return enqueued, ctx.Err()
+			}
 		case <-ctx.Done():
-			// Shutdown during recovery: stop rather than block forever on a full
-			// queue whose workers have already exited. The not-yet-enqueued runs
-			// stay "running" and are recovered on the next boot.
 			return enqueued, ctx.Err()
 		}
 	}
@@ -339,15 +337,26 @@ func (h *Handler) EscalateRun(ctx context.Context, id identity.Identity, cmd dom
 	if err := cmd.Validate(); err != nil {
 		return "", eventlog.Envelope{}, err
 	}
-	agent, ok, err := h.runAgentName(ctx, id, cmd.RunID)
+	run, ok, err := h.runStateFromLog(ctx, id, cmd.RunID)
 	if err != nil {
 		return "", eventlog.Envelope{}, err
 	}
 	if !ok {
 		return "", eventlog.Envelope{}, fmt.Errorf("agent-manager: unknown run %q", cmd.RunID)
 	}
+	if cmd.Agent != "" && cmd.Agent != run.agent {
+		return "", eventlog.Envelope{}, fmt.Errorf("agent-manager: run %q belongs to agent %q, not %q", cmd.RunID, run.agent, cmd.Agent)
+	}
+	if run.status != domain.RunCompleted {
+		return "", eventlog.Envelope{}, fmt.Errorf("agent-manager: only a completed run can be escalated (run %q is %s)", cmd.RunID, run.status)
+	}
+	if caseID, e, found, err := h.escalatedCaseFromLog(ctx, id, cmd.RunID); err != nil {
+		return "", eventlog.Envelope{}, err
+	} else if found {
+		return caseID, e, nil
+	}
 	caseID := h.newID()
-	source, err := json.Marshal(map[string]string{"source": "agent", "agent": agent, "run_id": cmd.RunID})
+	source, err := json.Marshal(map[string]string{"source": "agent", "agent": run.agent, "run_id": cmd.RunID})
 	if err != nil {
 		return "", eventlog.Envelope{}, fmt.Errorf("agent-manager: marshal escalation context: %w", err)
 	}
@@ -357,53 +366,104 @@ func (h *Handler) EscalateRun(ctx context.Context, id identity.Identity, cmd dom
 	if caseType == "" {
 		caseType = "agent_review"
 	}
-	e, err := eventlog.AppendJSON(ctx, h.log, id.Org, id.Workspace, id.Actor,
-		caseevents.StreamCases, caseevents.TypeReviewRequested, h.now(), caseevents.ReviewRequested{
-			CaseID: caseID, CompanyName: cmd.CompanyName, CaseType: caseType, SLADays: cmd.SLADays, Context: source,
-		})
+	payload, err := json.Marshal(caseevents.ReviewRequested{
+		CaseID: caseID, CompanyName: cmd.CompanyName, CaseType: caseType, SLADays: cmd.SLADays, Context: source,
+	})
 	if err != nil {
+		return "", eventlog.Envelope{}, fmt.Errorf("agent-manager: marshal review request: %w", err)
+	}
+	e, err := h.log.Append(ctx, eventlog.Envelope{
+		Org: id.Org, Workspace: id.Workspace, Actor: id.Actor,
+		Stream: caseevents.StreamCases, Type: caseevents.TypeReviewRequested,
+		Time: h.now(), Payload: payload, Unique: escalationClaim(cmd.RunID),
+	})
+	if err != nil {
+		if errors.Is(err, eventlog.ErrConflict) {
+			existingID, existing, found, readErr := h.escalatedCaseFromLog(ctx, id, cmd.RunID)
+			if readErr != nil {
+				return "", eventlog.Envelope{}, readErr
+			}
+			if found {
+				return existingID, existing, nil
+			}
+		}
 		return "", eventlog.Envelope{}, err
 	}
 	return caseID, e, nil
 }
 
-// runAgentName resolves a run for the tenant and returns its agent. It reads the
-// tenant-scoped projection first — an O(1) keyed lookup that avoids folding the
-// whole log (every tenant's events) on each escalate. The projection is eventually
-// consistent, so on a miss (e.g. a run escalated in the same breath it was recorded,
-// before the projection caught up) it falls back to a tenant-scoped fold of the log,
-// which is immediately consistent.
-func (h *Handler) runAgentName(ctx context.Context, id identity.Identity, runID string) (string, bool, error) {
-	if run, ok, err := agents.GetRun(ctx, h.store, id, runID); err != nil {
-		return "", false, fmt.Errorf("agent-manager: read run: %w", err)
-	} else if ok {
-		return run.Agent, true, nil
-	}
-	return h.runAgentNameFromLog(ctx, id, runID)
+type runState struct {
+	agent  string
+	status domain.RunStatus
 }
 
-// runAgentNameFromLog folds the log (tenant-scoped) as the immediately-consistent
-// fallback when the projection hasn't yet observed a just-recorded run.
-func (h *Handler) runAgentNameFromLog(ctx context.Context, id identity.Identity, runID string) (string, bool, error) {
-	evs, err := h.log.Read(ctx, 0)
+// runStateFromLog resolves the immediately consistent source-of-truth state of
+// one tenant run. Escalation is a command decision, so it must not depend on
+// projection timing.
+func (h *Handler) runStateFromLog(ctx context.Context, id identity.Identity, runID string) (runState, bool, error) {
+	evs, err := h.log.ReadTenantStream(ctx, id.Org, id.Workspace, events.StreamAgents, 0)
 	if err != nil {
-		return "", false, fmt.Errorf("agent-manager: read log: %w", err)
+		return runState{}, false, fmt.Errorf("agent-manager: read agent stream: %w", err)
+	}
+	var out runState
+	found := false
+	for _, e := range evs {
+		switch e.Type {
+		case events.TypeAgentRunStarted:
+			var p events.AgentRunStarted
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				return runState{}, false, fmt.Errorf("agent-manager: decode run_started seq %d: %w", e.Seq, err)
+			}
+			if p.RunID == runID {
+				out, found = runState{agent: p.Agent, status: domain.RunRunning}, true
+			}
+		case events.TypeAgentRunRecorded:
+			var p events.AgentRunRecorded
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				return runState{}, false, fmt.Errorf("agent-manager: decode run_recorded seq %d: %w", e.Seq, err)
+			}
+			if p.RunID == runID {
+				status, valid := domain.ParseRunStatus(p.Status)
+				if !valid {
+					return runState{}, false, fmt.Errorf("agent-manager: run %q has unknown status %q at seq %d", runID, p.Status, e.Seq)
+				}
+				out, found = runState{agent: p.Agent, status: status}, true
+			}
+		}
+	}
+	return out, found, nil
+}
+
+func (h *Handler) escalatedCaseFromLog(ctx context.Context, id identity.Identity, runID string) (string, eventlog.Envelope, bool, error) {
+	evs, err := h.log.ReadTenantStream(ctx, id.Org, id.Workspace, caseevents.StreamCases, 0)
+	if err != nil {
+		return "", eventlog.Envelope{}, false, fmt.Errorf("agent-manager: read case stream: %w", err)
 	}
 	for _, e := range evs {
-		if e.Stream != events.StreamAgents || e.Type != events.TypeAgentRunRecorded ||
-			e.Org != id.Org || e.Workspace != id.Workspace {
+		if e.Type != caseevents.TypeReviewRequested {
 			continue
 		}
-		var p events.AgentRunRecorded
+		var p caseevents.ReviewRequested
 		if err := json.Unmarshal(e.Payload, &p); err != nil {
-			return "", false, fmt.Errorf("agent-manager: decode run seq %d: %w", e.Seq, err)
+			return "", eventlog.Envelope{}, false, fmt.Errorf("agent-manager: decode review_requested seq %d: %w", e.Seq, err)
 		}
-		if p.RunID == runID {
-			return p.Agent, true, nil
+		var source struct {
+			Source string `json:"source"`
+			RunID  string `json:"run_id"`
+		}
+		if len(p.Context) > 0 {
+			if err := json.Unmarshal(p.Context, &source); err != nil {
+				return "", eventlog.Envelope{}, false, fmt.Errorf("agent-manager: decode review context seq %d: %w", e.Seq, err)
+			}
+		}
+		if source.Source == "agent" && source.RunID == runID {
+			return p.CaseID, e, true, nil
 		}
 	}
-	return "", false, nil
+	return "", eventlog.Envelope{}, false, nil
 }
+
+func escalationClaim(runID string) string { return "agent.escalate\x00" + runID }
 
 func (h *Handler) append(ctx context.Context, id identity.Identity, typ string, payload any) (eventlog.Envelope, error) {
 	return eventlog.AppendJSON(ctx, h.log, id.Org, id.Workspace, id.Actor, events.StreamAgents, typ, h.now(), payload)

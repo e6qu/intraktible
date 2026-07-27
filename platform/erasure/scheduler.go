@@ -20,6 +20,7 @@ const retentionSweeper = "retention-sweeper"
 // default, so the timer never erases data no one asked to expire.
 type Scheduler struct {
 	vault *Vault
+	gate  RetentionGate
 	now   func() time.Time
 }
 
@@ -34,9 +35,18 @@ func (s *Scheduler) WithNow(now func() time.Time) *Scheduler {
 	return s
 }
 
+// WithRetentionGate applies the same statutory hold used by the one-subject and
+// manual bulk erasure paths.
+func (s *Scheduler) WithRetentionGate(g RetentionGate) *Scheduler {
+	s.gate = g
+	return s
+}
+
 // TickSummary reports what one sweep did.
 type TickSummary struct {
-	Erased int
+	Erased            int
+	Held              int
+	StatutoryRetained int
 }
 
 // Tick applies every configured retention policy once. RetentionSweep is idempotent
@@ -53,22 +63,26 @@ func (s *Scheduler) Tick(ctx context.Context) (TickSummary, error) {
 			continue
 		}
 		id := identity.Identity{Org: p.Org, Workspace: p.Workspace, Actor: retentionSweeper}
-		n, err := s.vault.RetentionSweep(ctx, id, time.Duration(p.RetentionDays)*24*time.Hour)
+		result, err := s.vault.RetentionSweep(ctx, id, time.Duration(p.RetentionDays)*24*time.Hour, s.gate)
 		if err != nil {
 			return sum, err
 		}
-		if n > 0 {
+		if result.Erased > 0 {
 			slog.Info("erasure: retention sweep erased expired subjects",
-				"org", p.Org, "workspace", p.Workspace, "retention_days", p.RetentionDays, "erased", n)
+				"org", p.Org, "workspace", p.Workspace, "retention_days", p.RetentionDays,
+				"erased", result.Erased, "held", result.Held, "statutory_retained", result.StatutoryRetained)
 		}
-		sum.Erased += n
+		sum.Erased += result.Erased
+		sum.Held += result.Held
+		sum.StatutoryRetained += result.StatutoryRetained
 	}
 	return sum, nil
 }
 
-// Run applies retention on a timer until ctx is cancelled (errors are logged, not
-// fatal — a transient store error must not stop the loop).
-func (s *Scheduler) Run(ctx context.Context, interval time.Duration) {
+// Run applies retention on a timer until ctx is cancelled. A transient store
+// error does not stop retries, but it remains visible in operational health until
+// a later tick succeeds.
+func (s *Scheduler) Run(ctx context.Context, interval time.Duration, report func(error)) {
 	t := time.NewTicker(interval)
 	defer t.Stop()
 	for {
@@ -77,7 +91,10 @@ func (s *Scheduler) Run(ctx context.Context, interval time.Duration) {
 			return
 		case <-t.C:
 			if _, err := s.Tick(ctx); err != nil {
+				report(err)
 				slog.Error("erasure: retention sweep failed", "err", err)
+			} else {
+				report(nil)
 			}
 		}
 	}
