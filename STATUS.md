@@ -34,24 +34,26 @@ backend), does CI actually gate. Plus GitHub issue **#144**.
 
 ## Phase
 
-**Phase 2 — fixing, largely done.** Nine defects found and fixed across the
-production path, CI, and the frontend; see `WHAT_WE_DID.md`. Two items remain in
-`DO_NEXT.md` (the shauth-sso gate has not been run locally; the new append lock
-is unmeasured), plus an unfinished sweep list.
+**Production-readiness audit follow-up — complete.** The backend-parity round
+that Claude started on `audit/backend-parity` is finished: every event-log
+backend now runs the same optimistic-claim contract, and NATS refuses startup
+when it cannot enforce the required duplicate window. `DO_NEXT.md` is empty.
 
 **Gates run locally, all green:** `go build`, `go test ./...`, `go test -race`
 against real PostgreSQL 16 (whole suite), lint, gosec, deadcode, dupl,
 govulncheck, licenses, prettier, eslint, svelte-check, vitest (207),
 Playwright e2e (97), Playwright wasm demo (80), `make e2e-embedded` (3),
-`make terraform-check` (16), `make container-release-check`.
-**Not run locally:** the `shauth-sso` job — needs a Shauth checkout + Ory Hydra.
+`make terraform-check` (16), `make container-release-check`. This follow-up also
+passed `make check`, `make lint`, and the complete `platform/eventlog` race suite
+against ephemeral real PostgreSQL 15. The `shauth-sso` CI job passed in run
+30223404990.
 
 ## Ground truth established so far
 
-- Base commit `292d882` (origin/main). Branch created off it. Tree was clean.
+- Current branch `audit/backend-parity` is based on `5e03f6f` (`origin/main`).
 - No other open PRs (`gh pr list` empty) — satisfies the one-open-PR rule.
-- `go build ./...` passes. `go test ./...` passes (exit 0).
-- CI on main is green (run 29862257834).
+- `make check` and `make lint` pass; the real-Postgres claim contract and full
+  event-log race suite pass.
 - Toolchain present locally: Go 1.26.5, Node v26.5.0, Docker 29.6.1.
 
 ## Verdicts on the user's headline questions (evidence-backed)

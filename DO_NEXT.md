@@ -16,8 +16,8 @@ DOC (a claim not backed by code).
 
 ## Queue
 
-_Empty._ Every item the production-readiness audit found has been fixed and
-verified — see `WHAT_WE_DID.md` for the list and the evidence.
+_Empty._ Every item the production-readiness audit and backend-parity follow-up
+found has been fixed and verified — see `WHAT_WE_DID.md` for the evidence.
 
 **The honest edges** — not defects, but the limits of what was checked:
 

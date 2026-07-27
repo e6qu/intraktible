@@ -221,8 +221,9 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 
 	// The AI provider registry is shared by the Agent Manager and the decision
 	// engine's AI node. When INTRAKTIBLE_AI_BASE_URL is set, a real OpenAI-compatible
-	// HTTP provider is registered (and becomes the default); the Stub is always
-	// available as a fallback for dev/tests.
+	// HTTP provider is registered (and becomes the default). The deterministic Stub
+	// is opt-in through INTRAKTIBLE_AI_STUB for development and tests; with neither
+	// configured, AI operations fail loudly.
 	// Guardrails wrap every registered provider (rate limit + PII redaction +
 	// jailbreak/injection block), so both the Agent Manager and the Copilot are
 	// covered uniformly. Inert unless configured.

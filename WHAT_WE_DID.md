@@ -198,3 +198,19 @@ encoding.
 
 Do NOT benchmark the file WAL on Docker for macOS: ~34/sec there vs ~9,460 on
 Linux, entirely that VM's fsync path.
+
+## Session 1 (cont.) — event-log claim parity
+
+- **Backend contract matrix.** `Envelope.Unique` now runs one shared
+  NUL-separated-key contract against memory, WAL, SQLite, NATS, Postgres, and
+  the production encryption wrapper. Evidence:
+  `TestClaimContract{Memory,WAL,SQLite,NATS,Postgres,Encrypted}`; the Postgres
+  case passed against an ephemeral real PostgreSQL 15 instance.
+- **NATS fail-loud startup.** A pre-existing JetStream with a too-short duplicate
+  window no longer opens after a failed attempt to widen it, because doing so
+  leaves optimistic-concurrency claims unenforced. Evidence:
+  `TestNATSLogRefusesUnenforceableClaimWindow`, verified with a real in-process
+  JetStream account denied stream-update permission.
+- **Gates.** `make check` (vet, build, full `go test -race ./...`) and
+  `make lint` pass. The complete `platform/eventlog` race suite also passes with
+  PostgreSQL enabled.
