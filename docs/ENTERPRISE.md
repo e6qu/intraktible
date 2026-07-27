@@ -333,8 +333,14 @@ enterprise buyers; **P2** = differentiators / scale.
   A **NATS JetStream** backend (`eventlog.OpenNATSLog`, `--log=nats` +
   `INTRAKTIBLE_NATS_URL`) is the other option: the stream's monotonic sequence is the
   event Seq (one total order across nodes) and a push consumer delivers live with no
-  poller. Verified against an embedded JetStream server incl. cross-node ordering and
-  delivery. *Remaining: Kafka (franz-go), if a Kafka shop needs it.*
+  poller. Optimistic-concurrency claims use an atomic, permanent per-subject CAS
+  (the claimed event is its own index, retained and backed up with the log), while
+  a bounded Msg-Id cache protects races with an older binary during a rolling
+  upgrade. Existing base-subject claims are indexed at startup without rewriting
+  history, and one multi-filter consumer preserves live sequence order across both
+  subjects. Verified against an embedded JetStream server including claim expiry,
+  legacy-stream migration, and cross-node ordered delivery. *Remaining: Kafka
+  (franz-go), if a Kafka shop needs it.*
 - **P1 — Backups / DR runbook**, point-in-time recovery (replay already enables it).
 - **P2 — Horizontal scale & multi-region.**
 

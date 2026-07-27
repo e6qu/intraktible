@@ -6,6 +6,7 @@ package eventlog
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,11 +18,14 @@ import (
 )
 
 const (
-	natsStream  = "INTRAKTIBLE_EVENTS"
-	natsSubject = "intraktible.events"
-	// claimDedupWindow is the JetStream Msg-Id dedup window backing Envelope.Unique
-	// optimistic-concurrency claims. It only needs to span the race between two
-	// nodes computing the same claim (seconds); 5 minutes is generous headroom.
+	natsStream             = "INTRAKTIBLE_EVENTS"
+	natsSubject            = "intraktible.events"
+	natsClaimSubjectPrefix = natsSubject + ".claim."
+	natsClaimSubjectFilter = natsClaimSubjectPrefix + "*"
+	// claimDedupWindow is rolling-upgrade protection for Envelope.Unique: an older
+	// node publishes a claim on natsSubject using Msg-Id, while current nodes use a
+	// permanent per-subject CAS. The cache spans the brief mixed-version race; the
+	// CAS, not this timer, enforces the whole-log lifetime promised by Log.
 	claimDedupWindow = 5 * time.Minute
 )
 
@@ -38,6 +42,11 @@ type NATSLog struct {
 	sub *nats.Subscription
 
 	mu sync.Mutex
+	// claims contains every Unique key observed in retained history or live
+	// delivery, including legacy events on natsSubject. The permanent subject CAS
+	// is authoritative across nodes; this set preserves pre-upgrade claims without
+	// an O(total events) scan on every new append.
+	claims map[string]struct{}
 	// deliverErr latches the first live-delivery failure. The push subscription is
 	// the ONLY path onto the bus for this backend — there is no poller behind it —
 	// so a message that cannot be delivered is not a hiccup to log past: it leaves
@@ -50,7 +59,11 @@ type NATSLog struct {
 // OpenNATSLog connects to a NATS server (JetStream enabled), ensures the event
 // stream exists, and starts the live push subscription.
 func OpenNATSLog(url string) (*NATSLog, error) {
-	l := &NATSLog{bus: newBus()}
+	return openNATSLog(url, claimDedupWindow)
+}
+
+func openNATSLog(url string, dedupWindow time.Duration) (*NATSLog, error) {
+	l := &NATSLog{bus: newBus(), claims: make(map[string]struct{})}
 	// Reconnect with no cap (the log is the system of record) and, on reconnect,
 	// re-subscribe from the last delivered seq so events appended while the
 	// connection was down are still delivered — the ephemeral DeliverNew consumer
@@ -71,21 +84,24 @@ func OpenNATSLog(url string) (*NATSLog, error) {
 	switch {
 	case errors.Is(err, nats.ErrStreamNotFound):
 		if _, err := js.AddStream(&nats.StreamConfig{
-			Name:     natsStream,
-			Subjects: []string{natsSubject},
-			Storage:  nats.FileStorage,
+			Name:         natsStream,
+			Subjects:     []string{natsSubject, natsClaimSubjectFilter},
+			Storage:      nats.FileStorage,
+			MaxConsumers: -1,
 			// The event log is the system of record: never age/size/count out an
 			// event, or a projection rebuild would silently lose history.
-			Retention: nats.LimitsPolicy,
-			MaxAge:    0,
-			MaxMsgs:   -1,
-			MaxBytes:  -1,
-			Discard:   nats.DiscardNew, // refuse new writes at a limit rather than drop old ones
-			// Duplicates enables Msg-Id dedup, which backs Envelope.Unique optimistic-
-			// concurrency claims (a second append with the same claim id inside the
-			// window is rejected as a duplicate → ErrConflict). The window only has to
-			// cover the brief race between two nodes computing the same claim.
-			Duplicates: claimDedupWindow,
+			Retention:         nats.LimitsPolicy,
+			MaxAge:            0,
+			MaxMsgs:           -1,
+			MaxBytes:          -1,
+			MaxMsgsPerSubject: -1,
+			Discard:           nats.DiscardNew, // refuse new writes at a limit rather than drop old ones
+			DenyDelete:        true,
+			DenyPurge:         true,
+			// Duplicates covers a race against an older binary during a rolling
+			// upgrade. Current binaries enforce Unique permanently with a per-claim
+			// subject and ExpectLastSequencePerSubject(0).
+			Duplicates: dedupWindow,
 		}); err != nil {
 			nc.Close()
 			return nil, fmt.Errorf("eventlog: nats add stream: %w", err)
@@ -93,37 +109,82 @@ func OpenNATSLog(url string) (*NATSLog, error) {
 	case err != nil:
 		nc.Close()
 		return nil, fmt.Errorf("eventlog: nats stream info: %w", err)
-	case si.Config.Duplicates < claimDedupWindow:
-		// A pre-existing stream needs its dedup window widened, because that window IS
-		// the enforcement of Envelope.Unique on this backend. Failing to widen it and
-		// carrying on left optimistic-concurrency claims silently unenforced — two
-		// nodes racing to create the same flow slug would both succeed, which is the
-		// exact outcome the claim exists to prevent, reported as a log line nobody
-		// reads. Refuse to open instead.
-		cfg := si.Config
-		cfg.Duplicates = claimDedupWindow
-		if _, err := js.UpdateStream(&cfg); err != nil {
+	default:
+		if err := reconcileNATSStream(js, si, dedupWindow); err != nil {
 			nc.Close()
-			return nil, fmt.Errorf("eventlog: nats dedup window is %s, shorter than the %s that optimistic-concurrency claims require, and it could not be widened: %w",
-				si.Config.Duplicates, claimDedupWindow, err)
+			return nil, err
 		}
 	}
 
-	l.nc = nc
-	l.js = js
-	// Deliver only messages appended from now on (history is replayed via Read);
-	// the push consumer is the live bus feed for every node's events. resubscribe(0)
-	// starts at "new"; a reconnect later resumes from the last delivered seq.
-	if err := l.resubscribe(0); err != nil {
+	l.nc, l.js = nc, js
+	// Build the compatibility index before accepting writes, then subscribe from
+	// exactly the following sequence. DeliverNew would leave a race between the
+	// history scan and consumer creation where a legacy claim could be missed.
+	scannedThrough, err := l.loadNATSClaims()
+	if err != nil {
+		nc.Close()
+		return nil, err
+	}
+	if err := l.resubscribe(scannedThrough + 1); err != nil {
 		nc.Close()
 		return nil, fmt.Errorf("eventlog: nats subscribe: %w", err)
 	}
 	return l, nil
 }
 
-// resubscribe (re)creates the push subscription. afterSeq 0 means "from new"; a
-// positive afterSeq resumes from afterSeq+1, the gap-fill used on reconnect.
-func (l *NATSLog) resubscribe(afterSeq uint64) error {
+// reconcileNATSStream applies the same source-of-truth invariants to a
+// pre-existing stream that Open creates for a new one. It can prevent future
+// retention loss, but it cannot manufacture history already deleted: a prefix
+// gap is therefore a hard startup error.
+func reconcileNATSStream(js nats.JetStreamContext, si *nats.StreamInfo, dedupWindow time.Duration) error {
+	cfg := si.Config
+	if cfg.Storage != nats.FileStorage {
+		return fmt.Errorf("eventlog: nats stream storage is %s, want file storage for a durable event log", cfg.Storage)
+	}
+	if cfg.Sealed {
+		return errors.New("eventlog: nats stream is sealed and cannot accept events")
+	}
+	if si.State.FirstSeq > 1 {
+		return fmt.Errorf("eventlog: nats retained history begins at sequence %d, want 1: event log prefix has been discarded", si.State.FirstSeq)
+	}
+
+	changed := false
+	require := func(condition bool, apply func()) {
+		if !condition {
+			apply()
+			changed = true
+		}
+	}
+	require(cfg.Duplicates >= dedupWindow, func() { cfg.Duplicates = dedupWindow })
+	require(containsNATSSubject(cfg.Subjects, natsSubject), func() {
+		cfg.Subjects = append(cfg.Subjects, natsSubject)
+	})
+	require(containsNATSSubject(cfg.Subjects, natsClaimSubjectFilter), func() {
+		cfg.Subjects = append(cfg.Subjects, natsClaimSubjectFilter)
+	})
+	require(cfg.Retention == nats.LimitsPolicy, func() { cfg.Retention = nats.LimitsPolicy })
+	require(cfg.MaxConsumers == -1, func() { cfg.MaxConsumers = -1 })
+	require(cfg.MaxAge == 0, func() { cfg.MaxAge = 0 })
+	require(cfg.MaxMsgs == -1, func() { cfg.MaxMsgs = -1 })
+	require(cfg.MaxBytes == -1, func() { cfg.MaxBytes = -1 })
+	require(cfg.MaxMsgsPerSubject == -1, func() { cfg.MaxMsgsPerSubject = -1 })
+	require(cfg.Discard == nats.DiscardNew, func() { cfg.Discard = nats.DiscardNew })
+	require(!cfg.DiscardNewPerSubject, func() { cfg.DiscardNewPerSubject = false })
+	require(!cfg.NoAck, func() { cfg.NoAck = false })
+	require(cfg.DenyDelete, func() { cfg.DenyDelete = true })
+	require(cfg.DenyPurge, func() { cfg.DenyPurge = true })
+	if !changed {
+		return nil
+	}
+	if _, err := js.UpdateStream(&cfg); err != nil {
+		return fmt.Errorf("eventlog: nats stream cannot enforce durable permanent-claim settings and could not be updated: %w", err)
+	}
+	return nil
+}
+
+// resubscribe (re)creates the push subscription. startSeq 0 means "from new";
+// otherwise delivery begins at that exact sequence.
+func (l *NATSLog) resubscribe(startSeq uint64) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.closed {
@@ -134,10 +195,15 @@ func (l *NATSLog) resubscribe(afterSeq uint64) error {
 		l.sub = nil
 	}
 	deliver := nats.DeliverNew()
-	if afterSeq > 0 {
-		deliver = nats.StartSequence(afterSeq + 1)
+	if startSeq > 0 {
+		deliver = nats.StartSequence(startSeq)
 	}
-	sub, err := l.js.Subscribe(natsSubject, l.onMessage, deliver, nats.AckNone())
+	sub, err := l.js.Subscribe("", l.onMessage,
+		deliver,
+		nats.AckNone(),
+		nats.BindStream(natsStream),
+		nats.ConsumerFilterSubjects(natsSubject, natsClaimSubjectFilter),
+	)
 	if err != nil {
 		return err
 	}
@@ -155,8 +221,8 @@ func (l *NATSLog) onReconnect() {
 	if closed {
 		return
 	}
-	if err := l.resubscribe(last); err != nil {
-		slog.Error("eventlog: nats resubscribe after reconnect", "err", err)
+	if err := l.resubscribe(last + 1); err != nil {
+		l.failDelivery(fmt.Errorf("resubscribe after reconnect: %w", err))
 	}
 }
 
@@ -173,6 +239,9 @@ func (l *NATSLog) onMessage(m *nats.Msg) {
 	}
 	e.Seq = meta.Sequence.Stream
 	l.mu.Lock()
+	if e.Unique != "" {
+		l.claims[e.Unique] = struct{}{}
+	}
 	if e.Seq > l.lastSeq {
 		l.lastSeq = e.Seq
 	}
@@ -200,12 +269,30 @@ func (l *NATSLog) Append(ctx context.Context, e Envelope) (Envelope, error) {
 	if err != nil {
 		return Envelope{}, fmt.Errorf("eventlog: nats marshal: %w", err)
 	}
+	subject := natsSubject
 	opts := []nats.PubOpt{nats.Context(ctx)}
 	if e.Unique != "" {
-		opts = append(opts, nats.MsgId(e.Unique)) // JetStream dedups by Msg-Id within the window
+		subject = natsClaimSubject(e.Unique)
+		claimed, err := l.natsClaimed(e.Unique, subject)
+		if err != nil {
+			return Envelope{}, err
+		}
+		if claimed {
+			return Envelope{}, ErrConflict
+		}
+		// Expecting no prior message on this deterministic subject is an atomic,
+		// permanent compare-and-set: the claimed event itself is the index, so there
+		// is no second store or reservation that can commit without its event.
+		opts = append(opts,
+			nats.MsgId(e.Unique),
+			nats.ExpectLastSequencePerSubject(0),
+		)
 	}
-	ack, err := l.js.Publish(natsSubject, b, opts...)
+	ack, err := l.js.Publish(subject, b, opts...)
 	if err != nil {
+		if e.Unique != "" && natsWrongLastSequence(err) {
+			return Envelope{}, ErrConflict
+		}
 		return Envelope{}, fmt.Errorf("eventlog: nats publish: %w", err)
 	}
 	if e.Unique != "" && ack.Duplicate {
@@ -213,7 +300,67 @@ func (l *NATSLog) Append(ctx context.Context, e Envelope) (Envelope, error) {
 		return Envelope{}, ErrConflict
 	}
 	e.Seq = ack.Sequence
+	if e.Unique != "" {
+		l.mu.Lock()
+		l.claims[e.Unique] = struct{}{}
+		l.mu.Unlock()
+	}
 	return e, nil
+}
+
+func (l *NATSLog) natsClaimed(unique, subject string) (bool, error) {
+	l.mu.Lock()
+	_, claimed := l.claims[unique]
+	l.mu.Unlock()
+	if claimed {
+		return true, nil
+	}
+	if _, err := l.js.GetLastMsg(natsStream, subject); err == nil {
+		return true, nil
+	} else if !errors.Is(err, nats.ErrMsgNotFound) {
+		return false, fmt.Errorf("eventlog: nats read claim index: %w", err)
+	}
+	return false, nil
+}
+
+// loadNATSClaims makes every pre-upgrade base-subject claim part of the current
+// in-memory compatibility index. The returned sequence is the exact boundary
+// from which live delivery must start so no append can fall between scan and
+// subscription.
+func (l *NATSLog) loadNATSClaims() (uint64, error) {
+	evs, err := l.Read(context.Background(), 0)
+	if err != nil {
+		return 0, fmt.Errorf("eventlog: nats load retained claims: %w", err)
+	}
+	var through uint64
+	l.mu.Lock()
+	for _, e := range evs {
+		if e.Unique != "" {
+			l.claims[e.Unique] = struct{}{}
+		}
+		through = e.Seq
+	}
+	l.lastSeq = through
+	l.mu.Unlock()
+	return through, nil
+}
+
+func natsClaimSubject(unique string) string {
+	return natsClaimSubjectPrefix + base64.RawURLEncoding.EncodeToString([]byte(unique))
+}
+
+func natsWrongLastSequence(err error) bool {
+	var apiErr *nats.APIError
+	return errors.As(err, &apiErr) && apiErr.ErrorCode == nats.JSErrCodeStreamWrongLastSequence
+}
+
+func containsNATSSubject(subjects []string, want string) bool {
+	for _, subject := range subjects {
+		if subject == want {
+			return true
+		}
+	}
+	return false
 }
 
 // Read returns all events with Seq >= fromSeq (0 = all), in order, by walking

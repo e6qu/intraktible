@@ -209,10 +209,31 @@ Linux, entirely that VM's fsync path.
 - **NATS fail-loud startup.** A pre-existing JetStream with a too-short duplicate
   window no longer opens after a failed attempt to widen it, because doing so
   leaves optimistic-concurrency claims unenforced. Evidence:
-  `TestNATSLogRefusesUnenforceableClaimWindow`, verified with a real in-process
+  `TestNATSLogRefusesUnenforceableClaimConfig`, verified with a real in-process
   JetStream account denied stream-update permission.
 - **Gates.** `make check` (vet, build, full `go test -race ./...`) and
   `make lint` pass. The complete `platform/eventlog` race suite also passes with
   PostgreSQL enabled. All nine PR jobs passed in CI run 30282326320: Go,
   PostgreSQL, web, browser e2e, embedded-artifact e2e, WebAssembly demo,
   Shauth/Ory SSO, Terraform, and container-release.
+
+## Session 2 — NATS whole-log claims and stream durability
+
+- **Permanent claims.** NATS no longer forgets `Envelope.Unique` after the
+  `Msg-Id` window. A claimed event is published on an injectively encoded
+  per-claim subject with `ExpectLastSequencePerSubject(0)`, making the event and
+  its permanent claim one atomic write. The bounded `Msg-Id` cache remains only
+  for mixed-version races. Evidence: `TestNATSUniqueClaimSurvivesDedupWindow`,
+  verified to fail before the fix and pass across close/reopen after expiry.
+- **Safe migration and delivery.** Opening an old base-subject stream loads its
+  retained claims once and subscribes from the exact next sequence; base and
+  claim subjects use one ordered multi-filter consumer. Evidence:
+  `TestNATSUniqueClaimMigratesLegacyStream`, `TestNATSLog` (cross-node delivery
+  of both subjects), and the shared `TestClaimContractNATS`.
+- **Durable stream reconciliation.** A still-intact existing stream is made
+  unbounded and protected from per-message delete/purge before use. Memory
+  storage and `FirstSeq > 1` (a discarded prefix that replay cannot recover)
+  refuse startup. Evidence: `TestNATSLogUnboundsIntactExistingStream`,
+  `TestNATSLogRefusesMemoryStream`, and `TestNATSLogRefusesDiscardedHistory`.
+- **Gates.** The complete event-log package passes under `-race`; `make check`
+  and `make lint` pass repository-wide.

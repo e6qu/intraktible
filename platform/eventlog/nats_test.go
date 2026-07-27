@@ -39,7 +39,7 @@ func runNATSWithOptions(t *testing.T, opts *server.Options) string {
 	return s.ClientURL()
 }
 
-func TestNATSLogRefusesUnenforceableClaimWindow(t *testing.T) {
+func TestNATSLogRefusesUnenforceableClaimConfig(t *testing.T) {
 	const (
 		adminUser = "admin"
 		adminPass = "admin-pass"
@@ -92,10 +92,10 @@ func TestNATSLogRefusesUnenforceableClaimWindow(t *testing.T) {
 	log, err := eventlog.OpenNATSLog(appURL.String())
 	if log != nil {
 		_ = log.Close()
-		t.Fatal("OpenNATSLog returned a log whose claim window it could not enforce")
+		t.Fatal("OpenNATSLog returned a log whose permanent claim config it could not enforce")
 	}
-	if err == nil || !strings.Contains(err.Error(), "could not be widened") {
-		t.Fatalf("OpenNATSLog error = %v, want an explicit claim-window refusal", err)
+	if err == nil || !strings.Contains(err.Error(), "could not be updated") {
+		t.Fatalf("OpenNATSLog error = %v, want an explicit claim-config refusal", err)
 	}
 }
 
@@ -132,37 +132,44 @@ func TestNATSLog(t *testing.T) {
 	if err != nil || second.Seq != 2 {
 		t.Fatalf("node2 append -> seq=%d err=%v", second.Seq, err)
 	}
+	claimed := env(3)
+	claimed.Unique = "flow.slug\x00o\x00w\x00alpha"
+	third, err := node2.Append(ctx, claimed)
+	if err != nil || third.Seq != 3 {
+		t.Fatalf("node2 claimed append -> seq=%d err=%v", third.Seq, err)
+	}
 
 	// Read on either node is consistent and ordered.
 	got, err := node2.Read(ctx, 0)
-	if err != nil || len(got) != 2 || got[0].Seq != 1 || got[1].Seq != 2 {
+	if err != nil || len(got) != 3 || got[0].Seq != 1 || got[1].Seq != 2 || got[2].Seq != 3 {
 		t.Fatalf("node2 Read = %+v err=%v", got, err)
 	}
-	if h := node1.Head(); h != 2 {
-		t.Fatalf("node1 Head = %d, want 2", h)
+	if h := node1.Head(); h != 3 {
+		t.Fatalf("node1 Head = %d, want 3", h)
 	}
 	// A fromSeq past the head clamps to an empty read (no spurious gap error).
 	if past, err := node2.Read(ctx, 99); err != nil || len(past) != 0 {
 		t.Fatalf("node2 Read(99) = %+v err=%v, want empty", past, err)
 	}
 	// Reading from the second sequence returns just the tail.
-	if tail, err := node2.Read(ctx, 2); err != nil || len(tail) != 1 || tail[0].Seq != 2 {
-		t.Fatalf("node2 Read(2) = %+v err=%v, want [seq 2]", tail, err)
+	if tail, err := node2.Read(ctx, 2); err != nil || len(tail) != 2 || tail[0].Seq != 2 || tail[1].Seq != 3 {
+		t.Fatalf("node2 Read(2) = %+v err=%v, want [seq 2,3]", tail, err)
 	}
 
-	// Both appends reach node1's subscriber over the push consumer.
+	// Base-subject and claimed-subject appends reach node1 over one ordered
+	// multi-filter consumer.
 	deadline := time.After(5 * time.Second)
 	var seqs []uint64
-	for len(seqs) < 2 {
+	for len(seqs) < 3 {
 		select {
 		case e := <-ch:
 			seqs = append(seqs, e.Seq)
 		case <-deadline:
-			t.Fatalf("node1 received %v over the bus, want 2 events", seqs)
+			t.Fatalf("node1 received %v over the bus, want 3 events", seqs)
 		}
 	}
-	if seqs[0] != 1 || seqs[1] != 2 {
-		t.Fatalf("delivered seqs = %v, want ordered 1,2", seqs)
+	if seqs[0] != 1 || seqs[1] != 2 || seqs[2] != 3 {
+		t.Fatalf("delivered seqs = %v, want ordered 1,2,3", seqs)
 	}
 
 	_ = node1.Close()

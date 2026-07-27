@@ -19,8 +19,8 @@ import (
 
 // Optimistic-concurrency claims (Envelope.Unique) are enforced differently by every
 // backend — a map for memory, a partial unique index for SQLite and Postgres, a
-// JetStream Msg-Id dedup window for NATS, and nothing of its own for the encryption
-// wrapper, which must pass the claim through untouched.
+// permanent per-claim subject CAS for NATS, and nothing of its own for the
+// encryption wrapper, which must pass the claim through untouched.
 //
 // Each mechanism was tested in isolation. The claim-minting code was tested in
 // isolation. They were never tested together, which is precisely how --log=postgres
