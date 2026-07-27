@@ -239,6 +239,8 @@ export const PERSONAS: PersonaConfig[] = [
     home: 'persona',
     nav: [
       'preapprovals',
+      'engine',
+      'models',
       'cases',
       'decisions',
       'observability',
@@ -248,7 +250,7 @@ export const PERSONAS: PersonaConfig[] = [
       'audit'
     ],
     actions: [
-      { label: 'Clear pending approvals', href: '/preapprovals', icon: 'check' },
+      { label: 'Clear pending approvals', href: '/#pending-approvals', icon: 'check' },
       { label: 'Check case load', href: '/cases', icon: 'cases' },
       { label: 'Check model-risk posture', href: '/mrm', icon: 'shield' },
       { label: 'Check fair-lending impact', href: '/fairlending', icon: 'gauge' },

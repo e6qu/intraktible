@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/e6qu/intraktible/platform/identity"
-	"github.com/e6qu/intraktible/platform/metrics"
+	platformscheduler "github.com/e6qu/intraktible/platform/scheduler"
 	"github.com/e6qu/intraktible/platform/store"
 )
 
@@ -145,26 +145,13 @@ func (s *Scheduler) Tick(ctx context.Context) (TickSummary, error) {
 }
 
 // Run sweeps on every tick of interval until ctx is cancelled. A tick error is
-// logged and the loop continues (a transient store/delivery failure must not kill
-// the scheduler).
-func (s *Scheduler) Run(ctx context.Context, interval time.Duration) {
-	t := time.NewTicker(interval)
-	defer t.Stop()
+// logged and reported to operational health while the loop continues; only a
+// later successful tick clears the failure.
+func (s *Scheduler) Run(ctx context.Context, interval time.Duration, report func(error)) {
 	slog.Info("monitor scheduler started", "interval", interval)
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-			if sum, err := s.Tick(ctx); err != nil {
-				metrics.RecordSchedulerTick("flow_monitor", "error")
-				slog.Error("monitor scheduler tick failed", "err", err)
-			} else {
-				metrics.RecordSchedulerTick("flow_monitor", "ok")
-				if sum.Alerted > 0 || sum.Resolved > 0 {
-					slog.Info("monitor scheduler tick", "alerted", sum.Alerted, "resolved", sum.Resolved, "delivered", sum.Delivered)
-				}
-			}
+	platformscheduler.Run(ctx, interval, "flow_monitor", "monitor", report, s.Tick, func(sum TickSummary) {
+		if sum.Alerted > 0 || sum.Resolved > 0 {
+			slog.Info("monitor scheduler tick", "alerted", sum.Alerted, "resolved", sum.Resolved, "delivered", sum.Delivered)
 		}
-	}
+	})
 }

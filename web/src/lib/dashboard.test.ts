@@ -78,6 +78,17 @@ describe('percentile', () => {
 describe('personaHomeStats', () => {
   const data: DashboardData = {
     flows: [{}, {}] as unknown as DashboardData['flows'],
+    models: [
+      {
+        name: 'risk',
+        pending: {
+          request_id: 'request-1',
+          version: 1,
+          requested_by: 'maker',
+          requested_at: '2026-06-15T00:00:00Z'
+        }
+      }
+    ] as DashboardData['models'],
     decisions: [
       dec('2026-06-15T00:00:00Z', 'completed', 10),
       dec('2026-06-15T00:00:00Z', 'failed', 20),
@@ -106,5 +117,19 @@ describe('personaHomeStats', () => {
     const [p95, rate] = personaHomeStats(['p95', 'completion_rate'], data);
     expect(String(p95.value)).toMatch(/ms$/);
     expect(String(rate.value)).toMatch(/%$/);
+  });
+
+  it('counts flow and model governance requests as pending approvals', () => {
+    const withFlowRequest = {
+      ...data,
+      flows: [
+        {
+          deployment_requests: [{ status: 'pending' }]
+        }
+      ] as DashboardData['flows']
+    };
+    const [pending] = personaHomeStats(['pending_approvals'], withFlowRequest);
+    expect(pending.value).toBe(2);
+    expect(pending.href).toBe('/#pending-approvals');
   });
 });

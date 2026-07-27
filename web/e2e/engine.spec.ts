@@ -80,6 +80,50 @@ test('organizes the builder into tabs with the canvas pinned', async ({ page, re
   await expect(canvas).toBeVisible();
 });
 
+test('failed operational reads stay unavailable instead of becoming empty state', async ({
+  page,
+  request
+}) => {
+  const created = await request.post('/v1/flows', {
+    headers: { 'X-Api-Key': KEY },
+    data: { slug: uniqueSlug(), name: 'Read Failures' }
+  });
+  const { flow_id } = await created.json();
+
+  for (const [path, error] of [
+    ['metrics', 'metrics offline'],
+    ['drift', 'drift offline'],
+    ['shadow', 'shadow offline'],
+    ['grants', 'grants offline']
+  ]) {
+    await page.route(`**/v1/flows/${flow_id}/${path}`, (route) =>
+      route.fulfill({
+        status: 500,
+        contentType: 'application/json',
+        body: JSON.stringify({ error })
+      })
+    );
+  }
+
+  await page.goto(`/engine/${flow_id}`);
+  await expect(page.getByTestId('metrics-error')).toContainText('metrics offline');
+
+  await page.getByTestId('tab-monitor').click();
+  await expect(page.getByTestId('drift-error')).toContainText('drift offline');
+  await expect(page.getByTestId('capture-baseline')).toBeDisabled();
+
+  await page.getByTestId('tab-deploy').click();
+  await page.getByTestId('shadow-panel').locator('summary').click();
+  await expect(page.getByTestId('shadow-error')).toContainText('shadow offline');
+  await expect(page.getByLabel('shadow version for sandbox')).toBeDisabled();
+
+  await page.getByTestId('grants-panel').locator('summary').click();
+  await expect(page.getByTestId('grants-error')).toContainText('grants offline');
+  await expect(
+    page.getByTestId('grants-panel').getByRole('button', { name: 'Grant' })
+  ).toBeDisabled();
+});
+
 test('the test-run input guards invalid JSON and prefills a schema sample', async ({
   page,
   request
@@ -111,13 +155,28 @@ test('the test-run input guards invalid JSON and prefills a schema sample', asyn
   const data = page.getByLabel('input data');
   await data.fill('{ not json');
   await expect(page.getByText('Not valid JSON')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Run', exact: true })).toBeDisabled();
+  await expect(
+    page.getByRole('button', { name: 'Run published version', exact: true })
+  ).toBeDisabled();
+  await page.locator('details.api-call summary').click();
+  await expect(page.getByText('Fix the invalid JSON in Test input')).toBeVisible();
 
   // "Sample input" prefills a valid skeleton from the flow's input schema.
   await page.getByRole('button', { name: 'Sample input' }).click();
   await expect(page.getByText('Not valid JSON')).toHaveCount(0);
   await expect(data).toHaveValue(/"score": 1/);
-  await expect(page.getByRole('button', { name: 'Run', exact: true })).toBeEnabled();
+  await expect(
+    page.getByRole('button', { name: 'Run published version', exact: true })
+  ).toBeEnabled();
+  await expect(page.getByTestId('test-target')).toHaveText('v1 in sandbox');
+
+  // A named non-sandbox environment means its governed deployed version; it
+  // must never fall through to an unpublished/unapproved latest version.
+  await page.getByLabel('environment').selectOption('staging');
+  await expect(page.getByTestId('test-target')).toHaveText('No staging deployment');
+  await expect(
+    page.getByRole('button', { name: 'Run published version', exact: true })
+  ).toBeDisabled();
 });
 
 test('runs a what-if sensitivity sweep from the builder', async ({ page, request }) => {
@@ -308,7 +367,7 @@ test('renders a flow graph and runs a test decision', async ({ page, request }) 
 
   // Inline test run -> a completed decision.
   await page.getByLabel('input data').fill('{}');
-  await page.getByRole('button', { name: 'Run', exact: true }).click();
+  await page.getByRole('button', { name: 'Run published version', exact: true }).click();
   const result = page.getByTestId('run-result');
   await expect(result).toContainText('"status": "completed"');
   await expect(result).toContainText('SEEDED');
@@ -730,14 +789,24 @@ test('builds a flow in the editor and publishes it', async ({ page, request }) =
   await page.getByLabel('edge to', { exact: true }).selectOption('n3');
   await page.getByRole('button', { name: 'Add edge' }).click();
 
+  // Test runs deliberately target the persisted published/deployed graph, never
+  // unsaved canvas state. Make that boundary visible before the author publishes.
+  await expect(page.getByTestId('published-test-warning')).toBeVisible();
+  await expect(page.getByTestId('test-target')).toHaveText('Publish first');
+  await expect(
+    page.getByRole('button', { name: 'Run published version', exact: true })
+  ).toBeDisabled();
+
   // Publish -> v1, and the canvas now shows the three nodes.
   await page.getByRole('button', { name: 'Publish version' }).click();
   await expect(page.getByText('Published v1')).toBeVisible();
+  await expect(page.getByTestId('published-test-warning')).toHaveCount(0);
+  await expect(page.getByTestId('test-target')).toHaveText('v1 in sandbox');
   await expect(page.locator('.svelte-flow__node')).toHaveCount(3);
 
   // The built flow decides.
   await page.getByLabel('input data').fill('{}');
-  await page.getByRole('button', { name: 'Run', exact: true }).click();
+  await page.getByRole('button', { name: 'Run published version', exact: true }).click();
   await expect(page.getByTestId('run-result')).toContainText('BUILT');
 });
 
@@ -859,6 +928,27 @@ test('a structured config panel edits a node without raw JSON', async ({ page, r
   await page.getByRole('button', { name: 'Add', exact: true }).click();
   await page.getByLabel('condition', { exact: true }).fill('score >= 700');
   await expect(page.getByLabel('node config')).toHaveValue('{"condition":"score >= 700"}');
+});
+
+test('the structured editor refuses to overwrite invalid raw node config', async ({
+  page,
+  request
+}) => {
+  const created = await request.post('/v1/flows', {
+    headers: { 'X-Api-Key': KEY },
+    data: { slug: uniqueSlug(), name: 'Invalid Config Guard' }
+  });
+  const { flow_id } = await created.json();
+
+  await page.goto(`/engine/${flow_id}`);
+  await openTools(page);
+  await page.getByLabel('new node type').selectOption('split');
+  await page.getByRole('button', { name: 'Add', exact: true }).click();
+  await page.getByLabel('node config').fill('{broken');
+
+  await page.getByLabel('condition', { exact: true }).fill('score >= 700');
+  await expect(page.getByText(/Fix this node’s raw JSON config/)).toBeVisible();
+  await expect(page.getByLabel('node config')).toHaveValue('{broken');
 });
 
 test('the assignment panel edits target/expr rows without raw JSON', async ({ page, request }) => {

@@ -93,3 +93,96 @@ test('deploys to sandbox and runs the production four-eyes flow', async ({ page,
   const flowRow = page.locator('tbody tr').filter({ hasText: slug });
   await expect(flowRow).toContainText('v1');
 });
+
+test('hands a scheduled production deployment from maker to approver', async ({
+  page,
+  request
+}) => {
+  const suffix = Math.random().toString(36).slice(2, 9);
+  const makerActor = `deploy-maker-${suffix}`;
+  const keyResponse = await request.post('/v1/api-keys', {
+    headers: { 'X-Api-Key': KEY },
+    data: { name: makerActor, actor: makerActor, role: 'editor', scope: '*' }
+  });
+  expect(keyResponse.ok()).toBeTruthy();
+  const { secret: makerKey } = await keyResponse.json();
+  const makerHeaders = { 'X-Api-Key': makerKey };
+
+  const created = await request.post('/v1/flows', {
+    headers: makerHeaders,
+    data: { slug: uniqueSlug(), name: `Scheduled handoff ${suffix}` }
+  });
+  expect(created.ok()).toBeTruthy();
+  const { flow_id } = await created.json();
+  for (const expr of ["'baseline'", "'window'"]) {
+    const published = await request.post(`/v1/flows/${flow_id}/versions`, {
+      headers: makerHeaders,
+      data: { graph: constGraph(expr) }
+    });
+    expect(published.ok()).toBeTruthy();
+  }
+
+  // Work as the maker in the actual console and propose the production window.
+  await page.context().clearCookies();
+  const makerLogin = await page.context().request.post('/v1/login', {
+    data: { api_key: makerKey }
+  });
+  expect(makerLogin.ok()).toBeTruthy();
+  await page.goto(`/engine/${flow_id}?tab=deploy`);
+  const schedules = page.getByTestId('schedules-panel');
+  await schedules.locator('summary').click();
+  await schedules.getByLabel('schedule environment').selectOption('production');
+  await schedules.getByLabel('schedule version').fill('2');
+  const future = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  const localFuture = new Date(future.getTime() - future.getTimezoneOffset() * 60_000)
+    .toISOString()
+    .slice(0, 16);
+  await schedules.getByLabel('schedule at').fill(localFuture);
+  await schedules.getByRole('button', { name: 'Schedule' }).click();
+
+  const requests = page.getByTestId('deployment-requests');
+  await expect(requests).toContainText('scheduled');
+  await expect(requests).toContainText('pending');
+  await expect(requests.getByRole('button', { name: 'Approve' })).toBeDisabled();
+  await expect(schedules.locator('summary')).toContainText('(0)');
+
+  // Change actor. The approver receives actionable work in the shared inbox and
+  // its notification opens the exact review tab, not the unrelated canvas.
+  await page.context().clearCookies();
+  const approverLogin = await page.context().request.post('/v1/login', {
+    data: { api_key: KEY }
+  });
+  expect(approverLogin.ok()).toBeTruthy();
+  await page.goto('/');
+  const bell = page.getByTestId('notifications-bell');
+  await expect(bell.getByTestId('notif-badge')).toBeVisible();
+  await bell.locator('summary').click();
+  const approval = bell
+    .locator('button.item')
+    .filter({
+      hasText: 'Approval requested: schedule v2 to production'
+    })
+    .first();
+  await expect(approval).toBeVisible();
+  await approval.click();
+  await expect(page).toHaveURL(
+    (url) => url.pathname === `/engine/${flow_id}` && url.searchParams.get('tab') === 'deploy'
+  );
+
+  const approverRequests = page.getByTestId('deployment-requests');
+  await approverRequests.getByRole('button', { name: 'Approve' }).click();
+  await page.getByLabel('decision reason').fill('Independent maintenance-window review passed.');
+  await approverRequests.getByRole('button', { name: 'Confirm approve' }).click();
+  await expect(approverRequests.locator('.reqstatus')).toHaveText('approved');
+  await expect(approverRequests).toContainText('Independent maintenance-window review passed.');
+
+  // Approval creates a pending schedule; it does not deploy before the requested
+  // time. The scheduler transition itself is covered against the real command and
+  // replay path by the Go lifecycle regression.
+  const approvedSchedules = page.getByTestId('schedules-panel');
+  await approvedSchedules.locator('summary').click();
+  await expect(approvedSchedules.locator('summary')).toContainText('(1)');
+  await expect(approvedSchedules.locator('li')).toContainText('production v2');
+  await expect(approvedSchedules.locator('li .reqstatus')).toHaveText('pending');
+  await expect(page.getByTestId('deploy-panel').getByText(/production:/)).not.toContainText('v2');
+});

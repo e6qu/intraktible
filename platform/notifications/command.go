@@ -14,7 +14,7 @@ import (
 )
 
 // Handler is the inbox write side (imperative shell). The only mutation is
-// marking a notification read; notifications themselves are derived from comments.
+// marking a notification read; notifications are derived from domain events.
 type Handler struct {
 	log eventlog.Log
 	now func() time.Time

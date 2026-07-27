@@ -168,7 +168,7 @@
     let doc: unknown;
     try {
       doc = JSON.parse(importText);
-    } catch {
+    } catch (_parseError) {
       toast.error('Import document is not valid JSON');
       return;
     }

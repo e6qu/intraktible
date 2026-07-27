@@ -63,30 +63,40 @@ func (Projector) Apply(ctx context.Context, e eventlog.Envelope, s store.Store) 
 		if err := json.Unmarshal(e.Payload, &p); err != nil {
 			return fmt.Errorf("decision_webhooks: decode unsubscribed seq %d: %w", e.Seq, err)
 		}
-		return s.Delete(ctx, Collection, store.Key(e.Org, e.Workspace, p.WebhookID))
+		ok, err := store.UpdateDoc(ctx, s, Collection, store.Key(e.Org, e.Workspace, p.WebhookID), func(v *View) {
+			v.Active = false
+		})
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return fmt.Errorf("decision_webhooks: unsubscribed seq %d for unknown webhook %q", e.Seq, p.WebhookID)
+		}
+		return nil
 	case TypeDelivered:
 		var p Delivered
 		if err := json.Unmarshal(e.Payload, &p); err != nil {
 			return fmt.Errorf("decision_webhooks: decode delivered seq %d: %w", e.Seq, err)
 		}
-		_, err := store.UpdateDoc(ctx, s, Collection, store.Key(e.Org, e.Workspace, p.WebhookID), func(v *View) {
+		ok, err := store.UpdateDoc(ctx, s, Collection, store.Key(e.Org, e.Workspace, p.WebhookID), func(v *View) {
 			v.DeliveryCount++
 			v.LastStatus, v.LastOK, v.LastError, v.LastDeliveryAt = p.Status, p.OK, p.Error, p.At
 		})
-		return err // a delivery record for an unsubscribed webhook is a no-op
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return fmt.Errorf("decision_webhooks: delivered seq %d for unknown webhook %q", e.Seq, p.WebhookID)
+		}
+		return nil
 	}
 	return nil
 }
 
 // List returns the tenant's webhooks, newest first (Seq breaks same-tick ties).
 func List(ctx context.Context, s store.Store, id identity.Identity) ([]View, error) {
-	return store.ListByTime(ctx, s, Collection, store.Key(id.Org, id.Workspace, ""),
+	all, err := store.ListByTime(ctx, s, Collection, store.Key(id.Org, id.Workspace, ""),
 		func(v View) time.Time { return v.CreatedAt }, func(v View) uint64 { return v.Seq }, true)
-}
-
-// active returns the tenant's active webhooks (delivery targets).
-func active(ctx context.Context, s store.Store, id identity.Identity) ([]View, error) {
-	all, err := List(ctx, s, id)
 	if err != nil {
 		return nil, err
 	}
@@ -97,4 +107,9 @@ func active(ctx context.Context, s store.Store, id identity.Identity) ([]View, e
 		}
 	}
 	return out, nil
+}
+
+// active returns the tenant's active webhooks (delivery targets).
+func active(ctx context.Context, s store.Store, id identity.Identity) ([]View, error) {
+	return List(ctx, s, id)
 }

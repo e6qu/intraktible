@@ -3,7 +3,8 @@
      external), evaluated by the engine and referenced from a Predict node.
      Everything goes through the documented /v1/models API. -->
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
+  import { page } from '$app/stores';
   import Icon from '$lib/Icon.svelte';
   import EmptyState from '$lib/EmptyState.svelte';
   import Skeleton from '$lib/Skeleton.svelte';
@@ -14,6 +15,7 @@
     trainModel,
     modelDrift,
     getModelPerformance,
+    recordModelOutcome,
     whenPermitted,
     captureModelBaseline,
     setModelMonitor,
@@ -75,6 +77,8 @@
   // The model whose governance (four-eyes approval + validation) panel is open.
   let govOpen = $state('');
   let govBusy = $state(false);
+  let govDecision = $state<{ name: string; approve: boolean } | null>(null);
+  let govReason = $state('');
   // Validation-evidence form fields for the open governance panel.
   let valDataset = $state('');
   let valMetrics = $state('');
@@ -84,6 +88,8 @@
 
   function toggleGov(name: string) {
     govOpen = govOpen === name ? '' : name;
+    govDecision = null;
+    govReason = '';
   }
 
   // approvalStatus renders the model's four-eyes state as a badge tone + label.
@@ -116,14 +122,25 @@
     }
   }
 
+  function startGovDecision(name: string, approve: boolean) {
+    govDecision = { name, approve };
+    govReason = '';
+  }
+
   async function doApprove(m: Model, approve: boolean) {
     if (!m.pending) return;
+    const reason = govReason.trim();
+    if (!reason) {
+      toast.error(`A reason for ${approve ? 'approval' : 'rejection'} is required.`);
+      return;
+    }
     govBusy = true;
     try {
-      const reason = approve ? 'Reviewed and approved.' : 'Rejected on review.';
       if (approve) await approveModel(key, m.name, m.pending.request_id, reason);
       else await rejectModel(key, m.name, m.pending.request_id, reason);
       toast.success(approve ? 'Model approved.' : 'Request rejected.');
+      govDecision = null;
+      govReason = '';
       await refreshModels();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
@@ -171,7 +188,7 @@
 
   // An at-a-glance drift status per model, fetched once on load so the table shows
   // which models are drifting without the operator expanding each row.
-  type DriftStatus = { tone: Tone; label: string };
+  type DriftStatus = { tone: Tone; label: string; error?: string };
   // A Map (not a plain object) so the keyed writes below stay clean under the
   // object-injection lint, matching the STARTERS map above.
   let driftStatus = $state<Map<string, DriftStatus>>(new Map());
@@ -183,25 +200,32 @@
     if (d.psi >= 0.1) return { tone: 'warn', label: 'moderate' };
     return { tone: 'ok', label: 'stable' };
   }
-  // Fetch every model's all-time drift status concurrently; a single failure must
-  // not blank the table, so each is settled independently and only successes land.
+  // Fetch every model's all-time drift status concurrently. A single failure does
+  // not blank the registry, but it must land as an explicit unavailable badge.
   // A token drops an older sweep entirely, and successes merge per model, so a
   // slow sweep can't clobber newer statuses (e.g. the per-row loadDrift updates).
   let driftStatusSeq = 0;
   async function loadDriftStatuses(ms: Model[]) {
     const seq = ++driftStatusSeq;
-    const settled = await Promise.allSettled(
-      ms.map(
-        async (m): Promise<[string, DriftStatus]> => [
-          m.name,
-          statusFromDrift(await modelDrift(key, m.name, 0))
-        ]
-      )
+    const results = await Promise.all(
+      ms.map(async (model) => {
+        try {
+          return { model, status: statusFromDrift(await modelDrift(key, model.name, 0)) };
+        } catch (error) {
+          return { model, error };
+        }
+      })
     );
     if (seq !== driftStatusSeq) return; // a newer sweep superseded this one
     const next = new Map(driftStatus);
-    for (const res of settled) {
-      if (res.status === 'fulfilled') next.set(res.value[0], res.value[1]);
+    for (const result of results) {
+      if (result.status) next.set(result.model.name, result.status);
+      else
+        next.set(result.model.name, {
+          tone: 'danger',
+          label: 'unavailable',
+          error: msg(result.error)
+        });
     }
     driftStatus = next;
   }
@@ -228,6 +252,10 @@
   // The open model's reconciled performance (from recorded actuals), fetched alongside
   // its drift; null when none recorded yet.
   let perf = $state<ModelPerformance | null>(null);
+  let actualProbability = $state('');
+  let actualLabel = $state('1');
+  let actualDecisionID = $state('');
+  let actualBusy = $state(false);
   async function loadDrift(m: string) {
     drift = null;
     perf = null;
@@ -306,6 +334,34 @@
       toast.error(msg(e));
     }
   }
+  async function recordActual(m: string) {
+    const probability = Number(actualProbability);
+    const label = Number(actualLabel);
+    if (!Number.isFinite(probability) || probability < 0 || probability > 1) {
+      toast.error('Predicted probability must be a number from 0 through 1.');
+      return;
+    }
+    if (label !== 0 && label !== 1) {
+      toast.error('Realized outcome must be 0 or 1.');
+      return;
+    }
+    actualBusy = true;
+    try {
+      await recordModelOutcome(key, m, {
+        probability,
+        label,
+        decision_id: actualDecisionID.trim() || undefined
+      });
+      actualProbability = '';
+      actualDecisionID = '';
+      await loadDrift(m);
+      toast.success(`Actual outcome recorded for ${m}.`);
+    } catch (e) {
+      toast.error(msg(e));
+    } finally {
+      actualBusy = false;
+    }
+  }
   function starter(kind: string) {
     spec = STARTERS.get(kind) ?? spec;
   }
@@ -314,6 +370,26 @@
     error = '';
     try {
       models = await listModels(key);
+      const requestedGovernance = $page.url.searchParams.get('governance') ?? '';
+      const requestedDiscussion = $page.url.searchParams.get('discussion') ?? '';
+      if (requestedGovernance && requestedDiscussion) {
+        throw new Error('Open either model governance or discussion, not both.');
+      }
+      const requestedModel = requestedGovernance || requestedDiscussion;
+      if (requestedModel && !models.some((m) => m.name === requestedModel)) {
+        throw new Error(`Model ${requestedModel} was not found in this workspace.`);
+      }
+      if (requestedGovernance) {
+        govOpen = requestedGovernance;
+      } else if (requestedDiscussion) {
+        discussOpen = requestedDiscussion;
+      }
+      if (requestedModel) {
+        await tick();
+        document
+          .getElementById(requestedGovernance ? 'model-governance' : 'model-discussion')
+          ?.scrollIntoView({ block: 'start' });
+      }
       void loadDriftStatuses(models); // populate row badges without blocking the table
     } catch (e) {
       error = msg(e);
@@ -521,7 +597,7 @@
               <td>
                 {#if driftStatus.get(m.name)}
                   {@const s = driftStatus.get(m.name)}
-                  <Badge tone={s?.tone ?? 'neutral'}>{s?.label}</Badge>
+                  <Badge tone={s?.tone ?? 'neutral'} title={s?.error}>{s?.label}</Badge>
                 {:else}
                   <span class="muted">…</span>
                 {/if}
@@ -542,7 +618,7 @@
               >
             </tr>
             {#if govOpen === m.name}
-              <tr class="drift-row" data-testid="model-governance">
+              <tr id="model-governance" class="drift-row" data-testid="model-governance">
                 <td colspan="7">
                   <div class="gov">
                     <div class="gov-status">
@@ -568,17 +644,52 @@
                         >
                       {/if}
                       {#if m.pending && roleAtLeast($user?.role, 'approver')}
-                        <button
-                          class="btn primary"
-                          disabled={govBusy}
-                          onclick={() => doApprove(m, true)}>Approve</button
-                        >
-                        <button class="btn" disabled={govBusy} onclick={() => doApprove(m, false)}
-                          >Reject</button
-                        >
-                        <span class="muted small"
-                          >Four-eyes: the author and requester can't approve.</span
-                        >
+                        {#if govDecision?.name === m.name}
+                          <input
+                            class="decision-reason"
+                            bind:value={govReason}
+                            aria-label="model decision reason"
+                            placeholder={govDecision.approve
+                              ? 'Why this model is approved'
+                              : 'Why this request is rejected'}
+                          />
+                          <button
+                            class:primary={govDecision.approve}
+                            class="btn"
+                            disabled={govBusy}
+                            onclick={() => doApprove(m, govDecision?.approve ?? false)}
+                          >
+                            Confirm {govDecision.approve ? 'approval' : 'rejection'}
+                          </button>
+                          <button
+                            class="btn"
+                            disabled={govBusy}
+                            onclick={() => {
+                              govDecision = null;
+                              govReason = '';
+                            }}>Cancel</button
+                          >
+                        {:else}
+                          <button
+                            class="btn primary"
+                            disabled={govBusy ||
+                              m.owner === $user?.actor ||
+                              m.pending.requested_by === $user?.actor}
+                            title={m.owner === $user?.actor ||
+                            m.pending.requested_by === $user?.actor
+                              ? 'Four-eyes: you authored or requested this — a different approver must approve'
+                              : undefined}
+                            onclick={() => startGovDecision(m.name, true)}>Approve</button
+                          >
+                          <button
+                            class="btn"
+                            disabled={govBusy}
+                            onclick={() => startGovDecision(m.name, false)}>Reject</button
+                          >
+                          <span class="muted small"
+                            >Four-eyes: the author and requester can't approve.</span
+                          >
+                        {/if}
                       {/if}
                     </div>
 
@@ -629,7 +740,7 @@
               </tr>
             {/if}
             {#if discussOpen === m.name}
-              <tr class="drift-row" data-testid="model-discussion">
+              <tr id="model-discussion" class="drift-row" data-testid="model-discussion">
                 <td colspan="7">
                   <CommentThread subjectType="model" subjectId={m.name} title="Model discussion" />
                 </td>
@@ -638,6 +749,61 @@
             {#if driftOpen === m.name}
               <tr class="drift-row" data-testid="model-drift">
                 <td colspan="7">
+                  {#if roleAtLeast($user?.role, 'editor')}
+                    <div class="actual-form">
+                      <div>
+                        <p class="sub">Reconcile a realized outcome</p>
+                        <p class="muted small">
+                          Record ground truth against the probability this model predicted. These
+                          actuals drive calibration, accuracy, Brier score, and realized AUC.
+                        </p>
+                      </div>
+                      <label>
+                        Predicted probability
+                        <input
+                          aria-label="actual predicted probability"
+                          bind:value={actualProbability}
+                          inputmode="decimal"
+                          placeholder="0.82"
+                        />
+                      </label>
+                      <label>
+                        Outcome
+                        <select aria-label="actual outcome" bind:value={actualLabel}>
+                          <option value="1">1 — positive</option>
+                          <option value="0">0 — negative</option>
+                        </select>
+                      </label>
+                      <label>
+                        Decision ID (optional)
+                        <input
+                          aria-label="actual decision id"
+                          bind:value={actualDecisionID}
+                          placeholder="lineage"
+                        />
+                      </label>
+                      <button
+                        class="btn"
+                        disabled={actualBusy}
+                        onclick={() => recordActual(m.name)}
+                      >
+                        {actualBusy ? 'Recording…' : 'Record actual'}
+                      </button>
+                    </div>
+                  {/if}
+                  {#if perf && perf.count > 0}
+                    <div class="perf" data-testid="model-performance">
+                      <p class="sub">
+                        Live performance (from {perf.count} recorded
+                        {perf.count === 1 ? 'actual' : 'actuals'})
+                      </p>
+                      <div class="metrics">
+                        <span>AUC <b>{perf.auc.toFixed(3)}</b></span>
+                        <span>Accuracy <b>{(perf.accuracy * 100).toFixed(1)}%</b></span>
+                        <span>Brier <b>{perf.brier.toFixed(3)}</b></span>
+                      </div>
+                    </div>
+                  {/if}
                   {#if driftError}
                     <p class="err">
                       Couldn't load drift: {driftError}
@@ -742,16 +908,6 @@
                         </table>
                       </div>
                     {/if}
-                    {#if perf && perf.count > 0}
-                      <div class="perf" data-testid="model-performance">
-                        <p class="sub">Live performance (from {perf.count} recorded actuals)</p>
-                        <div class="metrics">
-                          <span>AUC <b>{perf.auc.toFixed(3)}</b></span>
-                          <span>Accuracy <b>{(perf.accuracy * 100).toFixed(1)}%</b></span>
-                          <span>Brier <b>{perf.brier.toFixed(3)}</b></span>
-                        </div>
-                      </div>
-                    {/if}
                   {/if}
                 </td>
               </tr>
@@ -811,6 +967,44 @@
     display: flex;
     gap: 1.2rem;
     font-size: 0.9rem;
+  }
+  .actual-form {
+    display: grid;
+    grid-template-columns: minmax(12rem, 2fr) repeat(3, minmax(8rem, 1fr)) auto;
+    align-items: end;
+    gap: 0.6rem;
+    margin-bottom: 0.8rem;
+    padding-bottom: 0.8rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .actual-form label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    color: var(--fg-subtle);
+    font-size: 0.78rem;
+  }
+  .actual-form input,
+  .actual-form select {
+    min-width: 0;
+    padding: 0.35rem 0.45rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface);
+    color: var(--fg);
+    font: inherit;
+  }
+  .decision-reason {
+    min-width: 16rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface);
+    color: var(--fg);
+  }
+  @media (max-width: 900px) {
+    .actual-form {
+      grid-template-columns: 1fr 1fr;
+    }
   }
   table.importance {
     border-collapse: collapse;

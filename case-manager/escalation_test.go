@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/e6qu/intraktible/case-manager/cases"
+	casecmd "github.com/e6qu/intraktible/case-manager/command"
 	casedomain "github.com/e6qu/intraktible/case-manager/domain"
 	decisioncmd "github.com/e6qu/intraktible/decision-engine/command"
 	decisiondomain "github.com/e6qu/intraktible/decision-engine/domain"
@@ -16,9 +17,96 @@ import (
 	decisionhistory "github.com/e6qu/intraktible/decision-engine/history"
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/identity"
+	"github.com/e6qu/intraktible/platform/notifications"
 	"github.com/e6qu/intraktible/platform/projection"
 	"github.com/e6qu/intraktible/platform/store"
 )
+
+func TestSuspendedDecisionOutcomeCompletesLinkedCaseAndTask(t *testing.T) {
+	ctx := context.Background()
+	log, err := eventlog.OpenWAL(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = log.Close() }()
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "reviewer"}
+
+	graph := decisionevents.Graph{
+		Nodes: []decisionevents.Node{
+			{ID: "in", Type: decisionevents.NodeInput},
+			{ID: "review", Type: decisionevents.NodeManualReview, Config: json.RawMessage(
+				`{"company_name":"'Acme'","case_type":"'underwriting'","suspend":true,"output_key":"review"}`,
+			)},
+			{ID: "out", Type: decisionevents.NodeOutput, Config: json.RawMessage(`{"fields":["review"]}`)},
+		},
+		Edges: []decisionevents.Edge{{From: "in", To: "review"}, {From: "review", To: "out"}},
+	}
+	fh := decisioncmd.NewHandler(log)
+	flowID, _, err := fh.CreateFlow(ctx, id, decisiondomain.CreateFlow{Slug: "durable-review", Name: "Durable review"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := fh.PublishVersion(ctx, id, decisiondomain.PublishVersion{FlowID: flowID, Graph: graph}); err != nil {
+		t.Fatal(err)
+	}
+
+	rebuild := func() store.Store {
+		st := store.NewMemory()
+		if err := projection.New(log, st,
+			decisionflows.Projector{}, decisionhistory.Projector{}, cases.Projector{}, notifications.Projector{},
+		).Start(ctx); err != nil {
+			t.Fatal(err)
+		}
+		return st
+	}
+	st := rebuild()
+	dh := decisioncmd.NewDecideHandler(log, st)
+	result, err := dh.Decide(ctx, id, "durable-review", "sandbox", map[string]any{"applicant": "A-1"}, decisioncmd.EntityRef{})
+	if err != nil || result.Status != decisiondomain.StatusSuspended {
+		t.Fatalf("decide: status=%s err=%v", result.Status, err)
+	}
+
+	st = rebuild()
+	record, ok, err := decisionhistory.Read(ctx, st, id, result.DecisionID)
+	if err != nil || !ok || record.CaseID == "" {
+		t.Fatalf("suspended decision link: ok=%v record=%+v err=%v", ok, record, err)
+	}
+	reviewCase, ok, err := cases.Read(ctx, st, id, record.CaseID)
+	if err != nil || !ok || reviewCase.SourceID != result.DecisionID {
+		t.Fatalf("linked case: ok=%v case=%+v err=%v", ok, reviewCase, err)
+	}
+
+	// Generic case closure is misleading while the decision still needs the
+	// approve/decline/refer outcome. The command boundary refuses it too.
+	if _, err := casecmd.NewHandler(log).SetStatus(ctx, id, casedomain.SetStatus{
+		CaseID: record.CaseID, Status: casedomain.StatusCompleted,
+	}); err == nil {
+		t.Fatal("suspended decision's case was completed without a review outcome")
+	}
+
+	if _, err := decisioncmd.NewDecideHandler(log, st).ResumeDecision(
+		ctx, id, result.DecisionID, map[string]any{"decision": "approve"},
+	); err != nil {
+		t.Fatal(err)
+	}
+	st = rebuild()
+	reviewCase, ok, err = cases.Read(ctx, st, id, record.CaseID)
+	if err != nil || !ok || reviewCase.Status != casedomain.StatusCompleted {
+		t.Fatalf("resumed case: ok=%v case=%+v err=%v", ok, reviewCase, err)
+	}
+	if got := reviewCase.Audit[len(reviewCase.Audit)-1].Type; got != "decision_resumed" {
+		t.Fatalf("case terminal audit = %q, want decision_resumed", got)
+	}
+	inbox, err := notifications.List(ctx, st, id, notifications.Access{ReviewTasks: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range inbox {
+		if item.SubjectType == "case" && item.SubjectID == record.CaseID {
+			t.Fatalf("completed review task remained in the inbox: %+v", item)
+		}
+	}
+}
 
 // TestEscalationFromFlowOpensCase exercises the cross-component hook: a decision
 // flow with a manual_review node escalates, and the Case Manager opens a case

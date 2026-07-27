@@ -92,25 +92,85 @@ func applyCaseAssigned(ctx context.Context, e eventlog.Envelope, s store.Store) 
 	if err := json.Unmarshal(e.Payload, &p); err != nil {
 		return fmt.Errorf("notifications: decode case_assigned seq %d: %w", e.Seq, err)
 	}
-	if _, err := store.UpdateDoc(ctx, s, caseIndexCollection, store.Key(e.Org, e.Workspace, p.CaseID),
-		func(idx *caseIndex) { idx.Assignee = p.Assignee }); err != nil {
+	ok, err := store.UpdateDoc(ctx, s, caseIndexCollection, store.Key(e.Org, e.Workspace, p.CaseID),
+		func(idx *caseIndex) { idx.Assignee = p.Assignee })
+	if err != nil {
 		return err
 	}
-	idx, _, err := store.GetDoc[caseIndex](ctx, s, caseIndexCollection, store.Key(e.Org, e.Workspace, p.CaseID))
+	if !ok {
+		return fmt.Errorf("notifications: case_assigned seq %d for unknown case %q", e.Seq, p.CaseID)
+	}
+	idx, found, err := store.GetDoc[caseIndex](ctx, s, caseIndexCollection, store.Key(e.Org, e.Workspace, p.CaseID))
 	if err != nil {
 		return fmt.Errorf("notifications: read case index %q: %w", p.CaseID, err)
+	}
+	if !found {
+		return fmt.Errorf("notifications: case index %q disappeared after assignment", p.CaseID)
 	}
 	idx.CaseID = p.CaseID
 	return task(ctx, e, s, p.Assignee, p.CaseID, "assigned",
 		fmt.Sprintf("Review task assigned to you: %s", label(idx)))
 }
 
+func applyCaseStatusChanged(ctx context.Context, e eventlog.Envelope, s store.Store) error {
+	var p cmevents.CaseStatusChanged
+	if err := json.Unmarshal(e.Payload, &p); err != nil {
+		return fmt.Errorf("notifications: decode case_status_changed seq %d: %w", e.Seq, err)
+	}
+	if p.Status != "completed" {
+		return nil
+	}
+	return resolveCaseTasks(ctx, e, s, p.CaseID)
+}
+
+func applyDecisionResumed(ctx context.Context, e eventlog.Envelope, s store.Store) error {
+	var p deevents.DecisionResumed
+	if err := json.Unmarshal(e.Payload, &p); err != nil {
+		return fmt.Errorf("notifications: decode decision_resumed seq %d: %w", e.Seq, err)
+	}
+	if p.CaseID == "" {
+		return nil // historical events pre-dating the explicit case link
+	}
+	return resolveCaseTasks(ctx, e, s, p.CaseID)
+}
+
+// resolveCaseTasks retires every personal/shared notification for a closed case.
+// Tombstoning instead of deleting keeps replay and audit deterministic while List
+// stops presenting completed work to other reviewers as an unread live task.
+func resolveCaseTasks(ctx context.Context, e eventlog.Envelope, s store.Store, caseID string) error {
+	all, err := store.ListDocs[View](ctx, s, Collection, store.Key(e.Org, e.Workspace, ""))
+	if err != nil {
+		return err
+	}
+	for _, notification := range all {
+		if notification.Kind != KindTask || notification.SubjectType != "case" ||
+			notification.SubjectID != caseID || notification.Resolved {
+			continue
+		}
+		ok, err := store.UpdateDoc(
+			ctx, s, Collection,
+			store.Key(e.Org, e.Workspace, notification.NotificationID),
+			func(v *View) { v.Resolved = true },
+		)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return fmt.Errorf("notifications: task %q disappeared while resolving case %q", notification.NotificationID, caseID)
+		}
+	}
+	return nil
+}
+
 // applySLA turns a bare SLA event (due-soon reminder or overdue breach) into a
 // notification addressed to the case's assignee, or the reviewer queue if unowned.
 func applySLA(ctx context.Context, e eventlog.Envelope, s store.Store, caseID, suffix, verb string) error {
 	idx, ok, err := store.GetDoc[caseIndex](ctx, s, caseIndexCollection, store.Key(e.Org, e.Workspace, caseID))
-	if err != nil || !ok {
+	if err != nil {
 		return err
+	}
+	if !ok {
+		return fmt.Errorf("notifications: %s seq %d for unknown case %q", suffix, e.Seq, caseID)
 	}
 	idx.CaseID = caseID
 	return task(ctx, e, s, recipientFor(idx), caseID, suffix,

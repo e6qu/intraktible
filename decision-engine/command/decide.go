@@ -262,10 +262,11 @@ type DecideResult struct {
 	PreApprovalID string
 }
 
-// Decide runs the latest published version of the flow with the given slug in
-// the given environment against data. A run that errors during evaluation is a
-// recorded "failed" decision (returned with Status failed), not an API error;
-// only infrastructure/lookup problems return an error.
+// Decide runs the active version of the flow with the given slug in the selected
+// environment against data. Sandbox falls back to the latest published version;
+// staging and production require an explicit deployment. A run that errors during
+// evaluation is a recorded "failed" decision (returned with Status failed), not an
+// API error; only infrastructure/lookup problems return an error.
 func (h *DecideHandler) Decide(ctx context.Context, id identity.Identity, slug, env string, data map[string]any, ref EntityRef) (res DecideResult, err error) {
 	if err := id.Valid(); err != nil {
 		return DecideResult{}, err
@@ -308,8 +309,8 @@ func (h *DecideHandler) Decide(ctx context.Context, id identity.Identity, slug, 
 	// latest-published fallback would let an un-deployed (production: un-reviewed)
 	// version decide real traffic. The sandbox keeps the fallback so a freshly
 	// published flow is immediately test-runnable.
-	if dep, deployed := fv.Deployments[env]; (!deployed || dep.Version == 0) && env != string(domain.EnvSandbox) {
-		return DecideResult{}, fmt.Errorf("%w: flow %q has no %s deployment — deploy a version there first", ErrNotFound, slug, env)
+	if err := requireDeployment(fv, slug, env); err != nil {
+		return DecideResult{}, err
 	}
 	versionNo, variantKind := h.resolveVersion(fv, env)
 	variant := string(variantKind) // recorded on the wire as a plain string
@@ -381,6 +382,7 @@ func (h *DecideHandler) Decide(ctx context.Context, id identity.Identity, slug, 
 	var terminalType string
 	var terminalPayload any
 	var result DecideResult
+	var suspendedCaseID string
 	switch run.Status {
 	case domain.StatusFailed:
 		terminalType = events.TypeDecisionFailed
@@ -397,10 +399,12 @@ func (h *DecideHandler) Decide(ctx context.Context, id identity.Identity, slug, 
 		if err != nil {
 			return DecideResult{}, fmt.Errorf("decision-engine: marshal suspend state: %w", err)
 		}
+		suspendedCaseID = h.newID()
 		terminalType = events.TypeDecisionSuspended
 		terminalPayload = events.DecisionSuspended{
 			DecisionID: decisionID, FlowID: fv.FlowID, Version: version.Version, Variant: variant,
-			NodeID: run.Suspend.NodeID, ResumeNode: run.Suspend.Resume, State: stateJSON, DurationMS: dur,
+			NodeID: run.Suspend.NodeID, ResumeNode: run.Suspend.Resume, CaseID: suspendedCaseID,
+			State: stateJSON, DurationMS: dur,
 		}
 		result = DecideResult{DecisionID: decisionID, Status: domain.StatusSuspended}
 	default:
@@ -435,7 +439,7 @@ func (h *DecideHandler) Decide(ctx context.Context, id identity.Identity, slug, 
 		return DecideResult{}, err
 	}
 	// A manual_review node that ran escalates to a case (consumed by the Case Manager).
-	if err := h.emitEscalations(ctx, id, decisionID, ref, dataJSON, run); err != nil {
+	if err := h.emitEscalations(ctx, id, decisionID, ref, dataJSON, run, suspendedCaseID); err != nil {
 		return DecideResult{}, err
 	}
 	// A shadow version, if configured for this environment, is evaluated over the
@@ -463,6 +467,9 @@ func (h *DecideHandler) ResumeDecision(ctx context.Context, id identity.Identity
 	}
 	if rec.Status != "suspended" || len(rec.SuspendState) == 0 {
 		return DecideResult{}, fmt.Errorf("decision-engine: decision %q is not suspended", decisionID)
+	}
+	if rec.CaseID == "" {
+		return DecideResult{}, fmt.Errorf("decision-engine: suspended decision %q has no linked review case", decisionID)
 	}
 	var suspend domain.SuspendState
 	if err := json.Unmarshal(rec.SuspendState, &suspend); err != nil {
@@ -499,7 +506,7 @@ func (h *DecideHandler) ResumeDecision(ctx context.Context, id identity.Identity
 	// The projection-status check above alone is TOCTOU: both racers can read
 	// "suspended" before either's events apply.
 	if err := h.emitUnique(ctx, id, events.TypeDecisionResumed, events.DecisionResumed{
-		DecisionID: decisionID, Actor: id.Actor, Outcome: outcomeJSON,
+		DecisionID: decisionID, CaseID: rec.CaseID, Actor: id.Actor, Outcome: outcomeJSON,
 	}, resumeClaim(decisionID, rec.SuspendState)); err != nil {
 		if errors.Is(err, eventlog.ErrConflict) {
 			return DecideResult{}, fmt.Errorf("decision-engine: decision %q is already being resumed", decisionID)
@@ -530,7 +537,7 @@ func (h *DecideHandler) ResumeDecision(ctx context.Context, id identity.Identity
 		}); err != nil {
 			return DecideResult{}, err
 		}
-		if err := h.emitEscalations(ctx, id, decisionID, ref, rec.Data, run); err != nil {
+		if err := h.emitEscalations(ctx, id, decisionID, ref, rec.Data, run, ""); err != nil {
 			return DecideResult{}, err
 		}
 		return DecideResult{DecisionID: decisionID, Status: domain.StatusFailed, Error: run.Err}, nil
@@ -539,13 +546,15 @@ func (h *DecideHandler) ResumeDecision(ctx context.Context, id identity.Identity
 		if err != nil {
 			return DecideResult{}, fmt.Errorf("decision-engine: marshal suspend state: %w", err)
 		}
+		nextCaseID := h.newID()
 		if err := h.emit(ctx, id, events.TypeDecisionSuspended, events.DecisionSuspended{
 			DecisionID: decisionID, FlowID: rec.FlowID, Version: rec.Version, Variant: rec.Variant,
-			NodeID: run.Suspend.NodeID, ResumeNode: run.Suspend.Resume, State: stateJSON, DurationMS: dur,
+			NodeID: run.Suspend.NodeID, ResumeNode: run.Suspend.Resume, CaseID: nextCaseID,
+			State: stateJSON, DurationMS: dur,
 		}); err != nil {
 			return DecideResult{}, err
 		}
-		if err := h.emitEscalations(ctx, id, decisionID, ref, rec.Data, run); err != nil {
+		if err := h.emitEscalations(ctx, id, decisionID, ref, rec.Data, run, nextCaseID); err != nil {
 			return DecideResult{}, err
 		}
 		return DecideResult{DecisionID: decisionID, Status: domain.StatusSuspended}, nil
@@ -570,7 +579,7 @@ func (h *DecideHandler) ResumeDecision(ctx context.Context, id identity.Identity
 		}); err != nil {
 			return DecideResult{}, err
 		}
-		if err := h.emitEscalations(ctx, id, decisionID, ref, rec.Data, run); err != nil {
+		if err := h.emitEscalations(ctx, id, decisionID, ref, rec.Data, run, ""); err != nil {
 			return DecideResult{}, err
 		}
 		return DecideResult{
@@ -646,7 +655,7 @@ func (h *DecideHandler) prepare(ctx context.Context, id identity.Identity, requi
 	return data, nil
 }
 
-// Preview runs the latest published version of the flow as Decide would —
+// Preview runs the environment's active version as Decide would —
 // resolving the same version, validating input, running the injectors, executing
 // the flow, and applying the operational policy — but records NOTHING: it emits no
 // decision events, opens no case, and runs no shadow. It backs the builder's "Test
@@ -677,6 +686,9 @@ func (h *DecideHandler) Preview(ctx context.Context, id identity.Identity, slug,
 	}
 	if len(fv.Versions) == 0 {
 		return DecideResult{}, fmt.Errorf("%w: flow %q has no published version", ErrNotFound, slug)
+	}
+	if err := requireDeployment(fv, slug, env); err != nil {
+		return DecideResult{}, err
 	}
 	versionNo, _ := h.resolveVersion(fv, env)
 	version, ok := versionByNumber(fv, versionNo)
@@ -1055,7 +1067,16 @@ func (h *DecideHandler) injectPredictions(ctx context.Context, id identity.Ident
 	return out, nil
 }
 
-func (h *DecideHandler) emitEscalations(ctx context.Context, id identity.Identity, decisionID string, ref EntityRef, dataJSON json.RawMessage, run domain.Run) error {
+func (h *DecideHandler) emitEscalations(
+	ctx context.Context,
+	id identity.Identity,
+	decisionID string,
+	ref EntityRef,
+	dataJSON json.RawMessage,
+	run domain.Run,
+	suspendedCaseID string,
+) error {
+	usedSuspendedID := false
 	for _, res := range run.Results {
 		if res.Type != events.NodeManualReview {
 			continue
@@ -1078,13 +1099,21 @@ func (h *DecideHandler) emitEscalations(ctx context.Context, id identity.Identit
 		if err := json.Unmarshal(sealedOut, &out); err != nil {
 			return fmt.Errorf("decision-engine: decode manual_review output: %w", err)
 		}
+		caseID := h.newID()
+		if suspendedCaseID != "" && run.Suspend != nil && res.NodeID == run.Suspend.NodeID {
+			caseID = suspendedCaseID
+			usedSuspendedID = true
+		}
 		if err := h.emit(ctx, id, events.TypeManualReviewRequested, events.ManualReviewRequested{
-			CaseID: h.newID(), DecisionID: decisionID, NodeID: res.NodeID,
+			CaseID: caseID, DecisionID: decisionID, NodeID: res.NodeID,
 			CompanyName: labelFromSealed(out.CompanyName), CaseType: labelFromSealed(out.CaseType),
 			SLADays: out.SLADays, Context: dataJSON,
 		}); err != nil {
 			return err
 		}
+	}
+	if suspendedCaseID != "" && !usedSuspendedID {
+		return fmt.Errorf("decision-engine: suspended case %q did not match a manual-review result", suspendedCaseID)
 	}
 	return nil
 }
@@ -1215,6 +1244,16 @@ func (h *DecideHandler) resolveVersion(fv flows.FlowView, env string) (int, doma
 		return dep.ChallengerVersion, domain.VariantChallenger
 	}
 	return dep.Version, domain.VariantChampion
+}
+
+// requireDeployment keeps recorded and record-free execution aligned: outside the
+// sandbox, selecting an environment always means its governed deployed version.
+func requireDeployment(fv flows.FlowView, slug, env string) error {
+	dep, deployed := fv.Deployments[env]
+	if env != string(domain.EnvSandbox) && (!deployed || dep.Version == 0) {
+		return fmt.Errorf("%w: flow %q has no %s deployment — deploy a version there first", ErrNotFound, slug, env)
+	}
+	return nil
 }
 
 func versionByNumber(fv flows.FlowView, n int) (flows.VersionView, bool) {

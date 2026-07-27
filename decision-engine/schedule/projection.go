@@ -67,39 +67,100 @@ func (Projector) Apply(ctx context.Context, e eventlog.Envelope, s store.Store) 
 			Environment: p.Environment, Version: p.Version, At: p.At, Until: p.Until,
 			Status: StatusPending, CreatedBy: e.Actor, CreatedAt: e.Time, Seq: e.Seq,
 		})
+	case events.TypeDeploymentApproved:
+		var p events.DeploymentApproved
+		if err := json.Unmarshal(e.Payload, &p); err != nil {
+			return fmt.Errorf("decision_deploy_schedules: decode deployment_approved seq %d: %w", e.Seq, err)
+		}
+		if p.ScheduleID == "" || p.At == nil {
+			return nil
+		}
+		return store.PutDoc(ctx, s, Collection, store.Key(e.Org, e.Workspace, p.ScheduleID), View{
+			Org: e.Org, Workspace: e.Workspace, ScheduleID: p.ScheduleID, FlowID: p.FlowID,
+			Environment: p.Environment, Version: p.Version, At: p.At.UTC(), Until: p.Until,
+			Status: StatusPending, CreatedBy: e.Actor, CreatedAt: e.Time, Seq: e.Seq,
+		})
 	case events.TypeDeployScheduleActivated:
 		var p events.DeployScheduleActivated
 		if err := json.Unmarshal(e.Payload, &p); err != nil {
 			return fmt.Errorf("decision_deploy_schedules: decode activated seq %d: %w", e.Seq, err)
 		}
-		_, err := store.UpdateDoc(ctx, s, Collection, store.Key(e.Org, e.Workspace, p.ScheduleID), func(v *View) {
-			v.Status, v.PriorVersion = StatusActive, p.PriorVersion
+		return transition(ctx, s, e, p.ScheduleID, StatusPending, StatusActive, func(v *View) error {
+			if p.FlowID != v.FlowID || p.Environment != v.Environment || p.Version != v.Version {
+				return fmt.Errorf(
+					"decision_deploy_schedules: activation seq %d does not match schedule %q",
+					e.Seq, p.ScheduleID,
+				)
+			}
+			v.PriorVersion = p.PriorVersion
+			return nil
 		})
-		return err
 	case events.TypeDeployScheduleReverted:
 		var p events.DeployScheduleReverted
 		if err := json.Unmarshal(e.Payload, &p); err != nil {
 			return fmt.Errorf("decision_deploy_schedules: decode reverted seq %d: %w", e.Seq, err)
 		}
-		return setStatus(ctx, s, e, p.ScheduleID, StatusReverted)
+		return transition(ctx, s, e, p.ScheduleID, StatusActive, StatusReverted, func(v *View) error {
+			if p.FlowID != v.FlowID || p.Environment != v.Environment || p.FromVersion != v.Version {
+				return fmt.Errorf("decision_deploy_schedules: revert seq %d does not match schedule %q", e.Seq, p.ScheduleID)
+			}
+			return nil
+		})
 	case events.TypeDeployScheduleCanceled:
 		var p events.DeployScheduleCanceled
 		if err := json.Unmarshal(e.Payload, &p); err != nil {
 			return fmt.Errorf("decision_deploy_schedules: decode canceled seq %d: %w", e.Seq, err)
 		}
-		return setStatus(ctx, s, e, p.ScheduleID, StatusCanceled)
+		from := StatusPending
+		if p.Active {
+			from = StatusActive
+		}
+		return transition(ctx, s, e, p.ScheduleID, from, StatusCanceled, func(v *View) error {
+			if p.FlowID != v.FlowID {
+				return fmt.Errorf("decision_deploy_schedules: cancel seq %d does not match schedule %q", e.Seq, p.ScheduleID)
+			}
+			if p.Active && (p.Environment != v.Environment || p.FromVersion != v.Version || p.Version != v.PriorVersion) {
+				return fmt.Errorf("decision_deploy_schedules: active cancel seq %d does not match schedule %q", e.Seq, p.ScheduleID)
+			}
+			return nil
+		})
 	}
 	return nil
 }
 
-func setStatus(ctx context.Context, s store.Store, e eventlog.Envelope, scheduleID string, status Status) error {
+func transition(
+	ctx context.Context,
+	s store.Store,
+	e eventlog.Envelope,
+	scheduleID string,
+	from Status,
+	to Status,
+	validate func(*View) error,
+) error {
 	if scheduleID == "" {
 		return fmt.Errorf("decision_deploy_schedules: event seq %d has no schedule id", e.Seq)
 	}
-	_, err := store.UpdateDoc(ctx, s, Collection, store.Key(e.Org, e.Workspace, scheduleID), func(v *View) {
-		v.Status = status
+	var transitionErr error
+	ok, err := store.UpdateDoc(ctx, s, Collection, store.Key(e.Org, e.Workspace, scheduleID), func(v *View) {
+		if v.Status != from {
+			transitionErr = fmt.Errorf(
+				"decision_deploy_schedules: schedule %q is %s, cannot transition to %s at seq %d",
+				scheduleID, v.Status, to, e.Seq,
+			)
+			return
+		}
+		if transitionErr = validate(v); transitionErr != nil {
+			return
+		}
+		v.Status = to
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("decision_deploy_schedules: event seq %d for unknown schedule %q", e.Seq, scheduleID)
+	}
+	return transitionErr
 }
 
 // List returns a flow's schedules, newest first.

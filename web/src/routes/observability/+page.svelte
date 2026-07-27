@@ -30,17 +30,12 @@
       const [s, fl] = await Promise.all([getRunSummary(key), listFlows(key)]);
       summary = s;
       flows = fl;
-      // One flow's SLO fetch failing must not blank the whole page: settle each
-      // independently and render what succeeded (a missing SLO shows as "no SLO",
-      // like models/cases do for their best-effort sub-fetches).
-      const settled = await Promise.allSettled(
+      // A failed read must not become "no SLO": that would invite an operator to
+      // overwrite an objective whose state is merely unavailable.
+      const objectives = await Promise.all(
         fl.map(async (f) => [f.flow_id, await getFlowSLO(key, f.flow_id)] as const)
       );
-      const map = new Map<string, SLOResponse>();
-      for (const r of settled) {
-        if (r.status === 'fulfilled') map.set(r.value[0], r.value[1]);
-      }
-      slos = map;
+      slos = new Map(objectives);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     } finally {

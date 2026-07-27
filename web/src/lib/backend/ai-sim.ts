@@ -88,7 +88,7 @@ function contextOf(prompt: string): Record<string, unknown> | undefined {
   if (start < 0) return undefined;
   try {
     return JSON.parse(prompt.slice(start)) as Record<string, unknown>;
-  } catch {
+  } catch (_parseError) {
     return undefined;
   }
 }

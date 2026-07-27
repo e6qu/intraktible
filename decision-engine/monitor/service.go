@@ -155,14 +155,34 @@ func (s *Service) check(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	fired := make([]firedMonitor, 0)
+	toAlert := make([]View, 0)
+	toResolve := make([]View, 0)
 	for _, v := range rules {
-		if st := Evaluate(snap, v.Rule()); st.Firing {
+		st := Evaluate(snap, v.Rule())
+		if st.Firing {
 			fired = append(fired, firedFrom(v, st))
+		}
+		switch transition(st.Firing, v.Alerting) {
+		case actionAlert:
+			toAlert = append(toAlert, v)
+		case actionResolve:
+			toResolve = append(toResolve, v)
 		}
 	}
 	resp := map[string]any{"flow_id": flowID, "checked": len(rules), "fired": fired}
-	if len(fired) > 0 && s.notifier != nil {
-		payload := map[string]any{"flow_id": flowID, "checked_at": s.now(), "fired": fired}
+	for _, v := range toResolve {
+		if _, err := s.cmd.MarkResolved(r.Context(), id, v.FlowID, v.MonitorID); err != nil {
+			httpx.Error(w, http.StatusInternalServerError, err)
+			return
+		}
+	}
+	recordAlerts := len(toAlert) > 0
+	if len(toAlert) > 0 && s.notifier != nil {
+		edges := make([]firedMonitor, 0, len(toAlert))
+		for _, v := range toAlert {
+			edges = append(edges, firedFrom(v, Evaluate(snap, v.Rule())))
+		}
+		payload := map[string]any{"flow_id": flowID, "checked_at": s.now(), "fired": edges}
 		// Evaluation succeeded, so report the delivery outcomes rather than 500-ing the
 		// check: surface the per-webhook results and flag delivery_failed when not every
 		// webhook accepted (any retryable/permanent failure, or a real Deliver error).
@@ -171,7 +191,22 @@ func (s *Service) check(w http.ResponseWriter, r *http.Request) {
 		if derr != nil || summary.Accepted < len(summary.Results) {
 			resp["delivery_failed"] = true
 		}
+		recordAlerts = derr == nil && !summary.RetryWorthy()
 	}
+	if recordAlerts {
+		for _, v := range toAlert {
+			if _, err := s.cmd.MarkAlerted(r.Context(), id, v.FlowID, v.MonitorID); err != nil {
+				httpx.Error(w, http.StatusInternalServerError, err)
+				return
+			}
+		}
+	}
+	alerted := 0
+	if recordAlerts {
+		alerted = len(toAlert)
+	}
+	resp["alerted"] = alerted
+	resp["resolved"] = len(toResolve)
 	httpx.JSON(w, http.StatusOK, resp)
 }
 

@@ -84,3 +84,17 @@ func TestDriftProjectorAlertResolve(t *testing.T) {
 		t.Fatal("resolved event should flip Alerting false")
 	}
 }
+
+func TestDriftProjectorRejectsAlertForMissingStats(t *testing.T) {
+	payload, err := json.Marshal(events.ModelDriftAlerted{Name: "missing", PSI: 0.5, Threshold: 0.25})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = (DriftProjector{}).Apply(context.Background(), eventlog.Envelope{
+		Seq: 7, Org: "demo", Workspace: "main", Type: events.TypeModelDriftAlerted,
+		Time: time.Now().UTC(), Payload: payload,
+	}, store.NewMemory())
+	if err == nil {
+		t.Fatal("alert transition for missing stats should fail loudly")
+	}
+}

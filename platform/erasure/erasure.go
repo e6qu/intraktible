@@ -42,6 +42,13 @@ type RetentionPolicy struct {
 	RetentionDays int    `json:"retention_days"`
 }
 
+// RetentionGate reports whether a subject must be retained because a record about
+// them is still inside a statutory mandatory-retention window. The composition root
+// supplies the adapter so this package stays free of compliance-record packages.
+type RetentionGate interface {
+	Retained(ctx context.Context, id identity.Identity, subject string) (retained bool, reason string, err error)
+}
+
 // ErrErased is returned when sealing or opening data for a subject whose key has
 // been destroyed — the subject's data is irrecoverable, by design.
 var ErrErased = errors.New("erasure: subject has been erased")
@@ -77,6 +84,14 @@ type Vault struct {
 
 // NewVault builds a store-backed erasure vault.
 func NewVault(s store.Store) *Vault { return &Vault{store: s, now: time.Now} }
+
+// WithNow overrides the clock used for subject creation, erasure tombstones, holds,
+// and retention cutoffs. Tests and deterministic seeders use it to record stable
+// effects; production leaves the UTC wall clock in place.
+func (v *Vault) WithNow(now func() time.Time) *Vault {
+	v.now = now
+	return v
+}
 
 // Seal encrypts plain under subject's key (creating the key on first use). It
 // fails with ErrErased if the subject has been erased — erased subjects accept
@@ -281,29 +296,52 @@ func (v *Vault) ListErased(ctx context.Context, id identity.Identity) ([]string,
 	return out, nil
 }
 
+// RetentionSweepSummary reports every outcome from a bulk/scheduled retention run.
+// Held and StatutoryRetained are deliberately separate: the former is an operator
+// hold, while the latter is a rule-derived legal obligation.
+type RetentionSweepSummary struct {
+	Erased            int `json:"erased"`
+	Held              int `json:"held"`
+	StatutoryRetained int `json:"statutory_retained"`
+}
+
 // RetentionSweep erases every not-yet-erased subject whose key predates
-// now-maxAge, enforcing a retention limit, and returns how many it erased.
-func (v *Vault) RetentionSweep(ctx context.Context, id identity.Identity, maxAge time.Duration) (int, error) {
+// now-maxAge, while preserving manual holds and anything the statutory gate says
+// must still be retained. The same gate is used by one-subject erasure, the manual
+// bulk endpoint, and the background scheduler so none of those paths can disagree.
+func (v *Vault) RetentionSweep(ctx context.Context, id identity.Identity, maxAge time.Duration, gate RetentionGate) (RetentionSweepSummary, error) {
 	recs, err := store.ListDocs[subject](ctx, v.store, collection, store.Key(id.Org, id.Workspace, ""))
 	if err != nil {
-		return 0, err
+		return RetentionSweepSummary{}, err
 	}
 	cutoff := v.now().UTC().Add(-maxAge)
-	erased := 0
+	var summary RetentionSweepSummary
 	for _, r := range recs {
+		if r.Erased != nil || !r.Created.Before(cutoff) {
+			continue
+		}
 		// A subject under a legal hold survives retention — skip it (Erase would
 		// refuse anyway with ErrHeld; skipping keeps the sweep going past it).
 		if r.Held {
+			summary.Held++
 			continue
 		}
-		if r.Erased == nil && r.Created.Before(cutoff) {
-			if err := v.Erase(ctx, id, r.Subject); err != nil {
-				return erased, err
+		if gate != nil {
+			retained, _, err := gate.Retained(ctx, id, r.Subject)
+			if err != nil {
+				return summary, fmt.Errorf("erasure: retention gate for %q: %w", r.Subject, err)
 			}
-			erased++
+			if retained {
+				summary.StatutoryRetained++
+				continue
+			}
 		}
+		if err := v.Erase(ctx, id, r.Subject); err != nil {
+			return summary, err
+		}
+		summary.Erased++
 	}
-	return erased, nil
+	return summary, nil
 }
 
 // SetRetentionPolicy stores a tenant's retention setting. days must be >= 0; 0

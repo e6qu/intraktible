@@ -15,13 +15,15 @@ describe('nodeSummary', () => {
     expect(nodeSummary('ai', '')).toBe('AI');
     expect(nodeSummary('predict', '{"model":"risk-v2"}')).toBe('risk-v2');
     expect(nodeSummary('predict', '')).toBe('prediction');
-    expect(nodeSummary('code', 'anything')).toBe('Starlark');
+    expect(nodeSummary('code', '{}')).toBe('Starlark');
     expect(nodeSummary('manual_review', '')).toBe('human review');
   });
 
-  it('tolerates partial / invalid JSON without throwing', () => {
-    expect(nodeSummary('rule', '{bad json')).toBe('0 rules');
-    expect(nodeSummary('output', '{"fields":')).toBe('all fields');
+  it('marks partial / invalid JSON instead of presenting empty config', () => {
+    expect(nodeSummary('rule', '{bad json')).toBe('invalid config');
+    expect(nodeSummary('output', '{"fields":')).toBe('invalid config');
+    expect(nodeSummary('output', '[]')).toBe('invalid config');
+    expect(nodeSummary('code', 'anything')).toBe('invalid config');
   });
 
   it('falls back to the type name for unknown types', () => {

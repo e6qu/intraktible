@@ -71,6 +71,9 @@ type DeploymentRequest struct {
 	Version           int           `json:"version"`
 	ChallengerVersion int           `json:"challenger_version,omitempty"`
 	ChallengerPct     int           `json:"challenger_pct,omitempty"`
+	ScheduleID        string        `json:"schedule_id,omitempty"`
+	At                *time.Time    `json:"at,omitempty"`
+	Until             *time.Time    `json:"until,omitempty"`
 	Status            RequestStatus `json:"status"` // pending | approved | rejected
 	Reason            string        `json:"reason,omitempty"`
 	RequestedBy       string        `json:"requested_by"`
@@ -114,17 +117,20 @@ func (Projector) Collections() []string { return []string{Collection, slugIndexC
 // flowAppliers dispatches each flow event type to its handler (a map keeps the
 // dispatch flat — events of other types are simply absent and skipped).
 var flowAppliers = map[string]func(context.Context, eventlog.Envelope, store.Store) error{
-	events.TypeFlowCreated:           applyCreated,
-	events.TypeFlowDetailsSet:        applyDetailsSet,
-	events.TypeFlowVersionPublished:  applyPublished,
-	events.TypeFlowVersionDeployed:   applyDeployed,
-	events.TypeDeploymentRequested:   applyDeploymentRequested,
-	events.TypeDeploymentApproved:    applyDeploymentApproved,
-	events.TypeDeploymentRejected:    applyDeploymentRejected,
-	events.TypePromotionPolicySet:    applyPromotionPolicySet,
-	events.TypeShadowSet:             applyShadowSet,
-	events.TypeSLOSet:                applySLOSet,
-	events.TypeFlowVersionRolledBack: applyRolledBack,
+	events.TypeFlowCreated:             applyCreated,
+	events.TypeFlowDetailsSet:          applyDetailsSet,
+	events.TypeFlowVersionPublished:    applyPublished,
+	events.TypeFlowVersionDeployed:     applyDeployed,
+	events.TypeDeploymentRequested:     applyDeploymentRequested,
+	events.TypeDeploymentApproved:      applyDeploymentApproved,
+	events.TypeDeploymentRejected:      applyDeploymentRejected,
+	events.TypePromotionPolicySet:      applyPromotionPolicySet,
+	events.TypeShadowSet:               applyShadowSet,
+	events.TypeSLOSet:                  applySLOSet,
+	events.TypeFlowVersionRolledBack:   applyRolledBack,
+	events.TypeDeployScheduleActivated: applyScheduleActivated,
+	events.TypeDeployScheduleReverted:  applyScheduleReverted,
+	events.TypeDeployScheduleCanceled:  applyScheduleCanceled,
 }
 
 // Apply maintains the flow document. Events of other types are not this
@@ -138,9 +144,13 @@ func (Projector) Apply(ctx context.Context, e eventlog.Envelope, s store.Store) 
 
 // mutateFlow loads a flow, applies fn (which may set UpdatedAt), and writes it
 // back — failing loudly when the flow is unknown.
-func mutateFlow(ctx context.Context, s store.Store, e eventlog.Envelope, flowID string, fn func(*FlowView)) error {
+func mutateFlow(ctx context.Context, s store.Store, e eventlog.Envelope, flowID string, fn func(*FlowView) error) error {
+	var mutationErr error
 	ok, err := store.UpdateDoc(ctx, s, Collection, store.Key(e.Org, e.Workspace, flowID), func(fv *FlowView) {
-		fn(fv)
+		mutationErr = fn(fv)
+		if mutationErr != nil {
+			return
+		}
 		fv.UpdatedAt = e.Time
 	})
 	if err != nil {
@@ -149,7 +159,7 @@ func mutateFlow(ctx context.Context, s store.Store, e eventlog.Envelope, flowID 
 	if !ok {
 		return fmt.Errorf("decision_flows: event seq %d for unknown flow %q", e.Seq, flowID)
 	}
-	return nil
+	return mutationErr
 }
 
 func applyDeploymentRequested(ctx context.Context, e eventlog.Envelope, s store.Store) error {
@@ -157,12 +167,14 @@ func applyDeploymentRequested(ctx context.Context, e eventlog.Envelope, s store.
 	if err := json.Unmarshal(e.Payload, &p); err != nil {
 		return fmt.Errorf("decision_flows: decode deployment_requested seq %d: %w", e.Seq, err)
 	}
-	return mutateFlow(ctx, s, e, p.FlowID, func(fv *FlowView) {
+	return mutateFlow(ctx, s, e, p.FlowID, func(fv *FlowView) error {
 		fv.DeploymentRequests = append(fv.DeploymentRequests, DeploymentRequest{
 			RequestID: p.RequestID, Environment: p.Environment, Version: p.Version,
 			ChallengerVersion: p.ChallengerVersion, ChallengerPct: p.ChallengerPct,
+			At: p.At, Until: p.Until,
 			Status: RequestPending, RequestedBy: e.Actor, RequestedAt: e.Time,
 		})
+		return nil
 	})
 }
 
@@ -171,15 +183,102 @@ func applyDeploymentApproved(ctx context.Context, e eventlog.Envelope, s store.S
 	if err := json.Unmarshal(e.Payload, &p); err != nil {
 		return fmt.Errorf("decision_flows: decode deployment_approved seq %d: %w", e.Seq, err)
 	}
-	return mutateFlow(ctx, s, e, p.FlowID, func(fv *FlowView) {
-		// Approving deploys the version.
+	return mutateFlow(ctx, s, e, p.FlowID, func(fv *FlowView) error {
+		request, err := pendingRequest(fv, p.RequestID, e)
+		if err != nil {
+			return err
+		}
+		// An immediate approval deploys now. A future approval instead creates a
+		// governed schedule in the schedule projector from this same event.
+		if p.ScheduleID == "" {
+			if fv.Deployments == nil {
+				fv.Deployments = make(map[string]DeploymentView)
+			}
+			fv.Deployments[p.Environment] = DeploymentView{
+				Version: p.Version, ChallengerVersion: p.ChallengerVersion, ChallengerPct: p.ChallengerPct,
+			}
+		}
+		request.ScheduleID = p.ScheduleID
+		decideRequest(request, RequestApproved, p.Reason, e)
+		return nil
+	})
+}
+
+// applyScheduleActivated makes activation and the live deployment one atomic
+// projection transition. Legacy activation events have no environment/version;
+// their companion FlowVersionDeployed event continues to supply the deployment.
+func applyScheduleActivated(ctx context.Context, e eventlog.Envelope, s store.Store) error {
+	var p events.DeployScheduleActivated
+	if err := json.Unmarshal(e.Payload, &p); err != nil {
+		return fmt.Errorf("decision_flows: decode deploy_schedule_activated seq %d: %w", e.Seq, err)
+	}
+	if p.Environment == "" || p.Version < 1 {
+		return nil
+	}
+	return mutateFlow(ctx, s, e, p.FlowID, func(fv *FlowView) error {
 		if fv.Deployments == nil {
 			fv.Deployments = make(map[string]DeploymentView)
 		}
-		fv.Deployments[p.Environment] = DeploymentView{
-			Version: p.Version, ChallengerVersion: p.ChallengerVersion, ChallengerPct: p.ChallengerPct,
+		fv.Deployments[p.Environment] = DeploymentView{Version: p.Version}
+		return nil
+	})
+}
+
+// applyScheduleReverted restores the captured prior version from the same event
+// that closes the schedule. A zero version means there was nothing live before,
+// so the environment becomes undeployed. A superseded schedule only closes its
+// lifecycle: it must not overwrite a newer deliberate deployment.
+func applyScheduleReverted(ctx context.Context, e eventlog.Envelope, s store.Store) error {
+	var p events.DeployScheduleReverted
+	if err := json.Unmarshal(e.Payload, &p); err != nil {
+		return fmt.Errorf("decision_flows: decode deploy_schedule_reverted seq %d: %w", e.Seq, err)
+	}
+	if p.Environment == "" || p.Superseded {
+		return nil
+	}
+	return mutateFlow(ctx, s, e, p.FlowID, func(fv *FlowView) error {
+		if live := fv.Deployments[p.Environment].Version; live != p.FromVersion {
+			return fmt.Errorf(
+				"decision_flows: schedule %q revert at seq %d expected %s v%d live, got v%d",
+				p.ScheduleID, e.Seq, p.Environment, p.FromVersion, live,
+			)
 		}
-		decideRequest(fv, p.RequestID, RequestApproved, p.Reason, e)
+		if p.Version < 1 {
+			delete(fv.Deployments, p.Environment)
+			return nil
+		}
+		if fv.Deployments == nil {
+			fv.Deployments = make(map[string]DeploymentView)
+		}
+		fv.Deployments[p.Environment] = DeploymentView{Version: p.Version}
+		return nil
+	})
+}
+
+// applyScheduleCanceled makes canceling an active schedule an atomic deployment
+// transition too. Pending cancellations (and active schedules superseded by a
+// newer deploy) do not touch the live environment.
+func applyScheduleCanceled(ctx context.Context, e eventlog.Envelope, s store.Store) error {
+	var p events.DeployScheduleCanceled
+	if err := json.Unmarshal(e.Payload, &p); err != nil {
+		return fmt.Errorf("decision_flows: decode deploy_schedule_canceled seq %d: %w", e.Seq, err)
+	}
+	if !p.Active || p.Environment == "" || p.Superseded {
+		return nil
+	}
+	return mutateFlow(ctx, s, e, p.FlowID, func(fv *FlowView) error {
+		if live := fv.Deployments[p.Environment].Version; live != p.FromVersion {
+			return fmt.Errorf(
+				"decision_flows: active schedule %q cancel at seq %d expected %s v%d live, got v%d",
+				p.ScheduleID, e.Seq, p.Environment, p.FromVersion, live,
+			)
+		}
+		if p.Version < 1 {
+			delete(fv.Deployments, p.Environment)
+			return nil
+		}
+		fv.Deployments[p.Environment] = DeploymentView{Version: p.Version}
+		return nil
 	})
 }
 
@@ -188,8 +287,13 @@ func applyDeploymentRejected(ctx context.Context, e eventlog.Envelope, s store.S
 	if err := json.Unmarshal(e.Payload, &p); err != nil {
 		return fmt.Errorf("decision_flows: decode deployment_rejected seq %d: %w", e.Seq, err)
 	}
-	return mutateFlow(ctx, s, e, p.FlowID, func(fv *FlowView) {
-		decideRequest(fv, p.RequestID, RequestRejected, p.Reason, e)
+	return mutateFlow(ctx, s, e, p.FlowID, func(fv *FlowView) error {
+		request, err := pendingRequest(fv, p.RequestID, e)
+		if err != nil {
+			return err
+		}
+		decideRequest(request, RequestRejected, p.Reason, e)
+		return nil
 	})
 }
 
@@ -198,8 +302,9 @@ func applyPromotionPolicySet(ctx context.Context, e eventlog.Envelope, s store.S
 	if err := json.Unmarshal(e.Payload, &p); err != nil {
 		return fmt.Errorf("decision_flows: decode promotion_policy_set seq %d: %w", e.Seq, err)
 	}
-	return mutateFlow(ctx, s, e, p.FlowID, func(fv *FlowView) {
+	return mutateFlow(ctx, s, e, p.FlowID, func(fv *FlowView) error {
 		fv.PromotionPolicy = EffectivePromotionPolicy(p.Policy)
+		return nil
 	})
 }
 
@@ -208,14 +313,15 @@ func applySLOSet(ctx context.Context, e eventlog.Envelope, s store.Store) error 
 	if err := json.Unmarshal(e.Payload, &p); err != nil {
 		return fmt.Errorf("decision_flows: decode slo_set seq %d: %w", e.Seq, err)
 	}
-	return mutateFlow(ctx, s, e, p.FlowID, func(fv *FlowView) {
+	return mutateFlow(ctx, s, e, p.FlowID, func(fv *FlowView) error {
 		// A zeroed objective clears the SLO (no targets) rather than storing an empty one.
 		if p.SLO.SuccessTarget == 0 && p.SLO.LatencyTargetMS == 0 {
 			fv.SLO = nil
-			return
+			return nil
 		}
 		slo := p.SLO
 		fv.SLO = &slo
+		return nil
 	})
 }
 
@@ -224,30 +330,44 @@ func applyShadowSet(ctx context.Context, e eventlog.Envelope, s store.Store) err
 	if err := json.Unmarshal(e.Payload, &p); err != nil {
 		return fmt.Errorf("decision_flows: decode shadow_set seq %d: %w", e.Seq, err)
 	}
-	return mutateFlow(ctx, s, e, p.FlowID, func(fv *FlowView) {
+	return mutateFlow(ctx, s, e, p.FlowID, func(fv *FlowView) error {
 		if p.Version == 0 {
 			delete(fv.Shadows, p.Environment)
-			return
+			return nil
 		}
 		if fv.Shadows == nil {
 			fv.Shadows = map[string]int{}
 		}
 		fv.Shadows[p.Environment] = p.Version
+		return nil
 	})
 }
 
-// decideRequest stamps a request's terminal status, decider, and time.
-func decideRequest(fv *FlowView, reqID string, status RequestStatus, reason string, e eventlog.Envelope) {
+// pendingRequest resolves the exact pending request a terminal event is allowed
+// to transition. A missing or already-decided request means the event stream is
+// impossible; replay must stop before it mutates a deployment.
+func pendingRequest(fv *FlowView, reqID string, e eventlog.Envelope) (*DeploymentRequest, error) {
 	for i := range fv.DeploymentRequests {
 		if fv.DeploymentRequests[i].RequestID != reqID {
 			continue
 		}
-		fv.DeploymentRequests[i].Status = status
-		fv.DeploymentRequests[i].Reason = reason
-		fv.DeploymentRequests[i].DecidedBy = e.Actor
-		fv.DeploymentRequests[i].DecidedAt = e.Time
-		return
+		if fv.DeploymentRequests[i].Status != RequestPending {
+			return nil, fmt.Errorf(
+				"decision_flows: request %q already %s at seq %d",
+				reqID, fv.DeploymentRequests[i].Status, e.Seq,
+			)
+		}
+		return &fv.DeploymentRequests[i], nil
 	}
+	return nil, fmt.Errorf("decision_flows: terminal event seq %d for unknown request %q", e.Seq, reqID)
+}
+
+// decideRequest stamps a validated request's terminal status, decider, and time.
+func decideRequest(request *DeploymentRequest, status RequestStatus, reason string, e eventlog.Envelope) {
+	request.Status = status
+	request.Reason = reason
+	request.DecidedBy = e.Actor
+	request.DecidedAt = e.Time
 }
 
 func applyCreated(ctx context.Context, e eventlog.Envelope, s store.Store) error {
@@ -278,9 +398,10 @@ func applyDetailsSet(ctx context.Context, e eventlog.Envelope, s store.Store) er
 	if err := json.Unmarshal(e.Payload, &p); err != nil {
 		return fmt.Errorf("decision_flows: decode details_set seq %d: %w", e.Seq, err)
 	}
-	return mutateFlow(ctx, s, e, p.FlowID, func(fv *FlowView) {
+	return mutateFlow(ctx, s, e, p.FlowID, func(fv *FlowView) error {
 		fv.Name = p.Name
 		fv.Description = p.Description
+		return nil
 	})
 }
 
@@ -342,11 +463,12 @@ func applyRolledBack(ctx context.Context, e eventlog.Envelope, s store.Store) er
 	if err := json.Unmarshal(e.Payload, &p); err != nil {
 		return fmt.Errorf("decision_flows: decode rolled_back seq %d: %w", e.Seq, err)
 	}
-	return mutateFlow(ctx, s, e, p.FlowID, func(fv *FlowView) {
+	return mutateFlow(ctx, s, e, p.FlowID, func(fv *FlowView) error {
 		if fv.Deployments == nil {
 			fv.Deployments = make(map[string]DeploymentView)
 		}
 		fv.Deployments[p.Environment] = DeploymentView{Version: p.Version}
+		return nil
 	})
 }
 
@@ -376,10 +498,9 @@ func GraphForVersion(fv FlowView, version int) (events.Graph, error) {
 // BySlug returns the flow with the given slug for id's tenant. Slugs are unique
 // per tenant, so at most one matches; it is the decide path's flow lookup.
 func BySlug(ctx context.Context, s store.Store, id identity.Identity, slug string) (FlowView, bool, error) {
-	// Fast path: the slug index resolves to a flow id without scanning the
-	// collection (this is the decide hot path). A store error is real and surfaces —
-	// degrading to the scan would hide a broken store behind a slower query. Only a
-	// miss falls through.
+	// The owned slug index resolves directly to a flow id on the decide hot path.
+	// Projector rebuilds create the flow and index together, so an index miss is a
+	// real not-found result and a dangling index is corrupt projection state.
 	ref, indexed, err := store.GetDoc[slugRef](ctx, s, slugIndexCollection, store.Key(id.Org, id.Workspace, slug))
 	if err != nil {
 		return FlowView{}, false, fmt.Errorf("decision-engine: read slug index %q: %w", slug, err)
@@ -389,22 +510,14 @@ func BySlug(ctx context.Context, s store.Store, id identity.Identity, slug strin
 		if err != nil {
 			return FlowView{}, false, fmt.Errorf("decision-engine: read flow %q: %w", ref.FlowID, err)
 		}
-		if found {
-			fv.PromotionPolicy = EffectivePromotionPolicy(fv.PromotionPolicy)
-			return fv, true, nil
+		if !found {
+			return FlowView{}, false, fmt.Errorf(
+				"decision-engine: slug index %q points to missing flow %q",
+				slug, ref.FlowID,
+			)
 		}
-	}
-	// Fallback: scan (e.g. a flow indexed before this index existed). Correctness
-	// never depends on the index — it only avoids the scan.
-	fvs, err := List(ctx, s, id)
-	if err != nil {
-		return FlowView{}, false, err
-	}
-	for _, fv := range fvs {
-		if fv.Slug == slug {
-			fv.PromotionPolicy = EffectivePromotionPolicy(fv.PromotionPolicy)
-			return fv, true, nil
-		}
+		fv.PromotionPolicy = EffectivePromotionPolicy(fv.PromotionPolicy)
+		return fv, true, nil
 	}
 	return FlowView{}, false, nil
 }

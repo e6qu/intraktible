@@ -109,10 +109,16 @@ func setAlerting(ctx context.Context, s store.Store, e eventlog.Envelope, typ st
 	if err := json.Unmarshal(e.Payload, &p); err != nil {
 		return fmt.Errorf("decision_monitors: decode %s seq %d: %w", typ, e.Seq, err)
 	}
-	_, err := store.UpdateDoc(ctx, s, Collection, store.Key(e.Org, e.Workspace, p.MonitorID), func(v *View) {
+	ok, err := store.UpdateDoc(ctx, s, Collection, store.Key(e.Org, e.Workspace, p.MonitorID), func(v *View) {
 		v.Alerting = alerting
 	})
-	return err // an alert/resolve for a deleted monitor is a no-op
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("decision_monitors: %s seq %d for unknown monitor %q", typ, e.Seq, p.MonitorID)
+	}
+	return nil
 }
 
 // ReadBaseline returns a flow's captured drift baseline, if any.

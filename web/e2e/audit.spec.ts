@@ -101,6 +101,34 @@ test('configures PII masking fields (admin)', async ({ page }) => {
   await expect(page.getByTestId('masking-config').getByLabel('masked fields')).toHaveValue(/ssn/);
 });
 
+test('failed admin configuration reads are visible and fail closed', async ({ page }) => {
+  await page.route('**/v1/privacy', (route) =>
+    route.fulfill({
+      status: 500,
+      contentType: 'application/json',
+      body: '{"error":"privacy store offline"}'
+    })
+  );
+  await page.route('**/v1/api-keys', (route) =>
+    route.fulfill({
+      status: 500,
+      contentType: 'application/json',
+      body: '{"error":"key store offline"}'
+    })
+  );
+
+  await page.goto('/audit');
+  const masking = page.getByTestId('masking-config');
+  await masking.locator('summary').click();
+  await expect(masking.getByTestId('privacy-error')).toContainText('privacy store offline');
+  await expect(masking.getByTestId('save-masking')).toBeDisabled();
+
+  const tokens = page.getByTestId('api-keys-config');
+  await tokens.locator('summary').click();
+  await expect(tokens.getByTestId('keys-error')).toContainText('key store offline');
+  await expect(tokens.getByTestId('create-token')).toBeDisabled();
+});
+
 test('Reload fetches the applied filter, not draft inputs', async ({ page, request }) => {
   // Ensure at least one event exists (creating a flow appends one).
   const created = await request.post('/v1/flows', {

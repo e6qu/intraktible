@@ -43,9 +43,10 @@ type Granted struct {
 
 // Revoked invalidates an entity's current pre-approval before it expires.
 type Revoked struct {
-	EntityType string `json:"entity_type"`
-	EntityID   string `json:"entity_id"`
-	Reason     string `json:"reason,omitempty"`
+	PreApprovalID string `json:"preapproval_id,omitempty"`
+	EntityType    string `json:"entity_type"`
+	EntityID      string `json:"entity_id"`
+	Reason        string `json:"reason,omitempty"`
 }
 
 // Honored records that a decision was served from a pre-approval (the decide path

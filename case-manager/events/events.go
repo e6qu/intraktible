@@ -17,6 +17,7 @@ const (
 	TypeCaseStatusChanged = "cases.status_changed"
 	TypeCaseNoteAdded     = "cases.note_added"
 	TypeCaseSLABreached   = "cases.sla_breached"
+	TypeCaseSLAEscalated  = "cases.sla_escalated"
 	// TypeCaseSLAReminder is emitted once by the SLA sweep when an open case enters its
 	// "due soon" window (before breach), nudging an assignee toward a task before it
 	// goes overdue. Like the breach event it carries only the case id; the notifications
@@ -57,6 +58,30 @@ type CaseNoteAdded struct {
 // recorded so replay is stable). The breach time is the envelope time.
 type CaseSLABreached struct {
 	CaseID string `json:"case_id"`
+}
+
+// SLAEscalationStatus is the durable outcome of processing an overdue case's
+// external escalation. Pending is set by the breach projection; only terminal
+// values are recorded in CaseSLAEscalated events.
+type SLAEscalationStatus string
+
+const (
+	SLAEscalationPending          SLAEscalationStatus = "pending"
+	SLAEscalationDelivered        SLAEscalationStatus = "delivered"
+	SLAEscalationNoChannel        SLAEscalationStatus = "no_channel"
+	SLAEscalationPermanentFailure SLAEscalationStatus = "permanent_failure"
+)
+
+// Terminal reports whether a status completes delivery processing.
+func (s SLAEscalationStatus) Terminal() bool {
+	return s == SLAEscalationDelivered || s == SLAEscalationNoChannel || s == SLAEscalationPermanentFailure
+}
+
+// CaseSLAEscalated records the terminal delivery outcome. Retryable delivery
+// failures intentionally emit no event, leaving the case pending for the next tick.
+type CaseSLAEscalated struct {
+	CaseID string              `json:"case_id"`
+	Status SLAEscalationStatus `json:"status"`
 }
 
 // CaseSLAReminder records that an open case entered its "due soon" window (emitted

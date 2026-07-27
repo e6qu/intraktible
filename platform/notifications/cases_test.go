@@ -49,7 +49,7 @@ func TestTaskNotificationsFromCaseLifecycle(t *testing.T) {
 	}
 
 	alice := identity.Identity{Org: "demo", Workspace: "main", Actor: "alice"}
-	mine, err := notifications.List(ctx, s, alice, false)
+	mine, err := notifications.List(ctx, s, alice, notifications.Access{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,14 +66,34 @@ func TestTaskNotificationsFromCaseLifecycle(t *testing.T) {
 	// A review-capable user who owns nothing still sees the unassigned-open task via the
 	// shared reviewer queue — but only when the queue is included.
 	bob := identity.Identity{Org: "demo", Workspace: "main", Actor: "bob"}
-	queue, err := notifications.List(ctx, s, bob, true)
+	queue, err := notifications.List(ctx, s, bob, notifications.Access{ReviewTasks: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(queue) != 1 || !strings.Contains(queue[0].Snippet, "New review task") {
 		t.Fatalf("reviewer should see the queued open task, got %+v", queue)
 	}
-	if no, _ := notifications.List(ctx, s, bob, false); len(no) != 0 {
+	if !strings.HasPrefix(queue[0].NotificationID, "bob:") || queue[0].Recipient != "bob" {
+		t.Fatalf("shared task was not personalized for independent read state: %+v", queue[0])
+	}
+	if _, err := notifications.NewHandler(log).MarkRead(ctx, bob, queue[0].NotificationID); err != nil {
+		t.Fatal(err)
+	}
+	replayed := store.NewMemory()
+	if err := projection.New(log, replayed, notifications.Projector{}).Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	after, err := notifications.List(ctx, replayed, bob, notifications.Access{ReviewTasks: true})
+	if err != nil || len(after) != 1 || !after[0].Read {
+		t.Fatalf("personal shared-task read receipt did not replay: %+v err=%v", after, err)
+	}
+	other, err := notifications.List(ctx, replayed,
+		identity.Identity{Org: "demo", Workspace: "main", Actor: "carol"},
+		notifications.Access{ReviewTasks: true})
+	if err != nil || len(other) != 1 || other[0].Read {
+		t.Fatalf("bob's read receipt hid the task from carol: %+v err=%v", other, err)
+	}
+	if no, _ := notifications.List(ctx, s, bob, notifications.Access{}); len(no) != 0 {
 		t.Fatalf("a non-reviewer must not see the queue: %+v", no)
 	}
 }

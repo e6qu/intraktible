@@ -5,14 +5,17 @@ package preapproval_test
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/e6qu/intraktible/decision-engine/policy"
 	"github.com/e6qu/intraktible/decision-engine/preapproval"
 	"github.com/e6qu/intraktible/platform/entity"
+	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/projection"
+	"github.com/e6qu/intraktible/platform/store"
 	"github.com/e6qu/intraktible/platform/testutil"
 )
 
@@ -74,5 +77,64 @@ func TestGrantValidation(t *testing.T) {
 		if _, _, err := h.Grant(ctx, id, c); err == nil {
 			t.Fatalf("bad grant %d passed validation", i)
 		}
+	}
+}
+
+func TestRevokeRejectsUnknownAndAlreadyRevokedWithoutAppending(t *testing.T) {
+	log, _ := testutil.NewLogStore(t)
+	h := preapproval.NewHandler(log)
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "ops"}
+	ref := entity.Ref{Type: "applicant", ID: "acme"}
+	ctx := context.Background()
+
+	if _, err := h.Revoke(ctx, id, ref, "unknown"); err == nil {
+		t.Fatal("revoke of unknown pre-approval succeeded")
+	}
+	if log.Head() != 0 {
+		t.Fatalf("unknown revoke appended an event: head=%d", log.Head())
+	}
+	if _, _, err := h.Grant(ctx, id, preapproval.GrantCmd{
+		EntityType: "applicant", EntityID: "acme", ValidDays: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.Revoke(ctx, id, ref, "changed circumstances"); err != nil {
+		t.Fatal(err)
+	}
+	head := log.Head()
+	if _, err := h.Revoke(ctx, id, ref, "again"); err == nil {
+		t.Fatal("second revoke succeeded")
+	}
+	if log.Head() != head {
+		t.Fatalf("second revoke appended an event: head=%d want %d", log.Head(), head)
+	}
+}
+
+func TestProjectorRejectsUnknownPreApprovalTransitions(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemory()
+	projector := preapproval.Projector{}
+	envelope := func(seq uint64, typ string, payload any) eventlog.Envelope {
+		raw, err := json.Marshal(payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return eventlog.Envelope{
+			Org: "demo", Workspace: "main", Actor: "ops", Seq: seq, Type: typ,
+			Time: time.Unix(int64(seq), 0).UTC(), Payload: raw,
+		}
+	}
+
+	err := projector.Apply(ctx, envelope(1, preapproval.TypeRevoked, preapproval.Revoked{
+		PreApprovalID: "missing", EntityType: "applicant", EntityID: "acme",
+	}), st)
+	if err == nil || !strings.Contains(err.Error(), "unknown entity") {
+		t.Fatalf("unknown revoke error = %v", err)
+	}
+	err = projector.Apply(ctx, envelope(2, preapproval.TypeHonored, preapproval.Honored{
+		PreApprovalID: "missing", EntityType: "applicant", EntityID: "acme", DecisionID: "d1",
+	}), st)
+	if err == nil || !strings.Contains(err.Error(), "unknown entity") {
+		t.Fatalf("unknown honor error = %v", err)
 	}
 }

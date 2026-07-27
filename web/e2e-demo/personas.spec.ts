@@ -70,8 +70,8 @@ test('each persona reprioritises the same nav catalog', async ({ page }) => {
     },
     {
       persona: 'manager',
-      shows: ['Pre-approvals', 'Cases', 'Observability'],
-      hides: ['Flows', 'Agents']
+      shows: ['Pre-approvals', 'Flows', 'Models', 'Cases', 'Observability'],
+      hides: ['Policies', 'Agents']
     }
   ];
   for (const { persona, shows, hides } of cases) {

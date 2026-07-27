@@ -53,7 +53,13 @@ import {
   logout,
   currentUser,
   listSsoProviders,
-  listSamlProviders
+  listSamlProviders,
+  getErasureStatus,
+  holdErasureSubject,
+  releaseErasureSubject,
+  eraseSubject,
+  setRetentionPolicy,
+  runRetentionSweep
 } from './api';
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -76,6 +82,70 @@ function textFetcher(status: number, body: string) {
       new Response(body, { status, headers: { 'Content-Type': 'text/plain' } })
   );
 }
+
+describe('data governance', () => {
+  it('encodes subject keys and sends each legal-hold and erasure mutation', async () => {
+    const statusFetch = fetcherReturning(200, {
+      subject: 'customer/a b',
+      erased: false,
+      held: false
+    });
+    await expect(getErasureStatus('k', 'customer/a b', statusFetch)).resolves.toMatchObject({
+      erased: false,
+      held: false
+    });
+    expect(statusFetch.mock.calls[0][0]).toBe('/v1/erasure/subjects/customer%2Fa%20b');
+
+    const holdFetch = fetcherReturning(200, { held: true });
+    await holdErasureSubject('k', 'customer/a b', 'dispute', holdFetch);
+    expect(holdFetch.mock.calls[0][0]).toBe('/v1/erasure/subjects/customer%2Fa%20b/hold');
+    expect(holdFetch.mock.calls[0][1]).toMatchObject({ method: 'POST' });
+    expect(JSON.parse(holdFetch.mock.calls[0][1]?.body as string)).toEqual({
+      reason: 'dispute'
+    });
+
+    const releaseFetch = fetcherReturning(200, { held: false });
+    await releaseErasureSubject('k', 'customer/a b', releaseFetch);
+    expect(releaseFetch.mock.calls[0][0]).toBe('/v1/erasure/subjects/customer%2Fa%20b/release');
+
+    const eraseFetch = fetcherReturning(200, { erased: true });
+    await eraseSubject('k', 'customer/a b', eraseFetch);
+    expect(eraseFetch.mock.calls[0][0]).toBe('/v1/erasure/subjects/customer%2Fa%20b');
+    expect(eraseFetch.mock.calls[0][1]?.method).toBe('POST');
+  });
+
+  it('stores scheduler policy and returns every manual-sweep outcome', async () => {
+    const policyFetch = fetcherReturning(200, { retention_days: 90 });
+    await expect(setRetentionPolicy('k', 90, policyFetch)).resolves.toEqual({
+      retention_days: 90
+    });
+    expect(JSON.parse(policyFetch.mock.calls[0][1]?.body as string)).toEqual({
+      retention_days: 90
+    });
+
+    const sweepFetch = fetcherReturning(200, {
+      erased: 2,
+      held: 1,
+      statutory_retained: 3,
+      max_age_days: 90
+    });
+    await expect(runRetentionSweep('k', 90, sweepFetch)).resolves.toMatchObject({
+      erased: 2,
+      held: 1,
+      statutory_retained: 3
+    });
+    expect(sweepFetch.mock.calls[0][0]).toBe('/v1/erasure/retention?max_age_days=90');
+    expect(sweepFetch.mock.calls[0][1]?.method).toBe('POST');
+  });
+
+  it('surfaces a retention conflict instead of reporting erasure success', async () => {
+    const fetcher = fetcherReturning(409, { error: 'erasure: retained until 2028-01-01' });
+    await expect(eraseSubject('k', 'customer/held', fetcher)).rejects.toMatchObject({
+      status: 409,
+      message: 'erasure: retained until 2028-01-01'
+    });
+  });
+});
 
 describe('export', () => {
   it('exportFlow requests the format and returns the raw diagram text', async () => {

@@ -27,7 +27,7 @@ func (f *fakeCmd) ActivateSchedule(_ context.Context, _ identity.Identity, sched
 	return nil
 }
 
-func (f *fakeCmd) RevertSchedule(_ context.Context, _ identity.Identity, scheduleID, _, _ string, _ int) error {
+func (f *fakeCmd) RevertSchedule(_ context.Context, _ identity.Identity, scheduleID, _, _ string, _, _ int) error {
 	f.reverted = append(f.reverted, scheduleID)
 	return nil
 }

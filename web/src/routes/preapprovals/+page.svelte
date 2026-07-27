@@ -81,7 +81,7 @@
     if (raw) {
       try {
         terms = JSON.parse(raw) as Record<string, unknown>;
-      } catch {
+      } catch (_parseError) {
         error = 'Terms must be valid JSON.';
         return;
       }

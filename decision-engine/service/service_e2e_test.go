@@ -1876,6 +1876,11 @@ func TestScheduleDeployOverHTTP(t *testing.T) {
 	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/deployments/schedule", map[string]any{
 		"environment": "sandbox", "version": 99, "at": "2030-01-01T00:00:00Z",
 	}, http.StatusBadRequest, nil)
+	// Production cannot use the direct schedule path: it must enter the same
+	// maker-checker queue as an immediate production deployment.
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/deployments/schedule", map[string]any{
+		"environment": "production", "version": 1, "at": "2030-01-01T00:00:00Z",
+	}, http.StatusBadRequest, nil)
 
 	var list struct {
 		Schedules []struct {
@@ -1896,6 +1901,66 @@ func TestScheduleDeployOverHTTP(t *testing.T) {
 		return len(list.Schedules) == 1 && list.Schedules[0].Status == "canceled"
 	}) {
 		t.Fatalf("schedule not canceled: %+v", list.Schedules)
+	}
+}
+
+func TestScheduledProductionDeploymentOverHTTP(t *testing.T) {
+	api := startEngine(t)
+	var created struct {
+		FlowID string `json:"flow_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows", map[string]any{
+		"slug": "scheduled-production", "name": "Scheduled production",
+	}, http.StatusCreated, &created)
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/versions",
+		map[string]any{"graph": flowtest.LinearGraph()}, http.StatusCreated, nil)
+
+	var req struct {
+		RequestID string `json:"request_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/deployment-requests", map[string]any{
+		"environment": "production", "version": 1,
+		"at": "2030-01-01T00:00:00Z", "until": "2030-01-02T00:00:00Z",
+	}, http.StatusCreated, &req)
+	if req.RequestID == "" {
+		t.Fatal("scheduled production request returned no id")
+	}
+
+	checker := api.AddKey("scheduled-checker", auth.APIKey{
+		ID: "scheduled-checker",
+		Identity: identity.Identity{
+			Org: api.Identity.Org, Workspace: api.Identity.Workspace, Actor: "scheduled-checker",
+		},
+		Scope: auth.ScopeAll, Role: auth.RoleAdmin,
+	})
+	checker.Request(t, http.MethodPost,
+		"/v1/flows/"+created.FlowID+"/deployment-requests/"+req.RequestID+"/approve",
+		map[string]any{"reason": "approved maintenance window"}, http.StatusOK, nil)
+
+	if !testutil.Eventually(t, func() bool {
+		var fv flows.FlowView
+		api.Request(t, http.MethodGet, "/v1/flows/"+created.FlowID, nil, http.StatusOK, &fv)
+		if len(fv.DeploymentRequests) != 1 {
+			return false
+		}
+		r := fv.DeploymentRequests[0]
+		_, deployedEarly := fv.Deployments["production"]
+		return !deployedEarly && r.Status == flows.RequestApproved && r.ScheduleID != "" &&
+			r.At != nil && r.Until != nil
+	}) {
+		t.Fatal("approved production window was not retained as a future schedule request")
+	}
+
+	if !testutil.Eventually(t, func() bool {
+		var list struct {
+			Schedules []schedule.View `json:"schedules"`
+		}
+		api.Request(t, http.MethodGet, "/v1/flows/"+created.FlowID+"/deployments/schedules",
+			nil, http.StatusOK, &list)
+		return len(list.Schedules) == 1 && list.Schedules[0].Status == schedule.StatusPending &&
+			list.Schedules[0].Environment == "production"
+	}) {
+		t.Fatal("approved production schedule was not listed")
 	}
 }
 

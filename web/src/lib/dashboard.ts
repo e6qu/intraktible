@@ -6,10 +6,12 @@
 import {
   listFlows,
   listDecisions,
+  listModels,
   getCaseSummary,
   getRunSummary,
   type Flow,
   type Decision,
+  type Model,
   type CaseSummary,
   type RunSummary
 } from '$lib/api';
@@ -18,6 +20,7 @@ import type { HomeStatId } from '$lib/persona';
 export interface DashboardData {
   flows: Flow[];
   decisions: Decision[];
+  models: Model[];
   cases: CaseSummary;
   runs: RunSummary;
 }
@@ -28,13 +31,14 @@ export async function loadDashboard(
   key = '',
   fetcher: typeof fetch = fetch
 ): Promise<DashboardData> {
-  const [flows, decisions, cases, runs] = await Promise.all([
+  const [flows, decisions, models, cases, runs] = await Promise.all([
     listFlows(key, fetcher),
     listDecisions(key, fetcher),
+    listModels(key, fetcher),
     getCaseSummary(key, {}, fetcher),
     getRunSummary(key, fetcher)
   ]);
-  return { flows, decisions, cases, runs };
+  return { flows, decisions, models, cases, runs };
 }
 
 export interface DecisionStats {
@@ -84,6 +88,10 @@ export function deployStats(flows: Flow[]): { live: number; pending: number } {
     pending += (f.deployment_requests ?? []).filter((r) => r.status === 'pending').length;
   }
   return { live, pending };
+}
+
+export function pendingApprovalCount(data: DashboardData): number {
+  return deployStats(data.flows).pending + data.models.filter((model) => model.pending).length;
 }
 
 // decisionsByDay buckets decisions by calendar day (the RFC3339 date prefix of
@@ -179,9 +187,9 @@ export function personaHomeStats(ids: HomeStatId[], data: DashboardData): HomeSt
       case 'pending_approvals':
         return {
           id,
-          value: deploy.pending,
+          value: pendingApprovalCount(data),
           label: 'pending approvals',
-          href: '/preapprovals'
+          href: '/#pending-approvals'
         };
       case 'needs_review':
         return {

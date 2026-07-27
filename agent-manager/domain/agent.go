@@ -58,6 +58,7 @@ type DefineAgent struct {
 
 // EscalateRun opens a human-review case from an agent run (human-in-the-loop).
 type EscalateRun struct {
+	Agent       string
 	RunID       string
 	CompanyName string
 	CaseType    string

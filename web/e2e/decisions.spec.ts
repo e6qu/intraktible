@@ -183,6 +183,67 @@ test('a bound policy assigns a disposition shown on the decision detail', async 
   await expect(page.getByTestId('verdict')).toContainText('approve');
 });
 
+test('a failed regulatory read never masquerades as no issuance or review', async ({
+  page,
+  request
+}) => {
+  const H = { 'X-Api-Key': KEY };
+  const slug = uniqueSlug();
+  const created = await request.post('/v1/flows', {
+    headers: H,
+    data: { slug, name: 'Regulatory failure' }
+  });
+  const { flow_id } = await created.json();
+  await request.post(`/v1/flows/${flow_id}/versions`, {
+    headers: H,
+    data: {
+      graph: {
+        nodes: [
+          { id: 'in', type: 'input' },
+          { id: 'out', type: 'output', config: { fields: ['score'] } }
+        ],
+        edges: [{ from: 'in', to: 'out' }]
+      }
+    }
+  });
+  const policy = await request.post('/v1/policies', {
+    headers: H,
+    data: { name: `decline-${slug}`, flow_slug: slug }
+  });
+  const { policy_id } = await policy.json();
+  await request.post(`/v1/policies/${policy_id}/versions`, {
+    headers: H,
+    data: { spec: { rules: [], default: 'decline' } }
+  });
+  let decisionId = '';
+  await expect(async () => {
+    const response = await request.post(`/v1/flows/${slug}/sandbox/decide`, {
+      headers: H,
+      data: { data: { score: 0.2 } }
+    });
+    const body = await response.json();
+    expect(body.disposition).toBe('decline');
+    decisionId = body.decision_id;
+  }).toPass({ timeout: 5000 });
+
+  await page.route('**/v1/decisions/*/adverse-action?format=json*', (route) =>
+    route.fulfill({
+      status: 500,
+      contentType: 'application/json',
+      body: '{"error":"regulatory store unavailable"}'
+    })
+  );
+  await page.goto(`/decisions/${decisionId}`);
+  await expect(page.getByTestId('verdict')).toContainText('decline');
+  await expect(page.getByText(/Regulatory records could not be loaded/)).toContainText(
+    'regulatory store unavailable'
+  );
+  await expect(page.getByText('issuance status unavailable')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Record as issued' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Log contest' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Record human review' })).toHaveCount(0);
+});
+
 test('a reason node yields adverse-action reason codes on the decision detail', async ({
   page,
   request

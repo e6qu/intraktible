@@ -76,6 +76,9 @@ export default defineConfig({
       // shared-IP test traffic and flake logins).
       env: {
         INTRAKTIBLE_AI_STUB: '1',
+        // Exercise the real per-subject vault in the entity-detail journey. The
+        // data spec records an `email` event field, then holds/releases/erases it.
+        INTRAKTIBLE_ERASURE_PII_FIELDS: 'email',
         INTRAKTIBLE_LOGIN_RATE_LIMIT_RPS: '1000',
         INTRAKTIBLE_LOGIN_RATE_LIMIT_BURST: '2000'
       },

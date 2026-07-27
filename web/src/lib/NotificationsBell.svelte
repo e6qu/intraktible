@@ -52,15 +52,28 @@
     await load();
   }
   // The route a notification's subject lives on, so a reviewer clicking a task reminder
-  // or an @-mention lands on the case/decision/flow/agent/entity/model instead of just
+  // or an @-mention lands on the case/decision/flow/policy/agent/entity/model instead of just
   // marking it read in place.
   function subjectHref(n: Notification): string | undefined {
     if (!n.subject_id) return undefined;
     if (n.subject_type === 'case') return appHref(`/cases/${n.subject_id}`);
     if (n.subject_type === 'decision') return appHref(`/decisions/${n.subject_id}`);
-    if (n.subject_type === 'flow') return appHref(`/engine/${n.subject_id}`);
+    // Approval notifications are actionable work, so land the checker on the
+    // deployment-review tab rather than the builder canvas. Other flow alerts
+    // retain the general flow destination until their subject carries a more
+    // specific operational surface.
+    if (n.subject_type === 'flow') {
+      const tab = n.kind === 'approval' ? '?tab=deploy' : '';
+      return appHref(`/engine/${n.subject_id}${tab}`);
+    }
+    if (n.subject_type === 'policy') {
+      return appHref(`/policies?policy=${encodeURIComponent(n.subject_id)}#policy-discussion`);
+    }
     if (n.subject_type === 'agent') return appHref(`/agents/${encodeURIComponent(n.subject_id)}`);
-    if (n.subject_type === 'model') return appHref('/models');
+    if (n.subject_type === 'model') {
+      const panel = n.kind === 'approval' ? 'governance' : 'discussion';
+      return appHref(`/models?${panel}=${encodeURIComponent(n.subject_id)}#model-${panel}`);
+    }
     if (n.subject_type === 'entity') {
       // The entity subject is "<type>/<id>" (one wire segment); split on the first
       // slash so each half is escaped into the /data/<type>/<id> route.
@@ -172,6 +185,8 @@
                     /_/g,
                     ' '
                   )}
+                {:else if n.kind === 'approval'}<b>Approval needed</b>
+                {:else if n.kind === 'alert'}<b>Operational alert</b>
                 {:else}<b>{n.author}</b> · {n.kind.replace(/_/g, ' ')}
                 {/if}
                 · <RelativeTime value={n.created_at} /></span

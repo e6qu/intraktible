@@ -85,7 +85,7 @@ test('a builder preview run shows a verdict but records no decision', async ({ p
   // silently changing which backend path this regression covers.
   await page.getByRole('link', { name: 'Collections Hardship Program' }).click();
   await page.getByLabel("preview (don't record)").check();
-  await page.getByRole('button', { name: 'Run', exact: true }).click();
+  await page.getByRole('button', { name: 'Run published version', exact: true }).click();
   await expect(page.getByTestId('run-verdict')).toBeVisible();
   await expect(page.getByTestId('run-error')).toHaveCount(0);
   await expect(page.getByText('preview · not recorded')).toBeVisible();

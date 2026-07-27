@@ -72,7 +72,7 @@ test('builder verdict card surfaces a honored pre-approval', async ({ page }) =>
   await page.getByRole('button', { name: 'Sample input' }).click();
   await page.getByPlaceholder('entity type (optional)').fill('applicant');
   await page.getByPlaceholder('entity id (optional)').fill('e2e-honored');
-  await page.getByRole('button', { name: 'Run', exact: true }).click();
+  await page.getByRole('button', { name: 'Run published version', exact: true }).click();
 
   const verdict = page.getByTestId('run-verdict');
   await expect(verdict).toBeVisible();

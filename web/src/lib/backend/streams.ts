@@ -77,8 +77,13 @@ class BridgedEventSource extends EventTarget {
           event === 'message' ? this.onmessage : event === 'error' ? this.onerror : null
         );
       });
-    } catch {
-      if (!this.closed) this.dispatch(new Event('error'), this.onerror);
+    } catch (e) {
+      if (!this.closed) {
+        this.dispatch(
+          new ErrorEvent('error', { message: e instanceof Error ? e.message : String(e) }),
+          this.onerror
+        );
+      }
     }
   }
 
@@ -128,8 +133,12 @@ class BridgedAgentSocket {
         );
       });
       if (!this.closed) this.onclose?.(new Event('close'));
-    } catch {
-      if (!this.closed) this.onerror?.(new Event('error'));
+    } catch (e) {
+      if (!this.closed) {
+        this.onerror?.(
+          new ErrorEvent('error', { message: e instanceof Error ? e.message : String(e) })
+        );
+      }
     }
   }
 

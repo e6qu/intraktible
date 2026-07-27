@@ -128,6 +128,48 @@ func TestModelMonitorThresholdPersists(t *testing.T) {
 	}
 }
 
+func TestModelMonitoringCommandsRejectUnknownModelAndPreserveFirstActual(t *testing.T) {
+	ctx := context.Background()
+	log, err := eventlog.OpenWAL(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = log.Close() }()
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "caller"}
+	cmd := command.NewHandler(log)
+
+	if _, err := cmd.SetModelMonitor(ctx, id, "missing", 0.2); err == nil {
+		t.Fatal("monitoring an unknown model should fail")
+	}
+	if _, err := cmd.CaptureModelBaseline(ctx, id, "missing"); err == nil {
+		t.Fatal("capturing a baseline for an unknown model should fail")
+	}
+	if _, err := cmd.RecordModelOutcome(ctx, id, "missing", 0.8, 1, "d1"); err == nil {
+		t.Fatal("recording an outcome for an unknown model should fail")
+	}
+
+	if _, err := cmd.DefineModel(ctx, id, "risk",
+		json.RawMessage(`{"kind":"logistic","coefficients":{"x":1}}`)); err != nil {
+		t.Fatal(err)
+	}
+	// An actual may arrive before this deployment has produced an in-platform
+	// prediction. It is still real ground truth and must not disappear.
+	if _, err := cmd.RecordModelOutcome(ctx, id, "risk", 0.8, 1, "d1"); err != nil {
+		t.Fatal(err)
+	}
+	st := store.NewMemory()
+	if err := projection.New(log, st, models.DriftProjector{}).Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	perf, err := models.ReadPerformance(ctx, st, id, "risk")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perf.Count != 1 || perf.Positives != 1 {
+		t.Fatalf("first actual was not preserved: %+v", perf)
+	}
+}
+
 // TestModelDriftMonitoring proves predictions accumulate into a per-model
 // probability histogram, a baseline can be captured, and a post-baseline shift in
 // the predicted distribution is detected as PSI > 0.

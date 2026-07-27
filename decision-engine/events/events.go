@@ -286,12 +286,14 @@ type FlowVersionDeployed struct {
 // DeploymentRequested proposes a deployment for review (maker-checker). The
 // proposer is the envelope actor; production deployments must go through this.
 type DeploymentRequested struct {
-	RequestID         string `json:"request_id"`
-	FlowID            string `json:"flow_id"`
-	Environment       string `json:"environment"`
-	Version           int    `json:"version"`
-	ChallengerVersion int    `json:"challenger_version,omitempty"`
-	ChallengerPct     int    `json:"challenger_pct,omitempty"`
+	RequestID         string     `json:"request_id"`
+	FlowID            string     `json:"flow_id"`
+	Environment       string     `json:"environment"`
+	Version           int        `json:"version"`
+	ChallengerVersion int        `json:"challenger_version,omitempty"`
+	ChallengerPct     int        `json:"challenger_pct,omitempty"`
+	At                *time.Time `json:"at,omitempty"`
+	Until             *time.Time `json:"until,omitempty"`
 }
 
 // DeploymentApproved records that a proposed deployment was approved by a
@@ -305,6 +307,11 @@ type DeploymentApproved struct {
 	ChallengerVersion int    `json:"challenger_version,omitempty"`
 	ChallengerPct     int    `json:"challenger_pct,omitempty"`
 	Reason            string `json:"reason,omitempty"` // the approver's note (explanation)
+	// ScheduleID is set only for an approved future deployment. In that case this
+	// single approval event creates the schedule; it does not make the version live.
+	ScheduleID string     `json:"schedule_id,omitempty"`
+	At         *time.Time `json:"at,omitempty"`
+	Until      *time.Time `json:"until,omitempty"`
 }
 
 // DeploymentRejected records that a proposed deployment was rejected.
@@ -342,20 +349,37 @@ type DeployScheduled struct {
 type DeployScheduleActivated struct {
 	ScheduleID   string `json:"schedule_id"`
 	FlowID       string `json:"flow_id"`
+	Environment  string `json:"environment,omitempty"`
+	Version      int    `json:"version,omitempty"`
 	PriorVersion int    `json:"prior_version"`
 }
 
-// DeployScheduleReverted marks a time-boxed schedule as reverted after its window.
+// DeployScheduleReverted atomically marks a time-boxed schedule as reverted and,
+// when Version is non-zero, restores the version that was live before activation.
 type DeployScheduleReverted struct {
-	ScheduleID string `json:"schedule_id"`
-	FlowID     string `json:"flow_id"`
+	ScheduleID  string `json:"schedule_id"`
+	FlowID      string `json:"flow_id"`
+	Environment string `json:"environment,omitempty"`
+	Version     int    `json:"version,omitempty"`
+	FromVersion int    `json:"from_version,omitempty"`
+	// Superseded closes the schedule without restoring Version because a newer
+	// deployment already replaced the scheduled version. This prevents an expired
+	// window from overwriting an operator's later deliberate deployment.
+	Superseded bool `json:"superseded,omitempty"`
 }
 
-// DeployScheduleCanceled cancels a pending (or active) schedule.
+// DeployScheduleCanceled cancels a pending schedule or atomically closes an active
+// one. Active cancellations restore Version (the captured prior version) unless a
+// newer deployment superseded the scheduled FromVersion.
 type DeployScheduleCanceled struct {
-	ScheduleID string `json:"schedule_id"`
-	FlowID     string `json:"flow_id"`
-	Reason     string `json:"reason,omitempty"`
+	ScheduleID  string `json:"schedule_id"`
+	FlowID      string `json:"flow_id"`
+	Environment string `json:"environment,omitempty"`
+	Version     int    `json:"version,omitempty"`
+	FromVersion int    `json:"from_version,omitempty"`
+	Active      bool   `json:"active,omitempty"`
+	Superseded  bool   `json:"superseded,omitempty"`
+	Reason      string `json:"reason,omitempty"`
 }
 
 // PromotionStagePolicy is the gate applied when promoting into one target

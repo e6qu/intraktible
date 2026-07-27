@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"time"
 
 	"github.com/e6qu/intraktible/decision-engine/events"
 	"github.com/e6qu/intraktible/platform/eventlog"
@@ -216,19 +217,31 @@ func applyOutcome(ctx context.Context, e eventlog.Envelope, s store.Store) error
 	if err := json.Unmarshal(e.Payload, &p); err != nil {
 		return fmt.Errorf("models: decode outcome seq %d: %w", e.Seq, err)
 	}
-	if math.IsNaN(p.Probability) || math.IsInf(p.Probability, 0) {
-		return nil
+	if p.Name == "" || math.IsNaN(p.Probability) || math.IsInf(p.Probability, 0) ||
+		p.Probability < 0 || p.Probability > 1 || (p.Label != 0 && p.Label != 1) {
+		return fmt.Errorf("models: invalid outcome at seq %d: model=%q probability=%v label=%v",
+			e.Seq, p.Name, p.Probability, p.Label)
 	}
 	idx := bucket(p.Probability)
-	_, err := store.UpdateDoc(ctx, s, StatsCollection, store.Key(e.Org, e.Workspace, p.Name), func(st *ModelStats) {
-		if p.Label == 1 {
-			st.Actuals[idx].Pos++
-		} else {
-			st.Actuals[idx].Neg++
-		}
-		st.ActualCount++
-	})
-	return err // an outcome for an unseen model is a no-op (no predictions folded yet)
+	key := store.Key(e.Org, e.Workspace, p.Name)
+	st, ok, err := store.GetDoc[ModelStats](ctx, s, StatsCollection, key)
+	if err != nil {
+		return err
+	}
+	// Actuals may be the first monitoring data for a newly-defined model (for
+	// example, outcomes imported before its first in-platform prediction). Preserve
+	// that real observation instead of relying on UpdateDoc's no-op-on-missing.
+	if !ok {
+		st = ModelStats{Org: e.Org, Workspace: e.Workspace, Name: p.Name}
+	}
+	if p.Label == 1 {
+		st.Actuals[idx].Pos++
+	} else {
+		st.Actuals[idx].Neg++
+	}
+	st.ActualCount++
+	st.UpdatedAt = e.Time.UTC().Format(time.RFC3339)
+	return store.PutDoc(ctx, s, StatsCollection, key, st)
 }
 
 // applyDriftAlerting flips a model's last-known firing state (scheduler dedup).
@@ -238,10 +251,16 @@ func applyDriftAlerting(ctx context.Context, e eventlog.Envelope, s store.Store,
 	if err := json.Unmarshal(e.Payload, &p); err != nil {
 		return fmt.Errorf("models: decode drift alert seq %d: %w", e.Seq, err)
 	}
-	_, err := store.UpdateDoc(ctx, s, StatsCollection, store.Key(e.Org, e.Workspace, p.Name), func(st *ModelStats) {
+	found, err := store.UpdateDoc(ctx, s, StatsCollection, store.Key(e.Org, e.Workspace, p.Name), func(st *ModelStats) {
 		st.Alerting = alerting
 	})
-	return err // an alert/resolve for an unseen model is a no-op
+	if err != nil {
+		return err
+	}
+	if !found {
+		return fmt.Errorf("models: drift alert transition for unknown stats %q at seq %d", p.Name, e.Seq)
+	}
+	return nil
 }
 
 // applyPredictNode bumps the histogram for each model named in a Predict node's

@@ -4,6 +4,7 @@ package decisionengine_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/e6qu/intraktible/decision-engine/command"
@@ -108,6 +109,30 @@ func TestPreviewAndDecideAgree(t *testing.T) {
 	}
 	if prev.Status != live.Status || prev.Output["decision"] != live.Output["decision"] {
 		t.Fatalf("preview (%s/%v) and decide (%s/%v) disagree", prev.Status, prev.Output["decision"], live.Status, live.Output["decision"])
+	}
+}
+
+func TestPreviewRequiresDeploymentOutsideSandbox(t *testing.T) {
+	ctx := context.Background()
+	log, err := eventlog.OpenWAL(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = log.Close() }()
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "caller"}
+	st := store.NewMemory()
+	publishDecisionFlow(t, ctx, log, st, id)
+
+	_, err = command.NewDecideHandler(log, st).Preview(
+		ctx,
+		id,
+		"scoring",
+		"production",
+		map[string]any{"fico": 680, "bonus": 40},
+		command.EntityRef{},
+	)
+	if !errors.Is(err, command.ErrNotFound) {
+		t.Fatalf("production preview without a deployment returned %v, want ErrNotFound", err)
 	}
 }
 

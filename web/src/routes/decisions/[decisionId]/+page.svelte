@@ -90,21 +90,34 @@
       explaining = false;
     }
   }
-  // The recorded issuance for this decline (null = not yet served). Loaded best-effort
-  // when the decision is a decline; a missing creditor config just leaves it unloaded.
+  // The recorded issuance, contest, and human review form one regulatory state:
+  // none of them may be presented as absent when the reads actually failed.
   let issuance = $state<AdverseActionIssuance | null>(null);
+  let regulatoryError = $state('');
+  let regulatoryLoading = $state(false);
   let issueMethod = $state('mail');
   let issueConsumerReport = $state(false);
   let issuing = $state(false);
   const canIssue = $derived(roleAtLeast($user?.role, 'operator'));
 
-  async function loadIssuance() {
-    if (!id) return;
+  async function loadRegulatory(reqId = id) {
+    if (!reqId) return;
+    regulatoryLoading = true;
+    regulatoryError = '';
     try {
-      const res = await getAdverseAction(key, id, issueConsumerReport);
+      const [res, nextReview, nextContest] = await Promise.all([
+        getAdverseAction(key, reqId, issueConsumerReport),
+        getReconsideration(key, reqId),
+        getContest(key, reqId)
+      ]);
+      if (id !== reqId) return;
       issuance = res.issuance ?? null;
-    } catch {
-      issuance = null; // creditor unconfigured or decision not a decline — nothing to show
+      review = nextReview;
+      contest = nextContest;
+    } catch (e) {
+      if (id === reqId) regulatoryError = msg(e);
+    } finally {
+      if (id === reqId) regulatoryLoading = false;
     }
   }
   async function submitIssue() {
@@ -115,7 +128,7 @@
         based_on_consumer_report: issueConsumerReport
       });
       toast.success('Adverse-action notice recorded as issued.');
-      await loadIssuance();
+      await loadRegulatory();
     } catch (e) {
       toast.error(msg(e));
     } finally {
@@ -137,19 +150,6 @@
   let contestNote = $state('');
   let contesting = $state(false);
 
-  async function loadReview() {
-    if (!id) return;
-    try {
-      review = await getReconsideration(key, id);
-    } catch {
-      review = null;
-    }
-    try {
-      contest = await getContest(key, id);
-    } catch {
-      contest = null;
-    }
-  }
   async function submitContest() {
     contesting = true;
     try {
@@ -159,7 +159,7 @@
       });
       toast.success('Contest logged — awaiting review.');
       contestNote = '';
-      await loadReview();
+      await loadRegulatory();
     } catch (e) {
       toast.error(msg(e));
     } finally {
@@ -180,7 +180,7 @@
       });
       toast.success('Human review recorded.');
       reviewRationale = '';
-      await loadReview();
+      await loadRegulatory();
     } catch (e) {
       toast.error(msg(e));
     } finally {
@@ -227,8 +227,7 @@
       if (id !== reqId) return;
       d = got;
       if (d.disposition === 'decline') {
-        void loadIssuance();
-        void loadReview();
+        await loadRegulatory(reqId);
       }
     } catch (e) {
       if (id !== reqId) return;
@@ -293,6 +292,8 @@
     issuance = null;
     review = null;
     contest = null;
+    regulatoryError = '';
+    regulatoryLoading = false;
     // Reset the rendered decision too — otherwise a failed sibling load keeps
     // showing the previous decision (including its Resume panel) under the new id.
     d = null;
@@ -434,12 +435,22 @@
           <Icon name="shield" />
           {notifying ? 'Generating…' : 'Download notice'}
         </button>
-        {#if issuance}
+        {#if regulatoryLoading}
+          <span class="badge">checking issuance…</span>
+        {:else if regulatoryError}
+          <span class="badge danger">issuance status unavailable</span>
+        {:else if issuance}
           <span class="badge ok">issued</span>
         {:else}
           <span class="badge">not yet issued</span>
         {/if}
       </div>
+      {#if regulatoryError}
+        <p class="err regulatory-error">
+          Regulatory records could not be loaded: {regulatoryError}
+          <button class="link" onclick={() => loadRegulatory()}>Retry</button>
+        </p>
+      {/if}
       {#if issuance}
         <dl class="issuance">
           <dt>Served</dt>
@@ -455,10 +466,14 @@
             ⛓ {issuance.content_hash.slice(0, 16)}…
           </dd>
         </dl>
-      {:else if canIssue}
+      {:else if canIssue && !regulatoryError && !regulatoryLoading}
         <div class="aa-issue">
           <label class="aa-check">
-            <input type="checkbox" bind:checked={issueConsumerReport} onchange={loadIssuance} />
+            <input
+              type="checkbox"
+              bind:checked={issueConsumerReport}
+              onchange={() => loadRegulatory()}
+            />
             Decision used a consumer / credit report (adds the US Fair Credit Reporting Act, Section 615
             disclosures)
           </label>
@@ -489,7 +504,13 @@
           under the US Equal Credit Opportunity Act — the original decision stays immutable.</Hint
         >
       </h2>
-      {#if contest}
+      {#if regulatoryLoading}
+        <p class="muted small">Checking contest and human-review records…</p>
+      {:else if regulatoryError}
+        <p class="muted small">
+          Contest and review status are unavailable until the regulatory records load succeeds.
+        </p>
+      {:else if contest}
         <p class="muted small">
           <span class="badge {contest.resolved ? 'ok' : ''}"
             >{contest.resolved ? 'contest resolved' : 'contest — awaiting review'}</span
@@ -519,55 +540,57 @@
           </div>
         </div>
       {/if}
-      {#if review}
-        <dl class="issuance">
-          <dt>Outcome</dt>
-          <dd>
-            {#if review.outcome === 'overturned'}
-              <span class="badge overturned">overturned</span>
-            {:else}
-              <span class="badge">upheld</span>
-            {/if}
-          </dd>
-          <dt>Basis</dt>
-          <dd>{review.basis.replace('_', ' ')}</dd>
-          <dt>Reviewer</dt>
-          <dd>{review.reviewed_by} · {review.reviewed_at?.slice(0, 10)}</dd>
-          <dt>Rationale</dt>
-          <dd>{review.rationale}</dd>
-        </dl>
-      {:else if !solelyAutomated}
-        <p class="muted small">
-          This decision already had a person in the loop{d.case_id
-            ? ' (routed to a review case)'
-            : ''}
-          — the human-intervention record (Article 22 of the EU General Data Protection Regulation) is
-          for a solely-automated decline.
-        </p>
-      {:else if canIssue}
-        <div class="aa-issue">
-          <div class="aa-controls">
-            <select bind:value={reviewBasis} aria-label="review basis">
-              <option value="applicant_contest">applicant contest</option>
-              <option value="proactive">proactive</option>
-              <option value="regulator_inquiry">regulator inquiry</option>
-            </select>
-            <select bind:value={reviewOutcome} aria-label="review outcome">
-              <option value="upheld">upheld</option>
-              <option value="overturned">overturned</option>
-            </select>
+      {#if !regulatoryLoading && !regulatoryError}
+        {#if review}
+          <dl class="issuance">
+            <dt>Outcome</dt>
+            <dd>
+              {#if review.outcome === 'overturned'}
+                <span class="badge overturned">overturned</span>
+              {:else}
+                <span class="badge">upheld</span>
+              {/if}
+            </dd>
+            <dt>Basis</dt>
+            <dd>{review.basis.replace('_', ' ')}</dd>
+            <dt>Reviewer</dt>
+            <dd>{review.reviewed_by} · {review.reviewed_at?.slice(0, 10)}</dd>
+            <dt>Rationale</dt>
+            <dd>{review.rationale}</dd>
+          </dl>
+        {:else if !solelyAutomated}
+          <p class="muted small">
+            This decision already had a person in the loop{d.case_id
+              ? ' (routed to a review case)'
+              : ''}
+            — the human-intervention record (Article 22 of the EU General Data Protection Regulation)
+            is for a solely-automated decline.
+          </p>
+        {:else if canIssue}
+          <div class="aa-issue">
+            <div class="aa-controls">
+              <select bind:value={reviewBasis} aria-label="review basis">
+                <option value="applicant_contest">applicant contest</option>
+                <option value="proactive">proactive</option>
+                <option value="regulator_inquiry">regulator inquiry</option>
+              </select>
+              <select bind:value={reviewOutcome} aria-label="review outcome">
+                <option value="upheld">upheld</option>
+                <option value="overturned">overturned</option>
+              </select>
+            </div>
+            <textarea
+              bind:value={reviewRationale}
+              rows="2"
+              placeholder="Rationale — what the human reviewer weighed (required)"
+            ></textarea>
+            <button class="notice-btn" onclick={submitReview} disabled={reviewing}>
+              {reviewing ? 'Recording…' : 'Record human review'}
+            </button>
           </div>
-          <textarea
-            bind:value={reviewRationale}
-            rows="2"
-            placeholder="Rationale — what the human reviewer weighed (required)"
-          ></textarea>
-          <button class="notice-btn" onclick={submitReview} disabled={reviewing}>
-            {reviewing ? 'Recording…' : 'Record human review'}
-          </button>
-        </div>
-      {:else}
-        <p class="muted small">Recording a human review requires the operator role.</p>
+        {:else}
+          <p class="muted small">Recording a human review requires the operator role.</p>
+        {/if}
       {/if}
     {/if}
 

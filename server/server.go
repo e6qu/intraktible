@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -166,6 +167,9 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
+	if err := validateBooleanEnv(); err != nil {
+		return nil, err
+	}
 	// Encryption at rest: when INTRAKTIBLE_ENCRYPTION_KEY is set, event payloads and
 	// projection-store documents are sealed under the keyring (AES-256-GCM). Off by
 	// default; the keyring is built once and shared by the log and store wrappers.
@@ -271,7 +275,8 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 	// Retention: on the shared sweep cadence, apply each tenant's retention policy
 	// (crypto-shred subjects past their window, skipping legal holds). Opt-in and off
 	// by default — a tenant with no policy is never swept.
-	retentionScheduler := erasure.NewScheduler(erasureVault).WithNow(now)
+	legalRetention := retentionGate{store: st, now: now}
+	retentionScheduler := erasure.NewScheduler(erasureVault).WithNow(now).WithRetentionGate(legalRetention)
 	erasurePIIFields := splitCSV(os.Getenv("INTRAKTIBLE_ERASURE_PII_FIELDS"))
 	// Consent: one handler backs both the /v1/consent surface and the decide-path
 	// gate (capture asserted consent + enforce permissible purpose on Connect nodes).
@@ -312,8 +317,8 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 		// seconds) so an operator can tune the wall-clock cap on flow-author logic.
 		if v := strings.TrimSpace(os.Getenv("INTRAKTIBLE_DECIDE_EVAL_TIMEOUT")); v != "" {
 			d, err := time.ParseDuration(v)
-			if err != nil {
-				return nil, fmt.Errorf("INTRAKTIBLE_DECIDE_EVAL_TIMEOUT %q: %w", v, err)
+			if err != nil || d <= 0 {
+				return nil, fmt.Errorf("INTRAKTIBLE_DECIDE_EVAL_TIMEOUT %q: want a positive duration", v)
 			}
 			decideOpts = append(decideOpts, enginecmd.WithEvalTimeout(d))
 		}
@@ -346,7 +351,11 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 		// configured threshold and pushes the firing edge to webhooks. The window is
 		// cumulative by default; INTRAKTIBLE_MODEL_DRIFT_WINDOW (days) narrows it to a
 		// recent slice so a fresh shift isn't diluted by all-time history.
-		driftScheduler = enginemodels.NewScheduler(st, engineCmd, notifier, driftWindowDays()).WithNow(now)
+		windowDays, err := driftWindowDays()
+		if err != nil {
+			return nil, err
+		}
+		driftScheduler = enginemodels.NewScheduler(st, engineCmd, notifier, windowDays).WithNow(now)
 		// Deploy scheduler: activates due scheduled deploys and reverts expired
 		// time-boxed ones on the same cadence as the monitor sweep.
 		deployScheduler = schedule.NewScheduler(st, engineCmd).WithNow(now)
@@ -366,9 +375,22 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 		// Push an overdue human task to the operator-configured webhooks (the in-app
 		// inbox is driven separately off the same events) so reviewers are pulled to it.
 		caseScheduler = caseschedule.NewScheduler(st, caseCmd).WithNow(now).WithNotify(
-			func(ctx context.Context, id identity.Identity, caseIDs []string) {
-				_, _ = notifier.Deliver(ctx, id, "case.sla_breached",
-					map[string]any{"event": "case.overdue", "case_ids": caseIDs})
+			func(ctx context.Context, id identity.Identity, caseID string) (caseschedule.DeliveryOutcome, error) {
+				summary, err := notifier.Deliver(ctx, id, "case.sla_breached",
+					map[string]any{"event": "case.overdue", "case_id": caseID})
+				if err != nil {
+					return "", err
+				}
+				switch {
+				case summary.RetryWorthy():
+					return caseschedule.DeliveryRetry, nil
+				case summary.Delivered():
+					return caseschedule.DeliverySucceeded, nil
+				case len(summary.Results) == 0:
+					return caseschedule.DeliveryNoChannel, nil
+				default:
+					return caseschedule.DeliveryPermanentFailure, nil
+				}
 			})
 	}
 	if enabled(cfg.Modules, "context-layer") {
@@ -449,7 +471,7 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 	// Right-to-erasure (crypto-shredding) + retention, admin-gated. erasureVault is
 	// built earlier and shared with the Context Layer's PII field sealing. The retention
 	// gate refuses erasure of a subject still within a statutory record-retention window.
-	erasure.NewService(erasureVault).WithRetentionGate(retentionGate{store: st, now: now}).Routes(api)
+	erasure.NewService(erasureVault).WithRetentionGate(legalRetention).Routes(api)
 	// A subject's record-retention status (read-only), for the compliance/entity view.
 	retention.New(st).WithNow(now).Routes(api)
 	api.HandleFunc("GET /v1/me", httpx.MeHandler())
@@ -474,23 +496,24 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 	// endpoint is the on-demand alternative. Each scheduler is gated only on its
 	// own module, so a split-services profile (e.g. --modules=case-manager) still
 	// runs its SLA sweeps without the decision-engine module.
-	var sweeps []timedSweeper
+	var sweeps []namedTimedSweeper
 	if monitorScheduler != nil {
-		sweeps = append(sweeps, monitorScheduler)
+		sweeps = append(sweeps, namedTimedSweeper{name: "flow_monitor", runner: monitorScheduler})
 	}
 	if driftScheduler != nil {
-		sweeps = append(sweeps, driftScheduler)
+		sweeps = append(sweeps, namedTimedSweeper{name: "model_drift", runner: driftScheduler})
 	}
 	if deployScheduler != nil {
-		sweeps = append(sweeps, deployScheduler)
+		sweeps = append(sweeps, namedTimedSweeper{name: "deploy_schedule", runner: deployScheduler})
 	}
 	if caseScheduler != nil {
-		sweeps = append(sweeps, caseScheduler)
+		sweeps = append(sweeps, namedTimedSweeper{name: "case_sla", runner: caseScheduler})
 	}
 	// Retention runs regardless of module (erasure is a platform capability); it is a
 	// no-op for every tenant without a retention policy.
-	sweeps = append(sweeps, retentionScheduler)
-	if err := startTimedSweeps(ctx, os.Getenv("INTRAKTIBLE_MONITOR_INTERVAL"), sweeps); err != nil {
+	sweeps = append(sweeps, namedTimedSweeper{name: "data_retention", runner: retentionScheduler})
+	schedulerState := newSchedulerHealth(sweeps)
+	if err := startTimedSweeps(ctx, os.Getenv("INTRAKTIBLE_MONITOR_INTERVAL"), sweeps, schedulerState); err != nil {
 		return nil, err
 	}
 
@@ -504,12 +527,12 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 	// health where the backend reports it — a log whose live feed has died leaves
 	// this replica just as stale as a stopped projector, and the NATS backend has no
 	// poller behind its subscription to notice on its own.
-	health := readModelHealth(rt.Err, log)
+	health := combinedHealth(readModelHealth(rt.Err, log), schedulerState.Err)
 	root.HandleFunc("GET /healthz", httpx.Health(health))
 	// /readyz gates traffic during a rolling deploy: 503 until this replica's
 	// projections have caught up to the log head, so a freshly-started pod does not
 	// serve empty read models while it rebuilds. Liveness (/healthz) vs readiness.
-	root.HandleFunc("GET /readyz", httpx.Ready(rt.Applied, log.Head, rt.Err, srv.Draining))
+	root.HandleFunc("GET /readyz", httpx.Ready(rt.Applied, log.Head, health, srv.Draining))
 	// /version reports the build (VCS revision + Go) so ops can confirm what's live.
 	root.HandleFunc("GET /version", httpx.Version())
 	// /auth/validation is the app-owned, deployment-neutral SSO validation
@@ -529,8 +552,17 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 	// rps to 0 to disable (behind a proxy that already rate-limits). With
 	// INTRAKTIBLE_TRUST_PROXY the bucket is per X-Forwarded-For, so shared egress IPs
 	// don't collide.
-	rps := envFloat("INTRAKTIBLE_LOGIN_RATE_LIMIT_RPS", 10)
-	burst := envInt("INTRAKTIBLE_LOGIN_RATE_LIMIT_BURST", 30)
+	rps, err := envFloat("INTRAKTIBLE_LOGIN_RATE_LIMIT_RPS", 10)
+	if err != nil {
+		return nil, err
+	}
+	burst, err := envInt("INTRAKTIBLE_LOGIN_RATE_LIMIT_BURST", 30)
+	if err != nil {
+		return nil, err
+	}
+	if rps > 0 && burst < 1 {
+		return nil, fmt.Errorf("INTRAKTIBLE_LOGIN_RATE_LIMIT_BURST must be positive when login rate limiting is enabled")
+	}
 	loginHandler := httpx.LoginHandler(keyring, sessions)
 	if rps > 0 {
 		loginHandler = httpx.NewRateLimit(rps, burst)(loginHandler)
@@ -538,8 +570,8 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 	root.HandleFunc("POST /v1/login", loginHandler)
 	root.HandleFunc("POST /v1/logout", httpx.LogoutHandler(sessions))
 	// SSO: OIDC login for the configured providers (Google, AWS Cognito, …). Each
-	// provider's discovery runs now; a provider that fails to initialize is skipped
-	// (logged) rather than blocking startup.
+	// provider's discovery runs now; a provider that fails to initialize stops
+	// startup so an explicitly configured login path cannot disappear.
 	// SCIM user provisioning (the SSO companion): an IdP creates/deactivates users
 	// here, and the OIDC login consults it so a deactivated user is refused.
 	var scimStore *scim.Store
@@ -632,17 +664,78 @@ func readModelHealth(projection func() error, log eventlog.Log) func() error {
 	}
 }
 
+// combinedHealth returns the first operational failure in dependency order. A
+// single check is shared by liveness and readiness so neither probe can claim
+// this replica is usable while another has already observed a stalled subsystem.
+func combinedHealth(checks ...func() error) func() error {
+	return func() error {
+		for _, check := range checks {
+			if check == nil {
+				continue
+			}
+			if err := check(); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+}
+
 // timedSweeper is the shared shape of the module schedulers (monitor, drift,
-// deploy, case SLA): a loop that sweeps on a fixed cadence until ctx is done.
+// deploy, case SLA, retention): a loop that sweeps on a fixed cadence until ctx
+// is done and reports every completed tick (nil means the prior failure cleared).
 type timedSweeper interface {
-	Run(ctx context.Context, interval time.Duration)
+	Run(ctx context.Context, interval time.Duration, report func(error))
+}
+
+type namedTimedSweeper struct {
+	name   string
+	runner timedSweeper
+}
+
+// schedulerHealth latches the most recent failed tick independently per
+// scheduler. A later successful tick clears only that scheduler: one recovered
+// loop cannot hide another loop that is still unable to do its work.
+type schedulerHealth struct {
+	mu     sync.RWMutex
+	order  []string
+	errors map[string]error
+}
+
+func newSchedulerHealth(sweeps []namedTimedSweeper) *schedulerHealth {
+	h := &schedulerHealth{errors: make(map[string]error, len(sweeps))}
+	for _, sweep := range sweeps {
+		h.order = append(h.order, sweep.name)
+	}
+	return h
+}
+
+func (h *schedulerHealth) Report(name string, err error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if err == nil {
+		delete(h.errors, name)
+		return
+	}
+	h.errors[name] = err
+}
+
+func (h *schedulerHealth) Err() error {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for _, name := range h.order {
+		if err := h.errors[name]; err != nil {
+			return fmt.Errorf("scheduler %s: %w", name, err)
+		}
+	}
+	return nil
 }
 
 // startTimedSweeps starts each scheduler on the interval given by
 // INTRAKTIBLE_MONITOR_INTERVAL (a no-op when unset). The schedulers start
 // independently of one another, so enabling only one module still gets its
 // timed sweeps.
-func startTimedSweeps(ctx context.Context, interval string, sweeps []timedSweeper) error {
+func startTimedSweeps(ctx context.Context, interval string, sweeps []namedTimedSweeper, health *schedulerHealth) error {
 	if interval == "" {
 		return nil
 	}
@@ -650,8 +743,10 @@ func startTimedSweeps(ctx context.Context, interval string, sweeps []timedSweepe
 	if err != nil || d <= 0 {
 		return fmt.Errorf("INTRAKTIBLE_MONITOR_INTERVAL %q: must be a positive duration", interval)
 	}
-	for _, s := range sweeps {
-		go s.Run(ctx, d)
+	for _, sweep := range sweeps {
+		go sweep.runner.Run(ctx, d, func(err error) {
+			health.Report(sweep.name, err)
+		})
 	}
 	return nil
 }
@@ -674,7 +769,7 @@ func preflight(cfg Config, encryptionEnabled bool) error {
 	if cfg.LogKind == "memory" {
 		problems = append(problems, "--log=memory is not durable (the event log is the system of record); use file, sqlite, postgres, or nats")
 	}
-	if !encryptionEnabled && os.Getenv("INTRAKTIBLE_ALLOW_PLAINTEXT_AT_REST") == "" {
+	if !encryptionEnabled && !truthy(os.Getenv("INTRAKTIBLE_ALLOW_PLAINTEXT_AT_REST")) {
 		problems = append(problems, "INTRAKTIBLE_ENCRYPTION_KEY is unset, so PII/event payloads would be written in plaintext at rest; set it, or set INTRAKTIBLE_ALLOW_PLAINTEXT_AT_REST=1 to accept that risk")
 	}
 	// A single-process WAL behind a load balancer is silent data divergence: each
@@ -694,7 +789,7 @@ func preflight(cfg Config, encryptionEnabled bool) error {
 	if cfg.LogKind == "file" {
 		slog.Warn("--log=file with INTRAKTIBLE_SINGLE_REPLICA=1: this deployment must never be scaled beyond one replica")
 	}
-	if os.Getenv("INTRAKTIBLE_CONNECTOR_ALLOW_PRIVATE") != "" {
+	if truthy(os.Getenv("INTRAKTIBLE_CONNECTOR_ALLOW_PRIVATE")) {
 		slog.Warn("INTRAKTIBLE_CONNECTOR_ALLOW_PRIVATE is set: flow connectors may reach private/internal hosts (the cloud metadata service stays blocked)")
 	}
 	return nil

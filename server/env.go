@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -33,7 +34,7 @@ func aiGuardrailsFromEnv() (ai.Guardrails, error) {
 	}
 	if v := strings.TrimSpace(os.Getenv("INTRAKTIBLE_AI_RATE_LIMIT_RPS")); v != "" {
 		rps, err := strconv.ParseFloat(v, 64)
-		if err != nil || rps < 0 {
+		if err != nil || rps < 0 || math.IsNaN(rps) || math.IsInf(rps, 0) {
 			return ai.Guardrails{}, fmt.Errorf("INTRAKTIBLE_AI_RATE_LIMIT_RPS %q: want a non-negative number", v)
 		}
 		g.RatePerSec = rps
@@ -301,24 +302,32 @@ func envOr(key, fallback string) string {
 	return fallback
 }
 
-// envFloat reads a float env var, returning fallback when unset or unparseable.
-func envFloat(key string, fallback float64) float64 {
-	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
-		if f, err := strconv.ParseFloat(v, 64); err == nil {
-			return f
-		}
+// envFloat reads a non-negative finite float env var. The default applies only
+// when the variable is absent; an explicitly malformed value is a startup error.
+func envFloat(key string, fallback float64) (float64, error) {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return fallback, nil
 	}
-	return fallback
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil || f < 0 || math.IsNaN(f) || math.IsInf(f, 0) {
+		return 0, fmt.Errorf("%s %q: want a non-negative finite number", key, v)
+	}
+	return f, nil
 }
 
-// envInt reads an int env var, returning fallback when unset or unparseable.
-func envInt(key string, fallback int) int {
-	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			return n
-		}
+// envInt reads a non-negative integer env var. The default applies only when
+// absent; an explicitly malformed value is a startup error.
+func envInt(key string, fallback int) (int, error) {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return fallback, nil
 	}
-	return fallback
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 0 {
+		return 0, fmt.Errorf("%s %q: want a non-negative integer", key, v)
+	}
+	return n, nil
 }
 
 // truthy reports whether an env value reads as enabled (1/true/yes/on).
@@ -331,12 +340,45 @@ func truthy(v string) bool {
 	}
 }
 
-// driftWindowDays reads INTRAKTIBLE_MODEL_DRIFT_WINDOW (in days) for the drift
-// scheduler's firing window. 0 (absent/invalid/non-positive) means all-time.
-func driftWindowDays() int {
-	n, err := strconv.Atoi(strings.TrimSpace(os.Getenv("INTRAKTIBLE_MODEL_DRIFT_WINDOW")))
-	if err != nil || n < 0 {
-		return 0
+// validateBooleanEnv rejects typoed switches before any subsystem reads them.
+// An absent variable still uses its documented default.
+func validateBooleanEnv() error {
+	for _, key := range []string{
+		"INTRAKTIBLE_AI_GUARDRAIL_PII",
+		"INTRAKTIBLE_AI_GUARDRAIL_BLOCK_INJECTION",
+		"INTRAKTIBLE_AI_STUB",
+		"INTRAKTIBLE_ALLOW_PLAINTEXT_AT_REST",
+		"INTRAKTIBLE_CONNECTOR_ALLOW_PRIVATE",
+		"INTRAKTIBLE_SECURE_COOKIES",
+		"INTRAKTIBLE_SINGLE_REPLICA",
+		"INTRAKTIBLE_TRUST_PROXY",
+	} {
+		switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
+		case "", "0", "false", "no", "off", "1", "true", "yes", "on":
+		default:
+			return fmt.Errorf(
+				"%s %q: want a boolean (1/0, true/false, yes/no, or on/off)",
+				key, os.Getenv(key),
+			)
+		}
 	}
-	return n
+	return nil
+}
+
+// driftWindowDays reads INTRAKTIBLE_MODEL_DRIFT_WINDOW (in days) for the drift
+// scheduler's firing window. Zero or absent means all-time; invalid and negative
+// values are startup errors.
+func driftWindowDays() (int, error) {
+	v := strings.TrimSpace(os.Getenv("INTRAKTIBLE_MODEL_DRIFT_WINDOW"))
+	if v == "" {
+		return 0, nil
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 0 {
+		return 0, fmt.Errorf(
+			"INTRAKTIBLE_MODEL_DRIFT_WINDOW %q: want a non-negative integer number of days",
+			v,
+		)
+	}
+	return n, nil
 }

@@ -58,10 +58,13 @@
   }
 
   let cName = $state('');
-  let cType = $state('mock_bureau');
+  let cType = $state('');
   let cConfig = $state('');
   let cBusy = $state(false);
   let catalog = $state<ConnectorTemplate[]>([]);
+  let catalogLoaded = $state(false);
+  let catalogError = $state('');
+  const catalogTypes = $derived([...new Set(catalog.map((t) => t.type))]);
   // Selecting a catalog template scaffolds the define form (the operator then edits
   // the placeholder URL/DSN and names it).
   function useTemplate(t: ConnectorTemplate) {
@@ -69,8 +72,26 @@
     cConfig = JSON.stringify(t.config, null, 2);
     if (!cName.trim()) cName = t.id;
   }
+  async function loadCatalog() {
+    catalogLoaded = false;
+    catalogError = '';
+    try {
+      const next = await listConnectorCatalog(key);
+      catalog = next;
+      catalogLoaded = true;
+      if (!next.some((t) => t.type === cType)) cType = next[0]?.type ?? '';
+    } catch (e) {
+      catalog = [];
+      cType = '';
+      catalogError = msg(e);
+    }
+  }
   async function addConnector() {
     if (cBusy) return; // Enter fires onsubmit directly, bypassing the disabled button
+    if (!catalogLoaded || !cType) {
+      error = 'Connector catalog has not loaded — refusing to define an unknown type.';
+      return;
+    }
     error = '';
     cBusy = true;
     try {
@@ -139,11 +160,7 @@
 
   onMount(() => {
     void load();
-    // The catalog drives which connector types can be created at all, so an empty
-    // one is indistinguishable from "this deployment supports none". Report instead.
-    listConnectorCatalog(key)
-      .then((c) => (catalog = c))
-      .catch((e) => toast.error(e instanceof Error ? e.message : String(e)));
+    void loadCatalog();
   });
 </script>
 
@@ -171,6 +188,14 @@
         {/each}
       </div>
     {/if}
+    {#if catalogError}
+      <p class="err" data-testid="connector-catalog-error">
+        Connector catalog unavailable: {catalogError}
+        <button class="link" onclick={loadCatalog}>Retry</button>
+      </p>
+    {:else if catalogLoaded && catalog.length === 0}
+      <p class="err">This deployment exposes no connector types.</p>
+    {/if}
     <form
       class="row"
       onsubmit={(e) => {
@@ -180,15 +205,9 @@
     >
       <input bind:value={cName} placeholder="name" aria-label="connector name" size="14" required />
       <select bind:value={cType} aria-label="connector type">
-        <option value="mock_bureau">mock_bureau</option>
-        <option value="credit_bureau">credit_bureau</option>
-        <option value="sanctions">sanctions</option>
-        <option value="http">http</option>
-        <option value="graphql">graphql</option>
-        <option value="sql">sql</option>
-        <option value="static">static</option>
-        <option value="plaid">plaid</option>
-        <option value="stripe">stripe</option>
+        {#each catalogTypes as connectorType (connectorType)}
+          <option value={connectorType}>{connectorType}</option>
+        {/each}
       </select>
       <input
         bind:value={cConfig}
@@ -198,7 +217,7 @@
       />
       <button
         type="submit"
-        disabled={cBusy || !roleAtLeast($user?.role, 'editor')}
+        disabled={cBusy || !catalogLoaded || !cType || !roleAtLeast($user?.role, 'editor')}
         title={!roleAtLeast($user?.role, 'editor') ? 'Requires the editor role' : undefined}
         >{cBusy ? 'Saving…' : 'Define connector'}</button
       >

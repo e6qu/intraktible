@@ -3,7 +3,8 @@
      decline / refer bands and publish a version; the decide path applies the
      policy bound to a flow and records the disposition. -->
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { page } from '$app/stores';
+  import { onMount, tick } from 'svelte';
   import Icon from '$lib/Icon.svelte';
   import CommentThread from '$lib/CommentThread.svelte';
   import EmptyState from '$lib/EmptyState.svelte';
@@ -211,6 +212,15 @@
     error = '';
     try {
       [policies, flows] = await Promise.all([listPolicies(key), listFlows(key)]);
+      const linkedPolicy = $page.url.searchParams.get('policy');
+      if (!selectedId && linkedPolicy) {
+        if (!policies.some((policy) => policy.policy_id === linkedPolicy)) {
+          throw new Error(`Policy ${linkedPolicy} was not found in this workspace.`);
+        }
+        edit(linkedPolicy);
+        await tick();
+        document.getElementById('policy-discussion')?.scrollIntoView({ block: 'start' });
+      }
     } catch (e) {
       error = msg(e);
     } finally {
@@ -595,13 +605,15 @@
 
       <!-- Key on the policy id: switching the selected policy remounts the thread
            so it reloads that policy's comments (it loads once, on mount). -->
-      {#key selected.policy_id}
-        <CommentThread
-          subjectType="policy"
-          subjectId={selected.policy_id}
-          title="Policy discussion"
-        />
-      {/key}
+      <div id="policy-discussion">
+        {#key selected.policy_id}
+          <CommentThread
+            subjectType="policy"
+            subjectId={selected.policy_id}
+            title="Policy discussion"
+          />
+        {/key}
+      </div>
     </section>
   {/if}
 </main>
