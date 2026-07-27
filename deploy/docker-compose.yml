@@ -5,6 +5,14 @@
 # it with `--store=postgres` + INTRAKTIBLE_POSTGRES_DSN (e.g. postgres://postgres:intraktible@postgres:5432/intraktible).
 #
 # The same image runs every module; `serve --modules=<name>` selects which one.
+#
+# The split services need INTRAKTIBLE_BOOTSTRAP_API_KEY. They run --store=sqlite, and a
+# durable store deliberately refuses to seed the well-known dev key (so production can
+# never boot with a known admin credential) — which left this profile with no way to
+# authenticate at all: every /v1 call returned 401 with nothing documenting a way in.
+# The bootstrap key is the supported answer. The value below is local-dev only; a real
+# deployment sets its own secret and rotates to a managed key.
+#
 # Split profile: every module service shares ONE data volume and runs with
 # `--log=sqlite --store=sqlite`, so all processes append to and read from a single
 # ordered event log (and a single projection store) — the cross-component flows
@@ -26,24 +34,32 @@ services:
     image: intraktible:dev
     profiles: ["split"]
     command: ["--modules=decision-engine", "--log=sqlite", "--store=sqlite"]
+    environment:
+      INTRAKTIBLE_BOOTSTRAP_API_KEY: split-profile-local-dev-key
     ports: ["8081:8080"]
     volumes: ["itk-split:/data"]
   case-manager:
     image: intraktible:dev
     profiles: ["split"]
     command: ["--modules=case-manager", "--log=sqlite", "--store=sqlite"]
+    environment:
+      INTRAKTIBLE_BOOTSTRAP_API_KEY: split-profile-local-dev-key
     ports: ["8082:8080"]
     volumes: ["itk-split:/data"]
   context-layer:
     image: intraktible:dev
     profiles: ["split"]
     command: ["--modules=context-layer", "--log=sqlite", "--store=sqlite"]
+    environment:
+      INTRAKTIBLE_BOOTSTRAP_API_KEY: split-profile-local-dev-key
     ports: ["8083:8080"]
     volumes: ["itk-split:/data"]
   agent-manager:
     image: intraktible:dev
     profiles: ["split"]
     command: ["--modules=agent-manager", "--log=sqlite", "--store=sqlite"]
+    environment:
+      INTRAKTIBLE_BOOTSTRAP_API_KEY: split-profile-local-dev-key
     ports: ["8084:8080"]
     volumes: ["itk-split:/data"]
 

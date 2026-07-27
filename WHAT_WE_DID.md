@@ -89,3 +89,33 @@ documenting fallbacks that were already removed.
   4m19s) — the highest-risk interaction in this branch.
 - `postgres` passes with the whole-suite change (3m1s).
 - `e2e-embedded`, the new job, passes (1m3s).
+
+## Session 1 (cont.) — PR #146 and after
+
+### Third fix pass — branch `audit/linux-throughput-and-split-profile`
+- **The split profile could not be authenticated at all.** Its services run
+  `--store=sqlite`, and a durable store deliberately refuses to seed the
+  well-known dev key, but nothing replaced it — every call to :8081–:8084
+  returned 401 with no documented way in. Found by *running* the profile rather
+  than reasoning about it. The four services now set
+  `INTRAKTIBLE_BOOTSTRAP_API_KEY`. Verified across processes: an entity written
+  on the context-layer container appears in the decision-engine container's audit
+  read at seq 1.
+- **Corrected my own published throughput claim.** The append-lock numbers in
+  PR #146 were taken on Docker for macOS, whose VM fsync dominated the signal and
+  led me to write that throughput is "flat in the number of appenders". Re-measured
+  on Linux: the lock costs ~1.36x uncontended and ~2.12x at eight appenders, and
+  appends still scale ~1.9x from one to eight because group commit batches the
+  flushes queued behind the lock. Both PERFORMANCE.md and ENTERPRISE.md corrected,
+  with the superseded figures and their cause left on the page.
+- **README config table** was missing `INTRAKTIBLE_BOOTSTRAP_API_KEY`,
+  `INTRAKTIBLE_SINGLE_REPLICA`, `INTRAKTIBLE_DRAIN_DELAY` and
+  `INTRAKTIBLE_SHUTDOWN_TIMEOUT` — the middle two govern whether a production node
+  boots at all. Added.
+
+### Docs-claim verification (PR #146)
+- All 50 documented `/v1` endpoints diffed against the 157 routes actually
+  registered: everything resolves, no facades.
+- `docs/GAPS.md`'s "verified in code, not marketing" claims independently
+  confirmed (expr-lang VM, four Predict kinds, five DMN hit policies).
+- `docs/ENTERPRISE.md`'s networked-log claim corrected.

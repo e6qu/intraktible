@@ -60,28 +60,42 @@ INTRAKTIBLE_TEST_POSTGRES='postgres://…' go test ./platform/eventlog/ \
   -run xxx -bench BenchmarkPostgresAppend -benchtime 3s -cpu 8 -count 5
 ```
 
-Median of 5 runs, PostgreSQL 16 in Docker on `darwin/arm64` (Apple M4 Pro), against a
-build with and without the lock:
+Median of 5 runs, PostgreSQL 16, **Linux** (both the benchmark and the server in
+containers on one Docker network, so neither the client hop nor fsync crosses a VM
+boundary), against a build with and without the lock:
 
 | | with the lock | without | cost |
 |---|---|---|---|
-| serial (one appender) | ~1.77 ms/op · ~565 appends/sec | ~1.71 ms/op · ~585/sec | none — uncontended |
-| parallel, 8 appenders | ~1.54 ms/op · ~650 appends/sec | ~0.60 ms/op · ~1,670/sec | **~2.6× throughput** |
+| serial (one appender) | ~1.03 ms/op · ~967 appends/sec | ~0.76 ms/op · ~1,312/sec | ~1.36× |
+| parallel, 8 appenders | ~0.56 ms/op · ~1,795 appends/sec | ~0.26 ms/op · ~3,802/sec | ~2.12× |
 
-**Reading it.** The lock is free when one appender is active and costs about 2.6× of
-concurrent append throughput when eight are. That is the expected shape — the work is
-serialized by design — and the honest way to state it is that the networked log's write
-ceiling is roughly *flat* in the number of appenders rather than scaling with them.
+**Reading it.** The lock costs about a third of single-appender throughput — it is an
+extra round-trip on every append, so it is not free even uncontended — and about 2.1×
+under eight concurrent appenders.
 
-Two things to keep in view before treating ~650/sec as the system's limit. It is an
+The more useful number is the one that is easy to assume away: **appends still scale
+with concurrency under the lock**, ~1.9× from one appender to eight (967 → 1,795/sec).
+Serializing the *critical section* does not serialize the *fsyncs*: PostgreSQL group
+commit batches the flushes of transactions queued behind the lock, so added concurrency
+still buys throughput. The ceiling is lower than it would be without the lock; it is not
+flat.
+
+> An earlier revision of this page reported these as measured on Docker for macOS and
+> concluded throughput was flat in the number of appenders. That was an artifact of the
+> macOS VM's fsync path, which was slow enough to dominate everything else: it put
+> serial and parallel within noise of each other (~565/sec vs ~650/sec) and overstated
+> the concurrent cost as ~2.6×. The Linux figures above supersede it. If you re-measure
+> on macOS you will reproduce the old numbers — they are a property of that storage
+> path, not of this code.
+
+Two things still keep ~1,795/sec from being the system's write ceiling. It is an
 **event** rate, not a decision rate, and one decision emits several events (started, one
-per node, completed). And these are Docker-on-macOS numbers, where fsync goes through a
-VM — a Linux host on local NVMe, or a managed PostgreSQL, should do considerably better.
-The **ratio** is the portable finding; the absolute figure is a floor, not a forecast.
+per node, completed). And a managed PostgreSQL on provisioned IOPS is a different
+machine again. Treat the ratios as durable and the absolute numbers as this setup's.
 
 **The alternative, and why it is not shipped.** Appends could stay concurrent if the
 poller instead withheld any row whose transaction might still be in flight, gating its
-watermark on the visibility horizon (`pg_snapshot_xmin`). That would recover the 2.6×.
+watermark on the visibility horizon (`pg_snapshot_xmin`). That would recover the ~2.1×.
 It is not here because it turns on 32-bit `xid` versus 64-bit `xid8` comparison and is
 therefore only correct if it handles transaction-id wraparound — a condition that cannot
 be exercised without on the order of 2^31 transactions, so shipping it would mean
