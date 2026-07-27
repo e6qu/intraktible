@@ -16,22 +16,37 @@ DOC (a claim not backed by code).
 
 ## Queue
 
-### PERF-2 — the ~650 appends/sec ceiling is a Docker-on-macOS floor `OPEN`
-`BenchmarkPostgresAppend` now measures the append lock (see docs/PERFORMANCE.md):
-free when uncontended, ~2.6x of concurrent throughput at eight appenders. The
-absolute number (~650/sec) was taken through a macOS Docker VM's fsync and is
-pessimistic. Re-run it on a Linux host or a managed PostgreSQL before treating it
-as the system's write ceiling — the ratio is the portable part.
+_Empty._ Every item the production-readiness audit found has been fixed and
+verified — see `WHAT_WE_DID.md` for the list and the evidence.
 
-### PROD-5 — the split profile was reasoned about, not executed `OPEN`
-`deploy/docker-compose.yml --profile split` shares a SQLite log across per-module
-containers. The new `--log=file` refusal is production-only so it cannot affect
-that profile, but the reasoning was never confirmed by running it. `docker compose
---profile split up` and check all four modules come up and share the log.
+**The honest edges** — not defects, but the limits of what was checked:
+
+- Absolute throughput numbers come from one Linux Docker host. A managed
+  PostgreSQL on provisioned IOPS is a different machine; the ratios travel, the
+  nanoseconds do not.
+- `docs/COMPETITIVE.md` was not verified, by design — AGENTS.md already states
+  its competitor entries are vendor claims rather than tested behavior.
+- `docs/JOURNEYS.md` and `docs/LAUNCH.md` were checked only through the endpoint
+  diff (every `/v1` path they mention exists). Their narrative claims about *how
+  a journey feels* were not walked through in a browser.
+- The audit swept for swallowed errors, fake data, and multi-replica correctness.
+  It was not a performance audit of the decide path, nor a security review — the
+  repo has `/security-review` for the latter.
 
 ---
 
 ## CONFIRMED-OK (do not re-investigate)
+
+- **The split profile works across processes.** Run and exercised, not reasoned
+  about: an entity written on the context-layer container (:8083) appears in the
+  decision-engine container's audit read (:8081) at seq 1, so the shared SQLite
+  log genuinely carries events between processes. All four modules answer
+  /healthz and /readyz, and the browser gate behaves on split nodes too.
+- **Append throughput is measured on Linux** (docs/PERFORMANCE.md): the lock
+  costs ~1.36x uncontended and ~2.12x at eight appenders, and appends still scale
+  ~1.9x from one appender to eight via group commit. Do NOT re-measure on Docker
+  for macOS and treat the result as a regression — that path's fsync dominates
+  and produces the superseded "flat throughput" reading.
 
 - **Every documented `/v1` endpoint exists.** All 50 `/v1` paths mentioned across
   `docs/`, `README.md` and `AGENTS.md` were diffed against the 157 routes actually
