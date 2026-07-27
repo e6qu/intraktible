@@ -89,17 +89,19 @@ agent run/stream/escalation, and SLA sweep paths that previously omitted their
 final sequence. The second inventory has no remaining evidence-backed gap. The
 complete repository and shipping-artifact gates pass. Commit `379801f` is now
 under review in PR #156, the repository's sole open PR. Its first remote matrix
-exposed and now has a verified repair for a race-instrumented multi-replica test
-deadline; the updated matrix is the remaining release step.
+exposed a race-instrumented multi-replica test deadline; the repair is verified
+locally and all nine jobs in updated run 30306203748 pass. GitHub reports the PR
+cleanly mergeable.
 
 **Current local gates, all green:** `make ci` passes vet/build, strict Go lint,
 gosec, the complete race-enabled Go suite, deadcode, zero-group copy-paste
 detection, `govulncheck`, and dependency licenses. Prettier, zero-warning ESLint,
 zero-error/warning Svelte check, 217 Vitest tests, the production web build, 122
 native Playwright journeys, 80 real-Wasm journeys, and 3 embedded-binary smokes
-also pass. The prior PR #155 run 30300119151 independently established the
-real-PostgreSQL, Shauth SSO, Terraform, and container-release gates on the merged
-baseline; the new PR's remote matrix is the remaining release step.
+also pass. PR #156 run 30306203748 independently passes the complete Go, web,
+native-browser, real-Wasm, embedded-artifact, real-PostgreSQL, Shauth SSO,
+Terraform, and container-release matrix. The prior PR #155 run 30300119151
+established the same deployment-specific gates on the merged baseline.
 
 ## Ground truth established so far
 

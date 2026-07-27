@@ -501,3 +501,8 @@ Linux, entirely that VM's fsync path.
   strict default while both deliberately heavy multi-replica proofs declare a
   bounded five-second deadline. The exact race case passes 30 consecutive runs,
   its helper regression passes, and the complete `make ci` gate is green.
+- 2026-07-28: Babysat the repaired PR #156 through run 30306203748: all nine
+  jobs pass, including Go race/security/license gates, web, 122 native browser
+  journeys, 80 real-Wasm journeys, the embedded artifact, real PostgreSQL,
+  Shauth SSO, Terraform, and container release. GitHub reports the PR cleanly
+  mergeable.
