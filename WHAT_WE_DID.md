@@ -495,3 +495,9 @@ Linux, entirely that VM's fsync path.
   `origin/main` at `fea7a26`, confirmed the PR queue was empty, committed the
   31-file journey completion as `379801f`, and opened PR #156 as the repository's
   sole review queue.
+- 2026-07-28: Repaired PR #156 run 30305483664's sole failure:
+  race-instrumented dual-replica SQLite projection work had outgrown the generic
+  one-second async assertion (`A=19 B=18`). Ordinary projections retain the
+  strict default while both deliberately heavy multi-replica proofs declare a
+  bounded five-second deadline. The exact race case passes 30 consecutive runs,
+  its helper regression passes, and the complete `make ci` gate is green.

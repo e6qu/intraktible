@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/projection"
@@ -139,7 +140,9 @@ func TestMultiReplicaNoDoubleApply(t *testing.T) {
 	}
 	// Both replicas observe the head (each skips or applies, but the checkpoint
 	// advances once); wait for both to reach it.
-	if !testutil.Eventually(t, func() bool { return rtA.Applied() >= n && rtB.Applied() >= n }) {
+	if !testutil.EventuallyWithin(t, 5*time.Second, func() bool {
+		return rtA.Applied() >= n && rtB.Applied() >= n
+	}) {
 		t.Fatalf("replicas did not both reach head: A=%d B=%d", rtA.Applied(), rtB.Applied())
 	}
 	if got := readCount(t, st); got != n {
@@ -219,7 +222,9 @@ func TestMultiReplicaNoDoubleApplyPostgres(t *testing.T) {
 	for i := 0; i < n; i++ {
 		appendEvent(t, log, "e")
 	}
-	if !testutil.Eventually(t, func() bool { return rtA.Applied() >= n && rtB.Applied() >= n }) {
+	if !testutil.EventuallyWithin(t, 5*time.Second, func() bool {
+		return rtA.Applied() >= n && rtB.Applied() >= n
+	}) {
 		t.Fatalf("replicas did not both reach head: A=%d B=%d", rtA.Applied(), rtB.Applied())
 	}
 	if got := readCount(t, st); got != n {
