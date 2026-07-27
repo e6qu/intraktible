@@ -491,3 +491,7 @@ Linux, entirely that VM's fsync path.
   clone groups, zero reachable vulnerabilities, and licenses; the production web
   build and all 3 embedded-binary browser smokes pass. Generated demo/embed assets
   were verified clean after their guarded builds.
+- 2026-07-28: Reconciled the completed second audit with authoritative
+  `origin/main` at `fea7a26`, confirmed the PR queue was empty, committed the
+  31-file journey completion as `379801f`, and opened PR #156 as the repository's
+  sole review queue.

@@ -17,9 +17,9 @@ DOC (a claim not backed by code).
 ## Queue
 
 The second whole-product audit inventory from merged commit `fea7a26` is
-complete. No evidence-backed product-journey gap remains open; package the
-verified implementation as the repository's single PR and watch its complete
-remote matrix.
+complete. No evidence-backed product-journey gap remains open. PR #156 is the
+repository's single review queue; watch its complete remote matrix and repair
+any failure on the same branch.
 
 **The honest edges** — not defects, but the limits of what was checked:
 

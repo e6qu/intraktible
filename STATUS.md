@@ -87,8 +87,9 @@ event-sourced product: commands that return a durable sequence wait for the
 projection watermark before the UI reloads, including decide/resume, batch,
 agent run/stream/escalation, and SLA sweep paths that previously omitted their
 final sequence. The second inventory has no remaining evidence-backed gap. The
-complete repository and shipping-artifact
-gates pass; the work is ready to commit and open as the repository's single PR.
+complete repository and shipping-artifact gates pass. Commit `379801f` is now
+under review in PR #156, the repository's sole open PR; its remote matrix is the
+remaining release step.
 
 **Current local gates, all green:** `make ci` passes vet/build, strict Go lint,
 gosec, the complete race-enabled Go suite, deadcode, zero-group copy-paste
