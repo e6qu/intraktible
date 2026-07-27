@@ -312,3 +312,27 @@ func TestBuildFailsWhenGovernanceEvidenceCannotBeRead(t *testing.T) {
 		})
 	}
 }
+
+// An inventory with nothing in it must encode as an empty array, not null. The field
+// carries no omitempty, so it is declared as always present; sending null broke every
+// consumer that treated it as the array it is declared to be — including this repo's
+// own UI, where it blanked the whole model-risk page on a fresh workspace.
+func TestBuildEncodesEmptyInventoryAsAnArray(t *testing.T) {
+	rep, err := mrm.Build(context.Background(), store.NewMemory(),
+		identity.Identity{Org: "demo", Workspace: "main"},
+		time.Date(2026, 6, 22, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Models == nil {
+		t.Fatal("Models is nil, so it marshals to null for a workspace with no models")
+	}
+
+	encoded, err := json.Marshal(rep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(encoded), `"models":[]`) {
+		t.Fatalf("encoded report does not carry an empty models array: %s", encoded)
+	}
+}
