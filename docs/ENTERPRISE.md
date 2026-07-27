@@ -322,9 +322,10 @@ enterprise buyers; **P2** = differentiators / scale.
   `Append` serializes on an advisory lock held to COMMIT: `BIGSERIAL` assigns a seq at
   INSERT but a row becomes visible at COMMIT, so without it concurrent appends could
   commit out of seq order and the poller — which advances to the highest seq it has read
-  — would never deliver the one that committed late. The cost is that append throughput
-  is flat in the number of appenders rather than scaling with them; measured in
-  [Performance](./performance.html). A **LISTEN/NOTIFY fast path** pushes a "new events" hint
+  — would never deliver the one that committed late. It costs roughly a third of
+  single-appender throughput and ~2.1x under eight concurrent appenders, though appends
+  do still scale with concurrency (group commit batches the flushes queued behind the
+  lock); measured in [Performance](./performance.html). A **LISTEN/NOTIFY fast path** pushes a "new events" hint
   cross-node (each `Append` issues `NOTIFY`; a dedicated listen connection pokes
   delivery), so live delivery is near-instant rather than waiting out the poll — the
   poller stays as the correctness floor if a notification is missed. Verified against a

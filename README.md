@@ -92,6 +92,8 @@ intraktible export --decision <id> --format dot      # export a recorded run: me
 cd deploy
 docker compose up                     # monolith → http://localhost:8080
 docker compose --profile split up     # one container per module (:8081–:8084), shared SQLite log
+                                      # authenticate with the key set in the compose file:
+                                      #   curl -H 'X-Api-Key: split-profile-local-dev-key' localhost:8081/v1/me
 docker compose --profile pg up        # add a Postgres projection store
 ```
 
@@ -116,6 +118,9 @@ runbook: [docs/DEPLOY.md](docs/DEPLOY.md); backups/DR: [docs/DR.md](docs/DR.md).
 | `INTRAKTIBLE_AI_GUARDRAIL_PII` · `_REDACT_FIELDS` · `_BLOCK_INJECTION` | AI guardrails: redact PII in prompts/output, mask structured fields (CSV), block prompt-injection (off by default) |
 | `INTRAKTIBLE_ENCRYPTION_KEY` · `_KEYS_PREVIOUS` | Encryption at rest for event payloads + projection store (base64/hex 32-byte key; previous keys retained for zero-downtime rotation; off by default) |
 | `INTRAKTIBLE_KMS_PROVIDER` · `_KEY` | Seal connector credentials via an external KMS (`aws`\|`gcp`) so the key never leaves the provider |
+| `INTRAKTIBLE_BOOTSTRAP_API_KEY` | Seed an operator-chosen admin key on **any** store (≥16 chars), so a self-hosted install can get its first credential without SSO. Re-added each boot; rotate to a managed key and unset it |
+| `INTRAKTIBLE_SINGLE_REPLICA` | Declare that exactly one replica runs, permitting `--log=file` in production. Without it a production boot with the single-process WAL is **refused** — each replica would keep a divergent copy of the event log |
+| `INTRAKTIBLE_DRAIN_DELAY` · `_SHUTDOWN_TIMEOUT` | Shutdown timing (defaults 5s · 30s). On `SIGTERM` the replica fails `/readyz` but keeps serving for the drain delay — so the load balancer depools it before the listener closes — then finishes in-flight requests within the timeout. Both are validated at startup |
 
 ### See it end-to-end
 
