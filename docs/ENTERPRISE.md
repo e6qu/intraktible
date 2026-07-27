@@ -318,7 +318,13 @@ enterprise buyers; **P2** = differentiators / scale.
   every node appends to and reads from one database: a `BIGSERIAL` seq gives one total
   order across nodes, and a shared polling `delivery` (factored out of the SQLite log)
   fans newly-committed rows — any node's — onto each process's in-process bus. Read/Head
-  are immediately consistent. A **LISTEN/NOTIFY fast path** pushes a "new events" hint
+  are immediately consistent. That total order is only *delivered* in order because
+  `Append` serializes on an advisory lock held to COMMIT: `BIGSERIAL` assigns a seq at
+  INSERT but a row becomes visible at COMMIT, so without it concurrent appends could
+  commit out of seq order and the poller — which advances to the highest seq it has read
+  — would never deliver the one that committed late. The cost is that append throughput
+  is flat in the number of appenders rather than scaling with them; measured in
+  [Performance](./performance.html). A **LISTEN/NOTIFY fast path** pushes a "new events" hint
   cross-node (each `Append` issues `NOTIFY`; a dedicated listen connection pokes
   delivery), so live delivery is near-instant rather than waiting out the poll — the
   poller stays as the correctness floor if a notification is missed. Verified against a
