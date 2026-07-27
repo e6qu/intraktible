@@ -119,3 +119,25 @@ documenting fallbacks that were already removed.
 - `docs/GAPS.md`'s "verified in code, not marketing" claims independently
   confirmed (expr-lang VM, four Predict kinds, five DMN hit policies).
 - `docs/ENTERPRISE.md`'s networked-log claim corrected.
+
+## Session 1 (cont.) — security review
+
+### Reviewed and found sound (recorded so it is not re-done)
+- **Tenant isolation.** Store keys are `org/workspace/`-prefixed and
+  `identity.Valid` rejects `/` in either segment, so one tenant's prefix cannot
+  match another's. An SSO login takes Org/Workspace from the *provider's
+  configuration*, never from a token claim, so a crafted claim cannot select
+  another tenant; a provider configured without them is refused at startup.
+- **PII masking has no bypass.** The decision list, single read, and export all
+  apply the tenant's masking config, and the config read fails closed. The
+  compliance registers carry subject identifiers and compliance metadata rather
+  than flow input data, so field masking does not apply to them by construction.
+- **All 180 registered routes checked for mis-scoping.** None found.
+
+### Fixed — authorization by inheritance
+`requiredRole` matches path substrings behind two blanket defaults (every GET is
+viewer, every other unmatched method is operator), so a new endpoint gets an
+authorization level without anyone choosing one. `authz_routes_internal_test.go`
+now pins the role for every registered route and scans the repo for registrations
+in both mounting styles, failing on an unpinned route or a silent role move.
+Verified by breaking it both ways.
