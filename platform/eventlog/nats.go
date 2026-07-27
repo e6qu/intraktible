@@ -94,11 +94,18 @@ func OpenNATSLog(url string) (*NATSLog, error) {
 		nc.Close()
 		return nil, fmt.Errorf("eventlog: nats stream info: %w", err)
 	case si.Config.Duplicates < claimDedupWindow:
-		// Ensure a pre-existing stream has a dedup window wide enough for claims.
+		// A pre-existing stream needs its dedup window widened, because that window IS
+		// the enforcement of Envelope.Unique on this backend. Failing to widen it and
+		// carrying on left optimistic-concurrency claims silently unenforced — two
+		// nodes racing to create the same flow slug would both succeed, which is the
+		// exact outcome the claim exists to prevent, reported as a log line nobody
+		// reads. Refuse to open instead.
 		cfg := si.Config
 		cfg.Duplicates = claimDedupWindow
 		if _, err := js.UpdateStream(&cfg); err != nil {
-			slog.Warn("eventlog: nats could not widen dedup window; Unique-key claims may not be enforced", "err", err)
+			nc.Close()
+			return nil, fmt.Errorf("eventlog: nats dedup window is %s, shorter than the %s that optimistic-concurrency claims require, and it could not be widened: %w",
+				si.Config.Duplicates, claimDedupWindow, err)
 		}
 	}
 

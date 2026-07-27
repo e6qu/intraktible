@@ -6,6 +6,8 @@ package eventlog_test
 
 import (
 	"context"
+	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,7 +22,12 @@ import (
 // infrastructure.
 func runNATS(t *testing.T) string {
 	t.Helper()
-	s, err := server.NewServer(&server.Options{Port: -1, JetStream: true, StoreDir: t.TempDir()})
+	return runNATSWithOptions(t, &server.Options{Port: -1, JetStream: true, StoreDir: t.TempDir()})
+}
+
+func runNATSWithOptions(t *testing.T, opts *server.Options) string {
+	t.Helper()
+	s, err := server.NewServer(opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,6 +37,66 @@ func runNATS(t *testing.T) string {
 	}
 	t.Cleanup(s.Shutdown)
 	return s.ClientURL()
+}
+
+func TestNATSLogRefusesUnenforceableClaimWindow(t *testing.T) {
+	const (
+		adminUser = "admin"
+		adminPass = "admin-pass"
+		appUser   = "app"
+		appPass   = "app-pass"
+	)
+	serverURL := runNATSWithOptions(t, &server.Options{
+		Port:      -1,
+		JetStream: true,
+		StoreDir:  t.TempDir(),
+		Users: []*server.User{
+			{Username: adminUser, Password: adminPass},
+			{
+				Username: appUser,
+				Password: appPass,
+				Permissions: &server.Permissions{
+					Publish: &server.SubjectPermission{
+						Deny: []string{"$JS.API.STREAM.UPDATE.INTRAKTIBLE_EVENTS"},
+					},
+				},
+			},
+		},
+	})
+
+	admin, err := nats.Connect(serverURL, nats.UserInfo(adminUser, adminPass))
+	if err != nil {
+		t.Fatal(err)
+	}
+	js, err := admin.JetStream()
+	if err != nil {
+		admin.Close()
+		t.Fatal(err)
+	}
+	if _, err := js.AddStream(&nats.StreamConfig{
+		Name:       "INTRAKTIBLE_EVENTS",
+		Subjects:   []string{"intraktible.events"},
+		Storage:    nats.FileStorage,
+		Duplicates: time.Second,
+	}); err != nil {
+		admin.Close()
+		t.Fatal(err)
+	}
+	admin.Close()
+
+	appURL, err := url.Parse(serverURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	appURL.User = url.UserPassword(appUser, appPass)
+	log, err := eventlog.OpenNATSLog(appURL.String())
+	if log != nil {
+		_ = log.Close()
+		t.Fatal("OpenNATSLog returned a log whose claim window it could not enforce")
+	}
+	if err == nil || !strings.Contains(err.Error(), "could not be widened") {
+		t.Fatalf("OpenNATSLog error = %v, want an explicit claim-window refusal", err)
+	}
 }
 
 func TestNATSLog(t *testing.T) {
