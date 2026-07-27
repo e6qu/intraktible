@@ -458,3 +458,36 @@ Linux, entirely that VM's fsync path.
   including Go race/security/license gates, web, native e2e, real-wasm demo,
   embedded artifact, real PostgreSQL, Shauth SSO, Terraform, and container
   release.
+- 2026-07-27: PR #155 merged as `fea7a26`; refreshed the audit branch from that
+  authoritative commit, confirmed the remote PR queue is empty, and began the
+  next whole-product journey pass.
+- 2026-07-27: Completed the Context data browser journey: editors can create or
+  update entities, record entity events, observe feature recomputation, invoke a
+  connector, and inspect its durable fetch evidence without exposing sealed
+  configuration. Commands wait for their exact event sequence to reach the read
+  model before reloading; focused Go/API checks and all 5 Context Data browser
+  journeys pass.
+- 2026-07-27: Corrected lawful-basis lifecycle semantics end to end: consent list
+  responses expose clock-evaluated `active`, the entity UI records future expiry
+  and distinguishes active/expired/withdrawn, and Compliance excludes expired
+  records from active/basis/expiring counts. HTTP, unit, and real-browser expiry
+  regressions pass.
+- 2026-07-27: Closed the regulated-decision handoff: adverse-action issuance,
+  contest, and reconsideration clients retain the durable event acknowledgement
+  and wait for projection application; Compliance lists actionable open contests;
+  the journey catalogue now covers fair-lending, notice issuance, contests,
+  reconsideration, lawful-basis expiry, and sharing. The real decline → notice →
+  contest → overturned review → resolved queue browser journey passes.
+- 2026-07-27: Established one browser-wide read-after-write contract for the
+  event-sourced backend: every successful mutation carrying `seq` waits for
+  `/readyz.applied` before its caller can reload, on both native and Wasm
+  transports. Recorded decide/resume (including manual-review and shadow side
+  effects), sync/async/streamed agent runs, agent escalation, batch decisions,
+  pre-approval promotion, and manual SLA sweeps now expose their final sequence
+  instead of stranding callers behind projection races. Focused Go suites, 217
+  Vitest tests, 122 native browser journeys, and all 80 real-Wasm journeys pass.
+- 2026-07-28: Closed the second whole-product audit release gate: `make ci`
+  passes vet/build, strict lint, gosec, the complete race suite, deadcode, zero
+  clone groups, zero reachable vulnerabilities, and licenses; the production web
+  build and all 3 embedded-binary browser smokes pass. Generated demo/embed assets
+  were verified clean after their guarded builds.

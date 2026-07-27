@@ -51,6 +51,7 @@ export type {
 } from './enums.generated';
 export { ENVIRONMENTS, MONITOR_METRICS, AGGREGATIONS, ROLES, SCOPES } from './enums.generated';
 import { record } from './recorder';
+import { waitForApplied } from './poll';
 
 // recordingFetch is the default fetcher for every function in this module: it
 // forwards to the global fetch (resolved at call time, so the wasm demo's
@@ -62,6 +63,27 @@ export const recordingFetch: typeof fetch = async (input, init) => {
   const method = (init?.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase();
   // The base is irrelevant — only the pathname is recorded (no host, no query).
   record({ method, path: new URL(raw, 'http://api').pathname, status: res.status });
+  // Commands acknowledge their durable event before the projection consumer
+  // necessarily exposes it. Most UI actions immediately reload the affected view;
+  // when a successful command carries an event sequence, establish that shared
+  // read-after-write boundary here so every page observes its own write. Clone the
+  // response so the individual API function can still parse the original body.
+  if (
+    res.ok &&
+    method !== 'GET' &&
+    method !== 'HEAD' &&
+    res.headers.get('content-type')?.includes('application/json')
+  ) {
+    const body = (await res.clone().json()) as unknown;
+    if (
+      body !== null &&
+      typeof body === 'object' &&
+      'seq' in body &&
+      typeof (body as { seq?: unknown }).seq === 'number'
+    ) {
+      await waitForApplied((body as { seq: number }).seq);
+    }
+  }
   return res;
 };
 
@@ -92,6 +114,7 @@ export interface SayHelloResult {
   event_id: string;
   seq: number;
 }
+export type EventAck = SayHelloResult;
 
 // authHeaders adds the API-key header only when a key is given; with an empty key
 // the request authenticates via the session cookie (sent automatically same-origin).
@@ -206,6 +229,7 @@ export interface Flow {
 export interface DecideResult {
   decision_id: string;
   status: RunStatus;
+  seq?: number; // absent for record-free Preview
   data?: Record<string, unknown>;
   disposition?: Disposition; // when a policy is bound
   disposition_reason?: string; // the matched band, or "pre-approval honored"
@@ -501,7 +525,7 @@ export async function resumeDecision(
   id: string,
   outcome: Record<string, unknown>,
   fetcher: typeof fetch = recordingFetch
-): Promise<{ decision_id: string; status: RunStatus; disposition?: Disposition }> {
+): Promise<{ decision_id: string; status: RunStatus; disposition?: Disposition; seq: number }> {
   const res = await fetcher(`/v1/decisions/${id}/resume`, {
     method: 'POST',
     headers: jsonHeaders(key),
@@ -514,6 +538,7 @@ export async function resumeDecision(
     decision_id: string;
     status: RunStatus;
     disposition?: Disposition;
+    seq: number;
   };
 }
 
@@ -1507,6 +1532,7 @@ export interface BatchResult {
   data?: Record<string, unknown>;
   disposition?: Disposition;
   error?: string;
+  seq?: number;
 }
 
 export interface BatchReport {
@@ -1515,6 +1541,7 @@ export interface BatchReport {
   failed: number;
   rejected: number;
   results: BatchResult[];
+  seq?: number;
 }
 
 // batchDecide runs a dataset of inputs through a published flow — each row a real
@@ -1554,6 +1581,7 @@ export interface PreApproveResult {
   preapproval_id?: string;
   reason?: string;
   error?: string;
+  seq?: number;
 }
 
 export interface PreApproveBatchReport {
@@ -1563,6 +1591,7 @@ export interface PreApproveBatchReport {
   failed: number;
   rejected: number;
   results: PreApproveResult[];
+  seq?: number;
 }
 
 // preapproveBatch runs a population through the flow + its bound policy and grants
@@ -2022,6 +2051,22 @@ export interface Entity {
   updated_at: string;
 }
 
+export async function recordEntity(
+  key: string,
+  body: { entity_type: string; entity_id: string; attributes?: Record<string, unknown> },
+  fetcher: typeof fetch = recordingFetch
+): Promise<EventAck> {
+  const res = await fetcher('/v1/context/entities', {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'POST /v1/context/entities');
+  }
+  return (await res.json()) as EventAck;
+}
+
 export interface EntityEvent {
   entity_type: string;
   entity_id: string;
@@ -2030,6 +2075,28 @@ export interface EntityEvent {
   seq: number;
   occurred_at: string;
   recorded_at: string;
+}
+
+export async function recordEntityEvent(
+  key: string,
+  body: {
+    entity_type: string;
+    entity_id: string;
+    event_name: string;
+    data?: Record<string, unknown>;
+    occurred_at?: string;
+  },
+  fetcher: typeof fetch = recordingFetch
+): Promise<EventAck> {
+  const res = await fetcher('/v1/context/events', {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'POST /v1/context/events');
+  }
+  return (await res.json()) as EventAck;
 }
 
 export interface FeatureValue {
@@ -2064,6 +2131,53 @@ export async function defineConnector(
   if (!res.ok) {
     return errorOrStatus(res, 'POST /v1/context/connectors');
   }
+}
+
+export interface ConnectorFetch {
+  fetch_id: string;
+  connector: string;
+  params?: unknown;
+  response: unknown;
+  seq: number;
+  at: string;
+}
+
+// fetchConnector exercises the real configured source and records its response,
+// exactly as a Connect node does before deterministic flow execution.
+export async function fetchConnector(
+  key: string,
+  name: string,
+  params: unknown,
+  fetcher: typeof fetch = recordingFetch
+): Promise<{ fetch_id: string; response: unknown; event_id: string; seq: number }> {
+  const res = await fetcher(`/v1/context/connectors/${encodeURIComponent(name)}/fetch`, {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify({ params })
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, `POST connector ${name} fetch`);
+  }
+  return (await res.json()) as {
+    fetch_id: string;
+    response: unknown;
+    event_id: string;
+    seq: number;
+  };
+}
+
+export async function listConnectorFetches(
+  key: string,
+  name: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<ConnectorFetch[]> {
+  const res = await fetcher(`/v1/context/connectors/${encodeURIComponent(name)}/fetches`, {
+    headers: authHeaders(key)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, `GET connector ${name} fetches`);
+  }
+  return ((await res.json()) as { fetches: ConnectorFetch[] }).fetches ?? [];
 }
 
 export interface ModelValidation {
@@ -2631,12 +2745,12 @@ export async function getCaseSummary(
 export async function sweepSLA(
   key: string,
   fetcher: typeof fetch = recordingFetch
-): Promise<{ count: number }> {
+): Promise<{ count: number; seq?: number }> {
   const res = await fetcher('/v1/cases/sla-sweep', { method: 'POST', headers: authHeaders(key) });
   if (!res.ok) {
     return errorOrStatus(res, 'POST /v1/cases/sla-sweep');
   }
-  return (await res.json()) as { count: number };
+  return (await res.json()) as { count: number; seq?: number };
 }
 
 export async function getCase(
@@ -2745,6 +2859,7 @@ export interface RunResult {
   text?: string;
   structured?: unknown;
   error?: string;
+  seq: number;
 }
 
 export interface ModelUsage {
@@ -3224,7 +3339,7 @@ export async function issueAdverseAction(
   decisionId: string,
   body: { method: string; based_on_consumer_report: boolean },
   fetcher: typeof fetch = recordingFetch
-): Promise<void> {
+): Promise<EventAck> {
   const res = await fetcher(
     `/v1/decisions/${encodeURIComponent(decisionId)}/adverse-action/issue`,
     { method: 'POST', headers: jsonHeaders(key), body: JSON.stringify(body) }
@@ -3232,6 +3347,7 @@ export async function issueAdverseAction(
   if (!res.ok) {
     return errorOrStatus(res, 'issue adverse-action notice');
   }
+  return (await res.json()) as EventAck;
 }
 // listAdverseActions returns the declined decisions and their notice status — the work
 // queue. status 'pending' returns declines not yet served; 'issued' those served.
@@ -3298,7 +3414,7 @@ export async function recordReconsideration(
   decisionId: string,
   body: { basis: string; outcome: string; rationale: string },
   fetcher: typeof fetch = recordingFetch
-): Promise<void> {
+): Promise<EventAck> {
   const res = await fetcher(`/v1/decisions/${encodeURIComponent(decisionId)}/reconsideration`, {
     method: 'POST',
     headers: jsonHeaders(key),
@@ -3307,6 +3423,7 @@ export async function recordReconsideration(
   if (!res.ok) {
     return errorOrStatus(res, 'record reconsideration');
   }
+  return (await res.json()) as EventAck;
 }
 // Contest is a subject's dispute of an automated decision — opened when logged, and
 // resolved once a human review is recorded for the same decision.
@@ -3342,7 +3459,7 @@ export async function recordContest(
   decisionId: string,
   body: { channel: string; note?: string },
   fetcher: typeof fetch = recordingFetch
-): Promise<void> {
+): Promise<EventAck> {
   const res = await fetcher(`/v1/decisions/${encodeURIComponent(decisionId)}/contest`, {
     method: 'POST',
     headers: jsonHeaders(key),
@@ -3351,6 +3468,7 @@ export async function recordContest(
   if (!res.ok) {
     return errorOrStatus(res, 'record contest');
   }
+  return (await res.json()) as EventAck;
 }
 // listContests returns the tenant's contests. status 'open' returns those awaiting a
 // review; 'resolved' those a review has closed.
@@ -3561,6 +3679,7 @@ export interface ConsentRecord {
   subject: string;
   purpose: string;
   granted: boolean;
+  active: boolean;
   basis?: string;
   granted_at?: string;
   withdrawn_at?: string;
@@ -3607,7 +3726,7 @@ export async function grantConsent(
     evidence?: ConsentEvidence;
   },
   fetcher: typeof fetch = recordingFetch
-): Promise<void> {
+): Promise<EventAck> {
   const res = await fetcher('/v1/consent/grant', {
     method: 'POST',
     headers: jsonHeaders(key),
@@ -3616,12 +3735,13 @@ export async function grantConsent(
   if (!res.ok) {
     return errorOrStatus(res, 'POST /v1/consent/grant');
   }
+  return (await res.json()) as EventAck;
 }
 export async function withdrawConsent(
   key: string,
   body: { subject: string; purpose: string; reason?: string },
   fetcher: typeof fetch = recordingFetch
-): Promise<void> {
+): Promise<EventAck> {
   const res = await fetcher('/v1/consent/withdraw', {
     method: 'POST',
     headers: jsonHeaders(key),
@@ -3630,6 +3750,7 @@ export async function withdrawConsent(
   if (!res.ok) {
     return errorOrStatus(res, 'POST /v1/consent/withdraw');
   }
+  return (await res.json()) as EventAck;
 }
 
 // SharingRecord is a subject's GLBA election to stop (or resume) NPI sharing with
@@ -3787,7 +3908,7 @@ export async function escalateRun(
   runID: string,
   body: { company_name: string; case_type: string; sla_days: number },
   fetcher: typeof fetch = recordingFetch
-): Promise<{ case_id: string }> {
+): Promise<{ case_id: string; event_id: string; seq: number }> {
   const res = await fetcher(`/v1/agents/${name}/runs/${runID}/escalate`, {
     method: 'POST',
     headers: jsonHeaders(key),
@@ -3796,7 +3917,7 @@ export async function escalateRun(
   if (!res.ok) {
     return errorOrStatus(res, `POST /v1/agents/${name}/runs/${runID}/escalate`);
   }
-  return (await res.json()) as { case_id: string };
+  return (await res.json()) as { case_id: string; event_id: string; seq: number };
 }
 
 export interface Identity {

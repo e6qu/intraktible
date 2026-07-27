@@ -1268,6 +1268,7 @@ type decideResponse struct {
 	Status      string         `json:"status"`
 	Data        map[string]any `json:"data,omitempty"`
 	Disposition string         `json:"disposition,omitempty"`
+	Seq         uint64         `json:"seq,omitempty"`
 	// DispositionReason names what assigned the disposition (a policy band, or
 	// "pre-approval honored"); PreApprovalID links the grant when a decision was
 	// served from one — the caller-visible evidence that the flow never ran.
@@ -1425,7 +1426,7 @@ func (s *Service) runDecide(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, decideResponse{
 		DecisionID: result.DecisionID, Status: string(result.Status), Data: result.Output,
 		Disposition: string(result.Disposition), DispositionReason: result.DispositionReason,
-		PreApprovalID: result.PreApprovalID, Error: result.Error,
+		PreApprovalID: result.PreApprovalID, Error: result.Error, Seq: result.EventSeq,
 	})
 }
 
@@ -1451,6 +1452,7 @@ type batchResult struct {
 	Data        map[string]any `json:"data,omitempty"`
 	Disposition string         `json:"disposition,omitempty"`
 	Error       string         `json:"error,omitempty"`
+	Seq         uint64         `json:"seq,omitempty"`
 }
 
 type batchResponse struct {
@@ -1459,6 +1461,7 @@ type batchResponse struct {
 	Failed    int           `json:"failed"`
 	Rejected  int           `json:"rejected"`
 	Results   []batchResult `json:"results"`
+	Seq       uint64        `json:"seq,omitempty"`
 }
 
 // decideBatch runs a dataset of inputs through the published flow, recording a
@@ -1524,8 +1527,9 @@ func (s *Service) decideBatch(w http.ResponseWriter, r *http.Request) {
 		}
 		resp.Results = append(resp.Results, batchResult{
 			Index: i, EntityID: entityID, DecisionID: res.DecisionID, Status: string(res.Status), Data: res.Output,
-			Disposition: string(res.Disposition), Error: res.Error,
+			Disposition: string(res.Disposition), Error: res.Error, Seq: res.EventSeq,
 		})
+		resp.Seq = max(resp.Seq, res.EventSeq)
 	}
 	httpx.JSON(w, http.StatusOK, resp)
 }
@@ -1604,7 +1608,7 @@ func (s *Service) decideStream(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		out.DecisionID, out.Status, out.Data = res.DecisionID, string(res.Status), res.Output
-		out.Disposition, out.Error = string(res.Disposition), res.Error
+		out.Disposition, out.Error, out.Seq = string(res.Disposition), res.Error, res.EventSeq
 		emit(out)
 	}
 	if err := sc.Err(); err != nil {
@@ -1632,6 +1636,7 @@ type preapproveResult struct {
 	PreApprovalID string `json:"preapproval_id,omitempty"`
 	Reason        string `json:"reason,omitempty"` // why a decided row was not granted
 	Error         string `json:"error,omitempty"`
+	Seq           uint64 `json:"seq,omitempty"`
 }
 
 type preapproveBatchResponse struct {
@@ -1641,6 +1646,7 @@ type preapproveBatchResponse struct {
 	Failed   int                `json:"failed"`   // flow logic errored
 	Rejected int                `json:"rejected"` // could not decide (missing entity id / validation)
 	Results  []preapproveResult `json:"results"`
+	Seq      uint64             `json:"seq,omitempty"`
 }
 
 // preapproveBatch promotes a population into pre-approvals: each row runs through
@@ -1703,6 +1709,8 @@ func (s *Service) preapproveBatch(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		row.DecisionID, row.Status, row.Disposition = res.DecisionID, string(res.Status), string(res.Disposition)
+		row.Seq = res.EventSeq
+		resp.Seq = max(resp.Seq, res.EventSeq)
 		switch {
 		case res.Status != domain.StatusCompleted:
 			row.Reason = "decision " + string(res.Status)
@@ -1717,7 +1725,7 @@ func (s *Service) preapproveBatch(w http.ResponseWriter, r *http.Request) {
 				resp.Skipped++
 				break
 			}
-			paID, _, gErr := s.pa.Grant(r.Context(), id, preapproval.GrantCmd{
+			paID, grantEvent, gErr := s.pa.Grant(r.Context(), id, preapproval.GrantCmd{
 				EntityType: req.EntityType, EntityID: row.EntityID, Disposition: target,
 				Terms: terms, FlowSlug: slug, ValidDays: req.ValidDays, Note: req.Note,
 			})
@@ -1727,6 +1735,8 @@ func (s *Service) preapproveBatch(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 			row.Granted, row.PreApprovalID = true, paID
+			row.Seq = grantEvent.Seq
+			resp.Seq = max(resp.Seq, grantEvent.Seq)
 			resp.Granted++
 		}
 		resp.Results = append(resp.Results, row)
@@ -1916,6 +1926,7 @@ func (s *Service) resumeDecision(w http.ResponseWriter, r *http.Request) {
 		"decision_id": res.DecisionID,
 		"status":      res.Status,
 		"disposition": res.Disposition,
+		"seq":         res.EventSeq,
 	})
 }
 

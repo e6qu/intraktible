@@ -34,10 +34,14 @@ import {
   revokeApiKey,
   listConnectors,
   defineConnector,
+  fetchConnector,
+  listConnectorFetches,
   listFeatures,
   defineFeature,
   listEntities,
+  recordEntity,
   listEntityEvents,
+  recordEntityEvent,
   listCases,
   getCaseSummary,
   requestReview,
@@ -59,7 +63,10 @@ import {
   releaseErasureSubject,
   eraseSubject,
   setRetentionPolicy,
-  runRetentionSweep
+  runRetentionSweep,
+  issueAdverseAction,
+  recordContest,
+  recordReconsideration
 } from './api';
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -144,6 +151,41 @@ describe('data governance', () => {
       status: 409,
       message: 'erasure: retained until 2028-01-01'
     });
+  });
+});
+
+describe('regulatory decisions', () => {
+  it('returns durable event acknowledgements for issuance, contest, and reconsideration', async () => {
+    const issueFetch = fetcherReturning(200, { event_id: 'issued-1', seq: 41 });
+    await expect(
+      issueAdverseAction(
+        'k',
+        'decision/1',
+        { method: 'email', based_on_consumer_report: false },
+        issueFetch
+      )
+    ).resolves.toEqual({ event_id: 'issued-1', seq: 41 });
+    expect(issueFetch.mock.calls[0][0]).toBe('/v1/decisions/decision%2F1/adverse-action/issue');
+
+    const contestFetch = fetcherReturning(200, { event_id: 'contest-1', seq: 42 });
+    await expect(
+      recordContest(
+        'k',
+        'decision/1',
+        { channel: 'online_portal', note: 'Please review' },
+        contestFetch
+      )
+    ).resolves.toEqual({ event_id: 'contest-1', seq: 42 });
+
+    const reviewFetch = fetcherReturning(200, { event_id: 'review-1', seq: 43 });
+    await expect(
+      recordReconsideration(
+        'k',
+        'decision/1',
+        { basis: 'applicant_contest', outcome: 'overturned', rationale: 'Verified correction' },
+        reviewFetch
+      )
+    ).resolves.toEqual({ event_id: 'review-1', seq: 43 });
   });
 });
 
@@ -517,6 +559,26 @@ describe('context layer', () => {
     expect(JSON.parse(String(init?.body))).toMatchObject({ name: 'b', type: 'http' });
   });
 
+  it('tests a connector and reads its recorded fetches', async () => {
+    const fetch = fetcherReturning(200, {
+      fetch_id: 'fx-1',
+      response: { risk_score: 42 }
+    });
+    const result = await fetchConnector('k', 'bureau one', { subject: 'a' }, fetch);
+    expect(result.response).toEqual({ risk_score: 42 });
+    expect(fetch.mock.calls[0][0]).toBe('/v1/context/connectors/bureau%20one/fetch');
+    expect(JSON.parse(String(fetch.mock.calls[0][1]?.body))).toEqual({
+      params: { subject: 'a' }
+    });
+
+    const list = fetcherReturning(200, {
+      fetches: [{ fetch_id: 'fx-1', connector: 'bureau one', response: { risk_score: 42 } }]
+    });
+    const history = await listConnectorFetches('k', 'bureau one', list);
+    expect(history[0].fetch_id).toBe('fx-1');
+    expect(list.mock.calls[0][0]).toBe('/v1/context/connectors/bureau%20one/fetches');
+  });
+
   it('listFeatures unwraps the features array', async () => {
     const fetcher = fetcherReturning(200, {
       features: [{ name: 'txn_24h', entity_type: 'cust', aggregation: 'count', window_hours: 24 }]
@@ -549,6 +611,39 @@ describe('context layer', () => {
     const fetcher = fetcherReturning(200, { entities: [] });
     await listEntities('k', 'customer', fetcher);
     expect(fetcher.mock.calls[0][0]).toBe('/v1/context/entities?type=customer');
+  });
+
+  it('records an entity and an event', async () => {
+    const entityFetch = fetcherReturning(202, {});
+    await recordEntity(
+      'k',
+      { entity_type: 'customer', entity_id: 'c1', attributes: { tier: 'gold' } },
+      entityFetch
+    );
+    expect(entityFetch.mock.calls[0][0]).toBe('/v1/context/entities');
+    expect(JSON.parse(String(entityFetch.mock.calls[0][1]?.body))).toMatchObject({
+      entity_type: 'customer',
+      entity_id: 'c1',
+      attributes: { tier: 'gold' }
+    });
+
+    const eventFetch = fetcherReturning(202, {});
+    await recordEntityEvent(
+      'k',
+      {
+        entity_type: 'customer',
+        entity_id: 'c1',
+        event_name: 'transaction',
+        data: { amount: 12 },
+        occurred_at: '2026-01-01T00:00:00Z'
+      },
+      eventFetch
+    );
+    expect(eventFetch.mock.calls[0][0]).toBe('/v1/context/events');
+    expect(JSON.parse(String(eventFetch.mock.calls[0][1]?.body))).toMatchObject({
+      event_name: 'transaction',
+      data: { amount: 12 }
+    });
   });
 
   it('listEntityEvents hits the per-entity events endpoint', async () => {

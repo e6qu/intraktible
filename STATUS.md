@@ -35,9 +35,11 @@ Fix every missing or misleading piece found; do not stop at documenting gaps.
 
 ## Phase
 
-**Whole-product journey audit — implementation and local validation complete.**
-PR #155 is the sole open PR; all nine required CI jobs pass on the complete
-implementation plus the PR continuity commit.
+**Second whole-product journey audit — implementation and release gates complete
+from the merged
+PR #155 baseline.** PR #155 merged as `fea7a26`; there are no open PRs, and the
+refreshed `hardening/production-readiness-audit` branch starts exactly at
+`origin/main`.
 `docs/JOURNEYS.md` is being treated as an executable product contract rather
 than endpoint documentation. The architecture/continuity/component plans are
 read and remote `main` is authoritative and clean. Three complete slices are now
@@ -72,26 +74,37 @@ inert, and model mentions, previously landing on an undifferentiated registry,
 open the exact subject and discussion thread; model approvals still open the
 exact Governance panel. The inventory has no remaining product-journey gaps.
 
-**Current gates, all green:** the full race-enabled `make check`, strict Go
-lint, gosec, deadcode, zero-group copy-paste detection, `govulncheck`,
-dependency licenses, Prettier, zero-warning ESLint, zero-error/warning Svelte
-check, 211 Vitest tests, the production web build, 119 native Playwright
-journeys, 80 real-wasm journeys, and 3 embedded-binary smokes pass. The approved
-Google-owned Apache-2.0 gRPC v1.81.1→v1.82.1 security update clears reachable
-GO-2026-6061 without changing any other module version. The earlier
-real-PostgreSQL, Terraform, container-release, and `shauth-sso` gates remain
-established below. The final post-update `make ci` pass reconfirmed vet, build,
-strict lint, SAST, race tests, deadcode, zero clone groups, vulnerability, and
-license gates together. PR run 30300119151 independently passes Go, web, native
-e2e, real-wasm demo, embedded artifact, real PostgreSQL, Shauth SSO, Terraform,
-and container-release jobs.
+That final sentence describes the first audit merged in PR #155, not the current
+second pass. The new pass has now completed its first two slices. Context data is
+fully operable from the browser: entity create/update, event recording, feature
+recomputation, connector validation, and durable fetch evidence all use the real
+backend. The regulated-decision arc is coherent from fair-lending configuration
+and a reason-coded decline through notice issuance, contest, human
+reconsideration, and Compliance queues. Lawful-basis expiry is evaluated by the
+backend clock and represented consistently by entity and Compliance UIs. The
+browser now also has a single read-after-write contract across the whole
+event-sourced product: commands that return a durable sequence wait for the
+projection watermark before the UI reloads, including decide/resume, batch,
+agent run/stream/escalation, and SLA sweep paths that previously omitted their
+final sequence. The second inventory has no remaining evidence-backed gap. The
+complete repository and shipping-artifact
+gates pass; the work is ready to commit and open as the repository's single PR.
+
+**Current local gates, all green:** `make ci` passes vet/build, strict Go lint,
+gosec, the complete race-enabled Go suite, deadcode, zero-group copy-paste
+detection, `govulncheck`, and dependency licenses. Prettier, zero-warning ESLint,
+zero-error/warning Svelte check, 217 Vitest tests, the production web build, 122
+native Playwright journeys, 80 real-Wasm journeys, and 3 embedded-binary smokes
+also pass. The prior PR #155 run 30300119151 independently established the
+real-PostgreSQL, Shauth SSO, Terraform, and container-release gates on the merged
+baseline; the new PR's remote matrix is the remaining release step.
 
 ## Ground truth established so far
 
-- Current branch `hardening/production-readiness-audit` is based on merge commit
-  `47d024b`; a fresh fetch confirms it still exactly matches `origin/main`.
-- PR #154 is merged; PR #155 is the sole open PR — satisfies the
-  one-open-PR rule.
+- Current branch `hardening/production-readiness-audit` is based on PR #155's
+  merge commit `fea7a26`; a fresh fetch confirms it exactly matches
+  `origin/main`.
+- PR #155 is merged and `gh pr list` is empty — satisfies the one-open-PR rule.
 - `make check` and `make lint` pass; the real-Postgres claim contract and full
   event-log race suite pass.
 - This round passes `make check`, `make lint`, and a dedicated complete
@@ -121,6 +134,15 @@ and container-release jobs.
   remains at zero errors/warnings.
   All focused Policy + Notifications journeys, both model notification handoffs,
   and all 211 Vitest tests pass after the collaboration fix.
+  In the second pass, focused Context/consent/server Go tests, 79 API/poll unit
+  tests, zero-warning Svelte and ESLint checks, and all 12 Context Data +
+  Decisions real-server Playwright journeys pass. After the cross-product
+  consistency repair, all 217 Vitest tests, 122 native Playwright journeys, and
+  all 80 real-Wasm journeys pass.
+  The final `make ci` passes vet/typecheck, strict lint, gosec, the complete
+  race-enabled Go suite, deadcode, zero clone groups, zero reachable
+  vulnerabilities, and dependency licenses. The production web build and all 3
+  embedded-binary smokes pass.
 
 ## Verdicts on the user's headline questions (evidence-backed)
 

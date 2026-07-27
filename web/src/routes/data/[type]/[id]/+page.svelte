@@ -6,9 +6,11 @@
   import EmptyState from '$lib/EmptyState.svelte';
   import Skeleton from '$lib/Skeleton.svelte';
   import RelativeTime from '$lib/RelativeTime.svelte';
+  import { now } from '$lib/time';
   import {
     getEntity,
     listEntityEvents,
+    recordEntityEvent,
     getEntityFeatures,
     getConsents,
     grantConsent,
@@ -49,6 +51,7 @@
   let holdReason = $state('');
   let eraseAcknowledged = $state(false);
   let consentPurpose = $state('');
+  let consentExpiry = $state('');
   // Default to a non-consent basis: for decisioning, the basis is usually contract or
   // legitimate interest, not "consent" (which is rarely freely given). See the hint.
   let consentBasis = $state('contract');
@@ -105,6 +108,16 @@
 
   function msg(e: unknown): string {
     return e instanceof Error ? e.message : String(e);
+  }
+  function objectJSON(text: string, label: string): Record<string, unknown> {
+    const parsed = JSON.parse(text || '{}') as unknown;
+    if (parsed === null || Array.isArray(parsed) || typeof parsed !== 'object') {
+      throw new Error(`${label} must be a JSON object.`);
+    }
+    return parsed as Record<string, unknown>;
+  }
+  function consentActive(record: ConsentRecord): boolean {
+    return record.active && (!record.expires_at || new Date(record.expires_at).getTime() > $now);
   }
   async function load() {
     error = '';
@@ -262,9 +275,44 @@
       governanceBusy = '';
     }
   }
+  let eventName = $state('');
+  let eventData = $state('{}');
+  let eventOccurredAt = $state('');
+  let eventBusy = $state(false);
+  async function recordEvent() {
+    if (eventBusy) return;
+    eventBusy = true;
+    try {
+      const occurredAt = eventOccurredAt ? new Date(eventOccurredAt) : null;
+      if (occurredAt && Number.isNaN(occurredAt.getTime())) {
+        throw new Error('Occurred at must be a valid date and time.');
+      }
+      await recordEntityEvent(key, {
+        entity_type: type,
+        entity_id: id,
+        event_name: eventName.trim(),
+        data: objectJSON(eventData, 'Event data'),
+        occurred_at: occurredAt?.toISOString()
+      });
+      eventName = '';
+      eventData = '{}';
+      eventOccurredAt = '';
+      await load();
+      toast.success(`Event recorded for ${subject}.`);
+    } catch (e) {
+      toast.error(msg(e));
+    } finally {
+      eventBusy = false;
+    }
+  }
   async function recordConsent() {
     if (!consentPurpose.trim()) {
       toast.error('A purpose is required.');
+      return;
+    }
+    const expiry = consentExpiry ? new Date(consentExpiry) : null;
+    if (expiry && (Number.isNaN(expiry.getTime()) || expiry.getTime() <= Date.now())) {
+      toast.error('Expiry must be a valid future date and time.');
       return;
     }
     const evidence: ConsentEvidence = {};
@@ -281,10 +329,12 @@
         subject,
         purpose: consentPurpose.trim(),
         basis: consentBasis,
+        expires_at: expiry?.toISOString(),
         evidence: Object.keys(evidence).length ? evidence : undefined
       });
       toast.success('Basis recorded.');
       consentPurpose = '';
+      consentExpiry = '';
       consentMethod = '';
       consentReference = '';
       consentNotice = '';
@@ -423,18 +473,21 @@
           <div class="table-wrap">
             <table>
               <thead>
-                <tr
-                  ><th>Purpose</th><th>Status</th><th>Basis</th><th>Evidence</th><th>Recorded</th
-                  ><th></th></tr
-                >
+                <tr>
+                  <th>Purpose</th><th>Status</th><th>Basis</th><th>Evidence</th><th>Expires</th><th
+                    >Recorded</th
+                  ><th></th>
+                </tr>
               </thead>
               <tbody>
                 {#each consents as c (c.purpose)}
                   <tr>
                     <td>{c.purpose}</td>
                     <td>
-                      {#if c.granted}
+                      {#if consentActive(c)}
                         <span class="badge ok">active</span>
+                      {:else if c.granted}
+                        <span class="badge">expired</span>
                       {:else}
                         <span class="badge">withdrawn</span>
                       {/if}
@@ -461,11 +514,14 @@
                         —
                       {/if}
                     </td>
+                    <td class="muted">
+                      {#if c.expires_at}<RelativeTime value={c.expires_at} />{:else}—{/if}
+                    </td>
                     <td class="muted"
                       ><RelativeTime value={c.granted_at ?? c.withdrawn_at ?? ''} /></td
                     >
                     <td>
-                      {#if c.granted && canManageConsent}
+                      {#if consentActive(c) && canManageConsent}
                         <button
                           class="link"
                           disabled={consentBusy}
@@ -498,6 +554,12 @@
               <option value="click_through">click_through</option>
               <option value="verbal">verbal</option>
             </select>
+            <input
+              bind:value={consentExpiry}
+              type="datetime-local"
+              aria-label="basis expiry"
+              title="Optional — after this instant the basis is inactive even if it was never withdrawn"
+            />
             <input bind:value={consentReference} placeholder="document reference" />
             <input bind:value={consentNotice} placeholder="notice version" />
             <label
@@ -614,6 +676,40 @@
 
     <section>
       <h2>Event timeline <span class="muted">({events.length})</span></h2>
+      {#if roleAtLeast($user?.role, 'editor')}
+        <form
+          class="event-form"
+          onsubmit={(e) => {
+            e.preventDefault();
+            void recordEvent();
+          }}
+        >
+          <label
+            >Event name
+            <input
+              bind:value={eventName}
+              placeholder="transaction"
+              aria-label="event name"
+              required
+            /></label
+          >
+          <label
+            >Occurred at (optional)
+            <input
+              bind:value={eventOccurredAt}
+              type="datetime-local"
+              aria-label="event occurred at"
+            /></label
+          >
+          <label class="event-data"
+            >Data (JSON)
+            <textarea bind:value={eventData} rows="3" aria-label="event data"></textarea>
+          </label>
+          <button class="btn" type="submit" disabled={eventBusy}>
+            {eventBusy ? 'Recording…' : 'Record event'}
+          </button>
+        </form>
+      {/if}
       {#if events.length === 0}
         <EmptyState
           icon="diagram"
@@ -847,6 +943,44 @@
     border-color: var(--danger);
     background: var(--danger);
     color: var(--on-danger, white);
+  }
+  .event-form {
+    display: grid;
+    grid-template-columns: minmax(10rem, 1fr) minmax(12rem, 1fr) auto;
+    align-items: end;
+    gap: 0.6rem;
+    margin: 0.6rem 0 1rem;
+    padding: 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+  }
+  .event-form label {
+    display: grid;
+    gap: 0.2rem;
+    color: var(--fg-subtle);
+    font-size: 0.78rem;
+  }
+  .event-form input,
+  .event-form textarea {
+    min-width: 0;
+    padding: 0.4rem 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface);
+    color: var(--fg);
+    font: inherit;
+  }
+  .event-data {
+    grid-column: 1 / -1;
+  }
+  @media (max-width: 44rem) {
+    .event-form {
+      grid-template-columns: 1fr;
+    }
+    .event-data {
+      grid-column: auto;
+    }
   }
   .timeline {
     list-style: none;

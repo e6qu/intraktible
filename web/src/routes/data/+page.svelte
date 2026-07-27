@@ -9,11 +9,15 @@
   import {
     listConnectors,
     defineConnector,
+    fetchConnector,
+    listConnectorFetches,
     listConnectorCatalog,
     listFeatures,
     defineFeature,
     listEntities,
+    recordEntity,
     type Connector,
+    type ConnectorFetch,
     type ConnectorTemplate,
     type Feature,
     type Entity
@@ -31,6 +35,13 @@
 
   function msg(e: unknown): string {
     return e instanceof Error ? e.message : String(e);
+  }
+  function objectJSON(text: string, label: string): Record<string, unknown> {
+    const parsed = JSON.parse(text || '{}') as unknown;
+    if (parsed === null || Array.isArray(parsed) || typeof parsed !== 'object') {
+      throw new Error(`${label} must be a JSON object.`);
+    }
+    return parsed as Record<string, unknown>;
   }
   let loadingData = $state(false);
   // A generation token so overlapping loads (repeated Reload, or Reload during a
@@ -112,6 +123,44 @@
     }
   }
 
+  let selectedConnector = $state('');
+  let connectorParams = $state('{\n  "subject": "applicant/demo"\n}');
+  let connectorResponse = $state<unknown>(null);
+  let connectorFetches = $state<ConnectorFetch[]>([]);
+  let connectorTestError = $state('');
+  let connectorBusy = $state(false);
+  async function inspectConnector(name: string) {
+    selectedConnector = name;
+    connectorResponse = null;
+    connectorFetches = [];
+    connectorTestError = '';
+    connectorBusy = true;
+    try {
+      connectorFetches = await listConnectorFetches(key, name);
+    } catch (e) {
+      connectorTestError = msg(e);
+    } finally {
+      connectorBusy = false;
+    }
+  }
+  async function testConnector() {
+    if (!selectedConnector || connectorBusy) return;
+    connectorBusy = true;
+    connectorTestError = '';
+    connectorResponse = null;
+    try {
+      const params = JSON.parse(connectorParams || '{}') as unknown;
+      const result = await fetchConnector(key, selectedConnector, params);
+      connectorResponse = result.response;
+      connectorFetches = await listConnectorFetches(key, selectedConnector);
+      toast.success(`Connector ${selectedConnector} responded and the fetch was recorded`);
+    } catch (e) {
+      connectorTestError = msg(e);
+    } finally {
+      connectorBusy = false;
+    }
+  }
+
   let fName = $state('');
   let fEntityType = $state('');
   let fEventName = $state('');
@@ -155,6 +204,48 @@
       error = msg(e);
     } finally {
       fBusy = false;
+    }
+  }
+
+  let entityType = $state('');
+  let entityID = $state('');
+  let entityAttributes = $state('{}');
+  let entityBusy = $state(false);
+  async function addEntity() {
+    if (entityBusy) return;
+    error = '';
+    entityBusy = true;
+    try {
+      const attributes = objectJSON(entityAttributes, 'Attributes');
+      const nextType = entityType.trim();
+      const nextID = entityID.trim();
+      await recordEntity(key, {
+        entity_type: nextType,
+        entity_id: nextID,
+        attributes
+      });
+      const nextEntities = await listEntities(key);
+      const recorded = nextEntities.find(
+        (record) => record.entity_type === nextType && record.entity_id === nextID
+      );
+      if (
+        !recorded ||
+        !Object.entries(attributes).every(
+          ([name, value]) => JSON.stringify(recorded.attributes[name]) === JSON.stringify(value)
+        )
+      ) {
+        throw new Error(
+          `Entity ${nextType}/${nextID} was applied without its recorded attributes.`
+        );
+      }
+      toast.success(`Entity ${nextType}/${nextID} recorded`);
+      entityID = '';
+      entityAttributes = '{}';
+      entities = nextEntities;
+    } catch (e) {
+      error = msg(e);
+    } finally {
+      entityBusy = false;
     }
   }
 
@@ -238,7 +329,7 @@
       <div class="table-wrap">
         <table>
           <thead>
-            <tr><th>Name</th><th>Type</th><th>Config</th><th>Updated</th></tr>
+            <tr><th>Name</th><th>Type</th><th>Config</th><th>Updated</th><th></th></tr>
           </thead>
           <tbody>
             {#each connectors as c (c.name)}
@@ -247,10 +338,58 @@
                 <td><span class="badge">{c.type}</span></td>
                 <td class="config">{c.config ? JSON.stringify(c.config) : '—'}</td>
                 <td class="muted"><RelativeTime value={c.updated_at} /></td>
+                <td>
+                  <button class="link" onclick={() => inspectConnector(c.name)}
+                    >Inspect / test</button
+                  >
+                </td>
               </tr>
             {/each}
           </tbody>
         </table>
+      </div>
+    {/if}
+    {#if selectedConnector}
+      <div class="connector-test" data-testid="connector-test">
+        <div class="panel-head">
+          <h3>Test {selectedConnector}</h3>
+          <button class="link" onclick={() => (selectedConnector = '')}>Close</button>
+        </div>
+        <p class="muted">
+          Calls the real configured source through its timeout, retry, and circuit-breaker path. A
+          successful response is recorded in the connector's immutable fetch history.
+        </p>
+        <textarea bind:value={connectorParams} rows="4" aria-label="connector test parameters"
+        ></textarea>
+        <button
+          onclick={testConnector}
+          disabled={connectorBusy || !roleAtLeast($user?.role, 'editor')}
+          title={!roleAtLeast($user?.role, 'editor') ? 'Requires the editor role' : undefined}
+          >{connectorBusy ? 'Testing…' : 'Test connector'}</button
+        >
+        {#if connectorTestError}
+          <p class="err" data-testid="connector-test-error">{connectorTestError}</p>
+        {/if}
+        {#if connectorResponse !== null}
+          <pre data-testid="connector-response">{JSON.stringify(connectorResponse, null, 2)}</pre>
+        {/if}
+        <h4>
+          Recorded fetches
+          <span class="muted" data-testid="connector-fetch-count">({connectorFetches.length})</span>
+        </h4>
+        {#if connectorFetches.length === 0 && !connectorBusy}
+          <p class="muted">No successful fetches recorded for this connector.</p>
+        {:else}
+          <ul class="fetches">
+            {#each connectorFetches.slice(0, 5) as f (f.fetch_id)}
+              <li>
+                <RelativeTime value={f.at} />
+                <code>{f.fetch_id.slice(0, 12)}</code>
+                <pre>{JSON.stringify(f.response, null, 2)}</pre>
+              </li>
+            {/each}
+          </ul>
+        {/if}
       </div>
     {/if}
   </section>
@@ -365,6 +504,44 @@
 
   <section>
     <h2>Entities</h2>
+    <form
+      class="row entity-form"
+      onsubmit={(e) => {
+        e.preventDefault();
+        void addEntity();
+      }}
+    >
+      <label
+        >Type <input
+          bind:value={entityType}
+          placeholder="applicant"
+          aria-label="entity type"
+          required
+        /></label
+      >
+      <label
+        >ID <input
+          bind:value={entityID}
+          placeholder="APP-123"
+          aria-label="entity id"
+          required
+        /></label
+      >
+      <label class="attributes"
+        >Attributes (JSON)
+        <input
+          bind:value={entityAttributes}
+          placeholder={'{"tier":"gold"}'}
+          aria-label="entity attributes"
+        /></label
+      >
+      <button
+        type="submit"
+        disabled={entityBusy || !roleAtLeast($user?.role, 'editor')}
+        title={!roleAtLeast($user?.role, 'editor') ? 'Requires the editor role' : undefined}
+        >{entityBusy ? 'Recording…' : 'Create or update entity'}</button
+      >
+    </form>
     {#if loadingData && entities.length === 0}
       <Skeleton rows={3} />
     {:else if entities.length === 0}
@@ -372,7 +549,7 @@
         <EmptyState
           icon="database"
           title="No entities yet"
-          hint="Entities appear when a decision references one, when an event records one, or when you create them via the API."
+          hint="Create one above, or let a decision or event record it automatically."
         />
       {/if}
     {:else}
@@ -505,6 +682,43 @@
     font-style: italic;
     font-size: 0.85rem;
     margin: 0.3rem 0 0;
+  }
+  .connector-test {
+    margin-top: 0.8rem;
+    padding: 0.8rem;
+    border: 1px solid var(--border);
+    border-radius: 0.65rem;
+    background: var(--surface-1);
+  }
+  .panel-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .panel-head h3,
+  .connector-test h4 {
+    margin: 0.2rem 0;
+  }
+  .connector-test textarea,
+  .connector-test pre {
+    width: 100%;
+    box-sizing: border-box;
+  }
+  .connector-test pre {
+    overflow: auto;
+    padding: 0.55rem;
+    border-radius: 0.4rem;
+    background: var(--surface-2);
+    white-space: pre-wrap;
+  }
+  .fetches {
+    padding-left: 1.2rem;
+  }
+  .fetches li {
+    margin: 0.45rem 0;
+  }
+  .entity-form .attributes {
+    flex: 1 1 18rem;
   }
   .row label {
     display: inline-flex;

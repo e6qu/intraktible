@@ -56,12 +56,14 @@ func (s *Service) slaSweep(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	breached, err := s.cmd.SweepSLA(r.Context(), id, s.now())
+	breached, seq, err := s.cmd.SweepSLAWithSeq(r.Context(), id, s.now())
 	if err != nil {
 		httpx.Error(w, http.StatusInternalServerError, err)
 		return
 	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"breached": breached, "count": len(breached)})
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"breached": breached, "count": len(breached), "seq": seq,
+	})
 }
 
 type reviewRequest struct {

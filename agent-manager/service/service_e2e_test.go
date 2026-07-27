@@ -57,10 +57,11 @@ func TestAgentAPIEndToEnd(t *testing.T) {
 		RunID  string `json:"run_id"`
 		Status string `json:"status"`
 		Text   string `json:"text"`
+		Seq    uint64 `json:"seq"`
 	}
 	api.Request(t, http.MethodPost, "/v1/agents/triage/run",
 		map[string]any{"prompt": "hello"}, http.StatusOK, &run)
-	if run.RunID == "" || run.Status != "completed" || run.Text != "stub: hello" {
+	if run.RunID == "" || run.Status != "completed" || run.Text != "stub: hello" || run.Seq == 0 {
 		t.Fatalf("run response: %+v", run)
 	}
 
@@ -83,11 +84,12 @@ func TestAgentAPIEndToEnd(t *testing.T) {
 	// Escalate the run to a case (human-in-the-loop).
 	var esc struct {
 		CaseID string `json:"case_id"`
+		Seq    uint64 `json:"seq"`
 	}
 	api.Request(t, http.MethodPost, "/v1/agents/triage/runs/"+run.RunID+"/escalate",
 		map[string]any{"company_name": "Acme Corp", "case_type": "aml", "sla_days": 3}, http.StatusAccepted, &esc)
-	if esc.CaseID == "" {
-		t.Fatal("escalation returned no case id")
+	if esc.CaseID == "" || esc.Seq == 0 {
+		t.Fatalf("escalation returned no durable acknowledgement: %+v", esc)
 	}
 	var retry struct {
 		CaseID string `json:"case_id"`

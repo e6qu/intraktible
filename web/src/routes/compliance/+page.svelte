@@ -9,6 +9,7 @@
   import Skeleton from '$lib/Skeleton.svelte';
   import EmptyState from '$lib/EmptyState.svelte';
   import RelativeTime from '$lib/RelativeTime.svelte';
+  import { now } from '$lib/time';
   import { appHref } from '$lib/paths';
   import { user } from '$lib/session';
   import { roleAtLeast } from '$lib/roles';
@@ -220,16 +221,28 @@
   const optedOut = $derived(sharing.filter((s) => s.opted_out).length);
 
   const DAY = 86_400_000;
-  // "Now" for the age/expiry math. In the browser this is real wall-clock; the demo's
-  // seeded timestamps are anchored near today, so the 30-day clock reads sensibly.
-  const nowMs = Date.now();
 
   const overdue = $derived(pending.filter((a) => a.age_days > 30).length);
   const overturned = $derived(reviews.filter((r) => r.outcome === 'overturned').length);
-  const active = $derived(consents.filter((c) => c.granted));
+  // active is evaluated by the backend against its injected clock. `granted` is
+  // historical lifecycle state and remains true after expires_at, so using it here
+  // would misstate an expired lawful basis as permission to process.
+  const active = $derived(
+    consents.filter((c) => c.active && (!c.expires_at || new Date(c.expires_at).getTime() > $now))
+  );
   const withdrawn = $derived(consents.filter((c) => !c.granted).length);
+  const expired = $derived(
+    consents.filter(
+      (c) =>
+        c.granted && (!c.active || (!!c.expires_at && new Date(c.expires_at).getTime() <= $now))
+    ).length
+  );
   const expiringSoon = $derived(
-    active.filter((c) => c.expires_at && new Date(c.expires_at).getTime() - nowMs < 30 * DAY).length
+    active.filter((c) => {
+      if (!c.expires_at) return false;
+      const remaining = new Date(c.expires_at).getTime() - $now;
+      return remaining > 0 && remaining <= 30 * DAY;
+    }).length
   );
 
   // Consent counts by lawful basis, most common first.
@@ -358,6 +371,21 @@
             <b class="warn">{contests.length}</b> awaiting review — decisions a subject has contested
             but no one has reviewed yet.
           </p>
+          <ul class="reviews" aria-label="Contests awaiting review">
+            {#each contests.slice(0, 6) as contest (contest.decision_id)}
+              <li>
+                <span class="badge warn">awaiting review</span>
+                <a href={appHref(`/decisions/${contest.decision_id}`)}
+                  >{contest.decision_id.slice(0, 10)}…</a
+                >
+                <span class="muted small"
+                  >{contest.channel.replace('_', ' ')} · {contest.received_by}</span
+                >
+                <span class="muted small ago"><RelativeTime value={contest.received_at} /></span>
+              </li>
+            {/each}
+          </ul>
+          {#if contests.length > 6}<p class="more">+{contests.length - 6} more</p>{/if}
         {/if}
         {#if reviews.length === 0}
           <EmptyState
@@ -408,8 +436,8 @@
             {/each}
           </ul>
           <p class="line">
-            Active <b>{active.length}</b> · withdrawn <b>{withdrawn}</b> · expiring within 30 days
-            <b class={expiringSoon ? 'warn' : ''}>{expiringSoon}</b>
+            Active <b>{active.length}</b> · expired <b>{expired}</b> · withdrawn <b>{withdrawn}</b>
+            · expiring within 30 days <b class={expiringSoon ? 'warn' : ''}>{expiringSoon}</b>
           </p>
         {/if}
         <p class="line">

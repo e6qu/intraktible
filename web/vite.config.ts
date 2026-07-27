@@ -35,6 +35,7 @@ export default defineConfig({
       '/v1': { target: apiTarget, ws: true },
       '/auth': apiTarget,
       '/healthz': apiTarget,
+      '/readyz': apiTarget,
       '/version': apiTarget
     }
   },
@@ -43,6 +44,7 @@ export default defineConfig({
       '/v1': { target: apiTarget, ws: true },
       '/auth': apiTarget,
       '/healthz': apiTarget,
+      '/readyz': apiTarget,
       '/version': apiTarget
     }
   }

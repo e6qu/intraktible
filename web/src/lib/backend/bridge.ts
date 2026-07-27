@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // The page side of the embedded backend: boots the worker hosting the Go
-// backend, routes /v1 + /healthz fetches through it, and persists the user's
+// backend, routes /v1 + health/readiness fetches through it, and persists the user's
 // event-log delta so a reload replays their own history on top of the seed.
 // Everything above this line of code is the SAME application either way — the
 // bridge only swaps the transport (network socket vs worker message port).

@@ -74,7 +74,7 @@ func (s *Service) runStreamSSE(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = writeSSE(w, "done", map[string]any{
 		"run_id": res.RunID, "status": res.Status, "text": res.Text,
-		"structured": res.Structured, "error": res.Error,
+		"structured": res.Structured, "error": res.Error, "seq": res.EventSeq,
 	})
 	flusher.Flush()
 }
@@ -137,7 +137,7 @@ func (s *Service) runStreamWS(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = wsjson.Write(ctx, c, map[string]any{
 		"type": "done", "run_id": res.RunID, "status": res.Status, "text": res.Text,
-		"structured": res.Structured, "error": res.Error,
+		"structured": res.Structured, "error": res.Error, "seq": res.EventSeq,
 	})
 	_ = c.Close(websocket.StatusNormalClosure, "")
 }

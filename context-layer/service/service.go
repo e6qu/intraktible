@@ -306,12 +306,14 @@ func (s *Service) fetchConnector(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadGateway, err)
 		return
 	}
-	fetchID, _, err := s.cmd.RecordFetch(r.Context(), id, name, req.Params, resp)
+	fetchID, event, err := s.cmd.RecordFetch(r.Context(), id, name, req.Params, resp)
 	if err != nil {
 		httpx.Error(w, http.StatusInternalServerError, err)
 		return
 	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"fetch_id": fetchID, "response": resp})
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"fetch_id": fetchID, "response": resp, "event_id": event.ID, "seq": event.Seq,
+	})
 }
 
 func (s *Service) listFetches(w http.ResponseWriter, r *http.Request) {

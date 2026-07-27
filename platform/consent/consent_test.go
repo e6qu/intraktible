@@ -4,6 +4,7 @@ package consent_test
 
 import (
 	"context"
+	"net/http"
 	"testing"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/store"
+	"github.com/e6qu/intraktible/platform/testutil"
 )
 
 var (
@@ -160,5 +162,42 @@ func TestWithdrawWithoutGrantIsIdempotent(t *testing.T) {
 	st := build(t, log)
 	if ok, _ := consent.Has(ctx, st, id, "cust-1", "never_granted", t0); ok {
 		t.Fatal("a purpose only ever withdrawn is not consented")
+	}
+}
+
+func TestListReportsCurrentActiveState(t *testing.T) {
+	h, log := handler(t0)
+	expiry := t0.Add(time.Hour)
+	if _, err := h.Grant(ctx, id, consent.GrantCmd{
+		Subject: "cust-1", Purpose: "marketing", Basis: consent.BasisConsent, ExpiresAt: &expiry,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	st := build(t, log)
+	svc := consent.New(h, st).WithNow(func() time.Time { return expiry.Add(time.Minute) })
+	api := testutil.StartAPI(t, log, st, "k", id, svc.Routes, consent.Projector{})
+
+	var listed struct {
+		Consents []struct {
+			Granted bool `json:"granted"`
+			Active  bool `json:"active"`
+		} `json:"consents"`
+	}
+	api.Request(t, http.MethodGet, "/v1/consent?subject=cust-1", nil, http.StatusOK, &listed)
+	if len(listed.Consents) != 1 {
+		t.Fatalf("consents = %d, want 1", len(listed.Consents))
+	}
+	if !listed.Consents[0].Granted || listed.Consents[0].Active {
+		t.Fatalf("expired record = %+v, want granted history but active=false", listed.Consents[0])
+	}
+
+	var all struct {
+		Consents []struct {
+			Active bool `json:"active"`
+		} `json:"consents"`
+	}
+	api.Request(t, http.MethodGet, "/v1/consent/records", nil, http.StatusOK, &all)
+	if len(all.Consents) != 1 || all.Consents[0].Active {
+		t.Fatalf("all records = %+v, want the same inactive state", all.Consents)
 	}
 }

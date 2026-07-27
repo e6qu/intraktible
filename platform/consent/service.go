@@ -25,6 +25,15 @@ func New(cmd *Handler, st store.Store) *Service {
 	return &Service{cmd: cmd, store: st, now: func() time.Time { return time.Now().UTC() }}
 }
 
+// WithNow overrides the clock used to compute whether listed records are
+// currently active. Granted is the historical lifecycle flag; a granted record
+// can still be inactive after expires_at, so HTTP callers must not reconstruct
+// this server-time decision themselves.
+func (s *Service) WithNow(now func() time.Time) *Service {
+	s.now = now
+	return s
+}
+
 // Routes registers the consent endpoints.
 func (s *Service) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/consent/grant", s.grant)
@@ -44,7 +53,23 @@ func (s *Service) listAll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	records, err := ListAll(r.Context(), s.store, id)
-	httpx.WriteList(w, "consents", records, err)
+	httpx.WriteList(w, "consents", s.views(records), err)
+}
+
+// recordView preserves the event-sourced lifecycle fields while adding the
+// authoritative current state evaluated against the service clock.
+type recordView struct {
+	Record
+	InForce bool `json:"active"`
+}
+
+func (s *Service) views(records []Record) []recordView {
+	views := make([]recordView, len(records))
+	now := s.now()
+	for i, record := range records {
+		views[i] = recordView{Record: record, InForce: record.Active(now)}
+	}
+	return views
 }
 
 type grantRequest struct {
@@ -108,7 +133,7 @@ func (s *Service) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	records, err := List(r.Context(), s.store, id, subject)
-	httpx.WriteList(w, "consents", records, err)
+	httpx.WriteList(w, "consents", s.views(records), err)
 }
 
 // status returns whether a (subject, purpose) has active consent as of now, plus the
