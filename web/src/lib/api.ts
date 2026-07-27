@@ -2981,7 +2981,12 @@ export async function getMrmReport(
   if (!res.ok) {
     return errorOrStatus(res, 'GET /v1/mrm/report');
   }
-  return (await res.json()) as MrmReport;
+  const report = (await res.json()) as MrmReport;
+  // Go encodes an empty slice as null, and the page reads report.models.length —
+  // which threw and blanked the whole model-risk surface for any workspace with no
+  // models yet. Normalize once here, as normalizeFlow does for a flow's versions,
+  // rather than leaving every consumer to remember a null guard.
+  return { ...report, models: report.models ?? [] };
 }
 // The MRM report as CSV/Markdown text — the page wraps it in a Blob download (an
 // <a href> would escape the demo's fetch mock and 404 on the static host).

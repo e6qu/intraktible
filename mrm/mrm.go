@@ -105,6 +105,12 @@ type Report struct {
 func Build(ctx context.Context, s store.Store, id identity.Identity, now time.Time) (Report, error) {
 	rep := Report{GeneratedAt: now, Org: id.Org, Workspace: id.Workspace}
 	rep.Summary.ByKind = map[Kind]int{}
+	// Models has no omitempty, so it is declared as always present — but a nil slice
+	// marshals to null, which is not an empty array to anyone consuming it. A
+	// workspace with nothing inventoried yet is the common case on a new install,
+	// and it was sending null to every client. Start from an empty slice so the
+	// encoded shape matches the declared one.
+	rep.Models = []Model{}
 
 	if err := buildFlows(ctx, s, id, &rep); err != nil {
 		return Report{}, err

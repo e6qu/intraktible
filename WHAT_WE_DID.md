@@ -141,3 +141,26 @@ authorization level without anyone choosing one. `authz_routes_internal_test.go`
 now pins the role for every registered route and scans the repo for registrations
 in both mounting styles, failing on an unpinned route or a silent role move.
 Verified by breaking it both ways.
+
+## Session 1 (cont.) — remaining coverage, and what it found
+
+### Fixed
+- **The model-risk page rendered blank** for any workspace with no models — every
+  new install. `/v1/mrm/report` encodes an empty inventory as `"models": null`,
+  the page read `report.models.length`, and the TypeError aborted the render of
+  everything below the lede with no error shown. Found by writing the page's
+  first browser spec. Normalized in `getMrmReport`; every other list endpoint was
+  probed on an empty workspace and none returns a null array.
+- **A malformed date bound on the decisions list was silently dropped**, returning
+  the unfiltered set to a caller who believed they had a time window. Now a 400,
+  matching the audit surface which already refused these.
+
+### Covered
+- `?variant=` (champion/challenger "compare arms") had no test at any layer.
+  Now driven with a pinned A/B roll, asserting each arm's exact share AND that
+  every returned row carries the requested variant — a count-only assertion
+  passes against a filter that ignores the parameter when arms are equal.
+- The four specless pages now have browser specs: `/compliance`, `/fairlending`,
+  `/mrm`, `/me`.
+
+All new tests were verified by breaking the code they cover.
