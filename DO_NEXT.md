@@ -16,9 +16,10 @@ DOC (a claim not backed by code).
 
 ## Queue
 
-No open implementation or local-validation items. Commit, push, open the single
-fat PR, and babysit its CI; the branch was reconciled with fresh `origin/main`
-immediately before release preparation.
+No open implementation or local-validation items. Babysit the sole open PR
+(#155), fix any CI failure on the same branch, and merge it when every required
+check is green. The branch was reconciled with fresh `origin/main` immediately
+before release preparation.
 
 **The honest edges** — not defects, but the limits of what was checked:
 

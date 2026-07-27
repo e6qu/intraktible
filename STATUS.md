@@ -36,6 +36,7 @@ Fix every missing or misleading piece found; do not stop at documenting gaps.
 ## Phase
 
 **Whole-product journey audit — implementation and local validation complete.**
+PR #155 is the sole open PR and carries commit `f54c80b`; CI is in progress.
 `docs/JOURNEYS.md` is being treated as an executable product contract rather
 than endpoint documentation. The architecture/continuity/component plans are
 read and remote `main` is authoritative and clean. Three complete slices are now
@@ -86,7 +87,8 @@ license gates together.
 
 - Current branch `hardening/production-readiness-audit` is based on merge commit
   `47d024b`; a fresh fetch confirms it still exactly matches `origin/main`.
-- PR #154 is merged and `gh pr list` is empty — satisfies the one-open-PR rule.
+- PR #154 is merged; PR #155 is the sole open PR — satisfies the
+  one-open-PR rule.
 - `make check` and `make lint` pass; the real-Postgres claim contract and full
   event-log race suite pass.
 - This round passes `make check`, `make lint`, and a dedicated complete

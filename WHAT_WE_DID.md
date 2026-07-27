@@ -451,3 +451,6 @@ Linux, entirely that VM's fsync path.
   `origin/main` (still exactly `47d024b`, no open PR), verified every new source
   file carries the AGPL SPDX header and generated/embed trees are clean, and
   passed the final post-update `make ci` release gate.
+- 2026-07-27: Committed the single 120-file whole-product audit as `f54c80b`,
+  pushed `hardening/production-readiness-audit`, and opened PR #155 as the
+  repository's sole review queue.
