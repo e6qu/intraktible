@@ -3161,3 +3161,103 @@ func TestModelPerformanceAndCovariateDrift(t *testing.T) {
 	api.Request(t, http.MethodPost, "/v1/models/risk/outcomes",
 		map[string]any{"probability": 0.5, "label": 2}, http.StatusBadRequest, nil)
 }
+
+// The champion/challenger journey (docs/JOURNEYS.md) has two halves: routing traffic
+// to a challenger, and reading the experiment's evidence afterwards. Routing is
+// covered at the command layer with a deterministic roll (decision-engine/
+// deploy_test.go). The reading half was not covered anywhere — and the
+// ?variant= filter that "compare arms" depends on had no test at all, at any layer.
+//
+// A filter that silently returned everything would not look broken. It would look
+// like an experiment whose arms perform identically, which is a conclusion someone
+// would act on.
+func TestDecisionsVariantFilterSeparatesArms(t *testing.T) {
+	// roll < challenger_pct routes to the challenger; alternating the draw either
+	// side of the threshold makes each arm's share exact instead of probabilistic.
+	var draw int
+	api := startEngine(t, command.WithRoll(func() int { return draw }))
+
+	var created struct {
+		FlowID string `json:"flow_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows",
+		map[string]any{"slug": "ab", "name": "AB"}, http.StatusCreated, &created)
+	for _, out := range []string{"champion-output", "challenger-output"} {
+		api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/versions",
+			map[string]any{"graph": flowtest.ConstGraph(out)}, http.StatusCreated, nil)
+	}
+	// v1 champion, v2 challenger at 50%.
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/deployments",
+		map[string]any{"environment": "staging", "version": 1, "challenger_version": 2, "challenger_pct": 50},
+		http.StatusCreated, nil)
+
+	const perArm = 3
+	for i := 0; i < perArm*2; i++ {
+		draw = 90 // above the 50% threshold -> champion
+		if i%2 == 0 {
+			draw = 10 // below it -> challenger
+		}
+		api.Request(t, http.MethodPost, "/v1/flows/ab/staging/decide",
+			map[string]any{"data": map[string]any{}}, http.StatusOK, nil)
+	}
+
+	decisionsWithVariant := func(variant string) []history.Record {
+		t.Helper()
+		var list struct {
+			Decisions []history.Record `json:"decisions"`
+		}
+		api.Request(t, http.MethodGet, "/v1/decisions?variant="+variant, nil, http.StatusOK, &list)
+		return list.Decisions
+	}
+
+	if !testutil.Eventually(t, func() bool {
+		return len(decisionsWithVariant("champion")) == perArm &&
+			len(decisionsWithVariant("challenger")) == perArm
+	}) {
+		t.Fatalf("variant filter did not separate the arms: champion=%d challenger=%d, want %d each",
+			len(decisionsWithVariant("champion")), len(decisionsWithVariant("challenger")), perArm)
+	}
+
+	// The filter must actually filter — every returned row carries the variant asked
+	// for. A filter that ignored the parameter would return all six and still match a
+	// count-only assertion if the arms happened to be equal.
+	for _, variant := range []string{"champion", "challenger"} {
+		for _, rec := range decisionsWithVariant(variant) {
+			if rec.Variant != variant {
+				t.Fatalf("?variant=%s returned a %q decision", variant, rec.Variant)
+			}
+		}
+	}
+
+	// And the metrics break the experiment down per arm, which is what makes it
+	// readable as evidence rather than a single blended number.
+	if !testutil.Eventually(t, func() bool {
+		var m analytics.FlowMetrics
+		api.Request(t, http.MethodGet, "/v1/flows/"+created.FlowID+"/metrics", nil, http.StatusOK, &m)
+		return m.ByVariant["champion"].Completed == perArm && m.ByVariant["challenger"].Completed == perArm
+	}) {
+		t.Fatal("flow metrics never broke the decisions down per variant")
+	}
+}
+
+// A malformed time bound used to be dropped, so a caller who mistyped a date got the
+// UNFILTERED set back — an answer shaped like data rather than like an error. The
+// audit surface already refused these; the decisions list now agrees with it.
+func TestDecisionsRefusesMalformedTimeBounds(t *testing.T) {
+	api := startEngine(t)
+
+	for _, q := range []string{
+		"since=yesterday",
+		"until=2026-13-45",
+		"start_time=not-a-time",
+		"end_time=1750000000", // a unix timestamp is not RFC3339
+	} {
+		t.Run(q, func(t *testing.T) {
+			api.Request(t, http.MethodGet, "/v1/decisions?"+q, nil, http.StatusBadRequest, nil)
+		})
+	}
+
+	// A well-formed bound still works, and an absent one still means "no bound".
+	api.Request(t, http.MethodGet, "/v1/decisions?since=2026-01-01T00:00:00Z", nil, http.StatusOK, nil)
+	api.Request(t, http.MethodGet, "/v1/decisions", nil, http.StatusOK, nil)
+}

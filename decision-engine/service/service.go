@@ -1730,7 +1730,12 @@ func (s *Service) listDecisions(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	page, err := history.ListPage(r.Context(), s.store, id, decisionFilter(r))
+	filter, err := decisionFilter(r)
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	page, err := history.ListPage(r.Context(), s.store, id, filter)
 	if err != nil {
 		httpx.Error(w, http.StatusInternalServerError, err)
 		return
@@ -1759,7 +1764,7 @@ func (s *Service) listDecisions(w http.ResponseWriter, r *http.Request) {
 // decisionFilter parses the Decisions list query string: flow/env/status/variant,
 // a decision-id search q, an RFC3339 time range (start_time/end_time, with since/
 // until accepted as aliases), and limit/offset.
-func decisionFilter(r *http.Request) history.Filter {
+func decisionFilter(r *http.Request) (history.Filter, error) {
 	q := r.URL.Query()
 	f := history.Filter{
 		Slug:        q.Get("flow"),
@@ -1770,13 +1775,33 @@ func decisionFilter(r *http.Request) history.Filter {
 		Limit:       atoiDefault(q.Get("limit"), 0),
 		Offset:      atoiDefault(q.Get("offset"), 0),
 	}
-	if t, err := time.Parse(time.RFC3339, firstNonEmpty(q.Get("start_time"), q.Get("since"))); err == nil {
-		f.Since = t
+	// A malformed bound is refused rather than dropped. Dropping it returned the
+	// UNFILTERED set for a caller who believes they are looking at a time window —
+	// the answer looks like data rather than like an error, so a typo in a date
+	// silently widens an audit or a metrics read to everything.
+	since, err := optionalTime(firstNonEmpty(q.Get("start_time"), q.Get("since")))
+	if err != nil {
+		return history.Filter{}, fmt.Errorf("start_time/since: %w", err)
 	}
-	if t, err := time.Parse(time.RFC3339, firstNonEmpty(q.Get("end_time"), q.Get("until"))); err == nil {
-		f.Until = t
+	until, err := optionalTime(firstNonEmpty(q.Get("end_time"), q.Get("until")))
+	if err != nil {
+		return history.Filter{}, fmt.Errorf("end_time/until: %w", err)
 	}
-	return f
+	f.Since, f.Until = since, until
+	return f, nil
+}
+
+// optionalTime parses an RFC3339 bound. An absent bound is the zero time (no
+// bound); a present but unparseable one is an error.
+func optionalTime(v string) (time.Time, error) {
+	if strings.TrimSpace(v) == "" {
+		return time.Time{}, nil
+	}
+	t, err := time.Parse(time.RFC3339, v)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("%q is not an RFC3339 timestamp", v)
+	}
+	return t, nil
 }
 
 // includeNodeResults reports whether the list should carry each decision's per-node
