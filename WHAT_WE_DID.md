@@ -213,4 +213,6 @@ Linux, entirely that VM's fsync path.
   JetStream account denied stream-update permission.
 - **Gates.** `make check` (vet, build, full `go test -race ./...`) and
   `make lint` pass. The complete `platform/eventlog` race suite also passes with
-  PostgreSQL enabled.
+  PostgreSQL enabled. All nine PR jobs passed in CI run 30282326320: Go,
+  PostgreSQL, web, browser e2e, embedded-artifact e2e, WebAssembly demo,
+  Shauth/Ory SSO, Terraform, and container-release.
