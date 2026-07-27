@@ -6,6 +6,7 @@ package eventlog_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"sync"
 	"testing"
@@ -304,4 +305,60 @@ func BenchmarkPostgresAppend(b *testing.B) {
 			}
 		})
 	})
+}
+
+// TestPostgresLogUniqueKeyWithNul is the regression test for a backend that could not
+// run this application at all.
+//
+// The optimistic-concurrency claims this repository mints join their components with a
+// NUL separator, and Postgres rejects NUL in a TEXT column. Every append carrying a
+// claim failed, so on --log=postgres — the backend documented for multi-replica HA and
+// used by the Helm chart, the ECS module and the production compose file — creating a
+// flow returned 400 and publishing a version was impossible.
+//
+// Nothing caught it because the Postgres log tests appended envelopes with no claim,
+// and the decision-engine tests that do mint claims build their own in-memory logs.
+func TestPostgresLogUniqueKeyWithNul(t *testing.T) {
+	dsn := os.Getenv("INTRAKTIBLE_TEST_POSTGRES")
+	if dsn == "" {
+		t.Skip("set INTRAKTIBLE_TEST_POSTGRES (a pgx DSN) to run the Postgres log test")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `DROP TABLE IF EXISTS events`); err != nil {
+		t.Fatal(err)
+	}
+	pool.Close()
+
+	log, err := eventlog.OpenPostgresLog(ctx, dsn, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = log.Close() }()
+
+	env := func(unique string) eventlog.Envelope {
+		return eventlog.Envelope{
+			Org: "o", Workspace: "w", Actor: "a", Stream: "s", Type: "evt",
+			Time: time.Unix(1, 0).UTC(), Unique: unique,
+		}
+	}
+
+	// The exact claim shape the flow-creation path mints.
+	if _, err := log.Append(ctx, env("flow.slug\x00demo\x00main\x00alpha")); err != nil {
+		t.Fatalf("append with a NUL-separated claim failed: %v", err)
+	}
+
+	// A DIFFERENT claim sharing everything up to the first NUL must not collide —
+	// encoding has to stay injective, or distinct flows would claim each other's slot.
+	if _, err := log.Append(ctx, env("flow.slug\x00demo\x00main\x00beta")); err != nil {
+		t.Fatalf("a distinct claim sharing a NUL prefix was refused: %v", err)
+	}
+
+	// And the claim still does its job: the same one twice is a conflict.
+	if _, err := log.Append(ctx, env("flow.slug\x00demo\x00main\x00alpha")); !errors.Is(err, eventlog.ErrConflict) {
+		t.Fatalf("re-claiming the same key returned %v, want ErrConflict", err)
+	}
 }

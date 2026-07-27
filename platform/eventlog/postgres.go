@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"strconv"
 	"sync"
 	"time"
 
@@ -127,6 +128,34 @@ func (l *PostgresLog) listenLoop(ctx context.Context) {
 	}
 }
 
+// postgresUniqueKey encodes an optimistic-concurrency claim for storage in a
+// Postgres TEXT column.
+//
+// The claims this repository mints join their components with a NUL separator
+// (command.flowSlugKey and friends), and Postgres rejects NUL in TEXT outright:
+// `invalid byte sequence for encoding "UTF8": 0x00`. Every append carrying a claim
+// therefore FAILED on --log=postgres — which is to say creating a flow or publishing
+// a version was impossible on the backend documented for multi-replica HA, and used
+// by the Helm chart, the ECS module, and the production compose file.
+//
+// strconv.Quote is injective, so encoding preserves the uniqueness semantics exactly:
+// two claims collide after encoding if and only if they were equal before it. It also
+// keeps the column readable, which matters for a value an operator only ever looks at
+// while diagnosing a conflict.
+//
+// This is deliberately NOT applied to the SQLite backend. SQLite stores NUL in TEXT
+// correctly (distinct claims sharing a NUL prefix do not collide there), so it has
+// real rows written in the raw form — re-encoding would make a new append of an
+// existing logical claim miss its own prior row and let through a duplicate the claim
+// exists to prevent. Postgres has no such rows to be compatible with: every append
+// that would have written one returned an error instead.
+func postgresUniqueKey(k string) any {
+	if k == "" {
+		return nil
+	}
+	return strconv.Quote(k)
+}
+
 // appendLockKey is the advisory-lock key every append serializes on. The value is
 // arbitrary but must be stable across nodes and versions — it is what makes them
 // the same lock.
@@ -186,7 +215,7 @@ func (l *PostgresLog) Append(ctx context.Context, e Envelope) (Envelope, error) 
 	err = tx.QueryRow(ctx,
 		`INSERT INTO events (id, org, workspace, stream, type, time, actor, payload, unique_key)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING seq`,
-		e.ID, e.Org, e.Workspace, e.Stream, e.Type, e.Time.Format(time.RFC3339Nano), e.Actor, string(e.Payload), nullableKey(e.Unique),
+		e.ID, e.Org, e.Workspace, e.Stream, e.Type, e.Time.Format(time.RFC3339Nano), e.Actor, string(e.Payload), postgresUniqueKey(e.Unique),
 	).Scan(&seq)
 	if err != nil {
 		// 23505 = unique_violation: the caller lost an optimistic-concurrency race.

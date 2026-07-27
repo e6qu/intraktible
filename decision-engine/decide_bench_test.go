@@ -4,7 +4,11 @@ package decisionengine_test
 
 import (
 	"context"
+	"os"
 	"testing"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/e6qu/intraktible/decision-engine/command"
 	"github.com/e6qu/intraktible/decision-engine/internal/flowtest"
@@ -21,8 +25,14 @@ import (
 // on top of these numbers.
 func benchSetup(b *testing.B) (context.Context, *command.DecideHandler, identity.Identity) {
 	b.Helper()
+	return benchSetupOn(b, eventlog.NewMemory())
+}
+
+// benchSetupOn is benchSetup against a caller-chosen log, so the same flow and input
+// can be measured on each durable backend.
+func benchSetupOn(b *testing.B, log eventlog.Log) (context.Context, *command.DecideHandler, identity.Identity) {
+	b.Helper()
 	ctx := context.Background()
-	log := eventlog.NewMemory()
 	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "caller"}
 	st := store.NewMemory()
 	publishFlow(b, ctx, log, st, id, "risk", "Risk", flowtest.DecisionGraph())
@@ -67,4 +77,93 @@ func BenchmarkDecideParallel(b *testing.B) {
 			}
 		}
 	})
+}
+
+// The in-memory benchmarks above deliberately exclude disk, and the setup comment has
+// long said durable persistence "adds per-decision I/O on top of these numbers"
+// without saying how much. These measure it.
+//
+// A decide is not one append: it records started, one node-evaluated per node, and
+// completed. So the durable cost is several fsync-bounded appends per decision, and
+// the ratio against the in-memory figure is the honest statement of what the event
+// log costs the synchronous decide path.
+
+// BenchmarkDecideFileWAL measures the default single-replica durable log.
+func BenchmarkDecideFileWAL(b *testing.B) {
+	log, err := eventlog.OpenWAL(b.TempDir())
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.Cleanup(func() { _ = log.Close() })
+
+	ctx, dh, id := benchSetupOn(b, log)
+	if _, err := dh.Decide(ctx, id, "risk", "sandbox", benchInput(), command.EntityRef{}); err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := dh.Decide(ctx, id, "risk", "sandbox", benchInput(), command.EntityRef{}); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// BenchmarkDecideSQLiteLog measures the log the split-services profile shares across
+// processes.
+func BenchmarkDecideSQLiteLog(b *testing.B) {
+	log, err := eventlog.OpenSQLiteLog(b.TempDir(), time.Hour) // long poll: measure appends, not delivery
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.Cleanup(func() { _ = log.Close() })
+
+	ctx, dh, id := benchSetupOn(b, log)
+	if _, err := dh.Decide(ctx, id, "risk", "sandbox", benchInput(), command.EntityRef{}); err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := dh.Decide(ctx, id, "risk", "sandbox", benchInput(), command.EntityRef{}); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// BenchmarkDecidePostgresLog measures the networked HA log, whose appends serialize
+// on an advisory lock so commit order matches seq order. This is the number that
+// bounds a multi-replica deployment's decision throughput.
+func BenchmarkDecidePostgresLog(b *testing.B) {
+	dsn := os.Getenv("INTRAKTIBLE_TEST_POSTGRES")
+	if dsn == "" {
+		b.Skip("set INTRAKTIBLE_TEST_POSTGRES (a pgx DSN) to benchmark the networked log")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		b.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `DROP TABLE IF EXISTS events`); err != nil {
+		b.Fatal(err)
+	}
+	pool.Close()
+
+	log, err := eventlog.OpenPostgresLog(ctx, dsn, time.Hour)
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.Cleanup(func() { _ = log.Close() })
+
+	_, dh, id := benchSetupOn(b, log)
+	if _, err := dh.Decide(ctx, id, "risk", "sandbox", benchInput(), command.EntityRef{}); err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := dh.Decide(ctx, id, "risk", "sandbox", benchInput(), command.EntityRef{}); err != nil {
+			b.Fatal(err)
+		}
+	}
 }
