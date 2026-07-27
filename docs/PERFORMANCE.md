@@ -42,6 +42,46 @@ Environment: `darwin/arm64`, Apple M4 Pro, Go's default settings.
   decisions/sec on this machine.
 - **No data race**: the concurrent path passes `go test -race`.
 
+## What the durable log costs a decision
+
+The decide benchmarks above run against an **in-memory** log, so they measure the
+decision core and not the event log underneath it. That was the honest scope, but it
+left the number people actually deploy against unstated. `BenchmarkDecideFileWAL`,
+`BenchmarkDecideSQLiteLog` and `BenchmarkDecidePostgresLog` measure it.
+
+A decide is not one append: it records started, one node-evaluated per node, and
+completed. So each decision pays for several durable appends, and the gap below is
+what the log costs the synchronous decide path.
+
+Median of 3 runs, **Linux** (benchmark and PostgreSQL 16 containerised on one Docker
+network, so neither the client hop nor fsync crosses a VM boundary):
+
+| log backend | ns/op | decisions/sec | vs in-memory |
+|---|---|---|---|
+| memory (the numbers above) | 59,732 | ~16,700 | — |
+| file WAL (`--log=file`, the default) | 105,674 | ~9,460 | ~1.8× slower |
+| SQLite (`--log=sqlite`, split profile) | 244,004 | ~4,100 | ~4× slower |
+| **Postgres (`--log=postgres`, multi-replica HA)** | **9,605,660** | **~104** | **~160× slower** |
+
+**Read the last row before sizing anything.** The configuration documented for
+multi-replica HA — the one the Helm chart, the ECS module and the production compose
+file all select — sustains on the order of **100 decisions/sec**, not the ~16,700 the
+in-memory benchmark suggests. Each decision costs several appends; each append is a
+network round-trip plus a commit, and they serialize on the advisory lock that keeps
+commit order equal to seq order (see the section below). It is consistent with the
+~1,795 appends/sec measured there, divided by the events one decide emits.
+
+That is a real ceiling and it should inform capacity planning rather than surprise
+someone in production. It is also the clearest argument for revisiting the
+`pg_snapshot_xmin` alternative discussed below, if throughput on the networked log
+ever becomes the binding constraint.
+
+> **Do not benchmark the file WAL on Docker for macOS.** It reports ~34 decisions/sec
+> there against ~9,460 on Linux — a 280× difference that is entirely the macOS VM's
+> fsync path, not this code. The same trap produced a wrong conclusion about the
+> append lock in an earlier revision of this page; the Linux figures are the ones to
+> reason about.
+
 ## The Postgres event log: what serialized appends cost
 
 The numbers above measure the decide path against an **in-memory** log. The networked
