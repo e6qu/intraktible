@@ -26,7 +26,16 @@ test('defines a connector and a feature from the UI', async ({ page }) => {
   await page.getByLabel('connector name').fill(conn);
   await page.getByLabel('connector type').selectOption('mock_bureau');
   await page.getByRole('button', { name: 'Define connector' }).click();
-  await expect(page.locator('tbody').filter({ hasText: conn })).toBeVisible();
+  const connectorRow = page.locator('tbody tr').filter({ hasText: conn });
+  await expect(connectorRow).toBeVisible();
+
+  // Validate the configured source through the same resilient invocation path a
+  // Connect node uses, then require its durable fetch evidence to appear.
+  await connectorRow.getByRole('button', { name: 'Inspect / test' }).click();
+  await page.getByLabel('connector test parameters').fill('{"subject":"applicant/e2e"}');
+  await page.getByRole('button', { name: 'Test connector' }).click();
+  await expect(page.getByTestId('connector-response')).toContainText('risk_score');
+  await expect(page.getByTestId('connector-fetch-count')).toHaveText('(1)');
 
   // A connector with a credential-bearing config is masked in the list (the DSN
   // never reaches the client).
@@ -49,6 +58,104 @@ test('defines a connector and a feature from the UI', async ({ page }) => {
   await page.getByLabel('feature window hours').fill('24');
   await page.getByRole('button', { name: 'Define feature' }).click();
   await expect(page.locator('tbody').filter({ hasText: feat })).toBeVisible();
+});
+
+test('creates an entity and records an event that updates its feature from the UI', async ({
+  page,
+  request
+}) => {
+  const id = 'ui-' + uniq();
+  const feature = 'ui_events_' + uniq();
+  await request.post('/v1/context/features', {
+    headers: { 'X-Api-Key': KEY },
+    data: {
+      name: feature,
+      entity_type: 'customer',
+      event_name: 'transaction',
+      aggregation: 'count',
+      window_hours: 24
+    }
+  });
+
+  await page.goto('/data');
+  await page.getByLabel('entity type', { exact: true }).fill('customer');
+  await page.getByLabel('entity id').fill(id);
+  await page.getByLabel('entity attributes').fill('{"tier":"gold"}');
+  await page.getByRole('button', { name: 'Create or update entity' }).click();
+
+  const entityRow = page.locator('tbody tr').filter({ hasText: id });
+  await expect(entityRow).toContainText('customer');
+  await entityRow.getByRole('link', { name: id }).click();
+  await expect(page.getByText('gold')).toBeVisible();
+
+  await page.getByLabel('event name').fill('transaction');
+  await page.getByLabel('event data').fill('{"amount":125}');
+  await page.getByRole('button', { name: 'Record event' }).click();
+
+  await expect(page.locator('.timeline')).toContainText('transaction');
+  await expect(page.locator('.timeline')).toContainText('"amount":125');
+  await expect(page.locator('.feat').filter({ hasText: feature })).toContainText('1');
+});
+
+test('lawful-basis expiry is authored and never presented as active after it lapses', async ({
+  page,
+  request
+}) => {
+  const id = 'basis-' + uniq();
+  const subject = `customer/${id}`;
+  await request.post('/v1/context/entities', {
+    headers: { 'X-Api-Key': KEY },
+    data: { entity_type: 'customer', entity_id: id, attributes: { tier: 'silver' } }
+  });
+
+  await expect(async () => {
+    const response = await request.get(`/v1/context/entities/customer/${id}`, {
+      headers: { 'X-Api-Key': KEY }
+    });
+    expect(response.ok()).toBe(true);
+  }).toPass();
+
+  await page.goto(`/data/customer/${id}`);
+  await page.getByPlaceholder('purpose (e.g. credit_underwriting)').fill('marketing');
+  await page.getByLabel('lawful basis').selectOption('consent');
+  const expires = new Date(Date.now() + 86_400_000);
+  const localExpiry = new Date(expires.getTime() - expires.getTimezoneOffset() * 60_000)
+    .toISOString()
+    .slice(0, 16);
+  await page.getByLabel('basis expiry').fill(localExpiry);
+  await page.getByRole('button', { name: 'Record basis' }).click();
+
+  let basisRow = page.locator('tbody tr').filter({ hasText: 'marketing' });
+  await expect(basisRow.getByText('active', { exact: true })).toBeVisible();
+  await expect(basisRow).toContainText('in 1d');
+
+  // The backend supplies `active` as an as-of-now field. Exercise the browser's
+  // expired branch explicitly without sleeping until tomorrow: granted remains true
+  // as historical evidence while active becomes false.
+  await page.route(`**/v1/consent?subject=${encodeURIComponent(subject)}`, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        consents: [
+          {
+            subject,
+            purpose: 'marketing',
+            granted: true,
+            active: false,
+            basis: 'consent',
+            granted_at: new Date(Date.now() - 172_800_000).toISOString(),
+            expires_at: new Date(Date.now() - 86_400_000).toISOString(),
+            updated_by: 'test'
+          }
+        ]
+      })
+    })
+  );
+  await page.reload();
+  basisRow = page.locator('tbody tr').filter({ hasText: 'marketing' });
+  await expect(basisRow.getByText('expired', { exact: true })).toBeVisible();
+  await expect(basisRow.getByRole('button', { name: 'Withdraw' })).toHaveCount(0);
 });
 
 test('connector creation fails closed when the catalog is unavailable', async ({ page }) => {

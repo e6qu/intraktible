@@ -251,6 +251,10 @@ type DecideResult struct {
 	Status     domain.RunStatus
 	Output     map[string]any
 	Error      string
+	// EventSeq is the final durable event whose projections make this result and
+	// its immediate side effects (case escalation / shadow comparison) readable.
+	// Preview leaves it zero because it records nothing.
+	EventSeq uint64
 	// Disposition is the operational policy's automated outcome (approve|decline|
 	// refer), empty when no policy is bound to the flow. DispositionReason is the
 	// matched rule's description (or why it referred). Typed (not bare string) so the
@@ -435,20 +439,30 @@ func (h *DecideHandler) Decide(ctx context.Context, id identity.Identity, slug, 
 			Disposition: disp.disposition, DispositionReason: disp.reason,
 		}
 	}
-	if err := h.emit(ctx, id, terminalType, terminalPayload); err != nil {
+	terminalEvent, err := h.emitEnvelope(ctx, id, terminalType, terminalPayload)
+	if err != nil {
 		return DecideResult{}, err
 	}
 	// A manual_review node that ran escalates to a case (consumed by the Case Manager).
-	if err := h.emitEscalations(ctx, id, decisionID, ref, dataJSON, run, suspendedCaseID); err != nil {
+	escalationEvent, err := h.emitEscalations(ctx, id, decisionID, ref, dataJSON, run, suspendedCaseID)
+	if err != nil {
 		return DecideResult{}, err
 	}
 	// A shadow version, if configured for this environment, is evaluated over the
 	// same input for divergence analysis — its outcome never affects the result.
 	// A suspended decision has no terminal output yet, so there's nothing to compare.
 	if run.Status != domain.StatusSuspended {
-		if err := h.runShadow(ctx, id, fv, env, decisionID, version.Version, data, run); err != nil {
+		shadowEvent, err := h.runShadow(ctx, id, fv, env, decisionID, version.Version, data, run)
+		if err != nil {
 			return DecideResult{}, err
 		}
+		result.EventSeq = shadowEvent.Seq
+	}
+	if escalationEvent.Seq > result.EventSeq {
+		result.EventSeq = escalationEvent.Seq
+	}
+	if terminalEvent.Seq > result.EventSeq {
+		result.EventSeq = terminalEvent.Seq
 	}
 	return result, nil
 }
@@ -531,33 +545,43 @@ func (h *DecideHandler) ResumeDecision(ctx context.Context, id identity.Identity
 
 	switch run.Status {
 	case domain.StatusFailed:
-		if err := h.emit(ctx, id, events.TypeDecisionFailed, events.DecisionFailed{
+		terminalEvent, err := h.emitEnvelope(ctx, id, events.TypeDecisionFailed, events.DecisionFailed{
 			DecisionID: decisionID, FlowID: rec.FlowID, Version: rec.Version, Variant: rec.Variant,
 			NodeID: run.FailedNode, Error: run.Err, DurationMS: dur,
-		}); err != nil {
+		})
+		if err != nil {
 			return DecideResult{}, err
 		}
-		if err := h.emitEscalations(ctx, id, decisionID, ref, rec.Data, run, ""); err != nil {
+		escalationEvent, err := h.emitEscalations(ctx, id, decisionID, ref, rec.Data, run, "")
+		if err != nil {
 			return DecideResult{}, err
 		}
-		return DecideResult{DecisionID: decisionID, Status: domain.StatusFailed, Error: run.Err}, nil
+		return DecideResult{
+			DecisionID: decisionID, Status: domain.StatusFailed, Error: run.Err,
+			EventSeq: max(terminalEvent.Seq, escalationEvent.Seq),
+		}, nil
 	case domain.StatusSuspended:
 		stateJSON, err := json.Marshal(run.Suspend)
 		if err != nil {
 			return DecideResult{}, fmt.Errorf("decision-engine: marshal suspend state: %w", err)
 		}
 		nextCaseID := h.newID()
-		if err := h.emit(ctx, id, events.TypeDecisionSuspended, events.DecisionSuspended{
+		terminalEvent, err := h.emitEnvelope(ctx, id, events.TypeDecisionSuspended, events.DecisionSuspended{
 			DecisionID: decisionID, FlowID: rec.FlowID, Version: rec.Version, Variant: rec.Variant,
 			NodeID: run.Suspend.NodeID, ResumeNode: run.Suspend.Resume, CaseID: nextCaseID,
 			State: stateJSON, DurationMS: dur,
-		}); err != nil {
+		})
+		if err != nil {
 			return DecideResult{}, err
 		}
-		if err := h.emitEscalations(ctx, id, decisionID, ref, rec.Data, run, nextCaseID); err != nil {
+		escalationEvent, err := h.emitEscalations(ctx, id, decisionID, ref, rec.Data, run, nextCaseID)
+		if err != nil {
 			return DecideResult{}, err
 		}
-		return DecideResult{DecisionID: decisionID, Status: domain.StatusSuspended}, nil
+		return DecideResult{
+			DecisionID: decisionID, Status: domain.StatusSuspended,
+			EventSeq: max(terminalEvent.Seq, escalationEvent.Seq),
+		}, nil
 	default:
 		outJSON, err := json.Marshal(run.Output)
 		if err != nil {
@@ -571,20 +595,23 @@ func (h *DecideHandler) ResumeDecision(ctx context.Context, id identity.Identity
 		if err != nil {
 			return DecideResult{}, err
 		}
-		if err := h.emit(ctx, id, events.TypeDecisionCompleted, events.DecisionCompleted{
+		terminalEvent, err := h.emitEnvelope(ctx, id, events.TypeDecisionCompleted, events.DecisionCompleted{
 			DecisionID: decisionID, FlowID: rec.FlowID, Version: rec.Version, Variant: rec.Variant,
 			Output: outJSON, DurationMS: dur,
 			Disposition: string(disp.disposition), DispositionCode: disp.code, DispositionReason: disp.reason,
 			PolicyID: disp.policyID, PolicyVersion: disp.policyVersion,
-		}); err != nil {
+		})
+		if err != nil {
 			return DecideResult{}, err
 		}
-		if err := h.emitEscalations(ctx, id, decisionID, ref, rec.Data, run, ""); err != nil {
+		escalationEvent, err := h.emitEscalations(ctx, id, decisionID, ref, rec.Data, run, "")
+		if err != nil {
 			return DecideResult{}, err
 		}
 		return DecideResult{
 			DecisionID: decisionID, Status: domain.StatusCompleted, Output: run.Output,
 			Disposition: disp.disposition, DispositionReason: disp.reason,
+			EventSeq: max(terminalEvent.Seq, escalationEvent.Seq),
 		}, nil
 	}
 }
@@ -729,10 +756,10 @@ func (h *DecideHandler) Preview(ctx context.Context, id identity.Identity, slug,
 // node needing input the live graph did not inject simply fails in the shadow
 // run and is recorded as such. The shadow's outcome never affects the caller's
 // result; only a failure to record the comparison event is returned.
-func (h *DecideHandler) runShadow(ctx context.Context, id identity.Identity, fv flows.FlowView, env, decisionID string, liveVersion int, data map[string]any, live domain.Run) error {
+func (h *DecideHandler) runShadow(ctx context.Context, id identity.Identity, fv flows.FlowView, env, decisionID string, liveVersion int, data map[string]any, live domain.Run) (eventlog.Envelope, error) {
 	shadowVer := fv.Shadows[env]
 	if shadowVer == 0 || shadowVer == liveVersion {
-		return nil
+		return eventlog.Envelope{}, nil
 	}
 	ev := events.ShadowEvaluated{
 		DecisionID: decisionID, FlowID: fv.FlowID, Environment: env,
@@ -751,7 +778,7 @@ func (h *DecideHandler) runShadow(ctx context.Context, id identity.Identity, fv 
 			srun.Status == domain.StatusCompleted &&
 			reflect.DeepEqual(live.Output, srun.Output)
 	}
-	return h.emit(ctx, id, events.TypeShadowEvaluated, ev)
+	return h.emitEnvelope(ctx, id, events.TypeShadowEvaluated, ev)
 }
 
 // sealPII crypto-shreds the configured PII fields of a recorded document under
@@ -1075,8 +1102,9 @@ func (h *DecideHandler) emitEscalations(
 	dataJSON json.RawMessage,
 	run domain.Run,
 	suspendedCaseID string,
-) error {
+) (eventlog.Envelope, error) {
 	usedSuspendedID := false
+	var last eventlog.Envelope
 	for _, res := range run.Results {
 		if res.Type != events.NodeManualReview {
 			continue
@@ -1089,7 +1117,7 @@ func (h *DecideHandler) emitEscalations(
 		// surviving in cleartext.
 		sealedOut, err := h.sealPII(ctx, id, ref, res.Output)
 		if err != nil {
-			return err
+			return eventlog.Envelope{}, err
 		}
 		var out struct {
 			CompanyName json.RawMessage `json:"company_name"`
@@ -1097,25 +1125,26 @@ func (h *DecideHandler) emitEscalations(
 			SLADays     int             `json:"sla_days"`
 		}
 		if err := json.Unmarshal(sealedOut, &out); err != nil {
-			return fmt.Errorf("decision-engine: decode manual_review output: %w", err)
+			return eventlog.Envelope{}, fmt.Errorf("decision-engine: decode manual_review output: %w", err)
 		}
 		caseID := h.newID()
 		if suspendedCaseID != "" && run.Suspend != nil && res.NodeID == run.Suspend.NodeID {
 			caseID = suspendedCaseID
 			usedSuspendedID = true
 		}
-		if err := h.emit(ctx, id, events.TypeManualReviewRequested, events.ManualReviewRequested{
+		last, err = h.emitEnvelope(ctx, id, events.TypeManualReviewRequested, events.ManualReviewRequested{
 			CaseID: caseID, DecisionID: decisionID, NodeID: res.NodeID,
 			CompanyName: labelFromSealed(out.CompanyName), CaseType: labelFromSealed(out.CaseType),
 			SLADays: out.SLADays, Context: dataJSON,
-		}); err != nil {
-			return err
+		})
+		if err != nil {
+			return eventlog.Envelope{}, err
 		}
 	}
 	if suspendedCaseID != "" && !usedSuspendedID {
-		return fmt.Errorf("decision-engine: suspended case %q did not match a manual-review result", suspendedCaseID)
+		return eventlog.Envelope{}, fmt.Errorf("decision-engine: suspended case %q did not match a manual-review result", suspendedCaseID)
 	}
-	return nil
+	return last, nil
 }
 
 // labelFromSealed extracts a manual_review case label from the SEALED node output: a
@@ -1179,22 +1208,23 @@ func (h *DecideHandler) honorPreApproval(ctx context.Context, id identity.Identi
 	}); err != nil {
 		return DecideResult{}, false, err
 	}
-	if err := h.emit(ctx, id, events.TypeDecisionCompleted, events.DecisionCompleted{
+	if _, err := h.emitEnvelope(ctx, id, events.TypeDecisionCompleted, events.DecisionCompleted{
 		DecisionID: decisionID, FlowID: fv.FlowID, Version: version, Variant: variant,
 		Output: outJSON, DurationMS: 0,
 		Disposition: pa.Disposition, DispositionReason: "pre-approval honored", PreApprovalID: pa.PreApprovalID,
 	}); err != nil {
 		return DecideResult{}, false, err
 	}
-	if err := h.appendStream(ctx, id, preapproval.StreamPreApprovals, preapproval.TypeHonored, preapproval.Honored{
+	honoredEvent, err := h.appendStreamEnvelope(ctx, id, preapproval.StreamPreApprovals, preapproval.TypeHonored, preapproval.Honored{
 		PreApprovalID: pa.PreApprovalID, EntityType: string(ref.Type), EntityID: string(ref.ID), DecisionID: decisionID,
-	}); err != nil {
+	})
+	if err != nil {
 		return DecideResult{}, false, err
 	}
 	return DecideResult{
 		DecisionID: decisionID, Status: domain.StatusCompleted, Output: terms,
 		Disposition: policy.Disposition(pa.Disposition), DispositionReason: "pre-approval honored",
-		PreApprovalID: pa.PreApprovalID,
+		PreApprovalID: pa.PreApprovalID, EventSeq: honoredEvent.Seq,
 	}, true, nil
 }
 
@@ -1269,6 +1299,10 @@ func (h *DecideHandler) emit(ctx context.Context, id identity.Identity, typ stri
 	return h.appendStream(ctx, id, events.StreamDecisions, typ, payload)
 }
 
+func (h *DecideHandler) emitEnvelope(ctx context.Context, id identity.Identity, typ string, payload any) (eventlog.Envelope, error) {
+	return h.appendStreamEnvelope(ctx, id, events.StreamDecisions, typ, payload)
+}
+
 // emitUnique is emit with a tenant-global uniqueness claim (eventlog.Envelope.Unique):
 // a second append under the same key fails with eventlog.ErrConflict.
 func (h *DecideHandler) emitUnique(ctx context.Context, id identity.Identity, typ string, payload any, unique string) error {
@@ -1292,11 +1326,16 @@ func (h *DecideHandler) emitUnique(ctx context.Context, id identity.Identity, ty
 // appendStream marshals and appends a payload to a named stream (decision events
 // go to StreamDecisions; a honored pre-approval also writes to its own stream).
 func (h *DecideHandler) appendStream(ctx context.Context, id identity.Identity, stream, typ string, payload any) error {
+	_, err := h.appendStreamEnvelope(ctx, id, stream, typ, payload)
+	return err
+}
+
+func (h *DecideHandler) appendStreamEnvelope(ctx context.Context, id identity.Identity, stream, typ string, payload any) (eventlog.Envelope, error) {
 	b, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("decision-engine: marshal %s: %w", typ, err)
+		return eventlog.Envelope{}, fmt.Errorf("decision-engine: marshal %s: %w", typ, err)
 	}
-	_, err = h.log.Append(ctx, eventlog.Envelope{
+	return h.log.Append(ctx, eventlog.Envelope{
 		Org:       id.Org,
 		Workspace: id.Workspace,
 		Actor:     id.Actor,
@@ -1305,5 +1344,4 @@ func (h *DecideHandler) appendStream(ctx context.Context, id identity.Identity, 
 		Time:      h.now(),
 		Payload:   b,
 	})
-	return err
 }

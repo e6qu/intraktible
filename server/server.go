@@ -453,7 +453,7 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 	// Consent: a purpose-limitation ledger — a data subject's consent to process
 	// their data for a named purpose, recorded as events so the grant/withdraw
 	// history is auditable (GDPR Art. 6/7, GLBA purpose limitation).
-	consent.New(consentHandler, st).Routes(api)
+	consent.New(consentHandler, st).WithNow(now).Routes(api)
 
 	// Applicable data-protection / fair-lending regimes for the workspace, so the
 	// automated-decision explanation cites the law that actually applies.

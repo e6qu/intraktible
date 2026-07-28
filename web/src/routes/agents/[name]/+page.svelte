@@ -10,6 +10,7 @@
   import CommentThread from '$lib/CommentThread.svelte';
   import { statusTone } from '$lib/badge';
   import { toast } from '$lib/toast';
+  import { waitForApplied } from '$lib/poll';
   import {
     getAgent,
     runAgent,
@@ -208,6 +209,21 @@
     streaming = false;
     closeStream();
   }
+
+  async function finishStream(seq: unknown) {
+    if (typeof seq !== 'number' || !Number.isFinite(seq) || seq <= 0) {
+      failStream('stream completed without a durable event acknowledgement');
+      return;
+    }
+    try {
+      await waitForApplied(seq);
+      streaming = false;
+      closeStream();
+      await load();
+    } catch (e) {
+      failStream(e instanceof Error ? e.message : String(e));
+    }
+  }
   // Parse one chunk frame's text, returning null on malformed/ill-shaped data.
   function chunkText(raw: string): string | null {
     try {
@@ -234,10 +250,17 @@
       }
       streamText += t;
     });
-    es.addEventListener('done', () => {
-      streaming = false;
-      closeStream();
-      void load();
+    es.addEventListener('done', (e) => {
+      try {
+        const payload = JSON.parse((e as MessageEvent).data) as { seq?: unknown };
+        // The server closes the SSE response after `done`; close locally first so
+        // EventSource does not turn that normal EOF into an onerror/reconnect race
+        // while the projection acknowledgement is still being awaited.
+        closeStream();
+        void finishStream(payload.seq);
+      } catch (_parseError) {
+        failStream('stream returned a malformed completion');
+      }
     });
     es.onerror = () => failStream('stream failed');
   }
@@ -252,7 +275,7 @@
     activeWS = ws;
     ws.onopen = () => ws.send(JSON.stringify({ prompt: streamPrompt }));
     ws.onmessage = (e) => {
-      let m: { type?: unknown; text?: unknown };
+      let m: { type?: unknown; text?: unknown; seq?: unknown };
       try {
         m = JSON.parse(e.data);
       } catch (_parseError) {
@@ -269,9 +292,8 @@
         return;
       }
       if (m.type === 'done') {
-        streaming = false;
         closeStream();
-        void load();
+        void finishStream(m.seq);
       }
     };
     ws.onerror = () => failStream('stream failed');

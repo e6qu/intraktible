@@ -92,6 +92,7 @@ type RunResult struct {
 	Text       string
 	Structured json.RawMessage
 	Error      string
+	EventSeq   uint64
 }
 
 // DefineAgent registers (or redefines) an agent.
@@ -156,14 +157,18 @@ func (h *Handler) RunAgent(ctx context.Context, id identity.Identity, agent, pro
 		return RunResult{}, err
 	}
 	runID := h.newID()
-	if _, err := h.append(ctx, id, events.TypeAgentRunRecorded, events.AgentRunRecorded{
+	event, err := h.append(ctx, id, events.TypeAgentRunRecorded, events.AgentRunRecorded{
 		RunID: runID, Agent: agent, Model: out.Model, Prompt: prompt,
 		Status: string(out.Status), Text: out.Text, Structured: out.Structured, ToolCalls: out.ToolCalls, Error: out.Error,
 		PromptTokens: out.Usage.PromptTokens, CompletionTokens: out.Usage.CompletionTokens, At: h.now(),
-	}); err != nil {
+	})
+	if err != nil {
 		return RunResult{}, err
 	}
-	return RunResult{RunID: runID, Status: out.Status, Text: out.Text, Structured: out.Structured, Error: out.Error}, nil
+	return RunResult{
+		RunID: runID, Status: out.Status, Text: out.Text, Structured: out.Structured,
+		Error: out.Error, EventSeq: event.Seq,
+	}, nil
 }
 
 // StreamRun runs the named agent, streaming text deltas to onChunk as they
@@ -178,14 +183,18 @@ func (h *Handler) StreamRun(ctx context.Context, id identity.Identity, agent, pr
 		return RunResult{}, err
 	}
 	runID := h.newID()
-	if _, err := h.append(ctx, id, events.TypeAgentRunRecorded, events.AgentRunRecorded{
+	event, err := h.append(ctx, id, events.TypeAgentRunRecorded, events.AgentRunRecorded{
 		RunID: runID, Agent: agent, Model: out.Model, Prompt: prompt,
 		Status: string(out.Status), Text: out.Text, Structured: out.Structured, ToolCalls: out.ToolCalls, Error: out.Error,
 		PromptTokens: out.Usage.PromptTokens, CompletionTokens: out.Usage.CompletionTokens, At: h.now(),
-	}); err != nil {
+	})
+	if err != nil {
 		return RunResult{}, err
 	}
-	return RunResult{RunID: runID, Status: out.Status, Text: out.Text, Structured: out.Structured, Error: out.Error}, nil
+	return RunResult{
+		RunID: runID, Status: out.Status, Text: out.Text, Structured: out.Structured,
+		Error: out.Error, EventSeq: event.Seq,
+	}, nil
 }
 
 // StartRun accepts an agent run for asynchronous execution: it records an
@@ -194,30 +203,39 @@ func (h *Handler) StreamRun(ctx context.Context, id identity.Identity, agent, pr
 // AgentRunRecorded; callers poll GET /v1/agent-runs/{run_id} for the outcome. An
 // unknown agent is rejected up front (the read model is the same one RunAgent uses).
 func (h *Handler) StartRun(ctx context.Context, id identity.Identity, agent, prompt string) (string, error) {
+	runID, _, err := h.StartRunWithSeq(ctx, id, agent, prompt)
+	return runID, err
+}
+
+// StartRunWithSeq is the HTTP-facing form of StartRun. The event acknowledgement
+// lets a polling client establish that the accepted "running" record is readable
+// before its first GET, while the worker records the terminal outcome later.
+func (h *Handler) StartRunWithSeq(ctx context.Context, id identity.Identity, agent, prompt string) (string, eventlog.Envelope, error) {
 	if err := id.Valid(); err != nil {
-		return "", err
+		return "", eventlog.Envelope{}, err
 	}
 	if _, ok, err := agents.Read(ctx, h.store, id, agent); err != nil {
-		return "", err
+		return "", eventlog.Envelope{}, err
 	} else if !ok {
-		return "", fmt.Errorf("agent-manager: unknown agent %q", agent)
+		return "", eventlog.Envelope{}, fmt.Errorf("agent-manager: unknown agent %q", agent)
 	}
 	select {
 	case h.queueSlots <- struct{}{}:
 		// Capacity is reserved before acceptance is recorded.
 	default:
-		return "", fmt.Errorf("agent-manager: async run queue is full")
+		return "", eventlog.Envelope{}, fmt.Errorf("agent-manager: async run queue is full")
 	}
 	runID := h.newID()
-	if _, err := h.append(ctx, id, events.TypeAgentRunStarted, events.AgentRunStarted{
+	event, err := h.append(ctx, id, events.TypeAgentRunStarted, events.AgentRunStarted{
 		RunID: runID, Agent: agent, Prompt: prompt, At: h.now(),
-	}); err != nil {
+	})
+	if err != nil {
 		<-h.queueSlots
-		return "", err
+		return "", eventlog.Envelope{}, err
 	}
 	job := asyncJob{id: id, runID: runID, agent: agent, prompt: prompt}
 	h.jobs <- job // the reserved slot guarantees this send cannot exceed capacity
-	return runID, nil
+	return runID, event, nil
 }
 
 // StartWorkers launches n goroutines that drain the async run queue until ctx is

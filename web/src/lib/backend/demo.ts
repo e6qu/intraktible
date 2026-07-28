@@ -167,7 +167,8 @@ function keyOf(keys: Map<string, string>, actor: string): string {
   return key;
 }
 
-// installBridgedFetch routes the backend's routes (/v1/*, /healthz) through the
+// installBridgedFetch routes the backend's routes (/v1/* plus health/readiness)
+// through the
 // worker and leaves every other request (assets, docs, external) untouched.
 function installBridgedFetch(): void {
   const original = window.fetch.bind(window);
@@ -176,7 +177,10 @@ function installBridgedFetch(): void {
     const url = new URL(raw, window.location.origin);
     const embedded =
       url.origin === window.location.origin &&
-      (url.pathname === '/healthz' || url.pathname === '/v1' || url.pathname.startsWith('/v1/'));
+      (url.pathname === '/healthz' ||
+        url.pathname === '/readyz' ||
+        url.pathname === '/v1' ||
+        url.pathname.startsWith('/v1/'));
     return embedded ? bridgeFetch(input, init) : original(input, init);
   };
 }

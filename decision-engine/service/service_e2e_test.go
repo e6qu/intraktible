@@ -181,6 +181,7 @@ func TestDecisionRecordErasure(t *testing.T) {
 	var dec struct {
 		DecisionID string `json:"decision_id"`
 		Status     string `json:"status"`
+		Seq        uint64 `json:"seq"`
 	}
 	if !testutil.Eventually(t, func() bool {
 		api.Request(t, http.MethodPost, "/v1/flows/kyc/sandbox/decide", map[string]any{
@@ -190,6 +191,9 @@ func TestDecisionRecordErasure(t *testing.T) {
 		return dec.Status == "completed"
 	}) {
 		t.Fatal("decide never completed")
+	}
+	if dec.Seq == 0 {
+		t.Fatal("recorded decide response has no final event sequence")
 	}
 
 	// The recorded decision input has the SSN sealed at rest. Poll: the history
@@ -1624,6 +1628,7 @@ func TestResumeEnvironmentScopeEnforced(t *testing.T) {
 	var dec struct {
 		DecisionID string `json:"decision_id"`
 		Status     string `json:"status"`
+		Seq        uint64 `json:"seq"`
 	}
 	if !testutil.Eventually(t, func() bool {
 		api.Request(t, http.MethodPost, "/v1/flows/htask/staging/decide",
@@ -1631,6 +1636,9 @@ func TestResumeEnvironmentScopeEnforced(t *testing.T) {
 		return dec.Status == "suspended"
 	}) {
 		t.Fatalf("decide never suspended: %+v", dec)
+	}
+	if dec.Seq == 0 {
+		t.Fatal("suspended decide response has no final event sequence")
 	}
 
 	// A sandbox-scoped reviewer cannot complete a staging decision.
@@ -1645,8 +1653,14 @@ func TestResumeEnvironmentScopeEnforced(t *testing.T) {
 		t.Fatal("sandbox-scoped resume of a staging decision must be 403")
 	}
 	// The unrestricted key resumes fine.
+	var resumed struct {
+		Seq uint64 `json:"seq"`
+	}
 	api.Request(t, http.MethodPost, "/v1/decisions/"+dec.DecisionID+"/resume",
-		map[string]any{"outcome": map[string]any{"decision": "approve"}}, http.StatusOK, nil)
+		map[string]any{"outcome": map[string]any{"decision": "approve"}}, http.StatusOK, &resumed)
+	if resumed.Seq <= dec.Seq {
+		t.Fatalf("resume final seq = %d, want later than suspension seq %d", resumed.Seq, dec.Seq)
+	}
 }
 
 // TestFlowOpenAPIEndpoint proves the per-flow generated contract carries the flow's

@@ -134,6 +134,44 @@ Spans: **Decision trace** (`/decisions/[decisionId]`) → **Flow builder** analy
    inputs sweeps the graph and reports dead branches and unreached nodes — the paths
    your traffic and your tests never exercise.
 
+### Screen fair-lending impact and serve an adverse-action notice
+
+Spans: **Fair lending** (`/fairlending`) → **Decision trace**
+(`/decisions/[decisionId]`) → **Compliance** (`/compliance`).
+
+1. On Fair lending, choose the protected-class attribute explicitly and run the
+   four-fifths screen for a flow. The platform does not infer protected class, and the
+   report is a screening signal rather than a legal conclusion. Outcome: selection
+   rates and impact ratios by group, with the configured threshold called out.
+2. Configure the workspace creditor identification used in notices. If a notice is
+   based on a consumer report, also configure the reporting agency; that path fails
+   loudly rather than producing an incomplete FCRA disclosure.
+3. In the flow, use a **reason** node to produce specific principal reasons and bind a
+   policy that can decline. Outcome: every adverse decision carries the reasons that
+   will appear in its notice.
+4. Open Compliance and work the **Adverse-action queue**, ordered with the age of the
+   decline so the 30-day clock is visible. Follow a row to the decision, preview or
+   download the rendered notice, choose the delivery method, and **Record as issued**.
+   Outcome: an immutable issuance record captures who served it, when, how, the
+   principal reasons, whether a consumer report was involved, and a hash of the exact
+   document; the decision leaves the pending queue.
+
+### Contest an automated decline and record human reconsideration
+
+Spans: **Decision trace** (`/decisions/[decisionId]`) ↔ **Compliance**
+(`/compliance`).
+
+1. On a solely automated decline, **Log contest** with the channel and an optional
+   note. Outcome: the decision is labelled `contest — awaiting review`, and an
+   actionable link appears in Compliance's human-review queue.
+2. A reviewer follows that link, selects the basis and whether the original outcome
+   is **upheld** or **overturned**, and records a required rationale. Outcome: an
+   immutable reconsideration is attached without rewriting the original decision,
+   and the contest resolves.
+3. Compliance retains the human-review audit trail, including the reviewer, basis,
+   outcome, and link back to the decision. The open-contest queue no longer includes
+   the resolved item.
+
 ### Resume a suspended decision (durable human task)
 
 Spans: a manual-review node with **suspend** on → **Case queue** → **Decision trace**.
@@ -308,6 +346,26 @@ Spans: **Context data** (`/data`) → **Entity** (`/data/[type]/[id]`) → **Flo
    the field its response lands in. Outcome: every decision through the flow fetches
    the signal first, and the fetch is recorded against the connector.
 
+### Record lawful basis, expiry, and an information-sharing choice
+
+Spans: **Entity** (`/data/[type]/[id]`) → **Compliance** (`/compliance`).
+
+1. Open the entity that represents the data subject. Record the processing purpose,
+   choose the lawful basis (for decisioning this is commonly contract, legal
+   obligation, or legitimate interest rather than consent), and optionally attach
+   evidence and a future expiry. Outcome: a versioned lawful-basis record tied to the
+   subject and purpose.
+2. Before expiry it is shown as **active**. At expiry the backend's authoritative
+   clock makes it **expired** without needing a withdrawal event; the entity and
+   Compliance views update their counts and no longer offer Withdraw for it.
+   Explicit withdrawal remains available for an active record.
+3. Record or rescind the subject's information-sharing opt-out on the same entity.
+   This is a separate outbound-sharing election, not an inbound consent.
+4. Open Compliance to see active, expired, withdrawn, and soon-to-expire lawful bases,
+   the distribution by basis, and the tenant's sharing opt-out count. Outcome:
+   operational obligations are visible without treating historical grants as current
+   permission.
+
 ### Stream a batch of decisions
 
 Spans: the decision API.
@@ -465,13 +523,13 @@ lens on shared lists.
 Actions are gated by role, ranked **viewer < operator < editor < approver < admin**.
 A higher role includes the rights below it.
 
-| Role     | Can                                                                          |
-| -------- | ---------------------------------------------------------------------------- |
-| viewer   | Read-only across surfaces                                                    |
-| operator | Work cases (assign, note, set status), run decisions                         |
-| editor   | Author and publish flows, policies, models, agents, context data             |
-| approver | Everything an editor can, plus approve/reject production deployment requests |
-| admin    | Everything, plus model risk, audit log, and API-key management               |
+| Role     | Can                                                                                |
+| -------- | ---------------------------------------------------------------------------------- |
+| viewer   | Read-only across surfaces                                                          |
+| operator | Run decisions; work cases; issue notices; record contests/reviews and lawful basis |
+| editor   | Author and publish flows, policies, models, agents, context data                   |
+| approver | Everything an editor can, plus approve/reject production deployment requests       |
+| admin    | Everything, plus model risk, audit log, and API-key management                     |
 
 Two gates matter most. **Four-eyes promotion**: approving a production deployment
 requires the approver role _and_ a different actor than the requester. **Admin-only

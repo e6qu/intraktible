@@ -12,8 +12,15 @@ import (
 // reporting whether it succeeded. Used to assert on asynchronous projection
 // updates delivered via the in-process event bus.
 func Eventually(t *testing.T, cond func() bool) bool {
+	return EventuallyWithin(t, time.Second, cond)
+}
+
+// EventuallyWithin is Eventually with an explicit deadline for operations whose
+// expected work is materially heavier than one in-process projection update, such
+// as two race-instrumented replicas serializing durable SQLite transactions.
+func EventuallyWithin(t *testing.T, timeout time.Duration, cond func() bool) bool {
 	t.Helper()
-	deadline := time.Now().Add(time.Second)
+	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		if cond() {
 			return true

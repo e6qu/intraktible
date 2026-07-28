@@ -300,6 +300,110 @@ test('a reason node yields adverse-action reason codes on the decision detail', 
   await expect(reasons).toContainText('Insufficient credit score');
 });
 
+test('an adverse decision moves through notice, contest, and human review queues', async ({
+  page,
+  request
+}) => {
+  const H = { 'X-Api-Key': KEY };
+  const slug = uniqueSlug();
+
+  await request.put('/v1/fairlending/settings', {
+    headers: H,
+    data: {
+      creditor_name: 'Journey Bank',
+      creditor_address: '1 Review Way, Test City',
+      creditor_phone: '1-800-555-0100'
+    }
+  });
+  await expect(async () => {
+    const response = await request.get('/v1/fairlending/settings', { headers: H });
+    expect((await response.json()).creditor_name).toBe('Journey Bank');
+  }).toPass({ timeout: 5000 });
+
+  const created = await request.post('/v1/flows', {
+    headers: H,
+    data: { slug, name: 'Regulatory Journey' }
+  });
+  const { flow_id } = await created.json();
+  await request.post(`/v1/flows/${flow_id}/versions`, {
+    headers: H,
+    data: {
+      graph: {
+        nodes: [
+          { id: 'in', type: 'input' },
+          {
+            id: 'reasons',
+            type: 'reason',
+            config: {
+              reasons: [
+                {
+                  when: 'score < 600',
+                  code: 'R01',
+                  description: 'Insufficient credit score'
+                }
+              ]
+            }
+          },
+          { id: 'out', type: 'output', config: { fields: ['score'] } }
+        ],
+        edges: [
+          { from: 'in', to: 'reasons' },
+          { from: 'reasons', to: 'out' }
+        ]
+      }
+    }
+  });
+  const policy = await request.post('/v1/policies', {
+    headers: H,
+    data: { name: `decline-${slug}`, flow_slug: slug }
+  });
+  const { policy_id } = await policy.json();
+  await request.post(`/v1/policies/${policy_id}/versions`, {
+    headers: H,
+    data: { spec: { rules: [], default: 'decline' } }
+  });
+
+  let decisionId = '';
+  await expect(async () => {
+    const response = await request.post(`/v1/flows/${slug}/sandbox/decide`, {
+      headers: H,
+      data: { data: { score: 520 } }
+    });
+    const body = await response.json();
+    expect(body.disposition).toBe('decline');
+    decisionId = body.decision_id;
+  }).toPass({ timeout: 5000 });
+
+  await page.goto(`/decisions/${decisionId}`);
+  await expect(page.getByTestId('verdict')).toContainText('decline');
+  await expect(page.getByTestId('reason-codes')).toContainText('R01');
+
+  await page.getByRole('button', { name: 'Record as issued' }).click();
+  await expect(page.getByText('issued', { exact: true })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Log contest' }).click();
+  await expect(page.getByText('contest — awaiting review', { exact: true })).toBeVisible();
+
+  await page.goto('/compliance');
+  const decisionLink = page.locator(`a[href="/decisions/${decisionId}"]`);
+  await expect(page.getByRole('list', { name: 'Contests awaiting review' })).toBeVisible();
+  await expect(decisionLink).toBeVisible();
+
+  await decisionLink.click();
+  await page.getByLabel('review outcome').selectOption('overturned');
+  await page
+    .getByPlaceholder('Rationale — what the human reviewer weighed (required)')
+    .fill('The applicant supplied a corrected bureau record that changed the outcome.');
+  await page.getByRole('button', { name: 'Record human review' }).click();
+  await expect(page.getByText('overturned', { exact: true })).toBeVisible();
+  await expect(page.getByText('contest resolved', { exact: true })).toBeVisible();
+
+  await page.goto('/compliance');
+  await expect(page.locator(`a[href="/decisions/${decisionId}"]`)).toBeVisible();
+  const openContests = page.getByRole('list', { name: 'Contests awaiting review' });
+  await expect(openContests.locator(`a[href="/decisions/${decisionId}"]`)).toHaveCount(0);
+});
+
 test('Reload keeps the applied filter and long JSON stays contained on the detail', async ({
   page,
   request

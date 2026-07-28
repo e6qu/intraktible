@@ -233,14 +233,22 @@ type slaCaseState struct {
 // replay reads the recorded breaches and stays stable. It is idempotent — a case
 // already breached is skipped — so repeated sweeps do not double-emit.
 func (h *Handler) SweepSLA(ctx context.Context, id identity.Identity, now time.Time) ([]string, error) {
+	breached, _, err := h.SweepSLAWithSeq(ctx, id, now)
+	return breached, err
+}
+
+// SweepSLAWithSeq is the HTTP-facing form of SweepSLA. It also returns the final
+// event sequence emitted by the sweep so an interactive caller can wait until
+// every breach/reminder from this run is visible in the case projection.
+func (h *Handler) SweepSLAWithSeq(ctx context.Context, id identity.Identity, now time.Time) ([]string, uint64, error) {
 	if err := id.Valid(); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	states, err := h.caseStates(ctx, id)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	ids := make([]string, 0, len(states))
 	for cid := range states {
@@ -248,6 +256,7 @@ func (h *Handler) SweepSLA(ctx context.Context, id identity.Identity, now time.T
 	}
 	sort.Strings(ids) // deterministic emission order
 	var breached []string
+	var finalSeq uint64
 	for _, cid := range ids {
 		st := states[cid]
 		if st.status == domain.StatusCompleted {
@@ -260,18 +269,20 @@ func (h *Handler) SweepSLA(ctx context.Context, id identity.Identity, now time.T
 			}
 			b, err := json.Marshal(events.CaseSLABreached{CaseID: cid})
 			if err != nil {
-				return breached, fmt.Errorf("case-manager: marshal sla_breached: %w", err)
+				return breached, finalSeq, fmt.Errorf("case-manager: marshal sla_breached: %w", err)
 			}
 			// The fold above dedupes within this process; the claim dedupes across
 			// them, so a second scheduler (or a manual sweep on another node) racing
 			// this one cannot breach the same case twice and fire its escalation and
 			// webhook twice. Losing the claim means someone else recorded it.
-			if _, err := h.appendUnique(ctx, id, events.TypeCaseSLABreached, b, slaBreachClaim(cid)); err != nil {
+			event, err := h.appendUnique(ctx, id, events.TypeCaseSLABreached, b, slaBreachClaim(cid))
+			if err != nil {
 				if errors.Is(err, eventlog.ErrConflict) {
 					continue
 				}
-				return breached, err
+				return breached, finalSeq, err
 			}
+			finalSeq = event.Seq
 			breached = append(breached, cid)
 		case domain.SLADueSoon:
 			// Nudge once, before breach, so an assignee gets to the task in time.
@@ -280,17 +291,19 @@ func (h *Handler) SweepSLA(ctx context.Context, id identity.Identity, now time.T
 			}
 			b, err := json.Marshal(events.CaseSLAReminder{CaseID: cid})
 			if err != nil {
-				return breached, fmt.Errorf("case-manager: marshal sla_reminder: %w", err)
+				return breached, finalSeq, fmt.Errorf("case-manager: marshal sla_reminder: %w", err)
 			}
-			if _, err := h.appendUnique(ctx, id, events.TypeCaseSLAReminder, b, slaReminderClaim(cid)); err != nil {
+			event, err := h.appendUnique(ctx, id, events.TypeCaseSLAReminder, b, slaReminderClaim(cid))
+			if err != nil {
 				if errors.Is(err, eventlog.ErrConflict) {
 					continue
 				}
-				return breached, err
+				return breached, finalSeq, err
 			}
+			finalSeq = event.Seq
 		}
 	}
-	return breached, nil
+	return breached, finalSeq, nil
 }
 
 // PendingSLAEscalations returns breached cases whose external escalation has no

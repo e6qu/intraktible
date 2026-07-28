@@ -98,12 +98,14 @@ func (s *Service) runAgent(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	// Async: queue the run and return 202 immediately; the caller polls the run.
 	if req.Async {
-		runID, err := s.cmd.StartRun(r.Context(), id, name, req.Prompt)
+		runID, event, err := s.cmd.StartRunWithSeq(r.Context(), id, name, req.Prompt)
 		if err != nil {
 			httpx.Error(w, http.StatusBadRequest, err)
 			return
 		}
-		httpx.JSON(w, http.StatusAccepted, map[string]any{"run_id": runID, "status": "running"})
+		httpx.JSON(w, http.StatusAccepted, map[string]any{
+			"run_id": runID, "status": "running", "event_id": event.ID, "seq": event.Seq,
+		})
 		return
 	}
 	res, err := s.cmd.RunAgent(r.Context(), id, name, req.Prompt, req.Version)
@@ -114,6 +116,7 @@ func (s *Service) runAgent(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, map[string]any{
 		"run_id": res.RunID, "status": res.Status,
 		"text": res.Text, "structured": res.Structured, "error": res.Error,
+		"seq": res.EventSeq,
 	})
 }
 
@@ -256,7 +259,7 @@ func (s *Service) escalateRun(w http.ResponseWriter, r *http.Request) {
 	if strings.TrimSpace(caseType) == "" {
 		caseType = "agent_review"
 	}
-	caseID, _, err := s.cmd.EscalateRun(r.Context(), id, domain.EscalateRun{
+	caseID, event, err := s.cmd.EscalateRun(r.Context(), id, domain.EscalateRun{
 		Agent: r.PathValue("name"), RunID: r.PathValue("run_id"),
 		CompanyName: req.CompanyName, CaseType: caseType, SLADays: req.SLADays,
 	})
@@ -264,7 +267,9 @@ func (s *Service) escalateRun(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, err)
 		return
 	}
-	httpx.JSON(w, http.StatusAccepted, map[string]any{"case_id": caseID})
+	httpx.JSON(w, http.StatusAccepted, map[string]any{
+		"case_id": caseID, "event_id": event.ID, "seq": event.Seq,
+	})
 }
 
 func (s *Service) listRuns(w http.ResponseWriter, r *http.Request) {

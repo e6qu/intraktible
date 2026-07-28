@@ -35,6 +35,28 @@ describe('API-call recorder', () => {
     expect(get(recordedCalls)).toEqual([{ method: 'POST', path: '/v1/hello', status: 200 }]);
   });
 
+  it('waits for the read model when a successful command returns an event sequence', async () => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === '/readyz') {
+        return new Response(JSON.stringify({ status: 'ready', applied: 17 }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+      return new Response(JSON.stringify({ event_id: 'event-17', seq: 17 }), {
+        status: 202,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    });
+    vi.stubGlobal('fetch', fetcher);
+
+    const response = await recordingFetch('/v1/hello', { method: 'POST' });
+
+    await expect(response.json()).resolves.toEqual({ event_id: 'event-17', seq: 17 });
+    expect(fetcher).toHaveBeenNthCalledWith(1, '/v1/hello', { method: 'POST' });
+    expect(fetcher).toHaveBeenNthCalledWith(2, '/readyz');
+  });
+
   it('caps the per-navigation ring buffer at 50 calls, keeping the newest', async () => {
     for (let i = 0; i < 60; i++) await recordingFetch(`/v1/decisions/${i}`);
     const calls = get(recordedCalls);

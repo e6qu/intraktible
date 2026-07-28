@@ -16,11 +16,10 @@ DOC (a claim not backed by code).
 
 ## Queue
 
-No open implementation or local-validation items. Merge the sole open PR
-(#155) after the documentation-only final CI rerun is green. The complete
-implementation and continuity state passed all nine jobs in run 30300119151,
-and the branch was reconciled with fresh `origin/main` immediately before
-release preparation.
+The second whole-product audit inventory from merged commit `fea7a26` is
+complete. No evidence-backed product-journey gap remains open. PR #156 is the
+repository's single review queue, all nine jobs in run 30306203748 pass, and
+GitHub reports it cleanly mergeable.
 
 **The honest edges** — not defects, but the limits of what was checked:
 
@@ -68,9 +67,8 @@ release preparation.
   JetStream assigns the sequence at publish-ack and the push consumer delivers
   every message in stream order, so there is no watermark to skip past.
 
-- The swallowed-error sweep is complete across the Go backend packages. The
-  journey-level `web/src/` pass is still active; do not treat its earlier
-  completion claim as settled.
+- The swallowed-error sweep is complete across both the Go backend packages and
+  the journey-level `web/src/` pass.
 - `context-layer/connectors/resilience.go` retry loop and
   `platform/secretbox` multi-key decrypt attempt are legitimate control flow —
   both fail loudly when every attempt is exhausted.
