@@ -36,7 +36,7 @@ Fix every missing or misleading piece found; do not stop at documenting gaps.
 ## Phase
 
 **Fourth whole-product journey audit — governed dependencies complete; final
-remote CI handoff in progress.**
+review handoff complete.**
 PR #157 merged as `8622b7a`; the GitHub PR queue is empty, and the refreshed
 `hardening/production-readiness-audit` branch is fast-forwarded exactly to
 `origin/main`. The third audit's model-validation, exact issued-notice, and
@@ -95,9 +95,9 @@ unversioned AI nodes outside sandbox. Focused command, projection/replay,
 assembled HTTP, agent-provider, notification, authorization, OpenAPI, Svelte,
 and frontend-unit tests are green. Deterministic demo regeneration, the
 race-enabled repository check, all 124 native browser journeys, all 81
-real-Wasm journeys, and all 3 embedded-production smokes are green. Only the
-remote CI result remains. The complete 43-file slice is commit `333e63f` in
-PR #158, the repository's sole open PR.
+real-Wasm journeys, and all 3 embedded-production smokes are green. The complete
+43-file slice is commit `333e63f` in PR #158, the repository's sole open PR.
+Run 30491363960 is terminal green: all nine jobs passed.
 
 The second pass completed its two slices. Context data is
 fully operable from the browser: entity create/update, event recording, feature
@@ -147,7 +147,9 @@ complete local `make ci` gate, then passed all nine remote jobs in run
   220 Vitest tests, 124 native browser journeys, 81 real-Wasm journeys, and 3
   embedded-production smokes all pass. `make ci` also passes strict Go lint,
   SAST, deadcode, zero clone groups, zero reachable vulnerabilities, and
-  dependency licenses.
+  dependency licenses. PR #158 run 30491363960 repeats the matrix remotely:
+  container release, demo/Wasm, native and embedded e2e, Go, real PostgreSQL,
+  Shauth SSO, Terraform, and web all pass.
 - The model-validation endpoint now takes validator identity only from the
   authenticated actor, is approver-gated, rejects the model owner, requires
   substantive evidence, and approval requires the latest independent
