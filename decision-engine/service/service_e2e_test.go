@@ -286,9 +286,17 @@ func TestNodeTraceErasure(t *testing.T) {
 		rec = history.Record{}
 		var rerr error
 		rec, _, rerr = history.Read(context.Background(), st, id, dec.DecisionID)
-		return rerr == nil && len(rec.Nodes) > 0
+		if rerr != nil {
+			return false
+		}
+		for _, node := range rec.Nodes {
+			if node.NodeID == "a" && len(node.Output) > 0 {
+				return true
+			}
+		}
+		return false
 	}) {
-		t.Fatal("decision record never projected")
+		t.Fatal("assignment node output never projected")
 	}
 	var aOut string
 	for _, n := range rec.Nodes {

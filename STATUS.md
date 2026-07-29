@@ -36,8 +36,8 @@ Fix every missing or misleading piece found; do not stop at documenting gaps.
 ## Phase
 
 **Third whole-product journey audit — complete on PR #157.**
-PR #156 merged as `92b285f`; there are no open PRs, and the refreshed
-`hardening/production-readiness-audit` branch starts exactly at `origin/main`.
+PR #156 merged as `92b285f`; PR #157 is the sole open PR, and the refreshed
+`hardening/production-readiness-audit` branch started exactly at `origin/main`.
 `docs/JOURNEYS.md` is being treated as an executable product contract rather
 than endpoint documentation. The architecture/continuity/component plans are
 read and remote `main` is authoritative and clean. Three complete slices are now
@@ -93,7 +93,7 @@ issued artifact. Both are now fixed across the command/event/projection/API/UI
 paths. Model approval requires substantive passing evidence from an
 authenticated actor other than the model owner; the exact adverse-action bytes
 are retained, hash-verified, replayable, and downloaded separately from the
-current preview. The release gate is active in `DO_NEXT.md`.
+current preview. `DO_NEXT.md` has no open implementation items.
 
 **Current local gates, all green:** `make check` and `make ci` pass vet/build,
 strict lint, SAST, the complete race-enabled Go suite, deadcode, zero clone
@@ -104,9 +104,13 @@ embedded-binary smokes also pass. Fresh `origin/main` still equals the local
 base `92b285f`; the implementation is committed as `4210abf` and PR #157 is the
 repository's sole review queue. Run 30486000491 passes all nine jobs, including
 Go, web, native browser, real-Wasm, embedded artifact, real PostgreSQL, Shauth
-SSO, Terraform, and container release. `DO_NEXT.md` has no open implementation
-items. The prior merged baseline remains independently proven by PR #156 run
-30306203748 across the same deployment-specific matrix.
+SSO, Terraform, and container release. Final continuity-head run 30486513300
+then exposed a pre-existing node-trace e2e race under the loaded PostgreSQL
+matrix: it waited for any projected node before asserting a later node. The
+predicate now waits for the exact assignment output under test; its 100-run
+race stress test and the complete local `make ci` gate pass. The prior merged
+baseline remains independently proven by PR #156 run 30306203748 across the
+same deployment-specific matrix.
 
 ## Ground truth established so far
 

@@ -18,8 +18,8 @@ DOC (a claim not backed by code).
 
 Third whole-product audit from authoritative merged commit `92b285f`.
 
-No open implementation items. PR #157 run 30486000491 passes all nine jobs and
-is the repository's sole review queue.
+No open implementation items. PR #157 is the repository's sole review queue;
+merge only after every required check on its current head is green.
 
 ---
 

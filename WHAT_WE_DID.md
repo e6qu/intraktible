@@ -542,3 +542,7 @@ Linux, entirely that VM's fsync path.
   nine jobs pass, including Go race/security/license gates, 122 native browser
   journeys, 81 real-Wasm journeys, the embedded artifact, real PostgreSQL,
   Shauth SSO, Terraform, web, and container release.
+- 2026-07-29: Repaired the real-PostgreSQL CI race exposed by PR #157 run
+  30486513300: `TestNodeTraceErasure` now waits for the exact assignment output
+  it seals instead of any earlier projected node. Its 100-run race stress test
+  and the complete `make ci` matrix pass.
