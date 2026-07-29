@@ -188,8 +188,8 @@ test('journey: assign a case, note it, and set its status', async ({ page }) => 
   await expect(page.getByTestId('audit')).toContainText('note');
 });
 
-// --- 7. Author a policy, backtest it, publish ----------------------------------
-test('journey: create a policy, backtest a draft band, and publish it', async ({ page }) => {
+// --- 7. Author a policy, backtest, publish, and approve -------------------------
+test('journey: create, backtest, publish, and independently approve a policy', async ({ page }) => {
   page.on('dialog', (d) => d.accept()); // policy publish confirms
   await forcePersona(page, 'builder');
   await gotoReady(page, 'policies');
@@ -214,6 +214,20 @@ test('journey: create a policy, backtest a draft band, and publish it', async ({
 
   await page.getByTestId('publish-policy').click();
   await expect(page.getByText(/Published policy v\d+/)).toBeVisible();
+
+  const governance = page.getByTestId('policy-governance');
+  await expect(governance).toContainText('no approved version');
+  await governance.getByTestId('request-policy-approval').click();
+  await expect(governance).toContainText('pending review');
+
+  await switchRole(page, 'approver');
+  await governance.getByRole('button', { name: 'Approve' }).click();
+  await governance
+    .getByLabel('policy decision reason')
+    .fill('Independent impact review passed in the WebAssembly backend.');
+  await governance.getByRole('button', { name: 'Confirm approval' }).click();
+  await expect(governance).toContainText(/approved v\d+/);
+  await expect(governance).toContainText('serving in staging and production');
 });
 
 // --- 8. Grant and revoke a pre-approval ----------------------------------------

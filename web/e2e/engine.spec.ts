@@ -930,6 +930,30 @@ test('a structured config panel edits a node without raw JSON', async ({ page, r
   await expect(page.getByLabel('node config')).toHaveValue('{"condition":"score >= 700"}');
 });
 
+test('an AI node pins an immutable agent version without raw JSON', async ({ page, request }) => {
+  const slug = uniqueSlug();
+  const created = await request.post('/v1/flows', {
+    headers: { 'X-Api-Key': KEY },
+    data: { slug, name: 'Versioned AI' }
+  });
+  const { flow_id } = await created.json();
+
+  await page.goto(`/engine/${flow_id}`);
+  await openTools(page);
+  await page.getByLabel('new node type').selectOption('ai');
+  await page.getByRole('button', { name: 'Add', exact: true }).click();
+  await page.getByLabel('agent', { exact: true }).fill('assess');
+  await page.getByLabel('agent version').fill('3');
+  await page.getByLabel('ai output').fill('assessment');
+
+  await expect(page.getByLabel('node config')).toHaveValue(
+    '{"agent":"assess","version":3,"output":"assessment"}'
+  );
+  await expect(
+    page.getByText(/Staging and production require a positive immutable agent version/)
+  ).toBeVisible();
+});
+
 test('the structured editor refuses to overwrite invalid raw node config', async ({
   page,
   request

@@ -89,7 +89,7 @@ func (c *erroringConnector) Fetch(context.Context, identity.Identity, string, js
 
 type erroringAgent struct{ called bool }
 
-func (a *erroringAgent) RunAgent(context.Context, identity.Identity, string, string) (json.RawMessage, error) {
+func (a *erroringAgent) RunAgent(context.Context, identity.Identity, string, string, int) (json.RawMessage, error) {
 	a.called = true
 	return nil, errors.New("assess: provider error")
 }

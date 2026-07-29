@@ -5,6 +5,7 @@ package policy_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/e6qu/intraktible/decision-engine/events"
@@ -131,36 +132,103 @@ func TestBacktestDistributionAndFlips(t *testing.T) {
 	}
 }
 
-// TestPolicyLifecycle exercises command → log → projection → ActiveForFlow.
+// TestPolicyLifecycle exercises command → log → projection → sandbox latest and
+// governed serving, including four-eyes and the last-approved fallback.
 func TestPolicyLifecycle(t *testing.T) {
 	log, st := testutil.NewLogStore(t)
 	h := policy.NewHandler(log)
-	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "author"}
+	maker := identity.Identity{Org: "demo", Workspace: "main", Actor: "author"}
+	checker := identity.Identity{Org: "demo", Workspace: "main", Actor: "checker"}
 	ctx := context.Background()
 
-	policyID, _, err := h.CreatePolicy(ctx, id, "credit-stp", "credit-risk")
+	policyID, _, err := h.CreatePolicy(ctx, maker, "credit-stp", "credit-risk")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, err := h.PublishVersion(ctx, id, policyID, spec()); err != nil {
+	if _, _, _, err := h.PublishVersion(ctx, maker, policyID, spec()); err != nil {
 		t.Fatal(err)
 	}
 	// Publishing to an unknown policy fails loudly.
-	if _, _, _, err := h.PublishVersion(ctx, id, "nope", spec()); err == nil {
+	if _, _, _, err := h.PublishVersion(ctx, maker, "nope", spec()); err == nil {
 		t.Fatal("expected unknown-policy error")
 	}
 
 	if _, err := projection.New(log, st, policy.Projector{}).RebuildTo(ctx, 0); err != nil {
 		t.Fatal(err)
 	}
-	pv, ver, ok, err := policy.ActiveForFlow(ctx, st, id, "credit-risk")
+	pv, ver, ok, err := policy.ActiveForFlow(ctx, st, maker, "credit-risk")
 	if err != nil || !ok {
 		t.Fatalf("active policy not found: ok=%v err=%v", ok, err)
 	}
 	if pv.PolicyID != policyID || ver.Version != 1 || len(ver.Spec.Rules) != 2 {
 		t.Fatalf("unexpected active policy: %+v / %+v", pv, ver)
 	}
-	if _, _, ok, _ := policy.ActiveForFlow(ctx, st, id, "no-such-flow"); ok {
+	if _, _, _, err := policy.ApprovedForFlow(ctx, st, maker, "credit-risk"); !errors.Is(err, policy.ErrNoApprovedVersion) {
+		t.Fatalf("published but unapproved policy error = %v, want ErrNoApprovedVersion", err)
+	}
+
+	requestID, _, err := h.RequestApproval(ctx, maker, policyID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.Approve(ctx, maker, policyID, requestID, "self approval"); err == nil {
+		t.Fatal("version author/requester must not approve their own request")
+	}
+	if _, err := h.Approve(ctx, checker, policyID, requestID, "bands reviewed"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := projection.New(log, st, policy.Projector{}).RebuildTo(ctx, 0); err != nil {
+		t.Fatal(err)
+	}
+	_, governed, ok, err := policy.ApprovedForFlow(ctx, st, maker, "credit-risk")
+	if err != nil || !ok || governed.Version != 1 {
+		t.Fatalf("approved v1 did not become governed serving version: ok=%v version=%d err=%v", ok, governed.Version, err)
+	}
+
+	looser := spec()
+	looser.Rules[0].When = "score >= 0.75"
+	if _, _, _, err := h.PublishVersion(ctx, maker, policyID, looser); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := projection.New(log, st, policy.Projector{}).RebuildTo(ctx, 0); err != nil {
+		t.Fatal(err)
+	}
+	_, latest, _, _ := policy.ActiveForFlow(ctx, st, maker, "credit-risk")
+	_, governed, ok, err = policy.ApprovedForFlow(ctx, st, maker, "credit-risk")
+	if latest.Version != 2 || err != nil || !ok || governed.Version != 1 {
+		t.Fatalf("unapproved v2 must be sandbox latest while v1 keeps serving: latest=%d governed=%d ok=%v err=%v", latest.Version, governed.Version, ok, err)
+	}
+
+	requestID, _, err = h.RequestApproval(ctx, maker, policyID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.Reject(ctx, checker, policyID, requestID, "threshold evidence incomplete"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := projection.New(log, st, policy.Projector{}).RebuildTo(ctx, 0); err != nil {
+		t.Fatal(err)
+	}
+	_, governed, ok, err = policy.ApprovedForFlow(ctx, st, maker, "credit-risk")
+	if err != nil || !ok || governed.Version != 1 {
+		t.Fatalf("rejection must retain v1: ok=%v version=%d err=%v", ok, governed.Version, err)
+	}
+
+	requestID, _, err = h.RequestApproval(ctx, maker, policyID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.Approve(ctx, checker, policyID, requestID, "evidence complete"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := projection.New(log, st, policy.Projector{}).RebuildTo(ctx, 0); err != nil {
+		t.Fatal(err)
+	}
+	pv, governed, ok, err = policy.ApprovedForFlow(ctx, st, maker, "credit-risk")
+	if err != nil || !ok || governed.Version != 2 || pv.ApprovedBy != checker.Actor || pv.Pending != nil {
+		t.Fatalf("v2 governance did not replay correctly: policy=%+v version=%+v ok=%v err=%v", pv, governed, ok, err)
+	}
+	if _, _, ok, _ := policy.ActiveForFlow(ctx, st, maker, "no-such-flow"); ok {
 		t.Fatal("expected no active policy for an unbound flow")
 	}
 }

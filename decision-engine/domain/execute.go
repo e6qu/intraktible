@@ -721,18 +721,31 @@ type ConnectSpec struct {
 // their connector calls before execution (keeping Execute pure). It fails loudly on
 // a Connect node missing its connector or output.
 func ConnectSpecs(g events.Graph) ([]ConnectSpec, error) {
-	return nodeSpecs(g, events.NodeConnect, func(n events.Node, cfg connectConfig) (ConnectSpec, error) {
-		if cfg.Connector == "" || cfg.Output == "" {
-			return ConnectSpec{}, fmt.Errorf("decision-engine: connect node %q needs a connector and an output", n.ID)
-		}
-		return ConnectSpec{NodeID: n.ID, Connector: cfg.Connector, Output: cfg.Output, RequiresConsent: cfg.RequiresConsent, SharesNPI: cfg.SharesNPI}, nil
+	return nodeSpecs(g, events.NodeConnect, func(n events.Node, cfg connectConfig) ConnectSpec {
+		return ConnectSpec{NodeID: n.ID, Connector: cfg.Connector, Output: cfg.Output, RequiresConsent: cfg.RequiresConsent, SharesNPI: cfg.SharesNPI}
 	})
+}
+
+type namedOutputConfig interface {
+	namedOutput() (kind, referenceKind, reference, output string)
+}
+
+func (c connectConfig) namedOutput() (string, string, string, string) {
+	return "connect", "connector", c.Connector, c.Output
+}
+
+func (c aiConfig) namedOutput() (string, string, string, string) {
+	return "ai", "agent", c.Agent, c.Output
+}
+
+func (c predictConfig) namedOutput() (string, string, string, string) {
+	return "predict", "model", c.Model, c.Output
 }
 
 // nodeSpecs walks the graph and builds the shell-resolution spec for every node
 // of one type — the single extractor behind ConnectSpecs/AISpecs/PredictSpecs,
-// so "collect the nodes the shell must pre-resolve" has exactly one implementation.
-func nodeSpecs[C, S any](g events.Graph, nt events.NodeType, build func(n events.Node, cfg C) (S, error)) ([]S, error) {
+// including their shared name/output contract.
+func nodeSpecs[C namedOutputConfig, S any](g events.Graph, nt events.NodeType, build func(n events.Node, cfg C) S) ([]S, error) {
 	var out []S
 	for _, n := range g.Nodes {
 		if n.Type != nt {
@@ -742,11 +755,14 @@ func nodeSpecs[C, S any](g events.Graph, nt events.NodeType, build func(n events
 		if err := decodeConfig(n, &cfg); err != nil {
 			return nil, err
 		}
-		s, err := build(n, cfg)
-		if err != nil {
-			return nil, err
+		kind, referenceKind, reference, output := cfg.namedOutput()
+		if reference == "" || output == "" {
+			return nil, fmt.Errorf(
+				"decision-engine: %s node %q needs a %s and an output",
+				kind, n.ID, referenceKind,
+			)
 		}
-		out = append(out, s)
+		out = append(out, build(n, cfg))
 	}
 	return out, nil
 }
@@ -765,21 +781,22 @@ func evalConnect(n events.Node, ctx map[string]any, edges []events.Edge) (any, s
 // AISpec names an AI node's agent + the key its output lands under (and the literal
 // prompt, empty meaning "send the current input").
 type AISpec struct {
-	NodeID string
-	Agent  string
-	Output string
-	Prompt string
+	NodeID  string
+	Agent   string
+	Version int
+	Output  string
+	Prompt  string
 }
 
 // AISpecs extracts the AI nodes from a graph so the shell can pre-resolve their
 // agent runs before execution (keeping Execute pure). It fails loudly on an AI
 // node missing its agent or output.
 func AISpecs(g events.Graph) ([]AISpec, error) {
-	return nodeSpecs(g, events.NodeAI, func(n events.Node, cfg aiConfig) (AISpec, error) {
-		if cfg.Agent == "" || cfg.Output == "" {
-			return AISpec{}, fmt.Errorf("decision-engine: ai node %q needs an agent and an output", n.ID)
+	return nodeSpecs(g, events.NodeAI, func(n events.Node, cfg aiConfig) AISpec {
+		return AISpec{
+			NodeID: n.ID, Agent: cfg.Agent, Version: cfg.Version,
+			Output: cfg.Output, Prompt: cfg.Prompt,
 		}
-		return AISpec{NodeID: n.ID, Agent: cfg.Agent, Output: cfg.Output, Prompt: cfg.Prompt}, nil
 	})
 }
 
@@ -804,11 +821,8 @@ type PredictSpec struct {
 // their model evaluations before execution (keeping Execute pure). It fails loudly
 // on a Predict node missing its model or output.
 func PredictSpecs(g events.Graph) ([]PredictSpec, error) {
-	return nodeSpecs(g, events.NodePredict, func(n events.Node, cfg predictConfig) (PredictSpec, error) {
-		if cfg.Model == "" || cfg.Output == "" {
-			return PredictSpec{}, fmt.Errorf("decision-engine: predict node %q needs a model and an output", n.ID)
-		}
-		return PredictSpec{NodeID: n.ID, Model: cfg.Model, Output: cfg.Output}, nil
+	return nodeSpecs(g, events.NodePredict, func(n events.Node, cfg predictConfig) PredictSpec {
+		return PredictSpec{NodeID: n.ID, Model: cfg.Model, Output: cfg.Output}
 	})
 }
 

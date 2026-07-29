@@ -35,9 +35,22 @@ Fix every missing or misleading piece found; do not stop at documenting gaps.
 
 ## Phase
 
-**Third whole-product journey audit — complete on PR #157.**
-PR #156 merged as `92b285f`; PR #157 is the sole open PR, and the refreshed
-`hardening/production-readiness-audit` branch started exactly at `origin/main`.
+**Fourth whole-product journey audit — governed dependencies complete; final
+release/PR handoff in progress.**
+PR #157 merged as `8622b7a`; the GitHub PR queue is empty, and the refreshed
+`hardening/production-readiness-audit` branch is fast-forwarded exactly to
+`origin/main`. The third audit's model-validation, exact issued-notice, and
+projection-test-race repairs are now the authoritative baseline. The fourth
+audit is re-walking every documented product journey across the UI/UX, HTTP
+boundary, command/event truth, projections, schedulers/notifications,
+restart/replay, and both native and real-Wasm browser paths.
+
+That inventory is complete. Every documented journey retains a concrete UI or
+API entry and supporting end-to-end coverage. The two mutable decision
+dependencies it found are now closed: policy activation is independently
+governed and snapshotted per decision, while governed AI nodes pin an immutable
+agent version so registry edits cannot bypass a reviewed flow deployment.
+`DO_NEXT.md` has no open product item.
 `docs/JOURNEYS.md` is being treated as an executable product contract rather
 than endpoint documentation. The architecture/continuity/component plans are
 read and remote `main` is authoritative and clean. Three complete slices are now
@@ -72,6 +85,19 @@ inert, and model mentions, previously landing on an undifferentiated registry,
 open the exact subject and discussion thread; model approvals still open the
 exact Governance panel.
 
+The fourth audit's governed-dependency slice is implemented across the native
+core, HTTP surface, UI, notifications, and seed source. Policy publication is
+now immutable sandbox iteration, while staging/production retain the last
+four-eyes-approved version; a decision records its selected policy before
+execution and an eventual resume reuses that exact version. AI nodes carry an
+immutable agent version, and both recorded decisions and previews refuse
+unversioned AI nodes outside sandbox. Focused command, projection/replay,
+assembled HTTP, agent-provider, notification, authorization, OpenAPI, Svelte,
+and frontend-unit tests are green. Deterministic demo regeneration, the
+race-enabled repository check, all 124 native browser journeys, all 81
+real-Wasm journeys, and all 3 embedded-production smokes are green. Only the
+remote reconciliation and single-PR handoff remain.
+
 The second pass completed its two slices. Context data is
 fully operable from the browser: entity create/update, event recording, feature
 recomputation, connector validation, and durable fetch evidence all use the real
@@ -95,30 +121,32 @@ authenticated actor other than the model owner; the exact adverse-action bytes
 are retained, hash-verified, replayable, and downloaded separately from the
 current preview. `DO_NEXT.md` has no open implementation items.
 
-**Current local gates, all green:** `make check` and `make ci` pass vet/build,
-strict lint, SAST, the complete race-enabled Go suite, deadcode, zero clone
-groups, zero reachable vulnerabilities, and dependency licenses. Prettier,
-zero-warning ESLint and Svelte check, all 218 Vitest tests, the production web
-build, 122 native Playwright journeys, 81 real-Wasm journeys, and 3
-embedded-binary smokes also pass. Fresh `origin/main` still equals the local
-base `92b285f`; the implementation is committed as `4210abf` and PR #157 is the
-repository's sole review queue. Run 30486000491 passes all nine jobs, including
-Go, web, native browser, real-Wasm, embedded artifact, real PostgreSQL, Shauth
-SSO, Terraform, and container release. Final continuity-head run 30486513300
-then exposed a pre-existing node-trace e2e race under the loaded PostgreSQL
-matrix: it waited for any projected node before asserting a later node. The
-predicate now waits for the exact assignment output under test; its 100-run
-race stress test and the complete local `make ci` gate pass. The prior merged
-baseline remains independently proven by PR #156 run 30306203748 across the
-same deployment-specific matrix.
+**Current local gates, all green:** the fourth-audit `make check` and `make ci`
+pass vet/build, strict lint, SAST, the complete race-enabled Go suite, deadcode,
+zero clone groups, zero reachable vulnerabilities, and dependency licenses.
+Prettier, zero-warning ESLint and Svelte check, all 220 Vitest tests, 124 native
+Playwright journeys, 81 real-Wasm journeys, and 3 embedded-binary smokes also
+pass. PR #157's final head repaired the
+node-trace projection-test race, passed its 100-run race stress test and the
+complete local `make ci` gate, then passed all nine remote jobs in run
+30487298842. The merged baseline is `8622b7a`, exactly matching fresh
+`origin/main`.
 
 ## Ground truth established so far
 
-- Current branch `hardening/production-readiness-audit` is based on PR #156's
-  merge commit `92b285f`; a fresh fetch confirms it exactly matches
+- Current branch `hardening/production-readiness-audit` is based on PR #157's
+  merge commit `8622b7a`; a fresh fetch confirms it exactly matches
   `origin/main`.
-- PR #156 is merged and the remote PR queue is empty — satisfies the
+- PR #157 is merged and the remote PR queue is empty — satisfies the
   one-open-PR rule.
+- Fourth-audit product and artifact gates are green: policy replay/governance,
+  the complete Decision Engine package, assembled policy HTTP serving, exact
+  resume snapshots, immutable agent dispatch, notifications, route
+  authorization, OpenAPI drift, `make check`, zero-warning Svelte/ESLint,
+  220 Vitest tests, 124 native browser journeys, 81 real-Wasm journeys, and 3
+  embedded-production smokes all pass. `make ci` also passes strict Go lint,
+  SAST, deadcode, zero clone groups, zero reachable vulnerabilities, and
+  dependency licenses.
 - The model-validation endpoint now takes validator identity only from the
   authenticated actor, is approver-gated, rejects the model owner, requires
   substantive evidence, and approval requires the latest independent

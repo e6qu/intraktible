@@ -54,7 +54,20 @@ func review(caseType string, slaDays int, suspend bool) map[string]any {
 func split(condition string) map[string]any { return map[string]any{"condition": condition} }
 
 func aiNode(agent, output, prompt string) map[string]any {
-	return map[string]any{"agent": agent, "output": output, "prompt": prompt}
+	versions := map[string]int{
+		"aml-narrative":         3,
+		"kyc-extract":           2,
+		"dispute-summarizer":    2,
+		"fraud-explainer":       2,
+		"collections-planner":   2,
+		"claims-adjuster-brief": 2,
+		"merchant-memo":         1,
+	}
+	version, ok := versions[agent]
+	if !ok {
+		panic("seed graph references an unversioned agent: " + agent)
+	}
+	return map[string]any{"agent": agent, "version": version, "output": output, "prompt": prompt}
 }
 
 func predict(model, output string) map[string]any {

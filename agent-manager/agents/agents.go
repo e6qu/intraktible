@@ -660,9 +660,18 @@ type Provider struct {
 	Tools    Toolbox
 }
 
-// RunAgent runs the named agent against prompt and returns its output as JSON.
-func (p Provider) RunAgent(ctx context.Context, id identity.Identity, agent, prompt string) (json.RawMessage, error) {
-	out, err := InvokeWithTools(ctx, p.Store, p.Registry, p.Tools, id, agent, prompt)
+// RunAgent runs the named agent version against prompt and returns its output as
+// JSON. Version 0 follows latest for sandbox iteration; production flow nodes pin
+// a positive immutable version.
+func (p Provider) RunAgent(ctx context.Context, id identity.Identity, agent, prompt string, version int) (json.RawMessage, error) {
+	cfg, ok, err := ReadConfig(ctx, p.Store, id, agent, version)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, unknownRefError{msg: fmt.Sprintf("agent-manager: unknown agent %q version %d", agent, version)}
+	}
+	out, err := InvokeConfig(ctx, p.Registry, p.Tools, id, cfg, prompt)
 	if err != nil {
 		return nil, err
 	}

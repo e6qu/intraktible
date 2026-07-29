@@ -13,7 +13,9 @@ will find genuinely absent or shallow.
 Verified in code, not marketing: the decision engine actually executes every node
 type with input-varying results; the expression evaluator is a real VM; Predict is
 real math (logistic / gradient-boosted trees / expression / egress-guarded external);
-everything is event-sourced and replayable; four-eyes maker-checker, RBAC, OIDC/SAML
+everything is event-sourced and replayable; four-eyes maker-checker for production
+flows, models, and operational policy versions; immutable agent-version pins in
+governed flows; RBAC, OIDC/SAML
 SSO, SCIM, AES-256-GCM at-rest encryption, crypto-shred erasure, and an SR 11-7 model
 inventory are all real and enforced. The decision table is DMN-grade (five hit
 policies + aggregation). **None of the gaps below are facades** — they are honestly

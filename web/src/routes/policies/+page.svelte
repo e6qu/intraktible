@@ -16,6 +16,8 @@
     listPolicies,
     createPolicy,
     publishPolicy,
+    requestPolicyApproval,
+    decidePolicyApproval,
     policyBacktest,
     listFlows,
     type Policy,
@@ -53,6 +55,9 @@
     `otherwise → ${dflt}`
   ]);
   let publishing = $state(false);
+  let govBusy = $state(false);
+  let govReason = $state('');
+  let govDecision = $state<'approve' | 'reject' | ''>('');
 
   // Field names the selected policy's bands actually key on, read from the `when`
   // expressions (e.g. `risk == "low"` / `fico_score >= 700` → risk, fico_score).
@@ -212,14 +217,17 @@
     error = '';
     try {
       [policies, flows] = await Promise.all([listPolicies(key), listFlows(key)]);
-      const linkedPolicy = $page.url.searchParams.get('policy');
+      const governancePolicy = $page.url.searchParams.get('governance');
+      const linkedPolicy = governancePolicy ?? $page.url.searchParams.get('policy');
       if (!selectedId && linkedPolicy) {
         if (!policies.some((policy) => policy.policy_id === linkedPolicy)) {
           throw new Error(`Policy ${linkedPolicy} was not found in this workspace.`);
         }
         edit(linkedPolicy);
         await tick();
-        document.getElementById('policy-discussion')?.scrollIntoView({ block: 'start' });
+        document
+          .getElementById(governancePolicy ? 'policy-governance' : 'policy-discussion')
+          ?.scrollIntoView({ block: 'start' });
       }
     } catch (e) {
       error = msg(e);
@@ -253,6 +261,8 @@
     // Drop the previous policy's preview-impact table and error — they belong to a
     // different policy and would otherwise render under this one's editor.
     btReport = null;
+    govReason = '';
+    govDecision = '';
     error = '';
   }
   function addRule() {
@@ -286,11 +296,11 @@
       toast.error('Add at least one rule before publishing.');
       return;
     }
-    // Publishing makes this version the live policy for real decisions — confirm the
-    // irreversible activation before the write.
+    // Publishing is immutable authoring, not production activation: sandbox follows
+    // latest while governed environments retain the last approved version.
     if (
       !confirm(
-        'Publish this policy version? It becomes live immediately and applies to real decisions.'
+        'Publish this immutable policy version? Sandbox will use it immediately; staging and production keep the last approved version until a different actor approves this one.'
       )
     )
       return;
@@ -303,6 +313,45 @@
       toast.error(msg(e));
     } finally {
       publishing = false;
+    }
+  }
+  async function requestApproval() {
+    if (!selectedId || govBusy) return;
+    govBusy = true;
+    try {
+      await requestPolicyApproval(key, selectedId);
+      toast.success('Policy approval requested.');
+      await load();
+    } catch (e) {
+      toast.error(msg(e));
+    } finally {
+      govBusy = false;
+    }
+  }
+  async function decideApproval(action: 'approve' | 'reject') {
+    if (!selected?.pending || govBusy) return;
+    const reason = govReason.trim();
+    if (!reason) {
+      toast.error(`A reason for ${action === 'approve' ? 'approval' : 'rejection'} is required.`);
+      return;
+    }
+    govBusy = true;
+    try {
+      await decidePolicyApproval(
+        key,
+        selected.policy_id,
+        selected.pending.request_id,
+        action === 'approve',
+        reason
+      );
+      toast.success(action === 'approve' ? 'Policy version approved.' : 'Policy request rejected.');
+      govReason = '';
+      govDecision = '';
+      await load();
+    } catch (e) {
+      toast.error(msg(e));
+    } finally {
+      govBusy = false;
     }
   }
   // preview replays a dataset through the bound flow + the draft bands, diffing
@@ -341,7 +390,8 @@
   <p class="muted">
     A policy maps a flow's output to a disposition — <b>approve</b> / <b>decline</b>
     (straight-through) or <b>refer</b> (to a human). The decide path applies the policy bound to a flow
-    and records the disposition. Rules are tried in order; the first match wins.
+    and records the disposition. Rules are tried in order; the first match wins. Sandbox follows the newest
+    published version; staging and production use only the newest version approved by a different actor.
   </p>
 
   <form
@@ -381,8 +431,9 @@
       <table>
         <thead>
           <tr
-            ><th>Name</th><th>Flow</th><th>Version</th><th>Mix</th><th>Published</th><th>Author</th
-            ><th></th></tr
+            ><th>Name</th><th>Flow</th><th>Version</th><th>Governance</th><th>Mix</th><th
+              >Published</th
+            ><th>Author</th><th></th></tr
           >
         </thead>
         <tbody>
@@ -393,6 +444,19 @@
               <td>{p.name}</td>
               <td class="mono">{p.flow_slug}</td>
               <td>{p.latest > 0 ? `v${p.latest}` : '—'}</td>
+              <td>
+                {#if p.pending}
+                  <Badge tone="warn">v{p.pending.version} pending</Badge>
+                {:else if p.approved_version === p.latest && p.latest > 0}
+                  <Badge tone="ok">v{p.approved_version} approved</Badge>
+                {:else if p.approved_version > 0}
+                  <Badge tone="warn">v{p.approved_version} serving</Badge>
+                {:else if p.latest > 0}
+                  <Badge tone="danger">not approved</Badge>
+                {:else}
+                  <span class="muted">—</span>
+                {/if}
+              </td>
               <td>
                 {#if mix.length > 0}
                   <span class="mix">
@@ -425,13 +489,15 @@
             </tr>
             {#if historyId === p.policy_id}
               <tr class="history-row">
-                <td colspan="7">
+                <td colspan="8">
                   <div class="history" data-testid="version-history">
                     <p class="muted">Published versions (newest first):</p>
                     <ul>
                       {#each [...p.versions].reverse() as v (v.version)}
                         <li>
                           <b>v{v.version}</b>
+                          {#if v.version === p.approved_version}<Badge tone="ok">approved</Badge
+                            >{/if}
                           <span class="hist-mix">
                             {#each dispositionMix(v.spec) as c (c.disposition)}
                               <Badge tone={DISPOSITION_TONE[c.disposition]}
@@ -528,6 +594,93 @@
           {publishing ? 'Publishing…' : 'Publish version'}
         </button>
       </div>
+
+      <section id="policy-governance" class="governance" data-testid="policy-governance">
+        <div>
+          <h2>Governance</h2>
+          {#if selected.approved_version > 0}
+            <p class="gov-status">
+              <Badge tone="ok">approved v{selected.approved_version}</Badge>
+              <span class="muted">
+                serving in staging and production{#if selected.approved_by}
+                  · approved by {selected.approved_by}{/if}
+              </span>
+            </p>
+          {:else}
+            <p class="gov-status">
+              <Badge tone="danger">no approved version</Badge>
+              <span class="muted">staging and production decisions are refused</span>
+            </p>
+          {/if}
+          {#if selected.latest > selected.approved_version}
+            <p class="muted">
+              Published v{selected.latest} is available in sandbox, but it cannot change governed decisions
+              until four-eyes review completes.
+            </p>
+          {/if}
+        </div>
+
+        {#if selected.pending}
+          <div class="pending-review">
+            <p>
+              <Badge tone="warn">v{selected.pending.version} pending review</Badge>
+              <span class="muted">requested by {selected.pending.requested_by}</span>
+            </p>
+            {#if roleAtLeast($user?.role, 'approver')}
+              {#if govDecision}
+                <input
+                  class="decision-reason"
+                  bind:value={govReason}
+                  aria-label="policy decision reason"
+                  placeholder={govDecision === 'approve'
+                    ? 'Why this policy is approved'
+                    : 'Why this request is rejected'}
+                />
+                <button
+                  class:primary={govDecision === 'approve'}
+                  disabled={govBusy}
+                  onclick={() => decideApproval(govDecision === 'approve' ? 'approve' : 'reject')}
+                >
+                  {govBusy
+                    ? 'Recording…'
+                    : `Confirm ${govDecision === 'approve' ? 'approval' : 'rejection'}`}
+                </button>
+                <button
+                  disabled={govBusy}
+                  onclick={() => {
+                    govDecision = '';
+                    govReason = '';
+                  }}>Cancel</button
+                >
+              {:else}
+                {@const latestAuthor = selected.versions.at(-1)?.published_by}
+                {@const cannotApprove =
+                  selected.pending.requested_by === $user?.actor || latestAuthor === $user?.actor}
+                <button
+                  class="primary"
+                  disabled={govBusy || cannotApprove}
+                  title={cannotApprove
+                    ? 'Four-eyes: the version author or requester cannot approve it'
+                    : undefined}
+                  onclick={() => (govDecision = 'approve')}>Approve</button
+                >
+                <button disabled={govBusy} onclick={() => (govDecision = 'reject')}>Reject</button>
+                <span class="muted small"
+                  >The approving actor must differ from the author and requester.</span
+                >
+              {/if}
+            {/if}
+          </div>
+        {:else if selected.latest > selected.approved_version && roleAtLeast($user?.role, 'editor')}
+          <button
+            disabled={govBusy}
+            onclick={requestApproval}
+            data-testid="request-policy-approval"
+          >
+            {govBusy ? 'Requesting…' : `Request approval for v${selected.latest}`}
+          </button>
+        {/if}
+      </section>
 
       <h2 class="preview-h">Preview impact</h2>
       <p class="muted">
@@ -766,6 +919,40 @@
     margin-top: 1.4rem;
     border-top: 1px solid var(--border);
     padding-top: 1rem;
+  }
+  .governance {
+    margin-top: 1.25rem;
+    padding: 0.9rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface-2);
+  }
+  .governance h2 {
+    margin: 0 0 0.5rem;
+  }
+  .gov-status,
+  .pending-review p {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+  .pending-review {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+  .pending-review p {
+    flex-basis: 100%;
+    margin: 0.4rem 0 0;
+  }
+  .decision-reason {
+    min-width: 18rem;
+    flex: 1;
+  }
+  .small {
+    font-size: 0.82rem;
   }
   table.bt {
     width: auto;

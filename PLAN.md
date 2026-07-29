@@ -312,7 +312,8 @@ delivered, by theme:
   (offset-indexed) file WAL; a shared SQLite event log and a **NATS JetStream** networked log for the
   split-services profile; Postgres `LISTEN/NOTIFY` fast path.
 - **Governance & change control:** RBAC (viewer→operator→editor→approver→admin); **four-eyes
-  maker-checker** on flow deploys with pre-approval binding + environment-scope gating; flow
+  maker-checker** on flow deploys, model versions, and operational policy versions, with pre-approval
+  binding + environment-scope gating; immutable AI-agent version pins in governed flows; flow
   **assertions + promotion gates**; **shadow deploys**; instant rollback; comment threads + @-mention
   notifications inbox on every reviewable subject.
 - **Enterprise identity:** OIDC SSO (Google, Cognito, generic) + **SAML 2.0**; **SCIM** user/group
@@ -402,6 +403,12 @@ orders them hardest-blocker-first; each phase is a direction, not a committed da
   tested/failing/none separately from the drift baseline and flags an unapproved or unvalidated model
   as a governance gap. The models page carries the complete notification → validation → decision
   handoff. The demo seed runs every model through different-actor validation + approval.
+  The whole-product governance audit also closed the adjacent mutable-dependency seam: policy
+  publication is now sandbox iteration, staging/production retain the last four-eyes-approved policy
+  version, and every decision snapshots its selected policy before execution so a durable resume
+  cannot change logic mid-flight. AI nodes carry an immutable agent version; a positive version is
+  required for non-sandbox decisions and previews, making an agent change an ordinary reviewed
+  flow-version deployment rather than an invisible mutation behind the flow.
 - **Phase 8 — Production hardening at scale — 🚧 partial.** The suspected multi-replica double-apply
   was **confirmed with a test** (two runtimes sharing one durable store applied each event to a
   non-idempotent counter twice — count 2N) and **fixed**: the incremental apply now reads the **durable

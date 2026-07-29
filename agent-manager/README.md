@@ -62,7 +62,10 @@ Done — agent definitions + runs (command→event→projection→API, durable &
 Consumed by the decision engine: a flow's **AI node** runs an agent (the shell pre-resolves it via the
 `agents.Provider` adapter and injects the output — structured when the agent has a schema, else
 `{"text": …}` — under `ai.<output>`), through an `AgentProvider` port so the engine never imports this
-layer.
+layer. The node can name an immutable agent `version`: `0` follows latest for sandbox iteration, while
+staging and production decisions and previews require a positive version and invoke exactly that
+historical config. Updating an agent therefore cannot change governed flow behavior until an author
+publishes and deploys a reviewed flow version that pins the new agent version.
 
 A schema-constrained agent's structured output is validated against its schema (a mismatch is a
 recorded failed run). A real OpenAI-compatible HTTP provider exists (`ai.NewHTTP`, configured via

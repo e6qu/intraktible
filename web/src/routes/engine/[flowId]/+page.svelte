@@ -3516,6 +3516,16 @@
                   /></label
                 >
                 <label
+                  >version <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={Number(nodeCfg().version ?? 0)}
+                    oninput={(e) => patchCfg({ version: Number(e.currentTarget.value) || 0 })}
+                    aria-label="agent version"
+                  /></label
+                >
+                <label
                   >output key <input
                     value={asText(nodeCfg().output)}
                     oninput={(e) => patchCfg({ output: e.currentTarget.value })}
@@ -3529,6 +3539,12 @@
                     aria-label="ai prompt"
                   /></label
                 >
+                <p class="muted">
+                  Staging and production require a positive immutable agent version. Use <code
+                    >0</code
+                  >
+                  only while iterating in sandbox.
+                </p>
               {:else if selected.type === 'predict'}
                 <label
                   >model <input

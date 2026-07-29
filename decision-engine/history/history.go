@@ -60,12 +60,13 @@ type Record struct {
 	ReasonCodes  []ReasonCode    `json:"reason_codes,omitempty"`
 	// Disposition is the operational policy's outcome (approve|decline|refer) +
 	// the policy that assigned it, lifted first-class onto the decision record.
-	Disposition       string `json:"disposition,omitempty"`
-	DispositionCode   string `json:"disposition_code,omitempty"`
-	DispositionReason string `json:"disposition_reason,omitempty"`
-	PolicyID          string `json:"policy_id,omitempty"`
-	PolicyVersion     int    `json:"policy_version,omitempty"`
-	PreApprovalID     string `json:"preapproval_id,omitempty"`
+	Disposition             string `json:"disposition,omitempty"`
+	DispositionCode         string `json:"disposition_code,omitempty"`
+	DispositionReason       string `json:"disposition_reason,omitempty"`
+	PolicyID                string `json:"policy_id,omitempty"`
+	PolicyVersion           int    `json:"policy_version,omitempty"`
+	PolicySelectionRecorded bool   `json:"policy_selection_recorded,omitempty"`
+	PreApprovalID           string `json:"preapproval_id,omitempty"`
 	// CaseID links a decision that routed to manual_review to the case it opened,
 	// populated from the decision's ManualReviewRequested escalation event.
 	CaseID string `json:"case_id,omitempty"`
@@ -170,7 +171,9 @@ func applyStarted(ctx context.Context, e eventlog.Envelope, s store.Store) error
 		DecisionID: p.DecisionID, FlowID: p.FlowID, Slug: p.Slug,
 		Version: p.Version, Environment: p.Environment, Variant: p.Variant, Status: "started",
 		EntityType: p.EntityType, EntityID: p.EntityID,
-		Data: p.Data, TimeOrdered: []string{}, Nodes: []NodeRecord{}, StartedAt: e.Time,
+		PolicyID: p.PolicyID, PolicyVersion: p.PolicyVersion,
+		PolicySelectionRecorded: p.PolicySelectionRecorded,
+		Data:                    p.Data, TimeOrdered: []string{}, Nodes: []NodeRecord{}, StartedAt: e.Time,
 	}
 	return store.PutDoc(ctx, s, Collection, store.Key(e.Org, e.Workspace, r.DecisionID), r)
 }

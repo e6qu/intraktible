@@ -12,6 +12,7 @@ import (
 	"github.com/e6qu/intraktible/decision-engine/domain"
 	"github.com/e6qu/intraktible/decision-engine/events"
 	"github.com/e6qu/intraktible/decision-engine/history"
+	"github.com/e6qu/intraktible/decision-engine/policy"
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/projection"
@@ -166,5 +167,73 @@ func TestResumeOpensDownstreamManualReviewCase(t *testing.T) {
 	}
 	if !strings.Contains(string(opened[0].Context), "applicant") {
 		t.Fatalf("escalation context should carry the recorded input, got: %s", opened[0].Context)
+	}
+}
+
+func TestResumeUsesPolicyVersionSnapshottedAtDecisionStart(t *testing.T) {
+	ctx := context.Background()
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "reviewer"}
+	log, err := eventlog.OpenWAL(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = log.Close() }()
+	st := store.NewMemory()
+	publishFlow(t, ctx, log, st, id, "htask", "HumanTask", suspendGraph())
+
+	ph := policy.NewHandler(log)
+	policyID, _, err := ph.CreatePolicy(ctx, id, "review outcome", "htask")
+	if err != nil {
+		t.Fatal(err)
+	}
+	v1 := policy.Spec{
+		Rules:   []policy.Rule{{When: `decision == "approve"`, Disposition: policy.Approve}},
+		Default: policy.Refer,
+	}
+	if _, _, _, err := ph.PublishVersion(ctx, id, policyID, v1); err != nil {
+		t.Fatal(err)
+	}
+	if err := projection.New(log, st, policy.Projector{}).Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	dh := command.NewDecideHandler(log, st)
+	started, err := dh.Decide(ctx, id, "htask", "sandbox", map[string]any{"applicant": "a1"}, command.EntityRef{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if started.Status != domain.StatusSuspended {
+		t.Fatalf("status=%s err=%s, want suspended", started.Status, started.Error)
+	}
+	if err := projection.New(log, st, history.Projector{}).Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// Publishing a contrary v2 while the case is waiting must not change what the
+	// already-started decision will apply on resume.
+	v2 := policy.Spec{
+		Rules:   []policy.Rule{{When: `decision == "approve"`, Disposition: policy.Decline}},
+		Default: policy.Decline,
+	}
+	if _, _, _, err := ph.PublishVersion(ctx, id, policyID, v2); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := projection.New(log, st, policy.Projector{}).RebuildTo(ctx, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := dh.ResumeDecision(ctx, id, started.DecisionID, map[string]any{"decision": "approve"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Status != domain.StatusCompleted || res.Disposition != policy.Approve {
+		t.Fatalf("resume used mutable policy state: %+v", res)
+	}
+	if _, err := projection.New(log, st, history.Projector{}).RebuildTo(ctx, 0); err != nil {
+		t.Fatal(err)
+	}
+	rec, ok, err := history.Read(ctx, st, id, started.DecisionID)
+	if err != nil || !ok || rec.PolicyID != policyID || rec.PolicyVersion != 1 {
+		t.Fatalf("history did not retain snapshotted policy v1: record=%+v ok=%v err=%v", rec, ok, err)
 	}
 }

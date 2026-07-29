@@ -67,7 +67,9 @@
       return appHref(`/engine/${n.subject_id}${tab}`);
     }
     if (n.subject_type === 'policy') {
-      return appHref(`/policies?policy=${encodeURIComponent(n.subject_id)}#policy-discussion`);
+      const panel = n.kind === 'approval' ? 'governance' : 'policy';
+      const anchor = n.kind === 'approval' ? 'policy-governance' : 'policy-discussion';
+      return appHref(`/policies?${panel}=${encodeURIComponent(n.subject_id)}#${anchor}`);
     }
     if (n.subject_type === 'agent') return appHref(`/agents/${encodeURIComponent(n.subject_id)}`);
     if (n.subject_type === 'model') {

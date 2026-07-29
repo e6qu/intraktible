@@ -9,6 +9,7 @@ import (
 
 	deevents "github.com/e6qu/intraktible/decision-engine/events"
 	"github.com/e6qu/intraktible/decision-engine/monitor"
+	"github.com/e6qu/intraktible/decision-engine/policy"
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/store"
 )
@@ -143,6 +144,43 @@ func applyModelApprovalRejected(ctx context.Context, e eventlog.Envelope, s stor
 	var p deevents.ModelApprovalRejected
 	if err := json.Unmarshal(e.Payload, &p); err != nil {
 		return fmt.Errorf("notifications: decode model_approval_rejected seq %d: %w", e.Seq, err)
+	}
+	return resolveApproval(ctx, e, s, p.RequestID)
+}
+
+func applyPolicyApprovalRequested(ctx context.Context, e eventlog.Envelope, s store.Store) error {
+	var p policy.ApprovalRequested
+	if err := json.Unmarshal(e.Payload, &p); err != nil {
+		return fmt.Errorf("notifications: decode policy approval requested seq %d: %w", e.Seq, err)
+	}
+	label := p.Name
+	if label == "" {
+		label = p.PolicyID
+	}
+	return shared(
+		ctx, e, s, ApproverQueue, KindApproval, "policy", p.PolicyID,
+		fmt.Sprintf("Approval requested: policy %s v%d", label, p.Version), p.RequestID,
+	)
+}
+
+func applyPolicyApprovalApproved(ctx context.Context, e eventlog.Envelope, s store.Store) error {
+	var p policy.ApprovalApproved
+	if err := json.Unmarshal(e.Payload, &p); err != nil {
+		return fmt.Errorf("notifications: decode policy approval approved seq %d: %w", e.Seq, err)
+	}
+	if err := resolveApproval(ctx, e, s, p.RequestID); err != nil {
+		return err
+	}
+	return shared(
+		ctx, e, s, OperatorQueue, KindAlert, "policy", p.PolicyID,
+		fmt.Sprintf("Policy approved for non-sandbox serving: v%d", p.Version),
+	)
+}
+
+func applyPolicyApprovalRejected(ctx context.Context, e eventlog.Envelope, s store.Store) error {
+	var p policy.ApprovalRejected
+	if err := json.Unmarshal(e.Payload, &p); err != nil {
+		return fmt.Errorf("notifications: decode policy approval rejected seq %d: %w", e.Seq, err)
 	}
 	return resolveApproval(ctx, e, s, p.RequestID)
 }

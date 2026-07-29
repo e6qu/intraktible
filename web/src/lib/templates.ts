@@ -316,6 +316,7 @@ export const TEMPLATES: FlowTemplate[] = [
             name: 'SAR narrative',
             config: {
               agent: 'sar-drafter',
+              version: 1,
               prompt: 'Draft a SAR narrative from the risk drivers',
               output: 'narrative'
             }
@@ -394,6 +395,7 @@ export const TEMPLATES: FlowTemplate[] = [
             name: 'Document extract',
             config: {
               agent: 'doc-extractor',
+              version: 1,
               prompt: 'Extract registration, UBOs and MCC from the documents',
               output: 'extracted'
             }
@@ -571,6 +573,7 @@ export const TEMPLATES: FlowTemplate[] = [
             name: 'Summary',
             config: {
               agent: 'dispute-summarizer',
+              version: 1,
               prompt: 'Summarize the dispute and recommend representment vs refund',
               output: 'summary'
             }
