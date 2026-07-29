@@ -36,7 +36,7 @@ Fix every missing or misleading piece found; do not stop at documenting gaps.
 ## Phase
 
 **Fourth whole-product journey audit — governed dependencies complete; final
-release/PR handoff in progress.**
+remote CI handoff in progress.**
 PR #157 merged as `8622b7a`; the GitHub PR queue is empty, and the refreshed
 `hardening/production-readiness-audit` branch is fast-forwarded exactly to
 `origin/main`. The third audit's model-validation, exact issued-notice, and
@@ -96,7 +96,8 @@ assembled HTTP, agent-provider, notification, authorization, OpenAPI, Svelte,
 and frontend-unit tests are green. Deterministic demo regeneration, the
 race-enabled repository check, all 124 native browser journeys, all 81
 real-Wasm journeys, and all 3 embedded-production smokes are green. Only the
-remote reconciliation and single-PR handoff remain.
+remote CI result remains. The complete 43-file slice is commit `333e63f` in
+PR #158, the repository's sole open PR.
 
 The second pass completed its two slices. Context data is
 fully operable from the browser: entity create/update, event recording, feature
@@ -138,7 +139,7 @@ complete local `make ci` gate, then passed all nine remote jobs in run
   merge commit `8622b7a`; a fresh fetch confirms it exactly matches
   `origin/main`.
 - PR #157 is merged and the remote PR queue is empty — satisfies the
-  one-open-PR rule.
+  one-open-PR rule at the start of this round. PR #158 is now the sole open PR.
 - Fourth-audit product and artifact gates are green: policy replay/governance,
   the complete Decision Engine package, assembled policy HTTP serving, exact
   resume snapshots, immutable agent dispatch, notifications, route

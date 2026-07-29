@@ -560,3 +560,6 @@ Linux, entirely that VM's fsync path.
 - 2026-07-30: Closed the strict fourth-audit release gate: `make ci` passes
   vet/build, strict lint, SAST, every race test, deadcode, zero clone groups,
   zero reachable vulnerabilities, and dependency licenses.
+- 2026-07-30: Re-fetched authoritative `origin/main` at `8622b7a`, confirmed
+  the GitHub queue was empty, committed the 43-file governed-dependency slice
+  as `333e63f`, pushed the recreated audit branch, and opened sole PR #158.
