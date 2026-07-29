@@ -534,3 +534,7 @@ Linux, entirely that VM's fsync path.
 - 2026-07-29: Re-fetched authoritative `origin/main` at `92b285f`, confirmed the
   GitHub PR queue is empty and the prior remote audit branch was deleted after
   merge, then committed the 34-file third-audit implementation as `4210abf`.
+- 2026-07-29: Pushed the recreated
+  `hardening/production-readiness-audit` branch and opened PR #157 as the
+  repository's sole review queue; its body records both deliberate compatibility
+  changes and the complete local verification matrix.

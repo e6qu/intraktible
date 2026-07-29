@@ -18,12 +18,11 @@ DOC (a claim not backed by code).
 
 Third whole-product audit from authoritative merged commit `92b285f`.
 
-1. **OPEN · CI/PROD — publish and babysit the sole review queue.** The complete
-   local release matrix is green and fresh `origin/main` still equals the local
-   base `92b285f`; GitHub has no open PR, and the old remote audit branch was
-   deleted after merge. The 34-file implementation is committed as `4210abf`;
-   recreate/push `hardening/production-readiness-audit`, open the repository's
-   sole PR, and babysit its complete CI matrix through a terminal result.
+1. **OPEN · CI/PROD — babysit PR #157 to a terminal result.** The complete local
+   release matrix is green, fresh `origin/main` equals the local base `92b285f`,
+   and the 34-file implementation is committed as `4210abf`. PR #157 is the
+   repository's sole review queue; watch every required check, repair any real
+   failure on this same branch, and record the terminal remote evidence.
 
 ---
 

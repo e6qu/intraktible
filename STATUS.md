@@ -101,10 +101,10 @@ groups, zero reachable vulnerabilities, and dependency licenses. Prettier,
 zero-warning ESLint and Svelte check, all 218 Vitest tests, the production web
 build, 122 native Playwright journeys, 81 real-Wasm journeys, and 3
 embedded-binary smokes also pass. Fresh `origin/main` still equals the local
-base `92b285f`, GitHub has no open PR, and only publication plus remote CI remain
-in `DO_NEXT.md`; the implementation is committed as `4210abf`. The prior merged
-baseline remains independently proven by PR #156 run 30306203748 across the
-deployment-specific matrix.
+base `92b285f`; the implementation is committed as `4210abf` and PR #157 is the
+repository's sole review queue. Only its terminal remote CI evidence remains in
+`DO_NEXT.md`. The prior merged baseline remains independently proven by PR #156
+run 30306203748 across the deployment-specific matrix.
 
 ## Ground truth established so far
 
