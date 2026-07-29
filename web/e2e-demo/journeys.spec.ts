@@ -116,6 +116,28 @@ test('journey: read a decision trace and run a counterfactual on a referred one'
   ).toBeVisible();
 });
 
+test('journey: download the exact issued adverse-action artifact', async ({ page }) => {
+  await forcePersona(page, 'operator');
+  await gotoReady(page, '');
+  const id = await api(page, async () => {
+    const response = await fetch('/v1/adverse-actions?status=issued');
+    const body = (await response.json()) as {
+      adverse_actions: { decision_id: string }[];
+    };
+    return body.adverse_actions[0]?.decision_id ?? '';
+  });
+  expect(id, 'the seed should contain an issued adverse-action notice').toBeTruthy();
+  await gotoReady(page, `decisions/${id}`);
+  // The demo worker intercepts the fetch before Playwright's page-response
+  // observer. Assert the user-visible Blob download instead; the Go HTTP
+  // journey covers the artifact bytes, integrity hash, and replay behavior.
+  const artifact = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Download issued artifact' }).click();
+  expect((await artifact).suggestedFilename()).toBe(`adverse-action-${id}-issued.md`);
+  await expect(page.getByText('Downloaded the exact issued artifact.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Download current preview' })).toBeVisible();
+});
+
 // --- 5. Resume a suspended decision --------------------------------------------
 test('journey: resume a suspended decision to a terminal outcome', async ({ page }) => {
   await forcePersona(page, 'operator');
@@ -237,6 +259,10 @@ test('journey: define a model and open its drift panel', async ({ page }) => {
   await expect(
     page.getByTestId('drift-firing').or(page.getByTestId('drift-alerting'))
   ).toBeVisible();
+  await claim.getByRole('button', { name: 'Governance', exact: true }).click();
+  const governance = page.getByTestId('model-governance');
+  await expect(governance).toContainText('Current independent validation:');
+  await expect(governance).toContainText('pass');
 });
 
 // --- 10. Agent: run and escalate to a case -------------------------------------

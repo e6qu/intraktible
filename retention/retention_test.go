@@ -26,7 +26,7 @@ func issuedAt(t *testing.T, at time.Time, subject string) store.Store {
 	h := fairlending.NewHandler(log).WithNow(func() time.Time { return at })
 	e, err := h.Issue(ctx, id, fairlending.IssueCmd{
 		DecisionID: "dec-1", Subject: subject, Method: fairlending.DeliveryMail,
-		PrincipalReasons: []string{"DTI too high"}, ContentHash: "h", HashAlgo: "sha-256",
+		PrincipalReasons: []string{"DTI too high"}, Artifact: "# Notice\n",
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -104,10 +104,11 @@ type ModelApprovalRejected struct {
 	Reason    string `json:"reason,omitempty"`
 }
 
-// ModelValidationRecorded attaches validation evidence to a model version: the
-// dataset it was validated on, named metrics (e.g. auc, ks), the validator, notes,
-// and whether it passed. It is evidence, not a gate — the four-eyes approval is the
-// gate; this is what an approver reviews.
+// ModelValidationRecorded attaches independent validation evidence to a model
+// version: the dataset it was validated on, named metrics (e.g. auc, ks), the
+// validator, notes, and whether it passed. Validator is derived from the event actor
+// at the command boundary rather than trusted from request data. A current-version
+// passing record is required before four-eyes approval.
 type ModelValidationRecorded struct {
 	Name      string             `json:"name"`
 	Version   int                `json:"version"`

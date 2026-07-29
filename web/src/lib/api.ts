@@ -2268,10 +2268,9 @@ export async function recordModelValidation(
   key: string,
   name: string,
   body: {
-    dataset?: string;
-    metrics?: Record<string, number>;
-    validator?: string;
-    notes?: string;
+    dataset: string;
+    metrics: Record<string, number>;
+    notes: string;
     passed: boolean;
   },
   fetcher: typeof fetch = recordingFetch
@@ -3250,7 +3249,7 @@ export interface AdverseActionSettings {
 }
 // AdverseActionIssuance is the durable record that a declined applicant was served
 // their notice — proof ECOA/Reg B expects a creditor to keep (who, when, how, citing
-// what, plus a hash of the exact document served).
+// what, the immutable artifact's media type, and its integrity hash).
 export interface AdverseActionIssuance {
   decision_id: string;
   subject?: string;
@@ -3259,6 +3258,7 @@ export interface AdverseActionIssuance {
   principal_reasons: string[];
   content_hash: string;
   hash_algo: string;
+  content_type: string;
   issued_at: string;
   issued_by: string;
 }
@@ -3311,6 +3311,23 @@ export async function adverseActionNotice(
   });
   if (!res.ok) {
     return errorOrStatus(res, 'generate adverse-action notice');
+  }
+  return res.text();
+}
+
+// issuedAdverseActionNotice fetches the exact immutable artifact retained when the
+// notice was recorded as served; it never re-renders from current settings.
+export async function issuedAdverseActionNotice(
+  key: string,
+  decisionId: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<string> {
+  const res = await fetcher(
+    `/v1/decisions/${encodeURIComponent(decisionId)}/adverse-action/issued`,
+    { headers: authHeaders(key) }
+  );
+  if (!res.ok) {
+    return errorOrStatus(res, 'download issued adverse-action artifact');
   }
   return res.text();
 }

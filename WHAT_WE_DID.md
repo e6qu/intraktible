@@ -506,3 +506,28 @@ Linux, entirely that VM's fsync path.
   journeys, 80 real-Wasm journeys, the embedded artifact, real PostgreSQL,
   Shauth SSO, Terraform, and container release. GitHub reports the PR cleanly
   mergeable.
+- 2026-07-29: Confirmed PR #156 merged as `92b285f`, fetched authoritative
+  `origin/main`, fast-forwarded the audit branch to that exact commit, verified
+  the remote PR queue is empty, and opened the third whole-product journey audit
+  with evidence-backed model-validation and issued-notice artifact gaps recorded
+  in `DO_NEXT.md`.
+- 2026-07-29: Made model validation a real independent approval gate:
+  authenticated approver identity is authoritative, the owner cannot validate,
+  current-version dataset/metric/notes evidence is mandatory, the latest result
+  must pass, and Models/MRM/notifications/OpenAPI/seed history share the same
+  contract. Focused command, HTTP, authorization, native-browser, and real-Wasm
+  journeys pass.
+- 2026-07-29: Made adverse-action issuance byte-reproducible: the exact artifact
+  is appended with a command-derived SHA-256 hash, replayed into a separate
+  projection, integrity-checked on exact download, and distinguished from the
+  mutable current preview in the UI. HTTP e2e proves identity across settings,
+  clock changes, replay, and tampering; native and real-Wasm journeys pass.
+- 2026-07-29: Reconciled PLAN, ENTERPRISE, PERFORMANCE, JOURNEYS, OpenAPI, and
+  BUGS with the shipped validation, durable human-task, measured durable-backend,
+  and issued-artifact contracts; stale contradictory roadmap claims are gone.
+- 2026-07-29: Closed the third-audit local release gate: `make check` and
+  `make ci` pass vet/build, strict lint, SAST, every race test, deadcode, zero
+  clone groups, zero reachable vulnerabilities, and licenses. Web formatting,
+  zero-warning lint/typecheck, all 218 unit tests, production build, 122 native
+  journeys, 81 real-Wasm journeys, and 3 embedded-binary smokes pass; generated
+  assets and diff hygiene are clean.

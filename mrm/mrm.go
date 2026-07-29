@@ -309,8 +309,8 @@ func buildModels(ctx context.Context, s store.Store, id identity.Identity, rep *
 		}
 		m.UpdatedAt = t
 		// Four-eyes governance parity with flows: an unapproved model version is a
-		// governance gap (it cannot serve production decisions), and a model with no
-		// validation evidence is another — both surface like any other MRM issue.
+		// governance gap (it cannot serve production decisions). Only a substantive
+		// independent validation of the current version counts as coverage.
 		if !mv.Approved() {
 			if mv.Pending != nil {
 				m.Issues = append(m.Issues, "model approval pending review")
@@ -318,8 +318,16 @@ func buildModels(ctx context.Context, s store.Store, id identity.Identity, rep *
 				m.Issues = append(m.Issues, "model version not approved (four-eyes)")
 			}
 		}
-		if len(mv.Validations) == 0 {
-			m.Issues = append(m.Issues, "no validation evidence recorded")
+		validation, validated := mv.LatestIndependentValidation()
+		switch {
+		case !validated:
+			m.Validation.Coverage = CoverageNone
+			m.Issues = append(m.Issues, "no independent validation evidence for current model version")
+		case !validation.Passed:
+			m.Validation.Coverage = CoverageFailing
+			m.Issues = append(m.Issues, "latest independent validation failed")
+		default:
+			m.Validation.Coverage = CoverageTested
 		}
 		d, err := models.Drift(ctx, s, id, mv.Name, 0)
 		if err != nil {
@@ -328,11 +336,7 @@ func buildModels(ctx context.Context, s store.Store, id identity.Identity, rep *
 		m.Validation.HasBaseline = d.HasBaseline
 		m.Monitoring.DriftPSI = d.PSI
 		m.Monitoring.DriftFiring = d.Firing
-		// A predictive model's validation reference is its captured baseline.
-		if m.Validation.HasBaseline {
-			m.Validation.Coverage = CoverageTested
-		} else {
-			m.Validation.Coverage = CoverageNone
+		if !m.Validation.HasBaseline {
 			m.Issues = append(m.Issues, "no drift baseline captured")
 		}
 		if m.Monitoring.DriftFiring {

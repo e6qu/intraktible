@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -142,6 +143,46 @@ func TestPredictiveModelSurfacesOwner(t *testing.T) {
 	}
 	if m.ID != "risk" || m.Owner != "dana" {
 		t.Fatalf("predictive model entry = %+v", m)
+	}
+}
+
+func TestPredictiveModelUsesLatestIndependentCurrentVersionValidation(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemory()
+	id := identity.Identity{Org: "demo", Workspace: "main"}
+	mv := models.ModelView{
+		Org: "demo", Workspace: "main", Name: "risk", Owner: "dana", Version: 2, ApprovedVersion: 2,
+		Spec:      json.RawMessage(`{"kind":"logistic","intercept":0,"coefficients":{"x":1}}`),
+		UpdatedAt: "2026-06-22T12:00:00Z",
+		Validations: []models.ValidationRecord{
+			{Version: 1, RecordedBy: "alex", Passed: true},
+			{Version: 2, RecordedBy: "dana", Passed: true},
+			{Version: 2, RecordedBy: "alex", Passed: false},
+		},
+	}
+	put(t, st, models.Collection, store.Key("demo", "main", "risk"), mv)
+	rep, err := mrm.Build(ctx, st, id, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := rep.Models[0].Validation.Coverage; got != mrm.CoverageFailing {
+		t.Fatalf("coverage = %q, want failing", got)
+	}
+	if !slices.Contains(rep.Models[0].Issues, "latest independent validation failed") {
+		t.Fatalf("issues = %v", rep.Models[0].Issues)
+	}
+
+	mv.Validations = append(mv.Validations, models.ValidationRecord{Version: 2, RecordedBy: "alex", Passed: true})
+	put(t, st, models.Collection, store.Key("demo", "main", "risk"), mv)
+	rep, err = mrm.Build(ctx, st, id, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := rep.Models[0].Validation.Coverage; got != mrm.CoverageTested {
+		t.Fatalf("coverage after passing revalidation = %q, want tested", got)
+	}
+	if slices.Contains(rep.Models[0].Issues, "latest independent validation failed") {
+		t.Fatalf("passing revalidation left a failed-validation issue: %v", rep.Models[0].Issues)
 	}
 }
 

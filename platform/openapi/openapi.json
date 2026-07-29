@@ -430,16 +430,15 @@
       "post": {
         "tags": ["models"],
         "summary": "Record validation evidence for the model's current version",
-        "description": "Attaches a validation record (dataset, named metrics, validator, notes, pass/fail) to the model's current version. Evidence an approver reviews; not itself the gate. Editor role.",
+        "description": "An actor other than the model owner records substantive validation evidence (dataset, at least one named finite metric, notes, pass/fail) for the current version. Validator identity comes from authentication, not request data. The latest independent record must pass before approval. Approver role.",
         "parameters": [
           { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
         ],
         "requestBody": {
           "required": true,
-          "content": { "application/json": { "schema": { "type": "object", "properties": {
+          "content": { "application/json": { "schema": { "type": "object", "required": ["dataset", "metrics", "notes", "passed"], "properties": {
             "dataset": { "type": "string" },
             "metrics": { "type": "object", "additionalProperties": { "type": "number" } },
-            "validator": { "type": "string" },
             "notes": { "type": "string" },
             "passed": { "type": "boolean" }
           } } } }
@@ -470,7 +469,7 @@
       "post": {
         "tags": ["models"],
         "summary": "Approve a pending model-approval request (checker)",
-        "description": "The checker side: a different actor — neither the requester nor the version's author — approves, marking the version approved for serving. Approver role.",
+        "description": "The checker side: a different actor — neither the requester nor the version's author — approves only after the latest independent validation of the current version passes, marking the version approved for serving. Approver role.",
         "parameters": [
           { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
         ],
@@ -3373,7 +3372,7 @@
       "post": {
         "tags": ["MRM"],
         "summary": "Record that a declined decision's adverse-action notice was served",
-        "description": "Renders the notice (exactly as the download does), stores its content hash, and records the issuance — the durable ECOA/Reg B proof that the applicant was served (who, when, by what method, citing which reasons). based_on_consumer_report adds the FCRA §615(a) disclosures and requires the CRA to be configured. Operator only.",
+        "description": "Renders the notice, stores its exact immutable Markdown artifact plus a SHA-256 content hash, and records the issuance — the durable ECOA/Reg B proof that the applicant was served (who, when, by what method, citing which reasons). The issued artifact remains reproducible after settings/template changes and replay. based_on_consumer_report adds the FCRA §615(a) disclosures and requires the CRA to be configured. Operator only.",
         "parameters": [
           { "name": "decision_id", "in": "path", "required": true, "schema": { "type": "string" } }
         ],
@@ -3389,6 +3388,22 @@
           "400": { "$ref": "#/components/responses/Error" },
           "401": { "$ref": "#/components/responses/Error" },
           "404": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/decisions/{decision_id}/adverse-action/issued": {
+      "get": {
+        "tags": ["MRM"],
+        "summary": "Download the exact adverse-action artifact retained at issuance",
+        "description": "Returns the byte-for-byte Markdown artifact recorded when the notice was served, after verifying it against the retained SHA-256 hash. It never re-renders from current settings. Operator only.",
+        "parameters": [
+          { "name": "decision_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "The exact issued Markdown artifact.", "content": { "text/markdown": { "schema": { "type": "string" } } } },
+          "401": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" }
         }
       }
     },

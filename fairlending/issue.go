@@ -26,6 +26,14 @@ const TypeIssued = "fairlending.adverse_action_issued"
 // the event log keeps the full trail if a corrected notice is re-issued).
 const IssuanceCollection = "fairlending_adverse_action"
 
+// ArtifactCollection holds the exact rendered bytes for the latest issuance. It is
+// separate from IssuanceCollection so work queues return metadata rather than
+// duplicating every retained notice.
+const ArtifactCollection = "fairlending_adverse_action_artifacts"
+
+// NoticeContentType is the media type of the immutable issuance artifact.
+const NoticeContentType = "text/markdown; charset=utf-8"
+
 // DeliveryMethod is how the notice was delivered to the applicant. It is a named
 // type so an unrecognized method is rejected at the boundary, not stored as free
 // text — the record must show how the notice reached the applicant (ECOA requires it
@@ -52,7 +60,8 @@ func (m DeliveryMethod) Valid() bool {
 // Issued is the event recording an adverse-action notice issuance. It is the durable
 // proof ECOA/Reg B expects a creditor to keep: which decision, to which subject, on
 // what date, by what method, citing which principal reasons, and a hash of the exact
-// notice text sent (tamper-evidence — the creditor can later prove what was served).
+// notice text sent plus the exact immutable artifact, so the creditor can reproduce
+// and verify what was served even after settings or templates change.
 type Issued struct {
 	DecisionID            string         `json:"decision_id"`
 	Subject               string         `json:"subject,omitempty"` // "type/id", the same subject key as consent/PII/erasure
@@ -61,6 +70,8 @@ type Issued struct {
 	PrincipalReasons      []string       `json:"principal_reasons"`
 	ContentHash           string         `json:"content_hash"`
 	HashAlgo              string         `json:"hash_algo"`
+	ContentType           string         `json:"content_type"`
+	Artifact              string         `json:"artifact"`
 }
 
 // HashNotice returns the hex SHA-256 of a rendered notice, the fingerprint stored on
@@ -80,13 +91,13 @@ type IssueCmd struct {
 	Method                DeliveryMethod
 	BasedOnConsumerReport bool
 	PrincipalReasons      []string
-	ContentHash           string
-	HashAlgo              string
+	Artifact              string
 }
 
 // Issue records that an adverse-action notice was issued. It re-checks the essentials
-// (a known delivery method, at least one principal reason, a content hash) so a
-// malformed issuance never reaches the log, then appends the event.
+// (a known delivery method, at least one principal reason, and exact rendered
+// bytes) so a malformed issuance never reaches the log, derives the hash from those
+// bytes, then appends the event.
 func (h *Handler) Issue(ctx context.Context, id identity.Identity, cmd IssueCmd) (eventlog.Envelope, error) {
 	if err := id.Valid(); err != nil {
 		return eventlog.Envelope{}, err
@@ -101,10 +112,15 @@ func (h *Handler) Issue(ctx context.Context, id identity.Identity, cmd IssueCmd)
 	if len(cmd.PrincipalReasons) == 0 {
 		return eventlog.Envelope{}, fmt.Errorf("fairlending: an issuance must cite at least one principal reason")
 	}
-	if cmd.ContentHash == "" || cmd.HashAlgo == "" {
-		return eventlog.Envelope{}, fmt.Errorf("fairlending: an issuance must carry the notice content hash")
+	if cmd.Artifact == "" {
+		return eventlog.Envelope{}, fmt.Errorf("fairlending: an issuance must carry the exact notice artifact")
 	}
-	b, err := json.Marshal(Issued(cmd))
+	hash, algo := HashNotice(cmd.Artifact)
+	b, err := json.Marshal(Issued{
+		DecisionID: cmd.DecisionID, Subject: cmd.Subject, Method: cmd.Method,
+		BasedOnConsumerReport: cmd.BasedOnConsumerReport, PrincipalReasons: cmd.PrincipalReasons,
+		ContentHash: hash, HashAlgo: algo, ContentType: NoticeContentType, Artifact: cmd.Artifact,
+	})
 	if err != nil {
 		return eventlog.Envelope{}, fmt.Errorf("fairlending: marshal issued: %w", err)
 	}
@@ -127,8 +143,20 @@ type IssuanceView struct {
 	PrincipalReasons      []string       `json:"principal_reasons"`
 	ContentHash           string         `json:"content_hash"`
 	HashAlgo              string         `json:"hash_algo"`
+	ContentType           string         `json:"content_type"`
 	IssuedAt              time.Time      `json:"issued_at"`
 	IssuedBy              string         `json:"issued_by"`
+}
+
+// IssuedArtifactView is the exact latest notice retained for byte-for-byte download.
+type IssuedArtifactView struct {
+	Org         string `json:"org"`
+	Workspace   string `json:"workspace"`
+	DecisionID  string `json:"decision_id"`
+	ContentType string `json:"content_type"`
+	ContentHash string `json:"content_hash"`
+	HashAlgo    string `json:"hash_algo"`
+	Artifact    string `json:"artifact"`
 }
 
 // IssuanceProjector folds the issuance stream into a per-decision record.
@@ -138,7 +166,9 @@ type IssuanceProjector struct{}
 func (IssuanceProjector) Name() string { return IssuanceCollection }
 
 // Collections lists the store collection this projector owns.
-func (IssuanceProjector) Collections() []string { return []string{IssuanceCollection} }
+func (IssuanceProjector) Collections() []string {
+	return []string{IssuanceCollection, ArtifactCollection}
+}
 
 // Apply maintains the per-decision issuance record. A re-issue overwrites with the
 // latest (the log retains earlier issuances for the full trail).
@@ -153,14 +183,32 @@ func (IssuanceProjector) Apply(ctx context.Context, e eventlog.Envelope, s store
 	v := IssuanceView{
 		Org: e.Org, Workspace: e.Workspace, DecisionID: p.DecisionID, Subject: p.Subject,
 		Method: p.Method, BasedOnConsumerReport: p.BasedOnConsumerReport, PrincipalReasons: p.PrincipalReasons,
-		ContentHash: p.ContentHash, HashAlgo: p.HashAlgo, IssuedAt: e.Time, IssuedBy: e.Actor,
+		ContentHash: p.ContentHash, HashAlgo: p.HashAlgo, ContentType: p.ContentType,
+		IssuedAt: e.Time, IssuedBy: e.Actor,
 	}
-	return store.PutDoc(ctx, s, IssuanceCollection, store.Key(e.Org, e.Workspace, p.DecisionID), v)
+	if err := store.PutDoc(ctx, s, IssuanceCollection, store.Key(e.Org, e.Workspace, p.DecisionID), v); err != nil {
+		return err
+	}
+	// Historical issuances recorded before artifacts were retained still project
+	// their metadata. The dedicated download reports that legacy limitation loudly.
+	if p.Artifact == "" {
+		return nil
+	}
+	artifact := IssuedArtifactView{
+		Org: e.Org, Workspace: e.Workspace, DecisionID: p.DecisionID,
+		ContentType: p.ContentType, ContentHash: p.ContentHash, HashAlgo: p.HashAlgo, Artifact: p.Artifact,
+	}
+	return store.PutDoc(ctx, s, ArtifactCollection, store.Key(e.Org, e.Workspace, p.DecisionID), artifact)
 }
 
 // ReadIssuance returns the issuance record for a decision (false when none exists).
 func ReadIssuance(ctx context.Context, s store.Store, id identity.Identity, decisionID string) (IssuanceView, bool, error) {
 	return store.GetDoc[IssuanceView](ctx, s, IssuanceCollection, store.Key(id.Org, id.Workspace, decisionID))
+}
+
+// ReadIssuedArtifact returns the exact retained notice for a decision.
+func ReadIssuedArtifact(ctx context.Context, s store.Store, id identity.Identity, decisionID string) (IssuedArtifactView, bool, error) {
+	return store.GetDoc[IssuedArtifactView](ctx, s, ArtifactCollection, store.Key(id.Org, id.Workspace, decisionID))
 }
 
 // ListIssuances returns the tenant's issuance records, most recently issued first.

@@ -35,11 +35,9 @@ Fix every missing or misleading piece found; do not stop at documenting gaps.
 
 ## Phase
 
-**Second whole-product journey audit — implementation and release gates complete
-from the merged
-PR #155 baseline.** PR #155 merged as `fea7a26`; there are no open PRs, and the
-refreshed `hardening/production-readiness-audit` branch starts exactly at
-`origin/main`.
+**Third whole-product journey audit — locally complete from PR #156's baseline.**
+PR #156 merged as `92b285f`; there are no open PRs, and the refreshed
+`hardening/production-readiness-audit` branch starts exactly at `origin/main`.
 `docs/JOURNEYS.md` is being treated as an executable product contract rather
 than endpoint documentation. The architecture/continuity/component plans are
 read and remote `main` is authoritative and clean. Three complete slices are now
@@ -72,10 +70,9 @@ governed deployment rather than falling through to latest.
 Cross-subject collaboration is now complete as well: policy mentions, previously
 inert, and model mentions, previously landing on an undifferentiated registry,
 open the exact subject and discussion thread; model approvals still open the
-exact Governance panel. The inventory has no remaining product-journey gaps.
+exact Governance panel.
 
-That final sentence describes the first audit merged in PR #155, not the current
-second pass. The new pass has now completed its first two slices. Context data is
+The second pass completed its two slices. Context data is
 fully operable from the browser: entity create/update, event recording, feature
 recomputation, connector validation, and durable fetch evidence all use the real
 backend. The regulated-decision arc is coherent from fair-lending configuration
@@ -86,29 +83,45 @@ browser now also has a single read-after-write contract across the whole
 event-sourced product: commands that return a durable sequence wait for the
 projection watermark before the UI reloads, including decide/resume, batch,
 agent run/stream/escalation, and SLA sweep paths that previously omitted their
-final sequence. The second inventory has no remaining evidence-backed gap. The
-complete repository and shipping-artifact gates pass. Commit `379801f` is now
-under review in PR #156, the repository's sole open PR. Its first remote matrix
-exposed a race-instrumented multi-replica test deadline; the repair is verified
-locally and all nine jobs in updated run 30306203748 pass. GitHub reports the PR
-cleanly mergeable.
+final sequence. The second inventory closed with a complete green repository
+and shipping-artifact matrix in PR #156. The new pass has identified two
+evidence-backed cross-layer gaps: model approval does not require
+current-version independent validation and permits self-attested validation;
+adverse-action issuance stores a hash but not the exact notice bytes, so
+settings or clock changes can make the downloadable rendering diverge from the
+issued artifact. Both are now fixed across the command/event/projection/API/UI
+paths. Model approval requires substantive passing evidence from an
+authenticated actor other than the model owner; the exact adverse-action bytes
+are retained, hash-verified, replayable, and downloaded separately from the
+current preview. The release gate is active in `DO_NEXT.md`.
 
-**Current local gates, all green:** `make ci` passes vet/build, strict Go lint,
-gosec, the complete race-enabled Go suite, deadcode, zero-group copy-paste
-detection, `govulncheck`, and dependency licenses. Prettier, zero-warning ESLint,
-zero-error/warning Svelte check, 217 Vitest tests, the production web build, 122
-native Playwright journeys, 80 real-Wasm journeys, and 3 embedded-binary smokes
-also pass. PR #156 run 30306203748 independently passes the complete Go, web,
-native-browser, real-Wasm, embedded-artifact, real-PostgreSQL, Shauth SSO,
-Terraform, and container-release matrix. The prior PR #155 run 30300119151
-established the same deployment-specific gates on the merged baseline.
+**Current local gates, all green:** `make check` and `make ci` pass vet/build,
+strict lint, SAST, the complete race-enabled Go suite, deadcode, zero clone
+groups, zero reachable vulnerabilities, and dependency licenses. Prettier,
+zero-warning ESLint and Svelte check, all 218 Vitest tests, the production web
+build, 122 native Playwright journeys, 81 real-Wasm journeys, and 3
+embedded-binary smokes also pass. Fresh `origin/main` still equals the local
+base `92b285f`, GitHub has no open PR, and only publication plus remote CI remain
+in `DO_NEXT.md`. The prior merged baseline remains independently proven by PR
+#156 run 30306203748 across the deployment-specific matrix.
 
 ## Ground truth established so far
 
-- Current branch `hardening/production-readiness-audit` is based on PR #155's
-  merge commit `fea7a26`; a fresh fetch confirms it exactly matches
+- Current branch `hardening/production-readiness-audit` is based on PR #156's
+  merge commit `92b285f`; a fresh fetch confirms it exactly matches
   `origin/main`.
-- PR #155 is merged and `gh pr list` is empty — satisfies the one-open-PR rule.
+- PR #156 is merged and the remote PR queue is empty — satisfies the
+  one-open-PR rule.
+- The model-validation endpoint now takes validator identity only from the
+  authenticated actor, is approver-gated, rejects the model owner, requires
+  substantive evidence, and approval requires the latest independent
+  current-version record to pass. Command, HTTP, authorization, MRM, native UI,
+  and real-Wasm tests exercise the handoff.
+- Adverse-action issuance now retains the exact served bytes and
+  command-derived hash in the append-only event, projects content separately
+  from list metadata, and verifies both before exact download. HTTP e2e proves
+  byte identity after settings/date changes and fresh replay, and refuses a
+  tampered projection.
 - `make check` and `make lint` pass; the real-Postgres claim contract and full
   event-log race suite pass.
 - This round passes `make check`, `make lint`, and a dedicated complete

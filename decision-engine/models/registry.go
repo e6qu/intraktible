@@ -83,6 +83,23 @@ func (v ModelView) Approved() bool {
 	return v.Version > 0 && v.ApprovedVersion == v.Version
 }
 
+// LatestIndependentValidation returns the newest validation for the current model
+// version that was recorded by an actor other than its owner. Older-version and
+// self-authored records remain visible audit evidence but never satisfy governance.
+func (v ModelView) LatestIndependentValidation() (ValidationRecord, bool) {
+	for i := len(v.Validations) - 1; i >= 0; i-- {
+		rec := v.Validations[i]
+		actor := rec.RecordedBy
+		if actor == "" {
+			actor = rec.Validator
+		}
+		if rec.Version == v.Version && actor != "" && actor != v.Owner {
+			return rec, true
+		}
+	}
+	return ValidationRecord{}, false
+}
+
 // Projector folds ModelDefined events into ModelView documents.
 type Projector struct{}
 

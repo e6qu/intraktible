@@ -28,18 +28,28 @@ func New(cmd *Handler, st store.Store) *Service {
 	return &Service{cmd: cmd, store: st, now: func() time.Time { return time.Now().UTC() }}
 }
 
+// WithNow overrides the rendering clock. Production uses the UTC wall clock; tests
+// and deterministic seeders record the exact date that became part of an artifact.
+func (s *Service) WithNow(now func() time.Time) *Service {
+	s.now = now
+	return s
+}
+
 // Routes registers the fair-lending endpoints.
 func (s *Service) Routes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /v1/fairlending/report", s.report)
-	mux.HandleFunc("GET /v1/fairlending/settings", s.getSettings)
-	mux.HandleFunc("PUT /v1/fairlending/settings", s.setSettings)
-	mux.HandleFunc("GET /v1/flows/{flow_id}/fairlending", s.getConfig)
-	mux.HandleFunc("PUT /v1/flows/{flow_id}/fairlending", s.setConfig)
-	mux.HandleFunc("GET /v1/decisions/{decision_id}/adverse-action", s.adverseAction)
-	mux.HandleFunc("POST /v1/decisions/{decision_id}/adverse-action/issue", s.issueAdverseAction)
-	// The adverse-action work queue: declines and whether each has had its notice
-	// issued yet (the 30-day-clock surface a compliance operator works from).
-	mux.HandleFunc("GET /v1/adverse-actions", s.adverseActions)
+	httpx.Register(mux, []httpx.Route{
+		{Method: "GET", Pattern: "/v1/fairlending/report", Handler: s.report},
+		{Method: "GET", Pattern: "/v1/fairlending/settings", Handler: s.getSettings},
+		{Method: "PUT", Pattern: "/v1/fairlending/settings", Handler: s.setSettings},
+		{Method: "GET", Pattern: "/v1/flows/{flow_id}/fairlending", Handler: s.getConfig},
+		{Method: "PUT", Pattern: "/v1/flows/{flow_id}/fairlending", Handler: s.setConfig},
+		{Method: "GET", Pattern: "/v1/decisions/{decision_id}/adverse-action", Handler: s.adverseAction},
+		{Method: "GET", Pattern: "/v1/decisions/{decision_id}/adverse-action/issued", Handler: s.issuedAdverseAction},
+		{Method: "POST", Pattern: "/v1/decisions/{decision_id}/adverse-action/issue", Handler: s.issueAdverseAction},
+		// The adverse-action work queue: declines and whether each has had its
+		// notice issued yet (the 30-day-clock surface an operator works from).
+		{Method: "GET", Pattern: "/v1/adverse-actions", Handler: s.adverseActions},
+	})
 }
 
 // report builds the disparate-impact report for a flow. flow is required; the
@@ -221,6 +231,46 @@ func (s *Service) adverseAction(w http.ResponseWriter, r *http.Request) {
 	httpx.Download(w, "text/markdown; charset=utf-8", "adverse-action-"+sanitize(decisionID)+".md", notice)
 }
 
+// issuedAdverseAction downloads the exact immutable bytes recorded at issuance. It
+// never re-renders from current settings: a legacy issuance without retained bytes
+// is reported explicitly instead of being passed off as the historical document.
+func (s *Service) issuedAdverseAction(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	decisionID := r.PathValue("decision_id")
+	issuance, issued, err := ReadIssuance(r.Context(), s.store, id, decisionID)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	if !issued {
+		httpx.Error(w, http.StatusNotFound, fmt.Errorf("adverse-action notice for decision %s has not been issued", decisionID))
+		return
+	}
+	artifact, found, err := ReadIssuedArtifact(r.Context(), s.store, id, decisionID)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	if !found {
+		httpx.Error(w, http.StatusConflict, fmt.Errorf("exact artifact is unavailable for this legacy issuance"))
+		return
+	}
+	hash, algo := HashNotice(artifact.Artifact)
+	if algo != issuance.HashAlgo || hash != issuance.ContentHash ||
+		artifact.HashAlgo != issuance.HashAlgo || artifact.ContentHash != issuance.ContentHash {
+		httpx.Error(w, http.StatusInternalServerError, fmt.Errorf("issued adverse-action artifact failed its recorded integrity check"))
+		return
+	}
+	if artifact.ContentType != NoticeContentType || issuance.ContentType != NoticeContentType {
+		httpx.Error(w, http.StatusInternalServerError, fmt.Errorf("issued adverse-action artifact has unsupported content type"))
+		return
+	}
+	httpx.Download(w, artifact.ContentType, "adverse-action-"+sanitize(decisionID)+"-issued.md", artifact.Artifact)
+}
+
 type issueRequest struct {
 	Method                DeliveryMethod `json:"method"`
 	BasedOnConsumerReport bool           `json:"based_on_consumer_report"`
@@ -261,15 +311,13 @@ func (s *Service) issueAdverseAction(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, err)
 		return
 	}
-	hash, algo := HashNotice(notice)
 	e, err := s.cmd.Issue(r.Context(), id, IssueCmd{
 		DecisionID:            decisionID,
 		Subject:               subjectOf(rec),
 		Method:                req.Method,
 		BasedOnConsumerReport: req.BasedOnConsumerReport,
 		PrincipalReasons:      principalReasons(rec),
-		ContentHash:           hash,
-		HashAlgo:              algo,
+		Artifact:              notice,
 	})
 	if err != nil {
 		httpx.Error(w, http.StatusBadRequest, err)
