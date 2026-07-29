@@ -380,6 +380,14 @@ test('an adverse decision moves through notice, contest, and human review queues
 
   await page.getByRole('button', { name: 'Record as issued' }).click();
   await expect(page.getByText('issued', { exact: true })).toBeVisible();
+  const issuedArtifact = page.waitForResponse(
+    (res) =>
+      res.url().endsWith(`/v1/decisions/${decisionId}/adverse-action/issued`) &&
+      res.request().method() === 'GET'
+  );
+  await page.getByRole('button', { name: 'Download issued artifact' }).click();
+  expect((await issuedArtifact).status()).toBe(200);
+  await expect(page.getByText('Download current preview', { exact: true })).toBeVisible();
 
   await page.getByRole('button', { name: 'Log contest' }).click();
   await expect(page.getByText('contest — awaiting review', { exact: true })).toBeVisible();

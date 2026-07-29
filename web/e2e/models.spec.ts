@@ -123,7 +123,27 @@ test('a different actor approves a model with recorded reasoning', async ({ page
   );
   const governance = page.getByTestId('model-governance');
   await expect(governance).toBeVisible();
-  await governance.getByRole('button', { name: 'Approve' }).click();
+  const approve = governance.getByRole('button', { name: 'Approve' });
+  await expect(approve).toBeDisabled();
+  await expect(approve).toHaveAttribute('title', /independent validation/i);
+  await governance.getByPlaceholder('dataset (e.g. backtest_Q1)').fill('holdout_2026Q2');
+  await governance.getByPlaceholder('metrics (auc=0.81, ks=0.42)').fill('auc=0.84, ks=0.45');
+  await governance
+    .getByPlaceholder('independent review notes')
+    .fill('Independent holdout review met the documented acceptance thresholds.');
+  const validationRequest = page.waitForRequest(
+    (req) => req.url().endsWith(`/v1/models/${name}/validation`) && req.method() === 'POST'
+  );
+  await governance.getByRole('button', { name: 'Record validation' }).click();
+  expect((await validationRequest).postDataJSON()).toEqual({
+    dataset: 'holdout_2026Q2',
+    metrics: { auc: 0.84, ks: 0.45 },
+    notes: 'Independent holdout review met the documented acceptance thresholds.',
+    passed: true
+  });
+  await expect(governance.getByText('Current independent validation:')).toBeVisible();
+  await expect(approve).toBeEnabled();
+  await approve.click();
   await page.getByLabel('model decision reason').fill('Independent validation passed.');
   const approvalRequest = page.waitForRequest(
     (req) => req.url().endsWith(`/v1/models/${name}/approve`) && req.method() === 'POST'

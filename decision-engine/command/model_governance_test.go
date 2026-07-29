@@ -69,7 +69,30 @@ func TestModelFourEyesApproval(t *testing.T) {
 	if _, err := h.ApproveModelApproval(ctx, ava, "m", reqID, ""); err == nil {
 		t.Fatal("expected four-eyes to block self-approval")
 	}
-	// A different, adequately-roled actor approves.
+	// A different actor still cannot approve until they have recorded a substantive
+	// current-version validation, and the model author cannot provide that evidence.
+	if _, err := h.ApproveModelApproval(ctx, marcus, "m", reqID, ""); err == nil || !strings.Contains(err.Error(), "requires independent validation") {
+		t.Fatalf("expected missing validation to block approval, got %v", err)
+	}
+	if _, err := h.RecordModelValidation(ctx, ava, "m", events.ModelValidationRecorded{
+		Dataset: "holdout-2026q2", Metrics: map[string]float64{"auc": 0.77}, Notes: "Author backtest", Passed: true,
+	}); err == nil || !strings.Contains(err.Error(), "cannot validate") {
+		t.Fatalf("expected self-validation to be refused, got %v", err)
+	}
+	if _, err := h.RecordModelValidation(ctx, marcus, "m", events.ModelValidationRecorded{
+		Dataset: "holdout-2026q2", Metrics: map[string]float64{"auc": 0.61}, Notes: "Below acceptance threshold", Passed: false,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.ApproveModelApproval(ctx, marcus, "m", reqID, ""); err == nil || !strings.Contains(err.Error(), "failed") {
+		t.Fatalf("expected failed validation to block approval, got %v", err)
+	}
+	if _, err := h.RecordModelValidation(ctx, marcus, "m", events.ModelValidationRecorded{
+		Dataset: "holdout-2026q2", Metrics: map[string]float64{"auc": 0.82}, Notes: "Meets the documented AUC threshold", Passed: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// The independent validator/checker now approves.
 	if _, err := h.ApproveModelApproval(ctx, marcus, "m", reqID, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -94,9 +117,18 @@ func TestModelRedefineInvalidatesApproval(t *testing.T) {
 	h := command.NewHandler(log)
 	ava, marcus := idFor("ava"), idFor("marcus")
 
-	h.DefineModel(ctx, ava, "m", modelSpec)
+	if _, err := h.DefineModel(ctx, ava, "m", modelSpec); err != nil {
+		t.Fatal(err)
+	}
 	reqID, _, _ := h.RequestModelApproval(ctx, ava, "m")
-	h.ApproveModelApproval(ctx, marcus, "m", reqID, "")
+	if _, err := h.RecordModelValidation(ctx, marcus, "m", events.ModelValidationRecorded{
+		Dataset: "backtest", Metrics: map[string]float64{"auc": 0.8}, Notes: "Independent backtest passed", Passed: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.ApproveModelApproval(ctx, marcus, "m", reqID, ""); err != nil {
+		t.Fatal(err)
+	}
 
 	// Redefining the model is a new version; the old approval no longer applies.
 	if _, err := h.DefineModel(ctx, ava, "m", modelSpec); err != nil {
@@ -120,7 +152,9 @@ func TestModelApprovalAuthorCannotApprove(t *testing.T) {
 	h := command.NewHandler(log)
 	ava, priya := idFor("ava"), idFor("priya")
 
-	h.DefineModel(ctx, ava, "m", modelSpec)
+	if _, err := h.DefineModel(ctx, ava, "m", modelSpec); err != nil {
+		t.Fatal(err)
+	}
 	// priya requests approval of ava's model; ava (the author) still cannot approve.
 	reqID, _, err := h.RequestModelApproval(ctx, priya, "m")
 	if err != nil {
@@ -138,7 +172,9 @@ func TestModelReject(t *testing.T) {
 	h := command.NewHandler(log)
 	ava, marcus := idFor("ava"), idFor("marcus")
 
-	h.DefineModel(ctx, ava, "m", modelSpec)
+	if _, err := h.DefineModel(ctx, ava, "m", modelSpec); err != nil {
+		t.Fatal(err)
+	}
 	reqID, _, _ := h.RequestModelApproval(ctx, ava, "m")
 	if _, err := h.RejectModelApproval(ctx, marcus, "m", reqID, "insufficient validation"); err != nil {
 		t.Fatal(err)
@@ -159,11 +195,13 @@ func TestRecordModelValidation(t *testing.T) {
 	ctx := context.Background()
 	log := eventlog.NewMemory()
 	h := command.NewHandler(log)
-	ava := idFor("ava")
+	ava, marcus := idFor("ava"), idFor("marcus")
 
-	h.DefineModel(ctx, ava, "m", modelSpec)
-	if _, err := h.RecordModelValidation(ctx, ava, "m", events.ModelValidationRecorded{
-		Dataset: "backtest", Metrics: map[string]float64{"auc": 0.8}, Validator: "val", Passed: true,
+	if _, err := h.DefineModel(ctx, ava, "m", modelSpec); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.RecordModelValidation(ctx, marcus, "m", events.ModelValidationRecorded{
+		Dataset: "backtest", Metrics: map[string]float64{"auc": 0.8}, Notes: "Independent holdout review", Passed: true,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +211,24 @@ func TestRecordModelValidation(t *testing.T) {
 	st := store.NewMemory()
 	foldModels(t, log, st)
 	mv := readModel(t, st, "m")
-	if len(mv.Validations) != 1 || mv.Validations[0].Metrics["auc"] != 0.8 || mv.Validations[0].Version != 1 {
+	if len(mv.Validations) != 1 || mv.Validations[0].Metrics["auc"] != 0.8 ||
+		mv.Validations[0].Version != 1 || mv.Validations[0].Validator != "marcus" ||
+		mv.Validations[0].RecordedBy != "marcus" {
 		t.Fatalf("validations = %+v", mv.Validations)
+	}
+	if _, err := h.RecordModelValidation(ctx, marcus, "m", events.ModelValidationRecorded{
+		Metrics: map[string]float64{"auc": 0.8}, Notes: "missing dataset", Passed: true,
+	}); err == nil || !strings.Contains(err.Error(), "dataset is required") {
+		t.Fatalf("expected empty dataset to fail, got %v", err)
+	}
+	if _, err := h.RecordModelValidation(ctx, marcus, "m", events.ModelValidationRecorded{
+		Dataset: "backtest", Notes: "missing metrics", Passed: true,
+	}); err == nil || !strings.Contains(err.Error(), "at least one named metric") {
+		t.Fatalf("expected empty metrics to fail, got %v", err)
+	}
+	if _, err := h.RecordModelValidation(ctx, marcus, "m", events.ModelValidationRecorded{
+		Dataset: "backtest", Metrics: map[string]float64{"auc": 0.8}, Passed: true,
+	}); err == nil || !strings.Contains(err.Error(), "notes are required") {
+		t.Fatalf("expected empty notes to fail, got %v", err)
 	}
 }

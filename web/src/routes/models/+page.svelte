@@ -25,6 +25,7 @@
     recordModelValidation,
     modelApproved,
     type Model,
+    type ModelValidation,
     type ModelDrift,
     type ModelPerformance,
     type TrainReport,
@@ -82,7 +83,6 @@
   // Validation-evidence form fields for the open governance panel.
   let valDataset = $state('');
   let valMetrics = $state('');
-  let valValidator = $state('');
   let valNotes = $state('');
   let valPassed = $state(true);
 
@@ -97,6 +97,17 @@
     if (modelApproved(m)) return { tone: 'ok', label: 'approved' };
     if (m.pending) return { tone: 'warn', label: 'pending review' };
     return { tone: 'danger', label: 'not approved' };
+  }
+
+  function latestIndependentValidation(m: Model): ModelValidation | undefined {
+    return [...(m.validations ?? [])]
+      .reverse()
+      .find(
+        (v) =>
+          v.version === (m.version ?? 0) &&
+          (v.recorded_by ?? v.validator) !== m.owner &&
+          !!(v.recorded_by ?? v.validator)
+      );
   }
 
   // refreshModels reloads just the registry list (governance state changes) without
@@ -168,15 +179,17 @@
     govBusy = true;
     try {
       const metrics = parseMetrics(valMetrics);
+      if (!valDataset.trim()) throw new Error('A validation dataset is required.');
+      if (!Object.keys(metrics).length) throw new Error('At least one named metric is required.');
+      if (!valNotes.trim()) throw new Error('Validation notes are required.');
       await recordModelValidation(key, name, {
-        dataset: valDataset.trim() || undefined,
-        metrics: Object.keys(metrics).length ? metrics : undefined,
-        validator: valValidator.trim() || undefined,
-        notes: valNotes.trim() || undefined,
+        dataset: valDataset.trim(),
+        metrics,
+        notes: valNotes.trim(),
         passed: valPassed
       });
       toast.success('Validation evidence recorded.');
-      valDataset = valMetrics = valValidator = valNotes = '';
+      valDataset = valMetrics = valNotes = '';
       valPassed = true;
       await refreshModels();
     } catch (e) {
@@ -674,11 +687,16 @@
                             class="btn primary"
                             disabled={govBusy ||
                               m.owner === $user?.actor ||
-                              m.pending.requested_by === $user?.actor}
+                              m.pending.requested_by === $user?.actor ||
+                              !latestIndependentValidation(m)?.passed}
                             title={m.owner === $user?.actor ||
                             m.pending.requested_by === $user?.actor
                               ? 'Four-eyes: you authored or requested this — a different approver must approve'
-                              : undefined}
+                              : !latestIndependentValidation(m)
+                                ? 'Record independent validation for this version before approval'
+                                : !latestIndependentValidation(m)?.passed
+                                  ? 'The latest independent validation failed'
+                                  : undefined}
                             onclick={() => startGovDecision(m.name, true)}>Approve</button
                           >
                           <button
@@ -687,7 +705,8 @@
                             onclick={() => startGovDecision(m.name, false)}>Reject</button
                           >
                           <span class="muted small"
-                            >Four-eyes: the author and requester can't approve.</span
+                            >Four-eyes plus a passing independent validation of this version are
+                            required.</span
                           >
                         {/if}
                       {/if}
@@ -695,6 +714,18 @@
 
                     <div class="gov-validation">
                       <h4>Validation evidence</h4>
+                      {#if latestIndependentValidation(m)}
+                        <p class="muted small">
+                          Current independent validation:
+                          <Badge tone={latestIndependentValidation(m)?.passed ? 'ok' : 'danger'}>
+                            {latestIndependentValidation(m)?.passed ? 'pass' : 'fail'}
+                          </Badge>
+                          by {latestIndependentValidation(m)?.recorded_by ??
+                            latestIndependentValidation(m)?.validator}
+                        </p>
+                      {:else}
+                        <p class="muted">No independent validation for this version yet.</p>
+                      {/if}
                       {#if m.validations && m.validations.length}
                         <ul class="val-list">
                           {#each m.validations as v (v.recorded_at)}
@@ -711,25 +742,25 @@
                             </li>
                           {/each}
                         </ul>
-                      {:else}
-                        <p class="muted">No validation evidence recorded yet.</p>
                       {/if}
 
-                      {#if roleAtLeast($user?.role, 'editor')}
+                      {#if roleAtLeast($user?.role, 'approver')}
                         <div class="val-form">
                           <input bind:value={valDataset} placeholder="dataset (e.g. backtest_Q1)" />
                           <input
                             bind:value={valMetrics}
                             placeholder="metrics (auc=0.81, ks=0.42)"
                           />
-                          <input bind:value={valValidator} placeholder="validator" />
-                          <input bind:value={valNotes} placeholder="notes" />
+                          <input bind:value={valNotes} placeholder="independent review notes" />
                           <label class="pass"
                             ><input type="checkbox" bind:checked={valPassed} /> passed</label
                           >
                           <button
                             class="btn"
-                            disabled={govBusy}
+                            disabled={govBusy || m.owner === $user?.actor}
+                            title={m.owner === $user?.actor
+                              ? 'The model author cannot validate their own version'
+                              : undefined}
                             onclick={() => doRecordValidation(m.name)}>Record validation</button
                           >
                         </div>

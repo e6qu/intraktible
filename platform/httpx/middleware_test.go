@@ -191,6 +191,8 @@ func TestAuthorizeRBAC(t *testing.T) {
 		{"editor-k", "POST", "/v1/models/train", 200},
 		{"operator-k", "POST", "/v1/models/m1/monitor", 403},
 		{"editor-k", "POST", "/v1/models/m1/monitor", 200},
+		{"editor-k", "POST", "/v1/models/m1/validation", 403},
+		{"approver-k", "POST", "/v1/models/m1/validation", 200},
 		// Recording a realized outcome is runtime feedback, not authoring → operator.
 		{"operator-k", "POST", "/v1/models/m1/outcomes", 200},
 		{"viewer-k", "GET", "/v1/models/m1/performance", 200},                    // reads stay open to viewer
@@ -227,6 +229,7 @@ func TestAuthorizeRoutesByPattern(t *testing.T) {
 	kr := auth.NewKeyring()
 	id := identity.Identity{Org: "o", Workspace: "w", Actor: "u"}
 	kr.Add("viewer-k", auth.APIKey{ID: "v", Identity: id, Role: auth.RoleViewer})
+	kr.Add("operator-k", auth.APIKey{ID: "o", Identity: id, Role: auth.RoleOperator})
 	kr.Add("editor-k", auth.APIKey{ID: "e", Identity: id, Role: auth.RoleEditor})
 	kr.Add("admin-k", auth.APIKey{ID: "a", Identity: id, Role: auth.RoleAdmin})
 
@@ -236,6 +239,7 @@ func TestAuthorizeRoutesByPattern(t *testing.T) {
 	mux.HandleFunc("POST /v1/flows/{id}/monitors", ok)
 	mux.HandleFunc("GET /v1/audit", ok)
 	mux.HandleFunc("GET /v1/adverse-actions", ok)
+	mux.HandleFunc("GET /v1/decisions/{decision_id}/adverse-action/issued", ok)
 	mux.HandleFunc("POST /v1/decisions/{decision_id}/adverse-action/issue", ok)
 	mux.HandleFunc("GET /v1/consent/records", ok)
 	mux.HandleFunc("GET /v1/compliance/jurisdiction", ok)
@@ -260,6 +264,8 @@ func TestAuthorizeRoutesByPattern(t *testing.T) {
 		{"admin-k", "GET", "/v1/audit", 200},                               // the real audit route → admin
 		{"viewer-k", "GET", "/v1/audit", 403},                              // ...denied to viewer
 		{"viewer-k", "GET", "/v1/adverse-actions", 200},                    // the read-only queue → viewer
+		{"viewer-k", "GET", "/v1/decisions/d1/adverse-action/issued", 403}, // issued customer document → operator+
+		{"operator-k", "GET", "/v1/decisions/d1/adverse-action/issued", 200},
 		{"viewer-k", "POST", "/v1/decisions/d1/adverse-action/issue", 403}, // ...but issuing → operator+
 		{"editor-k", "POST", "/v1/decisions/d1/adverse-action/issue", 200}, // editor outranks operator
 		{"viewer-k", "GET", "/v1/consent/records", 200},                    // cross-subject consent read → viewer

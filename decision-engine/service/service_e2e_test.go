@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -285,9 +286,17 @@ func TestNodeTraceErasure(t *testing.T) {
 		rec = history.Record{}
 		var rerr error
 		rec, _, rerr = history.Read(context.Background(), st, id, dec.DecisionID)
-		return rerr == nil && len(rec.Nodes) > 0
+		if rerr != nil {
+			return false
+		}
+		for _, node := range rec.Nodes {
+			if node.NodeID == "a" && len(node.Output) > 0 {
+				return true
+			}
+		}
+		return false
 	}) {
-		t.Fatal("decision record never projected")
+		t.Fatal("assignment node output never projected")
 	}
 	var aOut string
 	for _, n := range rec.Nodes {
@@ -3135,6 +3144,54 @@ func TestTrainModelOverHTTP(t *testing.T) {
 	api.Request(t, http.MethodPost, "/v1/models/train", map[string]any{
 		"name": "bad", "dataset": []map[string]any{{"features": map[string]any{"x": 1}, "label": 1}},
 	}, http.StatusBadRequest, nil)
+}
+
+func TestModelApprovalRequiresIndependentValidationOverHTTP(t *testing.T) {
+	api := startEngine(t)
+	maker := api.AddKey("maker-key", auth.APIKey{
+		ID: "maker", Identity: identity.Identity{Org: "demo", Workspace: "main", Actor: "maker"}, Role: auth.RoleEditor,
+	})
+	validator := api.AddKey("validator-key", auth.APIKey{
+		ID: "validator", Identity: identity.Identity{Org: "demo", Workspace: "main", Actor: "validator"}, Role: auth.RoleApprover,
+	})
+	maker.Request(t, http.MethodPost, "/v1/models", map[string]any{
+		"name": "risk-governed",
+		"spec": map[string]any{"kind": "logistic", "intercept": -3, "coefficients": map[string]any{"fico": 0.005}},
+	}, http.StatusCreated, nil)
+	var requested struct {
+		RequestID string `json:"request_id"`
+	}
+	maker.Request(t, http.MethodPost, "/v1/models/risk-governed/approval-request", nil, http.StatusOK, &requested)
+
+	validation := map[string]any{
+		"dataset": "holdout-2026q2", "metrics": map[string]any{"auc": 0.82},
+		"notes": "Independent holdout review met the documented threshold.", "passed": true,
+	}
+	// Model authors do not have the validator role, and approval is not a route
+	// around missing evidence.
+	maker.Request(t, http.MethodPost, "/v1/models/risk-governed/validation", validation, http.StatusForbidden, nil)
+	validator.Request(t, http.MethodPost, "/v1/models/risk-governed/approve", map[string]any{
+		"request_id": requested.RequestID, "reason": "ready",
+	}, http.StatusBadRequest, nil)
+	// Caller-supplied validator identity is not part of the contract.
+	spoofed := maps.Clone(validation)
+	spoofed["validator"] = "maker"
+	validator.Request(t, http.MethodPost, "/v1/models/risk-governed/validation", spoofed, http.StatusBadRequest, nil)
+	validator.Request(t, http.MethodPost, "/v1/models/risk-governed/validation", validation, http.StatusOK, nil)
+
+	var got models.ModelView
+	validator.Request(t, http.MethodGet, "/v1/models/risk-governed", nil, http.StatusOK, &got)
+	if len(got.Validations) != 1 || got.Validations[0].Validator != "validator" ||
+		got.Validations[0].RecordedBy != "validator" {
+		t.Fatalf("validation identity was not derived from the caller: %+v", got.Validations)
+	}
+	validator.Request(t, http.MethodPost, "/v1/models/risk-governed/approve", map[string]any{
+		"request_id": requested.RequestID, "reason": "Independent evidence meets the acceptance threshold.",
+	}, http.StatusOK, nil)
+	validator.Request(t, http.MethodGet, "/v1/models/risk-governed", nil, http.StatusOK, &got)
+	if !got.Approved() {
+		t.Fatalf("validated model was not approved: %+v", got)
+	}
 }
 
 // TestModelPerformanceAndCovariateDrift exercises GAPS #6 end to end: a model's

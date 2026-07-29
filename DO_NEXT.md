@@ -16,26 +16,10 @@ DOC (a claim not backed by code).
 
 ## Queue
 
-The second whole-product audit inventory from merged commit `fea7a26` is
-complete. No evidence-backed product-journey gap remains open. PR #156 is the
-repository's single review queue, all nine jobs in run 30306203748 pass, and
-GitHub reports it cleanly mergeable.
+Third whole-product audit from authoritative merged commit `92b285f`.
 
-**The honest edges** — not defects, but the limits of what was checked:
-
-- Absolute throughput numbers come from one Linux Docker host. A managed
-  PostgreSQL on provisioned IOPS is a different machine; the ratios travel, the
-  nanoseconds do not.
-- `docs/COMPETITIVE.md` was not verified, by design — AGENTS.md already states
-  its competitor entries are vendor claims rather than tested behavior.
-- `docs/JOURNEYS.md` and `docs/LAUNCH.md` are reconciled against the fixed
-  retention, scheduler, durable-task, maker-checker, and execution-target
-  behavior. Every corrected governance/collaboration handoff has a real browser
-  journey on both applicable native and wasm surfaces.
-- This was a whole-product journey/correctness pass, not a new decide-path
-  performance study or a replacement for the dedicated security review. The
-  full required vulnerability gate was run and reports zero reachable
-  vulnerabilities after the approved gRPC security update.
+No open implementation items. PR #157 is the repository's sole review queue;
+merge only after every required check on its current head is green.
 
 ---
 

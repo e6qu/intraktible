@@ -346,14 +346,15 @@ delivered, by theme:
 We are far from a production release. What exists is a decision engine with a governance layer
 (deterministic replay, audit/lineage, RBAC, four-eyes on flows, drift, crypto-shred erasure). A
 multi-agent review and a competitor comparison (**[docs/COMPETITIVE.md](docs/COMPETITIVE.md)**) point to
-what is not built. Some of that gap list has since been worked through (fair-lending testing and the
-adverse-action arc shipped, see Phase 6 and Phase 11); independent model validation is still absent.
+what is not built. Some of that gap list has since been worked through (fair-lending testing, the
+adverse-action arc, and independent model-validation gate shipped; see Phases 6, 7, and 11).
 On scale: there is now a **decision-throughput benchmark** (`make bench`, `decision-engine/decide_bench_test.go`)
 with a recorded baseline (see `docs/PERFORMANCE.md`) — the synchronous decide path is race-free under the
 detector and scales across cores. Decide-boundary failure injection now covers a failing dependency
 (Connect/AI/Predict) AND a dying store mid-decide, and a soak test drives sustained concurrent load over
 the segmented, self-archiving WAL asserting no drift; still open are the projection runtime's single-node
-ceiling, a multi-hour endurance run, and throughput numbers under a durable log or Postgres.
+ceiling and a multi-hour endurance run. Durable WAL, SQLite, and real-Postgres decide baselines are
+recorded in `docs/PERFORMANCE.md`.
 A **production-readiness audit** (2026-07-27, BUGS.md) then closed the load-balancer/multi-replica gaps
 that only appear in the deployment shape this project recommends: the Postgres log lost events under
 concurrent appends (seq assigned at INSERT, visible at COMMIT — appends now serialize on an advisory
@@ -388,17 +389,19 @@ orders them hardest-blocker-first; each phase is a direction, not a committed da
   surface**: a configured flow whose AIR falls below its threshold shows as an MRM open issue, like any
   other check. Admin-gated report/config/settings; operator-gated notice; `/fairlending` page (config
   save + settings) and an adverse-action download on the decision page. Zest AI's tooling was the scope
-  reference; independent model validation of the fair-lending model itself lands in Phase 7.
+  reference; independent model validation of the fair-lending model itself shipped in Phase 7.
 - **Phase 7 — Model governance parity — ✅ DONE.** Models now carry a **version** (each redefine bumps
   it) and a **four-eyes approval** (`ModelApprovalRequested/Approved/Rejected`): a maker requests, and a
   checker who is neither the requester nor the version's author approves — a redefine invalidates a
   prior approval, the same "changed logic, re-review" rule flows follow. Enforcement mirrors flows:
   **outside the sandbox, a Predict node refuses a model whose current version is not approved**.
-  **Validation evidence** (`ModelValidationRecorded`: dataset, metrics, validator, notes, pass/fail)
-  attaches to a version — what a checker reviews. The **MRM inventory** flags an unapproved model and a
-  model with no validation evidence as governance gaps (they fire like any other MRM issue), and the
-  models page carries the approval status, request/approve/reject, and the validation log. The demo seed
-  runs every model through validation + approval, so its production decisions serve approved models.
+  **Independent validation evidence** (`ModelValidationRecorded`: dataset, named finite metrics,
+  authenticated validator, substantive notes, pass/fail) attaches to a version. The owner cannot
+  validate their own model, the endpoint requires the approver role, and approval is refused until the
+  latest independent current-version record passes. The **MRM inventory** classifies that evidence as
+  tested/failing/none separately from the drift baseline and flags an unapproved or unvalidated model
+  as a governance gap. The models page carries the complete notification → validation → decision
+  handoff. The demo seed runs every model through different-actor validation + approval.
 - **Phase 8 — Production hardening at scale — 🚧 partial.** The suspected multi-replica double-apply
   was **confirmed with a test** (two runtimes sharing one durable store applied each event to a
   non-idempotent counter twice — count 2N) and **fixed**: the incremental apply now reads the **durable
@@ -488,7 +491,8 @@ orders them hardest-blocker-first; each phase is a direction, not a committed da
   (consent gates the data *pull*; adverse action governs a decline's *output*). The stateless ECOA
   notice render became an auditable issuance — `POST /v1/decisions/{id}/adverse-action/issue` records
   who served the notice, when, by what delivery method, citing which principal reasons, plus a SHA-256
-  hash of the exact document (the proof ECOA/Reg B expects within 30 days). The notice gained the
+  hash and the exact immutable rendered document (the proof ECOA/Reg B expects within 30 days). A
+  dedicated issued-artifact download verifies that hash and never re-renders mutable settings. The notice gained the
   **FCRA §615(a)** disclosures (consumer-reporting-agency identity, "the CRA did not make the decision",
   right to a free report + to dispute) for report-based declines, failing loud if the CRA is
   unconfigured. A **pending-notices work queue** (`GET /v1/adverse-actions`) surfaces declines awaiting
@@ -536,8 +540,11 @@ orders them hardest-blocker-first; each phase is a direction, not a committed da
   decision explanation cites the law that applies rather than hedging across all three — a UK-only
   workspace drops the EU Regulation; a US-only workspace cites the Equal Credit Opportunity Act, not
   Article 22. Editable on the compliance dashboard (admin), defaulting to all three when unset.
-  \_Still open:* byte-level WORM artifact storage; the ops-heavy scale tail (log compaction now shipped —
-  a segmented, self-archiving WAL with soak + store-failure coverage; backup automation still open).
+  **Byte-level adverse-action artifact retention now ships:** issuance records the exact rendered
+  Markdown in the append-only event, projects it into a dedicated artifact store, verifies it against
+  its SHA-256 hash on download, and reproduces it unchanged after settings/template changes or a full
+  replay. Still open: the ops-heavy scale tail (log compaction now shipped — a segmented,
+  self-archiving WAL with soak + store-failure coverage; backup automation still open).
 
 **Parallel non-code track (organisational, not code):** SOC 2 Type II, ISO 27001, independent
 penetration testing, data-provider commercial relationships, model-validation staffing, and reference

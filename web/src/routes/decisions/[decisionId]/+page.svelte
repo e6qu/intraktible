@@ -12,6 +12,7 @@
     resumeDecision,
     decisionCounterfactual,
     adverseActionNotice,
+    issuedAdverseActionNotice,
     getAdverseAction,
     issueAdverseAction,
     getReconsideration,
@@ -51,20 +52,23 @@
   }
 
   let notifying = $state(false);
-  // Generate the ECOA / Regulation B adverse-action notice for a declined decision and offer
-  // it as a download. Fetched through the app fetch (so the demo's mock serves it) and
-  // wrapped in a Blob — an <a href> would escape the mock and 404 on the static host.
-  async function downloadNotice() {
+  // Download either the current preview or the immutable artifact retained at
+  // issuance. Wrapping the app fetch in a Blob keeps both paths working in Wasm.
+  async function downloadNotice(issued = false) {
     notifying = true;
     try {
-      const text = await adverseActionNotice(key, id);
+      const text = issued
+        ? await issuedAdverseActionNotice(key, id)
+        : await adverseActionNotice(key, id);
       const url = URL.createObjectURL(new Blob([text], { type: 'text/markdown' }));
       const a = document.createElement('a');
       a.href = url;
-      a.download = `adverse-action-${id}.md`;
+      a.download = `adverse-action-${id}${issued ? '-issued' : '-preview'}.md`;
       a.click();
       setTimeout(() => URL.revokeObjectURL(url), 0);
-      toast.success('Downloaded the adverse-action notice.');
+      toast.success(
+        issued ? 'Downloaded the exact issued artifact.' : 'Downloaded the current notice preview.'
+      );
     } catch (e) {
       toast.error(msg(e));
     } finally {
@@ -426,15 +430,28 @@
           >A declined applicant must be served a notice under the US Equal Credit Opportunity Act
           (Regulation B) stating the specific principal reasons — and, if a consumer report was
           used, the Section 615 disclosures of the US Fair Credit Reporting Act. Recording the
-          issuance is the durable proof — who served it, when, how, and a hash of the exact
-          document.</Hint
+          issuance is the durable proof — who served it, when, how, and the exact immutable document
+          with its integrity hash.</Hint
         >
       </h2>
       <div class="aa-row">
-        <button class="notice-btn" onclick={downloadNotice} disabled={notifying}>
+        <button
+          class="notice-btn"
+          onclick={() => downloadNotice(!!issuance?.content_type)}
+          disabled={notifying || regulatoryLoading}
+        >
           <Icon name="shield" />
-          {notifying ? 'Generating…' : 'Download notice'}
+          {notifying
+            ? 'Downloading…'
+            : issuance?.content_type
+              ? 'Download issued artifact'
+              : 'Download current preview'}
         </button>
+        {#if issuance?.content_type}
+          <button class="notice-btn" onclick={() => downloadNotice(false)} disabled={notifying}
+            >Download current preview</button
+          >
+        {/if}
         {#if regulatoryLoading}
           <span class="badge">checking issuance…</span>
         {:else if regulatoryError}
@@ -465,6 +482,13 @@
           <dd class="mono" title={`${issuance.hash_algo}: ${issuance.content_hash}`}>
             ⛓ {issuance.content_hash.slice(0, 16)}…
           </dd>
+          {#if !issuance.content_type}
+            <dt>Artifact</dt>
+            <dd class="muted">
+              Exact bytes are unavailable for this legacy issuance; the current preview is not the
+              historical document.
+            </dd>
+          {/if}
         </dl>
       {:else if canIssue && !regulatoryError && !regulatoryLoading}
         <div class="aa-issue">
@@ -491,8 +515,10 @@
         </div>
       {/if}
       <p class="muted small">
-        The notice renders from these reason codes and the workspace creditor settings (set on the
-        Fair lending page). Recording an issuance requires the operator role.
+        The current preview renders from these reason codes and the workspace creditor settings (set
+        on the Fair lending page). Once recorded, the issued artifact remains byte-for-byte
+        reproducible even if those settings change. Recording an issuance requires the operator
+        role.
       </p>
 
       <h2>

@@ -145,10 +145,10 @@ the direction, and `BenchmarkPostgresAppend` is the measurement to beat.
 
 ## Caveats — what this is NOT
 
-- **In-memory log and store.** This isolates the decision core from disk. A durable WAL
-  fsyncs on append and a Postgres store adds network round-trips per decision — both add
-  latency this number does not include. There are no durable-backend or Postgres numbers
-  here yet.
+- **Backend-specific figures.** The in-memory row isolates the decision core from disk;
+  the WAL, SQLite, and Postgres rows above measure their real append/storage costs on the
+  stated Linux host. Managed Postgres latency and provisioned IOPS will differ, so treat
+  those absolute numbers as a reproducible baseline—not a promise for another deployment.
 - **One flow shape.** Throughput depends on the flow: a Connect node (external fetch), an
   AI node (a provider call), or a Predict node (a gradient-boosted model) each cost far
   more than the arithmetic-and-branch flow measured here. This is a floor for trivial

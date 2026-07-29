@@ -195,7 +195,7 @@ func TestAdverseActionIssuance(t *testing.T) {
 	e, err := h.Issue(ctx, id, fairlending.IssueCmd{
 		DecisionID: "dec-1", Subject: "applicant/APP-1", Method: fairlending.DeliveryMail,
 		BasedOnConsumerReport: true, PrincipalReasons: []string{"Insufficient credit history"},
-		ContentHash: "abc123", HashAlgo: "sha-256",
+		Artifact: "# Exact issued notice\n",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -208,19 +208,24 @@ func TestAdverseActionIssuance(t *testing.T) {
 		t.Fatalf("issuance not found: %v", err)
 	}
 	if iv.Method != fairlending.DeliveryMail || !iv.BasedOnConsumerReport || iv.IssuedBy != "tester" ||
-		len(iv.PrincipalReasons) != 1 || iv.ContentHash != "abc123" {
+		len(iv.PrincipalReasons) != 1 || iv.ContentType != fairlending.NoticeContentType {
 		t.Fatalf("issuance = %+v", iv)
+	}
+	artifact, found, err := fairlending.ReadIssuedArtifact(ctx, st, id, "dec-1")
+	if err != nil || !found || artifact.Artifact != "# Exact issued notice\n" ||
+		artifact.ContentHash != iv.ContentHash {
+		t.Fatalf("artifact = %+v, found=%v, err=%v", artifact, found, err)
 	}
 
 	// Fail-loud validation.
-	if _, err := h.Issue(ctx, id, fairlending.IssueCmd{DecisionID: "d", Method: "carrier_pigeon", PrincipalReasons: []string{"r"}, ContentHash: "h", HashAlgo: "sha-256"}); err == nil {
+	if _, err := h.Issue(ctx, id, fairlending.IssueCmd{DecisionID: "d", Method: "carrier_pigeon", PrincipalReasons: []string{"r"}, Artifact: "notice"}); err == nil {
 		t.Error("an unknown delivery method should be rejected")
 	}
-	if _, err := h.Issue(ctx, id, fairlending.IssueCmd{DecisionID: "d", Method: fairlending.DeliveryMail, ContentHash: "h", HashAlgo: "sha-256"}); err == nil {
+	if _, err := h.Issue(ctx, id, fairlending.IssueCmd{DecisionID: "d", Method: fairlending.DeliveryMail, Artifact: "notice"}); err == nil {
 		t.Error("an issuance with no principal reasons should be rejected")
 	}
 	if _, err := h.Issue(ctx, id, fairlending.IssueCmd{DecisionID: "d", Method: fairlending.DeliveryMail, PrincipalReasons: []string{"r"}}); err == nil {
-		t.Error("an issuance with no content hash should be rejected")
+		t.Error("an issuance with no exact artifact should be rejected")
 	}
 }
 

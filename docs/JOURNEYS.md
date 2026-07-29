@@ -153,8 +153,11 @@ Spans: **Fair lending** (`/fairlending`) → **Decision trace**
    decline so the 30-day clock is visible. Follow a row to the decision, preview or
    download the rendered notice, choose the delivery method, and **Record as issued**.
    Outcome: an immutable issuance record captures who served it, when, how, the
-   principal reasons, whether a consumer report was involved, and a hash of the exact
-   document; the decision leaves the pending queue.
+   principal reasons, whether a consumer report was involved, and the exact rendered
+   Markdown plus its hash; the decision leaves the pending queue. **Download issued
+   artifact** always returns those retained bytes, while **Download current preview**
+   deliberately re-renders current settings. A settings/template change or full
+   projection replay cannot alter the issued document.
 
 ### Contest an automated decline and record human reconsideration
 
@@ -237,10 +240,14 @@ Spans: **Models** (`/models`), referenced from a flow's **predict** node.
 1. Define a model from a spec—or train a logistic model from a labelled dataset.
    Supported kinds: **logistic**, **GBM**, **expression**, or an **external**
    endpoint. Outcome: a versioned model hosted as data.
-2. Record validation evidence, then request approval. A different approver follows
-   the shared notification to the exact Governance panel and records an
-   approve/reject reason. A changed definition needs fresh approval; unapproved
-   models are refused outside sandbox.
+2. Request approval. A different actor with the **approver** role follows the shared
+   notification to the exact Governance panel and records independent validation for
+   the current version: the holdout dataset, named metrics, pass/fail, and substantive
+   notes. Authentication supplies the validator identity; the model owner cannot
+   validate their own work. Approval is disabled and the backend refuses it until the
+   latest independent record passes, then the checker records an approve/reject
+   reason. A changed definition needs fresh validation and approval; unapproved models
+   are refused outside sandbox.
 3. Expand the model's **Drift** readout on the Models page and **capture a baseline**.
    Outcome: the current score distribution is recorded as the reference for drift.
 4. Set a drift monitor: alert when **PSI** (Population Stability Index) exceeds a
@@ -455,7 +462,7 @@ on the server as well.
 
 - **Model risk (MRM).** The SR 11-7 / SS1/23 model inventory in one register: every
   flow, predictive model, and agent, each with its validation coverage (assertions for
-  flows, a drift baseline for models, eval cases for agents), live monitoring (success
+  flows, current independent evidence for models, eval cases for agents), live monitoring (success
   rate, firing monitors, drift PSI), and any open governance gaps. Scan for entries
   with open gaps or failing validation, open an entry to read its evidence, and export
   the report (CSV or Markdown). _Admin only._

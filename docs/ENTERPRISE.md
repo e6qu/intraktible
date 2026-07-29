@@ -13,10 +13,12 @@ It is written from the **user's** perspective (a risk/credit/ops team and the
 platform team that supports them), and it is deliberately honest about what is
 present, what is missing, and what matters most.
 
-> **Scope note.** intraktible is a *synchronous decision engine*, not a
-> process-orchestration engine — it does not do long-running instances, timers,
-> message/signal events, or human tasks that suspend and resume. Its data/feature and
-> connector layers are also thinner than commercial decisioning SaaS. See
+> **Scope note.** intraktible is a *synchronous decision engine*, not a general
+> process-orchestration engine. A manual-review node does provide one event-sourced durable
+> human-task instance that suspends and resumes a decision across restart/replay, but there
+> is no general process-instance model, timer-driven resume, or arbitrary message/signal
+> events. Its data/feature and connector layers are also thinner than commercial decisioning
+> SaaS. See
 > [Honest gaps & scope](./gaps.html) for the candid competitive picture before relying
 > on any claim below.
 
@@ -173,7 +175,8 @@ enterprise buyers; **P2** = differentiators / scale.
   **flow**, a **predictive model**, and an **AI agent** — with its version, owner
   (last publisher), and deployments; the **validation evidence** for each (a flow's
   assertion suite run live + shadow divergence, an agent's eval cases, a predictive
-  model's captured drift baseline) classified as tested / failing / none; and the
+  model's latest independent current-version validation) classified as tested / failing /
+  none; and the
   **ongoing monitoring** (decision volume, success rate, firing monitors, PSI drift,
   SLO attainment). Crucially it flags the **governance gaps** — an unvalidated model,
   a failing assertion suite, a firing monitor, a breaching SLO, a drifting model — so

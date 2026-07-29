@@ -228,10 +228,11 @@
       const recorded = nextEntities.find(
         (record) => record.entity_type === nextType && record.entity_id === nextID
       );
+      const recordedAttributes = new Map(Object.entries(recorded?.attributes ?? {}));
       if (
         !recorded ||
         !Object.entries(attributes).every(
-          ([name, value]) => JSON.stringify(recorded.attributes[name]) === JSON.stringify(value)
+          ([name, value]) => JSON.stringify(recordedAttributes.get(name)) === JSON.stringify(value)
         )
       ) {
         throw new Error(

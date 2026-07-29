@@ -410,11 +410,10 @@ func (s *Service) modelApprovalDecision(w http.ResponseWriter, r *http.Request, 
 }
 
 type modelValidationRequest struct {
-	Dataset   string             `json:"dataset,omitempty"`
-	Metrics   map[string]float64 `json:"metrics,omitempty"`
-	Validator string             `json:"validator,omitempty"`
-	Notes     string             `json:"notes,omitempty"`
-	Passed    bool               `json:"passed"`
+	Dataset string             `json:"dataset"`
+	Metrics map[string]float64 `json:"metrics"`
+	Notes   string             `json:"notes"`
+	Passed  bool               `json:"passed"`
 }
 
 // recordModelValidation attaches validation evidence to the model's current version.
@@ -429,7 +428,7 @@ func (s *Service) recordModelValidation(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	e, err := s.cmd.RecordModelValidation(r.Context(), id, r.PathValue("name"), events.ModelValidationRecorded{
-		Dataset: req.Dataset, Metrics: req.Metrics, Validator: req.Validator, Notes: req.Notes, Passed: req.Passed,
+		Dataset: req.Dataset, Metrics: req.Metrics, Notes: req.Notes, Passed: req.Passed,
 	})
 	if err != nil {
 		httpx.Error(w, http.StatusBadRequest, err)

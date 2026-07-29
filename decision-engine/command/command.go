@@ -1119,13 +1119,16 @@ func (h *Handler) TrainModel(ctx context.Context, id identity.Identity, name str
 // modelGov is the folded governance state of one model: its current version and
 // author, the approved version, and any pending approval request.
 type modelGov struct {
-	version         int
-	owner           string
-	approvedVersion int
-	pendingID       string
-	pendingVersion  int
-	pendingBy       string
-	exists          bool
+	version                int
+	owner                  string
+	approvedVersion        int
+	pendingID              string
+	pendingVersion         int
+	pendingBy              string
+	validationRecorded     bool
+	latestValidationBy     string
+	latestValidationPassed bool
+	exists                 bool
 }
 
 // foldModelGov folds the models stream for one model into its governance state. Like
@@ -1154,6 +1157,7 @@ func (h *Handler) foldModelGov(ctx context.Context, id identity.Identity, name s
 			g.version++
 			g.owner = e.Actor
 			g.pendingID, g.pendingVersion, g.pendingBy = "", 0, ""
+			g.validationRecorded, g.latestValidationBy, g.latestValidationPassed = false, "", false
 		case events.TypeModelApprovalRequested:
 			var p events.ModelApprovalRequested
 			if err := json.Unmarshal(e.Payload, &p); err != nil {
@@ -1178,6 +1182,16 @@ func (h *Handler) foldModelGov(ctx context.Context, id identity.Identity, name s
 			}
 			if p.Name == name && p.RequestID == g.pendingID {
 				g.pendingID, g.pendingVersion, g.pendingBy = "", 0, ""
+			}
+		case events.TypeModelValidationRecorded:
+			var p events.ModelValidationRecorded
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				return modelGov{}, fmt.Errorf("decision-engine: decode model-validation seq %d: %w", e.Seq, err)
+			}
+			if p.Name == name && p.Version == g.version && e.Actor != g.owner {
+				g.validationRecorded = true
+				g.latestValidationBy = e.Actor
+				g.latestValidationPassed = p.Passed
 			}
 		}
 	}
@@ -1268,6 +1282,12 @@ func (h *Handler) decideModelApproval(ctx context.Context, id identity.Identity,
 			if g.pendingVersion != g.version {
 				return eventlog.Envelope{}, fmt.Errorf("decision-engine: model-approval request %q is stale — %q was redefined since; reject and request again", reqID, name)
 			}
+			if !g.validationRecorded {
+				return eventlog.Envelope{}, fmt.Errorf("decision-engine: model %q version %d requires independent validation before approval", name, g.version)
+			}
+			if !g.latestValidationPassed {
+				return eventlog.Envelope{}, fmt.Errorf("decision-engine: latest independent validation by %q failed for model %q version %d", g.latestValidationBy, name, g.version)
+			}
 		}
 		typ := events.TypeModelApprovalApproved
 		var payload []byte
@@ -1291,9 +1311,10 @@ func (h *Handler) decideModelApproval(ctx context.Context, id identity.Identity,
 	}
 }
 
-// RecordModelValidation attaches validation evidence to the model's current version
-// (dataset, named metrics, validator, notes, pass/fail). Evidence is what an approver
-// reviews; it is not itself the gate.
+// RecordModelValidation attaches substantive independent validation evidence to the
+// model's current version. The authenticated actor is the validator of record; the
+// model owner cannot validate their own work. The latest passing record gates
+// approval, while failed records remain durable evidence.
 func (h *Handler) RecordModelValidation(ctx context.Context, id identity.Identity, name string, rec events.ModelValidationRecorded) (eventlog.Envelope, error) {
 	if err := id.Valid(); err != nil {
 		return eventlog.Envelope{}, err
@@ -1307,7 +1328,35 @@ func (h *Handler) RecordModelValidation(ctx context.Context, id identity.Identit
 	if !g.exists {
 		return eventlog.Envelope{}, fmt.Errorf("decision-engine: unknown model %q", name)
 	}
-	rec.Name, rec.Version = name, g.version
+	if id.Actor == g.owner {
+		return eventlog.Envelope{}, fmt.Errorf("decision-engine: independent validation — %q authored model %q and cannot validate it", id.Actor, name)
+	}
+	rec.Dataset = strings.TrimSpace(rec.Dataset)
+	if rec.Dataset == "" {
+		return eventlog.Envelope{}, fmt.Errorf("decision-engine: model validation dataset is required")
+	}
+	if len(rec.Metrics) == 0 {
+		return eventlog.Envelope{}, fmt.Errorf("decision-engine: model validation requires at least one named metric")
+	}
+	metrics := make(map[string]float64, len(rec.Metrics))
+	for rawName, value := range rec.Metrics {
+		metric := strings.TrimSpace(rawName)
+		if metric == "" {
+			return eventlog.Envelope{}, fmt.Errorf("decision-engine: model validation metric names cannot be blank")
+		}
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return eventlog.Envelope{}, fmt.Errorf("decision-engine: model validation metric %q must be finite", metric)
+		}
+		if _, duplicate := metrics[metric]; duplicate {
+			return eventlog.Envelope{}, fmt.Errorf("decision-engine: duplicate model validation metric %q after trimming", metric)
+		}
+		metrics[metric] = value
+	}
+	rec.Notes = strings.TrimSpace(rec.Notes)
+	if rec.Notes == "" {
+		return eventlog.Envelope{}, fmt.Errorf("decision-engine: model validation notes are required")
+	}
+	rec.Name, rec.Version, rec.Validator, rec.Metrics = name, g.version, id.Actor, metrics
 	payload, err := json.Marshal(rec)
 	if err != nil {
 		return eventlog.Envelope{}, fmt.Errorf("decision-engine: marshal model validation: %w", err)

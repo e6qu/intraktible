@@ -65,6 +65,7 @@ import {
   setRetentionPolicy,
   runRetentionSweep,
   issueAdverseAction,
+  issuedAdverseActionNotice,
   recordContest,
   recordReconsideration
 } from './api';
@@ -155,6 +156,14 @@ describe('data governance', () => {
 });
 
 describe('regulatory decisions', () => {
+  it('downloads the exact issued adverse-action artifact from its immutable route', async () => {
+    const fetcher = textFetcher(200, '# Issued notice\n');
+    await expect(issuedAdverseActionNotice('k', 'decision/1', fetcher)).resolves.toBe(
+      '# Issued notice\n'
+    );
+    expect(fetcher.mock.calls[0][0]).toBe('/v1/decisions/decision%2F1/adverse-action/issued');
+  });
+
   it('returns durable event acknowledgements for issuance, contest, and reconsideration', async () => {
     const issueFetch = fetcherReturning(200, { event_id: 'issued-1', seq: 41 });
     await expect(

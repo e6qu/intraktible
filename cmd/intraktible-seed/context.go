@@ -537,23 +537,22 @@ func (s *seeder) contextConfigActions(cfg *timeCursor) []action {
 	}
 	for _, m := range modelSpecs() {
 		acts = append(acts, action{at: cfg.step(2 * time.Minute), name: "model " + m.name, run: func() {
-			// Define the model, attach validation evidence, then run it through the
-			// four-eyes approval: the owner requests, a different reviewer approves —
-			// so the model is approved for production (an unapproved model is refused
-			// outside the sandbox) and the demo shows the governance working.
+			// Define the model, have a different actor record independent validation,
+			// then run it through four-eyes approval. An unvalidated or unapproved
+			// model is refused outside the sandbox.
 			s.call(m.owner, http.MethodPost, "/v1/models", map[string]any{"name": m.name, "spec": m.spec}, nil)
-			s.call(m.owner, http.MethodPost, "/v1/models/"+m.name+"/validation", map[string]any{
-				"dataset":   "backtest_2026Q1",
-				"metrics":   map[string]any{"auc": 0.81, "ks": 0.42},
-				"validator": m.owner,
-				"notes":     "Backtested on the Q1 hold-out; calibration within tolerance.",
-				"passed":    true,
+			reviewer := modelApprover(m.owner)
+			s.call(reviewer, http.MethodPost, "/v1/models/"+m.name+"/validation", map[string]any{
+				"dataset": "backtest_2026Q1",
+				"metrics": map[string]any{"auc": 0.81, "ks": 0.42},
+				"notes":   "Independent Q1 hold-out review; calibration within tolerance.",
+				"passed":  true,
 			}, nil)
 			var req struct {
 				RequestID string `json:"request_id"`
 			}
 			s.call(m.owner, http.MethodPost, "/v1/models/"+m.name+"/approval-request", nil, &req)
-			s.call(modelApprover(m.owner), http.MethodPost, "/v1/models/"+m.name+"/approve",
+			s.call(reviewer, http.MethodPost, "/v1/models/"+m.name+"/approve",
 				map[string]any{"request_id": req.RequestID, "reason": "Validation evidence reviewed; approved for production."}, nil)
 		}})
 	}
