@@ -18,11 +18,8 @@ DOC (a claim not backed by code).
 
 Third whole-product audit from authoritative merged commit `92b285f`.
 
-1. **OPEN · CI/PROD — babysit PR #157 to a terminal result.** The complete local
-   release matrix is green, fresh `origin/main` equals the local base `92b285f`,
-   and the 34-file implementation is committed as `4210abf`. PR #157 is the
-   repository's sole review queue; watch every required check, repair any real
-   failure on this same branch, and record the terminal remote evidence.
+No open implementation items. PR #157 run 30486000491 passes all nine jobs and
+is the repository's sole review queue.
 
 ---
 

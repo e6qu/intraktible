@@ -35,7 +35,7 @@ Fix every missing or misleading piece found; do not stop at documenting gaps.
 
 ## Phase
 
-**Third whole-product journey audit — locally complete from PR #156's baseline.**
+**Third whole-product journey audit — complete on PR #157.**
 PR #156 merged as `92b285f`; there are no open PRs, and the refreshed
 `hardening/production-readiness-audit` branch starts exactly at `origin/main`.
 `docs/JOURNEYS.md` is being treated as an executable product contract rather
@@ -102,9 +102,11 @@ zero-warning ESLint and Svelte check, all 218 Vitest tests, the production web
 build, 122 native Playwright journeys, 81 real-Wasm journeys, and 3
 embedded-binary smokes also pass. Fresh `origin/main` still equals the local
 base `92b285f`; the implementation is committed as `4210abf` and PR #157 is the
-repository's sole review queue. Only its terminal remote CI evidence remains in
-`DO_NEXT.md`. The prior merged baseline remains independently proven by PR #156
-run 30306203748 across the deployment-specific matrix.
+repository's sole review queue. Run 30486000491 passes all nine jobs, including
+Go, web, native browser, real-Wasm, embedded artifact, real PostgreSQL, Shauth
+SSO, Terraform, and container release. `DO_NEXT.md` has no open implementation
+items. The prior merged baseline remains independently proven by PR #156 run
+30306203748 across the same deployment-specific matrix.
 
 ## Ground truth established so far
 
