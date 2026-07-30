@@ -708,3 +708,9 @@ Linux, entirely that VM's fsync path.
   projection-backed GET became visible; aligned the test with the explicit
   eventual-read contract before transition. The exact regression passes 50
   consecutive race runs and the complete local Go gate passes.
+- 2026-07-30: Followed the hosted E2 projection-race cascade through running
+  state, corrected outcome history, exposures, and analysis; injected one
+  deterministic journey clock and strengthened the assertion to prove the
+  corrected in-window cohort. The exact journey passes 100 consecutive race
+  runs; full `make ci` passes strict lint/SAST/race/dead-code/clone/vulnerability/
+  license gates.

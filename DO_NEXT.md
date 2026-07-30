@@ -25,12 +25,17 @@ Enterprise roadmap execution from authoritative E2 merge `565e1d2`.
    embedded smokes; Helm lint/render; 18 Terraform contracts; bounded workflows;
    and the container publication/retention contract. Authoritative
    `origin/main` remained `565e1d2`; branch commits `1b9e8bf` and `ec8f756`
-   are pushed as sole PR #162. Final-head run `30545905179` found one hosted
-   Linux race failure: the assembled E2 journey started an experiment before
-   its durable create reached the read projection. The test now observes the
-   public GET boundary first. The exact regression passes 50 consecutive
-   race-instrumented runs and `make ci` is green. Commit/push the fix and
-   babysit the replacement final-head run to terminal green.
+   are pushed as sole PR #162. Final-head runs `30545905179` and `30546697212`
+   exposed a cascade of hosted Linux read-after-write assumptions in the
+   assembled E2 experiment journey: create→start and correction→outcome reads
+   outran the projection. The whole sequence now observes public projected
+   create, running, corrected-history, exposure, and analysis state. Its clocks
+   are injected so the corrected outcome is inside the observation window, and
+   the exact journey passes 100 consecutive race-instrumented runs. The complete
+   local `make ci` gate is green. Fresh reconciliation confirms unchanged
+   `origin/main` `565e1d2`, remote head `cad7d2a`, and sole PR #162. Commit/push
+   the widened fix and babysit the replacement final-head matrix to terminal
+   green.
 
 PRs E4–E7 remain ordered behind E3 in `PLAN.md` §§8b.5–8b.8. Do not open or
 implement them concurrently; after each merge, reconcile fresh `origin/main`
