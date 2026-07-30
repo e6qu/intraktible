@@ -606,3 +606,6 @@ Linux, entirely that VM's fsync path.
 - 2026-07-30: Re-fetched authoritative `origin/main` at `7a7be66`, confirmed
   the GitHub PR queue is empty, and committed the 95-file E1 implementation as
   `8dddb44`.
+- 2026-07-30: Pushed `enterprise/e1-durable-execution` and opened PR #160 as
+  the repository's sole review queue, with the compatibility, topology-cost,
+  behavioral-change, and complete local-evidence contract in its body.

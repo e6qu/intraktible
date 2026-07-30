@@ -90,9 +90,9 @@ exactly `7a7be6607d81e52c5b924da8ad898a1a9521fcf2`; the prior remote audit branc
 is deleted and `gh pr list --state open` is empty. There is therefore no remote
 work to reconcile before the E1 commit.
 
-The 95-file E1 slice is committed locally as `8dddb44` (`Make decision and
-agent execution durable`). It has not yet been pushed; the authoritative queue
-remains empty.
+The 95-file E1 slice is commit `8dddb44` (`Make decision and agent execution
+durable`) with continuity evidence in `635ca00`. Both are pushed in PR #160,
+the repository's sole open review queue. Required checks are pending.
 
 **Fifth whole-product journey audit — complete in sole PR #159.**
 The audit began after PR #158 merged as `002e9d3`, with an empty GitHub queue
