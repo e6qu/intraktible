@@ -513,7 +513,10 @@ seeded real-Wasm history, and maker-checker handoffs expose the same contracts.
 The local E2 release matrix passes `make check`, `make ci`, 232 frontend unit
 tests plus the production build, 128 native browser journeys, 83 real-Wasm
 journeys, 3 embedded-production smokes, all 18 Terraform plan contracts, and
-the container publication/retention contract.
+the container publication/retention contract. Hosted run `30527793916` is
+terminal green across all nine jobs, including Go race/security/license gates,
+native and embedded UI, the real-Wasm seeded demo, real PostgreSQL, real Shauth
+SSO, Terraform, web, and container-release contracts.
 
 **Scope:**
 

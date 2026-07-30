@@ -18,14 +18,11 @@ DOC (a claim not backed by code).
 
 Enterprise roadmap execution from authoritative E1 merge `fea2a7e`.
 
-1. **OPEN — PR E2 · CI: complete the release matrix and open the sole PR.**
-   The §8b.3 implementation, project-wide journey/docs reconciliation, seed,
-   contracts, scheduler failure tests, and three real-backend browser journeys
-   are complete. Run diff/SPDX/OpenAPI hygiene, `make check`, `make ci`, the
-   complete frontend unit/build matrix, all native + real-Wasm + embedded
-   browser journeys, and deployment contract gates. Fix every failure, record
-   exact evidence in `PLAN.md`/continuity, fetch/reconcile `origin/main`, then
-   commit, push, open one E2 PR, and babysit its hosted checks.
+1. **OPEN — PR E2 · REVIEW: merge sole PR #161 before starting E3.**
+   E2 implementation commit `0eaa5a5` and hosted run `30527793916` are green
+   across all nine required jobs. This final evidence commit must repeat the
+   hosted matrix successfully; then wait for the user to merge PR #161, fetch
+   and reconcile authoritative `origin/main`, and only then cut E3.
 
 PRs E3–E7 remain ordered behind E2 in `PLAN.md` §§8b.4–8b.8. Do not open or
 implement them concurrently; after each merge, reconcile fresh `origin/main`

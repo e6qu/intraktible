@@ -35,14 +35,13 @@ the next implementation tranche by correctness and operational risk.
 ## Phase
 
 **Enterprise PR E2 — experimentation, outcomes, and population automation is
-in progress on `enterprise/e2-experiments-population` from merged
-`origin/main` commit `fea2a7e`.** PR #160 merged at that exact commit, its
-remote branch is deleted, and the remote PR queue was empty when E2 was cut.
-The tranche will deliver the complete `PLAN.md` §8b.3 vertical outcome before
-opening one review: first-class governed experiments, deterministic cohorts and
-reached-treatment exposures, attributable/correctable business outcomes,
-statistical analysis, and durable multi-worker population jobs with complete
-operator UI and contracts.
+implementation-complete on `enterprise/e2-experiments-population` from merged
+`origin/main` commit `fea2a7e`.** PR #161 is the repository's sole open review
+at implementation commit `0eaa5a5`; do not begin E3 until it merges. The tranche
+delivers the complete `PLAN.md` §8b.3 vertical outcome: first-class governed
+experiments, deterministic cohorts and reached-treatment exposures,
+attributable/correctable business outcomes, statistical analysis, and durable
+multi-worker population jobs with complete operator UI and contracts.
 
 The E2 core is now implemented end to end: governed experiment lifecycle and
 maker-checker launch, deterministic exact-version assignments and reached
@@ -66,8 +65,9 @@ experiments, population, fair lending, notifications, and OpenAPI are green.
 The plan-of-record, issue ledger, component guide, honest gap/competitive
 analysis, and persona journeys now describe the implemented first-class
 experiment/outcome/population contracts instead of legacy request-time
-challengers or model-only actuals. Remaining closeout is the complete release
-matrix, final remote reconciliation, and the sole E2 review.
+challengers or model-only actuals. Authoritative remote reconciliation confirms
+`origin/main` remains `fea2a7e`, the remote E2 head matches the local
+implementation commit, and PR #161 is the sole review.
 
 The local release matrix is now green: `make check`; `make ci` (strict lint,
 SAST, race, dead-code, zero clone groups, zero reachable vulnerabilities, and
@@ -80,8 +80,11 @@ was already projected. The latter now polls the explicit eventual-consistency
 boundary and passes five consecutive race runs. A local reproduction of the
 real-PostgreSQL job could not start because Docker Desktop returned
 `unable to upgrade to tcp, received 500` after pulling the repository's pinned
-`postgres:16` image; the exact disposable Created container was removed. The
-hosted PostgreSQL job remains required before merge.
+`postgres:16` image; the exact disposable Created container was removed. Hosted
+run `30527793916` closes that evidence gap and is terminal green across all nine
+jobs: Go race/security/dead-code/clone/vulnerability/license gates, native UI,
+real-Wasm demo, embedded artifact, web, real PostgreSQL, real Shauth SSO,
+Terraform, and container-release contracts.
 
 **Enterprise PR E1 — durable execution integrity is implementation-complete on
 `enterprise/e1-durable-execution` from merged `origin/main` commit `7a7be66`.**
