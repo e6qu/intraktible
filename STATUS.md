@@ -110,7 +110,8 @@ production web build, full race-enabled Go CI with zero reachable
 vulnerabilities, Terraform tests, container publication/retention checks, and
 workflow timeout checks. Final diff/documentation review and the sole E4 PR
 are complete. Pull request #163 is open and mergeable at implementation commit
-`01881f3`, continuity commit `1695908`, and hosted-race fix `b71f819`. Hosted run
+`01881f3`, continuity commit `1695908`, hosted-race fix `b71f819`, and release
+evidence commit `0957589`. Hosted run
 `30569499851` exposed a latent assembled-E2 read-after-write race: experiment
 creation could validate version 2 before that published version reached the
 flow projection. The journey now observes public `flow.latest == 2` before
@@ -119,8 +120,15 @@ The complete local `make ci` is green after the fix. Fresh hosted run
 `30570908349` is green across all nine jobs, including real PostgreSQL,
 race/security/license Go CI, 134 native journeys, 84 real-Wasm journeys,
 embedded artifact, real Shauth SSO, web, Terraform, and container contracts.
-E4 is ready for review and merge; it is not complete until PR #163 is merged.
-E5–E8 must not start or open concurrently.
+The evidence-only head then exposed a second latent test-ordering defect in Go
+race run `30572498699`: the durable agent-run HTTP contract used a private
+header helper that skipped the shared test harness's projection watermark, so
+it could run an acknowledged but not-yet-projected agent. The contract now uses
+the canonical `RequestWithHeaders` journey path and passes 100 consecutive
+race-enabled repetitions. The complete local `make ci` gate is green; the fresh
+exact-head hosted release matrix is pending. E4 is not ready to merge until
+that matrix is green, and it is not complete until PR #163 is merged. E5–E8
+must not start or open concurrently.
 
 The first E4 seam audit establishes the implementation boundary:
 

@@ -794,3 +794,9 @@ Linux, entirely that VM's fsync path.
   jobs pass, including real PostgreSQL, full race/security/license Go CI, 134
   native, 84 real-Wasm, 4 embedded, real Shauth SSO, web, Terraform and
   container contracts. PR #163 is ready for review and merge.
+- 2026-07-30: Diagnosed evidence-head Go failure `30572498699/90972478282`:
+  `TestDurableAgentRunHTTPContract` bypassed the shared projection watermark
+  through a duplicate request helper and raced an accepted agent definition.
+  Replaced it with `testutil.API.RequestWithHeaders`, removed 39 lines of
+  duplicate transport code, passed 100 consecutive race-enabled runs, and
+  completed the full local `make ci` gate with zero reachable vulnerabilities.

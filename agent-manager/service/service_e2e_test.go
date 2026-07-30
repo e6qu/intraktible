@@ -3,10 +3,8 @@
 package service_test
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"io"
 	"net/http"
 	"testing"
 
@@ -166,9 +164,9 @@ func TestDurableAgentRunHTTPContract(t *testing.T) {
 		Status string `json:"status"`
 		Seq    uint64 `json:"seq"`
 	}
-	requestWithHeaders(t, api, http.MethodPost, "/v1/agents/triage/run", body,
+	api.RequestWithHeaders(t, http.MethodPost, "/v1/agents/triage/run", body,
 		map[string]string{"Idempotency-Key": "agent-job-42"}, http.StatusAccepted, &first)
-	requestWithHeaders(t, api, http.MethodPost, "/v1/agents/triage/run", body,
+	api.RequestWithHeaders(t, http.MethodPost, "/v1/agents/triage/run", body,
 		map[string]string{"Idempotency-Key": "agent-job-42"}, http.StatusAccepted, &retry)
 	if first.RunID == "" || first.Status != "running" || first.Seq == 0 || retry.RunID != first.RunID {
 		t.Fatalf("durable acceptance/retry = first %+v, retry %+v", first, retry)
@@ -178,7 +176,7 @@ func TestDurableAgentRunHTTPContract(t *testing.T) {
 		"prompt": "different", "async": true, "version": 1,
 		"timeout_ms": 45_000, "max_attempts": 4,
 	}
-	requestWithHeaders(t, api, http.MethodPost, "/v1/agents/triage/run", conflicting,
+	api.RequestWithHeaders(t, http.MethodPost, "/v1/agents/triage/run", conflicting,
 		map[string]string{"Idempotency-Key": "agent-job-42"}, http.StatusBadRequest, nil)
 
 	var projected agents.RunView
@@ -208,45 +206,6 @@ func TestDurableAgentRunHTTPContract(t *testing.T) {
 	}
 	if starts != 1 {
 		t.Fatalf("idempotent HTTP submission emitted %d starts, want 1", starts)
-	}
-}
-
-func requestWithHeaders(
-	t *testing.T,
-	api *testutil.API,
-	method, path string,
-	body any,
-	headers map[string]string,
-	wantStatus int,
-	out any,
-) {
-	t.Helper()
-	payload, err := json.Marshal(body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	req, err := http.NewRequest(method, api.Server.URL+path, bytes.NewReader(payload))
-	if err != nil {
-		t.Fatal(err)
-	}
-	req.Header.Set("X-Api-Key", api.Key)
-	req.Header.Set("Content-Type", "application/json")
-	for key, value := range headers {
-		req.Header.Set(key, value)
-	}
-	resp, err := api.Server.Client().Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != wantStatus {
-		raw, _ := io.ReadAll(resp.Body)
-		t.Fatalf("%s %s -> %d, want %d (body: %s)", method, path, resp.StatusCode, wantStatus, raw)
-	}
-	if out != nil {
-		if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
-			t.Fatal(err)
-		}
 	}
 }
 
