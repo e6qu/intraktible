@@ -714,3 +714,7 @@ Linux, entirely that VM's fsync path.
   corrected in-window cohort. The exact journey passes 100 consecutive race
   runs; full `make ci` passes strict lint/SAST/race/dead-code/clone/vulnerability/
   license gates.
+- 2026-07-30: Pushed E3 projection-cascade fix `7e55c3d`; hosted run
+  `30547883192` is terminal green across all nine jobs, including real
+  PostgreSQL, Shauth SSO, 130 native browser journeys, 83 real-Wasm journeys,
+  the embedded artifact, and the full Go race/security gate.

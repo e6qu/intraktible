@@ -94,8 +94,11 @@ inside the observation window and the assertion proves one real analyzed fact
 rather than accepting stale collecting state. The exact regression passes 100
 consecutive race runs, and the complete local `make ci` gate is green again.
 Fresh reconciliation confirms unchanged `origin/main` `565e1d2`, remote E3
-head `cad7d2a`, and sole PR #162. Remaining work is commit/push and terminal
-green CI on the replacement final PR head.
+head `cad7d2a`, and sole PR #162. Fix commit `7e55c3d` is terminal green across
+all nine hosted jobs in run `30547883192`: Go race/lint/SAST/dead-code/clone/
+vulnerability/license, web, native browser, real-Wasm demo, embedded artifact,
+real PostgreSQL, real Shauth SSO, Terraform, and container-release. E3 is ready
+to merge; E4 must wait for the user to merge #162 and for fresh reconciliation.
 
 **Enterprise PR E2 — experimentation, outcomes, and population automation is
 merged as authoritative commit `565e1d2`.** Its implementation commit

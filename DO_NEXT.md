@@ -16,26 +16,10 @@ DOC (a claim not backed by code).
 
 ## Queue
 
-Enterprise roadmap execution from authoritative E2 merge `565e1d2`.
-
-1. **OPEN — E3-8 · CI: close the release evidence and sole PR.**
-   The exact final source is green across diff/SPDX/OpenAPI hygiene; `make ci`;
-   frontend format/lint/typecheck, 232 units and production build; all 130 native
-   browser journeys; all 83 real-Wasm journeys over the 8,708-event seed; 3
-   embedded smokes; Helm lint/render; 18 Terraform contracts; bounded workflows;
-   and the container publication/retention contract. Authoritative
-   `origin/main` remained `565e1d2`; branch commits `1b9e8bf` and `ec8f756`
-   are pushed as sole PR #162. Final-head runs `30545905179` and `30546697212`
-   exposed a cascade of hosted Linux read-after-write assumptions in the
-   assembled E2 experiment journey: create→start and correction→outcome reads
-   outran the projection. The whole sequence now observes public projected
-   create, running, corrected-history, exposure, and analysis state. Its clocks
-   are injected so the corrected outcome is inside the observation window, and
-   the exact journey passes 100 consecutive race-instrumented runs. The complete
-   local `make ci` gate is green. Fresh reconciliation confirms unchanged
-   `origin/main` `565e1d2`, remote head `cad7d2a`, and sole PR #162. Commit/push
-   the widened fix and babysit the replacement final-head matrix to terminal
-   green.
+No open implementation item. Enterprise E3 commit `7e55c3d` is terminal green
+across all nine jobs in hosted run `30547883192`; sole PR #162 is ready to merge.
+Do not start E4 until the user merges it, then fetch and reconcile the new
+authoritative `origin/main` before cutting the next vertical branch.
 
 PRs E4–E7 remain ordered behind E3 in `PLAN.md` §§8b.5–8b.8. Do not open or
 implement them concurrently; after each merge, reconcile fresh `origin/main`
