@@ -40,14 +40,17 @@ const (
 	TypeModelOutcomeRecorded = "decision.model.outcome_recorded"
 )
 
-// ModelOutcomeRecorded reconciles a model's prediction with the outcome that later
-// materialized: Probability is what the model predicted (0..1), Label is the realized
-// binary outcome (0 or 1). DecisionID links it back to the decision when known.
+// ModelOutcomeRecorded reconciles one recorded Predict-node observation with the
+// outcome that later materialized. Probability and ModelVersion are recovered from
+// the immutable decision trace, never supplied by the caller. DecisionID + NodeID
+// are mandatory lineage and uniquely identify the observation.
 type ModelOutcomeRecorded struct {
-	Name        string  `json:"name"`
-	Probability float64 `json:"probability"`
-	Label       float64 `json:"label"`
-	DecisionID  string  `json:"decision_id,omitempty"`
+	Name         string  `json:"name"`
+	ModelVersion int     `json:"model_version,omitempty"`
+	Probability  float64 `json:"probability"`
+	Label        float64 `json:"label"`
+	DecisionID   string  `json:"decision_id,omitempty"`
+	NodeID       string  `json:"node_id,omitempty"`
 }
 
 // ModelMonitorSet sets (Threshold > 0) or clears (Threshold <= 0) the PSI drift

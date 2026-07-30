@@ -289,11 +289,30 @@ test('assigns a shadow version from the builder', async ({ page, request }) => {
   await page.getByLabel('shadow version for sandbox').selectOption('2');
   await expect(page.getByText('Shadowing v2 in sandbox')).toBeVisible();
 
-  // The assignment round-trips: reloading rehydrates v2 as the sandbox shadow.
+  const decided = await request.post(`/v1/flows/${slug}/sandbox/decide`, {
+    headers: { 'X-Api-Key': KEY },
+    data: { data: {} }
+  });
+  expect(decided.ok()).toBeTruthy();
+  await expect
+    .poll(async () => {
+      const response = await request.get(`/v1/flows/${flow_id}/shadow`, {
+        headers: { 'X-Api-Key': KEY }
+      });
+      const state = await response.json();
+      return state.report?.sandbox?.diverged ?? 0;
+    })
+    .toBeGreaterThan(0);
+
+  // Assignment and explainable evidence round-trip through the real projection.
   await page.reload();
   await page.getByTestId('tab-deploy').click(); // reload resets to the default tab
   await page.getByTestId('shadow-panel').locator('summary').click();
   await expect(page.getByLabel('shadow version for sandbox')).toHaveValue('2');
+  const cohort = page.getByTestId('shadow-cohort-sandbox');
+  await expect(cohort).toContainText('live v1 vs candidate v2');
+  await expect(cohort).toContainText('same status and complete output');
+  await expect(page.getByTestId('shadow-samples-sandbox')).toContainText('changed: decision');
 });
 
 test('imports a bundle of flows', async ({ page }) => {

@@ -259,10 +259,16 @@ Spans: **Models** (`/models`), referenced from a flow's **predict** node.
    threshold. Outcome: the model's drift status shows the current PSI versus the
    baseline and whether the monitor is firing; the drift state surfaces on the model
    list and in the model-risk inventory.
-5. Reconcile realized binary outcomes against their predicted probabilities,
-   optionally linking the source decision. Outcome: live calibration, accuracy,
-   Brier score, and realized AUC are computed from actuals rather than inferred from
-   prediction distribution.
+5. Reconcile a realized binary outcome by entering the completed **Decision ID** (and
+   the Predict node ID only if that decision used this model more than once). You never
+   retype a probability: the backend derives the exact probability and model version
+   from the immutable decision trace, refuses duplicate or stale-version lineage, and
+   records one label per model observation. Outcome: current-version calibration,
+   accuracy, Brier score, and realized AUC are computed from attributable actuals
+   rather than caller-authored values or the prediction distribution.
+6. When model logic is redefined, recapture its drift baseline and collect new
+   current-version outcomes. Outcome: prediction, baseline, and performance evidence
+   restart as one homogeneous version cohort instead of blending unlike models.
 
 ### Watch a flow with monitors and get alerted
 
@@ -427,13 +433,24 @@ Spans: **Flows** (`/engine`) → **Flow builder**.
 Spans: **Flow builder** (`/engine/[flowId]`), Deploy & versions tab.
 
 1. Set a **shadow** version for an environment (`PUT /v1/flows/{flow_id}/shadow`).
-   Outcome: every live decision in that environment also runs through the shadow
-   version, over the same input; the shadow's result is recorded and never returned to
-   the caller. (A decision suspended for human review has no verdict yet, so nothing
+   Outcome: champion decisions in that environment also run through the shadow
+   version from the same caller input and authoritative entity-feature snapshot. (A
+   served A/B challenger already has its own observed metrics.) The
+   candidate resolves its own connectors, pinned agents, and models, so these calls can
+   send data or incur cost; consent, sharing, egress, model-approval, and immutable
+   agent-version gates still apply. The shadow's result is recorded and never served
+   to the caller. (A decision suspended for human review has no verdict yet, so nothing
    is compared.)
-2. Read the divergence report: how often the shadow agreed with the live version.
-   Outcome: evidence about how a candidate would behave on real traffic, before it
-   takes any.
+   The current champion cannot be selected as its own shadow; if a later deployment
+   makes it champion, the cohort records a configuration error until another
+   candidate is selected.
+2. Read the divergence cohort: exact live/candidate versions, the policy version when
+   one is bound, and how often the candidate matched, diverged, or errored. A live
+   version, candidate, or policy change starts a fresh cohort. Agreement means the
+   exact governed policy outcome when a policy is bound, otherwise the same status and
+   complete output. Follow a value-free sample to the live decision or inspect changed
+   top-level fields / the candidate error. Outcome: explainable evidence about how one
+   precise candidate would behave on real traffic before it serves any result.
 
 ### Restrict who may change a flow
 

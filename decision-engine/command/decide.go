@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+	"sort"
 	"time"
 
 	"github.com/e6qu/intraktible/decision-engine/domain"
@@ -341,9 +342,19 @@ func (h *DecideHandler) Decide(ctx context.Context, id identity.Identity, slug, 
 	}
 
 	// A recorded decision outside sandbox must use both approved models and
-	// immutable, explicitly-versioned agents.
+	// immutable, explicitly-versioned agents. Preserve the caller input and the
+	// authoritative feature snapshot separately: the live and shadow graphs each
+	// resolve their own connector/AI/model dependencies from that shared base.
 	governed := env != string(domain.EnvSandbox)
-	data, err = h.prepare(ctx, id, governed, governed, version, ref, data)
+	rawData := cloneDecisionInput(data)
+	liveInput := cloneDecisionInput(rawData)
+	baseData, err := h.prepareBase(ctx, id, version, ref, liveInput, true)
+	if err == nil {
+		data = cloneDecisionInput(baseData)
+	}
+	if err == nil {
+		data, err = h.prepareDependencies(ctx, id, governed, governed, version.Graph, ref, data)
+	}
 	if err != nil {
 		if badProviderRef(err) {
 			return DecideResult{}, fmt.Errorf("%w: %w", ErrBadRequest, err)
@@ -455,10 +466,14 @@ func (h *DecideHandler) Decide(ctx context.Context, id identity.Identity, slug, 
 		return DecideResult{}, err
 	}
 	// A shadow version, if configured for this environment, is evaluated over the
-	// same input for divergence analysis — its outcome never affects the result.
+	// same caller input + feature snapshot for divergence analysis. It independently
+	// resolves the candidate's dependencies; its outcome never affects the result.
 	// A suspended decision has no terminal output yet, so there's nothing to compare.
 	if run.Status != domain.StatusSuspended {
-		shadowEvent, err := h.runShadow(ctx, id, fv, env, decisionID, version.Version, data, run)
+		shadowEvent, err := h.runShadow(
+			ctx, id, fv, env, decisionID, version.Version, rawData, baseData, ref,
+			variantKind, governed, selectedPolicy, run,
+		)
 		if err != nil {
 			return DecideResult{}, err
 		}
@@ -638,19 +653,40 @@ func badProviderRef(err error) bool {
 	return errors.As(err, &ref) && ref.BadProviderRef()
 }
 
-// prepare validates the caller's input against the version contract, strips the
-// engine-owned namespaces, and resolves the feature/connector/AI/model injectors
-// into the input — the augmented input the pure core executes. Shared by the
-// recording Decide path and the record-free Preview path so both run identical
-// input preparation.
+// prepare validates caller input, captures its authoritative feature snapshot,
+// and resolves the graph-selected dependencies into the input the pure core
+// executes. captureConsent is false for record-free previews; recorded decisions
+// capture the caller's assertion once before live and shadow connector gates run.
 func (h *DecideHandler) prepare(
 	ctx context.Context,
 	id identity.Identity,
 	requireModelApproval bool,
 	requireAgentVersion bool,
+	captureConsent bool,
 	version flows.VersionView,
 	ref EntityRef,
 	data map[string]any,
+) (map[string]any, error) {
+	data, err := h.prepareBase(ctx, id, version, ref, data, captureConsent)
+	if err != nil {
+		return nil, err
+	}
+	return h.prepareDependencies(
+		ctx, id, requireModelApproval, requireAgentVersion, version.Graph, ref, data,
+	)
+}
+
+// prepareBase builds the input portion that must be identical for live and
+// candidate evaluation: validated caller data plus one authoritative entity
+// feature snapshot. Connector/AI/model namespaces are deliberately not resolved
+// here because each graph selects those dependencies independently.
+func (h *DecideHandler) prepareBase(
+	ctx context.Context,
+	id identity.Identity,
+	version flows.VersionView,
+	ref EntityRef,
+	data map[string]any,
+	captureConsent bool,
 ) (map[string]any, error) {
 	// Validate the caller's input against the version's contract before anything
 	// is injected or recorded — a contract violation is a bad request, not a
@@ -668,10 +704,9 @@ func (h *DecideHandler) prepare(
 	// flow author believes are trusted.
 	stripReservedNamespaces(data)
 
-	// Features and connector calls are resolved at decide time and merged into the
-	// input (under "features" and "connect"); the augmented input is what gets
-	// recorded and executed, so the run stays replay-stable from the recorded data
-	// alone and the pure core never performs I/O.
+	// Features are resolved once and merged under "features". Graph-selected
+	// connector calls are resolved later and independently for live and shadow.
+	// The live augmented input is recorded, so replay never repeats either effect.
 	data, err := h.injectFeatures(ctx, id, ref, data)
 	if err != nil {
 		return nil, err
@@ -679,18 +714,35 @@ func (h *DecideHandler) prepare(
 	// Record any consent the caller (the bank/insurer/fintech) asserts in this
 	// request — the consent it obtained from its own customer — under the decision's
 	// subject, BEFORE the connectors that enforce it run.
-	if err := h.captureConsent(ctx, id, ref, data); err != nil {
-		return nil, err
+	if captureConsent {
+		if err := h.captureConsent(ctx, id, ref, data); err != nil {
+			return nil, err
+		}
 	}
-	data, err = h.injectConnectors(ctx, id, ref, version.Graph, data)
+	return data, nil
+}
+
+// prepareDependencies independently resolves the dependencies selected by one
+// graph. Keeping this separate from prepareBase prevents a shadow graph from
+// consuming the live graph's connector, agent, or model result by output name.
+func (h *DecideHandler) prepareDependencies(
+	ctx context.Context,
+	id identity.Identity,
+	requireModelApproval bool,
+	requireAgentVersion bool,
+	graph events.Graph,
+	ref EntityRef,
+	data map[string]any,
+) (map[string]any, error) {
+	data, err := h.injectConnectors(ctx, id, ref, graph, data)
 	if err != nil {
 		return nil, err
 	}
-	data, err = h.injectAI(ctx, id, requireAgentVersion, version.Graph, data)
+	data, err = h.injectAI(ctx, id, requireAgentVersion, graph, data)
 	if err != nil {
 		return nil, err
 	}
-	data, err = h.injectPredictions(ctx, id, requireModelApproval, version.Graph, data)
+	data, err = h.injectPredictions(ctx, id, requireModelApproval, graph, data)
 	if err != nil {
 		return nil, err
 	}
@@ -747,7 +799,7 @@ func (h *DecideHandler) Preview(ctx context.Context, id identity.Identity, slug,
 	// Non-sandbox still runs a deployed flow, so its AI nodes must pin immutable
 	// agent versions just like a recorded decision.
 	data, err = h.prepare(
-		ctx, id, false, env != string(domain.EnvSandbox), version, ref, data,
+		ctx, id, false, env != string(domain.EnvSandbox), false, version, ref, data,
 	)
 	if err != nil {
 		if badProviderRef(err) {
@@ -770,35 +822,105 @@ func (h *DecideHandler) Preview(ctx context.Context, id identity.Identity, slug,
 	}, nil
 }
 
-// runShadow evaluates the environment's shadow version (if any) over the same
-// input as the live decision and records the comparison. The shadow reuses the
-// live input (so its features/connector/AI context match the request); a shadow
-// node needing input the live graph did not inject simply fails in the shadow
-// run and is recorded as such. The shadow's outcome never affects the caller's
-// result; only a failure to record the comparison event is returned.
-func (h *DecideHandler) runShadow(ctx context.Context, id identity.Identity, fv flows.FlowView, env, decisionID string, liveVersion int, data map[string]any, live domain.Run) (eventlog.Envelope, error) {
+// runShadow evaluates the candidate from the same raw caller input and feature
+// snapshot as the live decision, but resolves the candidate graph's connector,
+// AI, and model dependencies independently. Preparation/execution failure is
+// evidence about the candidate and never changes the live caller result; only a
+// failure to durably record that evidence is returned.
+func (h *DecideHandler) runShadow(
+	ctx context.Context,
+	id identity.Identity,
+	fv flows.FlowView,
+	env, decisionID string,
+	liveVersion int,
+	rawData, baseData map[string]any,
+	ref EntityRef,
+	variant domain.Variant,
+	governed bool,
+	selectedPolicy policySelection,
+	live domain.Run,
+) (eventlog.Envelope, error) {
 	shadowVer := fv.Shadows[env]
-	if shadowVer == 0 || shadowVer == liveVersion {
+	if shadowVer == 0 || variant == domain.VariantChallenger {
 		return eventlog.Envelope{}, nil
+	}
+	basis := events.ShadowMatchOutput
+	if selectedPolicy.policyID != "" {
+		basis = events.ShadowMatchPolicy
 	}
 	ev := events.ShadowEvaluated{
 		DecisionID: decisionID, FlowID: fv.FlowID, Environment: env,
 		LiveVersion: liveVersion, ShadowVersion: shadowVer, LiveStatus: string(live.Status),
+		MatchBasis: basis, PolicyID: selectedPolicy.policyID, PolicyVersion: selectedPolicy.version,
+	}
+	if shadowVer == liveVersion {
+		ev.ShadowError = fmt.Sprintf(
+			"shadow version %d is now the live champion; choose a different candidate",
+			shadowVer,
+		)
+		return h.emitEnvelope(ctx, id, events.TypeShadowEvaluated, ev)
 	}
 	sv, ok := versionByNumber(fv, shadowVer)
 	if !ok {
 		ev.ShadowError = fmt.Sprintf("shadow version %d not found", shadowVer)
 	} else {
-		srun := h.execute(ctx, sv.Graph, data, nil)
+		// A candidate may declare a different input contract. Validate the original
+		// caller payload against it, then start from the already-resolved feature
+		// snapshot so live and candidate see the same subject state.
+		if err := domain.ValidateInput(sv.InputSchema, rawData); err != nil {
+			ev.ShadowError = fmt.Sprintf("shadow input: %v", err)
+			return h.emitEnvelope(ctx, id, events.TypeShadowEvaluated, ev)
+		}
+		shadowData := cloneDecisionInput(baseData)
+		var err error
+		shadowData, err = h.prepareDependencies(
+			ctx, id, governed, governed, sv.Graph, ref, shadowData,
+		)
+		if err != nil {
+			ev.ShadowError = err.Error()
+			return h.emitEnvelope(ctx, id, events.TypeShadowEvaluated, ev)
+		}
+		srun := h.execute(ctx, sv.Graph, shadowData, nil)
 		ev.ShadowStatus = string(srun.Status)
 		if srun.Status == domain.StatusFailed {
 			ev.ShadowError = srun.Err
 		}
-		ev.Matched = live.Status == domain.StatusCompleted &&
-			srun.Status == domain.StatusCompleted &&
-			reflect.DeepEqual(live.Output, srun.Output)
+		if live.Status == domain.StatusCompleted && srun.Status == domain.StatusCompleted {
+			ev.ChangedFields = changedOutputFields(live.Output, srun.Output)
+			if basis == events.ShadowMatchPolicy {
+				liveDisp := applyPolicy(selectedPolicy, live.Output)
+				shadowDisp := applyPolicy(selectedPolicy, srun.Output)
+				ev.LiveDisposition, ev.ShadowDisposition = string(liveDisp.disposition), string(shadowDisp.disposition)
+				ev.LiveCode, ev.ShadowCode = liveDisp.code, shadowDisp.code
+				ev.LiveReason, ev.ShadowReason = liveDisp.reason, shadowDisp.reason
+				ev.Matched = liveDisp == shadowDisp
+			} else {
+				ev.Matched = reflect.DeepEqual(live.Output, srun.Output)
+			}
+		}
 	}
 	return h.emitEnvelope(ctx, id, events.TypeShadowEvaluated, ev)
+}
+
+// changedOutputFields reports the top-level shape of a divergence without
+// copying subject values into the shadow report. The event remains useful to an
+// operator while preserving the decision history as the only value-bearing log.
+func changedOutputFields(live, candidate map[string]any) []string {
+	keys := make(map[string]struct{}, len(live)+len(candidate))
+	for key := range live {
+		keys[key] = struct{}{}
+	}
+	for key := range candidate {
+		keys[key] = struct{}{}
+	}
+	changed := make([]string, 0, len(keys))
+	for key := range keys {
+		if !reflect.DeepEqual(live[key], candidate[key]) {
+			changed = append(changed, key)
+		}
+	}
+	sort.Strings(changed)
+	return changed
 }
 
 // sealPII crypto-shreds the configured PII fields of a recorded document under
@@ -827,6 +949,17 @@ func stripReservedNamespaces(data map[string]any) {
 	for _, k := range reservedInputNamespaces {
 		delete(data, k)
 	}
+}
+
+// cloneDecisionInput isolates the top-level working map while preserving scalar
+// Go types for in-process callers. Input preparation and Execute only write
+// top-level keys; nested caller values are read-only.
+func cloneDecisionInput(data map[string]any) map[string]any {
+	cloned := make(map[string]any, len(data))
+	for key, value := range data {
+		cloned[key] = value
+	}
+	return cloned
 }
 
 // spanObserver implements domain.NodeObserver, opening one tracing span per node

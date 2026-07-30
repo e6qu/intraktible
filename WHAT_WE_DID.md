@@ -567,3 +567,30 @@ Linux, entirely that VM's fsync path.
   jobs pass, including Go race/security/license gates, 124 native browser
   journeys, 81 real-Wasm journeys, the embedded artifact, real PostgreSQL,
   Shauth SSO, Terraform, web, and container release.
+- 2026-07-30: Made shadow deployments candidate-faithful end to end: each graph
+  resolves its own governed connector/AI/model dependencies over the same
+  authoritative input and feature snapshot, policy-bound comparisons use exact
+  governed outcomes, preview no longer persists consent, A/B cohorts remain
+  stable, and version/policy/basis cohort boundaries plus errors and divergent
+  decisions survive replay and are visible in the builder. Focused command,
+  projection, HTTP, native-browser, and real-Wasm journeys pass.
+- 2026-07-30: Made model actuals attributable performance evidence: the command
+  derives probability, model version, and Predict-node lineage from a completed
+  recorded decision; a tenant-wide claim rejects duplicate labels; ambiguous,
+  stale, unknown, and spoofed evidence is rejected; model redefinition starts a
+  fresh monitoring cohort and exposes any cross-replica stale exclusion.
+  Command, projector/replay, HTTP, OpenAPI, native-browser, and real-Wasm
+  journeys pass.
+- 2026-07-30: Closed the fifth-audit local release matrix: `make check` and
+  `make ci` pass vet/build, strict lint, SAST, every race test, deadcode, zero
+  clone groups, zero reachable vulnerabilities, and dependency licenses;
+  formatting, zero-warning ESLint/Svelte, all 221 frontend unit tests, 124
+  native browser journeys, 83 real-Wasm journeys, and 3 embedded-production
+  smokes pass.
+- 2026-07-30: Re-fetched authoritative `origin/main` at `002e9d3`, confirmed
+  the GitHub queue was empty, committed the 33-file fifth-audit slice as
+  `c403f83`, pushed the recreated audit branch, and opened sole PR #159.
+- 2026-07-30: Babysat PR #159 run 30505656168 to its terminal result: all nine
+  jobs pass, including Go race/security/license gates, 124 native browser
+  journeys, 83 real-Wasm journeys, the embedded artifact, real PostgreSQL,
+  Shauth SSO, Terraform, web, and container release.

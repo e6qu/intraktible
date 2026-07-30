@@ -83,6 +83,7 @@ type ModelStats struct {
 	Org           string               `json:"org"`
 	Workspace     string               `json:"workspace"`
 	Name          string               `json:"name"`
+	ModelVersion  int                  `json:"model_version,omitempty"`
 	Count         int                  `json:"count"`               // predictions seen with a probability
 	Hist          Histogram            `json:"hist"`                // cumulative distribution
 	Daily         map[string]Histogram `json:"daily,omitempty"`     // day (YYYY-MM-DD) -> histogram
@@ -102,7 +103,11 @@ type ModelStats struct {
 	// truth rather than inferred from the prediction distribution alone.
 	Actuals     [driftBuckets]ActualBucket `json:"actuals"`
 	ActualCount int                        `json:"actual_count"`
-	UpdatedAt   string                     `json:"updated_at"`
+	// ExcludedActualCount is a visible concurrency/audit signal: an actual event
+	// attributed to an older model version raced a redefine across replicas. The
+	// event remains immutable evidence but is never blended into current metrics.
+	ExcludedActualCount int    `json:"excluded_actual_count,omitempty"`
+	UpdatedAt           string `json:"updated_at"`
 }
 
 // FeatureStat is a feature's running count/mean/variance (Welford's algorithm), so
@@ -169,15 +174,16 @@ func (st ModelStats) histFor(windowDays int) Histogram {
 
 // DriftReport is the read-side drift view for one model.
 type DriftReport struct {
-	Model       string    `json:"model"`
-	Count       int       `json:"count"`       // predictions in the reported window
-	Hist        Histogram `json:"hist"`        // distribution over the window
-	WindowDays  int       `json:"window_days"` // 0 = all-time (cumulative)
-	HasBaseline bool      `json:"has_baseline"`
-	PSI         *float64  `json:"psi,omitempty"`
-	Threshold   float64   `json:"threshold,omitempty"`
-	Firing      bool      `json:"firing"`   // PSI exceeds the (set) threshold, computed live
-	Alerting    bool      `json:"alerting"` // the drift scheduler has pushed an alert (firing edge crossed)
+	Model        string    `json:"model"`
+	ModelVersion int       `json:"model_version,omitempty"`
+	Count        int       `json:"count"`       // predictions in the reported window
+	Hist         Histogram `json:"hist"`        // distribution over the window
+	WindowDays   int       `json:"window_days"` // 0 = all-time (cumulative)
+	HasBaseline  bool      `json:"has_baseline"`
+	PSI          *float64  `json:"psi,omitempty"`
+	Threshold    float64   `json:"threshold,omitempty"`
+	Firing       bool      `json:"firing"`   // PSI exceeds the (set) threshold, computed live
+	Alerting     bool      `json:"alerting"` // the drift scheduler has pushed an alert (firing edge crossed)
 	// Features is per-input-feature covariate drift vs the baseline (empty until a
 	// baseline is captured); it complements the prediction-distribution PSI above.
 	Features []FeatureDrift `json:"features,omitempty"`
@@ -193,6 +199,8 @@ func (DriftProjector) Collections() []string { return []string{StatsCollection} 
 
 func (DriftProjector) Apply(ctx context.Context, e eventlog.Envelope, s store.Store) error {
 	switch e.Type {
+	case events.TypeModelDefined:
+		return applyModelDefinedStats(ctx, e, s)
 	case events.TypeNodeEvaluated:
 		return applyPredictNode(ctx, e, s)
 	case events.TypeModelBaselineCaptured:
@@ -208,6 +216,33 @@ func (DriftProjector) Apply(ctx context.Context, e eventlog.Envelope, s store.St
 	default:
 		return nil
 	}
+}
+
+// applyModelDefinedStats starts a clean prediction/performance cohort for the new
+// immutable model version. A baseline and alerting state cannot carry across changed
+// model logic; the operator's threshold is retained as configuration, while all
+// evidence is reset.
+func applyModelDefinedStats(ctx context.Context, e eventlog.Envelope, s store.Store) error {
+	var p events.ModelDefined
+	if err := json.Unmarshal(e.Payload, &p); err != nil {
+		return fmt.Errorf("models: decode definition for stats seq %d: %w", e.Seq, err)
+	}
+	if p.Name == "" {
+		return fmt.Errorf("models: definition for stats seq %d has no model name", e.Seq)
+	}
+	key := store.Key(e.Org, e.Workspace, p.Name)
+	previous, _, err := store.GetDoc[ModelStats](ctx, s, StatsCollection, key)
+	if err != nil {
+		return err
+	}
+	next := ModelStats{
+		Org: e.Org, Workspace: e.Workspace, Name: p.Name,
+		ModelVersion:        previous.ModelVersion + 1,
+		Threshold:           previous.Threshold,
+		ExcludedActualCount: previous.ExcludedActualCount,
+		UpdatedAt:           e.Time.UTC().Format(time.RFC3339),
+	}
+	return store.PutDoc(ctx, s, StatsCollection, key, next)
 }
 
 // applyOutcome buckets a realized outcome by the predicted-probability decile, so the
@@ -228,11 +263,17 @@ func applyOutcome(ctx context.Context, e eventlog.Envelope, s store.Store) error
 	if err != nil {
 		return err
 	}
-	// Actuals may be the first monitoring data for a newly-defined model (for
-	// example, outcomes imported before its first in-platform prediction). Preserve
-	// that real observation instead of relying on UpdateDoc's no-op-on-missing.
 	if !ok {
-		st = ModelStats{Org: e.Org, Workspace: e.Workspace, Name: p.Name}
+		return fmt.Errorf("models: outcome for undefined model %q at seq %d", p.Name, e.Seq)
+	}
+	// ModelVersion was added with authoritative decision lineage. A zero version is
+	// a legacy event and replays into the version current at its original position.
+	// A non-zero mismatch is a legitimate cross-replica redefine race: preserve a
+	// visible exclusion count, but never poison the current cohort.
+	if p.ModelVersion > 0 && p.ModelVersion != st.ModelVersion {
+		st.ExcludedActualCount++
+		st.UpdatedAt = e.Time.UTC().Format(time.RFC3339)
+		return store.PutDoc(ctx, s, StatsCollection, key, st)
 	}
 	if p.Label == 1 {
 		st.Actuals[idx].Pos++
@@ -429,6 +470,7 @@ func Drift(ctx context.Context, s store.Store, id identity.Identity, model strin
 	if !ok {
 		return rep, nil
 	}
+	rep.ModelVersion = st.ModelVersion
 	hist := st.histFor(windowDays)
 	rep.Hist = hist
 	rep.Count = hist.total()

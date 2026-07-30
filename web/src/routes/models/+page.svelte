@@ -265,9 +265,9 @@
   // The open model's reconciled performance (from recorded actuals), fetched alongside
   // its drift; null when none recorded yet.
   let perf = $state<ModelPerformance | null>(null);
-  let actualProbability = $state('');
   let actualLabel = $state('1');
   let actualDecisionID = $state('');
+  let actualNodeID = $state('');
   let actualBusy = $state(false);
   async function loadDrift(m: string) {
     drift = null;
@@ -348,25 +348,25 @@
     }
   }
   async function recordActual(m: string) {
-    const probability = Number(actualProbability);
     const label = Number(actualLabel);
-    if (!Number.isFinite(probability) || probability < 0 || probability > 1) {
-      toast.error('Predicted probability must be a number from 0 through 1.');
-      return;
-    }
     if (label !== 0 && label !== 1) {
       toast.error('Realized outcome must be 0 or 1.');
+      return;
+    }
+    const decisionID = actualDecisionID.trim();
+    if (!decisionID) {
+      toast.error('Decision ID is required so the recorded prediction can be verified.');
       return;
     }
     actualBusy = true;
     try {
       await recordModelOutcome(key, m, {
-        probability,
         label,
-        decision_id: actualDecisionID.trim() || undefined
+        decision_id: decisionID,
+        node_id: actualNodeID.trim() || undefined
       });
-      actualProbability = '';
       actualDecisionID = '';
+      actualNodeID = '';
       await loadDrift(m);
       toast.success(`Actual outcome recorded for ${m}.`);
     } catch (e) {
@@ -785,17 +785,18 @@
                       <div>
                         <p class="sub">Reconcile a realized outcome</p>
                         <p class="muted small">
-                          Record ground truth against the probability this model predicted. These
-                          actuals drive calibration, accuracy, Brier score, and realized AUC.
+                          Link ground truth to a completed decision. The backend recovers the exact
+                          recorded probability and model version; you cannot author performance
+                          evidence here. These actuals drive calibration, accuracy, Brier score, and
+                          realized AUC.
                         </p>
                       </div>
                       <label>
-                        Predicted probability
+                        Decision ID
                         <input
-                          aria-label="actual predicted probability"
-                          bind:value={actualProbability}
-                          inputmode="decimal"
-                          placeholder="0.82"
+                          aria-label="actual decision id"
+                          bind:value={actualDecisionID}
+                          placeholder="required lineage"
                         />
                       </label>
                       <label>
@@ -806,11 +807,11 @@
                         </select>
                       </label>
                       <label>
-                        Decision ID (optional)
+                        Predict node ID (only if repeated)
                         <input
-                          aria-label="actual decision id"
-                          bind:value={actualDecisionID}
-                          placeholder="lineage"
+                          aria-label="actual predict node id"
+                          bind:value={actualNodeID}
+                          placeholder="usually blank"
                         />
                       </label>
                       <button
@@ -825,7 +826,10 @@
                   {#if perf && perf.count > 0}
                     <div class="perf" data-testid="model-performance">
                       <p class="sub">
-                        Live performance (from {perf.count} recorded
+                        Live performance{perf.model_version
+                          ? ` · model v${perf.model_version}`
+                          : ''}
+                        (from {perf.count} recorded
                         {perf.count === 1 ? 'actual' : 'actuals'})
                       </p>
                       <div class="metrics">
@@ -833,6 +837,13 @@
                         <span>Accuracy <b>{(perf.accuracy * 100).toFixed(1)}%</b></span>
                         <span>Brier <b>{perf.brier.toFixed(3)}</b></span>
                       </div>
+                      {#if perf.excluded_actuals}
+                        <p class="muted small">
+                          {perf.excluded_actuals} late
+                          {perf.excluded_actuals === 1 ? 'actual was' : 'actuals were'} excluded after
+                          a cross-replica model-version race.
+                        </p>
+                      {/if}
                     </div>
                   {/if}
                   {#if driftError}

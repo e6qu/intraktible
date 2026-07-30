@@ -69,7 +69,8 @@ import {
   issueAdverseAction,
   issuedAdverseActionNotice,
   recordContest,
-  recordReconsideration
+  recordReconsideration,
+  recordModelOutcome
 } from './api';
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -465,11 +466,31 @@ describe('shadow', () => {
   it('getShadow returns assignments and the report, defaulting empties', async () => {
     const fetcher = fetcherReturning(200, {
       shadows: { sandbox: 2 },
-      report: { sandbox: { shadow_version: 2, total: 10, matched: 7, diverged: 3, errored: 0 } }
+      report: {
+        sandbox: {
+          live_version: 1,
+          shadow_version: 2,
+          match_basis: 'output',
+          total: 10,
+          matched: 7,
+          diverged: 3,
+          errored: 0,
+          samples: [
+            {
+              decision_id: 'decision-1',
+              live_status: 'completed',
+              shadow_status: 'completed',
+              changed_fields: ['decision']
+            }
+          ]
+        }
+      }
     });
     const s = await getShadow('k', 'f1', fetcher);
     expect(s.shadows.sandbox).toBe(2);
     expect(s.report.sandbox.diverged).toBe(3);
+    expect(s.report.sandbox.match_basis).toBe('output');
+    expect(s.report.sandbox.samples?.[0].changed_fields).toEqual(['decision']);
     expect(fetcher.mock.calls[0][0]).toBe('/v1/flows/f1/shadow');
   });
 
@@ -952,6 +973,25 @@ describe('agents', () => {
     expect(sum.failed).toBe(1);
     const [url] = fetcher.mock.calls[0];
     expect(url).toBe('/v1/agent-runs/summary');
+  });
+});
+
+describe('model actuals', () => {
+  it('sends immutable decision lineage and no caller-authored probability', async () => {
+    const fetcher = fetcherReturning(202, { event_id: 'e1', seq: 42 });
+    await recordModelOutcome(
+      'k',
+      'risk/v2',
+      { decision_id: 'd1', node_id: 'predict-risk', label: 1 },
+      fetcher
+    );
+    const [url, init] = fetcher.mock.calls[0];
+    expect(url).toBe('/v1/models/risk%2Fv2/outcomes');
+    expect(JSON.parse(init?.body as string)).toEqual({
+      decision_id: 'd1',
+      node_id: 'predict-risk',
+      label: 1
+    });
   });
 });
 

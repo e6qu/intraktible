@@ -360,7 +360,7 @@
       "post": {
         "tags": ["models"],
         "summary": "Record a realized outcome for a model prediction",
-        "description": "Reconciles a realized ground-truth label (0/1) with the probability the model predicted, feeding the performance report.",
+        "description": "Reconciles a realized ground-truth label (0/1) with an immutable Predict-node observation from a completed decision. The backend derives probability and model version from the recorded trace; one outcome may be recorded per decision/model/node.",
         "parameters": [
           { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
         ],
@@ -370,11 +370,11 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "required": ["probability", "label"],
+                "required": ["decision_id", "label"],
                 "properties": {
-                  "probability": { "type": "number", "description": "The predicted probability (0..1)." },
                   "label": { "type": "number", "description": "Realized binary outcome (0 or 1)." },
-                  "decision_id": { "type": "string", "description": "Optional lineage back to the decision." }
+                  "decision_id": { "type": "string", "description": "Completed decision whose immutable trace contains the prediction." },
+                  "node_id": { "type": "string", "description": "Predict node to reconcile; required only when this decision used the named model more than once." }
                 }
               }
             }
@@ -383,6 +383,7 @@
         "responses": {
           "202": { "description": "The outcome was recorded." },
           "400": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" },
           "401": { "$ref": "#/components/responses/Error" }
         }
       }
@@ -1425,7 +1426,14 @@
         ],
         "responses": {
           "200": {
-            "description": "OK"
+            "description": "Current assignments and homogeneous comparison cohorts.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShadowState"
+                }
+              }
+            }
           }
         }
       },
@@ -1445,6 +1453,16 @@
             "description": "path parameter"
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ShadowSetRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "OK",
@@ -4665,6 +4683,151 @@
           },
           "seq": {
             "type": "integer"
+          }
+        }
+      },
+      "ShadowSetRequest": {
+        "type": "object",
+        "required": [
+          "environment",
+          "version"
+        ],
+        "properties": {
+          "environment": {
+            "type": "string",
+            "enum": [
+              "sandbox",
+              "staging",
+              "production"
+            ]
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Published candidate version; 0 clears the shadow."
+          }
+        }
+      },
+      "ShadowComparisonSample": {
+        "type": "object",
+        "required": [
+          "decision_id",
+          "live_status"
+        ],
+        "properties": {
+          "decision_id": {
+            "type": "string"
+          },
+          "live_status": {
+            "type": "string"
+          },
+          "shadow_status": {
+            "type": "string"
+          },
+          "live_disposition": {
+            "type": "string"
+          },
+          "shadow_disposition": {
+            "type": "string"
+          },
+          "live_code": {
+            "type": "string"
+          },
+          "shadow_code": {
+            "type": "string"
+          },
+          "live_reason": {
+            "type": "string"
+          },
+          "shadow_reason": {
+            "type": "string"
+          },
+          "changed_fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "error": {
+            "type": "string"
+          }
+        }
+      },
+      "ShadowCohort": {
+        "type": "object",
+        "required": [
+          "live_version",
+          "shadow_version",
+          "match_basis",
+          "total",
+          "matched",
+          "diverged",
+          "errored"
+        ],
+        "properties": {
+          "live_version": {
+            "type": "integer"
+          },
+          "shadow_version": {
+            "type": "integer"
+          },
+          "match_basis": {
+            "type": "string",
+            "enum": [
+              "output",
+              "policy"
+            ]
+          },
+          "policy_id": {
+            "type": "string"
+          },
+          "policy_version": {
+            "type": "integer"
+          },
+          "total": {
+            "type": "integer"
+          },
+          "matched": {
+            "type": "integer"
+          },
+          "diverged": {
+            "type": "integer"
+          },
+          "errored": {
+            "type": "integer"
+          },
+          "sample_diverged": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "samples": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ShadowComparisonSample"
+            }
+          }
+        }
+      },
+      "ShadowState": {
+        "type": "object",
+        "required": [
+          "shadows",
+          "report"
+        ],
+        "properties": {
+          "shadows": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer"
+            }
+          },
+          "report": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ShadowCohort"
+            }
           }
         }
       },

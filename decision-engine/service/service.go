@@ -289,17 +289,23 @@ func (s *Service) recordModelOutcome(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Probability float64 `json:"probability"`
-		Label       float64 `json:"label"`
-		DecisionID  string  `json:"decision_id"`
+		Label      float64 `json:"label"`
+		DecisionID string  `json:"decision_id"`
+		NodeID     string  `json:"node_id"`
 	}
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.Error(w, http.StatusBadRequest, err)
 		return
 	}
-	e, err := s.cmd.RecordModelOutcome(r.Context(), id, r.PathValue("name"), req.Probability, req.Label, req.DecisionID)
+	e, err := s.cmd.RecordModelOutcome(
+		r.Context(), id, r.PathValue("name"), req.Label, req.DecisionID, req.NodeID,
+	)
 	if err != nil {
-		httpx.Error(w, http.StatusBadRequest, err)
+		status := http.StatusBadRequest
+		if errors.Is(err, eventlog.ErrConflict) {
+			status = http.StatusConflict
+		}
+		httpx.Error(w, status, err)
 		return
 	}
 	httpx.JSON(w, http.StatusAccepted, map[string]any{"event_id": e.ID, "seq": e.Seq})

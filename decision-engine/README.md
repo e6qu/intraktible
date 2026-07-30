@@ -55,8 +55,10 @@ Done — flow model + versioning (vertical slice, command→event→projection�
     reports the model's predicted-probability distribution (deciles) + the PSI vs a captured baseline
     (`POST …/baseline`) — `<0.1` stable, `0.1–0.25` moderate, `>0.25` significant — **and per-input-feature
     covariate drift** (standardized mean shift + variance ratio vs the baseline, a leading indicator).
-    **Actuals:** `POST …/outcomes {probability, label}` records realized outcomes and `GET …/performance`
-    reports calibration, accuracy, Brier score, and realized AUC — live performance from ground truth.
+    **Actuals:** `POST …/outcomes {decision_id, label, node_id?}` derives the exact
+    probability/model version from the completed decision trace (one label per model
+    observation), and `GET …/performance` reports current-version calibration,
+    accuracy, Brier score, and realized AUC — live performance from attributable ground truth.
     `?window=Nd` measures only the most recent N day-buckets (a windowed view a cumulative one would
     dilute); `POST …/monitor {threshold}` sets a PSI alert, and the report's `firing` flag trips when PSI exceeds it. A
     `models.Scheduler` (started on `INTRAKTIBLE_MONITOR_INTERVAL`, the same cadence as the flow
