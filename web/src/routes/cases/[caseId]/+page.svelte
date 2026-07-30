@@ -2,15 +2,29 @@
 <script lang="ts">
   import { page } from '$app/stores';
   import Icon from '$lib/Icon.svelte';
+  import Copyable from '$lib/Copyable.svelte';
   import {
     getCase,
     assignCase,
     setCaseStatus,
     addCaseNote,
+    getCaseTypeVersion,
+    setCasePriority,
+    updateCaseFields,
+    dispositionCase,
+    linkCaseEvidence,
+    registerCaseAttachment,
+    accessCaseAttachment,
+    selectCaseQA,
+    reviewCaseQA,
+    addCaseQAFeedback,
+    retryCaseWebhook,
+    routeCase,
     getDecision,
     ApiError,
     type Case,
-    type CaseStatus,
+    type CaseFieldDefinition,
+    type CaseTypeView,
     type Decision
   } from '$lib/api';
   import { displayEntries } from '$lib/kv';
@@ -37,8 +51,32 @@
   let notFound = $state(false);
 
   let assignee = $state('');
-  let newStatus = $state<CaseStatus>('in_progress');
+  let newStatus = $state('in_progress');
+  let definition = $state<CaseTypeView | null>(null);
   let noteText = $state('');
+  let priority = $state('normal');
+  let disposition = $state('');
+  let reasonCode = $state('');
+  let dispositionNote = $state('');
+  let evidenceKind = $state('decision');
+  let evidenceSubject = $state('');
+  let evidenceLabel = $state('');
+  let attachmentName = $state('');
+  let attachmentSHA = $state('');
+  let attachmentRef = $state('');
+  let attachmentBasis = $state('legal_obligation');
+  let qaSample = $state('');
+  let qaReviewer = $state('');
+  let qaDisposition = $state('');
+  let qaReason = $state('');
+  let qaNote = $state('');
+  let qaOverride = $state(false);
+  let qaFeedback = $state('');
+  let retryReason = $state('');
+  let revealedAttachmentRefs = $state<Record<string, string>>({});
+  let fieldDrafts = $state<Record<string, string>>({});
+  let fieldOriginals = $state<Record<string, string>>({});
+  let seededFieldCase = $state('');
   // Seed the status <select> from the case's real status once, on first load, so it
   // doesn't default to in_progress (which invites an accidental backward
   // transition). Only the first load seeds it — later reloads must not clobber a
@@ -48,12 +86,26 @@
   // Derive from the route param so navigating between sibling cases reloads.
   const caseID = $derived($page.params.caseId ?? '');
 
-  // A closed case has no live SLA clock — its days_left is a frozen leftover, so the
-  // urgency badge and the days-left figure are suppressed rather than shown as a stale
-  // countdown. (completed is the only terminal status today; resolved/cancelled are
-  // guarded for forward-compat.)
-  const TERMINAL = new Set(['completed', 'resolved', 'cancelled']);
-  const closed = $derived(c != null && TERMINAL.has(c.status));
+  const allowedTransitions = $derived(
+    definition?.definition.transitions.filter(
+      (transition) =>
+        transition.from === c?.status &&
+        (!transition.roles?.length || transition.roles.includes($user?.role ?? 'viewer')) &&
+        !definition?.definition.dispositions.some(
+          (disposition) => disposition.terminal_state === transition.to
+        )
+    ) ?? []
+  );
+  const selectedDisposition = $derived(
+    definition?.definition.dispositions.find((item) => item.key === disposition)
+  );
+  const closed = $derived(
+    c != null &&
+      (Boolean(c.resolved_at) ||
+        c.status === 'completed' ||
+        definition?.definition.dispositions.some((item) => item.terminal_state === c?.status) ===
+          true)
+  );
   const sourceSuspended = $derived(sourceDecision?.status === 'suspended');
 
   // The SLA state is a wire enum (on_track/due_soon/overdue) — render it as a
@@ -74,12 +126,43 @@
       const decision = got.source_decision_id
         ? await getDecision(key, got.source_decision_id)
         : null;
+      const pinned =
+        got.case_type_version > 0
+          ? await getCaseTypeVersion(key, got.case_type, got.case_type_version)
+          : null;
       if (caseID !== reqID) return;
       c = got;
       sourceDecision = decision;
+      definition = pinned;
+      if (seededFieldCase !== got.case_id) {
+        const context =
+          got.context && typeof got.context === 'object' && !Array.isArray(got.context)
+            ? (got.context as Record<string, unknown>)
+            : {};
+        fieldDrafts = Object.fromEntries(
+          (pinned?.definition.fields ?? []).map((field) => {
+            const value = context[field.key];
+            return [
+              field.key,
+              typeof value === 'object' && value !== null
+                ? JSON.stringify(value)
+                : value == null
+                  ? ''
+                  : String(value)
+            ];
+          })
+        );
+        fieldOriginals = { ...fieldDrafts };
+        seededFieldCase = got.case_id;
+      }
+      priority = got.priority;
       if (!statusSeeded) {
         newStatus = got.status;
         statusSeeded = true;
+      }
+      if (!disposition && pinned?.definition.dispositions[0]) {
+        disposition = pinned.definition.dispositions[0].key;
+        reasonCode = pinned.definition.dispositions[0].reason_codes[0] ?? '';
       }
     } catch (e) {
       if (caseID === reqID) {
@@ -105,6 +188,68 @@
   // The risk figure is the headline number a reviewer scans for — emphasise it.
   function isRisk(key: string): boolean {
     return /risk|score/i.test(key);
+  }
+  // Published layouts control scan order for the active role. The backend has
+  // already enforced field-level PII visibility, so fields not named by the
+  // layout remain visible after the preferred sections instead of being hidden
+  // by a presentation-only client rule.
+  function contextEntries(): Array<[string, string]> {
+    if (!c) return [];
+    const entries = displayEntries(c.context);
+    const layout = definition?.definition.layouts.find(
+      (candidate) => candidate.role === ($user?.role ?? 'viewer')
+    );
+    if (!layout) return entries;
+    const rank = new Map(layout.sections.map((field, index) => [field, index]));
+    return [...entries].sort((a, b) => {
+      const left = rank.get(a[0]) ?? Number.MAX_SAFE_INTEGER;
+      const right = rank.get(b[0]) ?? Number.MAX_SAFE_INTEGER;
+      return left - right || a[0].localeCompare(b[0]);
+    });
+  }
+  function fieldLabel(field: string): string {
+    return (
+      definition?.definition.fields.find((candidate) => candidate.key === field)?.label ?? field
+    );
+  }
+  const editableFields = $derived.by((): CaseFieldDefinition[] => {
+    const editable =
+      definition?.definition.layouts.find(
+        (candidate) => candidate.role === ($user?.role ?? 'viewer')
+      )?.editable ?? [];
+    return (definition?.definition.fields ?? []).filter((field) => editable.includes(field.key));
+  });
+  function parsedFieldValue(field: CaseFieldDefinition): unknown {
+    // Svelte coerces a bound input[type=number] to a number at runtime even
+    // though drafts are seeded as display strings. Normalize before checking
+    // emptiness and parsing so a valid numeric edit cannot fail on String.trim.
+    const raw: unknown = fieldDrafts[field.key];
+    const value = raw == null ? '' : String(raw);
+    if (field.kind !== 'string' && value.trim() === '') return null;
+    switch (field.kind) {
+      case 'number': {
+        const parsed = Number(value);
+        if (!Number.isFinite(parsed)) throw new Error(`${field.label} must be a number`);
+        return parsed;
+      }
+      case 'boolean':
+        return value === 'true';
+      case 'object':
+      case 'array':
+        return JSON.parse(value);
+      default:
+        return value;
+    }
+  }
+  async function saveFields() {
+    const fields = Object.fromEntries(
+      editableFields
+        .filter((field) => fieldDrafts[field.key] !== fieldOriginals[field.key])
+        .map((field) => [field.key, parsedFieldValue(field)])
+    );
+    if (Object.keys(fields).length === 0) throw new Error('No field values changed');
+    await updateCaseFields(key, caseID, fields);
+    seededFieldCase = '';
   }
 
   let busy = $state(false);
@@ -138,6 +283,7 @@
     // load keeps showing the previous case (and its status in the select).
     c = null;
     sourceDecision = null;
+    definition = null;
     statusSeeded = false;
     void load();
   });
@@ -166,7 +312,11 @@
     </div>
     <dl>
       <dt>type</dt>
-      <dd><span class="chip">{c.case_type}</span></dd>
+      <dd><span class="chip">{c.case_type} · v{c.case_type_version || 'legacy'}</span></dd>
+      <dt>priority</dt>
+      <dd>{c.priority}</dd>
+      <dt>queue</dt>
+      <dd>{c.queue || 'unrouted'}</dd>
       <dt>assignee</dt>
       <dd>{c.assignee || '—'}</dd>
       <dt>SLA</dt>
@@ -199,17 +349,95 @@
           {/if}
         </dd>
       {/if}
+      {#if c.subject_governance}
+        <dt>data governance</dt>
+        <dd>
+          {#if c.subject_governance.erased}<Badge tone="danger">erased</Badge>{/if}
+          {#if c.subject_governance.legal_hold}<Badge tone="warn">legal hold</Badge>{/if}
+          {#if c.subject_governance.retained}
+            retained until {c.subject_governance.retain_until?.slice(0, 10)}
+          {:else}
+            no active statutory hold
+          {/if}
+        </dd>
+      {/if}
     </dl>
 
-    {#if displayEntries(c.context).length > 0}
+    {#if c.sla_delivery_attempts.length > 0}
+      <h2>Webhook delivery</h2>
+      <ol class="timeline" data-testid="sla-attempts">
+        {#each c.sla_delivery_attempts as attempt (`${attempt.round}-${attempt.attempt}`)}
+          <li>
+            <span class="when muted"><RelativeTime value={attempt.at} /></span>
+            <span class="what"
+              >round {attempt.round + 1}, attempt {attempt.attempt}: {attempt.outcome}</span
+            >
+          </li>
+        {/each}
+      </ol>
+      {#if c.sla_escalation_status === 'no_channel' || c.sla_escalation_status === 'permanent_failure'}
+        <div class="row">
+          <input
+            bind:value={retryReason}
+            placeholder="retry reason"
+            aria-label="webhook retry reason"
+          />
+          <button
+            onclick={() =>
+              run(async () => {
+                await retryCaseWebhook(key, caseID, retryReason);
+                retryReason = '';
+              }, 'Webhook delivery requeued')}
+            disabled={busy || !retryReason.trim()}>Retry delivery</button
+          >
+        </div>
+      {/if}
+    {/if}
+
+    {#if contextEntries().length > 0}
       <h2>Context</h2>
       <div class="facts" data-testid="context">
-        {#each displayEntries(c.context) as [k, v] (k)}
+        {#each contextEntries() as [k, v] (k)}
           <div class="fact" class:risk={isRisk(k)}>
-            <span class="fact-key">{k}</span>
+            <span class="fact-key">{fieldLabel(k)}</span>
             <span class="fact-val">{factValue(k, v)}</span>
           </div>
         {/each}
+      </div>
+    {/if}
+    {#if editableFields.length > 0 && !closed}
+      <div class="actions" data-testid="editable-case-fields">
+        <strong>Editable fields</strong>
+        <div class="row">
+          {#each editableFields as field (field.key)}
+            <label>
+              {field.label}
+              {#if field.kind === 'boolean'}
+                <select bind:value={fieldDrafts[field.key]} aria-label={`edit ${field.label}`}>
+                  <option value="">unset</option>
+                  <option value="true">true</option>
+                  <option value="false">false</option>
+                </select>
+              {:else if field.kind === 'object' || field.kind === 'array'}
+                <textarea
+                  bind:value={fieldDrafts[field.key]}
+                  rows="2"
+                  aria-label={`edit ${field.label}`}
+                ></textarea>
+              {:else}
+                <input
+                  bind:value={fieldDrafts[field.key]}
+                  type={field.kind === 'number' ? 'number' : 'text'}
+                  aria-label={`edit ${field.label}`}
+                />
+              {/if}
+            </label>
+          {/each}
+          <button
+            onclick={() => run(saveFields, 'Case fields updated')}
+            disabled={busy || !roleAtLeast($user?.role, 'operator')}>Save fields</button
+          >
+        </div>
       </div>
     {/if}
   {:else if notFound}
@@ -230,7 +458,7 @@
   {/if}
   {#if error && !notFound}<p class="err">{error}</p>{/if}
 
-  {#if c && c.status !== 'completed' && sourceSuspended}
+  {#if c && !closed && sourceSuspended}
     <div class="resolve-bar resume-required">
       <div>
         <strong>Record the human outcome to finish this task</strong>
@@ -245,7 +473,7 @@
         href={appHref(`/decisions/${c.source_decision_id}`)}>Review decision →</a
       >
     </div>
-  {:else if c && c.status !== 'completed'}
+  {:else if c && !closed && c.case_type_version === 0}
     <div class="resolve-bar">
       <button
         class="resolve"
@@ -257,28 +485,44 @@
       </button>
       <span class="muted">Mark this case completed.</span>
     </div>
-  {:else if c}
+  {:else if c && closed}
     <p class="resolved muted">✓ This case is resolved.</p>
+  {:else if c}
+    <p class="resolved muted">
+      This governed case is active. Complete it with a reasoned disposition below.
+    </p>
   {/if}
 
   {#if c}
     <h2>Actions</h2>
     <div class="actions">
       <div class="row">
-        <input bind:value={assignee} placeholder="assignee" aria-label="assignee" />
+        {#if !c.queue}
+          <button
+            onclick={() => run(() => routeCase(key, caseID), 'Case routed')}
+            disabled={busy || closed || !roleAtLeast($user?.role, 'operator')}>Route now</button
+          >
+        {/if}
+        <input
+          bind:value={assignee}
+          placeholder="assignee"
+          aria-label="assignee"
+          disabled={closed}
+        />
         <button
           onclick={() =>
             run(async () => {
               await claim(assignee);
               assignee = ''; // only clear after a successful save (run() surfaces errors)
             }, 'Assignee updated')}
-          disabled={busy || !assignee.trim() || !roleAtLeast($user?.role, 'operator')}
+          disabled={busy || closed || !assignee.trim() || !roleAtLeast($user?.role, 'operator')}
           title={!roleAtLeast($user?.role, 'operator') ? 'Requires the operator role' : undefined}
           >{c.assignee ? 'Reassign' : 'Assign'}</button
         >
         <button
           onclick={() => run(() => claim($user?.actor ?? ''), 'Assigned to you')}
           disabled={busy ||
+            closed ||
             !$user?.actor ||
             c.assignee === $user?.actor ||
             !roleAtLeast($user?.role, 'operator')}
@@ -290,21 +534,40 @@
         >
       </div>
       <div class="row">
-        <select bind:value={newStatus} aria-label="set status">
-          <option value="needs_review">needs_review</option>
-          <option value="in_progress">in_progress</option>
-          <option value="completed" disabled={sourceSuspended}>completed</option>
+        <select bind:value={newStatus} aria-label="set status" disabled={closed || sourceSuspended}>
+          {#if c.case_type_version === 0}
+            <option value="needs_review">needs_review</option>
+            <option value="in_progress">in_progress</option>
+            <option value="completed">completed</option>
+          {:else}
+            <option value={c.status}>{c.status} (current)</option>
+            {#each allowedTransitions as transition (`${transition.from}-${transition.to}`)}
+              <option value={transition.to}>{transition.to}</option>
+            {/each}
+          {/if}
         </select>
         <button
           onclick={() => run(() => setCaseStatus(key, caseID, newStatus), 'Status updated')}
-          disabled={busy ||
-            (sourceSuspended && newStatus === 'completed') ||
-            !roleAtLeast($user?.role, 'operator')}
+          disabled={busy || closed || sourceSuspended || !roleAtLeast($user?.role, 'operator')}
           title={!roleAtLeast($user?.role, 'operator')
             ? 'Requires the operator role'
-            : sourceSuspended && newStatus === 'completed'
-              ? 'Record the outcome on the suspended decision to complete this case'
+            : sourceSuspended
+              ? 'Record the outcome on the suspended decision to change this case lifecycle'
               : undefined}>Set status</button
+        >
+      </div>
+      <div class="row">
+        <select bind:value={priority} aria-label="case priority" disabled={closed}>
+          {#each definition?.definition.priorities ?? ['low', 'normal', 'high', 'critical'] as item}
+            <option value={item}>{item}</option>
+          {/each}
+        </select>
+        <button
+          onclick={() => run(() => setCasePriority(key, caseID, priority), 'Priority updated')}
+          disabled={busy ||
+            closed ||
+            priority === c.priority ||
+            !roleAtLeast($user?.role, 'operator')}>Set priority</button
         >
       </div>
       <div class="row">
@@ -322,6 +585,226 @@
         </button>
       </div>
     </div>
+  {/if}
+
+  {#if c && definition && !closed && !sourceSuspended}
+    <h2>Disposition</h2>
+    <p class="muted">Required evidence is checked by the pinned v{definition.version} schema.</p>
+    <div class="actions">
+      <div class="row">
+        <select bind:value={disposition} aria-label="disposition">
+          {#each definition.definition.dispositions as item (item.key)}
+            <option value={item.key}>{item.label}</option>
+          {/each}
+        </select>
+        <select bind:value={reasonCode} aria-label="reason code">
+          {#each selectedDisposition?.reason_codes ?? [] as reason (reason)}
+            <option value={reason}>{reason}</option>
+          {/each}
+        </select>
+        <input
+          bind:value={dispositionNote}
+          placeholder="decision note"
+          aria-label="disposition note"
+        />
+        <button
+          onclick={() =>
+            run(
+              () => dispositionCase(key, caseID, disposition, reasonCode, dispositionNote),
+              'Disposition recorded'
+            )}
+          disabled={busy || !disposition || !reasonCode || !roleAtLeast($user?.role, 'operator')}
+          >Record outcome</button
+        >
+      </div>
+    </div>
+  {/if}
+
+  {#if c}
+    <h2>Evidence</h2>
+    {#if c.evidence.length === 0 && c.attachments.length === 0}
+      <p class="muted">No evidence linked yet.</p>
+    {/if}
+    <ul data-testid="case-evidence">
+      {#each c.evidence as evidence (evidence.evidence_id)}
+        <li>{evidence.label} · {evidence.kind} · {evidence.subject_type}/{evidence.subject_id}</li>
+      {/each}
+      {#each c.attachments as attachment (attachment.attachment_id)}
+        <li>
+          {attachment.name} · {attachment.media_type} · SHA-256 {attachment.sha256.slice(0, 12)}…
+          {#if attachment.legal_hold}<Badge tone="warn">legal hold</Badge>{/if}
+          {#if attachment.erased}
+            <Badge tone="danger">erased</Badge>
+          {:else if revealedAttachmentRefs[attachment.attachment_id]}
+            <Copyable
+              value={revealedAttachmentRefs[attachment.attachment_id]}
+              label={`${attachment.name} storage reference`}
+            />
+          {:else}
+            <button
+              class="link"
+              onclick={() =>
+                run(async () => {
+                  const storageRef = await accessCaseAttachment(
+                    key,
+                    caseID,
+                    attachment.attachment_id,
+                    'case review'
+                  );
+                  revealedAttachmentRefs = {
+                    ...revealedAttachmentRefs,
+                    [attachment.attachment_id]: storageRef
+                  };
+                }, 'Attachment access audited; storage reference revealed')}
+              disabled={busy || !roleAtLeast($user?.role, 'operator')}
+              >Reveal storage reference</button
+            >
+          {/if}
+        </li>
+      {/each}
+    </ul>
+    <div class="actions">
+      <strong>Link evidence</strong>
+      <div class="row">
+        <select bind:value={evidenceKind} aria-label="evidence kind">
+          <option value="decision">decision</option>
+          <option value="entity">entity</option>
+          <option value="agent_run">agent run</option>
+          <option value="connector">connector</option>
+          <option value="case">case</option>
+          <option value="alert">alert</option>
+        </select>
+        <input
+          bind:value={evidenceSubject}
+          placeholder="subject id"
+          aria-label="evidence subject"
+        />
+        <input bind:value={evidenceLabel} placeholder="label" aria-label="evidence label" />
+        <button
+          onclick={() =>
+            run(async () => {
+              await linkCaseEvidence(key, caseID, {
+                evidence_id: crypto.randomUUID(),
+                kind: evidenceKind,
+                subject_type: evidenceKind,
+                subject_id: evidenceSubject,
+                label: evidenceLabel
+              });
+              evidenceSubject = '';
+              evidenceLabel = '';
+            }, 'Evidence linked')}
+          disabled={busy || !evidenceSubject || !evidenceLabel}>Link</button
+        >
+      </div>
+      <strong>Register attachment metadata</strong>
+      <div class="row">
+        <input bind:value={attachmentName} placeholder="filename" aria-label="attachment name" />
+        <input
+          bind:value={attachmentSHA}
+          placeholder="64-character SHA-256"
+          aria-label="attachment hash"
+        />
+        <input
+          bind:value={attachmentRef}
+          placeholder="approved storage reference"
+          aria-label="attachment storage"
+        />
+        <input
+          bind:value={attachmentBasis}
+          placeholder="lawful basis"
+          aria-label="attachment lawful basis"
+        />
+        <button
+          onclick={() =>
+            run(async () => {
+              await registerCaseAttachment(key, caseID, {
+                attachment_id: crypto.randomUUID(),
+                name: attachmentName,
+                media_type: 'application/octet-stream',
+                size: 0,
+                sha256: attachmentSHA,
+                storage_ref: attachmentRef,
+                subject: c?.subject,
+                lawful_basis: attachmentBasis
+              });
+              attachmentName = '';
+              attachmentSHA = '';
+              attachmentRef = '';
+            }, 'Attachment metadata registered')}
+          disabled={busy || !attachmentName || !attachmentSHA || !attachmentRef}>Register</button
+        >
+      </div>
+    </div>
+  {/if}
+
+  {#if c?.disposition}
+    <h2>Quality assurance</h2>
+    {#if c.qa}
+      <p data-testid="qa-state">
+        Assigned to <b>{c.qa.reviewer}</b> · {c.qa.status}
+        {#if c.qa.validated}<Badge tone="ok">validated</Badge>{/if}
+        {#if c.qa.disputed}<Badge tone="danger">disputed</Badge>{/if}
+      </p>
+      {#if c.qa.status !== 'completed' && c.qa.reviewer === $user?.actor}
+        <div class="row">
+          <select bind:value={qaDisposition} aria-label="QA disposition">
+            <option value="">select disposition</option>
+            {#each definition?.definition.dispositions ?? [] as item (item.key)}
+              <option value={item.key}>{item.label}</option>
+            {/each}
+          </select>
+          <input bind:value={qaReason} placeholder="reason code" aria-label="QA reason code" />
+          <input bind:value={qaNote} placeholder="QA note" aria-label="QA note" />
+          <label><input type="checkbox" bind:checked={qaOverride} /> override</label>
+          <button
+            onclick={() =>
+              run(
+                () =>
+                  reviewCaseQA(
+                    key,
+                    caseID,
+                    c?.qa?.sample_id ?? '',
+                    qaDisposition,
+                    qaReason,
+                    qaNote,
+                    qaOverride
+                  ),
+                'QA review recorded'
+              )}
+            disabled={busy || !qaDisposition || !qaReason}>Complete QA</button
+          >
+        </div>
+      {:else if c.qa.status === 'completed'}
+        <div class="row">
+          <input bind:value={qaFeedback} placeholder="reviewer feedback" aria-label="QA feedback" />
+          <button
+            onclick={() =>
+              run(async () => {
+                await addCaseQAFeedback(key, caseID, c?.qa?.sample_id ?? '', qaFeedback);
+                qaFeedback = '';
+              }, 'Feedback recorded')}
+            disabled={busy || !qaFeedback}>Add feedback</button
+          >
+        </div>
+      {/if}
+    {:else}
+      <div class="row">
+        <input bind:value={qaSample} placeholder="sample id" aria-label="QA sample id" />
+        <input
+          bind:value={qaReviewer}
+          placeholder="independent reviewer"
+          aria-label="QA reviewer"
+        />
+        <button
+          onclick={() =>
+            run(
+              () => selectCaseQA(key, caseID, qaSample, qaReviewer, 10000),
+              'Case selected for QA'
+            )}
+          disabled={busy || !qaSample || !qaReviewer}>Select for QA</button
+        >
+      </div>
+    {/if}
   {/if}
 
   {#if c}
@@ -482,6 +965,12 @@
     padding: 0.6rem;
     background: #8881;
     border-radius: 0.5rem;
+  }
+  button.link {
+    border: 0;
+    background: transparent;
+    color: var(--link, var(--accent-ink));
+    cursor: pointer;
   }
   ul {
     padding-left: 1rem;

@@ -25,12 +25,15 @@ func TestSummarize(t *testing.T) {
 		// completed AND unassigned: must count toward NEITHER the SLA buckets NOR the
 		// "unassigned" backlog (it is off the queue, not waiting for an owner).
 		{Status: domain.StatusCompleted, SLADays: 1, CreatedAt: now.Add(-9 * day)},
+		// A governed terminal state may use any validated state key; ResolvedAt is
+		// the projection-level terminal signal and must stop the clock too.
+		{Status: "declined", ResolvedAt: now.Add(-time.Hour), SLADays: 1, CreatedAt: now.Add(-9 * day)},
 	}
 
 	s := cases.Summarize(views, now)
 
-	if s.Total != 5 {
-		t.Errorf("Total = %d, want 5", s.Total)
+	if s.Total != 6 {
+		t.Errorf("Total = %d, want 6", s.Total)
 	}
 	if s.ByStatus[domain.StatusNeedsReview] != 2 || s.ByStatus[domain.StatusInProgress] != 1 || s.ByStatus[domain.StatusCompleted] != 2 {
 		t.Errorf("ByStatus = %v", s.ByStatus)
@@ -43,5 +46,20 @@ func TestSummarize(t *testing.T) {
 	}
 	if s.Overdue != 1 {
 		t.Errorf("Overdue = %d, want 1 (completed case excluded)", s.Overdue)
+	}
+}
+
+func TestAnnotateSLAClearsGovernedTerminalClock(t *testing.T) {
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	view := cases.CaseView{
+		Status:     "declined",
+		ResolvedAt: now.Add(-time.Hour),
+		Deadline:   now.Add(-24 * time.Hour),
+		DaysLeft:   -1,
+		SLAState:   domain.SLAOverdue,
+	}
+	cases.AnnotateSLA(&view, now)
+	if view.DaysLeft != 0 || view.SLAState != "" {
+		t.Fatalf("terminal SLA annotation = %d/%q, want cleared", view.DaysLeft, view.SLAState)
 	}
 }

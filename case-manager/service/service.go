@@ -5,7 +5,9 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -20,9 +22,16 @@ import (
 
 // Service wires the case commands and the case read model to HTTP.
 type Service struct {
-	cmd   *command.Handler
-	store store.Store
-	now   func() time.Time
+	cmd        *command.Handler
+	store      store.Store
+	now        func() time.Time
+	governance Governance
+}
+
+// Governance resolves mutable subject privacy state without coupling the Case
+// Manager to the platform erasure or statutory-retention implementations.
+type Governance interface {
+	Status(context.Context, identity.Identity, string, time.Time) (cases.SubjectGovernance, error)
 }
 
 // New builds the service.
@@ -34,6 +43,12 @@ func New(cmd *command.Handler, st store.Store) *Service {
 // demo seeder) and returns the service.
 func (s *Service) WithNow(now func() time.Time) *Service {
 	s.now = now
+	return s
+}
+
+// WithGovernance wires authoritative retention, hold, and erasure state.
+func (s *Service) WithGovernance(governance Governance) *Service {
+	s.governance = governance
 	return s
 }
 
@@ -110,10 +125,14 @@ func (s *Service) list(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	recs, err := cases.List(r.Context(), s.store, id, filterFrom(r))
+	recs, err := cases.List(r.Context(), s.store, id, s.filterFrom(r))
 	now := s.now()
 	for i := range recs {
 		cases.AnnotateSLA(&recs[i], now)
+		if err := s.annotateRead(r.Context(), id, string(httpx.RoleOf(r.Context())), &recs[i]); err != nil {
+			httpx.Error(w, http.StatusInternalServerError, err)
+			return
+		}
 	}
 	httpx.WriteList(w, "cases", recs, err)
 }
@@ -125,7 +144,7 @@ func (s *Service) summary(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	recs, err := cases.List(r.Context(), s.store, id, filterFrom(r))
+	recs, err := cases.List(r.Context(), s.store, id, s.filterFrom(r))
 	if err != nil {
 		httpx.Error(w, http.StatusInternalServerError, err)
 		return
@@ -133,12 +152,16 @@ func (s *Service) summary(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, cases.Summarize(recs, s.now()))
 }
 
-func filterFrom(r *http.Request) cases.Filter {
+func (s *Service) filterFrom(r *http.Request) cases.Filter {
 	q := r.URL.Query()
 	return cases.Filter{
 		Status:   q.Get("status"),
 		CaseType: q.Get("type"),
 		Assignee: q.Get("assignee"),
+		Queue:    q.Get("queue"), Priority: q.Get("priority"),
+		Jurisdiction: q.Get("jurisdiction"), Subject: q.Get("subject"),
+		Query: q.Get("q"), SLAState: q.Get("sla_state"),
+		Now: s.now(),
 	}
 }
 
@@ -150,8 +173,62 @@ func (s *Service) get(w http.ResponseWriter, r *http.Request) {
 	c, found, err := cases.Read(r.Context(), s.store, id, r.PathValue("case_id"))
 	if found {
 		cases.AnnotateSLA(&c, s.now())
+		if err := s.annotateRead(r.Context(), id, string(httpx.RoleOf(r.Context())), &c); err != nil {
+			httpx.Error(w, http.StatusInternalServerError, err)
+			return
+		}
 	}
 	httpx.WriteOne(w, c, found, err, "case not found")
+}
+
+func (s *Service) annotateRead(
+	ctx context.Context,
+	id identity.Identity,
+	role string,
+	view *cases.CaseView,
+) error {
+	if view.CaseTypeVersion > 0 {
+		published, found, err := cases.CaseTypeVersion(ctx, s.store, id, view.CaseType, view.CaseTypeVersion)
+		if err != nil {
+			return err
+		}
+		if !found {
+			return fmt.Errorf("case-manager: missing pinned case type %q version %d", view.CaseType, view.CaseTypeVersion)
+		}
+		masked, err := cases.MaskPII(*view, published.Definition, role)
+		if err != nil {
+			return err
+		}
+		*view = masked
+	}
+	if s.governance != nil && view.Subject != "" {
+		status, err := s.governance.Status(ctx, id, view.Subject, s.now())
+		if err != nil {
+			return err
+		}
+		view.SubjectGovernance = &status
+		if status.Erased {
+			view.Context = json.RawMessage(`{"erased":"[crypto-shredded]"}`)
+		}
+	}
+	for i := range view.Attachments {
+		if s.governance != nil && view.Attachments[i].Subject != "" {
+			attachmentStatus, err := s.governance.Status(ctx, id, view.Attachments[i].Subject, s.now())
+			if err != nil {
+				return err
+			}
+			view.Attachments[i].LegalHold = attachmentStatus.LegalHold
+			if attachmentStatus.Retained {
+				view.Attachments[i].RetainUntil = attachmentStatus.RetainUntil.Format(time.RFC3339)
+			}
+			view.Attachments[i].Erased = attachmentStatus.Erased
+		}
+		// A storage pointer is a capability, not list/detail metadata. Every
+		// ordinary read redacts it; the dedicated access command records the
+		// purpose, actor, and time before returning it.
+		view.Attachments[i].StorageRef = ""
+	}
+	return nil
 }
 
 func (s *Service) assign(w http.ResponseWriter, r *http.Request) {
@@ -173,7 +250,10 @@ func (s *Service) status(w http.ResponseWriter, r *http.Request) {
 		Status string `json:"status"`
 	}
 	httpx.Emit(w, r, &req, func(id identity.Identity) (eventlog.Envelope, error) {
-		return s.cmd.SetStatus(r.Context(), id, domain.SetStatus{CaseID: r.PathValue("case_id"), Status: domain.CaseStatus(req.Status)})
+		return s.cmd.SetStatus(r.Context(), id, domain.SetStatus{
+			CaseID: r.PathValue("case_id"), Status: domain.CaseStatus(req.Status),
+			Role: string(httpx.RoleOf(r.Context())),
+		})
 	})
 }
 

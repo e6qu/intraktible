@@ -409,7 +409,10 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 	}
 	if enabled(cfg.Modules, "case-manager") {
 		caseCmd := casecmd.NewHandler(log).WithNow(now)
-		caseservice.New(caseCmd, st).WithNow(now).Routes(api)
+		caseservice.New(caseCmd, st).
+			WithNow(now).
+			WithGovernance(caseGovernance{store: st, vault: erasureVault}).
+			Routes(api)
 		// SLA sweeper: records breaches for open cases past deadline on the same
 		// cadence as the monitor/drift/deploy sweeps (the /cases/sla-sweep endpoint
 		// is the on-demand alternative).
@@ -1066,6 +1069,37 @@ type retentionGate struct {
 
 func (g retentionGate) Retained(ctx context.Context, id identity.Identity, subject string) (bool, string, error) {
 	return retention.Retained(ctx, g.store, id, subject, g.now())
+}
+
+// caseGovernance exposes the same authoritative statutory-retention and
+// crypto-shred state on case reads and attachment access.
+type caseGovernance struct {
+	store store.Store
+	vault *erasure.Vault
+}
+
+func (g caseGovernance) Status(
+	ctx context.Context,
+	id identity.Identity,
+	subject string,
+	now time.Time,
+) (cases.SubjectGovernance, error) {
+	retained, err := retention.StatusFor(ctx, g.store, id, subject, now)
+	if err != nil {
+		return cases.SubjectGovernance{}, err
+	}
+	held, err := g.vault.OnHold(ctx, id, subject)
+	if err != nil {
+		return cases.SubjectGovernance{}, err
+	}
+	erased, err := g.vault.Erased(ctx, id, subject)
+	if err != nil {
+		return cases.SubjectGovernance{}, err
+	}
+	return cases.SubjectGovernance{
+		Subject: subject, Retained: retained.Retained, RetainUntil: retained.RetainUntil,
+		LegalHold: held, Erased: erased,
+	}, nil
 }
 
 // aiCompleter adapts the AI registry to the engine's copilot AICompleter port (a

@@ -185,7 +185,9 @@ test('journey: assign a case, note it, and set its status', async ({ page }) => 
     .click();
   await expect(page.getByText(/Assigned/)).toBeVisible();
   // Add a note — lands on the immutable activity trail.
-  await page.getByLabel('note').fill('Reviewed the applicant context; escalating.');
+  await page
+    .getByLabel('note', { exact: true })
+    .fill('Reviewed the applicant context; escalating.');
   await page.getByRole('button', { name: 'Add note' }).click();
   await expect(page.getByText(/Note added/)).toBeVisible();
   // Move status.

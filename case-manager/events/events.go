@@ -19,6 +19,7 @@ const (
 	TypeCaseAssigned              = "cases.assigned"
 	TypeCaseRouted                = "cases.routed"
 	TypeCaseStatusChanged         = "cases.status_changed"
+	TypeCaseFieldsUpdated         = "cases.fields_updated"
 	TypeCasePriorityChanged       = "cases.priority_changed"
 	TypeCaseDispositionRecorded   = "cases.disposition_recorded"
 	TypeCaseNoteAdded             = "cases.note_added"
@@ -30,8 +31,13 @@ const (
 	TypeCaseQASelected            = "cases.qa_selected"
 	TypeCaseQAReviewed            = "cases.qa_reviewed"
 	TypeCaseReviewerFeedbackAdded = "cases.reviewer_feedback_added"
+	TypeCaseBulkStarted           = "cases.bulk_started"
+	TypeCaseBulkItemRecorded      = "cases.bulk_item_recorded"
+	TypeCaseBulkCompleted         = "cases.bulk_completed"
 	TypeCaseSLABreached           = "cases.sla_breached"
 	TypeCaseSLAEscalated          = "cases.sla_escalated"
+	TypeCaseSLADeliveryAttempted  = "cases.sla_delivery_attempted"
+	TypeCaseSLAEscalationRetried  = "cases.sla_escalation_retried"
 	// TypeCaseSLAReminder is emitted once by the SLA sweep when an open case enters its
 	// "due soon" window (before breach), nudging an assignee toward a task before it
 	// goes overdue. Like the breach event it carries only the case id; the notifications
@@ -81,8 +87,9 @@ type CaseAssigned struct {
 	Assignee string `json:"assignee"`
 }
 
-// CaseRouted records the deterministic queue decision and optional initial
-// assignee. It is claimed once per case across scheduler replicas.
+// CaseRouted records a deterministic initial, rebalance, or escalation queue
+// decision and optional assignee. Each transition carries a purpose-specific
+// cross-replica claim at append time.
 type CaseRouted struct {
 	CaseID      string `json:"case_id"`
 	Queue       string `json:"queue"`
@@ -92,8 +99,17 @@ type CaseRouted struct {
 
 // CaseStatusChanged records a status transition.
 type CaseStatusChanged struct {
-	CaseID string `json:"case_id"`
-	Status string `json:"status"`
+	CaseID   string `json:"case_id"`
+	Status   string `json:"status"`
+	Terminal bool   `json:"terminal,omitempty"`
+}
+
+// CaseFieldsUpdated records a validated partial update to role-editable fields.
+// The pinned definition and actor role are command-time policy; the accepted patch
+// is the replay contract.
+type CaseFieldsUpdated struct {
+	CaseID string          `json:"case_id"`
+	Fields json.RawMessage `json:"fields"`
 }
 
 // CasePriorityChanged records an operator-controlled priority transition.
@@ -105,12 +121,13 @@ type CasePriorityChanged struct {
 // CaseDispositionRecorded records the reviewer's reasoned terminal or
 // non-terminal outcome under the pinned case-type version.
 type CaseDispositionRecorded struct {
-	CaseID      string `json:"case_id"`
-	Disposition string `json:"disposition"`
-	ReasonCode  string `json:"reason_code"`
-	Note        string `json:"note,omitempty"`
-	State       string `json:"state"`
-	Override    bool   `json:"override,omitempty"`
+	CaseID               string `json:"case_id"`
+	Disposition          string `json:"disposition"`
+	ReasonCode           string `json:"reason_code"`
+	Note                 string `json:"note,omitempty"`
+	State                string `json:"state"`
+	Override             bool   `json:"override,omitempty"`
+	RequiresSecondReview bool   `json:"requires_second_review,omitempty"`
 }
 
 // CaseNoteAdded records a note added to a case (author/time come from the envelope).
@@ -186,6 +203,7 @@ type CaseQAReviewed struct {
 	Agreement   bool   `json:"agreement"`
 	Override    bool   `json:"override,omitempty"`
 	Note        string `json:"note,omitempty"`
+	State       string `json:"state,omitempty"`
 }
 
 // CaseReviewerFeedbackAdded records feedback after a QA review.
@@ -194,6 +212,31 @@ type CaseReviewerFeedbackAdded struct {
 	SampleID string `json:"sample_id"`
 	Reviewer string `json:"reviewer"`
 	Text     string `json:"text"`
+}
+
+// CaseBulkStarted durably admits one bounded idempotent bulk operation before
+// any item is changed.
+type CaseBulkStarted struct {
+	BatchID        string   `json:"batch_id"`
+	IdempotencyKey string   `json:"idempotency_key"`
+	RequestHash    string   `json:"request_hash"`
+	Operation      string   `json:"operation"`
+	CaseIDs        []string `json:"case_ids"`
+}
+
+// CaseBulkItemRecorded is the authoritative result for one logical item.
+type CaseBulkItemRecorded struct {
+	BatchID string `json:"batch_id"`
+	CaseID  string `json:"case_id"`
+	Success bool   `json:"success"`
+	Error   string `json:"error,omitempty"`
+}
+
+// CaseBulkCompleted seals the manifest after every item has a result.
+type CaseBulkCompleted struct {
+	BatchID   string `json:"batch_id"`
+	Succeeded int    `json:"succeeded"`
+	Failed    int    `json:"failed"`
 }
 
 // CaseSLABreached records that a case passed its SLA deadline. It is emitted by
@@ -225,6 +268,39 @@ func (s SLAEscalationStatus) Terminal() bool {
 type CaseSLAEscalated struct {
 	CaseID string              `json:"case_id"`
 	Status SLAEscalationStatus `json:"status"`
+}
+
+// SLADeliveryOutcome is one external case-escalation attempt outcome.
+type SLADeliveryOutcome string
+
+const (
+	SLADeliveryDelivered        SLADeliveryOutcome = "delivered"
+	SLADeliveryRetryable        SLADeliveryOutcome = "retryable"
+	SLADeliveryNoChannel        SLADeliveryOutcome = "no_channel"
+	SLADeliveryPermanentFailure SLADeliveryOutcome = "permanent_failure"
+)
+
+// Valid reports whether o is a known outcome.
+func (o SLADeliveryOutcome) Valid() bool {
+	return o == SLADeliveryDelivered || o == SLADeliveryRetryable ||
+		o == SLADeliveryNoChannel || o == SLADeliveryPermanentFailure
+}
+
+// CaseSLADeliveryAttempted records every delivery boundary result, including
+// retryable failures that intentionally leave escalation pending.
+type CaseSLADeliveryAttempted struct {
+	CaseID  string             `json:"case_id"`
+	Round   int                `json:"round"`
+	Attempt int                `json:"attempt"`
+	Outcome SLADeliveryOutcome `json:"outcome"`
+}
+
+// CaseSLAEscalationRetried explicitly requeues a terminal failed/no-channel
+// escalation for a new bounded attempt round.
+type CaseSLAEscalationRetried struct {
+	CaseID string `json:"case_id"`
+	Reason string `json:"reason"`
+	Round  int    `json:"round"`
 }
 
 // CaseSLAReminder records that an open case entered its "due soon" window (emitted

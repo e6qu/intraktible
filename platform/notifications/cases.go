@@ -34,6 +34,7 @@ type caseIndex struct {
 	CompanyName      string `json:"company_name"`
 	CaseType         string `json:"case_type"`
 	SourceDecisionID string `json:"source_decision_id,omitempty"`
+	Resolved         bool   `json:"resolved,omitempty"`
 }
 
 func recipientFor(idx caseIndex) string {
@@ -108,8 +109,28 @@ func applyCaseAssigned(ctx context.Context, e eventlog.Envelope, s store.Store) 
 		return fmt.Errorf("notifications: case index %q disappeared after assignment", p.CaseID)
 	}
 	idx.CaseID = p.CaseID
+	if idx.Resolved {
+		return nil
+	}
 	return task(ctx, e, s, p.Assignee, p.CaseID, "assigned",
 		fmt.Sprintf("Review task assigned to you: %s", label(idx)))
+}
+
+func applyCaseRouted(ctx context.Context, e eventlog.Envelope, s store.Store) error {
+	var p cmevents.CaseRouted
+	if err := json.Unmarshal(e.Payload, &p); err != nil {
+		return fmt.Errorf("notifications: decode case_routed seq %d: %w", e.Seq, err)
+	}
+	if p.Assignee == "" {
+		return nil
+	}
+	payload, err := json.Marshal(cmevents.CaseAssigned{CaseID: p.CaseID, Assignee: p.Assignee})
+	if err != nil {
+		return fmt.Errorf("notifications: marshal routed assignment: %w", err)
+	}
+	assignment := e
+	assignment.Payload = payload
+	return applyCaseAssigned(ctx, assignment, s)
 }
 
 func applyCaseStatusChanged(ctx context.Context, e eventlog.Envelope, s store.Store) error {
@@ -117,7 +138,7 @@ func applyCaseStatusChanged(ctx context.Context, e eventlog.Envelope, s store.St
 	if err := json.Unmarshal(e.Payload, &p); err != nil {
 		return fmt.Errorf("notifications: decode case_status_changed seq %d: %w", e.Seq, err)
 	}
-	if p.Status != "completed" {
+	if !p.Terminal && p.Status != "completed" {
 		return nil
 	}
 	return resolveCaseTasks(ctx, e, s, p.CaseID)
@@ -134,10 +155,56 @@ func applyDecisionResumed(ctx context.Context, e eventlog.Envelope, s store.Stor
 	return resolveCaseTasks(ctx, e, s, p.CaseID)
 }
 
+func applyCaseDisposition(ctx context.Context, e eventlog.Envelope, s store.Store) error {
+	var p cmevents.CaseDispositionRecorded
+	if err := json.Unmarshal(e.Payload, &p); err != nil {
+		return fmt.Errorf("notifications: decode case disposition seq %d: %w", e.Seq, err)
+	}
+	if p.RequiresSecondReview {
+		return nil
+	}
+	return resolveCaseTasks(ctx, e, s, p.CaseID)
+}
+
+func applyCaseQASelected(ctx context.Context, e eventlog.Envelope, s store.Store) error {
+	var p cmevents.CaseQASelected
+	if err := json.Unmarshal(e.Payload, &p); err != nil {
+		return fmt.Errorf("notifications: decode case QA selection seq %d: %w", e.Seq, err)
+	}
+	return task(ctx, e, s, p.Reviewer, p.CaseID, "qa:"+p.SampleID,
+		"Independent QA review assigned: "+p.CaseID)
+}
+
+func applyCaseQAReviewed(ctx context.Context, e eventlog.Envelope, s store.Store) error {
+	var p cmevents.CaseQAReviewed
+	if err := json.Unmarshal(e.Payload, &p); err != nil {
+		return fmt.Errorf("notifications: decode case QA review seq %d: %w", e.Seq, err)
+	}
+	return resolveCaseTasks(ctx, e, s, p.CaseID)
+}
+
+func applySLAEscalationRetried(ctx context.Context, e eventlog.Envelope, s store.Store) error {
+	var p cmevents.CaseSLAEscalationRetried
+	if err := json.Unmarshal(e.Payload, &p); err != nil {
+		return fmt.Errorf("notifications: decode SLA retry seq %d: %w", e.Seq, err)
+	}
+	return applySLA(ctx, e, s, p.CaseID, fmt.Sprintf("retry:%d", p.Round), "SLA escalation requeued")
+}
+
 // resolveCaseTasks retires every personal/shared notification for a closed case.
 // Tombstoning instead of deleting keeps replay and audit deterministic while List
 // stops presenting completed work to other reviewers as an unread live task.
 func resolveCaseTasks(ctx context.Context, e eventlog.Envelope, s store.Store, caseID string) error {
+	found, err := store.UpdateDoc(
+		ctx, s, caseIndexCollection, store.Key(e.Org, e.Workspace, caseID),
+		func(idx *caseIndex) { idx.Resolved = true },
+	)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return fmt.Errorf("notifications: terminal event seq %d for unknown case %q", e.Seq, caseID)
+	}
 	all, err := store.ListDocs[View](ctx, s, Collection, store.Key(e.Org, e.Workspace, ""))
 	if err != nil {
 		return err
@@ -171,6 +238,9 @@ func applySLA(ctx context.Context, e eventlog.Envelope, s store.Store, caseID, s
 	}
 	if !ok {
 		return fmt.Errorf("notifications: %s seq %d for unknown case %q", suffix, e.Seq, caseID)
+	}
+	if idx.Resolved {
+		return nil
 	}
 	idx.CaseID = caseID
 	return task(ctx, e, s, recipientFor(idx), caseID, suffix,

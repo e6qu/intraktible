@@ -20,6 +20,101 @@ type caseNote struct {
 	hrs    float64
 }
 
+// caseConfigActions publishes the governed operational contract before any
+// decision traffic can open a review task. Decision-escalated cases therefore
+// resolve the exact definition version that preceded their event in the log.
+func (s *seeder) caseConfigActions(cfg *timeCursor) []action {
+	caseTypes := []struct {
+		key, name string
+	}{
+		{"aml_alert", "AML alert"},
+		{"claim_review", "Claim review"},
+		{"credit_review", "Credit review"},
+		{"dispute", "Dispute review"},
+		{"fraud_review", "Fraud review"},
+		{"hardship_review", "Hardship review"},
+		{"kyc_review", "KYC review"},
+		{"limit_review", "Limit review"},
+		{"merchant_review", "Merchant review"},
+		{"payout_review", "Payout review"},
+	}
+	var actions []action
+	for _, item := range caseTypes {
+		at := cfg.step(2 * time.Minute)
+		actions = append(actions, action{at: at, name: "case type " + item.key, run: func() {
+			s.call(actorPriya, http.MethodPost, "/v1/case-types", map[string]any{
+				"key": item.key, "name": item.name, "initial_state": "needs_review",
+				"fields": []map[string]any{
+					{"key": "applicant", "label": "Applicant", "kind": "string", "pii": true,
+						"read_by": []string{"operator", "approver", "admin"}},
+					{"key": "risk_score", "label": "Risk score", "kind": "number"},
+				},
+				"transitions": []map[string]any{
+					{"from": "needs_review", "to": "in_progress",
+						"roles": []string{"operator", "editor", "approver", "admin"}},
+					{"from": "in_progress", "to": "completed",
+						"roles": []string{"operator", "editor", "approver", "admin"}},
+					{"from": "in_progress", "to": "resolved",
+						"roles": []string{"operator", "editor", "approver", "admin"}},
+				},
+				"dispositions": []map[string]any{
+					{"key": "clear", "label": "Clear", "reason_codes": []string{"verified"},
+						"terminal_state": "resolved"},
+					{"key": "escalate", "label": "Escalate", "reason_codes": []string{"risk_confirmed"},
+						"terminal_state": "resolved", "requires_second_review": true},
+				},
+				"priorities": []string{"normal", "high", "critical"},
+				"service_calendar": map[string]any{
+					"timezone": "UTC", "weekdays": []int{1, 2, 3, 4, 5},
+					"start_hour": 8, "end_hour": 18, "sla_hours": 40, "escalation_hours": 8,
+				},
+				"evidence_requirements": []map[string]any{
+					{"key": "supporting_record", "label": "Supporting record",
+						"kinds": []string{"decision", "attachment"}},
+				},
+				"layouts": []map[string]any{
+					{"role": "operator", "sections": []string{"risk_score", "applicant"},
+						"editable": []string{"risk_score"}},
+					{"role": "admin", "sections": []string{"risk_score", "applicant"},
+						"editable": []string{"risk_score"}},
+					{"role": "viewer", "sections": []string{"risk_score"}},
+				},
+			}, nil)
+		}})
+	}
+	queues := []map[string]any{
+		{"key": "aml", "name": "AML investigations", "case_types": []string{"aml_alert"},
+			"required_skills": []string{"aml"}, "capacity": 200},
+		{"key": "general_review", "name": "General review", "case_types": []string{
+			"claim_review", "credit_review", "dispute", "fraud_review", "hardship_review",
+			"kyc_review", "limit_review", "merchant_review", "payout_review",
+		}, "required_skills": []string{"case_review"}, "capacity": 500},
+	}
+	for _, queue := range queues {
+		key := queue["key"].(string)
+		at := cfg.step(2 * time.Minute)
+		actions = append(actions, action{at: at, name: "case queue " + key, run: func() {
+			s.call(actorPriya, http.MethodPut, "/v1/case-queues/"+key, queue, nil)
+		}})
+	}
+	reviewers := []map[string]any{
+		{"actor": actorDiego, "skills": []string{"aml", "case_review"}, "jurisdictions": []string{},
+			"capacity": 40, "active": true},
+		{"actor": actorMarcus, "skills": []string{"aml", "case_review"}, "jurisdictions": []string{},
+			"capacity": 20, "active": true},
+		{"actor": actorPriya, "skills": []string{"case_review"}, "jurisdictions": []string{},
+			"capacity": 12, "active": true},
+	}
+	for _, reviewer := range reviewers {
+		actor := reviewer["actor"].(string)
+		at := cfg.step(2 * time.Minute)
+		actions = append(actions, action{at: at, name: "case reviewer " + actor, run: func() {
+			s.call(actorAva, http.MethodPut, "/v1/case-reviewers/"+actor, reviewer, nil)
+		}})
+	}
+	return actions
+}
+
 // caseSeed is one worked case, sourced from a real referred (or suspended)
 // decision of its flow.
 type caseSeed struct {
@@ -116,7 +211,7 @@ func caseSeeds() []caseSeed {
 		// The three suspended decisions each have a case a reviewer resumes them from.
 		{tag: "case:wonka", name: "Wonka Credit Application", slug: "credit-decision", status: "needs_review",
 			suspended: true, createdHrs: 2, updatedHrs: 2},
-		{tag: "case:ollivanders", name: "Ollivanders Onboarding", slug: "kyc-onboarding", status: "in_progress",
+		{tag: "case:ollivanders", name: "Ollivanders Onboarding", slug: "kyc-onboarding", status: "needs_review",
 			assignee: actorDiego, suspended: true,
 			notes:      []caseNote{{actorDiego, "Requested certified translation of the registry extract.", 3}},
 			createdHrs: 6, updatedHrs: 3},
@@ -249,6 +344,74 @@ func (s *seeder) caseWorkActions(bySeed map[string]*decideSlot, anchor time.Time
 		}
 	}
 	return acts
+}
+
+// enterpriseCaseActions leaves one complete governed review trail in the demo:
+// exact type pin, automatic route, evidence and immutable attachment metadata,
+// reasoned disposition, independent disagreement, and reviewer feedback.
+func (s *seeder) enterpriseCaseActions(anchor time.Time) []action {
+	var caseID string
+	return []action{
+		{at: anchor.Add(-5 * time.Hour), name: "open governed QA case", run: func() {
+			var result struct {
+				CaseID string `json:"case_id"`
+			}
+			s.call(actorAva, http.MethodPost, "/v1/cases", map[string]any{
+				"company_name": "Contoso Payments · QA sample", "case_type": "aml_alert",
+				"priority": "high", "jurisdiction": "us", "subject": "customer/contoso-qa",
+				"context": map[string]any{"applicant": "Contoso Payments", "risk_score": 82},
+			}, &result)
+			caseID = result.CaseID
+			s.setID("case:enterprise-qa", caseID)
+		}},
+		{at: anchor.Add(-4*time.Hour - 50*time.Minute), name: "route governed QA case", run: func() {
+			s.call(actorAva, http.MethodPost, "/v1/cases/"+caseID+"/route", nil, nil)
+		}},
+		{at: anchor.Add(-4*time.Hour - 40*time.Minute), name: "start governed QA case", run: func() {
+			s.call(actorDiego, http.MethodPost, "/v1/cases/"+caseID+"/status",
+				map[string]any{"status": "in_progress"}, nil)
+		}},
+		{at: anchor.Add(-4 * time.Hour), name: "link governed case evidence", run: func() {
+			s.call(actorDiego, http.MethodPost, "/v1/cases/"+caseID+"/evidence", map[string]any{
+				"evidence_id": "contoso-decision", "requirement": "supporting_record",
+				"kind": "decision", "subject_type": "decision", "subject_id": "contoso-source",
+				"label": "Original AML screening decision",
+			}, nil)
+		}},
+		{at: anchor.Add(-3*time.Hour - 45*time.Minute), name: "register governed attachment", run: func() {
+			s.call(actorDiego, http.MethodPost, "/v1/cases/"+caseID+"/attachments", map[string]any{
+				"attachment_id": "contoso-registry", "name": "registry-extract.pdf",
+				"media_type": "application/pdf", "size": 184320,
+				"sha256":      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				"storage_ref": "s3://demo-evidence/contoso/registry-extract.pdf",
+				"requirement": "supporting_record", "subject": "customer/contoso-qa",
+				"lawful_basis": "legal_obligation",
+			}, nil)
+		}},
+		{at: anchor.Add(-3 * time.Hour), name: "disposition governed QA case", run: func() {
+			s.call(actorDiego, http.MethodPost, "/v1/cases/"+caseID+"/disposition", map[string]any{
+				"disposition": "clear", "reason_code": "verified",
+				"note": "Registry extract is authentic; the alert is a false positive.",
+			}, nil)
+		}},
+		{at: anchor.Add(-2*time.Hour - 45*time.Minute), name: "sample governed QA case", run: func() {
+			s.call(actorAva, http.MethodPost, "/v1/cases/"+caseID+"/qa/select", map[string]any{
+				"sample_id": "july-qa", "reviewer": actorMarcus, "rate_bps": 10000,
+			}, nil)
+		}},
+		{at: anchor.Add(-2*time.Hour - 30*time.Minute), name: "disagree governed QA case", run: func() {
+			s.call(actorMarcus, http.MethodPost, "/v1/cases/"+caseID+"/qa/review", map[string]any{
+				"sample_id": "july-qa", "disposition": "escalate", "reason_code": "risk_confirmed",
+				"note": "The ownership chain still needs corroboration.", "override": false,
+			}, nil)
+		}},
+		{at: anchor.Add(-2 * time.Hour), name: "feedback governed QA case", run: func() {
+			s.call(actorAva, http.MethodPost, "/v1/cases/"+caseID+"/qa/feedback", map[string]any{
+				"sample_id": "july-qa",
+				"text":      "Confirm beneficial ownership before clearing future registry-only matches.",
+			}, nil)
+		}},
+	}
 }
 
 // hygieneActions periodically triage the undesignated backlog: open referral

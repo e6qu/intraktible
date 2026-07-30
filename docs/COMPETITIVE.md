@@ -41,7 +41,7 @@ applicable (different category). Competitor marks reflect vendor claims (see cav
 | Versioning + maker-checker | ✅ flows, models, policies, experiments | ✅ sign-off workflows | ✅ + rollback | 🟡 model lifecycle only |
 | Drift monitoring | ✅ PSI + covariate + actuals | ❌ not claimed | 🟡 dashboards | ✅ input/output + fair-lending |
 | Audit / lineage / replay | ✅ event-sourced deterministic replay | 🟡 audit-ready; a reviewer reports weak lineage | ✅ audit trail | 🟡 model docs |
-| Case management / manual review | ✅ durable suspend, review, and decision resume | ✅ Case Manager | ✅ + SAR/CTR e-file to FinCEN | ❌ |
+| Case management / manual review | ✅ governed types, atomic routing/bulk, evidence, QA, analytics + durable resume | ✅ Case Manager | ✅ + SAR/CTR e-file to FinCEN | ❌ |
 | Feature store (point-in-time) | ✅ as_of + versioning + cache | 🟡 light (Tecton partner for heavy) | ❌ | ❌ |
 | RBAC / SSO / SCIM | ✅ RBAC + OIDC + SAML + SCIM | ✅ (a reviewer reports role gaps) | ✅ RBAC + ABAC | — |
 | SOC 2 / ISO certs | ❌ | ✅ SOC2 II + ISO 27001 | ✅ SOC2 II | ❌ not confirmed |
@@ -52,8 +52,14 @@ applicable (different category). Competitor marks reflect vendor claims (see cav
 
 - **Taktile.** Same published architecture, different delivery model (SaaS vs self-host). Taktile
   advertises a larger data marketplace, agentic tooling, SOC 2 / ISO, and named bank customers.
-  intraktible records capabilities Taktile's docs do not claim: self-host, drift monitoring, and
-  deterministic replay / decision lineage (one Taktile reviewer reports lineage and search as weak).
+  intraktible's implemented Case Manager includes version-pinned schemas/state/dispositions,
+  typed role-authorized field editing, ordered
+  attribute/skill/capacity/age routing, durable bulk manifests, independent QA/validated outcomes,
+  governed evidence metadata, and replay-derived operations analytics. This describes tested
+  intraktible code, not missing Taktile behavior: public vendor material does not specify enough of
+  those internals for an honest parity claim. intraktible also records capabilities Taktile's docs do
+  not claim: self-host, drift monitoring, and deterministic replay / decision lineage (one Taktile
+  reviewer reports lineage and search as weak).
   These are marks in different columns, not a verdict.
 - **Alloy.** Mostly a different category — identity/KYC/KYB/AML onboarding plus a ~270-source data
   ecosystem and SAR/CTR e-filing. intraktible does not have that depth or any data-source relationships.

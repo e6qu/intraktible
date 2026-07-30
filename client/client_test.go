@@ -129,6 +129,157 @@ func TestEnterpriseE2ClientRoutes(t *testing.T) {
 	}
 }
 
+func TestEnterpriseE3ClientRoutes(t *testing.T) {
+	t.Parallel()
+
+	responses := map[string]string{
+		"GET /v1/cases":                                      `{"cases":[]}`,
+		"GET /v1/cases/case-1":                               `{"case_id":"case-1"}`,
+		"POST /v1/cases":                                     `{"case_id":"case-1"}`,
+		"GET /v1/case-types":                                 `{"case_types":[]}`,
+		"POST /v1/case-types":                                `{"version":2}`,
+		"GET /v1/case-types/edd/versions/2":                  `{"key":"edd","version":2}`,
+		"PUT /v1/case-queues/priority":                       `{}`,
+		"GET /v1/case-queues":                                `{"queues":[]}`,
+		"PUT /v1/case-reviewers/alice":                       `{}`,
+		"GET /v1/case-reviewers":                             `{"reviewers":[]}`,
+		"POST /v1/cases/bulk":                                `{"batch_id":"batch-1","operation":"assign","status":"completed","items":[]}`,
+		"GET /v1/case-views":                                 `{"views":[]}`,
+		"POST /v1/case-views":                                `{"view_id":"mine"}`,
+		"DELETE /v1/case-views/mine":                         `{}`,
+		"POST /v1/cases/case-1/assign":                       `{}`,
+		"POST /v1/cases/case-1/status":                       `{}`,
+		"POST /v1/cases/case-1/priority":                     `{}`,
+		"PATCH /v1/cases/case-1/fields":                      `{}`,
+		"POST /v1/cases/case-1/disposition":                  `{}`,
+		"POST /v1/cases/case-1/evidence":                     `{}`,
+		"POST /v1/cases/case-1/attachments":                  `{}`,
+		"POST /v1/cases/case-1/attachments/file-1/access":    `{"storage_ref":"s3://approved/file-1"}`,
+		"POST /v1/cases/case-1/route":                        `{"decision":{"queue":"priority"}}`,
+		"POST /v1/cases/rebalance":                           `{"moved":{"case-1":"alice"}}`,
+		"POST /v1/cases/case-1/qa/select":                    `{"selected":true}`,
+		"POST /v1/cases/case-1/qa/review":                    `{}`,
+		"POST /v1/cases/case-1/webhook/retry":                `{}`,
+		"GET /v1/cases/duplicates":                           `{"duplicate_groups":[]}`,
+		"GET /v1/cases/analytics":                            `{"open":1}`,
+		"GET /v1/case-validated-outcomes":                    `{"validated_outcomes":[]}`,
+		"GET /v1/cases/export?status=in_progress&format=csv": "case_id,status\ncase-1,in_progress\n",
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Api-Key") != "e3-key" {
+			http.Error(w, `{"error":"missing auth"}`, http.StatusUnauthorized)
+			return
+		}
+		key := r.Method + " " + r.URL.Path
+		if r.URL.RawQuery != "" {
+			key += "?" + r.URL.RawQuery
+		}
+		response, found := responses[key]
+		if !found {
+			http.Error(w, `{"error":"unexpected route"}`, http.StatusNotFound)
+			return
+		}
+		if r.URL.Path == "/v1/cases/bulk" && r.Header.Get("Idempotency-Key") != "bulk-key" {
+			http.Error(w, `{"error":"missing idempotency"}`, http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(response))
+	}))
+	defer srv.Close()
+
+	c := client.New(srv.URL, "e3-key", client.WithHTTPClient(srv.Client()))
+	ctx := context.Background()
+	filter := client.CaseFilter{Status: "in_progress"}
+
+	if got, err := c.ListCases(ctx, client.CaseFilter{}); err != nil || len(got) != 0 {
+		t.Fatalf("ListCases() = %+v, %v", got, err)
+	}
+	if got, err := c.GetCase(ctx, "case-1"); err != nil || got.CaseID != "case-1" {
+		t.Fatalf("GetCase() = %+v, %v", got, err)
+	}
+	if got, err := c.CreateCase(ctx, client.CaseCreate{CaseType: "edd"}); err != nil || got != "case-1" {
+		t.Fatalf("CreateCase() = %q, %v", got, err)
+	}
+	if got, err := c.ListCaseTypes(ctx); err != nil || len(got) != 0 {
+		t.Fatalf("ListCaseTypes() = %+v, %v", got, err)
+	}
+	if got, err := c.PublishCaseType(ctx, client.CaseTypeDefinition{Key: "edd"}); err != nil || got != 2 {
+		t.Fatalf("PublishCaseType() = %d, %v", got, err)
+	}
+	if got, err := c.GetCaseType(ctx, "edd", 2); err != nil || got.Version != 2 {
+		t.Fatalf("GetCaseType() = %+v, %v", got, err)
+	}
+	if err := c.ConfigureCaseQueue(ctx, client.CaseQueue{Key: "priority"}); err != nil {
+		t.Fatalf("ConfigureCaseQueue(): %v", err)
+	}
+	if got, err := c.ListCaseQueues(ctx); err != nil || len(got) != 0 {
+		t.Fatalf("ListCaseQueues() = %+v, %v", got, err)
+	}
+	if err := c.ConfigureCaseReviewer(ctx, client.CaseReviewer{Actor: "alice"}); err != nil {
+		t.Fatalf("ConfigureCaseReviewer(): %v", err)
+	}
+	if got, err := c.ListCaseReviewers(ctx); err != nil || len(got) != 0 {
+		t.Fatalf("ListCaseReviewers() = %+v, %v", got, err)
+	}
+	if got, err := c.BulkCases(ctx, client.CaseBulkRequest{Operation: "assign"}, "bulk-key"); err != nil ||
+		got.BatchID != "batch-1" {
+		t.Fatalf("BulkCases() = %+v, %v", got, err)
+	}
+	if got, err := c.ListCaseSavedViews(ctx); err != nil || len(got) != 0 {
+		t.Fatalf("ListCaseSavedViews() = %+v, %v", got, err)
+	}
+	if got, err := c.SaveCaseView(ctx, "mine", "Mine", filter); err != nil || got != "mine" {
+		t.Fatalf("SaveCaseView() = %q, %v", got, err)
+	}
+	if err := c.DeleteCaseView(ctx, "mine"); err != nil {
+		t.Fatalf("DeleteCaseView(): %v", err)
+	}
+	for name, run := range map[string]func() error{
+		"AssignCase":       func() error { return c.AssignCase(ctx, "case-1", "alice", false) },
+		"SetCaseStatus":    func() error { return c.SetCaseStatus(ctx, "case-1", "in_progress") },
+		"SetCasePriority":  func() error { return c.SetCasePriority(ctx, "case-1", "high") },
+		"UpdateCaseFields": func() error { return c.UpdateCaseFields(ctx, "case-1", map[string]any{"risk": 7}) },
+		"DispositionCase":  func() error { return c.DispositionCase(ctx, "case-1", "clear", "verified", "done", false) },
+		"LinkCaseEvidence": func() error { return c.LinkCaseEvidence(ctx, "case-1", map[string]any{"evidence_id": "e-1"}) },
+		"RegisterCaseAttachment": func() error {
+			return c.RegisterCaseAttachment(ctx, "case-1", map[string]any{"attachment_id": "file-1"})
+		},
+		"ReviewCaseQA":     func() error { return c.ReviewCaseQA(ctx, "case-1", "sample-1", "clear", "verified", "agree", false) },
+		"RetryCaseWebhook": func() error { return c.RetryCaseWebhook(ctx, "case-1", "operator retry") },
+	} {
+		if err := run(); err != nil {
+			t.Fatalf("%s(): %v", name, err)
+		}
+	}
+	if got, err := c.AccessCaseAttachment(ctx, "case-1", "file-1", "review"); err != nil ||
+		got != "s3://approved/file-1" {
+		t.Fatalf("AccessCaseAttachment() = %q, %v", got, err)
+	}
+	if got, err := c.RouteCase(ctx, "case-1"); err != nil || len(got) == 0 {
+		t.Fatalf("RouteCase() = %s, %v", got, err)
+	}
+	if got, err := c.RebalanceCases(ctx); err != nil || len(got) == 0 {
+		t.Fatalf("RebalanceCases() = %s, %v", got, err)
+	}
+	if got, err := c.SelectCaseQA(ctx, "case-1", "sample-1", "bob", 10000); err != nil || !got {
+		t.Fatalf("SelectCaseQA() = %t, %v", got, err)
+	}
+	if got, err := c.CaseDuplicates(ctx); err != nil || len(got) != 0 {
+		t.Fatalf("CaseDuplicates() = %+v, %v", got, err)
+	}
+	if got, err := c.CaseAnalytics(ctx); err != nil || len(got) == 0 {
+		t.Fatalf("CaseAnalytics() = %s, %v", got, err)
+	}
+	if got, err := c.ValidatedCaseOutcomes(ctx); err != nil || len(got) != 0 {
+		t.Fatalf("ValidatedCaseOutcomes() = %+v, %v", got, err)
+	}
+	if got, err := c.ExportCaseAudit(ctx, "csv", filter); err != nil ||
+		string(got) != "case_id,status\ncase-1,in_progress\n" {
+		t.Fatalf("ExportCaseAudit() = %q, %v", got, err)
+	}
+}
+
 // TestClientAgainstEngine drives the SDK against a real decision-engine service,
 // proving the typed client matches the live contract end to end.
 func TestClientAgainstEngine(t *testing.T) {

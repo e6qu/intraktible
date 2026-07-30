@@ -214,26 +214,47 @@ Spans: a manual-review node with **suspend** on → **Case queue** → **Decisio
 Spans: a flow's manual-review node → **Case queue** (`/cases`) → **Case**
 (`/cases/[caseId]`), linking back to **Decision trace**.
 
-1. A decision hits a **manual review** node. Outcome: the decision records a
-   `MANUAL_REVIEW` reason code, and a case opens automatically in the queue with the
-   decision's output as its context, an SLA (default 3 days), `needs_review` status,
-   and a link back to its source decision.
-2. On the Case queue, filter to `needs_review` and sort by urgency (soonest-due and
-   overdue first). The configured scheduler flags due-soon/overdue cases and retries
-   external SLA delivery; **Run SLA check** is the on-demand operator equivalent.
-   Outcome: a prioritised work list.
-3. Open the top case. Read its decision context and, if needed, open the source
-   decision's trace. Outcome: full context for the review.
-4. **Assign** the case (e.g. to yourself) and record **notes**. Outcome: assignment
-   and each note land on the case's immutable activity trail. Assigning is a claim: a
-   case someone else already owns is refused rather than silently taken, so two
-   reviewers cannot both believe they own it. Taking one over has to be asked for
-   (`"reassign": true`).
-5. Set the **status** to resolve an ordinary case. For a suspended decision, the case
-   instead directs you to record approve/decline/refer on the decision trace; that one
-   replayable outcome resumes the decision, completes this exact case, and retires
-   the task from every reviewer's inbox. Outcome: the case leaves the open queue and
-   the terminal action is recorded on both trails.
+1. An editor/admin first publishes an immutable **case type**: typed/required context
+   fields, dynamic state transitions and allowed roles, priorities, dispositions and
+   reasons, service calendar, evidence gates, PII readers, and role scan order. They
+   configure ordered queues and reviewer skill/capacity/jurisdiction/conflict profiles.
+   Existing cases remain pinned to the version under which they opened.
+2. A decision hits a **manual review** node. Outcome: the decision records a
+   `MANUAL_REVIEW` reason code, and the case opens with the exact active type version,
+   validated context, recorded business deadline, priority, and source-decision link.
+   The scheduler routes it by attributes, skill, capacity, jurisdiction, priority,
+   age, and conflicts. Competing replicas record one queue/assignee winner.
+3. On the Case queue, use text/structured filters or a personal saved view, inspect
+   possible duplicates, and sort by urgency. Select work for one bounded backend-owned
+   bulk assignment/status/priority/disposition operation; its durable per-item manifest
+   reports partial failures. Rebalance preserves the highest-priority/oldest work and
+   moves only unrouted, inactive-owner, or capacity-overflow cases.
+4. Open a case. Its context uses the active role layout and pinned field labels; PII
+   fields outside the role's read policy are masked by the backend. Update only the
+   fields that this exact version marks editable for the caller's role; the backend
+   revalidates the merged typed context and serializes concurrent edits before replay.
+   Link typed
+   decisions/entities/agents/connectors/cases/alerts as evidence, or register immutable
+   attachment metadata (hash and approved external storage pointer). The pointer is not
+   returned by ordinary reads: **Reveal storage reference** first records actor, purpose,
+   and time, refuses erased data, then exposes the pointer for the external artifact
+   system. Retention, legal hold, and erasure state stay visible.
+5. **Assign** or explicitly take over the task, follow only a configured state edge,
+   and add notes/discussion. Record a configured disposition/reason only after required
+   evidence is present. Assignment and terminal writes are permanent claims, so two
+   reviewers cannot both own or terminally decide one case.
+6. If the disposition requires second review, the case stays open. Deterministic QA
+   sampling assigns a different reviewer, who records agreement, disagreement, or an
+   explicit override and can return feedback. Only agreement/override becomes a
+   validated outcome for downstream agent/model evaluation; one reviewer is never
+   treated as ground truth.
+7. For a suspended decision, the case directs the operator to record
+   approve/decline/refer on the exact decision trace. That replayable outcome resumes
+   the pinned execution, completes this case, and retires every shared task notification.
+   SLA due-soon/breach events notify the queue, move breached work to its configured
+   escalation queue after restart-safe reconciliation, and drive bounded webhook
+   attempts with explicit retry/dead-letter history. Analytics and audit export report
+   workload/capacity, first action, resolution, ageing, routing, SLA, and QA evidence.
 
 ### Configure an AI agent, review its runs, escalate to a case
 

@@ -125,6 +125,7 @@ func (c AssignCase) Validate() error {
 type SetStatus struct {
 	CaseID string
 	Status CaseStatus
+	Role   string
 }
 
 // Validate requires a case and a known status.
@@ -132,8 +133,8 @@ func (c SetStatus) Validate() error {
 	if strings.TrimSpace(c.CaseID) == "" {
 		return errors.New("case-manager: case_id is required")
 	}
-	if !c.Status.Valid() {
-		return fmt.Errorf("case-manager: invalid status %q (needs_review|in_progress|completed)", c.Status)
+	if !ValidStateKey(c.Status) {
+		return fmt.Errorf("case-manager: invalid status key %q", c.Status)
 	}
 	return nil
 }

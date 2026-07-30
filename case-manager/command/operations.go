@@ -21,23 +21,94 @@ import (
 )
 
 type workState struct {
-	exists           bool
-	caseType         string
-	caseTypeVersion  int
-	status           domain.CaseStatus
-	priority         domain.Priority
-	assignee         string
-	sourceDecisionID string
-	sourceSuspended  bool
-	disposition      string
-	reasonCode       string
-	dispositionActor string
-	dispositionCount int
-	priorityCount    int
-	evidence         map[string]events.CaseEvidenceLinked
-	attachments      map[string]events.CaseAttachmentRegistered
-	qa               *events.CaseQASelected
-	qaReviewed       bool
+	exists              bool
+	caseType            string
+	caseTypeVersion     int
+	status              domain.CaseStatus
+	priority            domain.Priority
+	assignee            string
+	sourceDecisionID    string
+	sourceSuspended     bool
+	disposition         string
+	reasonCode          string
+	dispositionActor    string
+	dispositionCount    int
+	priorityCount       int
+	evidence            map[string]events.CaseEvidenceLinked
+	attachments         map[string]events.CaseAttachmentRegistered
+	qa                  *events.CaseQASelected
+	qaReviewed          bool
+	pendingSecondReview bool
+}
+
+// UpdateFields applies a role-authorized patch under the exact pinned type
+// version. Concurrent editors serialize on the context revision and revalidate
+// their patch against the winner's resulting object.
+func (h *Handler) UpdateFields(
+	ctx context.Context,
+	id identity.Identity,
+	caseID string,
+	fields json.RawMessage,
+	role string,
+) (eventlog.Envelope, error) {
+	if err := id.Valid(); err != nil {
+		return eventlog.Envelope{}, err
+	}
+	var patch map[string]any
+	if err := json.Unmarshal(fields, &patch); err != nil || patch == nil || len(patch) == 0 {
+		return eventlog.Envelope{}, errors.New("case-manager: fields must be a non-empty JSON object")
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for attempt := 0; ; attempt++ {
+		state, err := h.caseState(ctx, id, caseID)
+		if err != nil {
+			return eventlog.Envelope{}, err
+		}
+		if state.caseTypeVersion == 0 {
+			return eventlog.Envelope{}, errors.New("case-manager: editable fields require a versioned case type")
+		}
+		if state.terminal {
+			return eventlog.Envelope{}, fmt.Errorf("case-manager: terminal case %q fields are immutable", caseID)
+		}
+		published, err := h.caseTypeAtVersion(ctx, id, state.caseType, state.caseTypeVersion)
+		if err != nil {
+			return eventlog.Envelope{}, err
+		}
+		editable := map[string]bool{}
+		for _, layout := range published.Definition.Layouts {
+			if layout.Role != role {
+				continue
+			}
+			for _, key := range layout.Editable {
+				editable[key] = true
+			}
+		}
+		for key := range patch {
+			if !editable[key] {
+				return eventlog.Envelope{}, fmt.Errorf("case-manager: role %q cannot edit field %q", role, key)
+			}
+		}
+		merged, err := domain.PatchContext(state.context, fields)
+		if err != nil {
+			return eventlog.Envelope{}, err
+		}
+		if err := published.Definition.ValidateContext(merged); err != nil {
+			return eventlog.Envelope{}, err
+		}
+		payload, err := json.Marshal(events.CaseFieldsUpdated{CaseID: caseID, Fields: fields})
+		if err != nil {
+			return eventlog.Envelope{}, fmt.Errorf("case-manager: marshal field update: %w", err)
+		}
+		event, err := h.appendUnique(
+			ctx, id, events.TypeCaseFieldsUpdated, payload,
+			contextClaim(caseID, state.contextCount),
+		)
+		if errors.Is(err, eventlog.ErrConflict) && attempt < maxClaimRetries {
+			continue
+		}
+		return event, err
+	}
 }
 
 // SetPriority changes one case's urgency under its pinned type contract.
@@ -79,6 +150,9 @@ func (h *Handler) LinkEvidence(ctx context.Context, id identity.Identity, link e
 		strings.TrimSpace(link.Kind) == "" || strings.TrimSpace(link.SubjectType) == "" ||
 		strings.TrimSpace(link.SubjectID) == "" || strings.TrimSpace(link.Label) == "" {
 		return eventlog.Envelope{}, errors.New("case-manager: case_id, evidence_id, kind, subject_type, subject_id, and label are required")
+	}
+	if !domain.EvidenceKind(link.Kind).Linkable() || !domain.EvidenceKind(link.SubjectType).Linkable() {
+		return eventlog.Envelope{}, errors.New("case-manager: evidence kind and subject_type must be decision, entity, agent_run, connector, case, or alert")
 	}
 	if link.ContentHash != "" && !validSHA256(link.ContentHash) {
 		return eventlog.Envelope{}, errors.New("case-manager: evidence content_hash must be a lowercase SHA-256 hex digest")
@@ -161,7 +235,12 @@ func (h *Handler) AccessAttachment(ctx context.Context, id identity.Identity, ca
 
 // RecordDisposition validates the reason and required evidence under the exact
 // pinned definition before recording the outcome.
-func (h *Handler) RecordDisposition(ctx context.Context, id identity.Identity, caseID, dispositionKey, reasonCode, note string, override bool) (eventlog.Envelope, error) {
+func (h *Handler) RecordDisposition(
+	ctx context.Context,
+	id identity.Identity,
+	caseID, dispositionKey, reasonCode, note, role string,
+	override bool,
+) (eventlog.Envelope, error) {
 	if err := id.Valid(); err != nil {
 		return eventlog.Envelope{}, err
 	}
@@ -174,6 +253,9 @@ func (h *Handler) RecordDisposition(ctx context.Context, id identity.Identity, c
 	if state.caseTypeVersion == 0 {
 		return eventlog.Envelope{}, errors.New("case-manager: dispositions require a versioned case type")
 	}
+	if state.disposition != "" {
+		return eventlog.Envelope{}, errors.New("case-manager: case already has a recorded disposition")
+	}
 	if state.sourceSuspended {
 		return eventlog.Envelope{}, fmt.Errorf("case-manager: case %q belongs to suspended decision %q — record its review outcome to resume it", caseID, state.sourceDecisionID)
 	}
@@ -185,6 +267,12 @@ func (h *Handler) RecordDisposition(ctx context.Context, id identity.Identity, c
 	if !found || !slices.Contains(disposition.ReasonCodes, reasonCode) {
 		return eventlog.Envelope{}, fmt.Errorf("case-manager: disposition %q or reason %q is not valid for type %q version %d", dispositionKey, reasonCode, state.caseType, state.caseTypeVersion)
 	}
+	if !published.Definition.CanTransition(state.status, domain.CaseStatus(disposition.TerminalState), role) {
+		return eventlog.Envelope{}, fmt.Errorf(
+			"case-manager: role %q cannot disposition case %q from %s to %s",
+			role, caseID, state.status, disposition.TerminalState,
+		)
+	}
 	for _, requirement := range published.Definition.Evidence {
 		if requirement.Required && !requirementSatisfied(state, requirement.Key) {
 			return eventlog.Envelope{}, fmt.Errorf("case-manager: required evidence %q is missing", requirement.Key)
@@ -193,6 +281,7 @@ func (h *Handler) RecordDisposition(ctx context.Context, id identity.Identity, c
 	payload, err := json.Marshal(events.CaseDispositionRecorded{
 		CaseID: caseID, Disposition: dispositionKey, ReasonCode: reasonCode, Note: note,
 		State: disposition.TerminalState, Override: override,
+		RequiresSecondReview: disposition.RequiresSecondReview,
 	})
 	if err != nil {
 		return eventlog.Envelope{}, fmt.Errorf("case-manager: marshal disposition: %w", err)
@@ -254,15 +343,49 @@ func (h *Handler) ReviewQA(ctx context.Context, id identity.Identity, caseID, sa
 	if state.qaReviewed {
 		return eventlog.Envelope{}, errors.New("case-manager: QA sample is already completed")
 	}
+	if state.caseTypeVersion == 0 {
+		return eventlog.Envelope{}, errors.New("case-manager: QA review requires a versioned case type")
+	}
+	published, err := h.caseTypeAtVersion(ctx, id, state.caseType, state.caseTypeVersion)
+	if err != nil {
+		return eventlog.Envelope{}, err
+	}
+	qaDisposition, found := published.Definition.FindDisposition(disposition)
+	if !found || !slices.Contains(qaDisposition.ReasonCodes, reasonCode) {
+		return eventlog.Envelope{}, fmt.Errorf(
+			"case-manager: QA disposition %q or reason %q is not valid for type %q version %d",
+			disposition, reasonCode, state.caseType, state.caseTypeVersion,
+		)
+	}
+	agreement := disposition == state.disposition && reasonCode == state.reasonCode
+	if agreement && override {
+		return eventlog.Envelope{}, errors.New("case-manager: an agreeing QA review cannot override the primary outcome")
+	}
+	if state.pendingSecondReview && !agreement && !override {
+		return eventlog.Envelope{}, errors.New("case-manager: required second review must agree or explicitly override")
+	}
+	effectiveState := ""
+	if state.pendingSecondReview {
+		if override {
+			effectiveState = qaDisposition.TerminalState
+		} else {
+			primaryDisposition, _ := published.Definition.FindDisposition(state.disposition)
+			effectiveState = primaryDisposition.TerminalState
+		}
+	}
 	payload, err := json.Marshal(events.CaseQAReviewed{
 		CaseID: caseID, SampleID: sampleID, Disposition: disposition, ReasonCode: reasonCode,
-		Agreement: disposition == state.disposition && reasonCode == state.reasonCode,
-		Override:  override, Note: note,
+		Agreement: agreement,
+		Override:  override, Note: note, State: effectiveState,
 	})
 	if err != nil {
 		return eventlog.Envelope{}, fmt.Errorf("case-manager: marshal QA review: %w", err)
 	}
-	return h.appendUnique(ctx, id, events.TypeCaseQAReviewed, payload, qaReviewClaim(caseID, sampleID))
+	claim := qaReviewClaim(caseID, sampleID)
+	if state.pendingSecondReview {
+		claim = statusClaim(caseID, state.dispositionCount)
+	}
+	return h.appendUnique(ctx, id, events.TypeCaseQAReviewed, payload, claim)
 }
 
 // AddReviewerFeedback records reasoned feedback after a completed QA review.
@@ -394,11 +517,22 @@ func (h *Handler) workState(ctx context.Context, id identity.Identity, caseID st
 		attachments: map[string]events.CaseAttachmentRegistered{},
 	}
 	suspended := map[string]bool{}
+	latestTypes := map[string]PublishedCaseType{}
 	for _, event := range recorded {
 		if event.Org != id.Org || event.Workspace != id.Workspace {
 			continue
 		}
 		switch event.Type {
+		case events.TypeCaseTypePublished:
+			var payload events.CaseTypePublished
+			if err := json.Unmarshal(event.Payload, &payload); err != nil {
+				return workState{}, fmt.Errorf("case-manager: decode case type seq %d: %w", event.Seq, err)
+			}
+			var definition domain.CaseTypeDefinition
+			if err := json.Unmarshal(payload.Definition, &definition); err != nil {
+				return workState{}, fmt.Errorf("case-manager: decode case type definition seq %d: %w", event.Seq, err)
+			}
+			latestTypes[payload.Key] = PublishedCaseType{Version: payload.Version, Definition: definition}
 		case events.TypeReviewRequested:
 			var payload events.ReviewRequested
 			if err := json.Unmarshal(event.Payload, &payload); err != nil {
@@ -421,6 +555,13 @@ func (h *Handler) workState(ctx context.Context, id identity.Identity, caseID st
 			}
 			if payload.CaseID == caseID {
 				state.exists, state.caseType, state.sourceDecisionID = true, payload.CaseType, payload.DecisionID
+				if published, governed := latestTypes[payload.CaseType]; governed {
+					state.caseTypeVersion = published.Version
+					state.status = published.Definition.InitialState
+					if !published.Definition.AllowsPriority(state.priority) {
+						state.priority = published.Definition.Priorities[0]
+					}
+				}
 				state.sourceSuspended = suspended[payload.DecisionID]
 			}
 		case decisionevents.TypeDecisionSuspended:
@@ -464,6 +605,7 @@ func (h *Handler) workState(ctx context.Context, id identity.Identity, caseID st
 			}
 			if payload.CaseID == caseID {
 				state.status = domain.CaseStatus(payload.Status)
+				state.dispositionCount++
 			}
 		case events.TypeCasePriorityChanged:
 			var payload events.CasePriorityChanged
@@ -480,7 +622,27 @@ func (h *Handler) workState(ctx context.Context, id identity.Identity, caseID st
 			}
 			if payload.CaseID == caseID {
 				state.disposition, state.reasonCode, state.dispositionActor = payload.Disposition, payload.ReasonCode, event.Actor
-				state.status, state.dispositionCount = domain.CaseStatus(payload.State), state.dispositionCount+1
+				state.pendingSecondReview = payload.RequiresSecondReview
+				if !payload.RequiresSecondReview {
+					state.status = domain.CaseStatus(payload.State)
+				}
+				state.dispositionCount++
+			}
+		case events.TypeCaseSLABreached:
+			var payload events.CaseSLABreached
+			if err := json.Unmarshal(event.Payload, &payload); err != nil {
+				return workState{}, fmt.Errorf("case-manager: decode SLA breach seq %d: %w", event.Seq, err)
+			}
+			if payload.CaseID == caseID {
+				state.dispositionCount++
+			}
+		case events.TypeCaseSLAReminder:
+			var payload events.CaseSLAReminder
+			if err := json.Unmarshal(event.Payload, &payload); err != nil {
+				return workState{}, fmt.Errorf("case-manager: decode SLA reminder seq %d: %w", event.Seq, err)
+			}
+			if payload.CaseID == caseID {
+				state.dispositionCount++
 			}
 		case events.TypeCaseEvidenceLinked:
 			var payload events.CaseEvidenceLinked
@@ -513,6 +675,11 @@ func (h *Handler) workState(ctx context.Context, id identity.Identity, caseID st
 			}
 			if payload.CaseID == caseID {
 				state.qaReviewed = true
+				if payload.State != "" {
+					state.status = domain.CaseStatus(payload.State)
+					state.pendingSecondReview = false
+					state.dispositionCount++
+				}
 			}
 		}
 	}
@@ -547,8 +714,11 @@ func validSHA256(value string) bool {
 func priorityClaim(caseID string, count int) string {
 	return "case.priority\x00" + caseID + "\x00" + strconv.Itoa(count)
 }
+func contextClaim(caseID string, count int) string {
+	return "case.context\x00" + caseID + "\x00" + strconv.Itoa(count)
+}
 func dispositionClaim(caseID string, count int) string {
-	return "case.disposition\x00" + caseID + "\x00" + strconv.Itoa(count)
+	return statusClaim(caseID, count)
 }
 func evidenceClaim(caseID, evidenceID string) string {
 	return "case.evidence\x00" + caseID + "\x00" + evidenceID

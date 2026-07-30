@@ -33,7 +33,7 @@ func enterpriseType() CaseTypeDefinition {
 			Key: "registry_extract", Label: "Registry extract",
 			Kinds: []string{"attachment"}, Required: true,
 		}},
-		Layouts: []RoleLayout{{Role: "operator", Sections: []string{"summary", "evidence"}, Editable: []string{"country"}}},
+		Layouts: []RoleLayout{{Role: "operator", Sections: []string{"country", "amount"}, Editable: []string{"country"}}},
 	}
 }
 
@@ -102,5 +102,94 @@ func TestRouteIsDeterministicCapacityAndConflictAware(t *testing.T) {
 	again, err := Route(input)
 	if err != nil || again != got {
 		t.Fatalf("repeat route = %+v, %v; want stable %+v", again, err, got)
+	}
+}
+
+func TestRouteHonorsConfiguredAgeWindow(t *testing.T) {
+	now := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
+	input := RoutingInput{
+		CaseID: "case-1", CaseType: "enhanced_due_diligence",
+		Priority: PriorityHigh, CreatedAt: now.Add(-25 * time.Hour), Now: now,
+		Queues: []QueueDefinition{
+			{Key: "fresh", Name: "Fresh", CaseTypes: []string{"enhanced_due_diligence"}, MaxAgeHours: 24, Capacity: 100},
+			{Key: "aged", Name: "Aged", CaseTypes: []string{"enhanced_due_diligence"}, MinAgeHours: 24, Capacity: 100},
+		},
+		Reviewers:   []ReviewerProfile{{Actor: "amy", Capacity: 10, Active: true}},
+		OpenByActor: map[string]int{},
+	}
+	got, err := Route(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Queue != "aged" || got.Assignee != "amy" {
+		t.Fatalf("aged route = %+v, want aged/amy", got)
+	}
+
+	input.CreatedAt = time.Time{}
+	if _, err := Route(input); err == nil {
+		t.Fatal("age-based routing accepted a missing created_at")
+	}
+}
+
+func TestRouteHonorsExplicitRuleOrderBeforeQueueKey(t *testing.T) {
+	input := RoutingInput{
+		CaseID: "case-1", CaseType: "edd", Priority: PriorityNormal,
+		Queues: []QueueDefinition{
+			{Key: "a_fallback", Name: "Fallback", Order: 20, Capacity: 100},
+			{Key: "z_specialist", Name: "Specialist", Order: 10, Capacity: 100},
+		},
+		Reviewers:   []ReviewerProfile{{Actor: "amy", Capacity: 10, Active: true}},
+		OpenByActor: map[string]int{},
+	}
+	got, err := Route(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Queue != "z_specialist" {
+		t.Fatalf("route queue = %q, want explicit first rule z_specialist", got.Queue)
+	}
+}
+
+func TestDefinitionRejectsAmbiguousLayoutAndDispositionConfiguration(t *testing.T) {
+	definition := enterpriseType()
+	definition.Layouts[0].Sections = append(definition.Layouts[0].Sections, "unknown")
+	if err := definition.Validate(); err == nil {
+		t.Fatal("layout with an unknown field was accepted")
+	}
+
+	definition = enterpriseType()
+	definition.Dispositions[0].ReasonCodes = []string{"verified", "verified"}
+	if err := definition.Validate(); err == nil {
+		t.Fatal("duplicate disposition reason was accepted")
+	}
+
+	definition = enterpriseType()
+	definition.Priorities = append(definition.Priorities, PriorityHigh)
+	if err := definition.Validate(); err == nil {
+		t.Fatal("duplicate priority was accepted")
+	}
+
+	definition = enterpriseType()
+	definition.Evidence[0].Kinds = []string{"attachment", "attachment"}
+	if err := definition.Validate(); err == nil {
+		t.Fatal("duplicate evidence kind was accepted")
+	}
+
+	definition = enterpriseType()
+	definition.Calendar.Holidays = []string{"2026-12-25", "2026-12-25"}
+	if err := definition.Validate(); err == nil {
+		t.Fatal("duplicate calendar holiday was accepted")
+	}
+
+	definition = enterpriseType()
+	definition.Fields[0].PII = true
+	if err := definition.Validate(); err == nil {
+		t.Fatal("layout editing PII hidden from the role was accepted")
+	}
+
+	definition = enterpriseType()
+	definition.Layouts[0].Role = "superuser"
+	if err := definition.Validate(); err == nil {
+		t.Fatal("unknown platform role was accepted")
 	}
 }

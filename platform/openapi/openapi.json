@@ -2158,6 +2158,91 @@
         "responses": { "202": { "description": "Saved view deletion recorded." } }
       }
     },
+    "/v1/case-bulk": {
+      "get": {
+        "tags": ["Cases"],
+        "summary": "List durable backend-owned bulk case operations.",
+        "responses": { "200": { "description": "Bulk operation manifests." } }
+      }
+    },
+    "/v1/case-bulk/{batch_id}": {
+      "get": {
+        "tags": ["Cases"],
+        "summary": "Read one durable bulk case-operation manifest.",
+        "parameters": [
+          { "name": "batch_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Bulk operation manifest." },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/case-validated-outcomes": {
+      "get": {
+        "tags": ["Cases"],
+        "summary": "List independently validated case outcomes for agent and model evaluation.",
+        "responses": {
+          "200": { "description": "Agreement- or override-backed outcomes; unresolved disagreements are excluded." }
+        }
+      }
+    },
+    "/v1/cases/bulk": {
+      "post": {
+        "tags": ["Cases"],
+        "summary": "Execute a bounded idempotent backend-owned bulk operation.",
+        "parameters": [
+          {
+            "name": "Idempotency-Key", "in": "header", "required": true,
+            "schema": { "type": "string", "maxLength": 256 }
+          }
+        ],
+        "responses": {
+          "200": { "description": "Completed authoritative per-item manifest." },
+          "400": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/cases/duplicates": {
+      "get": {
+        "tags": ["Cases"],
+        "summary": "List deterministic possible-duplicate case groups for human review.",
+        "responses": { "200": { "description": "Possible duplicate groups." } }
+      }
+    },
+    "/v1/cases/analytics": {
+      "get": {
+        "tags": ["Cases"],
+        "summary": "Read workload, capacity, timing, ageing, SLA, routing, QA, and bottleneck analytics.",
+        "responses": { "200": { "description": "Operational Case Manager KPIs." } }
+      }
+    },
+    "/v1/cases/export": {
+      "get": {
+        "tags": ["Cases"],
+        "summary": "Export the filtered case audit ledger as spreadsheet-safe CSV, JSON, or Markdown.",
+        "parameters": [
+          {
+            "name": "format", "in": "query",
+            "schema": { "type": "string", "enum": ["csv", "json", "markdown"], "default": "csv" }
+          }
+        ],
+        "responses": {
+          "200": { "description": "Portable case audit export." },
+          "400": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/cases/rebalance": {
+      "post": {
+        "tags": ["Cases"],
+        "summary": "Rebalance unassigned, inactive-reviewer, and over-capacity cases.",
+        "responses": {
+          "200": { "description": "Moved cases and explicit routing failures." },
+          "400": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/v1/cases/route-pending": {
       "post": {
         "tags": ["Cases"],
@@ -2186,6 +2271,19 @@
           { "name": "case_id", "in": "path", "required": true, "schema": { "type": "string" } }
         ],
         "responses": { "202": { "description": "Priority change recorded." } }
+      }
+    },
+    "/v1/cases/{case_id}/fields": {
+      "patch": {
+        "tags": ["Cases"],
+        "summary": "Update role-editable fields under the case's exact pinned definition.",
+        "parameters": [
+          { "name": "case_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "202": { "description": "Validated field update recorded." },
+          "400": { "$ref": "#/components/responses/Error" }
+        }
       }
     },
     "/v1/cases/{case_id}/disposition": {
@@ -2224,12 +2322,16 @@
     "/v1/cases/{case_id}/attachments/{attachment_id}/access": {
       "post": {
         "tags": ["Cases"],
-        "summary": "Audit access to a registered attachment.",
+        "summary": "Audit access and return the approved external storage reference.",
         "parameters": [
           { "name": "case_id", "in": "path", "required": true, "schema": { "type": "string" } },
           { "name": "attachment_id", "in": "path", "required": true, "schema": { "type": "string" } }
         ],
-        "responses": { "202": { "description": "Attachment access recorded." } }
+        "responses": {
+          "202": { "description": "Attachment access recorded; storage_ref returned." },
+          "404": { "$ref": "#/components/responses/Error" },
+          "410": { "$ref": "#/components/responses/Error" }
+        }
       }
     },
     "/v1/cases/{case_id}/qa/select": {
@@ -2260,6 +2362,19 @@
           { "name": "case_id", "in": "path", "required": true, "schema": { "type": "string" } }
         ],
         "responses": { "202": { "description": "Reviewer feedback recorded." } }
+      }
+    },
+    "/v1/cases/{case_id}/webhook/retry": {
+      "post": {
+        "tags": ["Cases"],
+        "summary": "Explicitly requeue a terminal failed/no-channel SLA webhook delivery.",
+        "parameters": [
+          { "name": "case_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "202": { "description": "Escalation requeued for a new bounded attempt round." },
+          "400": { "$ref": "#/components/responses/Error" }
+        }
       }
     },
     "/v1/cases": {

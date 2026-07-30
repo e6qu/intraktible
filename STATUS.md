@@ -34,37 +34,56 @@ the next implementation tranche by correctness and operational risk.
 
 ## Phase
 
-**Enterprise PR E3 — enterprise case operations is in progress on
-`enterprise/e3-case-operations` from authoritative merged `origin/main` commit
-`565e1d2`.** PR #161 merged at that exact commit, its remote branch is deleted,
-and the GitHub review queue was empty when E3 was cut. This tranche will deliver
-the complete `PLAN.md` §8b.4 vertical before opening one review: versioned case
-types, configurable queues and routing, replica-safe claims and bulk work,
-linked evidence and attachment metadata, QA/second review, operational
-analytics, and complete SLA/notification/webhook/retention governance.
+**Enterprise PR E3 — enterprise case operations is implementation-complete and
+in closeout on `enterprise/e3-case-operations` from authoritative merged
+`origin/main` commit `565e1d2`.** PR #161 merged at that exact commit, its remote
+branch is deleted, and the GitHub review queue was empty when E3 was cut.
 
-The first E3 core slice is implemented and whole-repository compilation-clean.
-Immutable published case-type versions now define typed/required fields,
-configurable state transitions, dispositions/reasons, allowed priorities,
-business-hour service calendars, evidence requirements, and role layouts.
-Governed opens validate context, pin the exact version, and record a
-timezone-resolved deadline; historical cases retain explicit compatibility
-version `0`. Durable queue and reviewer profiles feed a pure deterministic
-skills/capacity/jurisdiction/conflict-aware router, and the route/assignment
-claim permits only one winner across replicas. The scheduler owns pending
-routing when a tenant opts in by defining queues.
+The complete `PLAN.md` §8b.4 vertical is now real across domain, event log,
+projections, API, scheduler, Go/TypeScript SDKs, UI, and demo history. Immutable
+case-type versions govern typed fields, dynamic state transitions,
+dispositions/reasons, priorities, business calendars, evidence requirements,
+PII read policy, and role scan order. Opens pin an exact definition and deadline;
+pre-E3 work stays explicit version `0`. Ordered queue rules cover attributes,
+skills, capacity, jurisdiction, priority, age windows, and conflicts. Initial
+routing, reassignment/rebalance, and SLA queue escalation use permanent
+cross-replica claims; every tick reconciles durable breaches so a crash between
+breach and queue movement cannot strand work.
 
-Typed evidence links, immutable attachment metadata (hash + approved storage
-reference, never hidden event-log bytes), lawful-basis/retention/hold
-annotations, audited access, reasoned dispositions with required-evidence
-gates, deterministic QA sampling, independent second review, derived agreement,
-feedback, and actor-owned saved views are event-sourced and projected. Replay
-tests reproduce the pinned definition, attachment, disposition, and QA result.
-Domain/command/cases/scheduler tests pass, authorization coverage is pinned for
-every new route, and `go test ./... -run '^$'` confirms every repository package
-still compiles. Remaining E3 work is server-owned bulk/search/rebalance,
-analytics and delivery operations, SDK/OpenAPI/UI/demo/docs, and the complete
-concurrency/restart/browser/release matrix.
+Search, actor-owned saved views, opaque duplicate groups, authoritative bounded
+idempotent bulk manifests, queue rebalance, workload/capacity/SLA/ageing/first-
+action/resolution/QA analytics, audit export, case notifications, and durable
+webhook attempt/retry/dead-letter rounds are exposed to operators. Evidence
+links, required-evidence gates, attachment hash/metadata, lawful basis,
+retention/hold/erasure, reasoned outcomes, deterministic QA sampling,
+independent second review, disagreement/override, feedback, and validated
+outcome feeds replay from events. Ordinary reads redact attachment storage
+capabilities; the operator-only purpose-bound access command records an audit
+event before returning the approved external pointer.
+
+The real UI administers types/queues/reviewers, opens governed work, edits only
+the pinned layout fields authorized for the caller's role through typed replayable
+commands, applies filters/saved views, reviews duplicates, performs all four
+server-owned bulk operations, routes/rebalances, follows role layouts, links evidence, registers
+and accesses attachments, records dispositions and QA, retries webhook
+deadletters, and reads analytics/export/governance state. The seeded real
+backend includes governed configuration and a complete enterprise case history.
+Focused domain/command/cases/scheduler/service tests pass, including competing
+route/terminal/escalation writers, restart reconciliation, replay, and audited
+attachment access. The complete local Go gate passes, including strict lint,
+SAST, race, dead-code, zero clone groups, zero reachable vulnerabilities, and
+licenses. Frontend formatting/lint/typecheck, all 232 unit tests, the production
+build, and all 130 native browser journeys pass. The browser walkthrough found
+and closed two integration defects: zero Go timestamps were serialized as
+truthy year-one values that made every active case look closed, and numeric
+field bindings reached the typed parser as numbers instead of strings. The
+regenerated 8,708-event real-backend history round-trips with 10 flows, 460
+decisions, 120 cases, 7 agents, 40 runs, 7 models, 8 preapprovals, 16 monitors,
+and 68 notifications. All 83 real-Wasm journeys and 3 embedded-production
+smokes pass; Helm lint/render, all 18 Terraform contracts, bounded-workflow
+checks, and the immutable container publication/retention contract are green.
+Diff/SPDX/OpenAPI/generated-asset hygiene is clean. Remaining work is remote
+reconciliation, the sole E3 PR, and terminal hosted green CI.
 
 **Enterprise PR E2 — experimentation, outcomes, and population automation is
 merged as authoritative commit `565e1d2`.** Its implementation commit
