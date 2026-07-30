@@ -785,3 +785,8 @@ Linux, entirely that VM's fsync path.
   (`01881f3`, 13,850 additions/812 deletions) after reconciling unchanged
   `origin/main` and an empty PR queue; pull request #163 is the sole open PR,
   mergeable, with all nine hosted jobs queued.
+- 2026-07-30: Followed hosted PostgreSQL failure `30569499851/90962317066` to a
+  latent assembled-E2 projection race: experiment validation could follow two
+  acknowledged publishes before flow version 2 was publicly readable. The
+  journey now observes exact `flow.latest == 2`; 100 consecutive race-enabled
+  repetitions and the complete local `make ci` pass.

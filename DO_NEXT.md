@@ -21,9 +21,12 @@ DOC (a claim not backed by code).
    real-Wasm over the regenerated 8,729-event history, 4 embedded-binary
    journeys, 240 frontend units/build/check/lint, race-enabled Go CI, Terraform,
    container, workflow, accessibility, security, license, dead-code and clone
-   gates. PR #163 is the sole open PR and is mergeable; inspect every hosted
-   failure to the bottom, push fixes to the same branch, and record the final
-   green run before merge.
+   gates. Hosted PostgreSQL exposed the assembled E2 journey validating a just
+   published version before its public flow projection caught up; the new
+   `flow.latest == 2` observation passes 100 race-enabled repetitions and the
+   complete local `make ci` is green. Push the fix to the same sole mergeable
+   PR, inspect every fresh hosted result, and record the final green run before
+   merge.
 2. **OPEN — E5 through E8 remain serialized behind E4.** Do not implement or
    open them concurrently. After each merge, fetch and deliberately reconcile
    authoritative `origin/main`, confirm the PR queue empty, and only then cut
