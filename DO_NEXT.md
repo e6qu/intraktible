@@ -21,10 +21,10 @@ Sixth whole-product audit from authoritative merged commit `7a7be66`.
 1. **OPEN — PR E1 · publish and babysit durable execution integrity.**
    The implementation and complete local exit matrix in `PLAN.md` §8b.2 are
    green. A fresh authoritative fetch confirms local `HEAD == origin/main ==
-   7a7be66` and the GitHub PR queue is empty. Commit the reconciled 94-file
-   vertical slice, push `enterprise/e1-durable-execution`, open it as the sole
-   PR, and babysit every required check to terminal green. Do not start E2 until
-   E1 merges.
+   7a7be66` and the GitHub PR queue is empty. Commit `8dddb44` contains the
+   reconciled 95-file vertical slice. Push
+   `enterprise/e1-durable-execution`, open it as the sole PR, and babysit every
+   required check to terminal green. Do not start E2 until E1 merges.
 2. **OPEN — PR E2 · CORRECT: experimentation, outcomes, and population jobs.**
    Begin only after E1 merges. `decision-engine/command/decide.go:1505-1513`
    rolls a fresh variant per invocation; replace it with the first-class stable

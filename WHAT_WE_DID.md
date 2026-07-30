@@ -594,3 +594,15 @@ Linux, entirely that VM's fsync path.
   jobs pass, including Go race/security/license gates, 124 native browser
   journeys, 83 real-Wasm journeys, the embedded artifact, real PostgreSQL,
   Shauth SSO, Terraform, web, and container release.
+- 2026-07-30: Completed E1 durable execution integrity across the yielded-effect
+  interpreter, idempotent/correlated decisions, cross-replica recovery,
+  distributed async-agent attempts, crash-idempotent terminal side effects,
+  API/SDK/UI/observability, and API/worker/scheduler deployment tiers; the
+  complete contracts are recorded in `PLAN.md` §8b.2 and `BUGS.md` E1-1–E1-10.
+- 2026-07-30: Closed the E1 local release matrix: `make check`, `make ci`, all
+  18 Terraform contracts, Helm lint/render, 228 frontend units, 125 native
+  browser journeys, 83 real-Wasm journeys over the 7,999-event demo history,
+  and 3 embedded-production smokes pass; diff/SPDX hygiene is clean.
+- 2026-07-30: Re-fetched authoritative `origin/main` at `7a7be66`, confirmed
+  the GitHub PR queue is empty, and committed the 95-file E1 implementation as
+  `8dddb44`.
