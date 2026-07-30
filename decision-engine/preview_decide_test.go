@@ -136,6 +136,32 @@ func TestPreviewRequiresDeploymentOutsideSandbox(t *testing.T) {
 	}
 }
 
+func TestPreviewMockDataSatisfiesReachedEffectsWithoutProvider(t *testing.T) {
+	ctx := context.Background()
+	log := eventlog.NewMemory()
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "caller"}
+	st := store.NewMemory()
+	publishFlow(t, ctx, log, st, id, "mocked-connect", "Mocked connect", flowtest.ConnectGraph())
+	handler := command.NewDecideHandler(log, st)
+
+	result, err := handler.PreviewWithInvocation(ctx, id, "mocked-connect", "sandbox", command.Invocation{
+		Data: map[string]any{},
+		MockData: map[string]any{
+			"connect": map[string]any{
+				"bureau": map[string]any{"score": 80},
+			},
+		},
+	})
+	if err != nil || result.Status != domain.StatusCompleted || result.Output["tier"] != "high" {
+		t.Fatalf("mock preview = %+v, err=%v", result, err)
+	}
+	if _, err := handler.DecideWithInvocation(ctx, id, "mocked-connect", "sandbox", command.Invocation{
+		MockData: map[string]any{"connect": map[string]any{}},
+	}); !errors.Is(err, command.ErrBadRequest) {
+		t.Fatalf("live mock_data error = %v, want ErrBadRequest", err)
+	}
+}
+
 func cloneMap(m map[string]any) map[string]any {
 	out := make(map[string]any, len(m))
 	for k, v := range m {

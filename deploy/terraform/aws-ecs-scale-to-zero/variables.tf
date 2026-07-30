@@ -36,7 +36,7 @@ variable "existing_private_subnet_ids" {
 }
 
 variable "existing_ecs_cluster_arn" {
-  description = "Existing Amazon Elastic Container Service cluster ARN. When set, the API and scheduler services reuse the cluster instead of creating one."
+  description = "Existing Amazon Elastic Container Service cluster ARN. When set, the API, worker, and scheduler services reuse the cluster instead of creating one."
   type        = string
   default     = ""
 }
@@ -119,6 +119,29 @@ variable "api_always_on" {
   description = "Keep one API task running continuously. When false, the EventBridge reaper may scale an idle API service to zero."
   type        = bool
   default     = false
+}
+
+variable "worker_tasks" {
+  description = "Number of always-on durable execution workers. Keep at least two in production so one task loss cannot stall decisions and asynchronous agent runs."
+  type        = number
+  default     = 2
+
+  validation {
+    condition     = var.worker_tasks >= 1 && var.worker_tasks <= 20 && floor(var.worker_tasks) == var.worker_tasks
+    error_message = "worker_tasks must be an integer between 1 and 20."
+  }
+}
+
+variable "worker_task_cpu" {
+  description = "Fargate CPU units for each durable execution worker."
+  type        = number
+  default     = 512
+}
+
+variable "worker_task_memory" {
+  description = "Fargate memory (MiB) for each durable execution worker."
+  type        = number
+  default     = 1024
 }
 
 variable "serve_embedded_ui_from_api" {

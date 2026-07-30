@@ -29,6 +29,28 @@ type NodeRecord struct {
 	Output json.RawMessage `json:"output,omitempty"`
 }
 
+// EffectRecord is one imperative operation requested by the pure graph
+// interpreter. It separates provider attempts from node evaluation so an operator
+// can see whether I/O was requested, completed, or failed.
+type EffectRecord struct {
+	EffectID        string          `json:"effect_id"`
+	Scope           string          `json:"scope"`
+	NodeID          string          `json:"node_id"`
+	Kind            string          `json:"kind"`
+	Reference       string          `json:"reference"`
+	ProviderVersion int             `json:"provider_version,omitempty"`
+	OutputKey       string          `json:"output_key"`
+	InputHash       string          `json:"input_hash"`
+	Attempt         int             `json:"attempt"`
+	Delivery        string          `json:"delivery"`
+	Status          string          `json:"status"` // requested | succeeded | failed
+	Output          json.RawMessage `json:"output,omitempty"`
+	Error           string          `json:"error,omitempty"`
+	RequestedAt     time.Time       `json:"requested_at"`
+	EndedAt         time.Time       `json:"ended_at,omitempty"`
+	DurationMS      int64           `json:"duration_ms,omitempty"`
+}
+
 // ReasonCode is one structured adverse-action reason — human-readable
 // explainability (ECOA/Reg B, insurance) lifted from a decision's output.
 type ReasonCode struct {
@@ -41,18 +63,25 @@ type Record struct {
 	Org         string `json:"org"`
 	Workspace   string `json:"workspace"`
 	DecisionID  string `json:"decision_id"`
+	Generation  int    `json:"generation"`
 	FlowID      string `json:"flow_id"`
 	Slug        string `json:"slug"`
 	Version     int    `json:"version"`
 	Environment string `json:"environment"`
 	Variant     string `json:"variant,omitempty"` // champion | challenger
-	Status      string `json:"status"`            // started | completed | failed
+	Status      string `json:"status"`            // running | retrying | suspended | completed | failed | abandoned
 	// EntityType/EntityID identify the decision's subject (when referenced) — the
 	// erasure subject under which the recorded PII is sealed.
-	EntityType string          `json:"entity_type,omitempty"`
-	EntityID   string          `json:"entity_id,omitempty"`
-	Data       json.RawMessage `json:"data,omitempty"`
-	Output     json.RawMessage `json:"output,omitempty"`
+	EntityType         string                  `json:"entity_type,omitempty"`
+	EntityID           string                  `json:"entity_id,omitempty"`
+	Data               json.RawMessage         `json:"data,omitempty"`
+	Output             json.RawMessage         `json:"output,omitempty"`
+	IdempotencyKeyHash string                  `json:"idempotency_key_hash,omitempty"`
+	RequestHash        string                  `json:"request_hash,omitempty"`
+	BusinessReference  string                  `json:"business_reference,omitempty"`
+	CorrelationID      string                  `json:"correlation_id,omitempty"`
+	Metadata           json.RawMessage         `json:"metadata,omitempty"`
+	Control            events.ExecutionControl `json:"control,omitempty"`
 	// Set while Status is "suspended": the human-task node it paused at and the
 	// captured instance state needed to resume (cleared on resume).
 	SuspendNode  string          `json:"suspend_node,omitempty"`
@@ -73,13 +102,19 @@ type Record struct {
 	// HumanReviewed is set once a suspended decision is resumed by a person — the
 	// durable signal that a human was in the loop, so a "solely automated" decision
 	// (the Art. 22 / reconsideration predicate) is distinguishable after the fact.
-	HumanReviewed bool         `json:"human_reviewed,omitempty"`
-	Error         string       `json:"error,omitempty"`
-	TimeOrdered   []string     `json:"time_ordered"`
-	Nodes         []NodeRecord `json:"nodes"`
-	StartedAt     time.Time    `json:"started_at"`
-	EndedAt       time.Time    `json:"ended_at,omitempty"`
-	DurationMS    int64        `json:"duration_ms,omitempty"`
+	HumanReviewed      bool           `json:"human_reviewed,omitempty"`
+	Error              string         `json:"error,omitempty"`
+	RecoveryAttempt    int            `json:"recovery_attempt,omitempty"`
+	RecoveryOwner      string         `json:"recovery_owner,omitempty"`
+	RecoveryLeaseUntil time.Time      `json:"recovery_lease_until,omitempty"`
+	RecoveryAfter      time.Time      `json:"recovery_after,omitempty"`
+	LastRecoveryError  string         `json:"last_recovery_error,omitempty"`
+	TimeOrdered        []string       `json:"time_ordered"`
+	Nodes              []NodeRecord   `json:"nodes"`
+	Effects            []EffectRecord `json:"effects,omitempty"`
+	StartedAt          time.Time      `json:"started_at"`
+	EndedAt            time.Time      `json:"ended_at,omitempty"`
+	DurationMS         int64          `json:"duration_ms,omitempty"`
 }
 
 // Projector folds decision events into Record documents.
@@ -107,12 +142,28 @@ func applyRecord(ctx context.Context, e eventlog.Envelope, s store.Store) error 
 	switch e.Type {
 	case events.TypeDecisionStarted:
 		return applyStarted(ctx, e, s)
+	case events.TypeContextPrepared:
+		return applyContextPrepared(ctx, e, s)
 	case events.TypeNodeEvaluated:
 		return applyNode(ctx, e, s)
+	case events.TypeEffectRequested:
+		return applyEffectRequested(ctx, e, s)
+	case events.TypeEffectSucceeded:
+		return applyEffectSucceeded(ctx, e, s)
+	case events.TypeEffectFailed:
+		return applyEffectFailed(ctx, e, s)
 	case events.TypeDecisionCompleted:
 		return applyCompleted(ctx, e, s)
 	case events.TypeDecisionFailed:
 		return applyFailed(ctx, e, s)
+	case events.TypeDecisionAbandoned:
+		return applyAbandoned(ctx, e, s)
+	case events.TypeExecutionInterrupted:
+		return applyExecutionInterrupted(ctx, e, s)
+	case events.TypeRecoveryClaimed:
+		return applyRecoveryClaimed(ctx, e, s)
+	case events.TypeRecoveryHeartbeat:
+		return applyRecoveryHeartbeat(ctx, e, s)
 	case events.TypeDecisionSuspended:
 		return applySuspended(ctx, e, s)
 	case events.TypeDecisionResumed:
@@ -124,6 +175,126 @@ func applyRecord(ctx context.Context, e eventlog.Envelope, s store.Store) error 
 	}
 }
 
+func applyRecoveryClaimed(ctx context.Context, e eventlog.Envelope, s store.Store) error {
+	p, err := decode[events.DecisionRecoveryClaimed](e)
+	if err != nil {
+		return err
+	}
+	return update(ctx, s, e, p.DecisionID, func(r *Record) {
+		if r.Status == "running" || r.Status == "retrying" {
+			r.Status = "retrying"
+		}
+		r.RecoveryAttempt, r.RecoveryOwner = p.Attempt, p.Owner
+		r.RecoveryLeaseUntil, r.LastRecoveryError = p.LeaseUntil, p.PreviousErr
+	})
+}
+
+func applyExecutionInterrupted(ctx context.Context, e eventlog.Envelope, s store.Store) error {
+	p, err := decode[events.DecisionExecutionInterrupted](e)
+	if err != nil {
+		return err
+	}
+	return update(ctx, s, e, p.DecisionID, func(r *Record) {
+		if r.Status == "running" {
+			r.Status = "retrying"
+		}
+		r.RecoveryAfter = time.Time{}
+		r.LastRecoveryError = p.Error
+	})
+}
+
+func applyRecoveryHeartbeat(ctx context.Context, e eventlog.Envelope, s store.Store) error {
+	p, err := decode[events.DecisionRecoveryHeartbeat](e)
+	if err != nil {
+		return err
+	}
+	return update(ctx, s, e, p.DecisionID, func(r *Record) {
+		if r.RecoveryOwner == p.Owner && r.RecoveryAttempt == p.Attempt {
+			r.RecoveryLeaseUntil = p.LeaseUntil
+		}
+	})
+}
+
+func applyContextPrepared(ctx context.Context, e eventlog.Envelope, s store.Store) error {
+	p, err := decode[events.DecisionContextPrepared](e)
+	if err != nil {
+		return err
+	}
+	return update(ctx, s, e, p.DecisionID, func(r *Record) {
+		r.Data = p.Data
+	})
+}
+
+func applyEffectRequested(ctx context.Context, e eventlog.Envelope, s store.Store) error {
+	p, err := decode[events.DecisionEffectRequested](e)
+	if err != nil {
+		return err
+	}
+	return update(ctx, s, e, p.DecisionID, func(r *Record) {
+		r.Effects = append(r.Effects, EffectRecord{
+			EffectID: p.EffectID, Scope: p.Scope, NodeID: p.NodeID, Kind: p.Kind,
+			Reference: p.Reference, ProviderVersion: p.ProviderVersion,
+			OutputKey: p.Output, InputHash: p.InputHash, Attempt: p.Attempt,
+			Delivery: p.Delivery, Status: "requested", RequestedAt: e.Time,
+		})
+	})
+}
+
+func applyEffectSucceeded(ctx context.Context, e eventlog.Envelope, s store.Store) error {
+	p, err := decode[events.DecisionEffectSucceeded](e)
+	if err != nil {
+		return err
+	}
+	return updateEffect(ctx, e, s, p.DecisionID, p.EffectID, p.Attempt, func(effect *EffectRecord) {
+		effect.Status, effect.Output, effect.EndedAt, effect.DurationMS = "succeeded", p.Output, e.Time, p.DurationMS
+	})
+}
+
+func applyEffectFailed(ctx context.Context, e eventlog.Envelope, s store.Store) error {
+	p, err := decode[events.DecisionEffectFailed](e)
+	if err != nil {
+		return err
+	}
+	return updateEffect(ctx, e, s, p.DecisionID, p.EffectID, p.Attempt, func(effect *EffectRecord) {
+		effect.Status, effect.Error, effect.EndedAt, effect.DurationMS = "failed", p.Error, e.Time, p.DurationMS
+	})
+}
+
+func updateEffect(
+	ctx context.Context,
+	e eventlog.Envelope,
+	s store.Store,
+	decisionID, effectID string,
+	attempt int,
+	mutate func(*EffectRecord),
+) error {
+	key := store.Key(e.Org, e.Workspace, decisionID)
+	record, ok, err := store.GetDoc[Record](ctx, s, Collection, key)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("decision_history: effect event seq %d for unknown decision %q", e.Seq, decisionID)
+	}
+	for i := len(record.Effects) - 1; i >= 0; i-- {
+		effect := &record.Effects[i]
+		if effect.EffectID == effectID && effect.Attempt == attempt {
+			if effect.Status != "requested" {
+				return fmt.Errorf(
+					"decision_history: effect %q attempt %d is already %s",
+					effectID, attempt, effect.Status,
+				)
+			}
+			mutate(effect)
+			return store.PutDoc(ctx, s, Collection, key, record)
+		}
+	}
+	return fmt.Errorf(
+		"decision_history: effect completion seq %d has no request for %q attempt %d",
+		e.Seq, effectID, attempt,
+	)
+}
+
 func applySuspended(ctx context.Context, e eventlog.Envelope, s store.Store) error {
 	p, err := decode[events.DecisionSuspended](e)
 	if err != nil {
@@ -131,6 +302,8 @@ func applySuspended(ctx context.Context, e eventlog.Envelope, s store.Store) err
 	}
 	return update(ctx, s, e, p.DecisionID, func(r *Record) {
 		r.Status = "suspended"
+		r.RecoveryAfter, r.RecoveryLeaseUntil = time.Time{}, time.Time{}
+		r.RecoveryOwner = ""
 		r.SuspendNode = p.NodeID
 		r.SuspendState = p.State
 		if p.CaseID != "" {
@@ -146,9 +319,11 @@ func applyResumed(ctx context.Context, e eventlog.Envelope, s store.Store) error
 	}
 	// Back to running; the following DecisionCompleted/Failed sets the terminal status.
 	return update(ctx, s, e, p.DecisionID, func(r *Record) {
-		r.Status = "started"
+		r.Status = "running"
 		r.SuspendState = nil
 		r.HumanReviewed = true
+		r.Generation++
+		r.RecoveryAfter = p.RecoveryAfter
 	})
 }
 
@@ -168,14 +343,32 @@ func applyStarted(ctx context.Context, e eventlog.Envelope, s store.Store) error
 	}
 	r := Record{
 		Org: e.Org, Workspace: e.Workspace,
-		DecisionID: p.DecisionID, FlowID: p.FlowID, Slug: p.Slug,
-		Version: p.Version, Environment: p.Environment, Variant: p.Variant, Status: "started",
+		DecisionID: p.DecisionID, Generation: 1, FlowID: p.FlowID, Slug: p.Slug,
+		Version: p.Version, Environment: p.Environment, Variant: p.Variant, Status: "running",
 		EntityType: p.EntityType, EntityID: p.EntityID,
-		PolicyID: p.PolicyID, PolicyVersion: p.PolicyVersion,
+		IdempotencyKeyHash: p.IdempotencyKeyHash, RequestHash: p.RequestHash,
+		BusinessReference: p.BusinessReference, CorrelationID: p.CorrelationID,
+		Metadata: p.Metadata, Control: p.Control,
+		RecoveryAfter: p.RecoveryAfter,
+		PolicyID:      p.PolicyID, PolicyVersion: p.PolicyVersion,
+		PreApprovalID:           p.PreApprovalID,
 		PolicySelectionRecorded: p.PolicySelectionRecorded,
 		Data:                    p.Data, TimeOrdered: []string{}, Nodes: []NodeRecord{}, StartedAt: e.Time,
 	}
 	return store.PutDoc(ctx, s, Collection, store.Key(e.Org, e.Workspace, r.DecisionID), r)
+}
+
+func applyAbandoned(ctx context.Context, e eventlog.Envelope, s store.Store) error {
+	p, err := decode[events.DecisionAbandoned](e)
+	if err != nil {
+		return err
+	}
+	return update(ctx, s, e, p.DecisionID, func(r *Record) {
+		r.Status, r.Error, r.EndedAt = "abandoned", p.Error, e.Time
+		r.RecoveryAfter, r.RecoveryLeaseUntil = time.Time{}, time.Time{}
+		r.RecoveryOwner = ""
+		r.RecoveryAttempt, r.LastRecoveryError = p.Attempt, p.Error
+	})
 }
 
 func applyNode(ctx context.Context, e eventlog.Envelope, s store.Store) error {
@@ -196,6 +389,8 @@ func applyCompleted(ctx context.Context, e eventlog.Envelope, s store.Store) err
 	}
 	return update(ctx, s, e, p.DecisionID, func(r *Record) {
 		r.Status, r.Output, r.EndedAt, r.DurationMS = "completed", p.Output, e.Time, p.DurationMS
+		r.RecoveryAfter, r.RecoveryLeaseUntil = time.Time{}, time.Time{}
+		r.RecoveryOwner = ""
 		r.ReasonCodes = extractReasonCodes(p.Output)
 		r.Disposition, r.DispositionCode, r.DispositionReason = p.Disposition, p.DispositionCode, p.DispositionReason
 		r.PolicyID, r.PolicyVersion, r.PreApprovalID = p.PolicyID, p.PolicyVersion, p.PreApprovalID
@@ -224,6 +419,8 @@ func applyFailed(ctx context.Context, e eventlog.Envelope, s store.Store) error 
 	}
 	return update(ctx, s, e, p.DecisionID, func(r *Record) {
 		r.Status, r.Error, r.EndedAt, r.DurationMS = "failed", p.Error, e.Time, p.DurationMS
+		r.RecoveryAfter, r.RecoveryLeaseUntil = time.Time{}, time.Time{}
+		r.RecoveryOwner = ""
 	})
 }
 
@@ -255,17 +452,23 @@ func List(ctx context.Context, s store.Store, id identity.Identity) ([]Record, e
 }
 
 // Filter narrows a decision-history query. Empty string fields and zero times are
-// "any"; Query matches the decision id (substring, case-insensitive).
+// "any"; Query matches decision id, business reference, correlation id, and entity
+// id (substring, case-insensitive).
 type Filter struct {
-	Slug        string
-	Environment string
-	Status      string
-	Variant     string
-	Query       string
-	Since       time.Time
-	Until       time.Time
-	Limit       int // 0 = default page size
-	Offset      int
+	Slug              string
+	Environment       string
+	Status            string
+	Variant           string
+	EntityType        string
+	EntityID          string
+	BusinessReference string
+	CorrelationID     string
+	Metadata          map[string]string
+	Query             string
+	Since             time.Time
+	Until             time.Time
+	Limit             int // 0 = default page size
+	Offset            int
 }
 
 // MaxPageSize caps a paginated decision-history page.

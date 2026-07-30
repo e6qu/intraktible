@@ -22,6 +22,16 @@ api:
   # Never set INTRAKTIBLE_MONITOR_INTERVAL here — the timed sweeps run on the
   # scheduler tier only (see below), so the API replicas don't double-fire them.
 
+# Durable execution workers claim interrupted decisions and asynchronous agent
+# runs from the shared event log. Claims and leases make this tier horizontally
+# scalable; keep at least two replicas so a pod loss cannot stall recovery.
+worker:
+  enabled: true
+  replicas: 2
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits: { cpu: "1", memory: 1Gi }
+
 # The scheduler tier runs the timed sweeps (monitor/model-drift/deploy/SLA). It is
 # a SINGLETON (replicas: 1): those sweeps are not leader-elected, so running them on
 # more than one replica would double-deliver alerts. The deploy-activation sweep is

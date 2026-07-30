@@ -4,21 +4,18 @@
 
 ## Task
 
-Whole-product journey audit: step back from individual endpoints and verify that
-each key Builder, Developer, Operator, Manager, Product, Executive, Evaluator, and
-Admin journey makes sense end to end across the UI/UX, HTTP boundary, command/event
-path, projections, schedulers, notifications, restart/replay, and deployment shape.
-Fix every missing or misleading piece found; do not stop at documenting gaps.
+Enterprise capability audit: compare the proposed whole-product scope and every
+key Builder, Developer, Operator, Manager, Product, Executive, Evaluator, and
+Admin journey with the implementation and Taktile's currently published product
+surface. Distinguish working foundations from enterprise-depth gaps, then order
+the next implementation tranche by correctness and operational risk.
 
 ## Standing rules (user-issued, non-negotiable)
 
-1. **ONE BIG FAT PR.** Branch `hardening/production-readiness-audit`, one PR at
-   the end. Phased work internally is fine; splitting into several PRs is not.
-   No mid-work checkpoint that waits for approval.
-   **Never open a second PR.** While that PR is open and unmerged, every further
-   change — including anything the user asks for next, related or not — is a new
-   commit on the SAME branch, which updates the SAME PR. Do not ask whether to
-   open another one; the answer is always no until the open PR is merged.
+1. **SERIALIZED BIG/HUGE PRs E1–E7.** Each enterprise tranche is one large
+   vertical PR. Never keep more than one PR open; merge the current tranche,
+   fetch and reconcile authoritative `origin/main`, then cut the next branch.
+   Do not fragment a tranche into anemic PRs.
 2. **NO FALLBACKS.** No `catch{}` / log-and-continue / degraded mode / backup
    path. A branch that only runs when something is already broken is banned —
    fail loudly, as early as possible. NOT fallbacks: network retries, explicit
@@ -34,6 +31,64 @@ Fix every missing or misleading piece found; do not stop at documenting gaps.
 6. No subagents, no workflows (system-prompt instruction).
 
 ## Phase
+
+**Enterprise PR E1 — durable execution integrity is implementation-complete on
+`enterprise/e1-durable-execution` from merged `origin/main` commit `7a7be66`.**
+PR #159 is merged and the remote PR queue was empty when the branch was cut, so
+the one-open-PR rule is satisfied. The planning edits and implementation will
+ship together as one fat vertical PR. Local closeout is green; the remaining
+step is to re-fetch authoritative remote state, commit, push, open the sole PR,
+and babysit its required checks before E2 can begin.
+
+The product has a broad, real foundation across the Decision Engine, Context
+Layer, Case Manager, Agent Manager, governance, compliance, and deployment
+surfaces. This audit found four enterprise-blocking semantics that cut across
+otherwise complete journeys: effectful graph nodes were resolved eagerly before
+graph traversal instead of only when reached; decision requests lacked
+idempotency and ignored their advertised metadata/control fields; A/B assignment
+is random per invocation rather than stable by subject; and every API replica
+could recover the same unfinished async agent run without a distributed claim.
+E1 closes the first, second, and fourth blockers; stable experiments remain the
+deliberately serialized E2 scope.
+`PLAN.md` §8b now carves the remaining enterprise program into seven strictly
+serialized large-to-huge vertical PRs (E1–E7), each with full-stack scope and
+exit evidence. E1 has replaced eager effect preparation with a pure resumable
+interpreter: Connect/AI/Predict are requested only when traversal reaches them
+and receive the exact upstream-mutated record. The shell records deterministic
+requested/succeeded/failed effect evidence and preview uses the same execution
+path with explicit preview-only mocks. Decision invocation now has a durable
+idempotency claim and request hash, business reference, correlation id, bounded
+metadata, entity tracking, timeout control, a finalized marker, and history
+search dimensions. Concurrent retries are covered at command level. Recovery
+ownership and provider delivery semantics are now durable: recovery uses
+cross-replica lease claims, reuses recorded successes, passes stable provider
+idempotency keys, and abandons an indeterminate at-least-once effect rather than
+duplicating it. Async agent runs now have durable idempotent admission,
+version/timeout/attempt controls, distributed claims and heartbeats,
+cancellation, explicit retry, timeout, and dead-letter outcomes. Tenant-safe
+polling and terminal counters are replay-correct. The native binary and Helm
+topology now distinguish `api`, horizontally scalable `worker`, singleton
+`scheduler`, and local `all` roles; only workers execute durable decision/agent
+work. Manual review, shadow, preapproval, and consent terminal-adjacent effects
+are crash-idempotent. HTTP, OpenAPI, Go/TypeScript SDK, history indexing,
+observability, and decision/agent operator UI contracts are complete. Focused
+command, service, route, frontend-unit, and native-browser tests are green.
+Counterfactual analysis now replays recorded live effects without provider I/O;
+Coverage requires explicit record-free mocks and exposes failed synthetic runs;
+policy evaluation errors fail decisions rather than silently converting to
+referrals. Helm lint/render and all 18 Terraform plan-contract tests prove the
+three-tier topology. Pre-E1 event compatibility is deterministic and
+provider-free. The complete local E1 matrix passes: `make check`; `make ci`
+(strict lint, SAST, race, dead-code, zero clone groups, zero reachable
+vulnerabilities, licenses); frontend formatting, zero-warning typecheck/lint,
+228 unit tests; 125 native browser journeys; 83 real-Wasm journeys over a
+regenerated 7,999-event history; and 3 embedded-production smokes. Diff hygiene
+and SPDX checks are clean.
+
+A closeout fetch on 2026-07-30 confirms `HEAD` and `origin/main` are still
+exactly `7a7be6607d81e52c5b924da8ad898a1a9521fcf2`; the prior remote audit branch
+is deleted and `gh pr list --state open` is empty. There is therefore no remote
+work to reconcile before the E1 commit.
 
 **Fifth whole-product journey audit — complete in sole PR #159.**
 The audit began after PR #158 merged as `002e9d3`, with an empty GitHub queue

@@ -91,13 +91,21 @@ test('journey: read a decision trace and run a counterfactual on a referred one'
   // Find a decision the engine dispositioned refer/decline (so the counterfactual
   // section renders), by natural query rather than a hardcoded id.
   const id = await api(page, async () => {
-    const r = (await fetch('/v1/decisions?limit=500').then((x) => x.json())) as {
-      decisions: { decision_id: string; disposition?: string }[];
-    };
-    return (
-      r.decisions.find((d) => d.disposition === 'refer' || d.disposition === 'decline')
-        ?.decision_id ?? ''
-    );
+    for (let offset = 0; ; offset += 200) {
+      const response = await fetch(`/v1/decisions?limit=200&offset=${offset}`);
+      if (!response.ok) throw new Error(`list decisions failed: ${response.status}`);
+      const result = (await response.json()) as {
+        decisions: { decision_id: string; disposition?: string }[];
+        total: number;
+      };
+      const match = result.decisions.find(
+        (decision) => decision.disposition === 'refer' || decision.disposition === 'decline'
+      );
+      if (match) return match.decision_id;
+      if (offset + result.decisions.length >= result.total || result.decisions.length === 0) {
+        return '';
+      }
+    }
   });
   expect(id, 'the seed should contain a referred or declined decision').toBeTruthy();
 

@@ -35,7 +35,11 @@ func newFakeConsent() *fakeConsent { return &fakeConsent{has: map[string]bool{}}
 func (f *fakeConsent) HasConsent(_ context.Context, _ identity.Identity, subject, purpose string) (bool, error) {
 	return f.has[subject+"\x00"+purpose], nil
 }
-func (f *fakeConsent) RecordConsent(_ context.Context, _ identity.Identity, subject, purpose, _ string) error {
+func (f *fakeConsent) RecordConsent(
+	_ context.Context,
+	_ identity.Identity,
+	subject, purpose, _, _ string,
+) error {
 	f.has[subject+"\x00"+purpose] = true
 	f.recorded = append(f.recorded, subject+"/"+purpose)
 	return nil
@@ -86,9 +90,9 @@ func TestConsentGateBlocksPullWithoutConsent(t *testing.T) {
 	e := consentTestSetup(t)
 
 	// A subject with no consent and no consent block — the bureau must NOT be pulled.
-	_, err := e.dh.Decide(e.ctx, e.id, "credit", "sandbox", map[string]any{"amount": 1000}, applicant())
-	if err == nil || !strings.Contains(err.Error(), "consent") {
-		t.Fatalf("expected a consent error, got %v", err)
+	res, err := e.dh.Decide(e.ctx, e.id, "credit", "sandbox", map[string]any{"amount": 1000}, applicant())
+	if err != nil || res.Status != "failed" || !strings.Contains(res.Error, "consent") {
+		t.Fatalf("expected a recorded consent failure, got result=%+v err=%v", res, err)
 	}
 	if e.conn.fetched != 0 {
 		t.Fatalf("the bureau was fetched %d times without permissible purpose", e.conn.fetched)
@@ -133,12 +137,12 @@ func TestStandingConsentPermitsPull(t *testing.T) {
 func TestPreviewDoesNotPersistAssertedConsent(t *testing.T) {
 	e := consentTestSetup(t)
 
-	_, err := e.dh.Preview(e.ctx, e.id, "credit", "sandbox", map[string]any{
+	res, err := e.dh.Preview(e.ctx, e.id, "credit", "sandbox", map[string]any{
 		"amount":  1000,
 		"consent": map[string]any{"purposes": []string{"credit_underwriting"}, "basis": "consent"},
 	}, applicant())
-	if err == nil || !strings.Contains(err.Error(), "consent") {
-		t.Fatalf("record-free preview should require standing consent, got %v", err)
+	if err != nil || res.Status != "failed" || !strings.Contains(res.Error, "consent") {
+		t.Fatalf("record-free preview should require standing consent, got result=%+v err=%v", res, err)
 	}
 	if len(e.gate.recorded) != 0 {
 		t.Fatalf("preview persisted consent despite its record-free contract: %v", e.gate.recorded)
@@ -152,9 +156,9 @@ func TestConsentRequiredButNoSubjectFails(t *testing.T) {
 	e := consentTestSetup(t)
 
 	// No entity ref → no subject to bear consent → the pull is refused.
-	_, err := e.dh.Decide(e.ctx, e.id, "credit", "sandbox", map[string]any{"amount": 1000}, command.EntityRef{})
-	if err == nil || !strings.Contains(err.Error(), "no subject") {
-		t.Fatalf("expected a no-subject error, got %v", err)
+	res, err := e.dh.Decide(e.ctx, e.id, "credit", "sandbox", map[string]any{"amount": 1000}, command.EntityRef{})
+	if err != nil || res.Status != "failed" || !strings.Contains(res.Error, "no subject") {
+		t.Fatalf("expected a recorded no-subject failure, got result=%+v err=%v", res, err)
 	}
 	if e.conn.fetched != 0 {
 		t.Fatal("bureau must not be fetched without a subject")

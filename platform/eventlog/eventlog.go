@@ -116,12 +116,26 @@ func filterTenantStream(evs []Envelope, org, workspace, stream string) []Envelop
 // tenant + stream — the shared write-side spine that command handlers wrap with
 // their stream constant and clock.
 func AppendJSON(ctx context.Context, log Log, org, workspace, actor, stream, typ string, at time.Time, payload any) (Envelope, error) {
+	return AppendJSONUnique(ctx, log, org, workspace, actor, stream, typ, at, payload, "")
+}
+
+// AppendJSONUnique is AppendJSON with a tenant-global optimistic-concurrency
+// claim. Keeping envelope construction here prevents command modules from
+// growing subtly different copies of the event-store write contract.
+func AppendJSONUnique(
+	ctx context.Context,
+	log Log,
+	org, workspace, actor, stream, typ string,
+	at time.Time,
+	payload any,
+	unique string,
+) (Envelope, error) {
 	b, err := json.Marshal(payload)
 	if err != nil {
 		return Envelope{}, fmt.Errorf("eventlog: marshal %s: %w", typ, err)
 	}
 	return log.Append(ctx, Envelope{
 		Org: org, Workspace: workspace, Actor: actor,
-		Stream: stream, Type: typ, Time: at, Payload: b,
+		Stream: stream, Type: typ, Time: at, Payload: b, Unique: unique,
 	})
 }

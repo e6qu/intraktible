@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/e6qu/intraktible/decision-engine/command"
 	"github.com/e6qu/intraktible/decision-engine/policy"
 	"github.com/e6qu/intraktible/platform/testutil"
 )
@@ -255,6 +256,94 @@ func TestCounterfactualFindsFlip(t *testing.T) {
 	}
 }
 
+func TestCounterfactualReplaysRecordedEffectWithoutCallingProvider(t *testing.T) {
+	connector := stubConnector{"bureau": `{"score":80}`}
+	api := startEngine(t, command.WithConnectors(connector))
+
+	var created struct {
+		FlowID string `json:"flow_id"`
+	}
+	api.Request(
+		t,
+		http.MethodPost,
+		"/v1/flows",
+		map[string]any{"slug": "cfeffect", "name": "Effectful scorecard"},
+		http.StatusCreated,
+		&created,
+	)
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/versions", map[string]any{
+		"graph": map[string]any{
+			"nodes": []map[string]any{
+				{"id": "in", "type": "input"},
+				{"id": "bureau", "type": "connect", "config": map[string]any{
+					"connector": "bureau", "output": "bureau",
+				}},
+				{"id": "score", "type": "assignment", "config": map[string]any{
+					"assignments": []map[string]any{{"target": "score", "expr": "income / 1000"}},
+				}},
+				{"id": "gate", "type": "split", "config": map[string]any{
+					"condition": "score >= 50 && connect.bureau.score >= 50",
+				}},
+				{"id": "approve", "type": "assignment", "config": map[string]any{
+					"assignments": []map[string]any{{"target": "decision", "expr": "'APPROVE'"}},
+				}},
+				{"id": "decline", "type": "assignment", "config": map[string]any{
+					"assignments": []map[string]any{{"target": "decision", "expr": "'DECLINE'"}},
+				}},
+				{"id": "out", "type": "output", "config": map[string]any{
+					"fields": []string{"decision", "score"},
+				}},
+			},
+			"edges": []map[string]any{
+				{"from": "in", "to": "bureau"},
+				{"from": "bureau", "to": "score"},
+				{"from": "score", "to": "gate"},
+				{"from": "gate", "to": "approve", "branch": "yes"},
+				{"from": "gate", "to": "decline", "branch": "no"},
+				{"from": "approve", "to": "out"},
+				{"from": "decline", "to": "out"},
+			},
+		},
+	}, http.StatusCreated, nil)
+	var pol struct {
+		PolicyID string `json:"policy_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/policies", map[string]any{
+		"name": "cfeffect-pol", "flow_slug": "cfeffect",
+	}, http.StatusCreated, &pol)
+	api.Request(t, http.MethodPost, "/v1/policies/"+pol.PolicyID+"/versions", map[string]any{
+		"spec": map[string]any{
+			"rules":   []map[string]any{{"when": "score >= 50", "disposition": "approve"}},
+			"default": "decline",
+		},
+	}, http.StatusCreated, nil)
+
+	decID := decideOnce(
+		t,
+		api,
+		"cfeffect",
+		map[string]any{"income": 10000.0},
+		string(policy.Decline),
+	)
+	var cf counterfactualResp
+	if !testutil.Eventually(t, func() bool {
+		cf = counterfactualResp{}
+		code := api.RequestStatus(
+			t,
+			http.MethodPost,
+			"/v1/decisions/"+decID+"/counterfactual",
+			map[string]any{},
+			&cf,
+		)
+		return code == http.StatusOK && len(cf.Flips) > 0
+	}) {
+		t.Fatalf("effectful counterfactual found no flip: %+v", cf)
+	}
+	if cf.Flips[0].Field != "income" || cf.Flips[0].Disposition != string(policy.Approve) {
+		t.Fatalf("effectful counterfactual = %+v", cf)
+	}
+}
+
 // TestCounterfactualHonorsPrivacyMasking pins the counterfactual to the same
 // read boundary as every other decision read: a privacy-masked field must not be
 // offered as a lever nor have its recorded value echoed in flip from/to.
@@ -311,6 +400,7 @@ type coverageBranchResp struct {
 
 type coverageResp struct {
 	Runs         int                  `json:"runs"`
+	FailedRuns   int                  `json:"failed_runs"`
 	Fields       []string             `json:"fields"`
 	Nodes        []coverageNodeResp   `json:"nodes"`
 	Branches     []coverageBranchResp `json:"branches"`
@@ -451,6 +541,69 @@ func TestCoverageReproducible(t *testing.T) {
 	}
 	if !hasIncome {
 		t.Fatalf("coverage did not discover 'income' field: %+v", a.Fields)
+	}
+}
+
+func TestCoverageRequiresExplicitMocksForReachedEffects(t *testing.T) {
+	api := startEngine(t)
+	var created struct {
+		FlowID string `json:"flow_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows", map[string]any{
+		"slug": "coveffect", "name": "Effect coverage",
+	}, http.StatusCreated, &created)
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/versions", map[string]any{
+		"graph": map[string]any{
+			"nodes": []map[string]any{
+				{"id": "in", "type": "input"},
+				{"id": "bureau", "type": "connect", "config": map[string]any{
+					"connector": "bureau", "output": "bureau",
+				}},
+				{"id": "gate", "type": "split", "config": map[string]any{
+					"condition": "connect.bureau.score >= amount",
+				}},
+				{"id": "yes", "type": "output"},
+				{"id": "no", "type": "output"},
+			},
+			"edges": []map[string]any{
+				{"from": "in", "to": "bureau"},
+				{"from": "bureau", "to": "gate"},
+				{"from": "gate", "to": "yes", "branch": "yes"},
+				{"from": "gate", "to": "no", "branch": "no"},
+			},
+		},
+	}, http.StatusCreated, nil)
+
+	var cov coverageResp
+	if !testutil.Eventually(t, func() bool {
+		cov = coverageResp{}
+		code := api.RequestStatus(
+			t,
+			http.MethodPost,
+			"/v1/flows/"+created.FlowID+"/coverage",
+			map[string]any{
+				"runs": 25,
+				"mock_data": map[string]any{
+					"connect": map[string]any{"bureau": map[string]any{"score": 80}},
+				},
+			},
+			&cov,
+		)
+		return code == http.StatusOK && cov.Runs == 25
+	}) {
+		t.Fatalf("effectful coverage never ran with mocks: %+v", cov)
+	}
+	if cov.FailedRuns != 0 {
+		t.Fatalf("effectful coverage failed runs = %d", cov.FailedRuns)
+	}
+	if code := api.RequestStatus(
+		t,
+		http.MethodPost,
+		"/v1/flows/"+created.FlowID+"/coverage",
+		map[string]any{"runs": 1},
+		nil,
+	); code != http.StatusBadRequest {
+		t.Fatalf("coverage without reached effect mock status = %d, want 400", code)
 	}
 }
 

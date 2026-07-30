@@ -40,13 +40,31 @@ describe('sdk Client', () => {
       data: { ok: true }
     });
     const c = new Client({ apiKey: 'k', baseUrl: 'https://api.example.com/', fetch: fetcher });
-    const res = await c.decide('risk', 'production', { data: { amount: 10 }, entity_id: 'e1' });
+    const res = await c.decide('risk', 'production', {
+      data: { amount: 10 },
+      entity_id: 'e1',
+      business_reference: 'app-42',
+      correlation_id: 'trace-7',
+      metadata: { channel: 'mobile' },
+      control: { timeout_ms: 750 },
+      idempotencyKey: 'retry-42'
+    });
     expect(res.status).toBe('completed');
     const [url, init] = fetcher.mock.calls[0];
     expect(url).toBe('https://api.example.com/v1/flows/risk/production/decide');
     expect(init?.method).toBe('POST');
-    expect(JSON.parse(init?.body as string)).toEqual({ data: { amount: 10 }, entity_id: 'e1' });
-    expect(init?.headers).toMatchObject({ 'Content-Type': 'application/json' });
+    expect(JSON.parse(init?.body as string)).toEqual({
+      data: { amount: 10 },
+      entity_id: 'e1',
+      business_reference: 'app-42',
+      correlation_id: 'trace-7',
+      metadata: { channel: 'mobile' },
+      control: { timeout_ms: 750 }
+    });
+    expect(init?.headers).toMatchObject({
+      'Content-Type': 'application/json',
+      'Idempotency-Key': 'retry-42'
+    });
   });
 
   it('decideBatch wraps the dataset', async () => {

@@ -18,10 +18,10 @@ import (
 	"github.com/e6qu/intraktible/platform/store"
 )
 
-// TestDecidePreResolvesPredictNode exercises the full registry → evaluate → inject →
-// record path: a logistic model is registered, the shell scores the input, branches
-// on the prediction, and records it for replay.
-func TestDecidePreResolvesPredictNode(t *testing.T) {
+// TestDecideRecordsPredictEffect exercises the full registry → yielded effect →
+// evaluate → inject → evidence path: a logistic model is registered, the shell
+// scores the reached input, branches on the prediction, and records it for replay.
+func TestDecideRecordsPredictEffect(t *testing.T) {
 	ctx := context.Background()
 	log, err := eventlog.OpenWAL(t.TempDir())
 	if err != nil {
@@ -61,35 +61,35 @@ func TestDecidePreResolvesPredictNode(t *testing.T) {
 		t.Fatalf("want low, got %+v (%s)", low.Output, low.Error)
 	}
 
-	// The prediction is recorded in the decision's input (replay reads it).
+	// The prediction is recorded as successful effect evidence, while
+	// DecisionStarted remains the caller's unmodified input.
 	evs, err := log.Read(ctx, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var sawPredict bool
 	for _, e := range evs {
-		if e.Type != events.TypeDecisionStarted {
+		if e.Type != events.TypeEffectSucceeded {
 			continue
 		}
-		var p events.DecisionStarted
+		var p events.DecisionEffectSucceeded
 		if err := json.Unmarshal(e.Payload, &p); err != nil {
 			t.Fatal(err)
 		}
-		var data map[string]any
-		if err := json.Unmarshal(p.Data, &data); err != nil {
+		if p.Kind != string(domain.EffectPredict) || p.NodeID != "p" {
+			continue
+		}
+		var prediction map[string]any
+		if err := json.Unmarshal(p.Output, &prediction); err != nil {
 			t.Fatal(err)
 		}
-		pred, ok := data["predict"].(map[string]any)
-		if !ok {
-			t.Fatalf("predict data not recorded: %v", data)
-		}
-		if _, ok := pred["risk"]; !ok {
-			t.Fatalf("risk prediction not recorded: %v", pred)
+		if _, ok := prediction["probability"]; !ok {
+			t.Fatalf("probability not recorded: %v", prediction)
 		}
 		sawPredict = true
 	}
 	if !sawPredict {
-		t.Fatal("no DecisionStarted recorded")
+		t.Fatal("no successful Predict effect recorded")
 	}
 }
 

@@ -40,10 +40,17 @@ private hosts; the cloud metadata service stays blocked regardless).
 
 ## Topology
 
-Two tiers, and they matter:
+Three tiers, and they matter:
 
 - **API tier** — the stateless read/write surface. Scale it horizontally; each
   replica rebuilds its own projections from the log and serves once caught up.
+  It accepts durable work but does not execute or recover it
+  (`--process-role=api`).
+- **Worker tier** — a horizontally scalable pool that claims and executes
+  interrupted decisions and asynchronous agent runs (`--process-role=worker`).
+  Every attempt has a durable owner, lease, heartbeat, and bounded timeout;
+  another worker can take over only after lease expiry. Keep at least two
+  replicas so one task loss cannot stall accepted work.
 - **Scheduler tier** — a **singleton** (1 replica) that runs the timed sweeps
   (monitor alerts, model-drift alerts, time-boxed deploy activation/revert, SLA
   breach sweep). These sweeps are not leader-elected, so running them on more than
@@ -52,17 +59,21 @@ Two tiers, and they matter:
   deploy-activation sweep is additionally claim-guarded, so it is safe either way,
   but keep the alert sweeps on the singleton.)
 
-The event log and projection store are external dependencies for HA: use a networked
-log (`--log=postgres` or `--log=nats`) and `--store=postgres` so N API replicas share
-one ordered log and durable read models.
+The event log and projection store are external dependencies for HA: use a
+networked log (`--log=postgres` or `--log=nats`) and `--store=postgres` so every
+API, worker, and scheduler replica shares one ordered log and durable read
+models. `INTRAKTIBLE_DECISION_RECOVERY_INTERVAL` controls the positive decision
+recovery scan cadence on workers (default `5s`).
 
 ## Deploy on Kubernetes (Helm)
 
-The chart in [`deploy/helm/intraktible`](../deploy/helm/intraktible) encodes the whole
-posture: the API/scheduler split, `livenessProbe: /healthz` + `readinessProbe:
-/readyz`, resource requests/limits, a hardened `securityContext` (non-root,
-read-only rootfs, all caps dropped), an HPA on the API tier, a PodDisruptionBudget, a
-ServiceAccount without token automount, and an optional NetworkPolicy.
+The chart in [`deploy/helm/intraktible`](../deploy/helm/intraktible) encodes the
+whole posture: separate API/worker/scheduler roles, two workers and one
+Recreate-strategy scheduler by default, `livenessProbe: /healthz` +
+`readinessProbe: /readyz`, resource requests/limits, a hardened
+`securityContext` (non-root, read-only rootfs, all caps dropped), an HPA on the
+API tier, a PodDisruptionBudget, a ServiceAccount without token automount, and
+an optional NetworkPolicy.
 
 ```sh
 # 1. Build & push the image (or use your registry's copy).
@@ -82,6 +93,7 @@ helm install intraktible deploy/helm/intraktible \
   --set ingress.enabled=true --set ingress.host=intraktible.example.com
 
 kubectl rollout status deploy/intraktible-intraktible-api
+kubectl rollout status deploy/intraktible-intraktible-worker
 ```
 
 Rolling deploys are safe: a new pod is **not** routed traffic until `/readyz` reports
@@ -119,11 +131,12 @@ The Amazon Elastic Container Service services explicitly depend on the
 Fargate from attempting startup while a newly created database DSN is still
 waiting for the shared fck-rds PostgreSQL service to publish its tenant secret.
 
-For a deployment that costs almost nothing when idle, the Terraform root module in
+For a deployment that removes idle API, scheduler, and load-balancer cost, the Terraform root module in
 [`deploy/terraform/aws-ecs-scale-to-zero`](../deploy/terraform/aws-ecs-scale-to-zero)
-runs the same image in a **private VPC** with the compute and database scaled to zero when
-there is no traffic. It keeps the same stateless-replicas-behind-one-endpoint posture as
-the topology above; it just removes the always-on pieces.
+runs the same image in a **private VPC** with the API and scheduled-sweep compute
+scaled to zero when there is no traffic. Durable execution workers deliberately
+stay warm so an accepted decision or agent run continues after its admission
+request has ended.
 
 Design, and why each choice:
 
@@ -139,6 +152,9 @@ Design, and why each choice:
   `POST /wake` request; CPU target-tracking scales `1→N` under load; a **reaper** scales it
   back to `0` when the edge has been idle. The wake request is the "event" that spins the
   infra back up.
+- **ECS Fargate `worker` service stays warm.** Two workers by default claim
+  durable decision and agent attempts from the shared event log. API and
+  scheduler tasks use their own process roles and cannot execute that work.
 - **Shared fck-rds PostgreSQL** backs both `--log=postgres` and `--store=postgres` through
   an isolated tenant database. A cold replica resumes projections from its durable checkpoint
   (not a full log replay), so the wake stays incremental.
@@ -147,13 +163,14 @@ Design, and why each choice:
   sweep window, then scales it back to zero (a `warm` always-on mode is also available). See
   the module README for the trade-off and the clean long-term fix (an idempotent
   `POST /internal/sweep` endpoint, not yet built).
-- **fck-nat**, not a NAT Gateway, provides egress from the private subnets — a single small
-  instance is the main residual idle cost.
+- **fck-nat**, not a NAT Gateway, provides egress from the private subnets — a
+  single small instance alongside the durable workers is part of the residual
+  idle cost.
 
-The intended idle floor is roughly the fck-nat instance plus storage: no hourly load
-balancer, no running compute, no database compute. See the module README for prerequisites
-(build/push the image, sync the site to S3), the cost table, and the deploy-time
-verification points.
+The intended idle floor is the durable worker pool, fck-nat instance, and
+storage: no hourly load balancer and no idle API or scheduler compute. See the
+module README for prerequisites (build/push the image, sync the site to S3), the
+cost table, and the deploy-time verification points.
 
 The module can also reuse a shared environment by supplying `existing_vpc_id`,
 `existing_private_subnet_ids`, and `existing_ecs_cluster_arn`. In that mode it

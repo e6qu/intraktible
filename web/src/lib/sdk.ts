@@ -30,11 +30,17 @@ export interface DecideRequest {
   data: Record<string, unknown>;
   entity_type?: string;
   entity_id?: string;
+  business_reference?: string;
+  correlation_id?: string;
+  metadata?: Record<string, unknown>;
+  control?: { timeout_ms?: number };
+  // Sent as the Idempotency-Key header, not in the JSON request.
+  idempotencyKey?: string;
 }
 
 export interface DecideResult {
   decision_id: string;
-  status: 'completed' | 'failed';
+  status: 'completed' | 'failed' | 'suspended';
   data?: Record<string, unknown>;
   disposition?: string;
   error?: string;
@@ -52,6 +58,11 @@ export interface Decision {
   environment: string;
   status: string;
   disposition?: string;
+  entity_type?: string;
+  entity_id?: string;
+  business_reference?: string;
+  correlation_id?: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface SdkFlow {
@@ -121,7 +132,13 @@ export class Client {
 
   // decide runs the live version of a flow in an environment against the input.
   decide(slug: string, env: string, req: DecideRequest): Promise<DecideResult> {
-    return this.request<DecideResult>('POST', `${this.flowPath(slug, env)}/decide`, req);
+    const { idempotencyKey, ...body } = req;
+    return this.request<DecideResult>(
+      'POST',
+      `${this.flowPath(slug, env)}/decide`,
+      body,
+      idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined
+    );
   }
 
   // decideBatch runs each row of a dataset through the recorded decide path.
@@ -191,10 +208,16 @@ export class Client {
     return `/v1/flows/${encodeURIComponent(slug)}/${encodeURIComponent(env)}`;
   }
 
-  private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  private async request<T>(
+    method: string,
+    path: string,
+    body?: unknown,
+    extraHeaders: Record<string, string> = {}
+  ): Promise<T> {
     const headers: Record<string, string> = {
       'X-Api-Key': this.apiKey,
-      Accept: 'application/json'
+      Accept: 'application/json',
+      ...extraHeaders
     };
     if (body !== undefined) {
       headers['Content-Type'] = 'application/json';

@@ -38,6 +38,7 @@ type coverageBranch struct {
 
 type coverageResponse struct {
 	Runs         int              `json:"runs"`
+	FailedRuns   int              `json:"failed_runs"`
 	Fields       []string         `json:"fields"`
 	Nodes        []coverageNode   `json:"nodes"`
 	Branches     []coverageBranch `json:"branches"`
@@ -53,7 +54,7 @@ type coverageResponse struct {
 // (unreachable under the sampled space). Pure and bounded (runs cap, deterministic seed).
 //
 //	POST /v1/flows/{flow_id}/coverage
-//	{ "version": 2, "runs": 500 }
+//	{ "version": 2, "runs": 500, "mock_data": {"connect": {"bureau": {"score": 80}}} }
 func (s *Service) coverage(w http.ResponseWriter, r *http.Request) {
 	id, ok := httpx.Caller(w, r)
 	if !ok {
@@ -69,8 +70,9 @@ func (s *Service) coverage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Version int `json:"version"`
-		Runs    int `json:"runs"`
+		Version  int            `json:"version"`
+		Runs     int            `json:"runs"`
+		MockData map[string]any `json:"mock_data,omitempty"`
 	}
 	// An empty/optional body is fine; only a malformed one is a bad request.
 	if r.ContentLength != 0 {
@@ -88,6 +90,10 @@ func (s *Service) coverage(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, fmt.Errorf("flow has no published graph to cover"))
 		return
 	}
+	if err := validateCoverageMocks(req.MockData); err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
 
 	runs := req.Runs
 	if runs <= 0 {
@@ -98,22 +104,38 @@ func (s *Service) coverage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	fields := discoverNumericFields(graph)
-	rep := s.runCoverage(r.Context(), id, fv.Slug, graph, fields, runs)
+	rep, err := s.runCoverage(r.Context(), id, fv.Slug, graph, fields, runs, req.MockData)
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
 	httpx.JSON(w, http.StatusOK, rep)
 }
 
 // runCoverage executes the synthetic fan and assembles the report. The disposition
 // derivation reuses deriveDisposition (the same policy path decide uses).
-func (s *Service) runCoverage(ctx context.Context, id identity.Identity, slug string, graph events.Graph, fields []string, runs int) coverageResponse {
+func (s *Service) runCoverage(
+	ctx context.Context,
+	id identity.Identity,
+	slug string,
+	graph events.Graph,
+	fields []string,
+	runs int,
+	mockData map[string]any,
+) (coverageResponse, error) {
 	nodeHits := make(map[string]int, len(graph.Nodes))
 	branchHits := make(map[string]int, len(graph.Edges))
 	dispositions := map[string]int{"approve": 0, "decline": 0, "refer": 0}
+	failedRuns := 0
 
 	branchKey := func(e events.Edge) string { return e.From + "\x00" + e.To + "\x00" + e.Branch }
 
 	for i := 0; i < runs; i++ {
 		input := syntheticInput(fields, i)
-		run := domain.Execute(graph, input)
+		run, err := executeCoverage(ctx, graph, input, mockData)
+		if err != nil {
+			return coverageResponse{}, err
+		}
 		hit := make(map[string]bool, len(run.Results))
 		// A branching node records its chosen branch in its output — that, not
 		// "both endpoints ran", decides which edge was taken: in a converging
@@ -141,21 +163,16 @@ func (s *Service) runCoverage(ctx context.Context, id identity.Identity, slug st
 			}
 		}
 		if run.Status != domain.StatusCompleted {
+			failedRuns++
 			continue
 		}
 		disp, err := s.deriveDisposition(ctx, id, slug, run.Output)
 		if err != nil {
-			continue
+			return coverageResponse{}, fmt.Errorf("coverage policy evaluation: %w", err)
 		}
 		switch disp {
 		case "approve", "decline", "refer":
 			dispositions[string(disp)]++
-		default:
-			// No policy (or an unmapped disposition): bucket by the run's decision/approved
-			// output field when present, else leave uncounted.
-			if d := bucketByOutput(run.Output); d != "" {
-				dispositions[d]++
-			}
 		}
 	}
 
@@ -188,46 +205,69 @@ func (s *Service) runCoverage(ctx context.Context, id identity.Identity, slug st
 		deadBranches = []coverageBranch{}
 	}
 	return coverageResponse{
-		Runs: runs, Fields: fields, Nodes: nodes, Branches: branches,
+		Runs: runs, FailedRuns: failedRuns, Fields: fields, Nodes: nodes, Branches: branches,
 		Dispositions: dispositions, DeadNodes: deadNodes, DeadBranches: deadBranches,
-	}
+	}, nil
 }
 
-// bucketByOutput maps a flow's own output decision field to a disposition bucket
-// when no policy assigns one — a best-effort fallback so a policy-less flow still
-// reports a distribution.
-func bucketByOutput(output map[string]any) string {
-	if output == nil {
-		return ""
-	}
-	if v, ok := output["approved"].(bool); ok {
-		if v {
-			return "approve"
+func validateCoverageMocks(mockData map[string]any) error {
+	for namespace, value := range mockData {
+		switch namespace {
+		case "features", "connect", "ai", "predict":
+		default:
+			return fmt.Errorf("coverage mock_data contains unsupported namespace %q", namespace)
 		}
-		return "decline"
-	}
-	if v, ok := output["decision"].(string); ok {
-		switch normalizeDecision(v) {
-		case "approve", "approved", "accept":
-			return "approve"
-		case "decline", "declined", "reject", "rejected", "deny":
-			return "decline"
-		case "refer", "review", "manual":
-			return "refer"
+		if _, ok := value.(map[string]any); !ok {
+			return fmt.Errorf("coverage mock_data.%s must be an object", namespace)
 		}
 	}
-	return ""
+	return nil
 }
 
-func normalizeDecision(v string) string {
-	out := make([]rune, 0, len(v))
-	for _, r := range v {
-		if r >= 'A' && r <= 'Z' {
-			r += 'a' - 'A'
-		}
-		out = append(out, r)
+func executeCoverage(
+	ctx context.Context,
+	graph events.Graph,
+	input map[string]any,
+	mockData map[string]any,
+) (domain.Run, error) {
+	prepared := make(map[string]any, len(input)+1)
+	for key, value := range input {
+		prepared[key] = value
 	}
-	return string(out)
+	if features, ok := mockData["features"]; ok {
+		prepared["features"] = features
+	}
+	state := domain.StartExecution(graph, prepared)
+	for {
+		step := domain.AdvanceExecution(ctx, graph, state, nil)
+		if step.Run != nil {
+			return *step.Run, nil
+		}
+		req := *step.Effect
+		namespace, ok := mockData[string(req.Kind)].(map[string]any)
+		if !ok {
+			return domain.Run{}, fmt.Errorf(
+				"coverage requires mock_data.%s.%s for reached node %q",
+				req.Kind,
+				req.Output,
+				req.NodeID,
+			)
+		}
+		value, ok := namespace[req.Output]
+		if !ok {
+			return domain.Run{}, fmt.Errorf(
+				"coverage requires mock_data.%s.%s for reached node %q",
+				req.Kind,
+				req.Output,
+				req.NodeID,
+			)
+		}
+		next, err := domain.ResolveEffect(graph, step.State, req, value)
+		if err != nil {
+			return domain.Run{}, err
+		}
+		state = next
+	}
 }
 
 // identRe matches bare identifiers (and namespaced ones via the leading segment)
@@ -241,7 +281,7 @@ var reservedIdents = map[string]bool{
 	"true": true, "false": true, "nil": true, "null": true,
 	"and": true, "or": true, "not": true, "in": true, "matches": true,
 	"len": true, "all": true, "any": true, "filter": true, "map": true,
-	// Engine-owned namespaces (pre-resolved context, not caller input).
+	// Engine-owned namespaces (authoritative context/effects, not caller input).
 	"features": true, "connect": true, "ai": true, "predict": true,
 	// Common config keys (the structural JSON around the expressions).
 	"assignments": true, "target": true, "expr": true, "condition": true,

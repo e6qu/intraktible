@@ -14,9 +14,12 @@ import {
   importFlowBundle,
   exportDecision,
   listDecisions,
+  listDecisionsPage,
+  getDecisionExecutionSummary,
   getDecision,
   ApiError,
   getFlowMetrics,
+  flowCoverage,
   backtestFlow,
   whatif,
   deployVersion,
@@ -53,6 +56,9 @@ import {
   listAgents,
   defineAgent,
   runAgent,
+  startAgentRun,
+  cancelAgentRun,
+  retryAgentRun,
   escalateRun,
   getRunSummary,
   login,
@@ -291,6 +297,43 @@ describe('decisions + analytics', () => {
     const d = await getDecision('k', 'd9', fetcher);
     expect(d.status).toBe('failed');
     expect(fetcher.mock.calls[0][0]).toBe('/v1/decisions/d9');
+  });
+
+  it('gets the durable decision execution summary', async () => {
+    const fetcher = fetcherReturning(200, {
+      total: 3,
+      running: 1,
+      retrying: 1,
+      suspended: 0,
+      completed: 0,
+      failed: 0,
+      abandoned: 1,
+      recovery_attempts: 4,
+      attention: [{ decision_id: 'd1', slug: 'risk', status: 'retrying' }]
+    });
+    const summary = await getDecisionExecutionSummary('k', fetcher);
+    expect(summary.recovery_attempts).toBe(4);
+    expect(summary.attention[0].decision_id).toBe('d1');
+    expect(fetcher.mock.calls[0][0]).toBe('/v1/decisions/summary');
+  });
+
+  it('listDecisionsPage encodes exact scalar metadata filters as a deep object', async () => {
+    const fetcher = fetcherReturning(200, {
+      decisions: [],
+      total: 0,
+      limit: 25,
+      offset: 0
+    });
+    await listDecisionsPage(
+      'k',
+      { metadata: { channel: 'branch', priority: 2, reviewed: true }, limit: 25 },
+      fetcher
+    );
+    const url = new URL(String(fetcher.mock.calls[0][0]), 'http://api');
+    expect(url.searchParams.get('metadata[channel]')).toBe('branch');
+    expect(url.searchParams.get('metadata[priority]')).toBe('2');
+    expect(url.searchParams.get('metadata[reviewed]')).toBe('true');
+    expect(url.searchParams.get('metadata')).toBeNull();
   });
 
   it('getFlowMetrics hits the flow metrics endpoint', async () => {
@@ -835,6 +878,39 @@ describe('flows', () => {
     const [, init] = fetcher.mock.calls[0];
     expect(init?.body).toBe(JSON.stringify({ data: {}, entity_type: 'customer', entity_id: 'c1' }));
   });
+
+  it('decide carries durable invocation tracking, controls, and the idempotency header', async () => {
+    const fetcher = fetcherReturning(200, { decision_id: 'd1', status: 'completed', data: {} });
+    await decide('k', 'risk', 'sandbox', { amount: 9 }, undefined, fetcher, false, {
+      idempotencyKey: 'retry-9',
+      businessReference: 'application-9',
+      correlationId: 'trace-9',
+      metadata: { channel: 'branch' },
+      control: { timeout_ms: 900 }
+    });
+    const [, init] = fetcher.mock.calls[0];
+    expect(init?.headers).toMatchObject({ 'Idempotency-Key': 'retry-9' });
+    expect(JSON.parse(init?.body as string)).toEqual({
+      data: { amount: 9 },
+      business_reference: 'application-9',
+      correlation_id: 'trace-9',
+      metadata: { channel: 'branch' },
+      control: { timeout_ms: 900 }
+    });
+  });
+
+  it('decide carries preview-only provider mocks without durable tracking', async () => {
+    const fetcher = fetcherReturning(200, { decision_id: '', status: 'completed', data: {} });
+    await decide('k', 'risk', 'sandbox', { amount: 9 }, undefined, fetcher, true, {
+      mockData: { connect: { bureau: { score: 700 } } }
+    });
+    const [, init] = fetcher.mock.calls[0];
+    expect(JSON.parse(init?.body as string)).toEqual({
+      data: { amount: 9 },
+      preview: true,
+      mock_data: { connect: { bureau: { score: 700 } } }
+    });
+  });
 });
 
 describe('cases', () => {
@@ -947,6 +1023,55 @@ describe('agents', () => {
     expect(init?.body).toBe(JSON.stringify({ prompt: 'hi' }));
   });
 
+  it('starts a durable agent run with retry and tracking controls', async () => {
+    const fetcher = fetcherReturning(202, { run_id: 'r2', status: 'running', seq: 17 });
+    const res = await startAgentRun(
+      'k',
+      'triage',
+      'review this',
+      {
+        version: 2,
+        timeoutMs: 45_000,
+        maxAttempts: 4,
+        idempotencyKey: 'job-2',
+        businessReference: 'case-2',
+        correlationId: 'trace-2'
+      },
+      fetcher
+    );
+    expect(res.status).toBe('running');
+    const [url, init] = fetcher.mock.calls[0];
+    expect(url).toBe('/v1/agents/triage/run');
+    expect(init?.headers).toMatchObject({
+      'Idempotency-Key': 'job-2',
+      'X-Correlation-ID': 'trace-2'
+    });
+    expect(JSON.parse(init?.body as string)).toEqual({
+      prompt: 'review this',
+      async: true,
+      version: 2,
+      timeout_ms: 45000,
+      max_attempts: 4,
+      business_reference: 'case-2',
+      correlation_id: 'trace-2'
+    });
+  });
+
+  it('requests cancellation and an acknowledged dead-letter retry', async () => {
+    const cancelFetch = fetcherReturning(202, { status: 'cancelling', seq: 18 });
+    await cancelAgentRun('k', 'r2', cancelFetch);
+    expect(cancelFetch.mock.calls[0][0]).toBe('/v1/agent-runs/r2/cancel');
+    expect(cancelFetch.mock.calls[0][1]?.method).toBe('POST');
+
+    const retryFetch = fetcherReturning(202, { status: 'retrying', seq: 19 });
+    await retryAgentRun('k', 'r2', 'provider reconciled', true, retryFetch);
+    expect(retryFetch.mock.calls[0][0]).toBe('/v1/agent-runs/r2/retry');
+    expect(JSON.parse(retryFetch.mock.calls[0][1]?.body as string)).toEqual({
+      reason: 'provider reconciled',
+      acknowledge_at_least_once: true
+    });
+  });
+
   it('escalateRun posts the case fields and returns the case id', async () => {
     const fetcher = fetcherReturning(202, { case_id: 'c1' });
     const res = await escalateRun(
@@ -973,6 +1098,37 @@ describe('agents', () => {
     expect(sum.failed).toBe(1);
     const [url] = fetcher.mock.calls[0];
     expect(url).toBe('/v1/agent-runs/summary');
+  });
+});
+
+describe('decision coverage', () => {
+  it('sends explicit record-free dependency mocks', async () => {
+    const fetcher = fetcherReturning(200, {
+      runs: 10,
+      failed_runs: 0,
+      fields: ['amount'],
+      nodes: [],
+      branches: [],
+      dispositions: { approve: 0, decline: 0, refer: 0 },
+      dead_nodes: [],
+      dead_branches: []
+    });
+    const report = await flowCoverage(
+      'k',
+      'flow-1',
+      {
+        runs: 10,
+        mock_data: { connect: { bureau: { score: 80 } } }
+      },
+      fetcher
+    );
+    expect(report.failed_runs).toBe(0);
+    const [url, init] = fetcher.mock.calls[0];
+    expect(url).toBe('/v1/flows/flow-1/coverage');
+    expect(JSON.parse(init?.body as string)).toEqual({
+      runs: 10,
+      mock_data: { connect: { bureau: { score: 80 } } }
+    });
   });
 });
 

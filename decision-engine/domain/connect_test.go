@@ -73,14 +73,15 @@ func TestExecuteConnectNode(t *testing.T) {
 		Edges: []events.Edge{{From: "in", To: "c"}, {From: "c", To: "out"}},
 	}
 
-	// With the connector pre-resolved (as the shell does), the node passes through.
+	// Execute is the pure simulation helper: supplied effect data lets it pass
+	// through without I/O. The production shell instead drives AdvanceExecution.
 	input := map[string]any{"connect": map[string]any{"bureau": map[string]any{"score": 80}}}
 	run := domain.Execute(g, input)
 	if run.Status != domain.StatusCompleted {
 		t.Fatalf("status=%s err=%s", run.Status, run.Err)
 	}
 
-	// Without pre-resolution, the Connect node fails loudly (no I/O in the core).
+	// Without supplied simulation data, the Connect node fails loudly.
 	run = domain.Execute(g, map[string]any{})
 	if run.Status != domain.StatusFailed || run.FailedNode != "c" {
 		t.Fatalf("expected failure at node c, got %+v", run)

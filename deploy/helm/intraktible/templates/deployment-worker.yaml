@@ -1,0 +1,58 @@
+{{- if .Values.worker.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "intraktible.fullname" . }}-worker
+  labels: {{- include "intraktible.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.worker.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "intraktible.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      intraktible.dev/tier: worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "intraktible.name" . }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        intraktible.dev/tier: worker
+    spec:
+      serviceAccountName: {{ include "intraktible.fullname" . }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: intraktible
+          image: {{ include "intraktible.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["serve", "--process-role=worker", "--addr=:8080", "--data-dir=/data", "--store={{ .Values.store }}", "--log={{ .Values.log }}"]
+          ports:
+            - { name: http, containerPort: 8080 }
+          envFrom:
+            - secretRef: { name: {{ include "intraktible.secretName" . }} }
+          env:
+            {{- range $k, $v := .Values.env }}
+            - { name: {{ $k }}, value: {{ $v | quote }} }
+            {{- end }}
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 6
+          resources: {{- toYaml .Values.worker.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: data, mountPath: /data }
+      volumes:
+        - name: data
+          emptyDir: {}
+{{- end }}

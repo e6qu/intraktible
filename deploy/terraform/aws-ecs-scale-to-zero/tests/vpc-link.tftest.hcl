@@ -84,6 +84,40 @@ run "inject_application_release_revision_into_shared_task_environment" {
   }
 }
 
+run "separate_api_worker_and_scheduler_process_roles" {
+  command = plan
+
+  assert {
+    condition     = contains(local.api_command, "--process-role=api")
+    error_message = "The API task must not own durable execution or timed sweeps."
+  }
+
+  assert {
+    condition     = contains(local.worker_command, "--process-role=worker")
+    error_message = "The worker task must own durable decision and agent execution."
+  }
+
+  assert {
+    condition     = contains(local.scheduler_command, "--process-role=scheduler")
+    error_message = "The scheduler task must own only timed sweeps."
+  }
+
+  assert {
+    condition     = aws_ecs_service.worker.desired_count == 2
+    error_message = "The default production topology must keep two durable workers available."
+  }
+}
+
+run "reject_zero_durable_workers" {
+  command = plan
+
+  variables {
+    worker_tasks = 0
+  }
+
+  expect_failures = [var.worker_tasks]
+}
+
 run "accept_maximum_length_application_release_revision" {
   command = plan
 

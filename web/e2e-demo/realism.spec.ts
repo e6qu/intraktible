@@ -122,27 +122,33 @@ test('model actuals derive probability from a real seeded decision', async ({ pa
   await page.addInitScript(() => localStorage.setItem('intraktible-persona', 'builder'));
   await page.goto('models');
   const lineage = await api(page, async () => {
-    const listed = (await fetch('/v1/decisions?limit=500').then((r) => r.json())) as {
-      decisions: { decision_id: string }[];
-    };
-    for (const summary of listed.decisions) {
-      const decision = (await fetch(`/v1/decisions/${summary.decision_id}`).then((r) =>
-        r.json()
-      )) as {
-        nodes?: { node_id: string; type: string; output?: Record<string, unknown> }[];
+    for (let offset = 0; ; offset += 200) {
+      const response = await fetch(`/v1/decisions?limit=200&offset=${offset}`);
+      if (!response.ok) throw new Error(`list decisions failed: ${response.status}`);
+      const listed = (await response.json()) as {
+        decisions: {
+          decision_id: string;
+          nodes?: { node_id: string; type: string; output?: Record<string, unknown> }[];
+        }[];
+        total: number;
       };
-      for (const node of decision.nodes ?? []) {
-        if (node.type !== 'predict' || !node.output) continue;
-        for (const raw of Object.values(node.output)) {
-          const prediction = raw as { model?: string; probability?: number };
-          if (prediction.model && typeof prediction.probability === 'number') {
-            return {
-              decisionID: summary.decision_id,
-              nodeID: node.node_id,
-              model: prediction.model
-            };
+      for (const decision of listed.decisions) {
+        for (const node of decision.nodes ?? []) {
+          if (node.type !== 'predict' || !node.output) continue;
+          for (const raw of Object.values(node.output)) {
+            const prediction = raw as { model?: string; probability?: number };
+            if (prediction.model && typeof prediction.probability === 'number') {
+              return {
+                decisionID: decision.decision_id,
+                nodeID: node.node_id,
+                model: prediction.model
+              };
+            }
           }
         }
+      }
+      if (offset + listed.decisions.length >= listed.total || listed.decisions.length === 0) {
+        break;
       }
     }
     throw new Error('seed has no decision-linked probabilistic prediction');

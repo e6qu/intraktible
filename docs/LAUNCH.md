@@ -77,8 +77,11 @@ store always full-rebuilds from the log.
 
 ## Observability
 
-- Decisions are event-sourced and replayable; `GET /v1/decisions` (filter by flow/env/status/time,
-  `include_node_results=false` for lighter pages).
+- Decisions are event-sourced and replayable; `GET /v1/decisions` filters by
+  flow/environment/status/time, business reference, correlation id, entity, and
+  top-level scalar metadata. `GET /v1/decisions/summary` reports running,
+  retrying, abandoned, failed, suspended, and completed work plus recovery
+  attempts that need attention.
 - Flow monitors (`distribution_drift` etc.) + the immutable audit log (`GET /v1/audit`).
 - **Model drift** — `GET /v1/models/{name}/drift` (PSI vs a captured baseline; `?window=Nd`),
   with a `POST …/monitor` PSI threshold.
@@ -88,6 +91,12 @@ store always full-rebuilds from the log.
   and retention policy. Monitor/drift notifications fire on state edges rather
   than every tick. `INTRAKTIBLE_MODEL_DRIFT_WINDOW` (days) narrows the drift
   window (default: all-time cumulative).
+- Production process ownership: API replicas use `--process-role=api`, a
+  horizontally scalable worker pool uses `--process-role=worker`, and the
+  singleton timed-sweep process uses `--process-role=scheduler`. A local
+  monolith uses `all`. Workers scan interrupted decisions on
+  `INTRAKTIBLE_DECISION_RECOVERY_INTERVAL` (positive duration, default `5s`) and
+  own asynchronous agent attempts through durable leases.
 
 ## Quality gate (CI parity)
 

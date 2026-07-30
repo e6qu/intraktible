@@ -254,16 +254,20 @@ serve --modules`; Makefile + golangci-lint + CI workflow; Dockerfile + docker-co
   `/v1/context/features`), module `context-layer`. Features are **wired into the decision engine**: a
   decide call may carry an `{entity_type, entity_id}` ref; the shell computes that entity's features
   and folds them into the input under `features.*` (so any Rule/Split/etc. expression can read
-  `features.txn_count_24h`), recorded in `DecisionStarted` for replay stability. The engine stays
-  free of a context-layer import via a `FeatureProvider` **port** (in `decision-engine/command`)
+  `features.txn_count_24h`). `DecisionStarted` retains the raw caller input while the separate
+  `DecisionContextPrepared` event retains the authoritative feature/consent snapshot for replay and
+  recovery. The engine stays free of a context-layer import via a `FeatureProvider` **port** (in
+  `decision-engine/command`)
   satisfied by a `features.Provider` **adapter** wired at the composition root — preserving the
   build-order dependency direction. **Connectors** subsystem: a `Connect` interface + registry +
   reference connectors (an arbitrary-HTTP one and a deterministic `mock_bureau`); a definition is
   `{name, type, config}` and invoking a connector is an effect recorded as a `ConnectorFetched`
   event (the stored response, not a re-fetch, is what replay reads) — API `/v1/context/connectors`
   - `…/{name}/fetch` + `…/{name}/fetches`. A flow's **Connect node** is wired the same way as features:
-    the shell pre-resolves each connector (params = the current input), injects the response under
-    `connect.<output>`, and records it in `DecisionStarted` — via a `ConnectorProvider` port +
+    the pure interpreter yields it only when traversal reaches the node, and the
+    shell invokes the connector with the exact current record, persists explicit
+    requested/succeeded/failed evidence, then resumes under
+    `connect.<output>` — via a `ConnectorProvider` port +
     `connectors.Provider` adapter, so the pure core does no I/O and the engine never imports the Context
     Layer. Full test pyramid (unit/integration/API-e2e); all CI gates green. **Deferred from Phase 3**
     (in `BUGS.md`): a **SQL** reference connector (D14); an SSRF/egress policy for the HTTP connector
@@ -279,8 +283,9 @@ serve --modules`; Makefile + golangci-lint + CI workflow; Dockerfile + docker-co
   (env-configured); the deterministic Stub is explicitly opt-in for development and tests, and a
   missing provider makes AI operations fail loudly.
   Enabling refactor: hoisted `eventlog.AppendJSON` (the marshal→append spine). A flow's **AI node** runs
-  an agent during a decision: the shell pre-resolves it (the node's literal prompt, or the current
-  input) and injects the output under `ai.<output>`, recorded in `DecisionStarted` — via an
+  an agent during a decision only when the interpreter reaches it; the shell
+  passes its literal prompt or exact current record, records effect evidence,
+  and resumes under `ai.<output>` — via an
   `AgentProvider` port + `agents.Provider` adapter wired at the composition root, so the engine never
   imports the Agent Manager (same one-way wiring as features/connectors). **Human-in-the-loop**:
   escalating a run opens a Case Manager case — the Agent Manager (built later) emits the Case Manager's
@@ -289,8 +294,9 @@ serve --modules`; Makefile + golangci-lint + CI workflow; Dockerfile + docker-co
   log (totals, completed/failed, by agent). The **agents UI** (`web/src/routes/agents`) lists/defines
   agents with a run-summary banner, and a per-agent view runs the agent, shows the run log, and
   escalates a run. Full test pyramid (unit/integration/API-e2e/Playwright); all CI gates green.
-  **Deferred from Phase 4** (in `BUGS.md`): tools are declared but not executed (D16); runs are
-  synchronous and structured output is not schema-validated (D17); real (non-Stub) AI providers (D5).
+  The original Phase 4 deferrals have since shipped: tool calling, structured-output validation,
+  asynchronous execution, and a real OpenAI-compatible provider are all part of the delivered track
+  recorded in `BUGS.md`.
 - **Phase 5 — Harden — ✅ DONE.** Shipped: **replay/rollback operator tooling** — `intraktible
 log` prints the durable event log (one line per event) + a per-stream summary (the audit view), and
   `intraktible replay [--modules] [--as-of <seq>]` rebuilds the enabled modules' projections from the
@@ -345,13 +351,19 @@ delivered, by theme:
 
 ---
 
-## 8b. Forward roadmap — the regulated-lending & production track
+## 8b. Forward roadmap — enterprise decision automation, modeling, and tracking
 
-We are far from a production release. What exists is a decision engine with a governance layer
-(deterministic replay, audit/lineage, RBAC, four-eyes on flows, drift, crypto-shred erasure). A
-multi-agent review and a competitor comparison (**[docs/COMPETITIVE.md](docs/COMPETITIVE.md)**) point to
-what is not built. Some of that gap list has since been worked through (fair-lending testing, the
-adverse-action arc, and independent model-validation gate shipped; see Phases 6, 7, and 11).
+The product is well beyond a prototype: all four product components are real, the hosted demo uses the
+real Go backend, and the governed/event-sourced foundation is unusually deep. It is not yet a complete
+enterprise decision platform. The remaining work is concentrated in execution integrity, operational
+depth, model/data-science workflow, and production evidence rather than endpoint count. A whole-product
+capability audit and the competitor comparison (**[docs/COMPETITIVE.md](docs/COMPETITIVE.md)**) establish
+the current boundary. Competitor entries are vendor claims, not independently tested facts.
+
+Some of the earlier gap list has already been worked through: fair-lending screening, the
+adverse-action arc, independent model validation, governed policy/agent dependencies, durable human
+tasks, candidate-faithful shadows, and decision-attributable model actuals shipped in Phases 6, 7, and
+11 and the subsequent journey audits.
 On scale: there is now a **decision-throughput benchmark** (`make bench`, `decision-engine/decide_bench_test.go`)
 with a recorded baseline (see `docs/PERFORMANCE.md`) — the synchronous decide path is race-free under the
 detector and scales across cores. Decide-boundary failure injection now covers a failing dependency
@@ -379,6 +391,298 @@ and every documented discussion subject deep-links from an inbox notification to
 `docs/JOURNEYS.md` remains the executable product contract for these cross-component seams.
 Nothing here is a claim that a competitor is beaten — only a list of gaps to work through. The roadmap
 orders them hardest-blocker-first; each phase is a direction, not a committed date.
+
+### 8b.1 Delivery shape — one serialized large PR per complete outcome
+
+The current program is deliberately carved into **large-to-huge vertical pull requests**. LLM-assisted
+implementation and review make broad coherent changes tractable; splitting one user journey across
+many small PRs would instead create temporary contracts, duplicated migrations, and misleading partial
+UI. Size is not a reason to omit a required layer.
+
+The PRs below are **strictly serialized**. Only one may be open at a time. After it merges, fetch and
+reconcile the new `origin/main`, regenerate any derived artifacts, and only then begin the next PR.
+Every PR must:
+
+- deliver its named journeys through domain logic, command/event contracts, projections, HTTP,
+  OpenAPI/SDKs, schedulers or workers, UI/UX, permissions, audit/notifications, replay/restart, and
+  deployment configuration wherever those layers participate;
+- preserve deterministic replay and the functional-core/imperative-shell boundary; recorded effects
+  are explicit data, never hidden I/O during replay;
+- include unit, integration, assembled HTTP, multi-replica/failure-injection, native browser,
+  real-Wasm, and embedded-artifact coverage proportional to the slice;
+- migrate old event/projection shapes deterministically or fail with an explicit compatibility error;
+- update `PLAN.md`, `BUGS.md`, `docs/JOURNEYS.md`, API examples, and performance/security evidence in
+  the same PR so documentation never describes an aspirational contract as shipped; and
+- announce and approve any new dependency before it is introduced, including its owner, license,
+  security posture, and the in-repository alternative.
+
+### 8b.2 PR E1 — durable execution integrity
+
+**Outcome:** a caller can submit or resume a decision or agent run through failures, retries, restarts,
+and replica changes without executing unreachable graph effects or silently creating a second logical
+run. This PR is the prerequisite for every later tranche.
+
+**Implemented in the E1 branch:** the pure interpreter now yields only reached
+Connect/AI/Predict effects with exact upstream state; requested, succeeded, and
+failed evidence plus delivery guarantees are durable. Decision admission has
+idempotency, caller tracking, metadata/control validation, history indexes, and
+lease-owned recovery; async agents have durable admission, claims, heartbeats,
+cancellation, timeout, explicit retry, and dead letter. Manual-review, shadow,
+preapproval, and consent side effects are crash-idempotent. The HTTP/OpenAPI,
+Go/TypeScript SDK, operator UI, observability, counterfactual, and record-free
+Coverage contracts share those semantics. Production deployment is explicitly
+split into scalable API and worker tiers plus a singleton scheduler in both
+Helm and the AWS ECS module.
+
+The compatibility boundary is explicit: pre-E1 `DecisionStarted` events are
+identified by the event shape introduced alongside recovery leases and replay
+their already-recorded prepared namespaces without re-reading mutable features,
+consent, or providers. New executions record separate context and effect
+evidence. The complete E1 exit matrix passes locally: `make check`, `make ci`,
+18 Terraform plan contracts, Helm lint/render, 228 frontend unit tests, 125
+native browser journeys, 83 real-Wasm journeys over the regenerated 7,999-event
+history, and 3 embedded-production smokes.
+
+**Scope:**
+
+- Replace eager Connect/AI/Predict preparation with a pure, resumable graph interpreter. The core
+  advances until it reaches an effectful node and yields a typed effect request containing the exact
+  current node input; the shell authorizes, executes, records, and feeds the result back before the core
+  advances. Untaken branches request no effects. Assignment/Rule/Code outputs are therefore visible to
+  downstream effects.
+- Give every effect a deterministic identity and durable requested/succeeded/failed evidence. Make
+  replay consume the recorded result and recovery continue from the last committed interpreter state.
+  Pass provider idempotency keys where supported; for providers that cannot guarantee effectively-once
+  behavior, expose the at-least-once risk explicitly rather than claiming impossible exactly-once
+  semantics.
+- Add a tenant/workspace/flow/environment-scoped decision idempotency contract, a caller business
+  reference and correlation id, bounded persisted metadata, and validated per-call controls. An
+  identical retry returns the original logical result; reuse with a conflicting payload fails loudly.
+  Index and search decision history by business reference, entity, status, and supported metadata.
+- Define interrupted decision states and recovery ownership. A durable recovery worker resumes safe
+  work, times out or abandons work that cannot continue, and surfaces attempts and the last error in
+  history, observability, and the decision UI.
+- Give async agent runs distributed claims with owner, lease, heartbeat, attempt, cancellation,
+  timeout, and retry/dead-letter state. Recovery belongs to a worker tier and cannot be performed
+  independently by every API replica. Tool/provider calls obey the same durable effect rules.
+- Reconcile preview, shadow, batch, manual-review suspend/resume, model actuals, consent/sharing gates,
+  audit, metrics, notifications, and the Wasm transport with the new interpreter and invocation
+  contracts.
+
+**Exit evidence:**
+
+- tests prove an effect on an untaken branch is never authorized or called, and a reached effect sees
+  all upstream mutations;
+- repeated and concurrent submissions with one idempotency key produce one decision and one set of
+  effects, while a conflicting reuse is rejected;
+- failure injection at every event boundary resumes to the same trace/output without losing the
+  decision or duplicating an effect the provider can deduplicate;
+- several API and worker replicas recover one agent run with one active lease and one terminal
+  outcome; lease loss, cancellation, timeout, and dead-letter paths are replay-stable; and
+- the browser can find a run by business reference/entity, explain its attempts/effects, and distinguish
+  running, suspended, retrying, abandoned, failed, and completed states.
+
+### 8b.3 PR E2 — experimentation, outcomes, and population automation
+
+**Outcome:** champion/challenger becomes an auditable experimentation product rather than per-request
+traffic splitting, and operators can run large populations as durable jobs.
+
+**Scope:**
+
+- Introduce a first-class experiment aggregate with hypothesis, owner, subject-key expression,
+  champion/challengers, allocation, salt, environments, eligibility, primary KPI, guardrails,
+  minimum sample/effect, start/stop windows, and draft/running/paused/completed/cancelled states.
+- Assign cohorts deterministically from the stable subject key and experiment salt. Record an exposure
+  only when execution reaches the experimental treatment; keep allocation stable across retries,
+  replicas, and restarts, and start a new cohort when material configuration changes.
+- Generalize outcome ingestion from model actuals into idempotent, decision-linked business outcomes
+  with event time, observation window, source lineage, label version, and correction history. Join
+  exposures to outcomes without caller-authored model or treatment facts.
+- Calculate sample sizes, conversion/continuous metrics, confidence intervals, effect size, sample-ratio
+  mismatch, guardrail regressions, and inconclusive results. State statistical assumptions and avoid
+  presenting directional movement as proof.
+- Unify A/B, shadow, backtest, model actuals, fair-lending slices, promotion evidence, and experiment
+  dashboards around consistent cohort dimensions and exact deployed versions.
+- Add a durable population-job resource for bulk decisions/backtests: immutable input manifest,
+  progress, per-item idempotency, bounded concurrency, pause/cancel/resume/retry, partial failure,
+  downloadable result manifest, retention, and scheduler/worker ownership. Preserve NDJSON as a
+  streaming convenience, not the durable job contract.
+- Provide Experimentation-persona setup, launch review, live health, outcome analysis, decision
+  drill-down, and promote/stop journeys with maker-checker controls where production behavior changes.
+
+**Exit evidence:** repeated subjects never cross arms within a cohort; exposure/outcome attribution is
+version-coherent after replay; statistical fixtures reproduce known results and edge cases; a killed
+multi-replica worker pool resumes a large population job without lost or duplicated logical items; and
+the UI never labels an underpowered or invalid experiment a winner.
+
+### 8b.4 PR E3 — enterprise case operations
+
+**Outcome:** Case Manager becomes a configurable operational workbench for high-volume review teams,
+not only a durable generic review queue.
+
+**Scope:**
+
+- Add versioned case-type schemas, required fields, state machines, dispositions, reason codes,
+  priorities, service calendars, evidence requirements, and role-aware form/view layouts.
+- Add configurable queues and routing rules over case/entity/decision attributes, reviewer skills,
+  capacity, jurisdiction, priority, ageing, and conflict-of-interest constraints. Make claims,
+  reassignment, escalation, and routing atomic across replicas.
+- Support linked cases, alerts, decisions, entities, agent runs, connector evidence, notes, and
+  immutable attachment metadata. Introduce a pluggable binary-artifact boundary only after the storage
+  dependency decision is approved; audit downloads and retention/hold behavior.
+- Add saved views, full-text/filter search, bulk assignment/status/disposition actions, duplicate
+  detection, queue rebalance, and keyboard-efficient review. Human-task completion must continue to
+  resume the exact suspended decision version.
+- Add QA sampling, second review, override tracking, reviewer feedback, workload/capacity,
+  time-to-first-action, resolution time, backlog ageing, SLA breach, routing failure, and bottleneck
+  analytics. Feed validated reviewer outcomes into agent/model evaluation without treating a single
+  reviewer as ground truth.
+- Integrate notifications, webhook delivery attempts, retry/dead-letter operations, audit exports, PII
+  masking, lawful basis, retention, legal hold, and erasure into the case/evidence model.
+
+**Exit evidence:** browser journeys cover case-type administration, automatic routing, an end-to-end
+review/resume, attachments/evidence, bulk work, QA disagreement, SLA escalation, and operational
+analytics; concurrent reviewers cannot both claim or terminally decide one task; and rebuild/restart
+reproduces queue membership, timers, evidence, and metrics.
+
+### 8b.5 PR E4 — collaborative authoring and governed delivery
+
+**Outcome:** teams can safely co-author and reuse decision assets without relying on one browser's
+in-memory canvas.
+
+**Scope:**
+
+- Add server-persisted flow drafts with autosave, explicit draft ownership, optimistic concurrency,
+  conflict presentation, recoverable local changes, and presence. Never silently overwrite another
+  editor's work.
+- Add versioned, immutable reusable subflows/components with typed input/output contracts, dependency
+  pins, impact analysis, cycle detection, upgrade previews, and exact runtime lineage.
+- Make comments, mentions, proposed changes, review assignments, diffs, assertions, backtests,
+  experiment evidence, and approvals part of one change-set journey. Show which deployed environments
+  and downstream assets a change affects.
+- Add repository-friendly export/import and validation commands for flows, policies, models,
+  experiments, case definitions, and environment bindings. Provide deterministic canonical formats,
+  semantic diff, CI validation, and guarded promotion without creating an alternate governance bypass.
+- Extend search and the command palette across drafts, reusable assets, experiments, case types, and
+  dependency relationships; preserve persona-specific density and WCAG-AA behavior.
+
+**Exit evidence:** two browsers can edit one draft with visible conflicts and no data loss; a reusable
+subflow upgrade shows and tests every dependent flow before approval; imported/exported assets
+round-trip deterministically; and no Git/API/UI route can deploy unreviewed production logic.
+
+### 8b.6 PR E5 — model and context data-science platform
+
+**Outcome:** modelers can build reproducible datasets and governed model releases, while decision flows
+consume typed, observable, point-in-time-correct data.
+
+**Scope:**
+
+- Add versioned entity/event schemas, relationships, source ownership, freshness and completeness
+  contracts, data classifications, lineage, and quality incidents. Validate ingestion at the boundary
+  while retaining an explicit governed evolution path.
+- Add streaming ingestion and incremental/materialized features with late-event and correction
+  semantics, backfill jobs, point-in-time joins, freshness SLOs, lineage, and cost/cardinality
+  observability. Retain the deterministic on-demand feature path as a correctness reference.
+- Add a dataset registry with immutable snapshots/manifests, feature/label definitions, time cutoffs,
+  consent/purpose scope, train/validation/test partitions, provenance, retention, and reproducible
+  export.
+- Add training/evaluation jobs and a signed model-artifact registry. Support richer runtimes through a
+  versioned serving protocol or approved sandboxed artifact runtime; do not embed arbitrary Python or
+  native code in the decision process without an explicit isolation and dependency decision.
+- Add calibration, threshold optimization, segment analysis, faithful model-specific explanations,
+  multi-class/regression outcomes, automated label pipelines, performance confidence intervals, and
+  challenger comparison.
+- Extend fair-lending analysis beyond the current AIR screen with minimum-sample rules, confidence
+  intervals/significance, intersectional groups, regression or matched-pair methods, missing-data
+  treatment, documented limitations, and examiner-reproducible snapshots. Keep every report a screen,
+  not an automated legal conclusion.
+- Unify data, feature, dataset, model, validation, approval, deployment, prediction, explanation,
+  actual, drift, fairness, and retirement lineage in the Model Risk and UI journeys.
+
+**Exit evidence:** a model release can be reproduced from an immutable dataset snapshot and artifact;
+offline and online feature values agree on correction/late-event fixtures; stale or poor-quality data
+blocks or visibly degrades according to an explicit policy; explanation/calibration/fairness fixtures
+are independently reproducible; and deployment still requires current independent validation and
+four-eyes approval.
+
+### 8b.7 PR E6 — production scale, tenancy, and disaster recovery
+
+**Outcome:** the recommended production topology has measured capacity, durable work ownership,
+operator-controlled tenancy, and routinely tested recovery rather than a runbook-only promise.
+
+**Scope:**
+
+- Remove the global serialized-append ceiling without reintroducing commit-order gaps; partition work
+  and projections by explicit tenant/stream ownership, preserve a canonical ordering contract where
+  required, and publish the consistency model.
+- Horizontally scale projection and worker ownership with durable leases/rebalancing. Run schedulers as
+  redundant replicas with leader/work claims rather than a deployment-enforced singleton.
+- Establish published workload profiles and SLOs for interactive decisions, effectful decisions,
+  event ingestion, projections, agent jobs, cases, and population jobs. Add multi-hour endurance,
+  overload/backpressure, noisy-neighbor, rolling-deploy, dependency-outage, and regional-latency tests.
+- Automate encrypted backups, point-in-time recovery where supported, restore validation, integrity
+  reconciliation, and scheduled disaster-recovery exercises. Measure and publish achieved RPO/RTO;
+  surface last successful backup/restore drill and recovery health to operators.
+- Add organization/workspace lifecycle APIs and UI: creation, invitations, membership, local/SSO/SCIM
+  role mapping, workspace isolation, API-key/service-account ownership, quotas, rate limits, spend
+  limits, suspension, export, and deletion. Make tenant placement and data residency explicit.
+- Define and test workload-isolation profiles for self-hosted single tenant, shared control plane, and
+  stronger per-tenant compute/storage isolation. Prevent cross-tenant cache, log, metric, trace,
+  artifact, secret, and support-tool access.
+- Formalize API compatibility/deprecation policy, generated and packaged SDK releases, audit-log
+  export, operator upgrade/rollback procedures, schema/event compatibility checks, and zero-downtime
+  migrations.
+
+**Exit evidence:** the documented production profile survives replica loss and rolling upgrades with no
+lost committed work; sustained tests meet published SLOs with bounded queues; restore drills rebuild and
+reconcile a production-shaped tenant inside the published RPO/RTO; scheduler/worker failover is proven
+with multiple live replicas; and automated isolation tests attempt cross-tenant access at every storage
+and observability boundary.
+
+### 8b.8 PR E7 — ecosystem and regulated solution packs
+
+**Outcome:** the platform is adoptable for complete credit, fraud, AML/KYB, and servicing workflows
+without pretending that a handful of generic adapters constitutes a data marketplace.
+
+**Scope:**
+
+- Publish a connector/provider SDK and conformance harness covering schemas, auth/secrets, egress,
+  idempotency, pagination, webhooks, rate limits, retries, circuit breaking, sandbox fixtures,
+  observability, data classification, consent/purpose, and replay evidence.
+- Deliver coherent provider packs prioritized by validated customer journeys, with normalized entities,
+  reason/evidence mapping, documented commercial prerequisites, and maintained contract tests. Provider
+  count is not a success metric; supported end-to-end journeys are.
+- Ship governed solution templates for credit origination/line management, fraud review, AML/KYB,
+  sanctions/adverse media, bank-statement analysis, and servicing. Include flow, policy, model/agent,
+  case type, queue, experiment, dashboard, compliance, and sample-data assets as one installable pack.
+- Add actual delivery providers and attempt tracking for adverse-action notices and other required
+  communications; retain the exact issued artifact independently of delivery. Add subject access and
+  portability exports over the governed data inventory.
+- Add AML investigation and regulatory-report preparation workflows, including evidence lineage,
+  approvals, amendments, submission/download boundaries, retention, and explicit human accountability.
+  Never represent generated narratives as filed reports unless a real filing integration confirms it.
+- Add domain-agent evaluation suites, reviewer-feedback loops, safety policies, cost/latency budgets,
+  escalation defaults, and aggregate quality reporting before marketing an agent as production-ready.
+
+**Exit evidence:** each published solution pack runs as a seeded native/Wasm journey over real backend
+contracts; connector conformance failures block release; communications prove generation, delivery
+attempts, and exact artifacts separately; and every claimed regulatory workflow identifies which steps
+are automated, human-approved, externally submitted, or intentionally outside the product.
+
+### 8b.9 Parallel organisational release track
+
+No code PR can manufacture customer trust or regulatory evidence. In parallel with E1–E7, a production
+offering requires SOC 2 Type II and ISO 27001 programs, independent penetration tests, threat-model and
+incident-response exercises, on-call and support processes, privacy/legal review, model-validation
+staffing, data-provider agreements, regional subprocessors, recovery exercises, and reference
+deployments. Marketing and enterprise-readiness claims must distinguish implemented controls from
+audited certifications and operating history.
+
+### 8b.10 Earlier regulated-lending and production phases
+
+The phases below record the already delivered or partially delivered track that preceded E1–E7. Open
+tails have been absorbed into the PRs above; they remain here as architectural history, not a second
+competing queue.
 
 - **Phase 6 — Fair lending & adverse action — ✅ DONE.** The `fairlending/` package: (1) a read-only
   **disparate-impact report** — the adverse-impact ratio (four-fifths rule, ECOA/Reg B) of
@@ -510,7 +814,7 @@ orders them hardest-blocker-first; each phase is a direction, not a committed da
   the demo seeds both issued and pending notices. **Automated-decision human review is now recorded**
   (GDPR Art. 22 human intervention / ECOA reconsideration): a decision engine can decline someone with
   no person in the loop, so the `reconsideration` package records that a human upheld or overturned that
-  solely-automated decline — basis, outcome, and a *required rationale* (a review with no reasoning is
+  solely-automated decline — basis, outcome, and a *required rationale\* (a review with no reasoning is
   the rubber stamp Art. 22 forbids), keyed to the decision. Eligibility fails loud unless the decision is
   a completed, solely-automated decline (`history.Record.HumanReviewed`, set on resume, excludes
   decisions that already had a person in the loop); the original decision stays immutable. The decision
@@ -519,7 +823,7 @@ orders them hardest-blocker-first; each phase is a direction, not a committed da
   (overdue flagged), the human-review audit trail, the lawful-basis / consent overview (by basis, with
   withdrawn + expiring counts), and an admin-only data-governance card (retention, legal holds, erased
   subjects). Cards degrade per role — the queue/audit/consent reads are viewer-level, so a compliance
-  *viewer* can work it; the governance card is admin-only. A tenant-global consent list
+  _viewer_ can work it; the governance card is admin-only. A tenant-global consent list
   (`GET /v1/consent/records`) was added, and the adverse-action queue GET relaxed to viewer (a read).
   The dashboard exports **examiner-ready compliance registers** (`registers` package): the
   adverse-action register (ECOA/Reg B record of adverse actions taken), the human-review register
@@ -556,10 +860,8 @@ orders them hardest-blocker-first; each phase is a direction, not a committed da
   replay. Still open: the ops-heavy scale tail (log compaction now shipped — a segmented,
   self-archiving WAL with soak + store-failure coverage; backup automation still open).
 
-**Parallel non-code track (organisational, not code):** SOC 2 Type II, ISO 27001, independent
-penetration testing, data-provider commercial relationships, model-validation staffing, and reference
-deployments. Code does not produce these, and they gate a regulated rollout as much as any missing
-feature.
+The former parallel non-code track is now specified with release evidence in §8b.9; it remains
+independent of, and just as necessary as, the implementation PR sequence.
 
 ## 9. Scope boundaries (current)
 

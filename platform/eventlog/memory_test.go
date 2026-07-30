@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestMemoryAppendReadHead(t *testing.T) {
@@ -127,6 +128,39 @@ func TestMemoryUniqueKeyConflict(t *testing.T) {
 	}
 	if _, err := l.Append(ctx, base); err != nil {
 		t.Fatalf("unconstrained append should succeed: %v", err)
+	}
+}
+
+func TestAppendJSONUniqueBuildsClaimedEnvelope(t *testing.T) {
+	ctx := context.Background()
+	log := NewMemory()
+	defer func() { _ = log.Close() }()
+	at := time.Date(2026, time.July, 30, 8, 0, 0, 0, time.UTC)
+	payload := struct {
+		Value string `json:"value"`
+	}{Value: "recorded"}
+
+	envelope, err := AppendJSONUnique(
+		ctx, log, "org", "workspace", "actor", "stream", "event", at,
+		payload, "claim-key",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if envelope.Org != "org" || envelope.Workspace != "workspace" ||
+		envelope.Actor != "actor" || envelope.Stream != "stream" ||
+		envelope.Type != "event" || envelope.Time != at ||
+		envelope.Unique != "claim-key" {
+		t.Fatalf("envelope = %+v", envelope)
+	}
+	if string(envelope.Payload) != `{"value":"recorded"}` {
+		t.Fatalf("payload = %s", envelope.Payload)
+	}
+	if _, err := AppendJSONUnique(
+		ctx, log, "org", "workspace", "actor", "stream", "event", at,
+		payload, "claim-key",
+	); !errors.Is(err, ErrConflict) {
+		t.Fatalf("duplicate claim error = %v, want ErrConflict", err)
 	}
 }
 

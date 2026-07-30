@@ -58,7 +58,11 @@ var enums = []tsEnum{
 	{"Environment", "ENVIRONMENTS", strs(dedomain.EnvSandbox, dedomain.EnvStaging, dedomain.EnvProduction)},
 	{"CaseStatus", "", strs(casedomain.StatusNeedsReview, casedomain.StatusInProgress, casedomain.StatusCompleted)},
 	{"SLAState", "", strs(casedomain.SLAOnTrack, casedomain.SLADueSoon, casedomain.SLAOverdue)},
-	{"AgentRunStatus", "", strs(agentdomain.RunRunning, agentdomain.RunCompleted, agentdomain.RunFailed)},
+	{"AgentRunStatus", "", strs(
+		agentdomain.RunRunning, agentdomain.RunRetrying, agentdomain.RunCompleted,
+		agentdomain.RunFailed, agentdomain.RunCancelled, agentdomain.RunTimedOut,
+		agentdomain.RunDeadLetter,
+	)},
 	{"ModelKind", "", strs(models.KindLogistic, models.KindGBM, models.KindExpression, models.KindExternal)},
 	{"PreApprovalStatus", "", strs(preapproval.StatusActive, preapproval.StatusRevoked)},
 	{"DeploymentRequestStatus", "", strs(flows.RequestPending, flows.RequestApproved, flows.RequestRejected)},

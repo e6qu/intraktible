@@ -3,13 +3,16 @@
 package service_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"testing"
 
 	"github.com/e6qu/intraktible/agent-manager/agents"
 	"github.com/e6qu/intraktible/agent-manager/command"
+	agentevents "github.com/e6qu/intraktible/agent-manager/events"
 	"github.com/e6qu/intraktible/agent-manager/service"
 	caseevents "github.com/e6qu/intraktible/case-manager/events"
 	"github.com/e6qu/intraktible/platform/ai"
@@ -127,6 +130,13 @@ func TestAgentAPIValidationAndAuth(t *testing.T) {
 	api.Request(t, http.MethodPost, "/v1/agents", map[string]any{"system": "x"}, http.StatusBadRequest, nil)
 	// Running an unknown agent -> 400.
 	api.Request(t, http.MethodPost, "/v1/agents/ghost/run", map[string]any{"prompt": "x"}, http.StatusBadRequest, nil)
+	api.Request(t, http.MethodPost, "/v1/agents",
+		map[string]any{"name": "known"}, http.StatusAccepted, nil)
+	api.Request(t, http.MethodPost, "/v1/agents/known/run",
+		map[string]any{"prompt": "x", "version": -1}, http.StatusBadRequest, nil)
+	api.Request(t, http.MethodPost, "/v1/agents/known/run",
+		map[string]any{"prompt": "x", "async": true, "timeout_ms": 600_001},
+		http.StatusBadRequest, nil)
 	// Unknown agent / run -> 404.
 	api.Request(t, http.MethodGet, "/v1/agents/ghost", nil, http.StatusNotFound, nil)
 	api.Request(t, http.MethodGet, "/v1/agent-runs/ghost", nil, http.StatusNotFound, nil)
@@ -138,6 +148,105 @@ func TestAgentAPIValidationAndAuth(t *testing.T) {
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("unauthenticated -> %d, want 401", resp.StatusCode)
+	}
+}
+
+func TestDurableAgentRunHTTPContract(t *testing.T) {
+	api, log := startWithLog(t)
+	api.Request(t, http.MethodPost, "/v1/agents",
+		map[string]any{"name": "triage", "system": "be terse"}, http.StatusAccepted, nil)
+
+	body := map[string]any{
+		"prompt": "review", "async": true, "version": 1,
+		"timeout_ms": 45_000, "max_attempts": 4,
+		"business_reference": "application-42", "correlation_id": "trace-42",
+	}
+	var first, retry struct {
+		RunID  string `json:"run_id"`
+		Status string `json:"status"`
+		Seq    uint64 `json:"seq"`
+	}
+	requestWithHeaders(t, api, http.MethodPost, "/v1/agents/triage/run", body,
+		map[string]string{"Idempotency-Key": "agent-job-42"}, http.StatusAccepted, &first)
+	requestWithHeaders(t, api, http.MethodPost, "/v1/agents/triage/run", body,
+		map[string]string{"Idempotency-Key": "agent-job-42"}, http.StatusAccepted, &retry)
+	if first.RunID == "" || first.Status != "running" || first.Seq == 0 || retry.RunID != first.RunID {
+		t.Fatalf("durable acceptance/retry = first %+v, retry %+v", first, retry)
+	}
+
+	conflicting := map[string]any{
+		"prompt": "different", "async": true, "version": 1,
+		"timeout_ms": 45_000, "max_attempts": 4,
+	}
+	requestWithHeaders(t, api, http.MethodPost, "/v1/agents/triage/run", conflicting,
+		map[string]string{"Idempotency-Key": "agent-job-42"}, http.StatusBadRequest, nil)
+
+	var projected agents.RunView
+	api.Request(t, http.MethodGet, "/v1/agent-runs/"+first.RunID, nil, http.StatusOK, &projected)
+	if projected.Status != "running" || projected.Version != 1 ||
+		projected.TimeoutMS != 45_000 || projected.MaxAttempts != 4 ||
+		projected.BusinessReference != "application-42" || projected.CorrelationID != "trace-42" {
+		t.Fatalf("projected durable run: %+v", projected)
+	}
+
+	api.Request(t, http.MethodPost, "/v1/agent-runs/"+first.RunID+"/cancel",
+		map[string]any{}, http.StatusAccepted, nil)
+	api.Request(t, http.MethodGet, "/v1/agent-runs/"+first.RunID, nil, http.StatusOK, &projected)
+	if !projected.CancelRequested {
+		t.Fatalf("cancel request was not projected: %+v", projected)
+	}
+
+	envelopes, err := log.Read(context.Background(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	starts := 0
+	for _, envelope := range envelopes {
+		if envelope.Type == agentevents.TypeAgentRunStarted {
+			starts++
+		}
+	}
+	if starts != 1 {
+		t.Fatalf("idempotent HTTP submission emitted %d starts, want 1", starts)
+	}
+}
+
+func requestWithHeaders(
+	t *testing.T,
+	api *testutil.API,
+	method, path string,
+	body any,
+	headers map[string]string,
+	wantStatus int,
+	out any,
+) {
+	t.Helper()
+	payload, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := http.NewRequest(method, api.Server.URL+path, bytes.NewReader(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("X-Api-Key", api.Key)
+	req.Header.Set("Content-Type", "application/json")
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
+	resp, err := api.Server.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != wantStatus {
+		raw, _ := io.ReadAll(resp.Body)
+		t.Fatalf("%s %s -> %d, want %d (body: %s)", method, path, resp.StatusCode, wantStatus, raw)
+	}
+	if out != nil {
+		if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 

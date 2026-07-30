@@ -86,6 +86,15 @@ import (
 // asyncRunWorkers is the size of the Agent Manager's async-run worker pool.
 const asyncRunWorkers = 4
 
+const (
+	processRoleAll       = "all"
+	processRoleAPI       = "api"
+	processRoleWorker    = "worker"
+	processRoleScheduler = "scheduler"
+
+	defaultDecisionRecoveryInterval = time.Second
+)
+
 // Config carries the caller-selected knobs New needs beyond the injected log
 // and store. Everything else (AI providers, guardrails, egress, encryption,
 // SSO, SCIM) comes from the environment inside New, so both deployment
@@ -93,6 +102,11 @@ const asyncRunWorkers = 4
 type Config struct {
 	// Modules is the comma-separated module selection (or "all").
 	Modules string
+	// ProcessRole controls background ownership while leaving the HTTP and
+	// projection surfaces available on every process: all (local monolith), api
+	// (no background work), worker (durable decisions/agent runs), or scheduler
+	// (singleton timed governance sweeps).
+	ProcessRole string
 	// DevAPIKey seeds the well-known dev admin key. Honored only with the
 	// non-durable in-memory store (StoreKind "memory"); empty disables.
 	DevAPIKey string
@@ -167,6 +181,12 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
+	processRole, err := normalizeProcessRole(cfg.ProcessRole)
+	if err != nil {
+		return nil, err
+	}
+	runWorkers := processRole == processRoleAll || processRole == processRoleWorker
+	runSchedulers := processRole == processRoleAll || processRole == processRoleScheduler
 	if err := validateBooleanEnv(); err != nil {
 		return nil, err
 	}
@@ -290,6 +310,7 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 	var driftScheduler *enginemodels.Scheduler
 	var deployScheduler *schedule.Scheduler
 	var caseScheduler *caseschedule.Scheduler
+	var decideHandler *enginecmd.DecideHandler
 	// Outbound webhook delivery (egress-guarded, retried, recorded) — shared by the
 	// monitor/drift pushes and the case SLA escalation, so both reach the same
 	// operator-configured webhooks.
@@ -323,6 +344,7 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 			decideOpts = append(decideOpts, enginecmd.WithEvalTimeout(d))
 		}
 		decide := enginecmd.NewDecideHandler(log, st, decideOpts...)
+		decideHandler = decide
 		// The pre-approval write side is shared: the engine service uses it to
 		// promote an approved batch into grants; the pre-approval service exposes
 		// the standalone grant/list/revoke surface.
@@ -404,12 +426,19 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 	srv := &Server{}
 	var agentHandler *agentcmd.Handler
 	if enabled(cfg.Modules, "agent-manager") {
-		agentHandler = agentcmd.NewHandler(log, st, aiRegistry, agentcmd.WithToolbox(toolbox), agentcmd.WithNow(now))
-		// Async agent runs: a worker pool drains the queue until ctx is cancelled;
-		// Server.Close waits for it, so in-flight runs finish on shutdown before
-		// the caller closes the log.
-		agentHandler.StartWorkers(ctx, asyncRunWorkers)
-		srv.agents = agentHandler
+		agentHandler = agentcmd.NewHandler(
+			log, st, aiRegistry,
+			agentcmd.WithToolbox(toolbox),
+			agentcmd.WithNow(now),
+			agentcmd.WithEnqueueOnStart(runWorkers),
+		)
+		if runWorkers {
+			// Async jobs are durable. Only worker/all roles poll and claim them;
+			// API and singleton scheduler replicas accept requests without also
+			// invoking providers.
+			agentHandler.StartWorkers(ctx, asyncRunWorkers)
+			srv.agents = agentHandler
+		}
 		// Per-model prices (USD per million tokens) derive run cost in the run
 		// summary / observability surface; absent, only token counts are reported.
 		pricing, err := agents.ParsePricing(os.Getenv("INTRAKTIBLE_AI_PRICES"))
@@ -481,13 +510,31 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 		return nil, fmt.Errorf("projection start: %w", err)
 	}
 	srv.Projections = rt
-	// Recover async runs left "running" by a previous crash/shutdown — only after
-	// the projections are rebuilt, so a worker can resolve the agent from the store.
-	if agentHandler != nil {
+	// Validate the durable queues after projections are rebuilt. Pollers continue
+	// from here, but startup fails rather than silently serving a worker that cannot
+	// read its source of truth.
+	if runWorkers && agentHandler != nil {
 		if n, err := agentHandler.RecoverRunning(ctx); err != nil {
 			return nil, fmt.Errorf("agent-manager: recover running runs: %w", err)
 		} else if n > 0 {
 			slog.Info("agent-manager: re-enqueued interrupted runs", "count", n)
+		}
+	}
+	var recoveryWorker *enginecmd.RecoveryWorker
+	if runWorkers && decideHandler != nil {
+		recoveryWorker = decideHandler.NewRecoveryWorker()
+		summary, err := recoveryWorker.Tick(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("decision-engine: initial recovery scan: %w", err)
+		}
+		if summary.Claimed > 0 {
+			slog.Info(
+				"decision-engine: initial recovery completed",
+				"scanned", summary.Scanned,
+				"claimed", summary.Claimed,
+				"recovered", summary.Recovered,
+				"abandoned", summary.Abandoned,
+			)
 		}
 	}
 	// Timed sweeps: if INTRAKTIBLE_MONITOR_INTERVAL is set (e.g. "1m"), every
@@ -497,24 +544,47 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 	// own module, so a split-services profile (e.g. --modules=case-manager) still
 	// runs its SLA sweeps without the decision-engine module.
 	var sweeps []namedTimedSweeper
-	if monitorScheduler != nil {
+	if runSchedulers && monitorScheduler != nil {
 		sweeps = append(sweeps, namedTimedSweeper{name: "flow_monitor", runner: monitorScheduler})
 	}
-	if driftScheduler != nil {
+	if runSchedulers && driftScheduler != nil {
 		sweeps = append(sweeps, namedTimedSweeper{name: "model_drift", runner: driftScheduler})
 	}
-	if deployScheduler != nil {
+	if runSchedulers && deployScheduler != nil {
 		sweeps = append(sweeps, namedTimedSweeper{name: "deploy_schedule", runner: deployScheduler})
 	}
-	if caseScheduler != nil {
+	if runSchedulers && caseScheduler != nil {
 		sweeps = append(sweeps, namedTimedSweeper{name: "case_sla", runner: caseScheduler})
 	}
 	// Retention runs regardless of module (erasure is a platform capability); it is a
 	// no-op for every tenant without a retention policy.
-	sweeps = append(sweeps, namedTimedSweeper{name: "data_retention", runner: retentionScheduler})
-	schedulerState := newSchedulerHealth(sweeps)
-	if err := startTimedSweeps(ctx, os.Getenv("INTRAKTIBLE_MONITOR_INTERVAL"), sweeps, schedulerState); err != nil {
-		return nil, err
+	if runSchedulers {
+		sweeps = append(sweeps, namedTimedSweeper{name: "data_retention", runner: retentionScheduler})
+	}
+	healthLoops := append([]namedTimedSweeper(nil), sweeps...)
+	if recoveryWorker != nil {
+		healthLoops = append(
+			healthLoops,
+			namedTimedSweeper{name: "decision_recovery", runner: recoveryWorker},
+		)
+	}
+	schedulerState := newSchedulerHealth(healthLoops)
+	if runSchedulers {
+		if err := startTimedSweeps(ctx, os.Getenv("INTRAKTIBLE_MONITOR_INTERVAL"), sweeps, schedulerState); err != nil {
+			return nil, err
+		}
+	}
+	if recoveryWorker != nil {
+		interval, err := positiveEnvDuration(
+			"INTRAKTIBLE_DECISION_RECOVERY_INTERVAL",
+			defaultDecisionRecoveryInterval,
+		)
+		if err != nil {
+			return nil, err
+		}
+		go recoveryWorker.Run(ctx, interval, func(err error) {
+			schedulerState.Report("decision_recovery", err)
+		})
 	}
 
 	// The API contract (OpenAPI 3.1) + a reference page, served publicly so
@@ -751,6 +821,34 @@ func startTimedSweeps(ctx context.Context, interval string, sweeps []namedTimedS
 	return nil
 }
 
+func positiveEnvDuration(key string, fallback time.Duration) (time.Duration, error) {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback, nil
+	}
+	duration, err := time.ParseDuration(value)
+	if err != nil || duration <= 0 {
+		return 0, fmt.Errorf("%s %q: must be a positive duration", key, value)
+	}
+	return duration, nil
+}
+
+func normalizeProcessRole(role string) (string, error) {
+	role = strings.ToLower(strings.TrimSpace(role))
+	if role == "" {
+		return processRoleAll, nil
+	}
+	switch role {
+	case processRoleAll, processRoleAPI, processRoleWorker, processRoleScheduler:
+		return role, nil
+	default:
+		return "", fmt.Errorf(
+			"server: process role %q is invalid: want all, api, worker, or scheduler",
+			role,
+		)
+	}
+}
+
 // seedDevKey registers the well-known dev admin key on keyring, but ONLY with the
 // non-durable in-memory store. Any durable store (sqlite/postgres) — the only kind a
 // real deployment can use — refuses to seed it regardless of the flag value, so
@@ -891,6 +989,10 @@ func (p piiSealer) SealPII(ctx context.Context, id identity.Identity, subject st
 	return p.vault.SealFields(ctx, id, subject, doc, p.fields)
 }
 
+func (p piiSealer) OpenPII(ctx context.Context, id identity.Identity, subject string, doc json.RawMessage) (json.RawMessage, error) {
+	return p.vault.OpenFields(ctx, id, subject, doc)
+}
+
 // consentGate adapts the consent ledger to the engine's ConsentGate port, keeping the
 // decision engine from importing platform/consent directly (composition-root wiring).
 type consentGate struct {
@@ -903,14 +1005,18 @@ func (g consentGate) HasConsent(ctx context.Context, id identity.Identity, subje
 	return consent.Has(ctx, g.store, id, subject, purpose, g.now())
 }
 
-func (g consentGate) RecordConsent(ctx context.Context, id identity.Identity, subject, purpose, basis string) error {
+func (g consentGate) RecordConsent(
+	ctx context.Context,
+	id identity.Identity,
+	subject, purpose, basis, unique string,
+) error {
 	// A consent asserted inside a decision request is the controller vouching, via the
 	// API, for authorization it holds out-of-band; the signed artifact is attached
 	// separately on the subject's page. Record the method so the audit trail shows how.
-	_, err := g.cmd.Grant(ctx, id, consent.GrantCmd{
+	_, err := g.cmd.GrantUnique(ctx, id, consent.GrantCmd{
 		Subject: subject, Purpose: purpose, Basis: consent.LawfulBasis(basis),
 		Evidence: &consent.Evidence{Method: consent.MethodAPIAssertion},
-	})
+	}, unique)
 	return err
 }
 

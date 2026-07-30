@@ -28,7 +28,7 @@ export type CaseStatus = 'needs_review' | 'in_progress' | 'completed';
 
 export type SLAState = 'on_track' | 'due_soon' | 'overdue';
 
-export type AgentRunStatus = 'running' | 'completed' | 'failed';
+export type AgentRunStatus = 'running' | 'retrying' | 'completed' | 'failed' | 'cancelled' | 'timed_out' | 'dead_letter';
 
 export type ModelKind = 'logistic' | 'gbm' | 'expression' | 'external';
 

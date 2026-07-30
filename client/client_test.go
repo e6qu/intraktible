@@ -102,7 +102,12 @@ func TestClientAgainstEngine(t *testing.T) {
 	// while the flow projection catches up.
 	var dec client.DecideResult
 	if !testutil.Eventually(t, func() bool {
-		dec, err = c.Decide(ctx, "sdk-demo", "sandbox", client.DecideRequest{Data: map[string]any{}})
+		dec, err = c.Decide(ctx, "sdk-demo", "sandbox", client.DecideRequest{
+			Data: map[string]any{}, IdempotencyKey: "sdk-decision-1",
+			BusinessReference: "application-1", CorrelationID: "trace-1",
+			Metadata: map[string]any{"channel": "sdk"},
+			Control:  &client.ExecutionControl{TimeoutMS: 1_000},
+		})
 		return err == nil && dec.Status == "completed" && dec.Data["decision"] == "OK"
 	}) {
 		t.Fatalf("Decide never produced the expected output: %+v err=%v", dec, err)
@@ -110,7 +115,9 @@ func TestClientAgainstEngine(t *testing.T) {
 
 	// The decision is readable from history.
 	got, err := c.GetDecision(ctx, dec.DecisionID)
-	if err != nil || got.DecisionID != dec.DecisionID || got.Slug != "sdk-demo" {
+	if err != nil || got.DecisionID != dec.DecisionID || got.Slug != "sdk-demo" ||
+		got.BusinessReference != "application-1" || got.CorrelationID != "trace-1" ||
+		got.Metadata["channel"] != "sdk" {
 		t.Fatalf("GetDecision = %+v, err=%v", got, err)
 	}
 	decisions, err := c.ListDecisions(ctx)

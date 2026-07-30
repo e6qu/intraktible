@@ -277,7 +277,9 @@
         <option value="completed">completed</option>
         <option value="failed">failed</option>
         <option value="suspended">suspended</option>
-        <option value="started">started</option>
+        <option value="running">running</option>
+        <option value="retrying">retrying</option>
+        <option value="abandoned">abandoned</option>
       </select></label
     >
     <label
@@ -289,10 +291,10 @@
       </select></label
     >
     <label
-      >Filter by ID <input
+      >Search <input
         bind:value={fQuery}
-        placeholder="id substring"
-        aria-label="filter by decision id substring"
+        placeholder="ID, business ref, correlation, entity"
+        aria-label="search decisions"
       /></label
     >
     <button type="submit" disabled={loading}><Icon name="search" size={14} /> Apply</button>

@@ -119,12 +119,31 @@ func ExecuteObserved(g events.Graph, input map[string]any, obs NodeObserver) Run
 // off with a deadline error instead. The context only bounds wall-clock; the
 // result stays deterministic for any graph+input that completes within it.
 func ExecuteContext(runCtx context.Context, g events.Graph, input map[string]any, obs NodeObserver) Run {
-	nodes, outgoing := indexGraph(g)
-	cur := inputNode(g)
-	if cur == "" {
-		return Run{Status: StatusFailed, Err: "decision-engine: graph has no input node"}
+	state := StartExecution(g, input)
+	for {
+		step := AdvanceExecution(runCtx, g, state, obs)
+		if step.Run != nil {
+			return *step.Run
+		}
+		req := *step.Effect
+		value, err := preResolvedValue(step.State.Record, req)
+		if err != nil {
+			run := Run{Status: StatusCompleted, Results: step.State.Results}
+			run.Results = append(run.Results, NodeResult{NodeID: req.NodeID, Type: nodeTypeForEffect(req.Kind)})
+			return fail(run, req.NodeID, err.Error())
+		}
+		if obs != nil {
+			done := obs.NodeStart(req.NodeID, nodeTypeForEffect(req.Kind))
+			state, err = ResolveEffect(g, step.State, req, value)
+			done(err)
+		} else {
+			state, err = ResolveEffect(g, step.State, req, value)
+		}
+		if err != nil {
+			run := Run{Status: StatusCompleted, Results: step.State.Results}
+			return fail(run, req.NodeID, err.Error())
+		}
 	}
-	return walk(evalContext{ctx: runCtx}, g, nodes, outgoing, cur, cloneContext(input), nil, obs)
 }
 
 // Resume continues a flow that paused at a human-task, from the saved instance state,
@@ -132,23 +151,28 @@ func ExecuteContext(runCtx context.Context, g events.Graph, input map[string]any
 // counterpart of the suspend in walk: same graph + same captured record + same outcome
 // always yields the same completion, which is what keeps a resumed decision replayable.
 func Resume(g events.Graph, s SuspendState, outcome map[string]any) Run {
-	nodes, outgoing := indexGraph(g)
-	ctx := cloneContext(s.Record)
-	key := s.OutputKey
-	if key == "" {
-		key = "review"
+	state := ResumeExecution(s, outcome)
+	if state.NextNode == "" {
+		return Run{Status: StatusCompleted, Output: cloneContext(state.Record)}
 	}
-	// The outcome is injected under OutputKey (so a downstream split can branch on
-	// e.g. review.decision) and merged at the top level (so a bare `decision` works too).
-	ctx[key] = outcome
-	for k, v := range outcome {
-		ctx[k] = v
+	for {
+		step := AdvanceExecution(context.Background(), g, state, nil)
+		if step.Run != nil {
+			return *step.Run
+		}
+		req := *step.Effect
+		value, err := preResolvedValue(step.State.Record, req)
+		if err != nil {
+			run := Run{Status: StatusCompleted, Results: step.State.Results}
+			run.Results = append(run.Results, NodeResult{NodeID: req.NodeID, Type: nodeTypeForEffect(req.Kind)})
+			return fail(run, req.NodeID, err.Error())
+		}
+		state, err = ResolveEffect(g, step.State, req, value)
+		if err != nil {
+			run := Run{Status: StatusCompleted, Results: step.State.Results}
+			return fail(run, req.NodeID, err.Error())
+		}
 	}
-	if s.Resume == "" {
-		// Paused at a terminal human-task: resuming completes with the merged record.
-		return Run{Status: StatusCompleted, Output: ctx}
-	}
-	return walk(evalContext{ctx: context.Background()}, g, nodes, outgoing, s.Resume, ctx, nil, nil)
 }
 
 func indexGraph(g events.Graph) (map[string]events.Node, map[string][]events.Edge) {
@@ -163,59 +187,45 @@ func indexGraph(g events.Graph) (map[string]events.Node, map[string][]events.Edg
 	return nodes, outgoing
 }
 
-// walk runs the graph from `cur` with the given record, appending to prior trace
-// results (so a resumed run carries the full pre- and post-pause trace). It returns a
-// suspended run when a manual_review node is configured as a durable human task.
-func walk(ec evalContext, g events.Graph, nodes map[string]events.Node, outgoing map[string][]events.Edge, cur string, ctx map[string]any, prior []NodeResult, obs NodeObserver) Run {
-	run := Run{Status: StatusCompleted, Results: prior}
-	// The graph is acyclic (enforced at publish time); the step bound is a
-	// defensive backstop, not a correctness mechanism.
-	for step := 0; step <= len(g.Nodes); step++ {
-		n, ok := nodes[cur]
-		if !ok {
-			return fail(run, cur, fmt.Sprintf("decision-engine: edge to unknown node %q", cur))
-		}
-		var (
-			output any
-			next   string
-			err    error
+func preResolvedValue(record map[string]any, req EffectRequest) (any, error) {
+	bucket, ok := record[string(req.Kind)].(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf(
+			"decision-engine: %s node %q has no resolved data (no %s provider configured?)",
+			req.Kind, req.NodeID, effectProviderName(req.Kind),
 		)
-		if obs != nil {
-			done := obs.NodeStart(n.ID, n.Type)
-			output, next, err = evalNode(ec, n, ctx, outgoing[n.ID])
-			done(err)
-		} else {
-			output, next, err = evalNode(ec, n, ctx, outgoing[n.ID])
-		}
-		run.Results = append(run.Results, NodeResult{NodeID: n.ID, Type: n.Type, Output: toJSON(output)})
-		if err != nil {
-			return fail(run, n.ID, err.Error())
-		}
-		// A manual_review configured to suspend pauses the decision here (a durable
-		// human task) rather than passing through; the rest of the flow runs on resume.
-		if n.Type == events.NodeManualReview {
-			var cfg manualReviewConfig
-			if derr := decodeConfig(n, &cfg); derr == nil && cfg.Suspend {
-				run.Status = StatusSuspended
-				run.Suspend = &SuspendState{
-					NodeID: n.ID, Resume: next, OutputKey: cfg.OutputKey,
-					Record: cloneContext(ctx), Case: caseFrom(output),
-				}
-				return run
-			}
-		}
-		if n.Type == events.NodeOutput {
-			run.Output = asMap(output)
-			return run
-		}
-		if next == "" {
-			// Only an output node completes a run (handled above): any other node
-			// with nowhere to go is a wiring bug, not a quiet success.
-			return fail(run, n.ID, fmt.Sprintf("decision-engine: flow dead-ends at non-output node %q", n.ID))
-		}
-		cur = next
 	}
-	return fail(run, cur, "decision-engine: execution exceeded the node bound")
+	value, ok := bucket[req.Output]
+	if !ok {
+		return nil, fmt.Errorf("decision-engine: %s node %q output %q was not resolved", req.Kind, req.NodeID, req.Output)
+	}
+	return value, nil
+}
+
+func effectProviderName(kind EffectKind) string {
+	switch kind {
+	case EffectConnect:
+		return "connector"
+	case EffectAI:
+		return "agent"
+	case EffectPredict:
+		return "model"
+	default:
+		return "effect"
+	}
+}
+
+func nodeTypeForEffect(kind EffectKind) events.NodeType {
+	switch kind {
+	case EffectConnect:
+		return events.NodeConnect
+	case EffectAI:
+		return events.NodeAI
+	case EffectPredict:
+		return events.NodePredict
+	default:
+		return ""
+	}
 }
 
 // caseFrom extracts the case-escalation fields from a manual_review node's output.
@@ -717,9 +727,9 @@ type ConnectSpec struct {
 	SharesNPI       bool
 }
 
-// ConnectSpecs extracts the Connect nodes from a graph so the shell can pre-resolve
-// their connector calls before execution (keeping Execute pure). It fails loudly on
-// a Connect node missing its connector or output.
+// ConnectSpecs extracts the Connect nodes for read-only provider-reference
+// validation before a recorded invocation begins. Runtime calls are still yielded
+// lazily by the interpreter only when execution reaches the node.
 func ConnectSpecs(g events.Graph) ([]ConnectSpec, error) {
 	return nodeSpecs(g, events.NodeConnect, func(n events.Node, cfg connectConfig) ConnectSpec {
 		return ConnectSpec{NodeID: n.ID, Connector: cfg.Connector, Output: cfg.Output, RequiresConsent: cfg.RequiresConsent, SharesNPI: cfg.SharesNPI}
@@ -742,7 +752,7 @@ func (c predictConfig) namedOutput() (string, string, string, string) {
 	return "predict", "model", c.Model, c.Output
 }
 
-// nodeSpecs walks the graph and builds the shell-resolution spec for every node
+// nodeSpecs walks the graph and builds the provider-reference spec for every node
 // of one type — the single extractor behind ConnectSpecs/AISpecs/PredictSpecs,
 // including their shared name/output contract.
 func nodeSpecs[C namedOutputConfig, S any](g events.Graph, nt events.NodeType, build func(n events.Node, cfg C) S) ([]S, error) {
@@ -767,9 +777,9 @@ func nodeSpecs[C namedOutputConfig, S any](g events.Graph, nt events.NodeType, b
 	return out, nil
 }
 
-// evalConnect is pass-through: the shell pre-resolves the connector call and
-// injects the response under connect.<output>; the node echoes that into its
-// recorded output and fails loudly if it was not resolved.
+// evalConnect consumes the response that the yielded-effect shell injected under
+// connect.<output>; it echoes that value into the node trace and fails loudly if
+// the effect was not resolved.
 func evalConnect(n events.Node, ctx map[string]any, edges []events.Edge) (any, string, error) {
 	var cfg connectConfig
 	if err := decodeConfig(n, &cfg); err != nil {
@@ -788,9 +798,8 @@ type AISpec struct {
 	Prompt  string
 }
 
-// AISpecs extracts the AI nodes from a graph so the shell can pre-resolve their
-// agent runs before execution (keeping Execute pure). It fails loudly on an AI
-// node missing its agent or output.
+// AISpecs extracts the AI nodes for read-only provider-reference and immutable
+// version validation. Runtime calls remain lazy yielded effects.
 func AISpecs(g events.Graph) ([]AISpec, error) {
 	return nodeSpecs(g, events.NodeAI, func(n events.Node, cfg aiConfig) AISpec {
 		return AISpec{
@@ -800,8 +809,8 @@ func AISpecs(g events.Graph) ([]AISpec, error) {
 	})
 }
 
-// evalAI is pass-through: the shell pre-resolves the agent run and injects the
-// output under ai.<output>; the node echoes that into its recorded output.
+// evalAI consumes the yielded-effect response under ai.<output> and echoes it
+// into the recorded node output.
 func evalAI(n events.Node, ctx map[string]any, edges []events.Edge) (any, string, error) {
 	var cfg aiConfig
 	if err := decodeConfig(n, &cfg); err != nil {
@@ -817,18 +826,16 @@ type PredictSpec struct {
 	Output string
 }
 
-// PredictSpecs extracts the Predict nodes from a graph so the shell can pre-resolve
-// their model evaluations before execution (keeping Execute pure). It fails loudly
-// on a Predict node missing its model or output.
+// PredictSpecs extracts the Predict nodes for read-only provider-reference
+// validation. Runtime predictions remain lazy yielded effects.
 func PredictSpecs(g events.Graph) ([]PredictSpec, error) {
 	return nodeSpecs(g, events.NodePredict, func(n events.Node, cfg predictConfig) PredictSpec {
 		return PredictSpec{NodeID: n.ID, Model: cfg.Model, Output: cfg.Output}
 	})
 }
 
-// evalPredict is pass-through: the shell pre-resolves the model evaluation and
-// injects the prediction under predict.<output>; the node echoes that into its
-// recorded output.
+// evalPredict consumes the yielded-effect response under predict.<output> and
+// echoes it into the recorded node output.
 func evalPredict(n events.Node, ctx map[string]any, edges []events.Edge) (any, string, error) {
 	var cfg predictConfig
 	if err := decodeConfig(n, &cfg); err != nil {

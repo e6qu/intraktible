@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 apiVersion: v2
 name: intraktible
-description: Event-sourced agentic decision platform — API tier + singleton scheduler tier.
+description: Event-sourced agentic decision platform — API, durable worker, and singleton scheduler tiers.
 type: application
 version: 0.1.0
 appVersion: "0.1.0"

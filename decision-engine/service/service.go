@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -111,6 +112,7 @@ func (s *Service) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/flows/{flow_id}/node-stats", s.nodeStats)
 	mux.HandleFunc("POST /v1/flows/{flow_id}/coverage", s.coverage)
 	mux.HandleFunc("GET /v1/decisions", s.listDecisions)
+	mux.HandleFunc("GET /v1/decisions/summary", s.decisionSummary)
 	mux.HandleFunc("GET /v1/decisions/{decision_id}", s.getDecision)
 	mux.HandleFunc("GET /v1/decisions/{decision_id}/export", s.exportDecision)
 	mux.HandleFunc("POST /v1/decisions/{decision_id}/resume", s.resumeDecision)
@@ -1256,12 +1258,14 @@ func (s *Service) decideDeploymentRequest(w http.ResponseWriter, r *http.Request
 }
 
 type decideRequest struct {
-	Data       map[string]any  `json:"data"`
-	EntityType string          `json:"entity_type,omitempty"`
-	EntityID   string          `json:"entity_id,omitempty"`
-	MockData   map[string]any  `json:"mock_data,omitempty"`
-	Metadata   json.RawMessage `json:"metadata,omitempty"`
-	Control    json.RawMessage `json:"control,omitempty"`
+	Data              map[string]any          `json:"data"`
+	EntityType        string                  `json:"entity_type,omitempty"`
+	EntityID          string                  `json:"entity_id,omitempty"`
+	BusinessReference string                  `json:"business_reference,omitempty"`
+	CorrelationID     string                  `json:"correlation_id,omitempty"`
+	MockData          map[string]any          `json:"mock_data,omitempty"`
+	Metadata          json.RawMessage         `json:"metadata,omitempty"`
+	Control           events.ExecutionControl `json:"control,omitempty"`
 	// Preview runs the flow without recording anything (no decision event, no case,
 	// no metrics/audit) — the builder's "Test decision". The response carries the
 	// same shape but an empty decision_id, since no decision was recorded.
@@ -1397,6 +1401,8 @@ func decideStatus(err error) int {
 		return http.StatusBadRequest
 	case errors.Is(err, command.ErrNotFound):
 		return http.StatusNotFound
+	case errors.Is(err, command.ErrInProgress):
+		return http.StatusConflict
 	default:
 		return http.StatusInternalServerError
 	}
@@ -1417,13 +1423,31 @@ func (s *Service) runDecide(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ref := command.EntityRef{Type: entity.Type(req.EntityType), ID: entity.ID(req.EntityID)}
-	// Preview ("Test decision") runs the flow without recording anything; the live
-	// path records the decision (history, metrics, audit) as before.
-	decide := s.decide.Decide
-	if req.Preview {
-		decide = s.decide.Preview
+	correlationID := req.CorrelationID
+	if correlationID == "" {
+		correlationID = r.Header.Get("X-Correlation-ID")
 	}
-	result, err := decide(r.Context(), id, r.PathValue("slug"), env, req.Data, ref)
+	invocation := command.Invocation{
+		Data: req.Data, Entity: ref,
+		IdempotencyKey:    r.Header.Get("Idempotency-Key"),
+		BusinessReference: req.BusinessReference, CorrelationID: correlationID,
+		Metadata: req.Metadata, Control: req.Control, MockData: req.MockData,
+	}
+	// Preview ("Test decision") runs the flow without recording anything; the live
+	// path records and deduplicates the complete invocation contract.
+	var (
+		result command.DecideResult
+		err    error
+	)
+	if req.Preview {
+		result, err = s.decide.PreviewWithInvocation(
+			r.Context(), id, r.PathValue("slug"), env, invocation,
+		)
+	} else {
+		result, err = s.decide.DecideWithInvocation(
+			r.Context(), id, r.PathValue("slug"), env, invocation,
+		)
+	}
 	if err != nil {
 		httpx.Error(w, decideStatus(err), err)
 		return
@@ -1811,19 +1835,43 @@ func (s *Service) listDecisions(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, page)
 }
 
+func (s *Service) decisionSummary(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	summary, err := history.SummarizeExecution(r.Context(), s.store, id)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, summary)
+}
+
 // decisionFilter parses the Decisions list query string: flow/env/status/variant,
-// a decision-id search q, an RFC3339 time range (start_time/end_time, with since/
-// until accepted as aliases), and limit/offset.
+// subject and caller tracking dimensions, a cross-reference search q, an RFC3339
+// time range (start_time/end_time, with since/until accepted as aliases), and
+// limit/offset.
 func decisionFilter(r *http.Request) (history.Filter, error) {
 	q := r.URL.Query()
+	metadata, err := metadataFilter(q)
+	if err != nil {
+		return history.Filter{}, err
+	}
+	limit, err := decisionPageInt("limit", q.Get("limit"))
+	if err != nil {
+		return history.Filter{}, err
+	}
+	offset, err := decisionPageInt("offset", q.Get("offset"))
+	if err != nil {
+		return history.Filter{}, err
+	}
 	f := history.Filter{
-		Slug:        q.Get("flow"),
-		Environment: q.Get("env"),
-		Status:      q.Get("status"),
-		Variant:     q.Get("variant"),
-		Query:       q.Get("q"),
-		Limit:       atoiDefault(q.Get("limit"), 0),
-		Offset:      atoiDefault(q.Get("offset"), 0),
+		Slug: q.Get("flow"), Environment: q.Get("env"),
+		Status: q.Get("status"), Variant: q.Get("variant"),
+		EntityType: q.Get("entity_type"), EntityID: q.Get("entity_id"),
+		BusinessReference: q.Get("business_reference"), CorrelationID: q.Get("correlation_id"),
+		Metadata: metadata, Query: q.Get("q"), Limit: limit, Offset: offset,
 	}
 	// A malformed bound is refused rather than dropped. Dropping it returned the
 	// UNFILTERED set for a caller who believes they are looking at a time window —
@@ -1839,6 +1887,44 @@ func decisionFilter(r *http.Request) (history.Filter, error) {
 	}
 	f.Since, f.Until = since, until
 	return f, nil
+}
+
+func decisionPageInt(name, raw string) (int, error) {
+	if raw == "" {
+		return 0, nil
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value < 0 {
+		return 0, fmt.Errorf("%s must be a non-negative integer", name)
+	}
+	if name == "limit" && value > history.MaxPageSize {
+		return 0, fmt.Errorf("limit must be at most %d", history.MaxPageSize)
+	}
+	return value, nil
+}
+
+// metadataFilter implements OpenAPI deepObject query encoding:
+// metadata[channel]=branch. Only top-level scalar values are indexed; repeated
+// keys are rejected so a caller never receives an ambiguously widened result.
+func metadataFilter(query url.Values) (map[string]string, error) {
+	const prefix = "metadata["
+	var fields map[string]string
+	for parameter, values := range query {
+		if !strings.HasPrefix(parameter, prefix) {
+			continue
+		}
+		if !strings.HasSuffix(parameter, "]") || len(parameter) <= len(prefix)+1 {
+			return nil, fmt.Errorf("metadata filter %q must use metadata[field]", parameter)
+		}
+		if len(values) != 1 {
+			return nil, fmt.Errorf("metadata filter %q must have exactly one value", parameter)
+		}
+		if fields == nil {
+			fields = make(map[string]string)
+		}
+		fields[parameter[len(prefix):len(parameter)-1]] = values[0]
+	}
+	return fields, nil
 }
 
 // optionalTime parses an RFC3339 bound. An absent bound is the zero time (no
@@ -1954,6 +2040,16 @@ func (s *Service) maskRecord(ctx context.Context, id identity.Identity, rec hist
 			return history.Record{}, fmt.Errorf("decision-engine: unseal output: %w", err)
 		}
 		rec.Output = o
+		m, err := s.eraser.OpenFields(ctx, id, subject, rec.Metadata)
+		if err != nil {
+			return history.Record{}, fmt.Errorf("decision-engine: unseal metadata: %w", err)
+		}
+		rec.Metadata = m
+		suspend, err := s.eraser.OpenFields(ctx, id, subject, rec.SuspendState)
+		if err != nil {
+			return history.Record{}, fmt.Errorf("decision-engine: unseal suspend state: %w", err)
+		}
+		rec.SuspendState = suspend
 		// Node-trace outputs are sealed at write time too — unseal them here (or
 		// surface "[erased]") so the trace stays readable while erasure still shreds.
 		for i := range rec.Nodes {
@@ -1962,6 +2058,16 @@ func (s *Service) maskRecord(ctx context.Context, id identity.Identity, rec hist
 				return history.Record{}, fmt.Errorf("decision-engine: unseal node %q: %w", rec.Nodes[i].NodeID, err)
 			}
 			rec.Nodes[i].Output = n
+		}
+		for i := range rec.Effects {
+			output, err := s.eraser.OpenFields(ctx, id, subject, rec.Effects[i].Output)
+			if err != nil {
+				return history.Record{}, fmt.Errorf(
+					"decision-engine: unseal effect %q: %w",
+					rec.Effects[i].EffectID, err,
+				)
+			}
+			rec.Effects[i].Output = output
 		}
 	}
 	// Fail closed: a masking-config read error must block the record, not serve it raw.
@@ -1978,8 +2084,13 @@ func maskRecord(rec history.Record, fields map[string]bool) history.Record {
 	}
 	rec.Data = privacy.Mask(rec.Data, fields)
 	rec.Output = privacy.Mask(rec.Output, fields)
+	rec.Metadata = privacy.Mask(rec.Metadata, fields)
+	rec.SuspendState = privacy.Mask(rec.SuspendState, fields)
 	for i := range rec.Nodes {
 		rec.Nodes[i].Output = privacy.Mask(rec.Nodes[i].Output, fields)
+	}
+	for i := range rec.Effects {
+		rec.Effects[i].Output = privacy.Mask(rec.Effects[i].Output, fields)
 	}
 	return rec
 }

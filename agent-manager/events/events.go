@@ -16,9 +16,14 @@ const StreamAgents = "agents"
 
 // Agent Manager event types.
 const (
-	TypeAgentDefined     = "agents.defined"
-	TypeAgentRunStarted  = "agents.run_started"
-	TypeAgentRunRecorded = "agents.run_recorded"
+	TypeAgentDefined            = "agents.defined"
+	TypeAgentRunStarted         = "agents.run_started"
+	TypeAgentRunClaimed         = "agents.run_claimed"
+	TypeAgentRunHeartbeat       = "agents.run_heartbeat"
+	TypeAgentRunRetryRequested  = "agents.run_retry_requested"
+	TypeAgentRunCancelRequested = "agents.run_cancel_requested"
+	TypeAgentRunDeadLettered    = "agents.run_dead_lettered"
+	TypeAgentRunRecorded        = "agents.run_recorded"
 )
 
 // AgentDefined registers (or redefines) an agent's configuration.
@@ -36,10 +41,54 @@ type AgentDefined struct {
 // running by a crash/shutdown can be recovered (re-enqueued) on boot. A
 // subsequent AgentRunRecorded for the same RunID folds it to its terminal state.
 type AgentRunStarted struct {
-	RunID  string    `json:"run_id"`
-	Agent  string    `json:"agent"`
-	Prompt string    `json:"prompt"`
-	At     time.Time `json:"at"`
+	RunID              string    `json:"run_id"`
+	Agent              string    `json:"agent"`
+	Prompt             string    `json:"prompt"`
+	Version            int       `json:"version,omitempty"`
+	TimeoutMS          int64     `json:"timeout_ms,omitempty"`
+	MaxAttempts        int       `json:"max_attempts"`
+	IdempotencyKeyHash string    `json:"idempotency_key_hash,omitempty"`
+	RequestHash        string    `json:"request_hash,omitempty"`
+	BusinessReference  string    `json:"business_reference,omitempty"`
+	CorrelationID      string    `json:"correlation_id,omitempty"`
+	At                 time.Time `json:"at"`
+}
+
+type AgentRunClaimed struct {
+	RunID      string    `json:"run_id"`
+	Owner      string    `json:"owner"`
+	Attempt    int       `json:"attempt"`
+	LeaseUntil time.Time `json:"lease_until"`
+}
+
+type AgentRunHeartbeat struct {
+	RunID      string    `json:"run_id"`
+	Owner      string    `json:"owner"`
+	Attempt    int       `json:"attempt"`
+	LeaseUntil time.Time `json:"lease_until"`
+}
+
+type AgentRunRetryRequested struct {
+	RunID                  string    `json:"run_id"`
+	Actor                  string    `json:"actor"`
+	AcknowledgeAtLeastOnce bool      `json:"acknowledge_at_least_once"`
+	Reason                 string    `json:"reason"`
+	At                     time.Time `json:"at"`
+}
+
+type AgentRunCancelRequested struct {
+	RunID string    `json:"run_id"`
+	Actor string    `json:"actor"`
+	At    time.Time `json:"at"`
+}
+
+type AgentRunDeadLettered struct {
+	RunID   string    `json:"run_id"`
+	Agent   string    `json:"agent"`
+	Prompt  string    `json:"prompt"`
+	Attempt int       `json:"attempt"`
+	Error   string    `json:"error"`
+	At      time.Time `json:"at"`
 }
 
 // AgentRunRecorded records one agent invocation and its outcome. Text is set for a
@@ -62,6 +111,7 @@ type AgentRunRecorded struct {
 	// unchanged (they report 0) — the event shape stays replay-stable.
 	PromptTokens     int       `json:"prompt_tokens,omitempty"`
 	CompletionTokens int       `json:"completion_tokens,omitempty"`
+	Attempt          int       `json:"attempt,omitempty"`
 	At               time.Time `json:"at"`
 }
 
