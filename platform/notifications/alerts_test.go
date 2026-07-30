@@ -8,6 +8,7 @@ import (
 	"time"
 
 	deevents "github.com/e6qu/intraktible/decision-engine/events"
+	"github.com/e6qu/intraktible/decision-engine/experiments"
 	"github.com/e6qu/intraktible/decision-engine/monitor"
 	"github.com/e6qu/intraktible/decision-engine/policy"
 	"github.com/e6qu/intraktible/platform/eventlog"
@@ -50,6 +51,10 @@ func TestOperationalAndApprovalAlertsReachRoleQueues(t *testing.T) {
 		policy.ApprovalRequested{
 			RequestID: "policy-req-1", PolicyID: "policy-1", Version: 4,
 		})
+	emit(experiments.Stream, experiments.TypeLaunchRequested,
+		experiments.LaunchRequested{
+			RequestID: "experiment-req-1", ExperimentID: "experiment-1", Cohort: 2,
+		})
 	emit(deevents.StreamFlows, deevents.TypeDeployScheduleActivated,
 		deevents.DeployScheduleActivated{
 			ScheduleID: "sch-1", FlowID: "flow-1", Environment: "production", Version: 3, PriorVersion: 2,
@@ -83,7 +88,7 @@ func TestOperationalAndApprovalAlertsReachRoleQueues(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(approvals) != 3 {
+	if len(approvals) != 4 {
 		t.Fatalf("approval queue wrong: %+v", approvals)
 	}
 	got := map[string]string{}
@@ -93,7 +98,8 @@ func TestOperationalAndApprovalAlertsReachRoleQueues(t *testing.T) {
 		}
 		got[approval.SubjectType] = approval.SubjectID
 	}
-	if got["flow"] != "flow-1" || got["model"] != "risk-model" || got["policy"] != "policy-1" {
+	if got["flow"] != "flow-1" || got["model"] != "risk-model" ||
+		got["policy"] != "policy-1" || got["experiment"] != "experiment-1" {
 		t.Fatalf("approval subjects = %+v", got)
 	}
 	if hidden, err := notifications.List(ctx, st,
@@ -133,6 +139,12 @@ func TestTerminalApprovalRetiresSharedWork(t *testing.T) {
 	})
 	emit(policy.StreamPolicies, policy.TypePolicyApprovalApproved, policy.ApprovalApproved{
 		RequestID: "policy-approved", PolicyID: "policy-1", Version: 4, Reason: "bands reviewed",
+	})
+	emit(experiments.Stream, experiments.TypeLaunchRequested, experiments.LaunchRequested{
+		RequestID: "experiment-approved", ExperimentID: "experiment-1", Cohort: 1,
+	})
+	emit(experiments.Stream, experiments.TypeLaunchApproved, experiments.LaunchApproved{
+		RequestID: "experiment-approved", ExperimentID: "experiment-1", Cohort: 1,
 	})
 
 	st := store.NewMemory()

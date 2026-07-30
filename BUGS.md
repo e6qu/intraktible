@@ -1,7 +1,22 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+
 # intraktible — Known Issues & Bugs
 
 Tracked alongside `PLAN.md`; updated in the same PR at the end of every phase.
 Format: `ID | severity | component | description | status`.
+
+## Enterprise PR E2 — experimentation, outcomes, and population automation
+
+- `E2-1 | CRITICAL | decision-engine/experiments | legacy request-time challenger percentages did not define a hypothesis, stable subject population, eligibility, KPI, or governed lifecycle. A first-class event-sourced experiment aggregate now binds those fields to exact flow-version arms, basis-point allocation, salt, guardrails, minimum evidence, windows, and draft/running/paused/completed/cancelled states. | fixed`
+- `E2-2 | CRITICAL | decision-engine/experiments | a traffic assignment was treated as experimental evidence even when execution never reached the treatment. Salted subject assignment is stable across retries/replicas/restarts, while a separate idempotent exposure is recorded only after the selected treatment is reached and the decision completes; decision history retains experiment/cohort/arm lineage. | fixed`
+- `E2-3 | HIGH | decision-engine/outcomes | model-specific binary actuals could not represent general business KPIs, late facts, source lineage, continuous values, or corrections. Idempotent decision-linked outcomes now record event/observation/source/label-version evidence, derive flow/treatment/model lineage from immutable execution, and preserve every superseded revision. | fixed`
+- `E2-4 | HIGH | decision-engine/experiments | directional arm movement could be mistaken for proof. Analysis now computes binary or continuous estimates, confidence intervals, effect size, minimum-sample/effect checks, sample-ratio mismatch, and guardrail regressions, with explicit collecting/underpowered/invalid/inconclusive/winner states and complete non-null empty shapes. | fixed`
+- `E2-5 | HIGH | fairlending + models + shadow | fairness, predictive performance, and shadow comparisons could blend evidence from unlike treatment/version populations. Fair-lending and generalized model performance accept exact experiment/cohort/arm filters; shadow retains separately keyed live/candidate/policy/experiment cohorts across changes and replay. | fixed`
+- `E2-6 | CRITICAL | decision-engine/population | synchronous batch/NDJSON transports had no durable population resource, progress, recovery ownership, or retained manifest. Decision and record-free backtest jobs now use immutable bounded manifests, per-item identities and attempts, bounded concurrency, distributed leases/heartbeats, lifecycle controls, partial failure, NDJSON results, and retention. | fixed`
+- `E2-7 | CRITICAL | decision-engine/population | an expired claimed item still occupied a concurrency slot, but the worker checked the limit before recovery; a job at its limit could therefore strand killed-worker work forever. Tick now lets the expired claim consume its own slot while pending/retry items still obey the cap; a two-replica killed-worker race proves one successor claim and terminal outcome. | fixed`
+- `E2-8 | HIGH | schedulers | time-window experiment completion and population result expiry needed durable, idempotent sweeps. Scheduler tests prove one completion across projection lag/replicas and replay-stable retention expiry; worker and scheduler ticks emit operational metrics. | fixed`
+- `E2-9 | HIGH | web | setup, launch review, reached exposure, outcome/correction, safe analysis, job controls/results, and production maker-checker were not one supported journey. Experiment and population list/detail surfaces, persona navigation, polling/in-flight states, decision drill-down, model/fair-lending integration, and three real-backend Playwright journeys now cover them; the walkthrough also caught and fixed missing dynamic-route build declarations and null collecting-analysis arrays. | fixed`
+- `E2-10 | HIGH | contracts + demo | the new aggregates were not usable as one public product contract. OpenAPI, typed Go/TypeScript SDKs, RBAC, notification inbox links, dashboard actions, seeded real event history, and deterministic replay now expose the same experiment/outcome/population semantics. | fixed`
 
 ## Enterprise PR E1 — durable execution integrity
 

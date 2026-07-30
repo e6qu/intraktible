@@ -34,19 +34,19 @@ applicable (different category). Competitor marks reflect vendor claims (see cav
 | Data-connector marketplace | 🟡 ~9 types (bureau/sanctions/plaid/sql) | ✅ ~200 claimed | ✅ ~270 claimed (KYC/KYB/AML) | — |
 | Model hosting (serve) | ✅ logistic/GBM/expr/external | ✅ Python endpoints | 🟡 import custom | ✅ (core product) |
 | Model training in-platform | 🟡 logistic only | ❌ | ❌ | ✅ GBM/NN/ensembles (core product) |
-| Explainability / adverse-action codes | 🟡 reason codes wired; no notice generation | 🟡 "white-box" claim; fair-lending via FairPlay | 🟡 audit trail | ✅ GIG method, FCRA/ECOA reason codes |
-| Fair-lending / disparate-impact | ❌ | 🟡 via FairPlay partner | ❌ | ✅ FairBoost LDA search |
-| Backtesting / simulation | ✅ incl. replay on recorded traffic | ✅ | ✅ backtest + what-if | 🟡 outcomes analysis (in docs) |
-| Champion/challenger + shadow | ✅ both | ✅ C/C (shadow not confirmed) | ✅ up to 5 + shadow | ❌ |
-| Versioning + maker-checker | ✅ flows (four-eyes); models bypass it | ✅ sign-off workflows | ✅ + rollback | 🟡 model lifecycle only |
+| Explainability / adverse-action codes | ✅ reasons + retained ECOA/FCRA notices | 🟡 "white-box" claim; fair-lending via FairPlay | 🟡 audit trail | ✅ GIG method, FCRA/ECOA reason codes |
+| Fair-lending / disparate-impact | ✅ four-fifths screening + exact experiment slices | 🟡 via FairPlay partner | ❌ | ✅ FairBoost LDA search |
+| Backtesting / simulation | ✅ exact-version diff + durable population jobs | ✅ | ✅ backtest + what-if | 🟡 outcomes analysis (in docs) |
+| Governed experiments + shadow | ✅ stable reached cohorts, outcomes, statistics + shadow | ✅ C/C (shadow not confirmed) | ✅ up to 5 + shadow | ❌ |
+| Versioning + maker-checker | ✅ flows, models, policies, experiments | ✅ sign-off workflows | ✅ + rollback | 🟡 model lifecycle only |
 | Drift monitoring | ✅ PSI + covariate + actuals | ❌ not claimed | 🟡 dashboards | ✅ input/output + fair-lending |
 | Audit / lineage / replay | ✅ event-sourced deterministic replay | 🟡 audit-ready; a reviewer reports weak lineage | ✅ audit trail | 🟡 model docs |
-| Case management / manual review | ✅ (case↔decision resume is manual) | ✅ Case Manager | ✅ + SAR/CTR e-file to FinCEN | ❌ |
+| Case management / manual review | ✅ durable suspend, review, and decision resume | ✅ Case Manager | ✅ + SAR/CTR e-file to FinCEN | ❌ |
 | Feature store (point-in-time) | ✅ as_of + versioning + cache | 🟡 light (Tecton partner for heavy) | ❌ | ❌ |
 | RBAC / SSO / SCIM | ✅ RBAC + OIDC + SAML + SCIM | ✅ (a reviewer reports role gaps) | ✅ RBAC + ABAC | — |
 | SOC 2 / ISO certs | ❌ | ✅ SOC2 II + ISO 27001 | ✅ SOC2 II | ❌ not confirmed |
-| Model-risk (SR 11-7) kit | 🟡 inventory report | 🟡 editorial | ❌ | ✅ Autodoc |
-| Scale / references | ❌ single-node, no load evidence, no users | ✅ Mercury/Monzo/Allianz; $184M raised | ✅ ~800 FIs; $1.55B val | ✅ Citi/CUs; $319M raised |
+| Model-risk (SR 11-7) kit | ✅ inventory, validation, monitoring, exports | 🟡 editorial | ❌ | ✅ Autodoc |
+| Scale / references | 🟡 multi-replica runtime; no public customer evidence | ✅ Mercury/Monzo/Allianz; $184M raised | ✅ ~800 FIs; $1.55B val | ✅ Citi/CUs; $319M raised |
 
 ## Per-competitor notes
 
@@ -59,9 +59,11 @@ applicable (different category). Competitor marks reflect vendor claims (see cav
   ecosystem and SAR/CTR e-filing. intraktible does not have that depth or any data-source relationships.
   On the overlap (rules + testing + audit), Alloy advertises SOC 2 and a large install base; intraktible
   does not. intraktible's distinct marks are self-host and event-sourced replay.
-- **Zest.** Complementary rather than competing. Zest covers the axes intraktible does not: model
-  training, FCRA/ECOA adverse-action reason codes (GIG), fair-lending (FairBoost), and SR 11-7 docs
-  (Autodoc). In a deployment, a Zest model could be the model inside an intraktible flow.
+- **Zest.** Complementary rather than competing. Zest's differentiators are advanced model
+  training, its GIG explanation method, FairBoost mitigation/search, and generated model
+  documentation; intraktible implements the surrounding decision, notice, screening, experimentation,
+  and governance workflows. In a deployment, a Zest model could be the model inside an intraktible
+  flow.
 - **Enterprise incumbents (FICO / SAS / IBM ODM / Provenir).** Long track records, self-managed
   deployment, many references. intraktible's difference is being open-source and self-hostable; it has
   none of the track record.

@@ -52,7 +52,7 @@
     await load();
   }
   // The route a notification's subject lives on, so a reviewer clicking a task reminder
-  // or an @-mention lands on the case/decision/flow/policy/agent/entity/model instead of just
+  // or an @-mention lands on the case/decision/flow/policy/experiment/agent/entity/model instead of just
   // marking it read in place.
   function subjectHref(n: Notification): string | undefined {
     if (!n.subject_id) return undefined;
@@ -75,6 +75,9 @@
     if (n.subject_type === 'model') {
       const panel = n.kind === 'approval' ? 'governance' : 'discussion';
       return appHref(`/models?${panel}=${encodeURIComponent(n.subject_id)}#model-${panel}`);
+    }
+    if (n.subject_type === 'experiment') {
+      return appHref(`/experiments/${encodeURIComponent(n.subject_id)}`);
     }
     if (n.subject_type === 'entity') {
       // The entity subject is "<type>/<id>" (one wire segment); split on the first

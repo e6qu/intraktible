@@ -11,6 +11,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/e6qu/intraktible/decision-engine/events"
@@ -30,6 +31,9 @@ const sampleCap = 10
 // output keys only; the linked live decision remains the value-bearing record.
 type ComparisonSample struct {
 	DecisionID        string   `json:"decision_id"`
+	ExperimentID      string   `json:"experiment_id,omitempty"`
+	ExperimentCohort  int      `json:"experiment_cohort,omitempty"`
+	ExperimentArm     string   `json:"experiment_arm,omitempty"`
 	LiveStatus        string   `json:"live_status"`
 	ShadowStatus      string   `json:"shadow_status,omitempty"`
 	LiveDisposition   string   `json:"live_disposition,omitempty"`
@@ -46,17 +50,21 @@ type ComparisonSample struct {
 // candidate version, comparison basis, or exact policy selection starts a new
 // cohort so the aggregate never blends unlike deployment evidence.
 type EnvShadow struct {
-	LiveVersion    int                     `json:"live_version"`
-	ShadowVersion  int                     `json:"shadow_version"`
-	MatchBasis     events.ShadowMatchBasis `json:"match_basis"`
-	PolicyID       string                  `json:"policy_id,omitempty"`
-	PolicyVersion  int                     `json:"policy_version,omitempty"`
-	Total          int                     `json:"total"`
-	Matched        int                     `json:"matched"`
-	Diverged       int                     `json:"diverged"`
-	Errored        int                     `json:"errored"`
-	SampleDiverged []string                `json:"sample_diverged,omitempty"` // compatibility: diverging live decision ids
-	Samples        []ComparisonSample      `json:"samples,omitempty"`
+	Environment      string                  `json:"environment"`
+	ExperimentID     string                  `json:"experiment_id,omitempty"`
+	ExperimentCohort int                     `json:"experiment_cohort,omitempty"`
+	ExperimentArm    string                  `json:"experiment_arm,omitempty"`
+	LiveVersion      int                     `json:"live_version"`
+	ShadowVersion    int                     `json:"shadow_version"`
+	MatchBasis       events.ShadowMatchBasis `json:"match_basis"`
+	PolicyID         string                  `json:"policy_id,omitempty"`
+	PolicyVersion    int                     `json:"policy_version,omitempty"`
+	Total            int                     `json:"total"`
+	Matched          int                     `json:"matched"`
+	Diverged         int                     `json:"diverged"`
+	Errored          int                     `json:"errored"`
+	SampleDiverged   []string                `json:"sample_diverged,omitempty"` // compatibility: diverging live decision ids
+	Samples          []ComparisonSample      `json:"samples,omitempty"`
 }
 
 // Report is the materialized shadow comparison for one flow, by environment.
@@ -65,6 +73,7 @@ type Report struct {
 	Workspace string               `json:"workspace"`
 	FlowID    string               `json:"flow_id"`
 	ByEnv     map[string]EnvShadow `json:"by_env"`
+	Cohorts   map[string]EnvShadow `json:"cohorts,omitempty"`
 	UpdatedAt time.Time            `json:"updated_at"`
 }
 
@@ -89,8 +98,8 @@ func (Projector) Apply(ctx context.Context, e eventlog.Envelope, s store.Store) 
 	if p.FlowID == "" {
 		return fmt.Errorf("decision_shadow: event seq %d has no flow id", e.Seq)
 	}
-	key := store.Key(e.Org, e.Workspace, p.FlowID)
-	rep, _, err := store.GetDoc[Report](ctx, s, Collection, key)
+	docKey := store.Key(e.Org, e.Workspace, p.FlowID)
+	rep, _, err := store.GetDoc[Report](ctx, s, Collection, docKey)
 	if err != nil {
 		return err
 	}
@@ -98,37 +107,59 @@ func (Projector) Apply(ctx context.Context, e eventlog.Envelope, s store.Store) 
 	if rep.ByEnv == nil {
 		rep.ByEnv = map[string]EnvShadow{}
 	}
-	env := rep.ByEnv[p.Environment]
-	// Any cohort dimension changing restarts the evidence for that environment.
-	// Most importantly, deploying a new champion or approving a new policy must
-	// not leave the old comparison ratio looking applicable.
-	if env.LiveVersion != p.LiveVersion ||
-		env.ShadowVersion != p.ShadowVersion ||
-		env.MatchBasis != p.MatchBasis ||
-		env.PolicyID != p.PolicyID ||
-		env.PolicyVersion != p.PolicyVersion {
-		env = EnvShadow{
-			LiveVersion: p.LiveVersion, ShadowVersion: p.ShadowVersion,
-			MatchBasis: p.MatchBasis, PolicyID: p.PolicyID, PolicyVersion: p.PolicyVersion,
+	if rep.Cohorts == nil {
+		rep.Cohorts = map[string]EnvShadow{}
+		// Upgrade a live projection created before exact shadow-cohort keys existed.
+		// A full replay produces the same keys directly.
+		for environment, prior := range rep.ByEnv {
+			prior.Environment = environment
+			rep.Cohorts[cohortKey(prior)] = prior
 		}
 	}
-	env.Total++
+	next := EnvShadow{
+		Environment:  p.Environment,
+		ExperimentID: p.ExperimentID, ExperimentCohort: p.ExperimentCohort,
+		ExperimentArm: p.ExperimentArm,
+		LiveVersion:   p.LiveVersion, ShadowVersion: p.ShadowVersion,
+		MatchBasis: p.MatchBasis, PolicyID: p.PolicyID, PolicyVersion: p.PolicyVersion,
+	}
+	cohortID := cohortKey(next)
+	cohort := rep.Cohorts[cohortID]
+	if cohort.Environment == "" {
+		cohort = next
+	}
+	cohort.Total++
 	switch {
 	case p.ShadowError != "":
-		env.Errored++
-		env.addSample(p)
+		cohort.Errored++
+		cohort.addSample(p)
 	case p.Matched:
-		env.Matched++
+		cohort.Matched++
 	default:
-		env.Diverged++
-		if len(env.SampleDiverged) < sampleCap {
-			env.SampleDiverged = append(env.SampleDiverged, p.DecisionID)
+		cohort.Diverged++
+		if len(cohort.SampleDiverged) < sampleCap {
+			cohort.SampleDiverged = append(cohort.SampleDiverged, p.DecisionID)
 		}
-		env.addSample(p)
+		cohort.addSample(p)
 	}
-	rep.ByEnv[p.Environment] = env
+	rep.Cohorts[cohortID] = cohort
+	// ByEnv remains the most recently observed exact cohort for compatibility.
+	// Cohorts retains all distinct evidence instead of blending or discarding it.
+	rep.ByEnv[p.Environment] = cohort
 	rep.UpdatedAt = e.Time
-	return store.PutDoc(ctx, s, Collection, key, rep)
+	return store.PutDoc(ctx, s, Collection, docKey, rep)
+}
+
+func cohortKey(cohort EnvShadow) string {
+	return cohort.Environment + "\x00" +
+		strconv.Itoa(cohort.LiveVersion) + "\x00" +
+		strconv.Itoa(cohort.ShadowVersion) + "\x00" +
+		string(cohort.MatchBasis) + "\x00" +
+		cohort.PolicyID + "\x00" +
+		strconv.Itoa(cohort.PolicyVersion) + "\x00" +
+		cohort.ExperimentID + "\x00" +
+		strconv.Itoa(cohort.ExperimentCohort) + "\x00" +
+		cohort.ExperimentArm
 }
 
 func (s *EnvShadow) addSample(p events.ShadowEvaluated) {
@@ -136,8 +167,10 @@ func (s *EnvShadow) addSample(p events.ShadowEvaluated) {
 		return
 	}
 	s.Samples = append(s.Samples, ComparisonSample{
-		DecisionID: p.DecisionID,
-		LiveStatus: p.LiveStatus, ShadowStatus: p.ShadowStatus,
+		DecisionID:   p.DecisionID,
+		ExperimentID: p.ExperimentID, ExperimentCohort: p.ExperimentCohort,
+		ExperimentArm: p.ExperimentArm,
+		LiveStatus:    p.LiveStatus, ShadowStatus: p.ShadowStatus,
 		LiveDisposition: p.LiveDisposition, ShadowDisposition: p.ShadowDisposition,
 		LiveCode: p.LiveCode, ShadowCode: p.ShadowCode,
 		LiveReason: p.LiveReason, ShadowReason: p.ShadowReason,

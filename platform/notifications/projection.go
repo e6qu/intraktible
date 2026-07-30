@@ -12,6 +12,7 @@ import (
 
 	cmevents "github.com/e6qu/intraktible/case-manager/events"
 	deevents "github.com/e6qu/intraktible/decision-engine/events"
+	"github.com/e6qu/intraktible/decision-engine/experiments"
 	"github.com/e6qu/intraktible/decision-engine/monitor"
 	"github.com/e6qu/intraktible/decision-engine/policy"
 	"github.com/e6qu/intraktible/platform/comments"
@@ -115,6 +116,12 @@ func (Projector) Apply(ctx context.Context, e eventlog.Envelope, s store.Store) 
 		return applyDeploymentApproved(ctx, e, s)
 	case deevents.TypeDeploymentRejected:
 		return applyDeploymentRejected(ctx, e, s)
+	case experiments.TypeLaunchRequested:
+		return applyExperimentLaunchRequested(ctx, e, s)
+	case experiments.TypeLaunchApproved:
+		return applyExperimentLaunchApproved(ctx, e, s)
+	case experiments.TypeLaunchRejected:
+		return applyExperimentLaunchRejected(ctx, e, s)
 	case deevents.TypeFlowVersionRolledBack:
 		return applyFlowRolledBack(ctx, e, s)
 	case deevents.TypeDeployScheduleActivated:

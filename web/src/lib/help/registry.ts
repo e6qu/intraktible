@@ -51,6 +51,141 @@ export const HELP = new Map<string, PageHelp>([
     }
   ],
   [
+    '/experiments',
+    {
+      title: 'Experiments',
+      summary:
+        'Set up governed champion/challenger cohorts over immutable flow versions. Assignment is stable by subject and only reached treatments count as exposures.',
+      capabilities: [
+        'Create a draft with a hypothesis, owner, stable-subject expression, allocation, KPI, power, and confidence contract.',
+        'Choose exact published versions for champion and challenger arms.',
+        'Open a cohort to launch, monitor, analyse, stop, and promote it.',
+        'Find experiments by name, owner, or hypothesis through Search (⌘K).'
+      ],
+      journeys: [
+        {
+          name: 'Create an experiment cohort',
+          steps: [
+            'Click New experiment.',
+            'Choose the flow, environment, exact champion/challenger versions, and allocation.',
+            'Define the stable subject expression, hypothesis, primary KPI, minimum sample, effect, and confidence.',
+            'Click Create draft and review the complete cohort configuration before launch.'
+          ]
+        },
+        {
+          name: 'Review experiment health',
+          steps: [
+            'Open an experiment row.',
+            'Read its lifecycle state, exposure counts, and current analysis status.',
+            'Use the reached-treatment rows to drill into the decisions behind the cohort.'
+          ]
+        }
+      ]
+    }
+  ],
+  [
+    '/experiments/[experimentId]',
+    {
+      title: 'Experiment cohort',
+      summary:
+        'Operate one governed cohort from setup through attributable outcomes and statistically gated promotion.',
+      capabilities: [
+        'Edit a draft as a new cohort namespace and launch it with production maker-checker review.',
+        'Pause, resume, complete, or cancel traffic assignment.',
+        'Record decision-linked business outcomes and append auditable corrections.',
+        'Inspect sample size, intervals, effect size, SRM, guardrails, assumptions, and exact exposures.',
+        'Open a deployment request only when a completed analysis has a valid winner.'
+      ],
+      journeys: [
+        {
+          name: 'Launch a cohort',
+          steps: [
+            'Review the pinned versions, allocation, KPI, and stable-subject configuration.',
+            'Click Start; sandbox/staging starts directly, while production becomes pending launch.',
+            'For production, a different approver enters a reason and clicks Approve launch.',
+            'Confirm the state is running before sending eligible traffic.'
+          ]
+        },
+        {
+          name: 'Attribute an observed outcome',
+          steps: [
+            'Under Outcome attribution, choose a reached decision.',
+            'Enter the KPI value, event time, source system/record, and label version.',
+            'Click Record outcome; treatment and model lineage are derived from immutable decision evidence.',
+            'Use Correct to append a changed fact without deleting its earlier revisions.'
+          ]
+        },
+        {
+          name: 'Stop and promote a winner',
+          steps: [
+            'Click Stop & analyse when the observation period is complete.',
+            'Read the status and reason; invalid, underpowered, inconclusive, or failed-guardrail cohorts show No winner can be called.',
+            'When the completed report says Winner, click Open governed winner deployment.',
+            'A separate deployment request carries the winning exact version into the normal approval journey.'
+          ]
+        }
+      ]
+    }
+  ],
+  [
+    '/population',
+    {
+      title: 'Population jobs',
+      summary:
+        'Create durable bulk decisions or record-free backtests whose inputs, exact versions, cohort assignments, progress, and results survive worker restarts.',
+      capabilities: [
+        'Create a job from JSON rows with bounded concurrency, retries, and retention.',
+        'Choose recorded decisions or record-free backtests explicitly.',
+        'Track queued, running, paused, completed, failed, and cancelled jobs.',
+        'Open a job to inspect every pinned item and attempt.'
+      ],
+      journeys: [
+        {
+          name: 'Run a durable population',
+          steps: [
+            'Click New population job and choose Backtest or Decision.',
+            'Choose the flow/environment and set concurrency, attempts, and result retention.',
+            'Paste a JSON array of raw data rows or full item objects.',
+            'Click Create durable job; the server snapshots exact versions and cohort arms before work begins.'
+          ]
+        }
+      ]
+    }
+  ],
+  [
+    '/population/[jobId]',
+    {
+      title: 'Population job',
+      summary:
+        'Operate and audit one durable population manifest, including worker leases, attempts, partial failures, and retained results.',
+      capabilities: [
+        'Watch live per-item and aggregate progress.',
+        'Pause, resume, or cancel non-terminal work.',
+        'Retry exhausted failed items after reviewing their errors.',
+        'Download the terminal NDJSON result manifest before its retention deadline.',
+        'Drill from recorded result rows into their decision traces.'
+      ],
+      journeys: [
+        {
+          name: 'Control active work',
+          steps: [
+            'Watch succeeded, failed, running, and pending counts update.',
+            'Enter an operational reason and click Pause or Cancel.',
+            'Click Resume on a paused job; workers continue uncompleted items from durable claims.'
+          ]
+        },
+        {
+          name: 'Recover partial failure',
+          steps: [
+            'Open a completed with errors job and inspect each terminal error.',
+            'Click Retry failed items to requeue only the failed logical rows.',
+            'After completion, click Download NDJSON results for the final manifest.'
+          ]
+        }
+      ]
+    }
+  ],
+  [
     '/engine',
     {
       title: 'Flows',

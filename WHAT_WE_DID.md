@@ -613,3 +613,35 @@ Linux, entirely that VM's fsync path.
   nine jobs: Go race/security/license gates, 125 native browser journeys, 83
   real-Wasm journeys, the embedded artifact, real PostgreSQL, real Shauth SSO,
   Terraform, web, and container-release contracts all pass.
+- 2026-07-30: Verified E1 final head `c177798` repeated all nine hosted jobs
+  green in run `30515124922`; PR #160 then merged as authoritative `fea2a7e`.
+- 2026-07-30: Fetched and reconciled merged `origin/main`, confirmed the remote
+  PR queue is empty, and cut `enterprise/e2-experiments-population` directly
+  from `fea2a7e` for the complete `PLAN.md` §8b.3 vertical tranche.
+- 2026-07-30: Implemented E2's governed experiment, stable reached-exposure,
+  correctable business-outcome, statistical analysis, durable population-job,
+  API/SDK/UI/notification, real-demo, and replay vertical; the assembled
+  `TestExperimentOutcomeAndPopulationHTTPJourney` passes.
+- 2026-07-30: Unified exact cohort evidence across fair-lending, corrected
+  business-outcome model performance, and shadow comparisons; focused
+  model/shadow/fair-lending/OpenAPI tests pass.
+- 2026-07-30: Failure-tested population and experiment schedulers, fixed expired
+  claims being blocked forever by their own concurrency slot, and proved two
+  replacement replicas recover one killed-worker item with one successor claim
+  and result; stop-window projection lag and idempotent result expiry also pass.
+- 2026-07-30: Closed the E2 browser journeys: all 3 real-backend tests prove
+  stable cohorts and corrected outcomes, durable backtest/result download, and
+  production maker-checker launch; the walkthrough fixed missing dynamic-route
+  packaging and made empty collecting analysis return complete array shapes.
+- 2026-07-30: Reconciled PLAN/BUGS/JOURNEYS/ENTERPRISE/GAPS/COMPETITIVE and the
+  component/public guides with the shipped governed experiment, generalized
+  outcome, exact-cohort, and durable population contracts.
+- 2026-07-30: Completed the local E2 matrix: `make check`, strict `make ci`, 232
+  frontend units + production build, 128 native journeys, 83 real-Wasm
+  journeys, 3 embedded smokes, 18 Terraform contracts, and the container
+  release contract. CI-driven cleanup reached zero dead code and zero clone
+  groups; the assembled E2 journey passes five consecutive race runs across
+  projection lag.
+- 2026-07-30: Pushed the 79-file E2 implementation as `0eaa5a5`, opened sole
+  PR #161, and babysat hosted run `30527793916` to terminal green across all
+  nine jobs, including real PostgreSQL, real-Wasm, SSO, and release contracts.

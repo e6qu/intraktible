@@ -4,9 +4,11 @@ package models
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"sort"
 
+	"github.com/e6qu/intraktible/decision-engine/outcomes"
 	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/store"
 )
@@ -79,6 +81,12 @@ type Calibration struct {
 type Performance struct {
 	Model           string        `json:"model"`
 	ModelVersion    int           `json:"model_version,omitempty"`
+	OutcomeKey      string        `json:"outcome_key,omitempty"`
+	NodeID          string        `json:"node_id,omitempty"`
+	Environment     string        `json:"environment,omitempty"`
+	ExperimentID    string        `json:"experiment_id,omitempty"`
+	Cohort          int           `json:"cohort,omitempty"`
+	Arm             string        `json:"arm,omitempty"`
 	Count           int           `json:"count"`
 	Positives       int           `json:"positives"`
 	ExcludedActuals int           `json:"excluded_actuals,omitempty"`
@@ -97,34 +105,7 @@ func (st ModelStats) Performance() Performance {
 		Count: st.ActualCount, ExcludedActuals: st.ExcludedActualCount,
 		Calibration: []Calibration{},
 	}
-	if st.ActualCount == 0 {
-		return perf
-	}
-	var correct, totalPos, totalNeg int
-	var brier float64
-	n := float64(len(st.Actuals))
-	for i, b := range st.Actuals {
-		mid := (float64(i) + 0.5) / n
-		totalPos += b.Pos
-		totalNeg += b.Neg
-		// Predicted class is positive when the midpoint ≥ 0.5.
-		if mid >= 0.5 {
-			correct += b.Pos
-		} else {
-			correct += b.Neg
-		}
-		brier += float64(b.Pos)*(1-mid)*(1-mid) + float64(b.Neg)*mid*mid
-		if c := b.Pos + b.Neg; c > 0 {
-			perf.Calibration = append(perf.Calibration, Calibration{
-				Bucket: i, Predicted: mid, Actual: float64(b.Pos) / float64(c), Count: c,
-			})
-		}
-	}
-	perf.Positives = totalPos
-	perf.Accuracy = float64(correct) / float64(st.ActualCount)
-	perf.Brier = brier / float64(st.ActualCount)
-	perf.AUC = bucketedAUC(st.Actuals, totalPos, totalNeg)
-	return perf
+	return performanceFromBuckets(perf, st.Actuals)
 }
 
 // bucketedAUC computes the realized AUC from the per-decile positive/negative counts:
@@ -160,4 +141,125 @@ func ReadPerformance(ctx context.Context, s store.Store, id identity.Identity, m
 		return Performance{Model: model, Calibration: []Calibration{}}, nil
 	}
 	return st.Performance(), nil
+}
+
+// OutcomePerformanceFilter selects corrected business outcomes for one exact
+// model-performance cohort. OutcomeKey is required. NodeID disambiguates flows
+// that invoke the same model more than once.
+type OutcomePerformanceFilter struct {
+	OutcomeKey   string
+	NodeID       string
+	Environment  string
+	ExperimentID string
+	Cohort       int
+	Arm          string
+}
+
+// ReadOutcomePerformance computes model performance from the current revision of
+// generalized decision-linked outcomes. Prediction probabilities and model
+// versions are engine-derived facts retained on each outcome; callers select the
+// business label but cannot author or relink the prediction.
+func ReadOutcomePerformance(
+	ctx context.Context,
+	s store.Store,
+	id identity.Identity,
+	model string,
+	filter OutcomePerformanceFilter,
+) (Performance, error) {
+	if filter.OutcomeKey == "" {
+		return Performance{}, fmt.Errorf("models: outcome_key is required")
+	}
+	if filter.Cohort < 0 {
+		return Performance{}, fmt.Errorf("models: cohort cannot be negative")
+	}
+	if (filter.Cohort > 0 || filter.Arm != "") && filter.ExperimentID == "" {
+		return Performance{}, fmt.Errorf("models: experiment is required when cohort or arm is set")
+	}
+	stats, ok, err := store.GetDoc[ModelStats](
+		ctx, s, StatsCollection, store.Key(id.Org, id.Workspace, model),
+	)
+	if err != nil {
+		return Performance{}, err
+	}
+	if !ok {
+		return Performance{
+			Model: model, OutcomeKey: filter.OutcomeKey, NodeID: filter.NodeID,
+			Environment: filter.Environment, ExperimentID: filter.ExperimentID,
+			Cohort: filter.Cohort, Arm: filter.Arm, Calibration: []Calibration{},
+		}, nil
+	}
+	recorded, err := outcomes.List(ctx, s, id, "", filter.OutcomeKey)
+	if err != nil {
+		return Performance{}, err
+	}
+	perf := Performance{
+		Model: model, ModelVersion: stats.ModelVersion,
+		OutcomeKey: filter.OutcomeKey, NodeID: filter.NodeID,
+		Environment: filter.Environment, ExperimentID: filter.ExperimentID,
+		Cohort: filter.Cohort, Arm: filter.Arm, Calibration: []Calibration{},
+	}
+	var buckets [driftBuckets]ActualBucket
+	for _, outcome := range recorded {
+		if outcome.Kind != outcomes.KindBinary ||
+			(filter.Environment != "" && outcome.Environment != filter.Environment) {
+			continue
+		}
+		if filter.ExperimentID != "" {
+			if outcome.Treatment == nil ||
+				outcome.Treatment.ExperimentID != filter.ExperimentID ||
+				(filter.Cohort > 0 && outcome.Treatment.Cohort != filter.Cohort) ||
+				(filter.Arm != "" && outcome.Treatment.ArmKey != filter.Arm) {
+				continue
+			}
+		}
+		matches := make([]outcomes.PredictionFact, 0, 1)
+		for _, prediction := range outcome.Predictions {
+			if prediction.Model == model &&
+				prediction.ModelVersion == stats.ModelVersion &&
+				(filter.NodeID == "" || prediction.NodeID == filter.NodeID) {
+				matches = append(matches, prediction)
+			}
+		}
+		if len(matches) != 1 {
+			perf.ExcludedActuals++
+			continue
+		}
+		idx := bucket(matches[0].Probability)
+		if outcome.Current.Value == 1 {
+			buckets[idx].Pos++
+		} else {
+			buckets[idx].Neg++
+		}
+		perf.Count++
+	}
+	return performanceFromBuckets(perf, buckets), nil
+}
+
+func performanceFromBuckets(perf Performance, buckets [driftBuckets]ActualBucket) Performance {
+	if perf.Count == 0 {
+		return perf
+	}
+	var correct, totalPos, totalNeg int
+	var brier float64
+	for i, b := range buckets {
+		mid := (float64(i) + 0.5) / float64(len(buckets))
+		totalPos += b.Pos
+		totalNeg += b.Neg
+		if mid >= 0.5 {
+			correct += b.Pos
+		} else {
+			correct += b.Neg
+		}
+		brier += float64(b.Pos)*(1-mid)*(1-mid) + float64(b.Neg)*mid*mid
+		if count := b.Pos + b.Neg; count > 0 {
+			perf.Calibration = append(perf.Calibration, Calibration{
+				Bucket: i, Predicted: mid, Actual: float64(b.Pos) / float64(count), Count: count,
+			})
+		}
+	}
+	perf.Positives = totalPos
+	perf.Accuracy = float64(correct) / float64(perf.Count)
+	perf.Brier = brier / float64(perf.Count)
+	perf.AUC = bucketedAUC(buckets, totalPos, totalNeg)
+	return perf
 }

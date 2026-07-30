@@ -410,6 +410,9 @@ func isAuthoringPath(path string) bool {
 		path == "/v1/flows/import-bundle" || // import many flows at once (GitOps repo)
 		path == "/v1/policies" || // create a policy
 		path == "/v1/preapprovals" || // grant a pre-approval (material)
+		path == "/v1/experiments" || // define a governed cohort
+		(strings.HasPrefix(path, "/v1/experiments/") &&
+			(strings.HasSuffix(path, "/start") || !strings.Contains(strings.TrimPrefix(path, "/v1/experiments/"), "/"))) || // update or request launch
 		strings.HasSuffix(path, "/preapprove/batch") || // bulk-grant pre-approvals from a run
 		strings.Contains(path, "/monitors") || // define/delete a monitor; check pushes alerts
 		strings.HasSuffix(path, "/assertions") || // define a flow's test cases (run is separate)

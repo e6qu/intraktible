@@ -42,13 +42,16 @@ import (
 	"github.com/e6qu/intraktible/decision-engine/analytics"
 	"github.com/e6qu/intraktible/decision-engine/assertions"
 	enginecmd "github.com/e6qu/intraktible/decision-engine/command"
+	"github.com/e6qu/intraktible/decision-engine/experiments"
 	"github.com/e6qu/intraktible/decision-engine/flows"
 	"github.com/e6qu/intraktible/decision-engine/grants"
 	"github.com/e6qu/intraktible/decision-engine/history"
 	enginemodels "github.com/e6qu/intraktible/decision-engine/models"
 	"github.com/e6qu/intraktible/decision-engine/monitor"
 	"github.com/e6qu/intraktible/decision-engine/notify"
+	"github.com/e6qu/intraktible/decision-engine/outcomes"
 	"github.com/e6qu/intraktible/decision-engine/policy"
+	"github.com/e6qu/intraktible/decision-engine/population"
 	"github.com/e6qu/intraktible/decision-engine/preapproval"
 	"github.com/e6qu/intraktible/decision-engine/schedule"
 	engineservice "github.com/e6qu/intraktible/decision-engine/service"
@@ -85,6 +88,7 @@ import (
 
 // asyncRunWorkers is the size of the Agent Manager's async-run worker pool.
 const asyncRunWorkers = 4
+const populationWorkers = 4
 
 const (
 	processRoleAll       = "all"
@@ -143,7 +147,8 @@ type Server struct {
 	// or a wasm shell reporting rebuild progress).
 	Projections *projection.Runtime
 
-	agents *agentcmd.Handler
+	agents     *agentcmd.Handler
+	population *population.Handler
 	// draining latches on BeginDrain and makes /readyz report 503 while the
 	// process still serves traffic, so a load balancer depools this replica
 	// before the listener closes.
@@ -166,6 +171,9 @@ func (s *Server) Draining() bool { return s.draining.Load() }
 func (s *Server) Close() {
 	if s.agents != nil {
 		s.agents.DrainWorkers()
+	}
+	if s.population != nil {
+		s.population.DrainWorkers()
 	}
 }
 
@@ -311,11 +319,15 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 	var deployScheduler *schedule.Scheduler
 	var caseScheduler *caseschedule.Scheduler
 	var decideHandler *enginecmd.DecideHandler
+	var populationHandler *population.Handler
+	var populationScheduler *population.Scheduler
+	var experimentScheduler *experiments.Scheduler
 	// Outbound webhook delivery (egress-guarded, retried, recorded) — shared by the
 	// monitor/drift pushes and the case SLA escalation, so both reach the same
 	// operator-configured webhooks.
 	notifier := notify.NewNotifier(log, st, egress.Client(15*time.Second)).WithNow(now)
 	if enabled(cfg.Modules, "decision-engine") {
+		experimentHandler := experiments.NewHandler(log, st).WithNow(now)
 		// A decision can fold in a Context Layer entity's features, call Context
 		// Layer connectors from Connect nodes, and run Agent Manager agents from AI
 		// nodes; each provider reads the shared store (a no-op when that module is
@@ -328,6 +340,7 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 			enginecmd.WithModels(enginemodels.Provider{Store: st, HTTP: egress.Client(10 * time.Second)}),
 			enginecmd.WithConsent(consentGate{store: st, cmd: consentHandler, now: now}),
 			enginecmd.WithSharing(sharingGate{store: st}),
+			enginecmd.WithExperiments(experimentHandler),
 		}
 		// Crypto-shred recorded decision PII under the entity subject when erasure
 		// fields are configured (same set as the Context Layer's event sealing).
@@ -356,6 +369,12 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 		}
 		engineSvc.UseCopilot(aiCompleter{reg: aiRegistry})
 		engineSvc.Routes(api)
+		experiments.New(experimentHandler, st, engineCmd).Routes(api)
+		experimentScheduler = experiments.NewScheduler(experimentHandler, st).WithNow(now)
+		outcomes.New(outcomes.NewHandler(log, st).WithNow(now), st).Routes(api)
+		populationHandler = population.NewHandler(log, st, decide, experimentHandler).WithNow(now)
+		population.New(populationHandler, st).WithNow(now).Routes(api)
+		populationScheduler = population.NewScheduler(log, st).WithNow(now)
 		// Policies are the operational disposition layer over flows (auto-approve/
 		// decline/refer); a first-class artifact alongside the flow registry.
 		policy.New(policy.NewHandler(log).WithNow(now), st).Routes(api)
@@ -510,6 +529,10 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 		return nil, fmt.Errorf("projection start: %w", err)
 	}
 	srv.Projections = rt
+	if runWorkers && populationHandler != nil {
+		populationHandler.StartWorkers(ctx, populationWorkers)
+		srv.population = populationHandler
+	}
 	// Validate the durable queues after projections are rebuilt. Pollers continue
 	// from here, but startup fails rather than silently serving a worker that cannot
 	// read its source of truth.
@@ -552,6 +575,12 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 	}
 	if runSchedulers && deployScheduler != nil {
 		sweeps = append(sweeps, namedTimedSweeper{name: "deploy_schedule", runner: deployScheduler})
+	}
+	if runSchedulers && populationScheduler != nil {
+		sweeps = append(sweeps, namedTimedSweeper{name: "population_retention", runner: populationScheduler})
+	}
+	if runSchedulers && experimentScheduler != nil {
+		sweeps = append(sweeps, namedTimedSweeper{name: "experiment_windows", runner: experimentScheduler})
 	}
 	if runSchedulers && caseScheduler != nil {
 		sweeps = append(sweeps, namedTimedSweeper{name: "case_sla", runner: caseScheduler})
@@ -940,7 +969,7 @@ func Projectors(modules string) []projection.Projector {
 		ps = append(ps, stats.Projector{})
 	}
 	if enabled(modules, "decision-engine") {
-		ps = append(ps, flows.Projector{}, history.Projector{}, analytics.Projector{}, policy.Projector{}, preapproval.Projector{}, monitor.Projector{}, notify.Projector{}, assertions.Projector{}, shadow.Projector{}, schedule.Projector{}, grants.Projector{}, enginemodels.Projector{}, enginemodels.DriftProjector{})
+		ps = append(ps, flows.Projector{}, history.Projector{}, analytics.Projector{}, policy.Projector{}, preapproval.Projector{}, monitor.Projector{}, notify.Projector{}, assertions.Projector{}, shadow.Projector{}, schedule.Projector{}, grants.Projector{}, enginemodels.Projector{}, enginemodels.DriftProjector{}, experiments.Projector{}, outcomes.Projector{}, population.Projector{})
 	}
 	if enabled(modules, "case-manager") {
 		ps = append(ps, cases.Projector{})

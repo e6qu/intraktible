@@ -24,6 +24,8 @@ export type NavId =
   | 'engine'
   | 'policies'
   | 'preapprovals'
+  | 'experiments'
+  | 'population'
   | 'decisions'
   | 'data'
   | 'cases'
@@ -47,6 +49,14 @@ export const NAV = new Map<NavId, NavItem>([
   [
     'preapprovals',
     { id: 'preapprovals', href: '/preapprovals', label: 'Pre-approvals', icon: 'check' }
+  ],
+  [
+    'experiments',
+    { id: 'experiments', href: '/experiments', label: 'Experiments', icon: 'diagram' }
+  ],
+  [
+    'population',
+    { id: 'population', href: '/population', label: 'Population jobs', icon: 'gauge' }
   ],
   ['decisions', { id: 'decisions', href: '/decisions', label: 'Decisions', icon: 'diagram' }],
   ['data', { id: 'data', href: '/data', label: 'Data', icon: 'database' }],
@@ -166,7 +176,16 @@ export const PERSONAS: PersonaConfig[] = [
     blurb: 'Author and version decision flows',
     icon: 'builder',
     home: 'builder',
-    nav: ['engine', 'policies', 'data', 'models', 'decisions', 'agents'],
+    nav: [
+      'engine',
+      'policies',
+      'experiments',
+      'population',
+      'data',
+      'models',
+      'decisions',
+      'agents'
+    ],
     actions: [
       { label: 'Open the flow builder', href: '/engine', icon: 'engine' },
       { label: 'Author policy bands', href: '/policies', icon: 'rule' },
@@ -179,7 +198,7 @@ export const PERSONAS: PersonaConfig[] = [
     blurb: 'Integrate the decision API and debug traces',
     icon: 'agents',
     home: 'persona',
-    nav: ['decisions', 'engine', 'keys', 'agents', 'data', 'observability', 'audit'],
+    nav: ['decisions', 'engine', 'population', 'keys', 'agents', 'data', 'observability', 'audit'],
     actions: [
       { label: 'Inspect decision traces', href: '/decisions', icon: 'diagram' },
       { label: 'Manage API keys', href: '/keys', icon: 'connect' },
@@ -212,7 +231,16 @@ export const PERSONAS: PersonaConfig[] = [
     blurb: 'Work the queues, SLAs, and monitors',
     icon: 'operator',
     home: 'operator',
-    nav: ['cases', 'decisions', 'preapprovals', 'policies', 'compliance', 'observability', 'audit'],
+    nav: [
+      'cases',
+      'population',
+      'decisions',
+      'preapprovals',
+      'policies',
+      'compliance',
+      'observability',
+      'audit'
+    ],
     actions: [
       { label: 'Work the case queue', href: '/cases', icon: 'cases' },
       { label: 'Review pre-approvals', href: '/preapprovals', icon: 'check' },
@@ -239,6 +267,8 @@ export const PERSONAS: PersonaConfig[] = [
     home: 'persona',
     nav: [
       'preapprovals',
+      'experiments',
+      'population',
       'engine',
       'models',
       'cases',
@@ -265,9 +295,19 @@ export const PERSONAS: PersonaConfig[] = [
     blurb: 'A/B, backtests, and policy impact',
     icon: 'diagram',
     home: 'persona',
-    nav: ['engine', 'policies', 'models', 'decisions', 'data', 'observability'],
+    nav: [
+      'experiments',
+      'population',
+      'engine',
+      'policies',
+      'models',
+      'decisions',
+      'data',
+      'observability'
+    ],
     actions: [
-      { label: 'Backtest a flow', href: '/engine', icon: 'engine' },
+      { label: 'Manage experiments', href: '/experiments', icon: 'diagram' },
+      { label: 'Run a population backtest', href: '/population', icon: 'gauge' },
       { label: 'Tune policy impact', href: '/policies', icon: 'rule' },
       { label: 'Manage models', href: '/models', icon: 'scorecard' },
       { label: 'Analyse decisions', href: '/decisions', icon: 'diagram' }
@@ -288,7 +328,16 @@ export const PERSONAS: PersonaConfig[] = [
     blurb: 'KPIs, trends, and governance posture',
     icon: 'showcase',
     home: 'showcase',
-    nav: ['decisions', 'cases', 'observability', 'mrm', 'fairlending', 'compliance', 'audit'],
+    nav: [
+      'experiments',
+      'decisions',
+      'cases',
+      'observability',
+      'mrm',
+      'fairlending',
+      'compliance',
+      'audit'
+    ],
     actions: [{ label: 'View decision volume', href: '/decisions', icon: 'diagram' }]
   },
   {
@@ -297,7 +346,7 @@ export const PERSONAS: PersonaConfig[] = [
     blurb: 'A guided look at the platform',
     icon: 'search',
     home: 'evaluator',
-    nav: ['engine', 'decisions', 'cases'],
+    nav: ['engine', 'experiments', 'decisions', 'cases'],
     actions: [
       { label: 'Explore the flow builder', href: '/engine', icon: 'engine' },
       { label: 'See decisions in action', href: '/decisions', icon: 'diagram' }

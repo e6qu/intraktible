@@ -60,6 +60,75 @@ func TestClientMapsErrorBody(t *testing.T) {
 	}
 }
 
+func TestEnterpriseE2ClientRoutes(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Api-Key") != "e2-key" {
+			http.Error(w, `{"error":"missing auth"}`, http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/experiments":
+			_, _ = w.Write([]byte(`{"experiments":[]}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/experiments/exp-1":
+			_, _ = w.Write([]byte(`{"experiment_id":"exp-1"}`))
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/experiments/exp-1":
+			_, _ = w.Write([]byte(`{}`))
+		case r.Method == http.MethodPost &&
+			r.URL.Path == "/v1/experiments/exp-1/launch-requests/launch-1/approve":
+			_, _ = w.Write([]byte(`{}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/experiments/exp-1/promote":
+			_, _ = w.Write([]byte(`{"pending":true,"request_id":"deploy-1"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/population-jobs":
+			_, _ = w.Write([]byte(`{"jobs":[]}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/population-jobs/job-1/pause":
+			_, _ = w.Write([]byte(`{}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/population-jobs/job-1/retry":
+			_, _ = w.Write([]byte(`{}`))
+		default:
+			http.Error(w, `{"error":"unexpected route"}`, http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := client.New(srv.URL, "e2-key", client.WithHTTPClient(srv.Client()))
+	ctx := context.Background()
+	experiments, err := c.ListExperiments(ctx)
+	if err != nil || len(experiments) != 0 {
+		t.Fatalf("ListExperiments() = %v, %v", experiments, err)
+	}
+	experiment, err := c.GetExperiment(ctx, "exp-1")
+	if err != nil || experiment.ExperimentID != "exp-1" {
+		t.Fatalf("GetExperiment() = %+v, %v", experiment, err)
+	}
+	if err := c.UpdateExperiment(ctx, "exp-1", client.ExperimentSpec{}); err != nil {
+		t.Fatalf("UpdateExperiment(): %v", err)
+	}
+	if err := c.DecideExperimentLaunch(
+		ctx, "exp-1", "launch-1", client.LaunchApprove, "independently reviewed",
+	); err != nil {
+		t.Fatalf("DecideExperimentLaunch(): %v", err)
+	}
+	promotion, err := c.PromoteExperimentWinner(ctx, "exp-1")
+	if err != nil || !promotion.Pending || promotion.RequestID != "deploy-1" {
+		t.Fatalf("PromoteExperimentWinner() = %+v, %v", promotion, err)
+	}
+	jobs, err := c.ListPopulationJobs(ctx)
+	if err != nil || len(jobs) != 0 {
+		t.Fatalf("ListPopulationJobs() = %v, %v", jobs, err)
+	}
+	if err := c.TransitionPopulationJob(
+		ctx, "job-1", client.PopulationPause, "operator pause",
+	); err != nil {
+		t.Fatalf("TransitionPopulationJob(): %v", err)
+	}
+	if err := c.RetryPopulationJob(ctx, "job-1", []int{2}); err != nil {
+		t.Fatalf("RetryPopulationJob(): %v", err)
+	}
+}
+
 // TestClientAgainstEngine drives the SDK against a real decision-engine service,
 // proving the typed client matches the live contract end to end.
 func TestClientAgainstEngine(t *testing.T) {

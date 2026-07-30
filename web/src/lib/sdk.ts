@@ -118,6 +118,94 @@ export interface BundleResult {
   unchanged: number;
 }
 
+export interface ExperimentSpec {
+  name: string;
+  hypothesis: string;
+  owner: string;
+  flow_id: string;
+  environment: string;
+  subject_key_expression: string;
+  eligibility_expression?: string;
+  salt: string;
+  arms: Array<{
+    key: string;
+    name: string;
+    kind: 'champion' | 'challenger';
+    version: number;
+    allocation_bps: number;
+  }>;
+  primary_metric: {
+    key: string;
+    name: string;
+    kind: 'binary' | 'continuous';
+    direction: 'increase' | 'decrease';
+  };
+  guardrails?: Array<Record<string, unknown>>;
+  minimum_sample_per_arm: number;
+  minimum_effect: number;
+  confidence: number;
+  observation_window_days: number;
+  start_at?: string;
+  stop_at?: string;
+}
+
+export interface Experiment {
+  experiment_id: string;
+  cohort: number;
+  state: 'draft' | 'pending_launch' | 'running' | 'paused' | 'completed' | 'cancelled';
+  spec: ExperimentSpec;
+  launch?: { request_id: string; status: string; requested_by: string };
+}
+
+export interface OutcomeRecord {
+  decision_id: string;
+  key: string;
+  kind: 'binary' | 'continuous';
+  value: number;
+  event_time: string;
+  observation_window_days?: number;
+  source: { system: string; record_id: string; lineage?: string };
+  label_version: string;
+}
+
+export interface PopulationJobCreate {
+  kind: 'decision' | 'backtest';
+  slug: string;
+  environment: string;
+  items: Array<{
+    data: Record<string, unknown>;
+    entity_type?: string;
+    entity_id?: string;
+    business_reference?: string;
+    correlation_id?: string;
+    metadata?: Record<string, unknown>;
+  }>;
+  max_attempts?: number;
+  concurrency?: number;
+  retention_days?: number;
+}
+
+export interface PopulationJob {
+  job_id: string;
+  state:
+    | 'queued'
+    | 'running'
+    | 'paused'
+    | 'cancelling'
+    | 'cancelled'
+    | 'completed'
+    | 'completed_with_errors'
+    | 'expired';
+  manifest: Record<string, unknown>;
+  manifest_hash: string;
+  total: number;
+  pending: number;
+  running: number;
+  succeeded: number;
+  failed: number;
+  items: Array<Record<string, unknown>>;
+}
+
 // Client calls an intraktible instance.
 export class Client {
   private readonly apiKey: string;
@@ -200,6 +288,126 @@ export class Client {
     });
   }
 
+  async listExperiments(): Promise<Experiment[]> {
+    const out = await this.request<{ experiments?: Experiment[] }>('GET', '/v1/experiments');
+    return out.experiments ?? [];
+  }
+
+  getExperiment(experimentId: string): Promise<Experiment> {
+    return this.request<Experiment>('GET', `/v1/experiments/${encodeURIComponent(experimentId)}`);
+  }
+
+  async createExperiment(spec: ExperimentSpec): Promise<string> {
+    const out = await this.request<{ experiment_id: string }>('POST', '/v1/experiments', spec);
+    return out.experiment_id;
+  }
+
+  updateExperiment(experimentId: string, spec: ExperimentSpec): Promise<Record<string, unknown>> {
+    return this.request('PUT', `/v1/experiments/${encodeURIComponent(experimentId)}`, spec);
+  }
+
+  transitionExperiment(
+    experimentId: string,
+    action: 'start' | 'pause' | 'resume' | 'complete' | 'cancel',
+    reason = ''
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      'POST',
+      `/v1/experiments/${encodeURIComponent(experimentId)}/${action}`,
+      action === 'start' ? undefined : { reason }
+    );
+  }
+
+  decideExperimentLaunch(
+    experimentId: string,
+    requestId: string,
+    decision: 'approve' | 'reject',
+    reason: string
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      'POST',
+      `/v1/experiments/${encodeURIComponent(experimentId)}/launch-requests/${encodeURIComponent(requestId)}/${decision}`,
+      { reason }
+    );
+  }
+
+  promoteExperimentWinner(experimentId: string): Promise<Record<string, unknown>> {
+    return this.request('POST', `/v1/experiments/${encodeURIComponent(experimentId)}/promote`);
+  }
+
+  experimentAnalysis(experimentId: string): Promise<Record<string, unknown>> {
+    return this.request('GET', `/v1/experiments/${encodeURIComponent(experimentId)}/analysis`);
+  }
+
+  async listOutcomes(decisionId = '', key = ''): Promise<Array<Record<string, unknown>>> {
+    const query = new URLSearchParams();
+    if (decisionId) query.set('decision_id', decisionId);
+    if (key) query.set('key', key);
+    const out = await this.request<{ outcomes?: Array<Record<string, unknown>> }>(
+      'GET',
+      `/v1/outcomes${query.size ? `?${query}` : ''}`
+    );
+    return out.outcomes ?? [];
+  }
+
+  recordOutcome(
+    outcome: OutcomeRecord,
+    idempotencyKey: string
+  ): Promise<{ outcome_id: string; revision: number }> {
+    return this.request('POST', '/v1/outcomes', outcome, {
+      'Idempotency-Key': idempotencyKey
+    });
+  }
+
+  correctOutcome(
+    outcomeId: string,
+    correction: Omit<OutcomeRecord, 'decision_id' | 'key' | 'kind'> & { reason: string },
+    idempotencyKey: string
+  ): Promise<{ outcome_id: string; revision: number }> {
+    return this.request(
+      'POST',
+      `/v1/outcomes/${encodeURIComponent(outcomeId)}/corrections`,
+      correction,
+      { 'Idempotency-Key': idempotencyKey }
+    );
+  }
+
+  async listPopulationJobs(): Promise<PopulationJob[]> {
+    const out = await this.request<{ jobs?: PopulationJob[] }>('GET', '/v1/population-jobs');
+    return out.jobs ?? [];
+  }
+
+  getPopulationJob(jobId: string): Promise<PopulationJob> {
+    return this.request('GET', `/v1/population-jobs/${encodeURIComponent(jobId)}`);
+  }
+
+  async createPopulationJob(job: PopulationJobCreate, idempotencyKey: string): Promise<string> {
+    const out = await this.request<{ job_id: string }>('POST', '/v1/population-jobs', job, {
+      'Idempotency-Key': idempotencyKey
+    });
+    return out.job_id;
+  }
+
+  transitionPopulationJob(
+    jobId: string,
+    action: 'pause' | 'resume' | 'cancel',
+    reason = ''
+  ): Promise<Record<string, unknown>> {
+    return this.request('POST', `/v1/population-jobs/${encodeURIComponent(jobId)}/${action}`, {
+      reason
+    });
+  }
+
+  retryPopulationJob(jobId: string, indices: number[] = []): Promise<Record<string, unknown>> {
+    return this.request('POST', `/v1/population-jobs/${encodeURIComponent(jobId)}/retry`, {
+      indices
+    });
+  }
+
+  populationResults(jobId: string): Promise<string> {
+    return this.requestText(`/v1/population-jobs/${encodeURIComponent(jobId)}/results`);
+  }
+
   me(): Promise<Identity> {
     return this.request<Identity>('GET', '/v1/me');
   }
@@ -240,5 +448,13 @@ export class Client {
       throw new ApiError(res.status, message);
     }
     return (await res.json()) as T;
+  }
+
+  private async requestText(path: string): Promise<string> {
+    const res = await this.fetchImpl(`${this.baseUrl}${path}`, {
+      headers: { 'X-Api-Key': this.apiKey, Accept: 'application/x-ndjson' }
+    });
+    if (!res.ok) throw new ApiError(res.status, await res.text());
+    return res.text();
   }
 }

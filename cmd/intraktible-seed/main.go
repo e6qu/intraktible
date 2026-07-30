@@ -145,6 +145,8 @@ func buildSeed() []eventlog.Envelope {
 	bySeed := s.designateCaseSources(slots, anchor)
 	acts = append(acts, s.entityEventActions(anchor)...)
 	acts = append(acts, s.decisionActions(slots)...)
+	acts = append(acts, s.experimentActions(anchor)...)
+	acts = append(acts, s.populationActions(anchor)...)
 	acts = append(acts, s.caseWorkActions(bySeed, anchor)...)
 	// Membership is re-derived per hygiene pass: designated slots gain their
 	// decision ids as the traffic runs.
@@ -292,7 +294,33 @@ func spotCheck(srv *server.Server) string {
 		Total int `json:"total"`
 	}
 	get("/v1/decisions?limit=1", &decisions)
-	requireEq("decisions", decisions.Total, len(trafficPattern)*trafficRotations)
+	requireEq("decisions", decisions.Total, len(trafficPattern)*trafficRotations+demoExperimentDecisions)
+
+	var experiments struct {
+		Experiments []struct {
+			State string `json:"state"`
+		} `json:"experiments"`
+	}
+	get("/v1/experiments", &experiments)
+	requireEq("experiments", len(experiments.Experiments), 2)
+	experimentStates := map[string]int{}
+	for _, experiment := range experiments.Experiments {
+		experimentStates[experiment.State]++
+	}
+	requireEq("completed experiments", experimentStates["completed"], 1)
+	requireEq("pending experiment launches", experimentStates["pending_launch"], 1)
+
+	var populationJobs struct {
+		Jobs []struct {
+			State     string `json:"state"`
+			Succeeded int    `json:"succeeded"`
+		} `json:"jobs"`
+	}
+	get("/v1/population-jobs", &populationJobs)
+	requireEq("population jobs", len(populationJobs.Jobs), 1)
+	if populationJobs.Jobs[0].State != "completed" || populationJobs.Jobs[0].Succeeded != 12 {
+		fatalf("round trip: population job lost terminal results: %+v", populationJobs.Jobs[0])
+	}
 
 	var suspended struct {
 		Total int `json:"total"`

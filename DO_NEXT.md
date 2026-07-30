@@ -16,20 +16,13 @@ DOC (a claim not backed by code).
 
 ## Queue
 
-Sixth whole-product audit from authoritative merged commit `7a7be66`.
+Enterprise roadmap execution from authoritative E1 merge `fea2a7e`.
 
-1. **OPEN — PR E1 · publish and babysit durable execution integrity.**
-   The implementation and complete local exit matrix in `PLAN.md` §8b.2 are
-   green. A fresh authoritative fetch confirms local `HEAD == origin/main ==
-   7a7be66` and the GitHub PR queue is empty. Commit `8dddb44` contains the
-   reconciled 95-file vertical slice. PR #160 is the sole open review queue;
-   hosted run `30514807479` is green across all nine jobs. Verify the final
-   continuity-only head, fix any cascade in the same branch, and wait for
-   merge. Do not start E2 until E1 merges.
-2. **OPEN — PR E2 · CORRECT: experimentation, outcomes, and population jobs.**
-   Begin only after E1 merges. `decision-engine/command/decide.go:1505-1513`
-   rolls a fresh variant per invocation; replace it with the first-class stable
-   experiment and durable population-job journeys in `PLAN.md` §8b.3.
+1. **OPEN — PR E2 · REVIEW: merge sole PR #161 before starting E3.**
+   E2 implementation commit `0eaa5a5` and hosted run `30527793916` are green
+   across all nine required jobs. This final evidence commit must repeat the
+   hosted matrix successfully; then wait for the user to merge PR #161, fetch
+   and reconcile authoritative `origin/main`, and only then cut E3.
 
 PRs E3–E7 remain ordered behind E2 in `PLAN.md` §§8b.4–8b.8. Do not open or
 implement them concurrently; after each merge, reconcile fresh `origin/main`

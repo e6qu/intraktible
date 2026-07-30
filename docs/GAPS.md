@@ -17,9 +17,11 @@ everything is event-sourced and replayable; four-eyes maker-checker for producti
 flows, models, and operational policy versions; immutable agent-version pins in
 governed flows; RBAC, OIDC/SAML
 SSO, SCIM, AES-256-GCM at-rest encryption, crypto-shred erasure, and an SR 11-7 model
-inventory are all real and enforced. The decision table is DMN-grade (five hit
-policies + aggregation). **None of the gaps below are facades** — they are honestly
-missing or honestly shallow capabilities.
+inventory are all real and enforced. Stable-cohort governed experiments, corrected
+decision-linked outcomes, and durable multi-worker population decision/backtest jobs
+are also real. The decision table is DMN-grade (five hit policies + aggregation).
+**None of the gaps below are facades** — they are honestly missing or honestly
+shallow capabilities.
 
 ## Positioning: a decision engine with light, durable orchestration
 
@@ -117,20 +119,22 @@ weeks, **L** = a real project.
    `docs/EXPRESSIONS.md` (v2). In the same pass the one non-deterministic builtin,
    `now()`, was disabled and is rejected at publish — closing a latent replayability
    hole in the "no clock, no I/O" guarantee.
-6. **Model monitoring — DONE (covariate drift + actuals).** Alongside the existing
+6. **Model monitoring — DONE (covariate drift + attributable outcomes).** Alongside the existing
    prediction-distribution PSI, the drift report now includes **covariate (input-feature)
    drift**: a prediction records the model's input feature values, the projector folds
    per-feature running mean/variance (Welford), and `GET /v1/models/{name}/drift` reports
    each feature's standardized mean shift + variance ratio vs the captured baseline — a
-   leading indicator that precedes prediction drift. **Actuals reconciliation**:
-   `POST /v1/models/{name}/outcomes {decision_id, label, node_id?}` resolves the exact
-   probability and model version from that completed decision's immutable Predict-node
-   trace (the caller cannot author either), refuses duplicate/stale/ambiguous lineage,
-   and buckets the realized outcome by predicted decile.
-   `GET /v1/models/{name}/performance` reports calibration, accuracy, Brier score, and
-   realized AUC for the current model version — live performance from ground truth.
-   Redefining a model starts a clean drift/performance cohort. Remaining (optional):
-   full per-feature PSI histograms (mean/variance shift is the bounded signal today).
+   leading indicator that precedes prediction drift. **Outcome reconciliation**:
+   `POST /v1/outcomes` records a binary or continuous decision-linked business fact
+   with event/source/label-version lineage, while corrections retain every prior
+   revision. The backend resolves exact probability, model version, and experiment
+   treatment from immutable decision evidence; callers cannot author them.
+   `GET /v1/models/{name}/performance?outcome_key=…` reports calibration, accuracy,
+   Brier score, and realized AUC for the exact current model/cohort — live performance
+   from corrected ground truth. Redefining a model starts a clean drift/performance
+   cohort. The old model-specific outcome route remains compatibility-only. Remaining
+   (optional): full per-feature PSI histograms (mean/variance shift is the bounded
+   signal today).
 7. **Example/template library — DONE.** A "New from template" gallery on the Flows page
    ships 6 importable starters (Consumer Credit STP, CNP Fraud, Sanctions/PEP, KYB, BNPL,
    Chargeback) that exercise the differentiating node types. Remaining (optional): convert

@@ -41,3 +41,19 @@ export type MonitorOp = 'gt' | 'lt';
 export type MonitorMetric = 'failure_rate' | 'refer_rate' | 'automation_rate' | 'approve_rate' | 'decline_rate' | 'avg_latency_ms' | 'volume' | 'distribution_drift' | 'distribution_drift_psi' | 'distribution_drift_kl';
 export const MONITOR_METRICS: readonly MonitorMetric[] = ['failure_rate', 'refer_rate', 'automation_rate', 'approve_rate', 'decline_rate', 'avg_latency_ms', 'volume', 'distribution_drift', 'distribution_drift_psi', 'distribution_drift_kl'] as const;
 
+export type ExperimentState = 'draft' | 'pending_launch' | 'running' | 'paused' | 'completed' | 'cancelled';
+
+export type ExperimentArmKind = 'champion' | 'challenger';
+
+export type ExperimentMetricKind = 'binary' | 'continuous';
+
+export type ExperimentDirection = 'increase' | 'decrease';
+
+export type ExperimentAnalysisStatus = 'collecting' | 'invalid' | 'underpowered' | 'inconclusive' | 'guardrail_failed' | 'winner';
+
+export type OutcomeKind = 'binary' | 'continuous';
+
+export type PopulationJobKind = 'decision' | 'backtest';
+
+export type PopulationJobState = 'queued' | 'running' | 'paused' | 'cancelling' | 'cancelled' | 'completed' | 'completed_with_errors' | 'expired';
+

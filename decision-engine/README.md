@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+
 # Decision Engine
 
 A component of **intraktible** (see [../PLAN.md](../PLAN.md) §4). New here? Start at [../AGENTS.md](../AGENTS.md).
@@ -59,10 +61,13 @@ Done — flow model + versioning (vertical slice, command→event→projection�
     reports the model's predicted-probability distribution (deciles) + the PSI vs a captured baseline
     (`POST …/baseline`) — `<0.1` stable, `0.1–0.25` moderate, `>0.25` significant — **and per-input-feature
     covariate drift** (standardized mean shift + variance ratio vs the baseline, a leading indicator).
-    **Actuals:** `POST …/outcomes {decision_id, label, node_id?}` derives the exact
-    probability/model version from the completed decision trace (one label per model
-    observation), and `GET …/performance` reports current-version calibration,
-    accuracy, Brier score, and realized AUC — live performance from attributable ground truth.
+    **Performance:** generalized `POST /v1/outcomes` records an idempotent,
+    decision-linked binary or continuous business fact with event/source/label-version
+    lineage; `POST /v1/outcomes/{id}/corrections` supersedes its current value without
+    erasing history. `GET …/performance?outcome_key=…[&node_id=…]` derives the exact
+    probability/model version and experiment cohort from immutable decision evidence
+    and reports current-version calibration, accuracy, Brier score, and realized AUC.
+    The model-specific `POST …/outcomes` route remains a deprecated compatibility path.
     `?window=Nd` measures only the most recent N day-buckets (a windowed view a cumulative one would
     dilute); `POST …/monitor {threshold}` sets a PSI alert, and the report's `firing` flag trips when PSI exceeds it. A
     `models.Scheduler` (started on `INTRAKTIBLE_MONITOR_INTERVAL`, the same cadence as the flow
@@ -105,10 +110,20 @@ Done — execution runtime + decide API + decision history (the decision event s
   one worker at a time; recorded successes are reused, providers receive the
   stable effect idempotency key where supported, and an indeterminate
   at-least-once effect is explicitly abandoned rather than silently duplicated.
-- **Versioning / rollout:** `POST /v1/flows/{flow_id}/deployments` pins which version is live per
-  environment and configures an optional **A/B challenger** taking `challenger_pct` of decisions.
-  Decide routes accordingly and records the chosen version + variant (champion/challenger), so replay
-  is stable; with no deployment it falls back to the latest version.
+- **Versioning / rollout:** `POST /v1/flows/{flow_id}/deployments` pins which
+  version is live per environment. Its optional legacy `challenger_pct` routing is
+  retained for wire compatibility; new controlled tests use the first-class
+  experiment aggregate below. With no deployment, decide falls back to the latest
+  version.
+- **Governed experiments (`decision-engine/experiments`):** `/v1/experiments`
+  owns hypothesis, owner, stable subject-key/eligibility expressions, exact version
+  arms and basis-point allocation, salt, primary KPI, minimum sample/effect,
+  guardrails, time windows, and lifecycle. Assignment is deterministic across
+  retries/replicas/restarts and exposure is recorded only after a reached treatment
+  completes. Production start uses an independent launch approval. Analysis reports
+  binary/continuous estimates, confidence intervals, effect size, sample-ratio
+  mismatch, guardrail regressions, and collecting/underpowered/invalid/inconclusive/
+  winner states; promotion opens the normal governed deployment request.
 - **Change governance (maker-checker / four-eyes):** a direct deploy is allowed only for non-production
   environments. A **production** deployment must be *proposed* by one user
   (`POST /v1/flows/{flow_id}/deployment-requests`) and *approved by a different user*
@@ -144,7 +159,7 @@ Done — execution runtime + decide API + decision history (the decision event s
   decision and performs **no** I/O, so it is a safe pre-deploy confidence check; the report gives an
   exact outcome summary (completed/failed/changed counts) plus the changed records. The builder UI
   exposes it as a panel. Datasets are capped (2000 inputs; 200 returned records).
-- **Analytics-lite:** a metrics projection folds the decision stream into per-flow counters
+- **Operational analytics:** a metrics projection folds the decision stream into per-flow counters
   (volume, completed/failed, average duration, and breakdowns by environment, version, and
   **variant** — so champion vs challenger outcome rates are directly comparable). `GET
   /v1/flows/{flow_id}/metrics`.
@@ -164,6 +179,15 @@ Done — execution runtime + decide API + decision history (the decision event s
   as **NDJSON** (one input per line) and streams NDJSON results back one per line — constant memory, no
   row cap (`entity_type`/`entity_key` are query params) — the same recorded decide path, just streamed
   (a dependency-light alternative to a gRPC/Arrow batch wire).
+- **Durable population jobs (`decision-engine/population`):** `POST
+  /v1/population-jobs` creates a decision or backtest job with an immutable manifest,
+  per-item idempotency, exact version/experiment assignments, bounded concurrency,
+  and retention. `GET /v1/population-jobs[/{id}]` reports item attempts, progress,
+  worker ownership, and partial failure; pause/cancel/resume/retry actions are durable.
+  Expiring claims allow another worker replica to recover a killed worker without
+  duplicating a logical item. `GET …/{id}/results` downloads the retained NDJSON
+  result manifest. The synchronous batch and streaming routes remain convenience
+  transports rather than the durable job contract.
 - **Policies (`decision-engine/policy`):** the operational disposition layer over a flow — a first-class,
   versioned, governed artifact (create/publish like flows; authoring needs `editor`) that maps a flow's
   output to a **disposition** (`approve` / `decline` / `refer`) via ordered expr-lang bands + a default.

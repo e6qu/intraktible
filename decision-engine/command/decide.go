@@ -4,13 +4,11 @@ package command
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"reflect"
 	"sort"
 	"strings"
@@ -18,6 +16,7 @@ import (
 
 	"github.com/e6qu/intraktible/decision-engine/domain"
 	"github.com/e6qu/intraktible/decision-engine/events"
+	"github.com/e6qu/intraktible/decision-engine/experiments"
 	"github.com/e6qu/intraktible/decision-engine/flows"
 	"github.com/e6qu/intraktible/decision-engine/history"
 	"github.com/e6qu/intraktible/decision-engine/policy"
@@ -125,19 +124,22 @@ type PIISealer interface {
 // for the version to run, evaluates it with the pure core, and records the
 // decision as an event stream (started -> node-evaluated… -> completed/failed).
 type DecideHandler struct {
-	log        eventlog.Log
-	store      store.Store
-	now        func() time.Time
-	newID      func() string
-	roll       func() int // A/B routing draw in [0,100); recorded via the chosen version+variant
-	features   FeatureProvider
-	connectors ConnectorProvider
-	agentsP    AgentProvider
-	models     ModelProvider
-	sealer     PIISealer
-	consent    ConsentGate
-	sharing    SharingGate
-	tracer     trace.Tracer
+	log   eventlog.Log
+	store store.Store
+	now   func() time.Time
+	newID func() string
+	// legacyRoll is a test-only compatibility override for old percentage
+	// deployments. Production selection hashes stable request identity.
+	legacyRoll  func() int
+	experiments *experiments.Handler
+	features    FeatureProvider
+	connectors  ConnectorProvider
+	agentsP     AgentProvider
+	models      ModelProvider
+	sealer      PIISealer
+	consent     ConsentGate
+	sharing     SharingGate
+	tracer      trace.Tracer
 	// evalTimeout bounds per-node expression/Code evaluation so a CPU-heavy
 	// expression a flow author ships can't tie up the synchronous decide.
 	evalTimeout time.Duration
@@ -153,7 +155,15 @@ const defaultEvalTimeout = 5 * time.Second
 type DecideOption func(*DecideHandler)
 
 // WithRoll overrides the A/B routing draw (a value in [0,100)).
-func WithRoll(roll func() int) DecideOption { return func(h *DecideHandler) { h.roll = roll } }
+func WithRoll(roll func() int) DecideOption {
+	return func(h *DecideHandler) { h.legacyRoll = roll }
+}
+
+// WithExperiments enables governed deterministic cohort selection and reached
+// exposure recording.
+func WithExperiments(handler *experiments.Handler) DecideOption {
+	return func(h *DecideHandler) { h.experiments = handler }
+}
 
 // WithNow overrides the clock used to stamp recorded decision events
 // (deterministic tests, the demo seeder).
@@ -221,7 +231,6 @@ func NewDecideHandler(log eventlog.Log, st store.Store, opts ...DecideOption) *D
 		store:       st,
 		now:         func() time.Time { return time.Now().UTC() },
 		newID:       newID,
-		roll:        rollPercent,
 		tracer:      telemetry.Tracer(),
 		evalTimeout: defaultEvalTimeout,
 	}
@@ -629,17 +638,6 @@ func mockedEffect(req domain.EffectRequest, mockData map[string]any) (any, bool,
 	return value, true, nil
 }
 
-// rollPercent returns a near-uniform draw in [0,100) from a cryptographic source
-// (avoids the weak-RNG SAST finding; routing is not security-sensitive). One byte
-// is mapped to [0,99] via *100/256, so the conversion is a safe widening byte->int.
-func rollPercent() int {
-	var b [1]byte
-	if _, err := io.ReadFull(rand.Reader, b[:]); err != nil {
-		panic("decision-engine: crypto/rand unavailable: " + err.Error())
-	}
-	return int(b[0]) * 100 / 256
-}
-
 // DecideResult is the decide response: the recorded decision id, the run status,
 // the flow's output (on success), and the failure reason (on failure).
 type DecideResult struct {
@@ -659,7 +657,10 @@ type DecideResult struct {
 	DispositionReason string
 	// PreApprovalID links the grant when the decision was served instantly from a
 	// pre-approval (the flow never ran); empty on an ordinary run.
-	PreApprovalID string
+	PreApprovalID    string
+	ExperimentID     string
+	ExperimentCohort int
+	ExperimentArm    string
 }
 
 // Invocation is the caller-controlled portion of one decision submission. Tracking
@@ -674,6 +675,10 @@ type Invocation struct {
 	Metadata          json.RawMessage
 	Control           events.ExecutionControl
 	MockData          map[string]any
+	// PinnedVersion and Experiment are internal orchestration controls used by a
+	// durable population manifest. The HTTP boundary never accepts them.
+	PinnedVersion int
+	Experiment    *experiments.Assignment
 }
 
 const (
@@ -782,7 +787,7 @@ func (h *DecideHandler) recordEffectFailed(
 	return err
 }
 
-func normalizeInvocation(slug, env string, inv Invocation, preview bool) (Invocation, error) {
+func normalizeInvocation(slug, env string, inv Invocation, preview, internal bool) (Invocation, error) {
 	inv.IdempotencyKey = strings.TrimSpace(inv.IdempotencyKey)
 	inv.BusinessReference = strings.TrimSpace(inv.BusinessReference)
 	inv.CorrelationID = strings.TrimSpace(inv.CorrelationID)
@@ -821,6 +826,22 @@ func normalizeInvocation(slug, env string, inv Invocation, preview bool) (Invoca
 			ErrBadRequest, maxInvocationTimeoutMS,
 		)
 	}
+	if inv.PinnedVersion < 0 {
+		return Invocation{}, fmt.Errorf("%w: pinned version cannot be negative", ErrBadRequest)
+	}
+	if inv.Experiment != nil {
+		if inv.Experiment.ExperimentID == "" || inv.Experiment.Cohort < 1 ||
+			inv.Experiment.ArmKey == "" || !inv.Experiment.ArmKind.Valid() ||
+			inv.Experiment.Version < 1 {
+			return Invocation{}, fmt.Errorf("%w: incomplete pinned experiment assignment", ErrBadRequest)
+		}
+		if inv.PinnedVersion == 0 {
+			inv.PinnedVersion = inv.Experiment.Version
+		}
+	}
+	if preview && !internal && (inv.PinnedVersion != 0 || inv.Experiment != nil) {
+		return Invocation{}, fmt.Errorf("%w: preview cannot use internal population pins", ErrBadRequest)
+	}
 	if preview {
 		if inv.IdempotencyKey != "" || inv.BusinessReference != "" || inv.CorrelationID != "" || len(inv.Metadata) > 0 {
 			return Invocation{}, fmt.Errorf(
@@ -854,11 +875,14 @@ func invocationRequestHash(slug, env string, inv Invocation) (string, error) {
 		CorrelationID     string                  `json:"correlation_id,omitempty"`
 		Metadata          json.RawMessage         `json:"metadata,omitempty"`
 		Control           events.ExecutionControl `json:"control,omitempty"`
+		PinnedVersion     int                     `json:"pinned_version,omitempty"`
+		Experiment        *experiments.Assignment `json:"experiment,omitempty"`
 	}{
 		Slug: slug, Environment: env, Data: inv.Data,
 		EntityType: string(inv.Entity.Type), EntityID: string(inv.Entity.ID),
 		BusinessReference: inv.BusinessReference, CorrelationID: inv.CorrelationID,
 		Metadata: inv.Metadata, Control: inv.Control,
+		PinnedVersion: inv.PinnedVersion, Experiment: inv.Experiment,
 	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
@@ -972,6 +996,8 @@ func (h *DecideHandler) foldIdempotentResult(
 			}
 			started, found = candidate, true
 			result.DecisionID = candidate.DecisionID
+			result.ExperimentID, result.ExperimentCohort, result.ExperimentArm =
+				candidate.ExperimentID, candidate.ExperimentCohort, candidate.ExperimentArm
 			break
 		}
 	}
@@ -1047,6 +1073,20 @@ func (h *DecideHandler) Decide(ctx context.Context, id identity.Identity, slug, 
 	return h.DecideWithInvocation(ctx, id, slug, env, Invocation{Data: data, Entity: ref})
 }
 
+// DecidePinned runs the immutable version/cohort captured by a durable
+// population manifest. It is intentionally not exposed at the HTTP boundary.
+func (h *DecideHandler) DecidePinned(
+	ctx context.Context,
+	id identity.Identity,
+	slug, env string,
+	inv Invocation,
+	version int,
+	assignment *experiments.Assignment,
+) (DecideResult, error) {
+	inv.PinnedVersion, inv.Experiment = version, assignment
+	return h.DecideWithInvocation(ctx, id, slug, env, inv)
+}
+
 // DecideWithInvocation is Decide with the complete idempotency, tracking, metadata,
 // and execution-control contract used by the HTTP boundary and SDKs.
 func (h *DecideHandler) DecideWithInvocation(
@@ -1076,9 +1116,12 @@ func (h *DecideHandler) DecideWithInvocation(
 	if !domain.ValidEnvironment(env) {
 		return DecideResult{}, fmt.Errorf("%w: invalid environment %q (sandbox|staging|production)", ErrBadRequest, env)
 	}
-	inv, err = normalizeInvocation(slug, env, inv, false)
+	inv, err = normalizeInvocation(slug, env, inv, false, false)
 	if err != nil {
 		return DecideResult{}, err
+	}
+	if inv.Experiment != nil && h.experiments == nil {
+		return DecideResult{}, fmt.Errorf("%w: experiment execution is not configured", ErrBadRequest)
 	}
 	data, ref := inv.Data, inv.Entity
 
@@ -1119,7 +1162,10 @@ func (h *DecideHandler) DecideWithInvocation(
 	if err := requireDeployment(fv, slug, env); err != nil {
 		return DecideResult{}, err
 	}
-	versionNo, variantKind := h.resolveVersion(fv, env)
+	versionNo, variantKind, err := h.resolveVersion(fv, env, inv)
+	if err != nil {
+		return DecideResult{}, err
+	}
 	variant := string(variantKind) // recorded on the wire as a plain string
 	version, ok := versionByNumber(fv, versionNo)
 	if !ok {
@@ -1168,6 +1214,38 @@ func (h *DecideHandler) DecideWithInvocation(
 		}
 	}
 
+	var assignment *experiments.Assignment
+	if inv.Experiment != nil {
+		pinnedAssignment := *inv.Experiment
+		assignment = &pinnedAssignment
+	} else if inv.PinnedVersion == 0 && h.experiments != nil {
+		resolved, assigned, resolveErr := h.experiments.Resolve(
+			ctx, id, fv.FlowID, env, rawData, ref,
+		)
+		if resolveErr != nil {
+			return DecideResult{}, fmt.Errorf("%w: %w", ErrBadRequest, resolveErr)
+		}
+		if assigned {
+			assignment = &resolved
+		}
+	}
+	if assignment != nil {
+		versionNo = assignment.Version
+		if assignment.ArmKind == experiments.ArmChampion {
+			variantKind = domain.VariantChampion
+		} else {
+			variantKind = domain.VariantChallenger
+		}
+		variant = string(variantKind)
+		version, ok = versionByNumber(fv, versionNo)
+		if !ok {
+			return DecideResult{}, fmt.Errorf("%w: flow %q has no experiment version %d", ErrNotFound, slug, versionNo)
+		}
+		if err := domain.ValidateInput(version.InputSchema, rawData); err != nil {
+			return DecideResult{}, fmt.Errorf("%w: experiment arm %q: %w", ErrBadRequest, assignment.ArmKey, err)
+		}
+	}
+
 	selectedPolicy, err := h.selectPolicy(ctx, id, slug, env != string(domain.EnvSandbox))
 	if err != nil {
 		return DecideResult{}, err
@@ -1206,6 +1284,9 @@ func (h *DecideHandler) DecideWithInvocation(
 		IdempotencyKeyHash: keyHash, RequestHash: requestHash,
 		BusinessReference: inv.BusinessReference, CorrelationID: inv.CorrelationID,
 		Metadata: metadataJSON, Control: inv.Control,
+		ExperimentID: experimentID(assignment), ExperimentCohort: experimentCohort(assignment),
+		ExperimentArm: experimentArm(assignment), ExperimentArmName: experimentArmName(assignment),
+		ExperimentSubjectHash:   experimentSubjectHash(assignment),
 		RecoveryAfter:           h.executionRecoveryAfter(inv.Control),
 		PolicySelectionRecorded: true,
 		PolicyID:                selectedPolicy.policyID, PolicyVersion: selectedPolicy.version,
@@ -1275,6 +1356,13 @@ func (h *DecideHandler) DecideWithInvocation(
 	)
 	if err != nil {
 		return DecideResult{}, err
+	}
+	if assignment != nil && len(run.Results) > 0 {
+		if _, err := h.experiments.RecordExposure(
+			ctx, id, decisionID, fv.FlowID, env, *assignment,
+		); err != nil && !errors.Is(err, eventlog.ErrConflict) {
+			return DecideResult{}, err
+		}
 	}
 	for _, r := range run.Results {
 		// Seal PII in each node's output too — node outputs echo input-derived PII
@@ -1382,7 +1470,8 @@ func (h *DecideHandler) DecideWithInvocation(
 	if run.Status != domain.StatusSuspended {
 		shadowEvent, err := h.runShadow(
 			ctx, id, fv, env, decisionID, version.Version, rawData, baseData, ref,
-			variantKind, governed, selectedPolicy, run, invocationTimeout(inv.Control), 1, nil,
+			variantKind, assignment, governed, selectedPolicy, run,
+			invocationTimeout(inv.Control), 1, nil,
 		)
 		if err != nil {
 			return DecideResult{}, err
@@ -1402,6 +1491,10 @@ func (h *DecideHandler) DecideWithInvocation(
 		return DecideResult{}, err
 	}
 	result.EventSeq = finalizedEvent.Seq
+	if assignment != nil {
+		result.ExperimentID, result.ExperimentCohort, result.ExperimentArm =
+			assignment.ExperimentID, assignment.Cohort, assignment.ArmKey
+	}
 	activeDecisionID = ""
 	return result, nil
 }
@@ -1778,13 +1871,37 @@ func (h *DecideHandler) PreviewWithInvocation(
 	slug, env string,
 	inv Invocation,
 ) (DecideResult, error) {
+	return h.previewWithInvocation(ctx, id, slug, env, inv, false)
+}
+
+// PreviewPinned runs an exact immutable version for a record-free population
+// backtest. It creates neither a decision nor an experiment exposure.
+func (h *DecideHandler) PreviewPinned(
+	ctx context.Context,
+	id identity.Identity,
+	slug, env string,
+	inv Invocation,
+	version int,
+	assignment *experiments.Assignment,
+) (DecideResult, error) {
+	inv.PinnedVersion, inv.Experiment = version, assignment
+	return h.previewWithInvocation(ctx, id, slug, env, inv, true)
+}
+
+func (h *DecideHandler) previewWithInvocation(
+	ctx context.Context,
+	id identity.Identity,
+	slug, env string,
+	inv Invocation,
+	internal bool,
+) (DecideResult, error) {
 	if err := id.Valid(); err != nil {
 		return DecideResult{}, err
 	}
 	if !domain.ValidEnvironment(env) {
 		return DecideResult{}, fmt.Errorf("%w: invalid environment %q (sandbox|staging|production)", ErrBadRequest, env)
 	}
-	inv, err := normalizeInvocation(slug, env, inv, true)
+	inv, err := normalizeInvocation(slug, env, inv, true, internal)
 	if err != nil {
 		return DecideResult{}, err
 	}
@@ -1808,7 +1925,19 @@ func (h *DecideHandler) PreviewWithInvocation(
 	if err := requireDeployment(fv, slug, env); err != nil {
 		return DecideResult{}, err
 	}
-	versionNo, _ := h.resolveVersion(fv, env)
+	versionNo, _, err := h.resolveVersion(fv, env, inv)
+	if err != nil {
+		return DecideResult{}, err
+	}
+	if inv.PinnedVersion == 0 && h.experiments != nil {
+		if assignment, assigned, resolveErr := h.experiments.Resolve(
+			ctx, id, fv.FlowID, env, data, ref,
+		); resolveErr != nil {
+			return DecideResult{}, fmt.Errorf("%w: %w", ErrBadRequest, resolveErr)
+		} else if assigned {
+			versionNo = assignment.Version
+		}
+	}
 	version, ok := versionByNumber(fv, versionNo)
 	if !ok {
 		return DecideResult{}, fmt.Errorf("%w: flow %q has no version %d", ErrNotFound, slug, versionNo)
@@ -1873,6 +2002,7 @@ func (h *DecideHandler) runShadow(
 	rawData, baseData map[string]any,
 	ref EntityRef,
 	variant domain.Variant,
+	assignment *experiments.Assignment,
 	governed bool,
 	selectedPolicy policySelection,
 	live domain.Run,
@@ -1892,6 +2022,8 @@ func (h *DecideHandler) runShadow(
 		DecisionID: decisionID, FlowID: fv.FlowID, Environment: env,
 		LiveVersion: liveVersion, ShadowVersion: shadowVer, LiveStatus: string(live.Status),
 		MatchBasis: basis, PolicyID: selectedPolicy.policyID, PolicyVersion: selectedPolicy.version,
+		ExperimentID: experimentID(assignment), ExperimentCohort: experimentCohort(assignment),
+		ExperimentArm: experimentArm(assignment),
 	}
 	if shadowVer == liveVersion {
 		ev.ShadowError = fmt.Sprintf(
@@ -2491,19 +2623,96 @@ func applyPolicy(selected policySelection, output map[string]any) (dispositionRe
 	return res, nil
 }
 
-// resolveVersion selects the version to run for an environment: the deployed
-// champion (or the A/B challenger for ChallengerPct percent of traffic), falling
-// back to the latest published version when nothing is deployed. It returns the
-// version number and the variant; the choice is recorded so replay is stable.
-func (h *DecideHandler) resolveVersion(fv flows.FlowView, env string) (int, domain.Variant) {
+// resolveVersion selects a pinned population version or the deployed version.
+// Legacy percentage deployments are retained for replay/backward compatibility,
+// but their bucket is now a stable request hash rather than a fresh random draw.
+func (h *DecideHandler) resolveVersion(fv flows.FlowView, env string, inv Invocation) (int, domain.Variant, error) {
+	if inv.Experiment != nil {
+		if inv.PinnedVersion != 0 && inv.PinnedVersion != inv.Experiment.Version {
+			return 0, "", fmt.Errorf("%w: pinned version and experiment arm disagree", ErrBadRequest)
+		}
+		if inv.Experiment.ArmKind == experiments.ArmChampion {
+			return inv.Experiment.Version, domain.VariantChampion, nil
+		}
+		return inv.Experiment.Version, domain.VariantChallenger, nil
+	}
+	if inv.PinnedVersion > 0 {
+		return inv.PinnedVersion, domain.VariantChampion, nil
+	}
 	dep, ok := fv.Deployments[env]
 	if !ok || dep.Version == 0 {
-		return fv.Latest, domain.VariantChampion
+		return fv.Latest, domain.VariantChampion, nil
 	}
-	if dep.ChallengerVersion > 0 && h.roll() < dep.ChallengerPct {
-		return dep.ChallengerVersion, domain.VariantChallenger
+	if dep.ChallengerVersion > 0 {
+		bucket, err := h.legacyBucket(inv)
+		if err != nil {
+			return 0, "", err
+		}
+		if bucket < dep.ChallengerPct {
+			return dep.ChallengerVersion, domain.VariantChallenger, nil
+		}
 	}
-	return dep.Version, domain.VariantChampion
+	return dep.Version, domain.VariantChampion, nil
+}
+
+func (h *DecideHandler) legacyBucket(inv Invocation) (int, error) {
+	if h.legacyRoll != nil {
+		value := h.legacyRoll()
+		if value < 0 || value >= 100 {
+			return 0, fmt.Errorf("%w: legacy routing override returned %d outside [0,100)", ErrBadRequest, value)
+		}
+		return value, nil
+	}
+	stable := struct {
+		Data              map[string]any `json:"data"`
+		EntityType        string         `json:"entity_type,omitempty"`
+		EntityID          string         `json:"entity_id,omitempty"`
+		BusinessReference string         `json:"business_reference,omitempty"`
+	}{
+		Data: inv.Data, EntityType: string(inv.Entity.Type), EntityID: string(inv.Entity.ID),
+		BusinessReference: inv.BusinessReference,
+	}
+	raw, err := json.Marshal(stable)
+	if err != nil {
+		return 0, fmt.Errorf("%w: hash legacy cohort subject: %w", ErrBadRequest, err)
+	}
+	digest := sha256.Sum256(raw)
+	return int(digest[0]) * 100 / 256, nil
+}
+
+func experimentID(assignment *experiments.Assignment) string {
+	if assignment == nil {
+		return ""
+	}
+	return assignment.ExperimentID
+}
+
+func experimentCohort(assignment *experiments.Assignment) int {
+	if assignment == nil {
+		return 0
+	}
+	return assignment.Cohort
+}
+
+func experimentArm(assignment *experiments.Assignment) string {
+	if assignment == nil {
+		return ""
+	}
+	return assignment.ArmKey
+}
+
+func experimentArmName(assignment *experiments.Assignment) string {
+	if assignment == nil {
+		return ""
+	}
+	return assignment.ArmName
+}
+
+func experimentSubjectHash(assignment *experiments.Assignment) string {
+	if assignment == nil {
+		return ""
+	}
+	return assignment.SubjectHash
 }
 
 // requireDeployment keeps recorded and record-free execution aligned: outside the

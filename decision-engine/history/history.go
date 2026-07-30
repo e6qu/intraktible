@@ -60,16 +60,21 @@ type ReasonCode struct {
 
 // Record is the materialized history of one decision.
 type Record struct {
-	Org         string `json:"org"`
-	Workspace   string `json:"workspace"`
-	DecisionID  string `json:"decision_id"`
-	Generation  int    `json:"generation"`
-	FlowID      string `json:"flow_id"`
-	Slug        string `json:"slug"`
-	Version     int    `json:"version"`
-	Environment string `json:"environment"`
-	Variant     string `json:"variant,omitempty"` // champion | challenger
-	Status      string `json:"status"`            // running | retrying | suspended | completed | failed | abandoned
+	Org                   string `json:"org"`
+	Workspace             string `json:"workspace"`
+	DecisionID            string `json:"decision_id"`
+	Generation            int    `json:"generation"`
+	FlowID                string `json:"flow_id"`
+	Slug                  string `json:"slug"`
+	Version               int    `json:"version"`
+	Environment           string `json:"environment"`
+	Variant               string `json:"variant,omitempty"` // champion | challenger
+	ExperimentID          string `json:"experiment_id,omitempty"`
+	ExperimentCohort      int    `json:"experiment_cohort,omitempty"`
+	ExperimentArm         string `json:"experiment_arm,omitempty"`
+	ExperimentArmName     string `json:"experiment_arm_name,omitempty"`
+	ExperimentSubjectHash string `json:"experiment_subject_hash,omitempty"`
+	Status                string `json:"status"` // running | retrying | suspended | completed | failed | abandoned
 	// EntityType/EntityID identify the decision's subject (when referenced) — the
 	// erasure subject under which the recorded PII is sealed.
 	EntityType         string                  `json:"entity_type,omitempty"`
@@ -345,7 +350,10 @@ func applyStarted(ctx context.Context, e eventlog.Envelope, s store.Store) error
 		Org: e.Org, Workspace: e.Workspace,
 		DecisionID: p.DecisionID, Generation: 1, FlowID: p.FlowID, Slug: p.Slug,
 		Version: p.Version, Environment: p.Environment, Variant: p.Variant, Status: "running",
-		EntityType: p.EntityType, EntityID: p.EntityID,
+		ExperimentID: p.ExperimentID, ExperimentCohort: p.ExperimentCohort,
+		ExperimentArm: p.ExperimentArm, ExperimentArmName: p.ExperimentArmName,
+		ExperimentSubjectHash: p.ExperimentSubjectHash,
+		EntityType:            p.EntityType, EntityID: p.EntityID,
 		IdempotencyKeyHash: p.IdempotencyKeyHash, RequestHash: p.RequestHash,
 		BusinessReference: p.BusinessReference, CorrelationID: p.CorrelationID,
 		Metadata: p.Metadata, Control: p.Control,

@@ -17,7 +17,9 @@
     listCases,
     listPolicies,
     listModels,
-    listEntities
+    listEntities,
+    listExperiments,
+    listPopulationJobs
   } from '$lib/api';
   import { appHref } from '$lib/paths';
   import { toast } from '$lib/toast';
@@ -255,6 +257,32 @@
                 `/data/${encodeURIComponent(en.entity_type)}/${encodeURIComponent(en.entity_id)}`
               )
             )
+        })
+      )
+    );
+    appendDynamic(seq, 'experiments', listExperiments(''), (experiments) =>
+      experiments.map(
+        (experiment): Cmd => ({
+          id: `experiment:${experiment.experiment_id}`,
+          section: 'Experiments',
+          label: experiment.spec.name,
+          hint: `${experiment.state} · cohort ${experiment.cohort}`,
+          icon: 'diagram',
+          keywords: `experiment cohort ${experiment.spec.name} ${experiment.spec.hypothesis} ${experiment.spec.owner}`,
+          run: () => goto(appHref(`/experiments/${experiment.experiment_id}`))
+        })
+      )
+    );
+    appendDynamic(seq, 'population jobs', listPopulationJobs(''), (jobs) =>
+      jobs.map(
+        (job): Cmd => ({
+          id: `population:${job.job_id}`,
+          section: 'Population jobs',
+          label: `${job.slug} · ${job.kind}`,
+          hint: `${job.state} · ${job.total} items`,
+          icon: 'gauge',
+          keywords: `population job bulk backtest ${job.slug} ${job.kind} ${job.state}`,
+          run: () => goto(appHref(`/population/${job.job_id}`))
         })
       )
     );

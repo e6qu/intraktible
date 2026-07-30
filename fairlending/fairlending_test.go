@@ -151,6 +151,43 @@ func TestBuildEnvironmentFilter(t *testing.T) {
 	}
 }
 
+func TestBuildFiltersExactExperimentCohortAndArm(t *testing.T) {
+	st := store.NewMemory()
+	put := func(decisionID, experimentID, arm string, cohort int) {
+		data, _ := json.Marshal(map[string]any{"applicant": map[string]any{"gender": "female"}})
+		rec := history.Record{
+			Org: id.Org, Workspace: id.Workspace, DecisionID: decisionID,
+			FlowID: "f1", Environment: "production", Status: "completed",
+			Data: data, Disposition: string(policy.Approve), StartedAt: now,
+			ExperimentID: experimentID, ExperimentCohort: cohort, ExperimentArm: arm,
+		}
+		if err := store.PutDoc(ctx, st, history.Collection, store.Key(id.Org, id.Workspace, decisionID), rec); err != nil {
+			t.Fatal(err)
+		}
+	}
+	put("target", "experiment-1", "treatment", 2)
+	put("other-arm", "experiment-1", "control", 2)
+	put("old-cohort", "experiment-1", "treatment", 1)
+	put("other-experiment", "experiment-2", "treatment", 2)
+
+	rep, err := fairlending.Build(ctx, st, id, fairlending.Params{
+		FlowID: "f1", Attribute: "applicant.gender",
+		ExperimentID: "experiment-1", Cohort: 2, Arm: "treatment",
+	}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Decisions != 1 || rep.ExperimentID != "experiment-1" ||
+		rep.Cohort != 2 || rep.Arm != "treatment" {
+		t.Fatalf("exact experiment slice = %+v", rep)
+	}
+	if _, err := fairlending.Build(ctx, st, id, fairlending.Params{
+		FlowID: "f1", Attribute: "applicant.gender", Cohort: 2,
+	}, now); err == nil {
+		t.Fatal("cohort without experiment must fail")
+	}
+}
+
 func TestBuildCustomFavorableOutcome(t *testing.T) {
 	st := store.NewMemory()
 	// Favorable = "refer" (e.g. a flow where referral is the sought outcome).

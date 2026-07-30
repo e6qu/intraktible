@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+
 # intraktible — Implementation Plan
 
 > Open-source MVPs of the four user-facing components of a commercial **Agentic Decision
@@ -327,9 +329,14 @@ delivered, by theme:
   provisioning + deprovisioning honored by live sessions.
 - **Decisioning depth:** decision-table hit policies + aggregators; **ML model hosting**
   (logistic/GBM/expression/external) with a **Predict node**; an external-decision compatibility API;
-  champion/challenger + monitors (**PSI drift**, covariate drift, decision-linked
-  **actuals reconciliation** with engine-derived probability/version and homogeneous
-  model-version cohorts) + SLOs.
+  governed stable-cohort experiments + monitors (**PSI drift**, covariate drift,
+  decision-linked corrected business outcomes with engine-derived treatment/model
+  lineage and homogeneous model-version cohorts) + SLOs.
+- **Experimentation & population automation:** hypothesis-driven experiment aggregates with
+  exact-version arms, reached exposure, maker-checker production launches, confidence/effect/SRM/
+  guardrail analysis, and safe promotion; durable decision/backtest population jobs with immutable
+  manifests, per-item idempotency, cross-replica worker recovery, full lifecycle control, partial
+  failure, downloadable results, and retention.
 - **Model-risk & governance packaging:** **SR 11-7 / SS1/23 model inventory** (`mrm/`) across flows,
   models, and agents; AI/ML governance — agent registry/versioning, offline eval, guardrails, cost
   attribution; structured **reason codes** end-to-end.
@@ -486,6 +493,30 @@ history, and 3 embedded-production smokes.
 
 **Outcome:** champion/challenger becomes an auditable experimentation product rather than per-request
 traffic splitting, and operators can run large populations as durable jobs.
+
+**Implemented in the E2 branch:** `decision-engine/experiments` owns exact-version
+multi-arm specifications, deterministic salted subject assignment, reached exposure,
+lifecycle scheduling, production launch review, statistically guarded analysis, and
+governed promotion. `decision-engine/outcomes` records idempotent binary/continuous
+business facts with source, observation, label-version, and immutable correction
+history while deriving flow, treatment, and model lineage from the completed
+decision. Fair-lending reports, model performance, and shadow evidence accept or
+retain the same exact experiment/cohort/arm dimensions.
+
+`decision-engine/population` provides decision and record-free backtest jobs with
+immutable bounded manifests, per-item identities and attempts, concurrency limits,
+distributed claims/heartbeats, pause/cancel/resume/retry, partial failure, NDJSON
+results, retention, and scheduler/worker ownership. Expired claims recover even when
+the job is at its concurrency limit. The OpenAPI document, Go/TypeScript SDKs,
+Experimentation-persona navigation, list/detail operator surfaces, notifications,
+seeded real-Wasm history, and maker-checker handoffs expose the same contracts.
+The local E2 release matrix passes `make check`, `make ci`, 232 frontend unit
+tests plus the production build, 128 native browser journeys, 83 real-Wasm
+journeys, 3 embedded-production smokes, all 18 Terraform plan contracts, and
+the container publication/retention contract. Hosted run `30527793916` is
+terminal green across all nine jobs, including Go race/security/license gates,
+native and embedded UI, the real-Wasm seeded demo, real PostgreSQL, real Shauth
+SSO, Terraform, web, and container-release contracts.
 
 **Scope:**
 

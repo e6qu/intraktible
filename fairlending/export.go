@@ -66,6 +66,16 @@ func Markdown(rep Report) string {
 	if rep.Environment != "" {
 		fmt.Fprintf(&b, "- Environment: `%s`\n", rep.Environment)
 	}
+	if rep.ExperimentID != "" {
+		fmt.Fprintf(&b, "- Experiment: `%s`", mdCell(rep.ExperimentID))
+		if rep.Cohort > 0 {
+			fmt.Fprintf(&b, ", cohort %d", rep.Cohort)
+		}
+		if rep.Arm != "" {
+			fmt.Fprintf(&b, ", arm `%s`", mdCell(rep.Arm))
+		}
+		fmt.Fprintln(&b)
+	}
 	fmt.Fprintf(&b, "- Scored decisions: **%d** (excluded: %d — referred, no disposition, or attribute absent)\n\n", rep.Decisions, rep.Excluded)
 
 	verdict := "insufficient data"

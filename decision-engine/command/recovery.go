@@ -13,6 +13,7 @@ import (
 
 	"github.com/e6qu/intraktible/decision-engine/domain"
 	"github.com/e6qu/intraktible/decision-engine/events"
+	"github.com/e6qu/intraktible/decision-engine/experiments"
 	"github.com/e6qu/intraktible/decision-engine/flows"
 	"github.com/e6qu/intraktible/decision-engine/policy"
 	"github.com/e6qu/intraktible/decision-engine/preapproval"
@@ -920,6 +921,35 @@ func (h *DecideHandler) recordRecoveredRun(
 	selectedPolicy policySelection,
 ) (uint64, error) {
 	decisionID := generation.started.DecisionID
+	var lastSeq uint64
+	if generation.started.ExperimentID != "" && len(run.Results) > 0 {
+		if h.experiments == nil {
+			return 0, fmt.Errorf(
+				"decision-engine: recovery for experiment decision %q has no experiment handler",
+				decisionID,
+			)
+		}
+		kind := experiments.ArmChallenger
+		if generation.started.Variant == string(domain.VariantChampion) {
+			kind = experiments.ArmChampion
+		}
+		exposure, err := h.experiments.RecordExposure(
+			ctx, generation.id, decisionID, generation.started.FlowID,
+			generation.started.Environment,
+			experiments.Assignment{
+				ExperimentID: generation.started.ExperimentID,
+				Cohort:       generation.started.ExperimentCohort,
+				ArmKey:       generation.started.ExperimentArm,
+				ArmName:      generation.started.ExperimentArmName,
+				ArmKind:      kind, Version: generation.started.Version,
+				SubjectHash: generation.started.ExperimentSubjectHash,
+			},
+		)
+		if err != nil && !errors.Is(err, eventlog.ErrConflict) {
+			return 0, err
+		}
+		lastSeq = exposure.Seq
+	}
 	existingNodes := map[string]bool{}
 	for _, envelope := range generation.events[generation.boundary:] {
 		if envelope.Type != events.TypeNodeEvaluated {
@@ -931,7 +961,6 @@ func (h *DecideHandler) recordRecoveredRun(
 		}
 		existingNodes[node.NodeID] = true
 	}
-	var lastSeq uint64
 	for _, result := range run.Results {
 		if existingNodes[result.NodeID] {
 			continue
@@ -1070,6 +1099,11 @@ func (h *DecideHandler) recordRecoveredRun(
 				ctx, generation.id, fv, generation.started.Environment, decisionID,
 				generation.started.Version, rawData, baseData, ref,
 				domain.Variant(generation.started.Variant),
+				&experiments.Assignment{
+					ExperimentID: generation.started.ExperimentID,
+					Cohort:       generation.started.ExperimentCohort,
+					ArmKey:       generation.started.ExperimentArm,
+				},
 				generation.started.Environment != string(domain.EnvSandbox),
 				selectedPolicy, run, invocationTimeout(generation.started.Control),
 				generation.generation, shadowEvidence,

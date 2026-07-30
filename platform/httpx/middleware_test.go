@@ -195,6 +195,13 @@ func TestAuthorizeRBAC(t *testing.T) {
 		{"approver-k", "POST", "/v1/models/m1/validation", 200},
 		// Recording a realized outcome is runtime feedback, not authoring → operator.
 		{"operator-k", "POST", "/v1/models/m1/outcomes", 200},
+		{"operator-k", "POST", "/v1/experiments", 403},
+		{"editor-k", "POST", "/v1/experiments", 200},
+		{"operator-k", "PUT", "/v1/experiments/e1", 403},
+		{"editor-k", "PUT", "/v1/experiments/e1", 200},
+		{"editor-k", "POST", "/v1/experiments/e1/launch-requests/r1/approve", 403},
+		{"approver-k", "POST", "/v1/experiments/e1/launch-requests/r1/approve", 200},
+		{"operator-k", "POST", "/v1/population-jobs", 200},
 		{"viewer-k", "GET", "/v1/models/m1/performance", 200},                    // reads stay open to viewer
 		{"admin-k", "POST", "/v1/flows/f1/deployments", 200},                     // admin may do anything
 		{"editor-k", "POST", "/v1/flows/f1/deployment-requests", 200},            // propose: editor

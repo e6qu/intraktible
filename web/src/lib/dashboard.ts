@@ -7,11 +7,13 @@ import {
   listFlows,
   listDecisions,
   listModels,
+  listExperiments,
   getCaseSummary,
   getRunSummary,
   type Flow,
   type Decision,
   type Model,
+  type Experiment,
   type CaseSummary,
   type RunSummary
 } from '$lib/api';
@@ -21,6 +23,7 @@ export interface DashboardData {
   flows: Flow[];
   decisions: Decision[];
   models: Model[];
+  experiments: Experiment[];
   cases: CaseSummary;
   runs: RunSummary;
 }
@@ -31,14 +34,15 @@ export async function loadDashboard(
   key = '',
   fetcher: typeof fetch = fetch
 ): Promise<DashboardData> {
-  const [flows, decisions, models, cases, runs] = await Promise.all([
+  const [flows, decisions, models, experiments, cases, runs] = await Promise.all([
     listFlows(key, fetcher),
     listDecisions(key, fetcher),
     listModels(key, fetcher),
+    listExperiments(key, fetcher),
     getCaseSummary(key, {}, fetcher),
     getRunSummary(key, fetcher)
   ]);
-  return { flows, decisions, models, cases, runs };
+  return { flows, decisions, models, experiments, cases, runs };
 }
 
 export interface DecisionStats {
@@ -91,7 +95,11 @@ export function deployStats(flows: Flow[]): { live: number; pending: number } {
 }
 
 export function pendingApprovalCount(data: DashboardData): number {
-  return deployStats(data.flows).pending + data.models.filter((model) => model.pending).length;
+  return (
+    deployStats(data.flows).pending +
+    data.models.filter((model) => model.pending).length +
+    data.experiments.filter((experiment) => experiment.state === 'pending_launch').length
+  );
 }
 
 // decisionsByDay buckets decisions by calendar day (the RFC3339 date prefix of
@@ -152,7 +160,7 @@ export const DEFAULT_HOME_STATS: HomeStatId[] = ['decisions', 'completed', 'flow
 export function personaHomeStats(ids: HomeStatId[], data: DashboardData): HomeStat[] {
   const stats = decisionStats(data.decisions);
   const deploy = deployStats(data.flows);
-  const challenger = data.decisions.filter((d) => d.variant === 'challenger').length;
+  const experimentExposures = data.decisions.filter((d) => d.experiment_id).length;
   const stat = (id: HomeStatId): HomeStat => {
     switch (id) {
       case 'decisions':
@@ -204,7 +212,12 @@ export function personaHomeStats(ids: HomeStatId[], data: DashboardData): HomeSt
       case 'unassigned':
         return { id, value: data.cases.unassigned, label: 'unassigned', href: '/cases' };
       case 'challenger':
-        return { id, value: challenger, label: 'challenger arm', href: '/decisions' };
+        return {
+          id,
+          value: experimentExposures,
+          label: 'experiment exposures',
+          href: '/experiments'
+        };
     }
   };
   return ids.map(stat);

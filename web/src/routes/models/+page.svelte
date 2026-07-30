@@ -269,6 +269,8 @@
   let actualDecisionID = $state('');
   let actualNodeID = $state('');
   let actualBusy = $state(false);
+  let performanceOutcomeKey = $state('');
+  let performanceNodeID = $state('');
   async function loadDrift(m: string) {
     drift = null;
     perf = null;
@@ -280,15 +282,29 @@
     // wins, not last-to-arrive).
     const reqModel = m;
     const reqWindow = driftWindow;
+    const reqOutcomeKey = performanceOutcomeKey.trim();
+    const reqNodeID = performanceNodeID.trim();
     try {
       const [got, gotPerf] = await Promise.all([
         modelDrift(key, m, driftWindow),
         // A model with no recorded actuals comes back as an empty performance record
         // with a 200, so only a 403 blanks this panel; a real failure reaches the
         // handler below rather than reading as "this model has no measured outcomes".
-        whenPermitted(getModelPerformance(key, m), null)
+        whenPermitted(
+          getModelPerformance(key, m, {
+            outcome_key: reqOutcomeKey || undefined,
+            node_id: reqNodeID || undefined
+          }),
+          null
+        )
       ]);
-      if (driftOpen !== reqModel || driftWindow !== reqWindow) return;
+      if (
+        driftOpen !== reqModel ||
+        driftWindow !== reqWindow ||
+        performanceOutcomeKey.trim() !== reqOutcomeKey ||
+        performanceNodeID.trim() !== reqNodeID
+      )
+        return;
       drift = got;
       perf = gotPerf;
       thresholdInput = drift.threshold ? String(drift.threshold) : '';
@@ -315,6 +331,15 @@
     }
     driftOpen = m;
     driftWindow = 0;
+    performanceOutcomeKey = '';
+    performanceNodeID = '';
+    await loadDrift(m);
+  }
+  async function applyPerformanceSource(m: string) {
+    if (!performanceOutcomeKey.trim() && performanceNodeID.trim()) {
+      toast.error('Choose a business outcome key before filtering by Predict node.');
+      return;
+    }
     await loadDrift(m);
   }
   async function captureBaseline(m: string) {
@@ -783,12 +808,12 @@
                   {#if roleAtLeast($user?.role, 'editor')}
                     <div class="actual-form">
                       <div>
-                        <p class="sub">Reconcile a realized outcome</p>
+                        <p class="sub">Legacy model-specific actual</p>
                         <p class="muted small">
-                          Link ground truth to a completed decision. The backend recovers the exact
-                          recorded probability and model version; you cannot author performance
-                          evidence here. These actuals drive calibration, accuracy, Brier score, and
-                          realized AUC.
+                          Compatibility path for existing integrations. New evidence should be
+                          recorded as a corrected business outcome from the decision detail, then
+                          selected below. The backend still recovers the exact recorded probability
+                          and model version; you cannot author them here.
                         </p>
                       </div>
                       <label>
@@ -823,12 +848,46 @@
                       </button>
                     </div>
                   {/if}
+                  <div class="performance-source">
+                    <div>
+                      <p class="sub">Performance evidence</p>
+                      <p class="muted small">
+                        Enter a business outcome key to measure this model from the corrected,
+                        decision-linked facts also used by experiments. Leave it blank to inspect
+                        legacy model-specific actuals.
+                      </p>
+                    </div>
+                    <label>
+                      Business outcome key
+                      <input
+                        aria-label="performance outcome key"
+                        bind:value={performanceOutcomeKey}
+                        placeholder="e.g. defaulted_90d"
+                      />
+                    </label>
+                    <label>
+                      Predict node ID (only if repeated)
+                      <input
+                        aria-label="performance predict node id"
+                        bind:value={performanceNodeID}
+                        placeholder="usually blank"
+                      />
+                    </label>
+                    <button
+                      class="btn"
+                      disabled={driftLoading}
+                      onclick={() => applyPerformanceSource(m.name)}
+                    >
+                      {driftLoading ? 'Loading…' : 'Apply evidence'}
+                    </button>
+                  </div>
                   {#if perf && perf.count > 0}
                     <div class="perf" data-testid="model-performance">
                       <p class="sub">
                         Live performance{perf.model_version
                           ? ` · model v${perf.model_version}`
                           : ''}
+                        {perf.outcome_key ? ` · ${perf.outcome_key}` : ''}
                         (from {perf.count} recorded
                         {perf.count === 1 ? 'actual' : 'actuals'})
                       </p>
@@ -839,12 +898,17 @@
                       </div>
                       {#if perf.excluded_actuals}
                         <p class="muted small">
-                          {perf.excluded_actuals} late
-                          {perf.excluded_actuals === 1 ? 'actual was' : 'actuals were'} excluded after
-                          a cross-replica model-version race.
+                          {perf.excluded_actuals}
+                          {perf.excluded_actuals === 1 ? 'actual was' : 'actuals were'} excluded because
+                          exact current-version prediction lineage was missing or ambiguous.
                         </p>
                       {/if}
                     </div>
+                  {:else if perf?.outcome_key && !driftLoading}
+                    <p class="muted">
+                      No current-version predictions are joined to binary outcome
+                      <code>{perf.outcome_key}</code> for this model and node selection.
+                    </p>
                   {/if}
                   {#if driftError}
                     <p class="err">
@@ -1010,7 +1074,8 @@
     gap: 1.2rem;
     font-size: 0.9rem;
   }
-  .actual-form {
+  .actual-form,
+  .performance-source {
     display: grid;
     grid-template-columns: minmax(12rem, 2fr) repeat(3, minmax(8rem, 1fr)) auto;
     align-items: end;
@@ -1019,7 +1084,11 @@
     padding-bottom: 0.8rem;
     border-bottom: 1px solid var(--border);
   }
-  .actual-form label {
+  .performance-source {
+    grid-template-columns: minmax(12rem, 2fr) repeat(2, minmax(8rem, 1fr)) auto;
+  }
+  .actual-form label,
+  .performance-source label {
     display: flex;
     flex-direction: column;
     gap: 0.2rem;
@@ -1027,7 +1096,8 @@
     font-size: 0.78rem;
   }
   .actual-form input,
-  .actual-form select {
+  .actual-form select,
+  .performance-source input {
     min-width: 0;
     padding: 0.35rem 0.45rem;
     border: 1px solid var(--border);
@@ -1044,7 +1114,8 @@
     color: var(--fg);
   }
   @media (max-width: 900px) {
-    .actual-form {
+    .actual-form,
+    .performance-source {
       grid-template-columns: 1fr 1fr;
     }
   }
