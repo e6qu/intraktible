@@ -35,12 +35,12 @@ Fix every missing or misleading piece found; do not stop at documenting gaps.
 
 ## Phase
 
-**Fifth whole-product journey audit — product work and local release matrix
-complete; remote reconciliation and PR delivery in progress.**
-PR #158 merged as `002e9d3`; the GitHub PR queue is empty, and the refreshed
-`hardening/production-readiness-audit` branch is fast-forwarded exactly to
-`origin/main`. The fourth audit's governed policy snapshots and immutable agent
-version pins are now the authoritative baseline.
+**Fifth whole-product journey audit — complete in sole PR #159.**
+The audit began after PR #158 merged as `002e9d3`, with an empty GitHub queue
+and the refreshed `hardening/production-readiness-audit` branch exactly at
+`origin/main`. PR #159 is now the repository's sole open review queue. The
+fourth audit's governed policy snapshots and immutable agent version pins were
+the authoritative baseline.
 
 The walk found and closed two concrete cross-layer evidence defects. Shadow
 evaluation now independently resolves candidate-selected connector/AI/model
@@ -144,8 +144,10 @@ pass vet/build, strict lint, SAST, the complete race-enabled Go suite, deadcode,
 zero clone groups, zero reachable vulnerabilities, and dependency licenses.
 Prettier, zero-warning ESLint and Svelte check, all 221 Vitest tests, 124 native
 Playwright journeys, 83 real-Wasm journeys, and 3 embedded-binary smokes also
-pass. The starting merged baseline is `002e9d3`; final remote reconciliation,
-commit, sole-PR creation, and remote CI remain.
+pass. The implementation is commit `c403f83` in sole PR #159. Remote run
+30505656168 is terminal green: all nine jobs pass, including Go,
+real PostgreSQL, native and real-Wasm browser journeys, the embedded artifact,
+Shauth SSO, Terraform, web, container release, security, and licenses.
 
 ## Ground truth established so far
 
@@ -173,6 +175,8 @@ commit, sole-PR creation, and remote CI remain.
 - The fifth-audit complete local matrix passes: `make check`, `make ci`, all 221
   frontend units, 124 native browser journeys, 83 real-Wasm journeys, and 3
   embedded-production smokes.
+- Commit `c403f83` is pushed in sole PR #159. Remote run 30505656168 is
+  terminal green across all nine required jobs.
 - The model-validation endpoint now takes validator identity only from the
   authenticated actor, is approver-gated, rejects the model owner, requires
   substantive evidence, and approval requires the latest independent
