@@ -34,14 +34,42 @@ the next implementation tranche by correctness and operational risk.
 
 ## Phase
 
+**Enterprise PR E3 — enterprise case operations is in progress on
+`enterprise/e3-case-operations` from authoritative merged `origin/main` commit
+`565e1d2`.** PR #161 merged at that exact commit, its remote branch is deleted,
+and the GitHub review queue was empty when E3 was cut. This tranche will deliver
+the complete `PLAN.md` §8b.4 vertical before opening one review: versioned case
+types, configurable queues and routing, replica-safe claims and bulk work,
+linked evidence and attachment metadata, QA/second review, operational
+analytics, and complete SLA/notification/webhook/retention governance.
+
+The first E3 core slice is implemented and whole-repository compilation-clean.
+Immutable published case-type versions now define typed/required fields,
+configurable state transitions, dispositions/reasons, allowed priorities,
+business-hour service calendars, evidence requirements, and role layouts.
+Governed opens validate context, pin the exact version, and record a
+timezone-resolved deadline; historical cases retain explicit compatibility
+version `0`. Durable queue and reviewer profiles feed a pure deterministic
+skills/capacity/jurisdiction/conflict-aware router, and the route/assignment
+claim permits only one winner across replicas. The scheduler owns pending
+routing when a tenant opts in by defining queues.
+
+Typed evidence links, immutable attachment metadata (hash + approved storage
+reference, never hidden event-log bytes), lawful-basis/retention/hold
+annotations, audited access, reasoned dispositions with required-evidence
+gates, deterministic QA sampling, independent second review, derived agreement,
+feedback, and actor-owned saved views are event-sourced and projected. Replay
+tests reproduce the pinned definition, attachment, disposition, and QA result.
+Domain/command/cases/scheduler tests pass, authorization coverage is pinned for
+every new route, and `go test ./... -run '^$'` confirms every repository package
+still compiles. Remaining E3 work is server-owned bulk/search/rebalance,
+analytics and delivery operations, SDK/OpenAPI/UI/demo/docs, and the complete
+concurrency/restart/browser/release matrix.
+
 **Enterprise PR E2 — experimentation, outcomes, and population automation is
-implementation-complete on `enterprise/e2-experiments-population` from merged
-`origin/main` commit `fea2a7e`.** PR #161 is the repository's sole open review
-at implementation commit `0eaa5a5`; do not begin E3 until it merges. The tranche
-delivers the complete `PLAN.md` §8b.3 vertical outcome: first-class governed
-experiments, deterministic cohorts and reached-treatment exposures,
-attributable/correctable business outcomes, statistical analysis, and durable
-multi-worker population jobs with complete operator UI and contracts.
+merged as authoritative commit `565e1d2`.** Its implementation commit
+`0eaa5a5` passed all nine hosted jobs in run `30527793916`; final evidence head
+`0ea67ec` repeated the complete matrix in run `30528560455` before merge.
 
 The E2 core is now implemented end to end: governed experiment lifecycle and
 maker-checker launch, deterministic exact-version assignments and reached

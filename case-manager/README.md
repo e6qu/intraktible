@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+
 # Case Manager
 
 A component of **intraktible** (see [../PLAN.md](../PLAN.md) §4.2). New here? Start at [../AGENTS.md](../AGENTS.md).
@@ -11,7 +13,19 @@ cases/       # events -> JSONB read model (queue/detail + an audit log built fro
 service/     # HTTP handlers + wiring (imperative shell)
 ```
 
-Status: **done (Phase 2).**
+Status: **Phase 2 complete; enterprise operations expansion in progress
+(`PLAN.md` §8b.4).**
+
+The E3 branch adds immutable versioned case-type definitions, typed/required
+fields, configurable state transitions/dispositions/reasons/priorities,
+business-hour service calendars, evidence requirements, and role layouts.
+Cases opened under a registered definition pin its exact version. Configurable
+queues and reviewer profiles drive a deterministic skill/capacity/jurisdiction/
+conflict-aware router with a cross-replica claim. Evidence links, immutable
+attachment metadata, lawful-basis/retention/hold annotations, saved views, and
+independent QA events are replayable parts of the case rather than browser
+state. Historical pre-E3 cases remain readable at explicit compatibility
+version `0`.
 
 Done — case lifecycle + queues + flow escalation + SLA tracking (command→event→projection→API, durable & replayable):
 - A case is opened either via the API (**ReviewRequested**) or by a **decision flow** — a

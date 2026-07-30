@@ -645,3 +645,15 @@ Linux, entirely that VM's fsync path.
 - 2026-07-30: Pushed the 79-file E2 implementation as `0eaa5a5`, opened sole
   PR #161, and babysat hosted run `30527793916` to terminal green across all
   nine jobs, including real PostgreSQL, real-Wasm, SSO, and release contracts.
+- 2026-07-30: Verified final E2 head `0ea67ec` repeated all nine hosted jobs
+  green in run `30528560455`; PR #161 then merged as authoritative `565e1d2`.
+- 2026-07-30: Fetched and reconciled merged `origin/main`, confirmed the E2
+  remote branch is deleted and the PR queue empty, and cut
+  `enterprise/e3-case-operations` directly from `565e1d2`.
+- 2026-07-30: Audited the complete Case Manager vertical and recorded six E3
+  failure groups: unversioned types, absent routing, absent evidence lifecycle,
+  browser-fanned bulk work, absent independent QA, and incomplete operations.
+- 2026-07-30: Implemented the first E3 core: versioned definitions and business
+  calendars, pinned governed opens, deterministic replica-safe routing,
+  evidence/attachment governance, dispositions, saved views, independent QA,
+  projections and HTTP/RBAC contracts; focused tests and whole-repo compile pass.

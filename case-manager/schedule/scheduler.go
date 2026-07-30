@@ -22,6 +22,7 @@ const sweepActor = "sla-sweeper"
 // Cmd is the narrow command surface the scheduler drives (kept narrow to avoid a
 // command↔schedule import cycle and to make the scheduler testable with a fake).
 type Cmd interface {
+	RoutePending(ctx context.Context, id identity.Identity) (map[string]string, []string, error)
 	SweepSLA(ctx context.Context, id identity.Identity, now time.Time) ([]string, error)
 	PendingSLAEscalations(ctx context.Context, id identity.Identity) ([]string, error)
 	RecordSLAEscalation(ctx context.Context, id identity.Identity, caseID string, status events.SLAEscalationStatus) error
@@ -70,6 +71,8 @@ const (
 
 // TickSummary reports what one sweep did.
 type TickSummary struct {
+	Routed            int
+	RoutingFailures   int
 	Breached          int
 	Delivered         int
 	NoChannel         int
@@ -92,6 +95,15 @@ func (s *Scheduler) Tick(ctx context.Context) (TickSummary, error) {
 	now := s.now()
 	var sum TickSummary
 	for id := range tenants {
+		routed, failures, err := s.cmd.RoutePending(ctx, id)
+		if err != nil {
+			return sum, err
+		}
+		sum.Routed += len(routed)
+		sum.RoutingFailures += len(failures)
+		if len(failures) > 0 {
+			return sum, fmt.Errorf("case router: %d case(s) could not be routed: %v", len(failures), failures)
+		}
 		breached, err := s.cmd.SweepSLA(ctx, id, now)
 		if err != nil {
 			return sum, err
@@ -153,9 +165,9 @@ func (s *Scheduler) Run(ctx context.Context, interval time.Duration, report func
 				continue
 			}
 			report(nil)
-			if summary.Breached > 0 || summary.Delivered > 0 || summary.Retrying > 0 ||
+			if summary.Routed > 0 || summary.Breached > 0 || summary.Delivered > 0 || summary.Retrying > 0 ||
 				summary.PermanentFailures > 0 {
-				slog.Info("sla sweeper", "breached", summary.Breached, "delivered", summary.Delivered,
+				slog.Info("case scheduler", "routed", summary.Routed, "breached", summary.Breached, "delivered", summary.Delivered,
 					"retrying", summary.Retrying, "permanent_failures", summary.PermanentFailures)
 			}
 			metrics.RecordSchedulerTick("case_sla", "ok")

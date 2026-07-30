@@ -47,6 +47,7 @@ func (s *Service) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/cases/{case_id}/status", s.status)
 	mux.HandleFunc("POST /v1/cases/{case_id}/notes", s.note)
 	mux.HandleFunc("POST /v1/cases/sla-sweep", s.slaSweep)
+	s.enterpriseRoutes(mux)
 }
 
 // slaSweep emits SLA-breach events for the tenant's overdue open cases (the push
@@ -69,6 +70,9 @@ func (s *Service) slaSweep(w http.ResponseWriter, r *http.Request) {
 type reviewRequest struct {
 	CompanyName      string          `json:"company_name"`
 	CaseType         string          `json:"case_type"`
+	Priority         string          `json:"priority,omitempty"`
+	Jurisdiction     string          `json:"jurisdiction,omitempty"`
+	Subject          string          `json:"subject,omitempty"`
 	SLADays          int             `json:"sla_days"`
 	Context          json.RawMessage `json:"context,omitempty"`
 	SourceDecisionID string          `json:"source_decision_id,omitempty"`
@@ -87,6 +91,9 @@ func (s *Service) requestReview(w http.ResponseWriter, r *http.Request) {
 	caseID, e, err := s.cmd.RequestReview(r.Context(), id, domain.RequestReview{
 		CompanyName:      req.CompanyName,
 		CaseType:         req.CaseType,
+		Priority:         domain.Priority(req.Priority),
+		Jurisdiction:     req.Jurisdiction,
+		Subject:          req.Subject,
 		SLADays:          req.SLADays,
 		Context:          req.Context,
 		SourceDecisionID: req.SourceDecisionID,

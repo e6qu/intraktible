@@ -66,11 +66,53 @@ func (h *Handler) RequestReview(ctx context.Context, id identity.Identity, cmd d
 	if err := cmd.Validate(); err != nil {
 		return "", eventlog.Envelope{}, err
 	}
+	caseTypeVersion := 0
+	initialState := domain.StatusNeedsReview
+	priority := cmd.Priority
+	if priority == "" {
+		priority = domain.PriorityNormal
+	}
+	deadline := ""
+	published, governed, err := h.latestCaseType(ctx, id, cmd.CaseType)
+	if err != nil {
+		return "", eventlog.Envelope{}, err
+	}
+	if governed {
+		if err := published.Definition.ValidateContext(cmd.Context); err != nil {
+			return "", eventlog.Envelope{}, err
+		}
+		if !published.Definition.AllowsPriority(priority) {
+			return "", eventlog.Envelope{}, fmt.Errorf(
+				"case-manager: priority %q is not permitted by case type %q version %d",
+				priority, cmd.CaseType, published.Version,
+			)
+		}
+		location, err := time.LoadLocation(published.Definition.Calendar.Timezone)
+		if err != nil {
+			return "", eventlog.Envelope{}, fmt.Errorf(
+				"case-manager: load service-calendar timezone %q: %w",
+				published.Definition.Calendar.Timezone, err,
+			)
+		}
+		due, err := domain.BusinessDeadline(h.now(), published.Definition.Calendar, location)
+		if err != nil {
+			return "", eventlog.Envelope{}, err
+		}
+		caseTypeVersion = published.Version
+		initialState = published.Definition.InitialState
+		deadline = due.Format(time.RFC3339)
+	}
 	caseID := h.newID()
 	payload, err := json.Marshal(events.ReviewRequested{
 		CaseID:           caseID,
 		CompanyName:      cmd.CompanyName,
 		CaseType:         cmd.CaseType,
+		CaseTypeVersion:  caseTypeVersion,
+		InitialState:     string(initialState),
+		Priority:         string(priority),
+		Jurisdiction:     cmd.Jurisdiction,
+		Subject:          cmd.Subject,
+		Deadline:         deadline,
 		SLADays:          cmd.SLADays,
 		Context:          cmd.Context,
 		SourceDecisionID: cmd.SourceDecisionID,
@@ -213,12 +255,18 @@ func (h *Handler) AddNote(ctx context.Context, id identity.Identity, cmd domain.
 // slaCaseState is the folded state of one case: what the SLA sweep needs, plus the
 // current assignee and the per-kind event counts the CAS claims pin an append to.
 type slaCaseState struct {
-	createdAt time.Time
-	slaDays   int
-	status    domain.CaseStatus
-	breached  bool
-	reminded  bool
-	escalated events.SLAEscalationStatus
+	createdAt    time.Time
+	deadline     time.Time
+	slaDays      int
+	status       domain.CaseStatus
+	caseType     string
+	priority     domain.Priority
+	jurisdiction string
+	context      json.RawMessage
+	queue        string
+	breached     bool
+	reminded     bool
+	escalated    events.SLAEscalationStatus
 
 	assignee                 string
 	assignCount, statusCount int
@@ -262,7 +310,18 @@ func (h *Handler) SweepSLAWithSeq(ctx context.Context, id identity.Identity, now
 		if st.status == domain.StatusCompleted {
 			continue
 		}
-		switch domain.SLAState(st.createdAt, st.slaDays, now) {
+		slaState := domain.SLAState(st.createdAt, st.slaDays, now)
+		if !st.deadline.IsZero() {
+			switch {
+			case !now.Before(st.deadline):
+				slaState = domain.SLAOverdue
+			case st.deadline.Sub(now) <= 24*time.Hour:
+				slaState = domain.SLADueSoon
+			default:
+				slaState = domain.SLAOnTrack
+			}
+		}
+		switch slaState {
 		case domain.SLAOverdue:
 			if st.breached {
 				continue
@@ -384,7 +443,30 @@ func (h *Handler) caseStates(ctx context.Context, id identity.Identity) (map[str
 			if err := json.Unmarshal(e.Payload, &p); err != nil {
 				return nil, fmt.Errorf("case-manager: decode requested seq %d: %w", e.Seq, err)
 			}
-			states[p.CaseID] = slaCaseState{createdAt: e.Time, slaDays: domain.NormalizeSLADays(p.SLADays), status: domain.StatusNeedsReview}
+			status := domain.StatusNeedsReview
+			if p.InitialState != "" {
+				parsed, valid := domain.ParseStateKey(p.InitialState)
+				if !valid {
+					return nil, fmt.Errorf("case-manager: case %q has invalid initial state %q at seq %d", p.CaseID, p.InitialState, e.Seq)
+				}
+				status = parsed
+			}
+			priority := domain.Priority(p.Priority)
+			if priority == "" {
+				priority = domain.PriorityNormal
+			}
+			var deadline time.Time
+			if p.Deadline != "" {
+				deadline, err = time.Parse(time.RFC3339, p.Deadline)
+				if err != nil {
+					return nil, fmt.Errorf("case-manager: case %q has invalid deadline at seq %d: %w", p.CaseID, e.Seq, err)
+				}
+			}
+			states[p.CaseID] = slaCaseState{
+				createdAt: e.Time, slaDays: domain.NormalizeSLADays(p.SLADays), status: status,
+				deadline: deadline, caseType: p.CaseType, priority: priority,
+				jurisdiction: p.Jurisdiction, context: p.Context,
+			}
 		case decisionevents.TypeManualReviewRequested:
 			var p decisionevents.ManualReviewRequested
 			if err := json.Unmarshal(e.Payload, &p); err != nil {
@@ -394,6 +476,7 @@ func (h *Handler) caseStates(ctx context.Context, id identity.Identity) (map[str
 				createdAt: e.Time, slaDays: domain.NormalizeSLADays(p.SLADays),
 				status: domain.StatusNeedsReview, sourceDecisionID: p.DecisionID,
 				sourceDecisionSuspended: suspendedDecisions[p.DecisionID],
+				caseType:                p.CaseType, priority: domain.PriorityNormal, context: p.Context,
 			}
 		case decisionevents.TypeDecisionSuspended:
 			var p decisionevents.DecisionSuspended
@@ -432,6 +515,19 @@ func (h *Handler) caseStates(ctx context.Context, id identity.Identity) (map[str
 			if st, ok := states[p.CaseID]; ok {
 				st.assignee = p.Assignee
 				st.assignCount++
+				states[p.CaseID] = st
+			}
+		case events.TypeCaseRouted:
+			var p events.CaseRouted
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				return nil, fmt.Errorf("case-manager: decode routed seq %d: %w", e.Seq, err)
+			}
+			if st, ok := states[p.CaseID]; ok {
+				st.queue = p.Queue
+				if p.Assignee != "" {
+					st.assignee = p.Assignee
+					st.assignCount++
+				}
 				states[p.CaseID] = st
 			}
 		case events.TypeCaseStatusChanged:

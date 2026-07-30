@@ -29,8 +29,17 @@ var statuses = map[CaseStatus]bool{
 	StatusCompleted:   true,
 }
 
-// Valid reports whether s is a known case status.
+// Valid reports whether s is a known built-in case status.
 func (s CaseStatus) Valid() bool { return statuses[s] }
+
+// ValidStateKey reports whether s is a well-formed configurable state key.
+func ValidStateKey(s CaseStatus) bool { return keyPattern.MatchString(string(s)) }
+
+// ParseStateKey parses a configurable state key.
+func ParseStateKey(s string) (CaseStatus, bool) {
+	state := CaseStatus(s)
+	return state, ValidStateKey(state)
+}
 
 // ParseStatus converts a raw string (from an event payload) into a CaseStatus,
 // reporting ok=false for an unknown value. Projectors parse at the decode boundary
@@ -66,6 +75,9 @@ func (s CaseStatus) CanTransitionTo(next CaseStatus) bool {
 type RequestReview struct {
 	CompanyName      string
 	CaseType         string
+	Priority         Priority
+	Jurisdiction     string
+	Subject          string
 	SLADays          int
 	Context          json.RawMessage
 	SourceDecisionID string
@@ -81,6 +93,9 @@ func (c RequestReview) Validate() error {
 	}
 	if c.SLADays < 0 || c.SLADays > MaxSLADays {
 		return fmt.Errorf("case-manager: sla_days must be between 0 and %d, got %d", MaxSLADays, c.SLADays)
+	}
+	if c.Priority != "" && !c.Priority.Valid() {
+		return fmt.Errorf("case-manager: invalid priority %q", c.Priority)
 	}
 	return nil
 }

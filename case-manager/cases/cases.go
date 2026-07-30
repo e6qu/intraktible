@@ -38,6 +38,52 @@ type AuditEntry struct {
 	Detail string    `json:"detail,omitempty"`
 }
 
+// EvidenceLink is one immutable relationship to evidence held elsewhere.
+type EvidenceLink struct {
+	EvidenceID  string `json:"evidence_id"`
+	Requirement string `json:"requirement,omitempty"`
+	Kind        string `json:"kind"`
+	SubjectType string `json:"subject_type"`
+	SubjectID   string `json:"subject_id"`
+	Label       string `json:"label"`
+	ContentHash string `json:"content_hash,omitempty"`
+}
+
+// Attachment is immutable metadata for bytes held by the configured artifact
+// store; access is audited through a separate event.
+type Attachment struct {
+	AttachmentID string    `json:"attachment_id"`
+	Name         string    `json:"name"`
+	MediaType    string    `json:"media_type"`
+	Size         int64     `json:"size"`
+	SHA256       string    `json:"sha256"`
+	StorageRef   string    `json:"storage_ref"`
+	Requirement  string    `json:"requirement,omitempty"`
+	Subject      string    `json:"subject,omitempty"`
+	LawfulBasis  string    `json:"lawful_basis,omitempty"`
+	RetainUntil  string    `json:"retain_until,omitempty"`
+	LegalHold    bool      `json:"legal_hold,omitempty"`
+	RegisteredBy string    `json:"registered_by"`
+	RegisteredAt time.Time `json:"registered_at"`
+	AccessCount  int       `json:"access_count"`
+	LastAccessed time.Time `json:"last_accessed,omitempty"`
+}
+
+// QAReview is the current independent-review state for a sampled case.
+type QAReview struct {
+	SampleID       string `json:"sample_id"`
+	PrimaryActor   string `json:"primary_actor"`
+	Reviewer       string `json:"reviewer"`
+	Status         string `json:"status"`
+	Disposition    string `json:"disposition,omitempty"`
+	ReasonCode     string `json:"reason_code,omitempty"`
+	Agreement      bool   `json:"agreement,omitempty"`
+	Override       bool   `json:"override,omitempty"`
+	Note           string `json:"note,omitempty"`
+	Feedback       string `json:"feedback,omitempty"`
+	FeedbackAuthor string `json:"feedback_author,omitempty"`
+}
+
 // CaseView is the materialized read model for one case. SLADays is the SLA window
 // at open time. DaysLeft and SLAState are clock-derived: the projector leaves them
 // zero (the stored model stays clock-free + replay-stable) and the read layer fills
@@ -48,15 +94,29 @@ type CaseView struct {
 	CaseID              string                     `json:"case_id"`
 	CompanyName         string                     `json:"company_name"`
 	CaseType            string                     `json:"case_type"`
+	CaseTypeVersion     int                        `json:"case_type_version"`
 	Status              domain.CaseStatus          `json:"status"`
+	Priority            domain.Priority            `json:"priority"`
+	Queue               string                     `json:"queue,omitempty"`
+	RoutingExplanation  string                     `json:"routing_explanation,omitempty"`
 	Assignee            string                     `json:"assignee,omitempty"`
+	Jurisdiction        string                     `json:"jurisdiction,omitempty"`
+	Subject             string                     `json:"subject,omitempty"`
 	SLADays             int                        `json:"sla_days"`
+	Deadline            time.Time                  `json:"deadline,omitempty"`
 	DaysLeft            int                        `json:"days_left"`
 	SLAState            domain.SLAStatus           `json:"sla_state,omitempty"`
 	SLABreached         bool                       `json:"sla_breached,omitempty"`
 	SLAEscalationStatus events.SLAEscalationStatus `json:"sla_escalation_status,omitempty"`
 	Context             json.RawMessage            `json:"context,omitempty"`
 	SourceID            string                     `json:"source_decision_id,omitempty"`
+	Disposition         string                     `json:"disposition,omitempty"`
+	ReasonCode          string                     `json:"reason_code,omitempty"`
+	DispositionNote     string                     `json:"disposition_note,omitempty"`
+	DispositionOverride bool                       `json:"disposition_override,omitempty"`
+	Evidence            []EvidenceLink             `json:"evidence"`
+	Attachments         []Attachment               `json:"attachments"`
+	QA                  *QAReview                  `json:"qa,omitempty"`
 	Notes               []Note                     `json:"notes"`
 	Audit               []AuditEntry               `json:"audit"`
 	CreatedAt           time.Time                  `json:"created_at"`
@@ -66,6 +126,19 @@ type CaseView struct {
 // AnnotateSLA fills a view's clock-derived SLA fields from now. The read layer
 // calls this so the stored projection itself stays clock-free.
 func AnnotateSLA(c *CaseView, now time.Time) {
+	if !c.Deadline.IsZero() {
+		remaining := c.Deadline.Sub(now)
+		c.DaysLeft = int(remaining.Hours() / 24)
+		switch {
+		case !now.Before(c.Deadline):
+			c.SLAState = domain.SLAOverdue
+		case remaining <= 24*time.Hour:
+			c.SLAState = domain.SLADueSoon
+		default:
+			c.SLAState = domain.SLAOnTrack
+		}
+		return
+	}
 	c.DaysLeft = domain.DaysLeft(c.CreatedAt, c.SLADays, now)
 	c.SLAState = domain.SLAState(c.CreatedAt, c.SLADays, now)
 }
@@ -94,7 +167,8 @@ func Summarize(views []CaseView, now time.Time) Summary {
 		if c.Assignee == "" {
 			s.Unassigned++
 		}
-		switch domain.SLAState(c.CreatedAt, c.SLADays, now) {
+		AnnotateSLA(&c, now)
+		switch c.SLAState {
 		case domain.SLAOverdue:
 			s.Overdue++
 		case domain.SLADueSoon:
@@ -118,7 +192,12 @@ type Projector struct{}
 func (Projector) Name() string { return "cases" }
 
 // Collections lists the store collection this projector owns.
-func (Projector) Collections() []string { return []string{Collection} }
+func (Projector) Collections() []string {
+	return []string{
+		Collection, CaseTypesCollection, CaseTypeLatestCollection,
+		QueuesCollection, ReviewersCollection, SavedViewsCollection,
+	}
+}
 
 // Apply maintains the case document and its audit log.
 func (Projector) Apply(ctx context.Context, e eventlog.Envelope, s store.Store) error {
@@ -140,7 +219,7 @@ func (Projector) Apply(ctx context.Context, e eventlog.Envelope, s store.Store) 
 	case events.TypeCaseSLAEscalated:
 		return applySLAEscalated(ctx, e, s)
 	default:
-		return nil
+		return applyEnterpriseEvent(ctx, e, s)
 	}
 }
 
@@ -213,7 +292,11 @@ func applyEscalated(ctx context.Context, e eventlog.Envelope, s store.Store) err
 	if err := decode(e, &p); err != nil {
 		return err
 	}
-	return openCase(ctx, e, s, p.CaseID, p.CompanyName, p.CaseType, p.SLADays, p.Context, p.DecisionID, "escalated from decision "+p.DecisionID)
+	return openCase(ctx, e, s, openCaseInput{
+		CaseID: p.CaseID, Company: p.CompanyName, CaseType: p.CaseType,
+		Status: domain.StatusNeedsReview, Priority: domain.PriorityNormal, SLADays: p.SLADays,
+		Context: p.Context, SourceID: p.DecisionID, Detail: "escalated from decision " + p.DecisionID,
+	})
 }
 
 func applyRequested(ctx context.Context, e eventlog.Envelope, s store.Store) error {
@@ -221,24 +304,65 @@ func applyRequested(ctx context.Context, e eventlog.Envelope, s store.Store) err
 	if err := decode(e, &p); err != nil {
 		return err
 	}
-	return openCase(ctx, e, s, p.CaseID, p.CompanyName, p.CaseType, p.SLADays, p.Context, p.SourceDecisionID, "opened for "+p.CompanyName)
+	status := domain.StatusNeedsReview
+	if p.InitialState != "" {
+		var valid bool
+		status, valid = domain.ParseStateKey(p.InitialState)
+		if !valid {
+			return fmt.Errorf("cases: requested seq %d has invalid initial state %q", e.Seq, p.InitialState)
+		}
+	}
+	priority := domain.Priority(p.Priority)
+	if priority == "" {
+		priority = domain.PriorityNormal
+	}
+	var deadline time.Time
+	if p.Deadline != "" {
+		var err error
+		deadline, err = time.Parse(time.RFC3339, p.Deadline)
+		if err != nil {
+			return fmt.Errorf("cases: requested seq %d has invalid deadline: %w", e.Seq, err)
+		}
+	}
+	return openCase(ctx, e, s, openCaseInput{
+		CaseID: p.CaseID, Company: p.CompanyName, CaseType: p.CaseType,
+		CaseTypeVersion: p.CaseTypeVersion, Status: status, Priority: priority,
+		Jurisdiction: p.Jurisdiction, Subject: p.Subject, Deadline: deadline,
+		SLADays: p.SLADays, Context: p.Context, SourceID: p.SourceDecisionID,
+		Detail: "opened for " + p.CompanyName,
+	})
+}
+
+type openCaseInput struct {
+	CaseID, Company, CaseType string
+	CaseTypeVersion           int
+	Status                    domain.CaseStatus
+	Priority                  domain.Priority
+	Jurisdiction, Subject     string
+	Deadline                  time.Time
+	SLADays                   int
+	Context                   json.RawMessage
+	SourceID, Detail          string
 }
 
 // openCase materializes a freshly opened case (status needs_review) with its
 // first audit entry. Used by both the manual and flow-escalation open paths.
-func openCase(ctx context.Context, e eventlog.Envelope, s store.Store, caseID, company, caseType string, slaDays int, context json.RawMessage, sourceID, detail string) error {
+func openCase(ctx context.Context, e eventlog.Envelope, s store.Store, input openCaseInput) error {
 	// A case opened without an SLA window would be due the instant it opens
 	// (immediately overdue); apply the shared default so the reviewer has time (and so
 	// this read model and the SLA sweeper agree on the deadline).
-	slaDays = domain.NormalizeSLADays(slaDays)
+	input.SLADays = domain.NormalizeSLADays(input.SLADays)
 	c := CaseView{
-		Org: e.Org, Workspace: e.Workspace, CaseID: caseID,
-		CompanyName: company, CaseType: caseType, Status: domain.StatusNeedsReview,
-		SLADays: slaDays, Context: context, SourceID: sourceID,
-		Notes: []Note{}, Audit: []AuditEntry{}, CreatedAt: e.Time, UpdatedAt: e.Time,
+		Org: e.Org, Workspace: e.Workspace, CaseID: input.CaseID,
+		CompanyName: input.Company, CaseType: input.CaseType, CaseTypeVersion: input.CaseTypeVersion,
+		Status: input.Status, Priority: input.Priority, Jurisdiction: input.Jurisdiction,
+		Subject: input.Subject, Deadline: input.Deadline, SLADays: input.SLADays,
+		Context: input.Context, SourceID: input.SourceID,
+		Evidence: []EvidenceLink{}, Attachments: []Attachment{}, Notes: []Note{}, Audit: []AuditEntry{},
+		CreatedAt: e.Time, UpdatedAt: e.Time,
 	}
-	c.Audit = append(c.Audit, audit(e, "requested", detail))
-	return store.PutDoc(ctx, s, Collection, store.Key(e.Org, e.Workspace, caseID), c)
+	c.Audit = append(c.Audit, audit(e, "requested", input.Detail))
+	return store.PutDoc(ctx, s, Collection, store.Key(e.Org, e.Workspace, input.CaseID), c)
 }
 
 func applyAssigned(ctx context.Context, e eventlog.Envelope, s store.Store) error {
