@@ -23,8 +23,9 @@ Sixth whole-product audit from authoritative merged commit `7a7be66`.
    green. A fresh authoritative fetch confirms local `HEAD == origin/main ==
    7a7be66` and the GitHub PR queue is empty. Commit `8dddb44` contains the
    reconciled 95-file vertical slice. PR #160 is the sole open review queue;
-   babysit every required check to terminal green, fix any cascade in the same
-   branch, and wait for merge. Do not start E2 until E1 merges.
+   hosted run `30514807479` is green across all nine jobs. Verify the final
+   continuity-only head, fix any cascade in the same branch, and wait for
+   merge. Do not start E2 until E1 merges.
 2. **OPEN — PR E2 · CORRECT: experimentation, outcomes, and population jobs.**
    Begin only after E1 merges. `decision-engine/command/decide.go:1505-1513`
    rolls a fresh variant per invocation; replace it with the first-class stable

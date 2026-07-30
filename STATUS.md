@@ -36,9 +36,9 @@ the next implementation tranche by correctness and operational risk.
 `enterprise/e1-durable-execution` from merged `origin/main` commit `7a7be66`.**
 PR #159 is merged and the remote PR queue was empty when the branch was cut, so
 the one-open-PR rule is satisfied. The planning edits and implementation will
-ship together as one fat vertical PR. Local closeout is green; the remaining
-step is to re-fetch authoritative remote state, commit, push, open the sole PR,
-and babysit its required checks before E2 can begin.
+ship together as one fat vertical PR. Local closeout and the first complete
+hosted matrix are green; PR #160 is the repository's sole review queue and E2
+must wait for its merge.
 
 The product has a broad, real foundation across the Decision Engine, Context
 Layer, Case Manager, Agent Manager, governance, compliance, and deployment
@@ -92,7 +92,12 @@ work to reconcile before the E1 commit.
 
 The 95-file E1 slice is commit `8dddb44` (`Make decision and agent execution
 durable`) with continuity evidence in `635ca00`. Both are pushed in PR #160,
-the repository's sole open review queue. Required checks are pending.
+the repository's sole open review queue. Hosted run `30514807479` is terminal
+green across all nine jobs: Go race/security/dead-code/clone/vulnerability/
+license gates, native UI, real-Wasm demo, embedded artifact, web, real
+PostgreSQL, real Shauth SSO, Terraform, and container-release contracts. The
+only remaining E1 action is to verify the final continuity-only head and wait
+for the user to merge PR #160.
 
 **Fifth whole-product journey audit — complete in sole PR #159.**
 The audit began after PR #158 merged as `002e9d3`, with an empty GitHub queue
