@@ -57,6 +57,15 @@ func (undeclaredToolProvider) Complete(_ context.Context, req ai.Request) (ai.Re
 	return ai.Response{Text: "done", Model: "rogue"}, nil
 }
 
+// versionEchoProvider makes the selected immutable agent config visible in the
+// structured result, so a provider-adapter test can distinguish pinned from latest.
+type versionEchoProvider struct{}
+
+func (versionEchoProvider) Name() string { return "version-echo" }
+func (versionEchoProvider) Complete(_ context.Context, req ai.Request) (ai.Response, error) {
+	return ai.Response{Structured: json.RawMessage(`{"system":"` + req.System + `"}`)}, nil
+}
+
 // fakeToolbox resolves only the "bureau" tool and returns a fixed result.
 type fakeToolbox struct{ calls int }
 
@@ -152,6 +161,43 @@ func TestInvokeWithoutToolboxIsAPlainCompletion(t *testing.T) {
 	}
 	if out.Status != "completed" || len(out.ToolCalls) != 0 {
 		t.Fatalf("expected a plain completion, got %+v", out)
+	}
+}
+
+func TestDecisionProviderRunsExactAgentVersion(t *testing.T) {
+	ctx := context.Background()
+	s := store.NewMemory()
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "dev"}
+	schema := json.RawMessage(`{"type":"object","required":["system"],"properties":{"system":{"type":"string"}}}`)
+	v1 := agents.AgentConfig{Provider: "version-echo", System: "v1", Schema: schema}
+	v2 := agents.AgentConfig{Provider: "version-echo", System: "v2", Schema: schema}
+	defineAgent(t, s, id, agents.AgentView{
+		Name: "checker", Provider: v2.Provider, System: v2.System, Schema: schema, Latest: 2,
+		Versions: []agents.AgentVersionView{
+			{Version: 1, AgentConfig: v1},
+			{Version: 2, AgentConfig: v2},
+		},
+	})
+	reg := ai.NewRegistry()
+	reg.Register(versionEchoProvider{})
+	provider := agents.Provider{Store: s, Registry: reg}
+
+	pinned, err := provider.RunAgent(ctx, id, "checker", "go", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(pinned) != `{"system":"v1"}` {
+		t.Fatalf("pinned v1 ran %s", pinned)
+	}
+	latest, err := provider.RunAgent(ctx, id, "checker", "go", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(latest) != `{"system":"v2"}` {
+		t.Fatalf("sandbox latest ran %s", latest)
+	}
+	if _, err := provider.RunAgent(ctx, id, "checker", "go", 3); err == nil {
+		t.Fatal("unknown positive version must fail loudly")
 	}
 }
 

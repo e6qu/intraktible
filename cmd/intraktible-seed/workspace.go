@@ -802,6 +802,20 @@ func (s *seeder) policyActions(cfg *timeCursor) []action {
 			acts = append(acts, action{at: cfg.step(6 * time.Minute), name: "policy version " + p.name, run: func() {
 				s.call(v.by, http.MethodPost, "/v1/policies/"+s.id(p.tag)+"/versions",
 					map[string]any{"spec": v.spec}, nil)
+				var req struct {
+					RequestID string `json:"request_id"`
+				}
+				s.call(v.by, http.MethodPost, "/v1/policies/"+s.id(p.tag)+"/approval-request", nil, &req)
+				checker := actorMarcus
+				if checker == v.by {
+					checker = actorAva
+				}
+				s.clk.Advance(20 * time.Minute)
+				s.call(checker, http.MethodPost, "/v1/policies/"+s.id(p.tag)+"/approve",
+					map[string]any{
+						"request_id": req.RequestID,
+						"reason":     "Disposition bands and impact preview reviewed; approved for governed environments.",
+					}, nil)
 			}})
 		}
 	}

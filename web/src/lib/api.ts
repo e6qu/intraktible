@@ -926,6 +926,15 @@ export interface Policy {
   flow_slug: string;
   latest: number;
   versions: PolicyVersion[];
+  approved_version: number;
+  approved_by?: string;
+  approved_at?: string;
+  pending?: {
+    request_id: string;
+    version: number;
+    requested_by: string;
+    requested_at: string;
+  };
   updated_at?: string;
 }
 
@@ -971,6 +980,40 @@ export async function publishPolicy(
     return errorOrStatus(res, 'POST policy version');
   }
   return (await res.json()) as { version: number; etag: string };
+}
+
+export async function requestPolicyApproval(
+  key: string,
+  policyId: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<{ request_id: string }> {
+  const res = await fetcher(`/v1/policies/${encodeURIComponent(policyId)}/approval-request`, {
+    method: 'POST',
+    headers: jsonHeaders(key)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'request policy approval');
+  }
+  return (await res.json()) as { request_id: string };
+}
+
+export async function decidePolicyApproval(
+  key: string,
+  policyId: string,
+  requestId: string,
+  approve: boolean,
+  reason: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<void> {
+  const action = approve ? 'approve' : 'reject';
+  const res = await fetcher(`/v1/policies/${encodeURIComponent(policyId)}/${action}`, {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify({ request_id: requestId, reason })
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, `${action} policy`);
+  }
 }
 
 export interface PolicyDistribution {

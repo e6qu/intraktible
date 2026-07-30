@@ -23,6 +23,8 @@ import {
   requestDeployment,
   approveDeployment,
   rejectDeployment,
+  requestPolicyApproval,
+  decidePolicyApproval,
   getShadow,
   setShadow,
   listAudit,
@@ -431,6 +433,31 @@ describe('deployment & maker-checker', () => {
     const [url, init] = fetcher.mock.calls[0];
     expect(url).toBe('/v1/flows/f1/deployment-requests/req-9/reject');
     expect(JSON.parse(String(init?.body))).toMatchObject({ reason: 'nope' });
+  });
+});
+
+describe('policy maker-checker', () => {
+  it('requests review of the latest immutable version', async () => {
+    const fetcher = fetcherReturning(200, { request_id: 'policy-req-9' });
+    await expect(requestPolicyApproval('k', 'policy/a', fetcher)).resolves.toEqual({
+      request_id: 'policy-req-9'
+    });
+    expect(fetcher.mock.calls[0][0]).toBe('/v1/policies/policy%2Fa/approval-request');
+    expect(fetcher.mock.calls[0][1]).toMatchObject({ method: 'POST' });
+  });
+
+  it('records an approval or rejection with the exact request and reason', async () => {
+    const approve = fetcherReturning(200, { status: 'approved' });
+    await decidePolicyApproval('k', 'policy/a', 'req-1', true, 'bands reviewed', approve);
+    expect(approve.mock.calls[0][0]).toBe('/v1/policies/policy%2Fa/approve');
+    expect(JSON.parse(String(approve.mock.calls[0][1]?.body))).toEqual({
+      request_id: 'req-1',
+      reason: 'bands reviewed'
+    });
+
+    const reject = fetcherReturning(200, { status: 'rejected' });
+    await decidePolicyApproval('k', 'policy/a', 'req-2', false, 'impact too wide', reject);
+    expect(reject.mock.calls[0][0]).toBe('/v1/policies/policy%2Fa/reject');
   });
 });
 

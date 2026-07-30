@@ -146,17 +146,22 @@ Done — execution runtime + decide API + decision history (the decision event s
 - **Policies (`decision-engine/policy`):** the operational disposition layer over a flow — a first-class,
   versioned, governed artifact (create/publish like flows; authoring needs `editor`) that maps a flow's
   output to a **disposition** (`approve` / `decline` / `refer`) via ordered expr-lang bands + a default.
-  The decide path resolves the policy bound to the flow (`ActiveForFlow`, latest version) and applies it
-  to the output, recording the disposition + the policy version on the decision (replay-stable; lifted
-  first-class onto the history record and returned by `decide` / `decide/batch`). It is the shared brain
-  for real-time (faster/STP), bulk, and pre-approval decisioning. A policy that can't evaluate
+  Sandbox resolves the latest published version. Staging and production resolve only a four-eyes-approved
+  version: the maker requests review and a different actor from both requester and version author approves
+  or rejects with a reason; publishing an unapproved version never displaces the prior serving version.
+  The decide path snapshots that exact policy before execution and records it on `DecisionStarted`, so a
+  suspended decision resumes under the same immutable policy even if governance changes while it waits.
+  It records the disposition + policy version on completion (replay-stable; lifted first-class onto the
+  history record and returned by `decide` / `decide/batch`). It is the shared brain for real-time
+  (faster/STP), bulk, and pre-approval decisioning. A policy that can't evaluate
   refers (routes to a human) rather than failing a completed decision. The completed disposition rolls up
   into analytics (`by_disposition` → an automation rate). **Disposition backtest**: `POST
   /v1/policies/{id}/backtest` `{spec?, compare_version?, flow_version?, dataset}` replays a dataset through
   the bound flow + the (draft or published) bands and reports the disposition distribution — and, vs a
   compare version, the rows that flip — recording nothing (safe tuning). API: `POST /v1/policies`,
-  `POST /v1/policies/{id}/versions`, `GET /v1/policies[/{id}]`. UI: a `/policies` page authors the bands
-  and previews impact.
+  `POST /v1/policies/{id}/versions`, `POST /v1/policies/{id}/approval-request`,
+  `POST /v1/policies/{id}/approve|reject`, `GET /v1/policies[/{id}]`. UI: `/policies` authors and
+  backtests bands and carries the complete notification → exact Governance panel → checker decision handoff.
 - **Pre-approvals (`decision-engine/preapproval`):** durable, time-boxed pre-decisions for an entity —
   granted with the offer **terms** + provenance (policy/flow) + a validity window, and **honored
   instantly at decide** time: a `decide` request that names a pre-approved entity (`entity_type` +

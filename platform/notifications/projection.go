@@ -13,6 +13,7 @@ import (
 	cmevents "github.com/e6qu/intraktible/case-manager/events"
 	deevents "github.com/e6qu/intraktible/decision-engine/events"
 	"github.com/e6qu/intraktible/decision-engine/monitor"
+	"github.com/e6qu/intraktible/decision-engine/policy"
 	"github.com/e6qu/intraktible/platform/comments"
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/identity"
@@ -102,6 +103,12 @@ func (Projector) Apply(ctx context.Context, e eventlog.Envelope, s store.Store) 
 		return applyModelApprovalApproved(ctx, e, s)
 	case deevents.TypeModelApprovalRejected:
 		return applyModelApprovalRejected(ctx, e, s)
+	case policy.TypePolicyApprovalRequested:
+		return applyPolicyApprovalRequested(ctx, e, s)
+	case policy.TypePolicyApprovalApproved:
+		return applyPolicyApprovalApproved(ctx, e, s)
+	case policy.TypePolicyApprovalRejected:
+		return applyPolicyApprovalRejected(ctx, e, s)
 	case deevents.TypeDeploymentRequested:
 		return applyDeploymentRequested(ctx, e, s)
 	case deevents.TypeDeploymentApproved:

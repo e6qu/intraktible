@@ -87,6 +87,91 @@ test('creates a policy bound to a flow and publishes a band', async ({ page, req
   await expect(thread.locator('.reply')).toContainText('Approved by risk for the quarter.');
 });
 
+test('hands a published policy version from maker to approver', async ({ page, request }) => {
+  const suffix = Math.random().toString(36).slice(2, 9);
+  const name = `Handoff policy ${suffix}`;
+  const makerActor = `policy-maker-${suffix}`;
+  const keyResponse = await request.post('/v1/api-keys', {
+    headers: { 'X-Api-Key': KEY },
+    data: { name: makerActor, actor: makerActor, role: 'editor', scope: '*' }
+  });
+  expect(keyResponse.ok()).toBeTruthy();
+  const { secret: makerKey } = await keyResponse.json();
+  const makerHeaders = { 'X-Api-Key': makerKey };
+
+  const flow = await request.post('/v1/flows', {
+    headers: makerHeaders,
+    data: { slug: `policy-handoff-${suffix}`, name: `Policy handoff ${suffix}` }
+  });
+  expect(flow.ok()).toBeTruthy();
+  const policy = await request.post('/v1/policies', {
+    headers: makerHeaders,
+    data: { name, flow_slug: `policy-handoff-${suffix}` }
+  });
+  expect(policy.ok()).toBeTruthy();
+  const { policy_id } = await policy.json();
+  const published = await request.post(`/v1/policies/${policy_id}/versions`, {
+    headers: makerHeaders,
+    data: {
+      spec: {
+        rules: [{ when: 'risk < 30', disposition: 'approve', code: 'LOW_RISK' }],
+        default: 'refer'
+      }
+    }
+  });
+  expect(published.ok()).toBeTruthy();
+
+  // The maker sees the unpublished-to-production state and raises the work item
+  // from the policy workspace.
+  await page.context().clearCookies();
+  expect(
+    (
+      await page.context().request.post('/v1/login', {
+        data: { api_key: makerKey }
+      })
+    ).ok()
+  ).toBeTruthy();
+  await page.goto(`/policies?governance=${encodeURIComponent(policy_id)}#policy-governance`);
+  const makerGovernance = page.getByTestId('policy-governance');
+  await expect(makerGovernance).toContainText('no approved version');
+  await makerGovernance.getByTestId('request-policy-approval').click();
+  await expect(makerGovernance).toContainText('pending review');
+
+  // The separate checker receives an unambiguous, actionable notification that
+  // deep-links to this exact policy and records the approval reason.
+  await page.context().clearCookies();
+  expect(
+    (
+      await page.context().request.post('/v1/login', {
+        data: { api_key: KEY }
+      })
+    ).ok()
+  ).toBeTruthy();
+  await page.goto('/');
+  const bell = page.getByTestId('notifications-bell');
+  await bell.locator('summary').click();
+  const approval = bell.locator('button.item').filter({
+    hasText: `Approval requested: policy ${name} v1`
+  });
+  await expect(approval).toBeVisible();
+  await approval.click();
+  await expect(page).toHaveURL(
+    (url) =>
+      url.pathname === '/policies' &&
+      url.searchParams.get('governance') === policy_id &&
+      url.hash === '#policy-governance'
+  );
+
+  const checkerGovernance = page.getByTestId('policy-governance');
+  await checkerGovernance.getByRole('button', { name: 'Approve' }).click();
+  await checkerGovernance
+    .getByLabel('policy decision reason')
+    .fill('Independent threshold and impact review passed.');
+  await checkerGovernance.getByRole('button', { name: 'Confirm approval' }).click();
+  await expect(checkerGovernance).toContainText('approved v1');
+  await expect(checkerGovernance).toContainText('serving in staging and production');
+});
+
 test('switching policies reloads the discussion thread (not the prior policy)', async ({
   page,
   request

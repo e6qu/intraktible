@@ -941,6 +941,117 @@ func TestDecideAppliesPolicyOverHTTP(t *testing.T) {
 	}
 }
 
+func TestPolicyFourEyesControlsGovernedServingOverHTTP(t *testing.T) {
+	api := startEngine(t)
+	makerID := identity.Identity{Org: api.Identity.Org, Workspace: api.Identity.Workspace, Actor: "policy-maker"}
+	checkerID := identity.Identity{Org: api.Identity.Org, Workspace: api.Identity.Workspace, Actor: "policy-checker"}
+	maker := api.AddKey("policy-maker-key", auth.APIKey{
+		ID: "policy-maker", Identity: makerID, Scope: auth.ScopeAll, Role: auth.RoleApprover,
+	})
+	checker := api.AddKey("policy-checker-key", auth.APIKey{
+		ID: "policy-checker", Identity: checkerID, Scope: auth.ScopeAll, Role: auth.RoleApprover,
+	})
+
+	var created struct {
+		FlowID string `json:"flow_id"`
+	}
+	maker.Request(t, http.MethodPost, "/v1/flows",
+		map[string]any{"slug": "governed-policy", "name": "Governed Policy"},
+		http.StatusCreated, &created)
+	maker.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/versions", map[string]any{
+		"graph": map[string]any{
+			"nodes": []map[string]any{
+				{"id": "in", "type": "input"},
+				{"id": "out", "type": "output", "config": map[string]any{"fields": []string{"score"}}},
+			},
+			"edges": []map[string]any{{"from": "in", "to": "out"}},
+		},
+	}, http.StatusCreated, nil)
+	checker.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/deployments",
+		map[string]any{"environment": "staging", "version": 1}, http.StatusCreated, nil)
+
+	var pol struct {
+		PolicyID string `json:"policy_id"`
+	}
+	maker.Request(t, http.MethodPost, "/v1/policies",
+		map[string]any{"name": "governed bands", "flow_slug": "governed-policy"},
+		http.StatusCreated, &pol)
+	publish := func(disposition string) {
+		t.Helper()
+		maker.Request(t, http.MethodPost, "/v1/policies/"+pol.PolicyID+"/versions", map[string]any{
+			"spec": map[string]any{
+				"rules": []map[string]any{{
+					"when": "score >= 0", "disposition": disposition,
+				}},
+				"default": disposition,
+			},
+		}, http.StatusCreated, nil)
+	}
+	requestApproval := func() string {
+		t.Helper()
+		var out struct {
+			RequestID string `json:"request_id"`
+		}
+		maker.Request(t, http.MethodPost, "/v1/policies/"+pol.PolicyID+"/approval-request",
+			nil, http.StatusOK, &out)
+		return out.RequestID
+	}
+	decide := func(client *testutil.API, env string) string {
+		t.Helper()
+		var out struct {
+			Status      string `json:"status"`
+			Disposition string `json:"disposition"`
+		}
+		client.Request(t, http.MethodPost, "/v1/flows/governed-policy/"+env+"/decide",
+			map[string]any{"data": map[string]any{"score": 1}}, http.StatusOK, &out)
+		if out.Status != "completed" {
+			t.Fatalf("%s decision did not complete: %+v", env, out)
+		}
+		return out.Disposition
+	}
+
+	publish("approve")
+	if !testutil.Eventually(t, func() bool {
+		return maker.RequestStatus(t, http.MethodPost, "/v1/flows/governed-policy/staging/decide",
+			map[string]any{"data": map[string]any{"score": 1}}, nil) == http.StatusBadRequest
+	}) {
+		t.Fatal("published policy without an approved version must reject governed decisions with 400")
+	}
+	req1 := requestApproval()
+	maker.Request(t, http.MethodPost, "/v1/policies/"+pol.PolicyID+"/approve",
+		map[string]any{"request_id": req1, "reason": "self"}, http.StatusBadRequest, nil)
+	checker.Request(t, http.MethodPost, "/v1/policies/"+pol.PolicyID+"/approve",
+		map[string]any{"request_id": req1, "reason": "v1 bands reviewed"}, http.StatusOK, nil)
+	if got := decide(checker, "staging"); got != "approve" {
+		t.Fatalf("approved v1 staging disposition = %q, want approve", got)
+	}
+
+	publish("decline")
+	if got := decide(maker, "sandbox"); got != "decline" {
+		t.Fatalf("sandbox did not follow published v2: %q", got)
+	}
+	if got := decide(checker, "staging"); got != "approve" {
+		t.Fatalf("unapproved v2 changed staging: %q", got)
+	}
+	var preview struct {
+		Status      string `json:"status"`
+		Disposition string `json:"disposition"`
+	}
+	checker.Request(t, http.MethodPost, "/v1/flows/governed-policy/staging/decide",
+		map[string]any{"data": map[string]any{"score": 1}, "preview": true},
+		http.StatusOK, &preview)
+	if preview.Status != "completed" || preview.Disposition != "approve" {
+		t.Fatalf("unapproved v2 changed governed preview: %+v", preview)
+	}
+
+	req2 := requestApproval()
+	checker.Request(t, http.MethodPost, "/v1/policies/"+pol.PolicyID+"/approve",
+		map[string]any{"request_id": req2, "reason": "v2 impact accepted"}, http.StatusOK, nil)
+	if got := decide(checker, "staging"); got != "decline" {
+		t.Fatalf("approved v2 did not become staging serving policy: %q", got)
+	}
+}
+
 func TestPreApprovalOverHTTP(t *testing.T) {
 	api := startEngine(t)
 	var granted struct {
@@ -2198,7 +2309,7 @@ func TestDecideWithConnectorOverHTTP(t *testing.T) {
 // stubAgent is a fixed agent source for the decide HTTP test.
 type stubAgent string
 
-func (s stubAgent) RunAgent(_ context.Context, _ identity.Identity, _, _ string) (json.RawMessage, error) {
+func (s stubAgent) RunAgent(_ context.Context, _ identity.Identity, _, _ string, _ int) (json.RawMessage, error) {
 	return json.RawMessage(s), nil
 }
 

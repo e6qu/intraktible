@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/e6qu/intraktible/decision-engine/flows"
+	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/httpx"
 	"github.com/e6qu/intraktible/platform/store"
 )
@@ -33,6 +34,9 @@ func (s *Service) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/policies/{policy_id}", s.get)
 	mux.HandleFunc("POST /v1/policies/{policy_id}/versions", s.publish)
 	mux.HandleFunc("POST /v1/policies/{policy_id}/backtest", s.backtest)
+	mux.HandleFunc("POST /v1/policies/{policy_id}/approval-request", s.requestApproval)
+	mux.HandleFunc("POST /v1/policies/{policy_id}/approve", s.approve)
+	mux.HandleFunc("POST /v1/policies/{policy_id}/reject", s.reject)
 }
 
 type backtestRequest struct {
@@ -182,6 +186,61 @@ func (s *Service) publish(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusCreated, map[string]any{
 		"version": version, "etag": etag, "event_id": e.ID, "seq": e.Seq,
 	})
+}
+
+func (s *Service) requestApproval(w http.ResponseWriter, r *http.Request) {
+	policyID := r.PathValue("policy_id")
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	requestID, e, err := s.cmd.RequestApproval(r.Context(), id, policyID)
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"request_id": requestID, "event_id": e.ID, "seq": e.Seq,
+	})
+}
+
+type approvalDecisionRequest struct {
+	RequestID string `json:"request_id"`
+	Reason    string `json:"reason"`
+}
+
+func (s *Service) approve(w http.ResponseWriter, r *http.Request) {
+	s.decideApproval(w, r, true)
+}
+
+func (s *Service) reject(w http.ResponseWriter, r *http.Request) {
+	s.decideApproval(w, r, false)
+}
+
+func (s *Service) decideApproval(w http.ResponseWriter, r *http.Request, approve bool) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	var req approvalDecisionRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	var (
+		e   eventlog.Envelope
+		err error
+	)
+	if approve {
+		e, err = s.cmd.Approve(r.Context(), id, r.PathValue("policy_id"), req.RequestID, req.Reason)
+	} else {
+		e, err = s.cmd.Reject(r.Context(), id, r.PathValue("policy_id"), req.RequestID, req.Reason)
+	}
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"event_id": e.ID, "seq": e.Seq})
 }
 
 func (s *Service) list(w http.ResponseWriter, r *http.Request) {

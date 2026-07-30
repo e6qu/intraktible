@@ -546,3 +546,24 @@ Linux, entirely that VM's fsync path.
   30486513300: `TestNodeTraceErasure` now waits for the exact assignment output
   it seals instead of any earlier projected node. Its 100-run race stress test
   and the complete `make ci` matrix pass.
+- 2026-07-29: Governed operational policy activation end to end: immutable
+  publication, independent reasoned approval/rejection, last-approved serving,
+  exact decision/resume snapshots, role-queue notifications, API/OpenAPI,
+  policy UI, replay-safe seed history, and native/real-Wasm two-actor journeys.
+- 2026-07-29: Pinned governed AI nodes to immutable agent versions across the
+  graph schema, provider port, exact historical config lookup, structured
+  builder, templates, seed, and decision/preview validation; sandbox alone may
+  explicitly select latest with version zero.
+- 2026-07-29: Closed the fourth audit's product matrix: `make check`, formatting,
+  zero-warning ESLint/Svelte, all 220 frontend unit tests, 124 native browser
+  journeys, 81 real-Wasm journeys, and 3 embedded-production smokes pass.
+- 2026-07-30: Closed the strict fourth-audit release gate: `make ci` passes
+  vet/build, strict lint, SAST, every race test, deadcode, zero clone groups,
+  zero reachable vulnerabilities, and dependency licenses.
+- 2026-07-30: Re-fetched authoritative `origin/main` at `8622b7a`, confirmed
+  the GitHub queue was empty, committed the 43-file governed-dependency slice
+  as `333e63f`, pushed the recreated audit branch, and opened sole PR #158.
+- 2026-07-30: Babysat PR #158 run 30491363960 to its terminal result: all nine
+  jobs pass, including Go race/security/license gates, 124 native browser
+  journeys, 81 real-Wasm journeys, the embedded artifact, real PostgreSQL,
+  Shauth SSO, Terraform, web, and container release.

@@ -100,6 +100,15 @@ enterprise buyers; **P2** = differentiators / scale.
   decided) with approve/reject (self-approval is refused — four-eyes), plus A/B
   challenger %. Approve and reject both capture an **explanation** recorded on the
   request, and each request carries a comment thread, so the who/why is durable.
+- **P0 — Governed decision dependencies — ✅ done (backend + UI).** Operational
+  policy versions use their own four-eyes handoff: publishing makes an immutable
+  sandbox candidate, while staging/production retain the last approved version
+  until a different actor from both author and requester decides the exact pending
+  version with a reason. The selection is recorded before execution and restored
+  verbatim after a durable human-task resume. AI nodes similarly pin an immutable
+  agent version outside sandbox, so redefining an agent cannot mutate a deployed
+  flow behind change control. Both are surfaced in the policy/builder UIs and the
+  shared approver inbox.
 - **P1 — Promotion workflow — ✅ done.** Three environments (sandbox → staging →
   production) and a **promote** action (`POST /v1/flows/{id}/promote {from,to}`)
   that ships the live version of one env up the chain — deploying directly into a
@@ -437,7 +446,9 @@ SOC2 …); none requires re-architecting — they extend the same event-sourced 
 Beyond the P0 envelope, a **decision-automation** layer now sits over the engine:
 **policies** (`decision-engine/policy`) attach auto-approve / decline / refer bands
 to a flow and assign a disposition on every decision (real-time STP, with a
-record-nothing disposition backtest for safe tuning); **batch decisioning** scores a
+record-nothing disposition backtest for safe tuning). Latest publication is a
+sandbox candidate; staging/production serve only the newest checker-approved
+version, and the exact selected version survives suspend/resume. **Batch decisioning** scores a
 whole population through the recorded decide path; and **pre-approvals**
 (`decision-engine/preapproval`) are durable, time-boxed grants that the decide path
 honors instantly — a pre-approved entity is completed straight from the grant's terms,

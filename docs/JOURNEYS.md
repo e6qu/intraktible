@@ -111,6 +111,11 @@ Spans: **Flow builder** test panel or the decision API → **Decisions** (`/deci
    (`completed`/`failed`, or `suspended` while a manual-review node waits on a human),
    an output payload, reason codes, and — if a policy is bound
    to the flow — a **disposition** (`approve`, `decline`, or `refer`).
+   Outside sandbox, the deployed graph must pin every AI node to a positive,
+   immutable agent version, and the engine uses only the policy version a separate
+   checker approved. Both dependencies are resolved before execution; a suspended
+   decision records its exact policy selection and reuses it after human review
+   rather than re-reading whatever is current at resume time.
 2. On Decisions, filter by flow, environment, status, variant (champion/challenger),
    or decision id to find the run. Outcome: a list showing status, disposition, and
    latency per run.
@@ -318,9 +323,18 @@ Spans: **Policies** (`/policies`).
    disposed by the draft bands; nothing is recorded, and the dataset is capped at 2000
    rows. Outcome: the mix of dispositions the draft would produce, so you see the shift
    before publishing.
-4. **Publish** the version. Outcome: a new immutable policy version; subsequent
-   decisions on the bound flow carry the disposition it produces, with the matched
-   band's reason code attached.
+4. **Publish** the version. Outcome: a new immutable policy version available for
+   sandbox iteration. Publishing is not production activation: staging and production
+   retain the last approved version (or refuse to decide when none has ever been
+   approved).
+5. **Request approval** for the latest version. Outcome: an actionable item in the
+   shared approver inbox that opens this exact policy's Governance panel. Publishing
+   another version invalidates the pending request without disturbing the serving
+   version.
+6. A different actor — neither the version author nor the requester — records an
+   approval or rejection with a reason. Approval makes that exact version serve in
+   staging and production; rejection leaves the prior approved version live. Every
+   completed decision records the policy id and version that produced its disposition.
 
 ### Grant a pre-approval
 
@@ -511,8 +525,8 @@ lens on shared lists.
   _Manual review_ and _Grant a pre-approval_.
 - **Team Manager.** Watches throughput and governance. Home stats lead with pending
   approvals, cases needing review, and overdue cases; reviews the audit trail. Lives
-  in _Promote with four-eyes_ (as the approver) and the queue/oversight side of
-  _Manual review_.
+  in _Promote with four-eyes_ and _Author a policy_ (as the approver), and the
+  queue/oversight side of _Manual review_.
 - **Product / Experimentation.** Tunes impact. Lands on the **challenger** variant of
   decisions, leading with the variant column; backtests flows and policy changes and
   manages models. Lives in _Author a policy → backtest_ and _Register a model_.

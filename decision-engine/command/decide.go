@@ -67,7 +67,7 @@ type ConnectorProvider interface {
 // output as JSON. The port lives here so the engine never imports the Agent
 // Manager; a failed run is returned as an error so the decision fails loudly.
 type AgentProvider interface {
-	RunAgent(ctx context.Context, id identity.Identity, agent, prompt string) (json.RawMessage, error)
+	RunAgent(ctx context.Context, id identity.Identity, agent, prompt string, version int) (json.RawMessage, error)
 }
 
 // ModelProvider evaluates a named predictive model from the registry over the
@@ -335,8 +335,15 @@ func (h *DecideHandler) Decide(ctx context.Context, id identity.Identity, slug, 
 		}
 	}
 
-	// A recorded decision outside the sandbox must serve four-eyes-approved models.
-	data, err = h.prepare(ctx, id, env != string(domain.EnvSandbox), version, ref, data)
+	selectedPolicy, err := h.selectPolicy(ctx, id, slug, env != string(domain.EnvSandbox))
+	if err != nil {
+		return DecideResult{}, err
+	}
+
+	// A recorded decision outside sandbox must use both approved models and
+	// immutable, explicitly-versioned agents.
+	governed := env != string(domain.EnvSandbox)
+	data, err = h.prepare(ctx, id, governed, governed, version, ref, data)
 	if err != nil {
 		if badProviderRef(err) {
 			return DecideResult{}, fmt.Errorf("%w: %w", ErrBadRequest, err)
@@ -361,6 +368,8 @@ func (h *DecideHandler) Decide(ctx context.Context, id identity.Identity, slug, 
 		DecisionID: decisionID, FlowID: fv.FlowID, Slug: slug,
 		Version: version.Version, Environment: env, Variant: variant,
 		EntityType: string(ref.Type), EntityID: string(ref.ID), Data: dataJSON,
+		PolicySelectionRecorded: true,
+		PolicyID:                selectedPolicy.policyID, PolicyVersion: selectedPolicy.version,
 	}); err != nil {
 		return DecideResult{}, err
 	}
@@ -423,10 +432,7 @@ func (h *DecideHandler) Decide(ctx context.Context, id identity.Identity, slug, 
 		// Operational policy: assign a disposition over the output. A store error is
 		// fatal; a missing policy yields no disposition; a policy eval error refers
 		// (routes to a human) rather than failing an otherwise-completed decision.
-		disp, err := h.applyPolicy(ctx, id, slug, run.Output)
-		if err != nil {
-			return DecideResult{}, err
-		}
+		disp := applyPolicy(selectedPolicy, run.Output)
 		terminalType = events.TypeDecisionCompleted
 		terminalPayload = events.DecisionCompleted{
 			DecisionID: decisionID, FlowID: fv.FlowID, Version: version.Version, Variant: variant,
@@ -497,6 +503,10 @@ func (h *DecideHandler) ResumeDecision(ctx context.Context, id identity.Identity
 		return DecideResult{}, fmt.Errorf("decision-engine: flow %q not found", rec.FlowID)
 	}
 	graph, err := flows.GraphForVersion(fv, rec.Version)
+	if err != nil {
+		return DecideResult{}, err
+	}
+	selectedPolicy, err := h.policyForResume(ctx, id, rec)
 	if err != nil {
 		return DecideResult{}, err
 	}
@@ -591,10 +601,7 @@ func (h *DecideHandler) ResumeDecision(ctx context.Context, id identity.Identity
 		if err != nil {
 			return DecideResult{}, err
 		}
-		disp, err := h.applyPolicy(ctx, id, rec.Slug, run.Output)
-		if err != nil {
-			return DecideResult{}, err
-		}
+		disp := applyPolicy(selectedPolicy, run.Output)
 		terminalEvent, err := h.emitEnvelope(ctx, id, events.TypeDecisionCompleted, events.DecisionCompleted{
 			DecisionID: decisionID, FlowID: rec.FlowID, Version: rec.Version, Variant: rec.Variant,
 			Output: outJSON, DurationMS: dur,
@@ -636,7 +643,15 @@ func badProviderRef(err error) bool {
 // into the input — the augmented input the pure core executes. Shared by the
 // recording Decide path and the record-free Preview path so both run identical
 // input preparation.
-func (h *DecideHandler) prepare(ctx context.Context, id identity.Identity, requireApproval bool, version flows.VersionView, ref EntityRef, data map[string]any) (map[string]any, error) {
+func (h *DecideHandler) prepare(
+	ctx context.Context,
+	id identity.Identity,
+	requireModelApproval bool,
+	requireAgentVersion bool,
+	version flows.VersionView,
+	ref EntityRef,
+	data map[string]any,
+) (map[string]any, error) {
 	// Validate the caller's input against the version's contract before anything
 	// is injected or recorded — a contract violation is a bad request, not a
 	// recorded decision.
@@ -671,11 +686,11 @@ func (h *DecideHandler) prepare(ctx context.Context, id identity.Identity, requi
 	if err != nil {
 		return nil, err
 	}
-	data, err = h.injectAI(ctx, id, version.Graph, data)
+	data, err = h.injectAI(ctx, id, requireAgentVersion, version.Graph, data)
 	if err != nil {
 		return nil, err
 	}
-	data, err = h.injectPredictions(ctx, id, requireApproval, version.Graph, data)
+	data, err = h.injectPredictions(ctx, id, requireModelApproval, version.Graph, data)
 	if err != nil {
 		return nil, err
 	}
@@ -722,10 +737,18 @@ func (h *DecideHandler) Preview(ctx context.Context, id identity.Identity, slug,
 	if !ok {
 		return DecideResult{}, fmt.Errorf("%w: flow %q has no version %d", ErrNotFound, slug, versionNo)
 	}
+	selectedPolicy, err := h.selectPolicy(ctx, id, slug, env != string(domain.EnvSandbox))
+	if err != nil {
+		return DecideResult{}, err
+	}
 
-	// A preview records nothing — it is the author's test tool, exempt from the model
-	// four-eyes gate so a model can be tried before it is approved.
-	data, err = h.prepare(ctx, id, false, version, ref, data)
+	// A preview records nothing — it is the author's test tool, exempt from the
+	// MODEL four-eyes gate so a candidate model can be tried before approval.
+	// Non-sandbox still runs a deployed flow, so its AI nodes must pin immutable
+	// agent versions just like a recorded decision.
+	data, err = h.prepare(
+		ctx, id, false, env != string(domain.EnvSandbox), version, ref, data,
+	)
 	if err != nil {
 		if badProviderRef(err) {
 			return DecideResult{}, fmt.Errorf("%w: %w", ErrBadRequest, err)
@@ -740,10 +763,7 @@ func (h *DecideHandler) Preview(ctx context.Context, id identity.Identity, slug,
 	// Apply the operational policy over the output, exactly as Decide does, so the
 	// preview reflects the disposition the real decision would assign — but without
 	// recording the decision the disposition would otherwise be attached to.
-	disp, err := h.applyPolicy(ctx, id, slug, run.Output)
-	if err != nil {
-		return DecideResult{}, err
-	}
+	disp := applyPolicy(selectedPolicy, run.Output)
 	return DecideResult{
 		Status: domain.StatusCompleted, Output: run.Output,
 		Disposition: disp.disposition, DispositionReason: disp.reason,
@@ -996,10 +1016,24 @@ func (h *DecideHandler) captureConsent(ctx context.Context, id identity.Identity
 // injects the outputs under "ai" (keyed by each node's output). As with
 // connectors, this is the only I/O, keeping domain.Execute pure; without a
 // provider it is a no-op and any AI node fails loudly during execution.
-func (h *DecideHandler) injectAI(ctx context.Context, id identity.Identity, graph events.Graph, data map[string]any) (map[string]any, error) {
+func (h *DecideHandler) injectAI(
+	ctx context.Context,
+	id identity.Identity,
+	requireVersion bool,
+	graph events.Graph,
+	data map[string]any,
+) (map[string]any, error) {
 	specs, err := domain.AISpecs(graph)
 	if err != nil {
 		return nil, err
+	}
+	for _, sp := range specs {
+		if requireVersion && sp.Version <= 0 {
+			return nil, fmt.Errorf(
+				"%w: ai node %q must pin an immutable agent version outside sandbox",
+				ErrBadRequest, sp.NodeID,
+			)
+		}
 	}
 	if h.agentsP == nil || len(specs) == 0 {
 		return data, nil
@@ -1016,9 +1050,10 @@ func (h *DecideHandler) injectAI(ctx context.Context, id identity.Identity, grap
 		}
 		callCtx, span := h.tracer.Start(ctx, "engine.ai", trace.WithAttributes(
 			attribute.String("agent.name", sp.Agent),
+			attribute.Int("agent.version", sp.Version),
 			attribute.String("node.id", sp.NodeID),
 		))
-		resp, err := h.agentsP.RunAgent(callCtx, id, sp.Agent, prompt)
+		resp, err := h.agentsP.RunAgent(callCtx, id, sp.Agent, prompt, sp.Version)
 		span.End()
 		if err != nil {
 			return nil, fmt.Errorf("decision-engine: ai node %q (agent %q): %w", sp.NodeID, sp.Agent, err)
@@ -1238,27 +1273,96 @@ type dispositionResult struct {
 	policyVersion int
 }
 
-// applyPolicy resolves the active policy for the flow and assigns a disposition
-// over the output. No policy bound → empty disposition; a policy evaluation error
-// → refer (with the error as the reason) so a completed decision is never failed
-// by a policy problem; only a store error is returned.
-func (h *DecideHandler) applyPolicy(ctx context.Context, id identity.Identity, slug string, output map[string]any) (dispositionResult, error) {
-	pv, ver, ok, err := policy.ActiveForFlow(ctx, h.store, id, slug)
+type policySelection struct {
+	policyID string
+	version  int
+	spec     policy.Spec
+}
+
+// selectPolicy resolves the exact policy version before execution. Sandbox uses
+// the latest published draft; non-sandbox decisions and previews use only a
+// checker-approved version.
+func (h *DecideHandler) selectPolicy(
+	ctx context.Context,
+	id identity.Identity,
+	slug string,
+	requireApproval bool,
+) (policySelection, error) {
+	var (
+		pv  policy.View
+		ver policy.VersionView
+		ok  bool
+		err error
+	)
+	if requireApproval {
+		pv, ver, ok, err = policy.ApprovedForFlow(ctx, h.store, id, slug)
+	} else {
+		pv, ver, ok, err = policy.ActiveForFlow(ctx, h.store, id, slug)
+	}
 	if err != nil {
-		return dispositionResult{}, err
+		if errors.Is(err, policy.ErrNoApprovedVersion) {
+			return policySelection{}, fmt.Errorf("%w: %w", ErrBadRequest, err)
+		}
+		return policySelection{}, err
 	}
 	if !ok {
-		return dispositionResult{}, nil
+		return policySelection{}, nil
 	}
-	res := dispositionResult{policyID: pv.PolicyID, policyVersion: ver.Version}
+	return policySelection{policyID: pv.PolicyID, version: ver.Version, spec: ver.Spec}, nil
+}
+
+// policyForResume restores the version selected when the decision began. A legacy
+// suspended decision with a currently-bound policy cannot prove which version it
+// started under, so it fails loudly instead of silently re-resolving mutable logic.
+func (h *DecideHandler) policyForResume(
+	ctx context.Context,
+	id identity.Identity,
+	rec history.Record,
+) (policySelection, error) {
+	if !rec.PolicySelectionRecorded {
+		_, _, bound, err := policy.ActiveForFlow(ctx, h.store, id, rec.Slug)
+		if err != nil {
+			return policySelection{}, err
+		}
+		if bound {
+			return policySelection{}, fmt.Errorf(
+				"decision-engine: suspended decision %q predates policy snapshots and cannot safely resume while a policy is bound",
+				rec.DecisionID,
+			)
+		}
+		return policySelection{}, nil
+	}
+	if rec.PolicyID == "" {
+		return policySelection{}, nil
+	}
+	pv, ver, ok, err := policy.ReadVersion(ctx, h.store, id, rec.PolicyID, rec.PolicyVersion)
+	if err != nil {
+		return policySelection{}, err
+	}
+	if !ok {
+		return policySelection{}, fmt.Errorf(
+			"decision-engine: decision %q references missing policy %q version %d",
+			rec.DecisionID, rec.PolicyID, rec.PolicyVersion,
+		)
+	}
+	return policySelection{policyID: pv.PolicyID, version: ver.Version, spec: ver.Spec}, nil
+}
+
+// applyPolicy applies an already-selected immutable version. An evaluation error
+// refers to a human rather than failing an otherwise-completed decision.
+func applyPolicy(selected policySelection, output map[string]any) dispositionResult {
+	if selected.policyID == "" {
+		return dispositionResult{}
+	}
+	res := dispositionResult{policyID: selected.policyID, policyVersion: selected.version}
 	// A policy that cannot evaluate (e.g. references a field the output lacks)
 	// refers to a human rather than failing the completed decision.
-	if out, applyErr := ver.Spec.Apply(output); applyErr != nil {
+	if out, applyErr := selected.spec.Apply(output); applyErr != nil {
 		res.disposition, res.reason = policy.Refer, "policy: "+applyErr.Error()
 	} else {
 		res.disposition, res.code, res.reason = out.Disposition, out.Code, out.Description
 	}
-	return res, nil
+	return res
 }
 
 // resolveVersion selects the version to run for an environment: the deployed

@@ -84,9 +84,10 @@ type predictConfig struct {
 // the key its output is injected under (read downstream as ai.<output>). Prompt is
 // the literal prompt; when empty the node sends the current input as the prompt.
 type aiConfig struct {
-	Agent  string `json:"agent"`
-	Output string `json:"output"`
-	Prompt string `json:"prompt,omitempty"`
+	Agent   string `json:"agent"`
+	Version int    `json:"version,omitempty"`
+	Output  string `json:"output"`
+	Prompt  string `json:"prompt,omitempty"`
 }
 
 // codeConfig is the config of a Code node: a Starlark script with the decision

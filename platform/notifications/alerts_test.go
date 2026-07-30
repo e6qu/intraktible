@@ -9,6 +9,7 @@ import (
 
 	deevents "github.com/e6qu/intraktible/decision-engine/events"
 	"github.com/e6qu/intraktible/decision-engine/monitor"
+	"github.com/e6qu/intraktible/decision-engine/policy"
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/notifications"
@@ -45,6 +46,10 @@ func TestOperationalAndApprovalAlertsReachRoleQueues(t *testing.T) {
 		deevents.ModelApprovalRequested{
 			RequestID: "model-req-1", Name: "risk-model", Version: 2,
 		})
+	emit(policy.StreamPolicies, policy.TypePolicyApprovalRequested,
+		policy.ApprovalRequested{
+			RequestID: "policy-req-1", PolicyID: "policy-1", Version: 4,
+		})
 	emit(deevents.StreamFlows, deevents.TypeDeployScheduleActivated,
 		deevents.DeployScheduleActivated{
 			ScheduleID: "sch-1", FlowID: "flow-1", Environment: "production", Version: 3, PriorVersion: 2,
@@ -78,7 +83,7 @@ func TestOperationalAndApprovalAlertsReachRoleQueues(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(approvals) != 2 {
+	if len(approvals) != 3 {
 		t.Fatalf("approval queue wrong: %+v", approvals)
 	}
 	got := map[string]string{}
@@ -88,7 +93,7 @@ func TestOperationalAndApprovalAlertsReachRoleQueues(t *testing.T) {
 		}
 		got[approval.SubjectType] = approval.SubjectID
 	}
-	if got["flow"] != "flow-1" || got["model"] != "risk-model" {
+	if got["flow"] != "flow-1" || got["model"] != "risk-model" || got["policy"] != "policy-1" {
 		t.Fatalf("approval subjects = %+v", got)
 	}
 	if hidden, err := notifications.List(ctx, st,
@@ -122,6 +127,12 @@ func TestTerminalApprovalRetiresSharedWork(t *testing.T) {
 	})
 	emit(deevents.StreamModels, deevents.TypeModelApprovalRejected, deevents.ModelApprovalRejected{
 		RequestID: "model-rejected", Name: "risk-model", Version: 2, Reason: "validation failed",
+	})
+	emit(policy.StreamPolicies, policy.TypePolicyApprovalRequested, policy.ApprovalRequested{
+		RequestID: "policy-approved", PolicyID: "policy-1", Version: 4,
+	})
+	emit(policy.StreamPolicies, policy.TypePolicyApprovalApproved, policy.ApprovalApproved{
+		RequestID: "policy-approved", PolicyID: "policy-1", Version: 4, Reason: "bands reviewed",
 	})
 
 	st := store.NewMemory()

@@ -1715,7 +1715,8 @@
     },
     "/v1/policies/{policy_id}/versions": {
       "post": {
-        "summary": "Publish a policy version (disposition bands).",
+        "summary": "Publish an immutable policy version (disposition bands).",
+        "description": "The newest published version is available in sandbox. Staging and production continue using the last approved version until this version completes four-eyes approval.",
         "tags": [
           "Policies"
         ],
@@ -1751,6 +1752,106 @@
               }
             }
           }
+        }
+      }
+    },
+    "/v1/policies/{policy_id}/approval-request": {
+      "post": {
+        "summary": "Request four-eyes approval of the latest policy version.",
+        "description": "The maker submits the latest immutable version for review. Publishing another version invalidates the pending request while the last approved version keeps serving. Editor role.",
+        "tags": ["Policies"],
+        "parameters": [
+          {
+            "name": "policy_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Approval requested.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": { "request_id": { "type": "string" } }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/policies/{policy_id}/approve": {
+      "post": {
+        "summary": "Approve a pending policy-version request (checker).",
+        "description": "A different actor from both the version author and requester approves the exact requested version for staging and production. Approver role.",
+        "tags": ["Policies"],
+        "parameters": [
+          {
+            "name": "policy_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PolicyApprovalDecision"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Approved.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/EventAck" } }
+            }
+          },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/policies/{policy_id}/reject": {
+      "post": {
+        "summary": "Reject a pending policy-version request (checker).",
+        "description": "Rejects the exact pending request with an audit reason. The last approved version keeps serving. Approver role.",
+        "tags": ["Policies"],
+        "parameters": [
+          {
+            "name": "policy_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PolicyApprovalDecision"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Rejected.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/EventAck" } }
+            }
+          },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" }
         }
       }
     },
@@ -4698,6 +4799,19 @@
                 ]
               }
             }
+          }
+        }
+      },
+      "PolicyApprovalDecision": {
+        "type": "object",
+        "required": ["request_id", "reason"],
+        "properties": {
+          "request_id": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
           }
         }
       },

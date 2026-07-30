@@ -16,10 +16,11 @@ DOC (a claim not backed by code).
 
 ## Queue
 
-Third whole-product audit from authoritative merged commit `92b285f`.
+Fourth whole-product audit from authoritative merged commit `8622b7a`.
 
-No open implementation items. PR #157 is the repository's sole review queue;
-merge only after every required check on its current head is green.
+No open implementation items. The governed policy-version and immutable
+agent-version slices are complete; final `make ci`, remote reconciliation, and
+the single-PR handoff remain release work rather than product gaps.
 
 ---
 

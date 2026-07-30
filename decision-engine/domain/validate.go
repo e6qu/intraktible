@@ -238,7 +238,13 @@ func validateNodeConfig(n events.Node) error {
 	case events.NodeConnect:
 		return decodeConfig(n, &connectConfig{})
 	case events.NodeAI:
-		return decodeConfig(n, &aiConfig{})
+		var cfg aiConfig
+		if err := decodeConfig(n, &cfg); err != nil {
+			return err
+		}
+		if cfg.Version < 0 {
+			return fmt.Errorf("decision-engine: node %q agent version must be >= 0", n.ID)
+		}
 	case events.NodePredict:
 		return decodeConfig(n, &predictConfig{})
 	case events.NodeOutput:

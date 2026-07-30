@@ -58,6 +58,11 @@ type DecisionStarted struct {
 	EntityType  string          `json:"entity_type,omitempty"`
 	EntityID    string          `json:"entity_id,omitempty"`
 	Data        json.RawMessage `json:"data"` // includes injected "features" when an entity was referenced
+	// PolicySelectionRecorded distinguishes a new decision that deliberately had
+	// no bound policy from a legacy event that predates policy snapshots.
+	PolicySelectionRecorded bool   `json:"policy_selection_recorded,omitempty"`
+	PolicyID                string `json:"policy_id,omitempty"`
+	PolicyVersion           int    `json:"policy_version,omitempty"`
 }
 
 // NodeEvaluated records one node's evaluation and its output, in execution order.
