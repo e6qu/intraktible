@@ -12,6 +12,13 @@ const StreamComments = "platform.comments"
 // TypeCommentPosted records a new comment on a subject's thread.
 const TypeCommentPosted = "platform.comment_posted"
 
+const (
+	// TypeCommentResolved records that a discussion item no longer blocks review.
+	TypeCommentResolved = "platform.comment_resolved"
+	// TypeCommentReopened records that a resolved discussion needs attention again.
+	TypeCommentReopened = "platform.comment_reopened"
+)
+
 // CommentPosted is one comment appended to a subject's thread. ParentID, when
 // set, makes it a reply to another comment (one level of threading).
 type CommentPosted struct {
@@ -20,4 +27,12 @@ type CommentPosted struct {
 	SubjectID   string `json:"subject_id"`
 	Body        string `json:"body"`
 	ParentID    string `json:"parent_id,omitempty"`
+}
+
+// CommentResolutionChanged addresses one exact comment in one tenant-scoped
+// subject thread.
+type CommentResolutionChanged struct {
+	CommentID   string `json:"comment_id"`
+	SubjectType string `json:"subject_type"`
+	SubjectID   string `json:"subject_id"`
 }

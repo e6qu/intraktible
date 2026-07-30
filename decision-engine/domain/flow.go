@@ -16,7 +16,7 @@ import (
 	"github.com/e6qu/intraktible/decision-engine/events"
 )
 
-var nodeTypes = map[events.NodeType]bool{
+var runtimeNodeTypes = map[events.NodeType]bool{
 	events.NodeInput:         true,
 	events.NodeRule:          true,
 	events.NodeSplit:         true,
@@ -33,12 +33,33 @@ var nodeTypes = map[events.NodeType]bool{
 	events.NodeOutput:        true,
 }
 
+var authoringNodeTypes = func() map[events.NodeType]bool {
+	types := make(map[events.NodeType]bool, len(runtimeNodeTypes)+1)
+	for nodeType := range runtimeNodeTypes {
+		types[nodeType] = true
+	}
+	types[events.NodeSubflow] = true
+	return types
+}()
+
 // ValidateGraph fails loudly on a structurally invalid flow graph: it requires
 // unique non-empty node IDs of known types, exactly one Input and at least one
 // Output node, edges that reference existing distinct nodes, and acyclicity.
 // Per-node Config is not inspected here — each node engine validates its own
 // config at decide time.
 func ValidateGraph(g events.Graph) error {
+	return validateGraph(g, runtimeNodeTypes)
+}
+
+// ValidateAuthoringGraph applies the same structural contract as ValidateGraph
+// while permitting authoring-only reusable-subflow references. A graph accepted
+// here still must be compiled and pass ValidateGraph before it can be published
+// or executed.
+func ValidateAuthoringGraph(g events.Graph) error {
+	return validateGraph(g, authoringNodeTypes)
+}
+
+func validateGraph(g events.Graph, allowed map[events.NodeType]bool) error {
 	if len(g.Nodes) == 0 {
 		return errors.New("decision-engine: graph has no nodes")
 	}
@@ -51,7 +72,7 @@ func ValidateGraph(g events.Graph) error {
 		if _, dup := types[n.ID]; dup {
 			return fmt.Errorf("decision-engine: duplicate node id %q", n.ID)
 		}
-		if !nodeTypes[n.Type] {
+		if !allowed[n.Type] {
 			return fmt.Errorf("decision-engine: node %q has unknown type %q", n.ID, n.Type)
 		}
 		types[n.ID] = n.Type
@@ -179,25 +200,53 @@ func validateEdgesAcyclic(g events.Graph, types map[string]events.NodeType) erro
 // content yields an identical etag, so a no-op republish is detectable and the
 // value is stable across replay.
 func Etag(g events.Graph, inputSchema json.RawMessage) (string, error) {
+	return EtagWithSource(g, inputSchema, nil, nil)
+}
+
+// EtagWithSource includes the authoring graph and exact reusable dependency
+// pins when present. Two publications with identical compiled runtime behavior
+// but different governed component lineage are therefore not collapsed into a
+// misleading no-op version.
+func EtagWithSource(
+	g events.Graph,
+	inputSchema json.RawMessage,
+	sourceGraph *events.Graph,
+	dependencies []events.FlowDependency,
+) (string, error) {
 	// Hash a canonical form so the etag is a function of meaning, not byte-level
 	// formatting: each node's Config (a json.RawMessage) and the input schema are
 	// re-encoded with sorted keys + normalized whitespace, so a semantically
 	// identical re-import is still detected as a no-op republish.
+	canon := canonicalGraph(g)
+	var canonicalSource *events.Graph
+	if sourceGraph != nil {
+		source := canonicalGraph(*sourceGraph)
+		canonicalSource = &source
+	}
+	b, err := json.Marshal(struct {
+		Graph        events.Graph            `json:"graph"`
+		InputSchema  json.RawMessage         `json:"input_schema,omitempty"`
+		SourceGraph  *events.Graph           `json:"source_graph,omitempty"`
+		Dependencies []events.FlowDependency `json:"dependencies,omitempty"`
+	}{
+		Graph: canon, InputSchema: canonicalJSON(inputSchema),
+		SourceGraph: canonicalSource, Dependencies: dependencies,
+	})
+	if err != nil {
+		return "", fmt.Errorf("decision-engine: hash version: %w", err)
+	}
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:]), nil
+}
+
+func canonicalGraph(g events.Graph) events.Graph {
 	canon := g
 	canon.Nodes = make([]events.Node, len(g.Nodes))
 	copy(canon.Nodes, g.Nodes)
 	for i := range canon.Nodes {
 		canon.Nodes[i].Config = canonicalJSON(canon.Nodes[i].Config)
 	}
-	b, err := json.Marshal(struct {
-		Graph       events.Graph    `json:"graph"`
-		InputSchema json.RawMessage `json:"input_schema,omitempty"`
-	}{Graph: canon, InputSchema: canonicalJSON(inputSchema)})
-	if err != nil {
-		return "", fmt.Errorf("decision-engine: hash version: %w", err)
-	}
-	sum := sha256.Sum256(b)
-	return hex.EncodeToString(sum[:]), nil
+	return canon
 }
 
 // canonicalJSON re-encodes a JSON value with sorted object keys and normalized

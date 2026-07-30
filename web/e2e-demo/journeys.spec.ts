@@ -13,7 +13,7 @@ function token(prefix: string): string {
 // --- 1a. Author a flow from a template and publish it --------------------------
 // The from-scratch create path is covered in persistence.spec; here the guided "New
 // from template" path instantiates a complete, valid graph in the builder, which is
-// then published — the author→publish loop through the real backend.
+// then reviewed and published — the maker→checker loop through the real backend.
 test('journey: author a flow from a template and publish it', async ({ page }) => {
   await forcePersona(page, 'builder');
   await gotoReady(page, 'engine');
@@ -23,10 +23,17 @@ test('journey: author a flow from a template and publish it', async ({ page }) =
   await expect(page).toHaveURL(/\/engine\/[^/]+$/);
   await expect(page.getByTestId('flow-canvas')).toBeVisible();
 
-  // Publishing the instantiated graph succeeds — the template compiles (a broken
-  // graph would be refused loudly here).
-  await page.getByRole('button', { name: 'Publish version' }).click();
-  await expect(page.getByText(/Published v\d+|Already at v\d+/)).toBeVisible();
+  // The template compiles at the server-owned check, then a different actor
+  // approves and publishes the exact pinned revision.
+  await page.getByRole('button', { name: 'Request review' }).click();
+  await expect(page.getByTestId('changeset-in_review')).toBeVisible();
+  await switchRole(page, 'approver');
+  const review = page.getByTestId('changeset-in_review');
+  await review.getByRole('button', { name: 'Approve' }).click();
+  const approved = page.getByTestId('changeset-approved');
+  await expect(approved).toBeVisible();
+  await approved.getByRole('button', { name: 'Publish reviewed version' }).click();
+  await expect(page.getByTestId('changeset-published')).toBeVisible();
 });
 
 // --- 1b. Run a test decision on a deployed flow and record it -------------------
@@ -398,15 +405,23 @@ test('journey: export a flow and re-import it as a new flow', async ({ page }) =
   await gotoReady(page, '');
   await switchRole(page, 'editor');
 
-  // Export a seeded flow's JSON via the API (the builder Export menu produces the
-  // same document), rewrite the slug, and import it through the /engine Import form.
+  // Export a seeded flow's active draft as strict canonical source, rewrite only
+  // its portable slug, and import it through the /engine Import form.
   const doc = await api(page, async () => {
     const j = (r: Response) => r.json();
     const flows = (await fetch('/v1/flows').then(j)).flows as { slug: string; flow_id: string }[];
-    const flow = flows.find((f) => f.slug === 'kyc-onboarding');
-    if (!flow) throw new Error('kyc-onboarding missing from the seed');
-    const id = flow.flow_id;
-    return fetch(`/v1/flows/${id}/export?format=json`).then((r) => r.text());
+    const flow = flows.find((f) => f.slug === 'credit-decision');
+    if (!flow) throw new Error('credit-decision missing from the seed');
+    const drafts = (
+      (await fetch(`/v1/authoring/drafts?flow_id=${flow.flow_id}`).then(j)) as {
+        drafts: { draft_id: string; state: string }[];
+      }
+    ).drafts;
+    const draft = drafts.find((candidate) => candidate.state === 'active');
+    if (!draft) throw new Error('credit-decision active draft missing from the seed');
+    const response = await fetch(`/v1/authoring/drafts/${draft.draft_id}/export`);
+    if (!response.ok) throw new Error(`canonical export failed: ${response.status}`);
+    return response.text();
   });
   const newSlug = token('imported');
   const rewritten = JSON.stringify({ ...JSON.parse(doc), slug: newSlug });
@@ -415,7 +430,8 @@ test('journey: export a flow and re-import it as a new flow', async ({ page }) =
   await page.getByTestId('import-flow').click();
   await page.getByLabel('flow document').fill(rewritten);
   await page.getByTestId('import-submit').click();
-  await expect(page.getByText(`Created ${newSlug}`)).toBeVisible();
+  await expect(page.getByText(/Created the flow and imported draft revision 1/)).toBeVisible();
+  await expect(page).toHaveURL(/\/engine\/[^/]+$/);
   await gotoReady(page, 'engine');
   await expect(page.getByRole('cell', { name: newSlug })).toBeVisible();
 });

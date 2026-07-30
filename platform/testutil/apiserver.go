@@ -116,6 +116,19 @@ func (a *API) settle() {
 // response status, and decodes the JSON body into out (pass nil to skip
 // decoding). A non-nil body is JSON encoded. The response body is always closed.
 func (a *API) Request(t *testing.T, method, path string, body any, wantStatus int, out any) {
+	a.RequestWithHeaders(t, method, path, body, nil, wantStatus, out)
+}
+
+// RequestWithHeaders is Request plus explicit request headers for contracts
+// such as required idempotency keys and conditional writes.
+func (a *API) RequestWithHeaders(
+	t *testing.T,
+	method, path string,
+	body any,
+	headers map[string]string,
+	wantStatus int,
+	out any,
+) {
 	t.Helper()
 	a.settle() // read-after-write: the read model reflects every prior write
 	var rdr io.Reader
@@ -131,6 +144,9 @@ func (a *API) Request(t *testing.T, method, path string, body any, wantStatus in
 		t.Fatalf("testutil: build request: %v", err)
 	}
 	req.Header.Set("X-Api-Key", a.Key)
+	for name, value := range headers {
+		req.Header.Set(name, value)
+	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}

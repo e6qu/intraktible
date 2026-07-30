@@ -90,15 +90,35 @@ describe('sdk Client', () => {
   it('importFlow posts a flow-as-code document', async () => {
     const fetcher = fetcherReturning(201, {
       flow_id: 'f9',
-      slug: 'demo',
-      version: 1,
-      created: true,
-      published: true
+      draft_id: 'd1',
+      revision: 1,
+      created: true
     });
     const c = new Client({ apiKey: 'k', fetch: fetcher });
-    const out = await c.importFlow({ slug: 'demo', graph: { nodes: [], edges: [] } });
-    expect(out.version).toBe(1);
-    expect(fetcher.mock.calls[0][0]).toBe('/v1/flows/import');
+    const out = await c.importFlow({ slug: 'demo', graph: { nodes: [], edges: [] } }, 'commit-1');
+    expect(out.revision).toBe(1);
+    expect(fetcher.mock.calls[0][0]).toBe('/v1/authoring/import');
+    expect(fetcher.mock.calls[0][1]?.headers).toMatchObject({
+      'Idempotency-Key': 'commit-1'
+    });
+  });
+
+  it('creates component upgrade drafts with an explicit retry identity', async () => {
+    const fetcher = fetcherReturning(201, {
+      drafts: [{ flow_id: 'f1', draft_id: 'd1', base_version: 3, revision: 1 }],
+      seq: 8
+    });
+    const c = new Client({ apiKey: 'k', fetch: fetcher });
+    const result = await c.createComponentUpgradeDrafts(
+      'component/1',
+      { from_version: 1, to_version: 2, flow_ids: ['f1'] },
+      'upgrade-key'
+    );
+    expect(result.drafts[0].draft_id).toBe('d1');
+    expect(fetcher.mock.calls[0][0]).toBe('/v1/authoring/components/component%2F1/upgrade-drafts');
+    expect(fetcher.mock.calls[0][1]?.headers).toMatchObject({
+      'Idempotency-Key': 'upgrade-key'
+    });
   });
 
   it('deploy and promote post to the right endpoints', async () => {
@@ -121,19 +141,68 @@ describe('sdk Client', () => {
   });
 
   it('importBundle wraps the flows and returns the report', async () => {
-    const fetcher = fetcherReturning(200, {
-      results: [{ slug: 'a', created: true, published: true }],
-      published: 1,
-      failed: 0,
-      unchanged: 0
+    const fetcher = fetcherReturning(201, {
+      imports: [{ flow_id: 'f1', draft_id: 'd1', revision: 1, created: true }],
+      seq: 4
     });
     const c = new Client({ apiKey: 'k', fetch: fetcher });
-    const out = await c.importBundle([{ slug: 'a', graph: {} }]);
-    expect(out.published).toBe(1);
-    expect(fetcher.mock.calls[0][0]).toBe('/v1/flows/import-bundle');
+    const out = await c.importBundle([{ slug: 'a', graph: {} }], 'bundle-1');
+    expect(out.imports).toHaveLength(1);
+    expect(fetcher.mock.calls[0][0]).toBe('/v1/authoring/import-bundle');
     expect(JSON.parse(fetcher.mock.calls[0][1]?.body as string)).toEqual({
-      flows: [{ slug: 'a', graph: {} }]
+      format_version: 'intraktible.authoring/v1',
+      kind: 'bundle',
+      flows: [
+        {
+          slug: 'a',
+          graph: {},
+          format_version: 'intraktible.authoring/v1',
+          kind: 'flow'
+        }
+      ]
     });
+  });
+
+  it('covers the complete collaborative draft lifecycle', async () => {
+    const fetcher = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+        const path = String(input);
+        if (path.endsWith('/revisions')) {
+          return jsonResponse(200, { revisions: [{ draft_id: 'd1', revision: 2 }] });
+        }
+        if (path.endsWith('/presence') && init?.method === 'PUT') {
+          return jsonResponse(200, { draft_id: 'd1', actor: 'ada', revision: 2 });
+        }
+        if (path.endsWith('/presence') && init?.method === 'GET') {
+          return jsonResponse(200, {
+            presence: [{ draft_id: 'd1', actor: 'ada', revision: 2 }]
+          });
+        }
+        if (path.endsWith('/presence') && init?.method === 'DELETE') {
+          return new Response(null, { status: 204 });
+        }
+        if (path.endsWith('/rebase')) return jsonResponse(200, { revision: 3 });
+        if (init?.method === 'DELETE') return jsonResponse(200, { event_id: 'archived' });
+        return jsonResponse(200, { draft_id: 'd1', revision: 2 });
+      }
+    );
+    const c = new Client({ apiKey: 'k', fetch: fetcher });
+    expect((await c.getDraft('d1')).revision).toBe(2);
+    expect(
+      (
+        await c.rebaseDraft('d1', {
+          expected_revision: 2,
+          base_version: 1,
+          title: 'Resolved',
+          graph: {}
+        })
+      ).revision
+    ).toBe(3);
+    expect(await c.listDraftRevisions('d1')).toHaveLength(1);
+    expect((await c.renewDraftPresence('d1', { revision: 2 })).actor).toBe('ada');
+    expect(await c.listDraftPresence('d1')).toHaveLength(1);
+    await expect(c.leaveDraftPresence('d1')).resolves.toBeUndefined();
+    await expect(c.archiveDraft('d1')).resolves.toBeUndefined();
   });
 
   it('unwraps list endpoints and defaults to empty', async () => {

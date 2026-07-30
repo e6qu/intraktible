@@ -58,11 +58,16 @@ func (h *Handler) WithNow(now func() time.Time) *Handler {
 // flowAgg is the command-side aggregate of one flow: its slug, current details
 // (name/description), and highest published version, folded from the log.
 type flowAgg struct {
-	slug        string
-	name        string
-	description string
-	latest      int
-	latestEtag  string
+	slug            string
+	name            string
+	description     string
+	latest          int
+	latestEtag      string
+	promotionPolicy map[string]events.PromotionStagePolicy
+	changeSets      map[string]struct {
+		version int
+		etag    string
+	}
 }
 
 // CreateFlow validates the command, ensures the slug is unique for the tenant,
@@ -156,7 +161,7 @@ func (h *Handler) PublishVersion(ctx context.Context, id identity.Identity, cmd 
 	// with a sensible default layout (a UI/custom layout is preserved). Done before
 	// the etag so the stored graph and its etag match.
 	cmd.Graph = layout.Apply(cmd.Graph)
-	etag, err := domain.Etag(cmd.Graph, cmd.InputSchema)
+	etag, err := domain.EtagWithSource(cmd.Graph, cmd.InputSchema, cmd.SourceGraph, cmd.Dependencies)
 	if err != nil {
 		return 0, "", eventlog.Envelope{}, err
 	}
@@ -175,13 +180,23 @@ func (h *Handler) PublishVersion(ctx context.Context, id identity.Identity, cmd 
 		if !ok {
 			return 0, "", eventlog.Envelope{}, fmt.Errorf("decision-engine: unknown flow %q", cmd.FlowID)
 		}
+		if cmd.ChangeSetID != "" {
+			if published, exists := agg.changeSets[cmd.ChangeSetID]; exists {
+				return published.version, published.etag, eventlog.Envelope{}, nil
+			}
+		}
 		version := agg.latest + 1
 		payload, err := json.Marshal(events.FlowVersionPublished{
-			FlowID:      cmd.FlowID,
-			Version:     version,
-			Etag:        etag,
-			Graph:       cmd.Graph,
-			InputSchema: cmd.InputSchema,
+			FlowID:        cmd.FlowID,
+			Version:       version,
+			Etag:          etag,
+			Graph:         cmd.Graph,
+			InputSchema:   cmd.InputSchema,
+			SourceGraph:   cmd.SourceGraph,
+			Dependencies:  cmd.Dependencies,
+			ChangeSetID:   cmd.ChangeSetID,
+			DraftID:       cmd.DraftID,
+			DraftRevision: cmd.DraftRevision,
 		})
 		if err != nil {
 			return 0, "", eventlog.Envelope{}, fmt.Errorf("decision-engine: marshal published: %w", err)
@@ -911,6 +926,30 @@ func (h *Handler) SetPromotionPolicy(ctx context.Context, id identity.Identity, 
 	}
 	return h.setFlowAttribute(ctx, id, cmd.FlowID, events.TypePromotionPolicySet, "promotion policy",
 		events.PromotionPolicySet{FlowID: cmd.FlowID, Policy: cmd.Policy})
+}
+
+// PromotionPolicy returns the current effective policy from the authoritative
+// event stream. Command paths that enforce promotion gates must use this instead
+// of the eventually consistent projection: a caller may save a stricter policy
+// and immediately promote in the same user journey.
+func (h *Handler) PromotionPolicy(ctx context.Context, id identity.Identity, flowID string) (map[string]events.PromotionStagePolicy, error) {
+	if err := id.Valid(); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(flowID) == "" {
+		return nil, fmt.Errorf("decision-engine: flow id is required")
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	byID, _, err := h.foldTenant(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	agg, ok := byID[flowID]
+	if !ok {
+		return nil, fmt.Errorf("decision-engine: unknown flow %q", flowID)
+	}
+	return flows.EffectivePromotionPolicy(agg.promotionPolicy), nil
 }
 
 // setFlowAttribute validates the identity, asserts the flow exists (under the
@@ -1782,7 +1821,14 @@ func (h *Handler) foldTenant(ctx context.Context, id identity.Identity) (map[str
 			if err := json.Unmarshal(e.Payload, &p); err != nil {
 				return nil, nil, fmt.Errorf("decision-engine: decode created seq %d: %w", e.Seq, err)
 			}
-			byID[p.FlowID] = &flowAgg{slug: p.Slug, name: p.Name, description: p.Description}
+			byID[p.FlowID] = &flowAgg{
+				slug: p.Slug, name: p.Name, description: p.Description,
+				promotionPolicy: flows.DefaultPromotionPolicy(),
+				changeSets: make(map[string]struct {
+					version int
+					etag    string
+				}),
+			}
 			bySlug[p.Slug] = p.FlowID
 		case events.TypeFlowDetailsSet:
 			var p events.FlowDetailsSet
@@ -1798,9 +1844,25 @@ func (h *Handler) foldTenant(ctx context.Context, id identity.Identity) (map[str
 			if err := json.Unmarshal(e.Payload, &p); err != nil {
 				return nil, nil, fmt.Errorf("decision-engine: decode published seq %d: %w", e.Seq, err)
 			}
-			if a, ok := byID[p.FlowID]; ok && p.Version > a.latest {
-				a.latest = p.Version
-				a.latestEtag = p.Etag
+			if a, ok := byID[p.FlowID]; ok {
+				if p.Version > a.latest {
+					a.latest = p.Version
+					a.latestEtag = p.Etag
+				}
+				if p.ChangeSetID != "" {
+					a.changeSets[p.ChangeSetID] = struct {
+						version int
+						etag    string
+					}{version: p.Version, etag: p.Etag}
+				}
+			}
+		case events.TypePromotionPolicySet:
+			var p events.PromotionPolicySet
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				return nil, nil, fmt.Errorf("decision-engine: decode promotion_policy_set seq %d: %w", e.Seq, err)
+			}
+			if a, ok := byID[p.FlowID]; ok {
+				a.promotionPolicy = flows.EffectivePromotionPolicy(p.Policy)
 			}
 		}
 	}

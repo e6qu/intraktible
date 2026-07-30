@@ -4,6 +4,7 @@ package privacy_test
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/e6qu/intraktible/platform/privacy"
@@ -46,5 +47,21 @@ func TestMaskNoOps(t *testing.T) {
 	// Unparseable / empty input is returned as-is.
 	if got := privacy.Mask(json.RawMessage(``), privacy.FieldSet([]string{"ssn"})); len(got) != 0 {
 		t.Fatalf("empty input should be returned unchanged: %s", got)
+	}
+}
+
+func TestFreeTextPIIDetectionAndRedaction(t *testing.T) {
+	input := "contact ada@example.test about 123-45-6789"
+	if !privacy.ContainsTextPII(input) {
+		t.Fatal("free-text PII was not detected")
+	}
+	masked := privacy.RedactTextPII(input)
+	if strings.Contains(masked, "ada@example.test") ||
+		strings.Contains(masked, "123-45-6789") ||
+		strings.Count(masked, privacy.Redacted) != 2 {
+		t.Fatalf("free-text PII redaction = %q", masked)
+	}
+	if privacy.ContainsTextPII("assertions/run-42: 24 of 24 passed") {
+		t.Fatal("ordinary immutable evidence reference was classified as PII")
 	}
 }

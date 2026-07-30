@@ -588,115 +588,35 @@ func (s *Service) update(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// importRequest is the flow-as-code document — the same shape `…/export`
-// produces. Version and Etag are accepted so an exported doc round-trips, but
-// they are advisory: the import always publishes onto the live latest version.
-type importRequest struct {
-	Slug        string          `json:"slug"`
-	Name        string          `json:"name"`
-	Graph       events.Graph    `json:"graph"`
-	InputSchema json.RawMessage `json:"input_schema,omitempty"`
-	Version     int             `json:"version,omitempty"`
-	Etag        string          `json:"etag,omitempty"`
-}
-
-// importFlow upserts a flow from an exported document via the command layer,
-// which folds the authoritative log: it reuses the flow with the given slug (or
-// creates it) and publishes the graph as a new version. Re-importing identical
-// content is a no-op (the live latest version already matches), so it is safe to
-// run from CI / GitOps on every push. A 200 means no-op, a 201 means it wrote.
+// importFlow is retained as an explicit migration boundary. The legacy route
+// published directly and therefore cannot coexist with governed repository
+// authoring; callers must create an idempotent canonical draft instead.
 func (s *Service) importFlow(w http.ResponseWriter, r *http.Request) {
-	id, ok := httpx.Caller(w, r)
-	if !ok {
+	if _, ok := httpx.Caller(w, r); !ok {
 		return
 	}
-	var req importRequest
-	if err := httpx.DecodeJSON(r, &req); err != nil {
-		httpx.Error(w, http.StatusBadRequest, err)
-		return
-	}
-	res, err := s.cmd.ImportFlow(r.Context(), id, domain.ImportFlow{
-		Slug:        req.Slug,
-		Name:        req.Name,
-		Graph:       req.Graph,
-		InputSchema: req.InputSchema,
-	})
-	if err != nil {
-		httpx.Error(w, http.StatusBadRequest, err)
-		return
-	}
-	body := map[string]any{
-		"flow_id": res.FlowID, "slug": req.Slug, "version": res.Version,
-		"etag": res.Etag, "created": res.Created, "published": res.Published,
-	}
-	if !res.Published {
-		httpx.JSON(w, http.StatusOK, body)
-		return
-	}
-	body["event_id"] = res.Event.ID
-	body["seq"] = res.Event.Seq
-	httpx.JSON(w, http.StatusCreated, body)
+	httpx.Error(
+		w, http.StatusGone,
+		errors.New(
+			"flow import no longer publishes directly; use POST /v1/authoring/import "+
+				"with intraktible.authoring/v1 and Idempotency-Key",
+		),
+	)
 }
 
-type bundleRequest struct {
-	Flows []importRequest `json:"flows"`
-}
-
-// bundleResult is one flow's outcome within a bundle import.
-type bundleResult struct {
-	Slug      string `json:"slug"`
-	FlowID    string `json:"flow_id,omitempty"`
-	Version   int    `json:"version,omitempty"`
-	Created   bool   `json:"created"`
-	Published bool   `json:"published"`
-	Error     string `json:"error,omitempty"`
-}
-
-// importBundle imports many flows in one document (a GitOps repo of flows). It
-// is best-effort: each flow is imported independently against the authoritative
-// log, and a failing flow is reported in its result rather than aborting the
-// rest — so the response is the per-flow truth, not all-or-nothing. The status
-// is 200 (a batch report); per-flow success/failure is in each result.
+// importBundle is the matching migration boundary for the old best-effort,
+// direct-publication bundle contract.
 func (s *Service) importBundle(w http.ResponseWriter, r *http.Request) {
-	id, ok := httpx.Caller(w, r)
-	if !ok {
+	if _, ok := httpx.Caller(w, r); !ok {
 		return
 	}
-	var req bundleRequest
-	if err := httpx.DecodeJSON(r, &req); err != nil {
-		httpx.Error(w, http.StatusBadRequest, err)
-		return
-	}
-	if len(req.Flows) == 0 {
-		httpx.Error(w, http.StatusBadRequest, fmt.Errorf("bundle: flows is required"))
-		return
-	}
-	results := make([]bundleResult, 0, len(req.Flows))
-	var published, failed int
-	for _, f := range req.Flows {
-		res, err := s.cmd.ImportFlow(r.Context(), id, domain.ImportFlow{
-			Slug:        f.Slug,
-			Name:        f.Name,
-			Graph:       f.Graph,
-			InputSchema: f.InputSchema,
-		})
-		if err != nil {
-			results = append(results, bundleResult{Slug: f.Slug, Error: err.Error()})
-			failed++
-			continue
-		}
-		results = append(results, bundleResult{
-			Slug: f.Slug, FlowID: res.FlowID, Version: res.Version,
-			Created: res.Created, Published: res.Published,
-		})
-		if res.Published {
-			published++
-		}
-	}
-	httpx.JSON(w, http.StatusOK, map[string]any{
-		"results": results, "published": published, "failed": failed,
-		"unchanged": len(req.Flows) - published - failed,
-	})
+	httpx.Error(
+		w, http.StatusGone,
+		errors.New(
+			"flow bundle import no longer publishes directly; use POST "+
+				"/v1/authoring/import-bundle with intraktible.authoring/v1 and Idempotency-Key",
+		),
+	)
 }
 
 type publishRequest struct {
@@ -1086,7 +1006,12 @@ func (s *Service) promote(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, fmt.Errorf("promote: nothing deployed in %q to promote", req.From))
 		return
 	}
-	stage := fv.PromotionPolicy[req.To]
+	policy, err := s.cmd.PromotionPolicy(r.Context(), id, flowID)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, fmt.Errorf("promote: read current promotion policy: %w", err))
+		return
+	}
+	stage := policy[req.To]
 	cmd := domain.DeployVersion{FlowID: flowID, Environment: req.To, Version: src.Version}
 	if stage.RequireReview {
 		// A review target only raises a request here — nothing goes live, so the

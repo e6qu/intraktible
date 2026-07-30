@@ -28,6 +28,9 @@ type View struct {
 	ParentID    string    `json:"parent_id,omitempty"`
 	Author      string    `json:"author"`
 	At          time.Time `json:"at"`
+	Resolved    bool      `json:"resolved"`
+	ResolvedBy  string    `json:"resolved_by,omitempty"`
+	ResolvedAt  time.Time `json:"resolved_at,omitzero"`
 	// Seq is the event-log sequence — a strict monotonic tiebreaker so two comments
 	// at the same wall-clock instant (coarse clocks, batch import) always sort in a
 	// stable, deterministic order rather than however sort.Slice happens to land.
@@ -50,8 +53,39 @@ func (Projector) Name() string          { return Collection }
 func (Projector) Collections() []string { return []string{Collection} }
 
 func (Projector) Apply(ctx context.Context, e eventlog.Envelope, s store.Store) error {
-	if e.Type != TypeCommentPosted {
+	if e.Type != TypeCommentPosted &&
+		e.Type != TypeCommentResolved &&
+		e.Type != TypeCommentReopened {
 		return nil
+	}
+	if e.Type == TypeCommentResolved || e.Type == TypeCommentReopened {
+		var payload CommentResolutionChanged
+		if err := json.Unmarshal(e.Payload, &payload); err != nil {
+			return fmt.Errorf("comments: decode resolution seq %d: %w", e.Seq, err)
+		}
+		key := store.Key(
+			e.Org, e.Workspace,
+			docID(payload.SubjectType, payload.SubjectID, payload.CommentID),
+		)
+		view, found, err := store.GetDoc[View](ctx, s, Collection, key)
+		if err != nil {
+			return err
+		}
+		if !found {
+			return fmt.Errorf(
+				"comments: resolution references missing comment %q",
+				payload.CommentID,
+			)
+		}
+		view.Resolved = e.Type == TypeCommentResolved
+		if view.Resolved {
+			view.ResolvedBy = e.Actor
+			view.ResolvedAt = e.Time
+		} else {
+			view.ResolvedBy = ""
+			view.ResolvedAt = time.Time{}
+		}
+		return store.PutDoc(ctx, s, Collection, key, view)
 	}
 	var p CommentPosted
 	if err := json.Unmarshal(e.Payload, &p); err != nil {

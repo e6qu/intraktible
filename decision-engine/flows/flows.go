@@ -31,12 +31,17 @@ type slugRef struct {
 
 // VersionView is one published, immutable flow version in the read model.
 type VersionView struct {
-	Version     int             `json:"version"`
-	Etag        string          `json:"etag"`
-	Graph       events.Graph    `json:"graph"`
-	InputSchema json.RawMessage `json:"input_schema,omitempty"`
-	PublishedAt time.Time       `json:"published_at"`
-	PublishedBy string          `json:"published_by"`
+	Version       int                     `json:"version"`
+	Etag          string                  `json:"etag"`
+	Graph         events.Graph            `json:"graph"`
+	InputSchema   json.RawMessage         `json:"input_schema,omitempty"`
+	SourceGraph   *events.Graph           `json:"source_graph,omitempty"`
+	Dependencies  []events.FlowDependency `json:"dependencies,omitempty"`
+	ChangeSetID   string                  `json:"changeset_id,omitempty"`
+	DraftID       string                  `json:"draft_id,omitempty"`
+	DraftRevision int                     `json:"draft_revision,omitempty"`
+	PublishedAt   time.Time               `json:"published_at"`
+	PublishedBy   string                  `json:"published_by"`
 }
 
 // DeploymentView is which version is live in an environment, with an optional
@@ -419,12 +424,17 @@ func applyPublished(ctx context.Context, e eventlog.Envelope, s store.Store) err
 		return fmt.Errorf("decision_flows: published seq %d for unknown flow %q", e.Seq, p.FlowID)
 	}
 	fv.Versions = append(fv.Versions, VersionView{
-		Version:     p.Version,
-		Etag:        p.Etag,
-		Graph:       p.Graph,
-		InputSchema: p.InputSchema,
-		PublishedAt: e.Time,
-		PublishedBy: e.Actor,
+		Version:       p.Version,
+		Etag:          p.Etag,
+		Graph:         p.Graph,
+		InputSchema:   p.InputSchema,
+		SourceGraph:   p.SourceGraph,
+		Dependencies:  p.Dependencies,
+		ChangeSetID:   p.ChangeSetID,
+		DraftID:       p.DraftID,
+		DraftRevision: p.DraftRevision,
+		PublishedAt:   e.Time,
+		PublishedBy:   e.Actor,
 	})
 	fv.Latest = p.Version
 	fv.UpdatedAt = e.Time

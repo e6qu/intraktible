@@ -192,9 +192,20 @@ export interface FlowVersion {
   version: number;
   etag: string;
   graph: FlowGraph;
+  source_graph?: FlowGraph;
+  dependencies?: FlowDependency[];
+  changeset_id?: string;
+  draft_id?: string;
+  draft_revision?: number;
   input_schema?: unknown;
   published_at?: string;
   published_by?: string;
+}
+
+export interface FlowDependency {
+  component_id: string;
+  version: number;
+  etag: string;
 }
 
 export interface DeploymentView {
@@ -256,6 +267,10 @@ export interface DecideResult {
 
 function jsonHeaders(key: string): Record<string, string> {
   return { ...authHeaders(key), 'Content-Type': 'application/json' };
+}
+
+function idempotentJSONHeaders(key: string, idempotencyKey: string): Record<string, string> {
+  return { ...jsonHeaders(key), 'Idempotency-Key': idempotencyKey };
 }
 
 // normalizeFlow makes the wire shape honest against the Flow type: the Go API
@@ -348,66 +363,131 @@ export async function exportFlow(
   return res.text();
 }
 
-export interface FlowImportResult {
-  flow_id: string;
-  slug: string;
-  version: number;
-  etag: string;
-  created: boolean;
-  published: boolean;
+// exportAuthoringDraft returns the current canvas as byte-stable canonical v1
+// source, without target-workspace version/deployment metadata or layout noise.
+export async function exportAuthoringDraft(
+  key: string,
+  draftId: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<string> {
+  const res = await fetcher(`/v1/authoring/drafts/${encodeURIComponent(draftId)}/export`, {
+    headers: authHeaders(key)
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, 'export canonical authoring draft');
+  }
+  return res.text();
 }
 
-// importFlow upserts a flow from an exported document (the JSON `exportFlow`
-// produces): it creates the flow if its slug is new, then publishes the graph as
-// a new version. Re-importing identical content is a no-op (`published: false`),
-// so it is safe to run from CI / GitOps on every push.
+export interface FlowImportResult {
+  flow_id: string;
+  draft_id: string;
+  revision: number;
+  created: boolean;
+  migration_report: CanonicalMigrationReport;
+  event_id: string;
+  seq: number;
+}
+
+export interface CanonicalMigrationReport {
+  rewrites: Array<{
+    path: string;
+    from: string;
+    to: string;
+    reason: string;
+  }>;
+}
+
+function canonicalFlowDocument(doc: unknown): Record<string, unknown> {
+  if (doc === null || typeof doc !== 'object' || Array.isArray(doc)) {
+    throw new Error('canonical flow import must be a JSON object');
+  }
+  const source = doc as Record<string, unknown>;
+  // The older flow JSON export carries target-workspace publication metadata
+  // (`version`, `etag`) that is deliberately not part of repository source.
+  // Recognize that unversioned shape explicitly and project only its documented
+  // source fields. Once a caller supplies a canonical marker, preserve every
+  // field so the strict server decoder still catches typos and future semantics.
+  if (source.format_version === undefined && source.kind === undefined) {
+    return {
+      format_version: 'intraktible.authoring/v1',
+      kind: 'flow',
+      slug: source.slug,
+      name: source.name,
+      description: source.description,
+      graph: source.graph,
+      input_schema: source.input_schema
+    };
+  }
+  return {
+    ...source,
+    format_version: source.format_version ?? 'intraktible.authoring/v1',
+    kind: source.kind ?? 'flow'
+  };
+}
+
+// importFlow creates a durable draft from a versioned canonical source. Recognized
+// legacy JSON flow exports are projected to source fields and wrapped in the v1
+// envelope; canonical documents remain strict. Neither form publishes or deploys
+// without the normal changeset review.
 export async function importFlow(
   key: string,
   doc: unknown,
-  fetcher: typeof fetch = recordingFetch
+  fetcher: typeof fetch = recordingFetch,
+  idempotencyKey: string = crypto.randomUUID()
 ): Promise<FlowImportResult> {
-  const res = await fetcher('/v1/flows/import', {
+  const res = await fetcher('/v1/authoring/import', {
     method: 'POST',
-    headers: jsonHeaders(key),
-    body: typeof doc === 'string' ? doc : JSON.stringify(doc)
+    headers: { ...jsonHeaders(key), 'Idempotency-Key': idempotencyKey },
+    body: JSON.stringify(canonicalFlowDocument(doc))
   });
   if (!res.ok) {
-    return errorOrStatus(res, 'POST /v1/flows/import');
+    return errorOrStatus(res, 'POST /v1/authoring/import');
   }
   return (await res.json()) as FlowImportResult;
 }
 
 export interface FlowBundleResult {
-  slug: string;
-  flow_id?: string;
-  version?: number;
+  flow_id: string;
+  draft_id: string;
+  revision: number;
   created: boolean;
-  published: boolean;
-  error?: string;
+  migration_report: CanonicalMigrationReport;
 }
 
 export interface FlowBundleImport {
-  results: FlowBundleResult[];
-  published: number;
-  failed: number;
-  unchanged: number;
+  imports: FlowBundleResult[];
+  seq: number;
 }
 
-// importFlowBundle imports many flows in one document (`{ flows: [...] }`). It is
-// best-effort: each flow's outcome (including any error) is in its result, so a
-// bad flow does not abort the rest.
+// importFlowBundle validates the complete versioned document before creating
+// one independently reviewable durable draft per flow.
 export async function importFlowBundle(
   key: string,
   bundle: unknown,
-  fetcher: typeof fetch = recordingFetch
+  fetcher: typeof fetch = recordingFetch,
+  idempotencyKey: string = crypto.randomUUID()
 ): Promise<FlowBundleImport> {
-  const res = await fetcher('/v1/flows/import-bundle', {
+  if (bundle === null || typeof bundle !== 'object' || Array.isArray(bundle)) {
+    throw new Error('canonical bundle import must be a JSON object');
+  }
+  const flows = (bundle as { flows?: unknown }).flows;
+  if (!Array.isArray(flows)) {
+    throw new Error('canonical bundle import requires a flows array');
+  }
+  const document = {
+    format_version:
+      (bundle as Record<string, unknown>).format_version ?? 'intraktible.authoring/v1',
+    kind: (bundle as Record<string, unknown>).kind ?? 'bundle',
+    flows: flows.map(canonicalFlowDocument)
+  };
+  const res = await fetcher('/v1/authoring/import-bundle', {
     method: 'POST',
-    headers: jsonHeaders(key),
-    body: typeof bundle === 'string' ? bundle : JSON.stringify(bundle)
+    headers: { ...jsonHeaders(key), 'Idempotency-Key': idempotencyKey },
+    body: JSON.stringify(document)
   });
   if (!res.ok) {
-    return errorOrStatus(res, 'POST /v1/flows/import-bundle');
+    return errorOrStatus(res, 'POST /v1/authoring/import-bundle');
   }
   return (await res.json()) as FlowBundleImport;
 }
@@ -1326,6 +1406,595 @@ export async function publishVersion(
   return (await res.json()) as { version: number; etag: string; published?: boolean };
 }
 
+export type DraftState = 'active' | 'archived';
+export type ChangeSetState =
+  | 'draft'
+  | 'in_review'
+  | 'changes_requested'
+  | 'approved'
+  | 'publishing'
+  | 'published';
+
+export interface AuthoringDraft {
+  draft_id: string;
+  flow_id: string;
+  base_version: number;
+  revision: number;
+  state: DraftState;
+  title: string;
+  graph: FlowGraph;
+  input_schema?: unknown;
+  created_by: string;
+  created_at: string;
+  updated_by: string;
+  updated_at: string;
+  archived_by?: string;
+  archived_at?: string;
+}
+
+export interface DraftRevision {
+  draft_id: string;
+  flow_id: string;
+  base_version: number;
+  revision: number;
+  title: string;
+  graph: FlowGraph;
+  input_schema?: unknown;
+  actor: string;
+  at: string;
+  rebased?: boolean;
+}
+
+export interface DraftPresence {
+  draft_id: string;
+  actor: string;
+  display_name?: string;
+  revision: number;
+  selected_id?: string;
+  renewed_at: string;
+  expires_at: string;
+}
+
+export interface ChangeSetCheck {
+  name: string;
+  status: 'passed' | 'failed';
+  evidence?: string;
+  recorded_by: string;
+  recorded_at: string;
+}
+
+export interface ChangeSetReview {
+  decision: 'approve' | 'request_changes';
+  reason?: string;
+  actor: string;
+  at: string;
+}
+
+export interface ChangeSet {
+  changeset_id: string;
+  flow_id: string;
+  base_version: number;
+  draft_id: string;
+  draft_revision: number;
+  title: string;
+  rationale?: string;
+  state: ChangeSetState;
+  source_graph: FlowGraph;
+  graph: FlowGraph;
+  input_schema?: unknown;
+  dependencies?: FlowDependency[];
+  proposed_etag: string;
+  required_checks?: string[];
+  reviewers?: string[];
+  checks?: Record<string, ChangeSetCheck>;
+  review?: ChangeSetReview;
+  created_by: string;
+  created_at: string;
+  submitted_by?: string;
+  submitted_at?: string;
+  updated_at: string;
+  published_by?: string;
+  published_at?: string;
+  published_version?: number;
+  published_etag?: string;
+}
+
+export interface SemanticDifference {
+  kind:
+    | 'node_added'
+    | 'node_removed'
+    | 'node_changed'
+    | 'edge_added'
+    | 'edge_removed'
+    | 'input_schema_changed'
+    | 'dependency_added'
+    | 'dependency_removed'
+    | 'dependency_changed';
+  object: string;
+  before?: unknown;
+  after?: unknown;
+}
+
+export interface ReusableComponentVersion {
+  version: number;
+  etag: string;
+  source_graph: FlowGraph;
+  graph: FlowGraph;
+  input_schema?: unknown;
+  output_schema?: unknown;
+  dependencies?: FlowDependency[];
+  compatibility: ComponentCompatibilityReport;
+  breaking_change_reason?: string;
+  published_by: string;
+  published_at: string;
+}
+
+export interface ComponentCompatibilityIssue {
+  path: string;
+  code: string;
+  message: string;
+}
+
+export interface ComponentCompatibilityReport {
+  from_version?: number;
+  to_version: number;
+  status: 'initial' | 'compatible' | 'incompatible';
+  issues?: ComponentCompatibilityIssue[];
+}
+
+export interface ComponentCompatibilityAssessment {
+  component_id: string;
+  report: ComponentCompatibilityReport;
+  consumers: ComponentConsumer[];
+  upgradeable: boolean;
+}
+
+export interface ComponentUpgradeDraft {
+  flow_id: string;
+  draft_id: string;
+  base_version: number;
+  revision: number;
+}
+
+export interface ReusableComponent {
+  component_id: string;
+  slug: string;
+  name: string;
+  description?: string;
+  latest: number;
+  versions?: ReusableComponentVersion[];
+  retired: boolean;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ComponentConsumer {
+  component_id: string;
+  component_version: number;
+  component_etag: string;
+  consumer_kind: 'flow' | 'component';
+  consumer_id: string;
+  consumer_version: number;
+}
+
+export async function createDraft(
+  key: string,
+  input: {
+    flow_id: string;
+    base_version: number;
+    title: string;
+    graph: FlowGraph;
+    input_schema?: unknown;
+  },
+  fetcher: typeof fetch = recordingFetch,
+  idempotencyKey: string = crypto.randomUUID()
+): Promise<{ draft_id: string; revision: number; event_id: string; seq: number }> {
+  const res = await fetcher('/v1/authoring/drafts', {
+    method: 'POST',
+    headers: idempotentJSONHeaders(key, idempotencyKey),
+    body: JSON.stringify(input)
+  });
+  if (!res.ok) return errorOrStatus(res, 'POST /v1/authoring/drafts');
+  return (await res.json()) as {
+    draft_id: string;
+    revision: number;
+    event_id: string;
+    seq: number;
+  };
+}
+
+export async function listDrafts(
+  key: string,
+  flowId = '',
+  fetcher: typeof fetch = recordingFetch
+): Promise<AuthoringDraft[]> {
+  const query = flowId ? `?flow_id=${encodeURIComponent(flowId)}` : '';
+  const res = await fetcher(`/v1/authoring/drafts${query}`, { headers: authHeaders(key) });
+  if (!res.ok) return errorOrStatus(res, 'GET /v1/authoring/drafts');
+  return ((await res.json()) as { drafts?: AuthoringDraft[] }).drafts ?? [];
+}
+
+export async function getDraft(
+  key: string,
+  draftId: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<AuthoringDraft> {
+  const res = await fetcher(`/v1/authoring/drafts/${encodeURIComponent(draftId)}`, {
+    headers: authHeaders(key)
+  });
+  if (!res.ok) return errorOrStatus(res, 'GET /v1/authoring/drafts/{draft_id}');
+  return (await res.json()) as AuthoringDraft;
+}
+
+export async function saveDraft(
+  key: string,
+  draftId: string,
+  input: {
+    expected_revision: number;
+    title: string;
+    graph: FlowGraph;
+    input_schema?: unknown;
+  },
+  fetcher: typeof fetch = recordingFetch
+): Promise<{ draft_id: string; revision: number; event_id: string; seq: number }> {
+  const res = await fetcher(`/v1/authoring/drafts/${encodeURIComponent(draftId)}`, {
+    method: 'PUT',
+    headers: jsonHeaders(key),
+    body: JSON.stringify(input)
+  });
+  if (res.status === 409) {
+    const body = (await res.json()) as { error: string; current: AuthoringDraft };
+    throw new DraftConflictError(body.error, body.current);
+  }
+  if (!res.ok) return errorOrStatus(res, 'PUT /v1/authoring/drafts/{draft_id}');
+  return (await res.json()) as {
+    draft_id: string;
+    revision: number;
+    event_id: string;
+    seq: number;
+  };
+}
+
+export async function rebaseDraft(
+  key: string,
+  draftId: string,
+  input: {
+    expected_revision: number;
+    base_version: number;
+    title: string;
+    graph: FlowGraph;
+    input_schema?: unknown;
+  },
+  fetcher: typeof fetch = recordingFetch
+): Promise<{ draft_id: string; revision: number; event_id: string; seq: number }> {
+  const res = await fetcher(`/v1/authoring/drafts/${encodeURIComponent(draftId)}/rebase`, {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify(input)
+  });
+  if (res.status === 409) {
+    const body = (await res.json()) as { error: string; current: AuthoringDraft };
+    throw new DraftConflictError(body.error, body.current);
+  }
+  if (!res.ok) return errorOrStatus(res, 'POST /v1/authoring/drafts/{draft_id}/rebase');
+  return (await res.json()) as {
+    draft_id: string;
+    revision: number;
+    event_id: string;
+    seq: number;
+  };
+}
+
+export async function listDraftRevisions(
+  key: string,
+  draftId: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<DraftRevision[]> {
+  const res = await fetcher(`/v1/authoring/drafts/${encodeURIComponent(draftId)}/revisions`, {
+    headers: authHeaders(key)
+  });
+  if (!res.ok) return errorOrStatus(res, 'GET /v1/authoring/drafts/{draft_id}/revisions');
+  return ((await res.json()) as { revisions?: DraftRevision[] }).revisions ?? [];
+}
+
+export async function archiveDraft(
+  key: string,
+  draftId: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<void> {
+  const res = await fetcher(`/v1/authoring/drafts/${encodeURIComponent(draftId)}`, {
+    method: 'DELETE',
+    headers: authHeaders(key)
+  });
+  if (!res.ok) return errorOrStatus(res, 'DELETE /v1/authoring/drafts/{draft_id}');
+}
+
+export async function renewDraftPresence(
+  key: string,
+  draftId: string,
+  input: { display_name?: string; revision: number; selected_id?: string; ttl_seconds?: number },
+  fetcher: typeof fetch = recordingFetch
+): Promise<DraftPresence> {
+  const res = await fetcher(`/v1/authoring/drafts/${encodeURIComponent(draftId)}/presence`, {
+    method: 'PUT',
+    headers: jsonHeaders(key),
+    body: JSON.stringify(input)
+  });
+  if (!res.ok) return errorOrStatus(res, 'PUT /v1/authoring/drafts/{draft_id}/presence');
+  return (await res.json()) as DraftPresence;
+}
+
+export async function listDraftPresence(
+  key: string,
+  draftId: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<DraftPresence[]> {
+  const res = await fetcher(`/v1/authoring/drafts/${encodeURIComponent(draftId)}/presence`, {
+    headers: authHeaders(key)
+  });
+  if (!res.ok) return errorOrStatus(res, 'GET /v1/authoring/drafts/{draft_id}/presence');
+  return ((await res.json()) as { presence?: DraftPresence[] }).presence ?? [];
+}
+
+export async function leaveDraftPresence(
+  key: string,
+  draftId: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<void> {
+  const res = await fetcher(`/v1/authoring/drafts/${encodeURIComponent(draftId)}/presence`, {
+    method: 'DELETE',
+    headers: authHeaders(key)
+  });
+  if (!res.ok) return errorOrStatus(res, 'DELETE /v1/authoring/drafts/{draft_id}/presence');
+}
+
+export async function createChangeSet(
+  key: string,
+  input: {
+    draft_id: string;
+    draft_revision: number;
+    title: string;
+    rationale?: string;
+    required_checks?: string[];
+    reviewers?: string[];
+  },
+  fetcher: typeof fetch = recordingFetch,
+  idempotencyKey: string = crypto.randomUUID()
+): Promise<{ changeset_id: string; event_id: string; seq: number }> {
+  const res = await fetcher('/v1/authoring/changesets', {
+    method: 'POST',
+    headers: idempotentJSONHeaders(key, idempotencyKey),
+    body: JSON.stringify(input)
+  });
+  if (!res.ok) return errorOrStatus(res, 'POST /v1/authoring/changesets');
+  return (await res.json()) as { changeset_id: string; event_id: string; seq: number };
+}
+
+export async function listChangeSets(
+  key: string,
+  flowId = '',
+  fetcher: typeof fetch = recordingFetch
+): Promise<ChangeSet[]> {
+  const query = flowId ? `?flow_id=${encodeURIComponent(flowId)}` : '';
+  const res = await fetcher(`/v1/authoring/changesets${query}`, {
+    headers: authHeaders(key)
+  });
+  if (!res.ok) return errorOrStatus(res, 'GET /v1/authoring/changesets');
+  return ((await res.json()) as { changesets?: ChangeSet[] }).changesets ?? [];
+}
+
+export async function getChangeSetDiff(
+  key: string,
+  changeSetId: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<SemanticDifference[]> {
+  const res = await fetcher(`/v1/authoring/changesets/${encodeURIComponent(changeSetId)}/diff`, {
+    headers: authHeaders(key)
+  });
+  if (!res.ok) return errorOrStatus(res, 'GET /v1/authoring/changesets/{changeset_id}/diff');
+  return ((await res.json()) as { differences?: SemanticDifference[] }).differences ?? [];
+}
+
+export async function checkChangeSet(
+  key: string,
+  changeSetId: string,
+  name = 'flow-validation',
+  status: 'passed' | 'failed' = 'passed',
+  evidence = '',
+  fetcher: typeof fetch = recordingFetch
+): Promise<EventAck> {
+  const res = await fetcher(`/v1/authoring/changesets/${encodeURIComponent(changeSetId)}/checks`, {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify({ name, status, evidence: evidence || undefined })
+  });
+  if (!res.ok) return errorOrStatus(res, 'POST /v1/authoring/changesets/{id}/checks');
+  return (await res.json()) as EventAck;
+}
+
+async function changeSetAction(
+  key: string,
+  changeSetId: string,
+  action: 'submit' | 'publish',
+  fetcher: typeof fetch
+): Promise<Record<string, unknown>> {
+  const res = await fetcher(
+    `/v1/authoring/changesets/${encodeURIComponent(changeSetId)}/${action}`,
+    { method: 'POST', headers: jsonHeaders(key), body: '{}' }
+  );
+  if (!res.ok) return errorOrStatus(res, `POST changeset ${action}`);
+  return (await res.json()) as Record<string, unknown>;
+}
+
+export async function submitChangeSet(
+  key: string,
+  changeSetId: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<EventAck> {
+  return (await changeSetAction(key, changeSetId, 'submit', fetcher)) as unknown as EventAck;
+}
+
+export async function reviewChangeSet(
+  key: string,
+  changeSetId: string,
+  decision: 'approve' | 'request_changes',
+  reason = '',
+  fetcher: typeof fetch = recordingFetch
+): Promise<EventAck> {
+  const res = await fetcher(`/v1/authoring/changesets/${encodeURIComponent(changeSetId)}/review`, {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify({ decision, reason })
+  });
+  if (!res.ok) return errorOrStatus(res, 'POST /v1/authoring/changesets/{id}/review');
+  return (await res.json()) as EventAck;
+}
+
+export async function publishChangeSet(
+  key: string,
+  changeSetId: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<{ version: number; etag: string; event_id?: string; seq?: number }> {
+  return (await changeSetAction(key, changeSetId, 'publish', fetcher)) as {
+    version: number;
+    etag: string;
+    event_id?: string;
+    seq?: number;
+  };
+}
+
+export async function listReusableComponents(
+  key: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<ReusableComponent[]> {
+  const res = await fetcher('/v1/authoring/components', { headers: authHeaders(key) });
+  if (!res.ok) return errorOrStatus(res, 'GET /v1/authoring/components');
+  return ((await res.json()) as { components?: ReusableComponent[] }).components ?? [];
+}
+
+export async function createReusableComponent(
+  key: string,
+  input: { slug: string; name: string; description?: string },
+  fetcher: typeof fetch = recordingFetch,
+  idempotencyKey: string = crypto.randomUUID()
+): Promise<{ component_id: string; event_id: string; seq: number }> {
+  const res = await fetcher('/v1/authoring/components', {
+    method: 'POST',
+    headers: idempotentJSONHeaders(key, idempotencyKey),
+    body: JSON.stringify(input)
+  });
+  if (!res.ok) return errorOrStatus(res, 'POST /v1/authoring/components');
+  return (await res.json()) as { component_id: string; event_id: string; seq: number };
+}
+
+export async function getReusableComponent(
+  key: string,
+  componentId: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<ReusableComponent> {
+  const res = await fetcher(`/v1/authoring/components/${encodeURIComponent(componentId)}`, {
+    headers: authHeaders(key)
+  });
+  if (!res.ok) return errorOrStatus(res, 'GET /v1/authoring/components/{id}');
+  return (await res.json()) as ReusableComponent;
+}
+
+export async function publishReusableComponent(
+  key: string,
+  componentId: string,
+  input: {
+    graph: FlowGraph;
+    input_schema?: unknown;
+    output_schema?: unknown;
+    allow_breaking?: boolean;
+    breaking_change_reason?: string;
+  },
+  fetcher: typeof fetch = recordingFetch,
+  idempotencyKey: string = crypto.randomUUID()
+): Promise<{ version: number; etag: string; event_id: string; seq: number }> {
+  const res = await fetcher(
+    `/v1/authoring/components/${encodeURIComponent(componentId)}/versions`,
+    {
+      method: 'POST',
+      headers: idempotentJSONHeaders(key, idempotencyKey),
+      body: JSON.stringify(input)
+    }
+  );
+  if (!res.ok) return errorOrStatus(res, 'POST /v1/authoring/components/{id}/versions');
+  return (await res.json()) as {
+    version: number;
+    etag: string;
+    event_id: string;
+    seq: number;
+  };
+}
+
+export async function assessComponentCompatibility(
+  key: string,
+  componentId: string,
+  fromVersion: number,
+  toVersion: number,
+  fetcher: typeof fetch = recordingFetch
+): Promise<ComponentCompatibilityAssessment> {
+  const query = new URLSearchParams({
+    from_version: String(fromVersion),
+    to_version: String(toVersion)
+  });
+  const res = await fetcher(
+    `/v1/authoring/components/${encodeURIComponent(componentId)}/compatibility?${query}`,
+    { headers: authHeaders(key) }
+  );
+  if (!res.ok) return errorOrStatus(res, 'GET reusable component compatibility');
+  return (await res.json()) as ComponentCompatibilityAssessment;
+}
+
+export async function createComponentUpgradeDrafts(
+  key: string,
+  componentId: string,
+  input: { from_version: number; to_version: number; flow_ids: string[]; title?: string },
+  fetcher: typeof fetch = recordingFetch,
+  idempotencyKey: string = crypto.randomUUID()
+): Promise<{ drafts: ComponentUpgradeDraft[]; seq: number }> {
+  const res = await fetcher(
+    `/v1/authoring/components/${encodeURIComponent(componentId)}/upgrade-drafts`,
+    {
+      method: 'POST',
+      headers: idempotentJSONHeaders(key, idempotencyKey),
+      body: JSON.stringify(input)
+    }
+  );
+  if (!res.ok) return errorOrStatus(res, 'POST reusable component upgrade drafts');
+  return (await res.json()) as { drafts: ComponentUpgradeDraft[]; seq: number };
+}
+
+export async function listComponentConsumers(
+  key: string,
+  componentId: string,
+  version: number,
+  fetcher: typeof fetch = recordingFetch
+): Promise<ComponentConsumer[]> {
+  const res = await fetcher(
+    `/v1/authoring/components/${encodeURIComponent(componentId)}/versions/${version}/consumers`,
+    { headers: authHeaders(key) }
+  );
+  if (!res.ok) return errorOrStatus(res, 'GET reusable component consumers');
+  return ((await res.json()) as { consumers?: ComponentConsumer[] }).consumers ?? [];
+}
+
+export async function retireReusableComponent(
+  key: string,
+  componentId: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<EventAck> {
+  const res = await fetcher(`/v1/authoring/components/${encodeURIComponent(componentId)}`, {
+    method: 'DELETE',
+    headers: authHeaders(key)
+  });
+  if (!res.ok) return errorOrStatus(res, 'DELETE /v1/authoring/components/{id}');
+  return (await res.json()) as EventAck;
+}
+
 export interface DeployInput {
   environment: Environment;
   version: number;
@@ -2085,6 +2754,19 @@ export class ApiError extends Error {
   }
 }
 
+// DraftConflictError carries the authoritative remote snapshot returned by a
+// failed optimistic save. The builder can compare base/local/remote and requires
+// an explicit user choice; it never silently retries as last-write-wins.
+export class DraftConflictError extends ApiError {
+  constructor(
+    message: string,
+    readonly current: AuthoringDraft
+  ) {
+    super(message, 409);
+    this.name = 'DraftConflictError';
+  }
+}
+
 // whenPermitted resolves an admin-gated read to `absent` when the caller is not
 // allowed to make it, and lets every other failure through.
 //
@@ -2209,6 +2891,9 @@ export interface Comment {
   parent_id?: string;
   author: string;
   at: string;
+  resolved: boolean;
+  resolved_by?: string;
+  resolved_at?: string;
 }
 
 export async function listComments(
@@ -2243,6 +2928,28 @@ export async function postComment(
     return errorOrStatus(res, 'POST comment');
   }
   return (await res.json()) as { comment_id: string };
+}
+
+export async function setCommentResolved(
+  key: string,
+  subjectType: string,
+  subjectId: string,
+  commentId: string,
+  resolved: boolean,
+  fetcher: typeof fetch = recordingFetch
+): Promise<void> {
+  const action = resolved ? 'resolve' : 'reopen';
+  const res = await fetcher(
+    `/v1/comments/${subjectType}/${encodeURIComponent(subjectId)}/${encodeURIComponent(commentId)}/${action}`,
+    {
+      method: 'POST',
+      headers: jsonHeaders(key),
+      body: '{}'
+    }
+  );
+  if (!res.ok) {
+    return errorOrStatus(res, `POST comment ${action}`);
+  }
 }
 
 export interface Notification {

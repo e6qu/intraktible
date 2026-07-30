@@ -53,6 +53,9 @@ func New(baseURL, apiKey string, opts ...Option) *Client {
 type APIError struct {
 	Status  int
 	Message string
+	// Body retains the bounded server error document so typed callers can inspect
+	// structured conflict material (for example, the authoritative draft on 409).
+	Body json.RawMessage
 }
 
 func (e *APIError) Error() string {
@@ -460,14 +463,9 @@ func (c *Client) GetFlow(ctx context.Context, flowID string) (Flow, error) {
 	return do[Flow](ctx, c, http.MethodGet, "/v1/flows/"+url.PathEscape(flowID), nil)
 }
 
-// ImportFlow upserts a flow from a flow-as-code document (create-if-new, else
-// publish a new version; identical content is a no-op).
-func (c *Client) ImportFlow(ctx context.Context, doc FlowDoc) (ImportResult, error) {
-	return do[ImportResult](ctx, c, http.MethodPost, "/v1/flows/import", doc)
-}
-
-// ImportBundle imports many flows in one request (best-effort; each flow's
-// outcome, including any error, is in its result).
+// ImportBundle calls the retired direct-publication bundle route and returns
+// HTTP 410.
+// Deprecated: use ImportCanonicalBundle with a stable idempotency key.
 func (c *Client) ImportBundle(ctx context.Context, docs []FlowDoc) (BundleResult, error) {
 	return do[BundleResult](ctx, c, http.MethodPost, "/v1/flows/import-bundle",
 		map[string]any{"flows": docs})
@@ -709,7 +707,7 @@ func doBytes(ctx context.Context, c *Client, path string) ([]byte, error) {
 		if json.Unmarshal(data, &payload) == nil && payload.Error != "" {
 			message = payload.Error
 		}
-		return nil, &APIError{Status: resp.StatusCode, Message: message}
+		return nil, &APIError{Status: resp.StatusCode, Message: message, Body: data}
 	}
 	return data, nil
 }
@@ -770,7 +768,7 @@ func doWithHeaders[T any](
 		if json.Unmarshal(data, &e) == nil && e.Error != "" {
 			msg = e.Error
 		}
-		return zero, &APIError{Status: resp.StatusCode, Message: msg}
+		return zero, &APIError{Status: resp.StatusCode, Message: msg, Body: data}
 	}
 	var out T
 	if len(data) > 0 {

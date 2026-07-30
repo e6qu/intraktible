@@ -977,8 +977,9 @@
         "tags": [
           "flows"
         ],
-        "summary": "Import a flow as code",
-        "description": "Upserts a flow from an exported document: creates it when the slug is new, otherwise publishes the graph as a new version. Re-importing identical content is a no-op (200, published=false).",
+        "summary": "Retired direct-publication flow import",
+        "description": "Always returns 410. Migrate to POST /v1/authoring/import with intraktible.authoring/v1 and Idempotency-Key; that route creates a governed draft and never publishes directly.",
+        "deprecated": true,
         "requestBody": {
           "required": true,
           "content": {
@@ -990,27 +991,7 @@
           }
         },
         "responses": {
-          "200": {
-            "description": "No change (the live latest version already matches).",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/FlowImportResult"
-                }
-              }
-            }
-          },
-          "201": {
-            "description": "A flow and/or version was written.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/FlowImportResult"
-                }
-              }
-            }
-          },
-          "400": {
+          "410": {
             "$ref": "#/components/responses/Error"
           },
           "401": {
@@ -1024,8 +1005,9 @@
         "tags": [
           "flows"
         ],
-        "summary": "Import many flows at once",
-        "description": "Imports a bundle of flow-as-code documents (a GitOps repo). Best-effort: a failing flow is reported in its result rather than aborting the rest.",
+        "summary": "Retired direct-publication flow bundle import",
+        "description": "Always returns 410. Migrate to POST /v1/authoring/import-bundle with intraktible.authoring/v1 and Idempotency-Key; imports become governed drafts.",
+        "deprecated": true,
         "requestBody": {
           "required": true,
           "content": {
@@ -1037,17 +1019,7 @@
           }
         },
         "responses": {
-          "200": {
-            "description": "A per-flow report with rollup counts.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/FlowBundleResult"
-                }
-              }
-            }
-          },
-          "400": {
+          "410": {
             "$ref": "#/components/responses/Error"
           },
           "401": {
@@ -1167,7 +1139,7 @@
     },
     "/v1/flows/{flow_id}/versions": {
       "post": {
-        "summary": "Publish a new flow version (the primary authoring write). Node positions are optional \u2014 omit them and the server fills a deterministic swimlane auto-layout.",
+        "summary": "Publish a low-level immutable flow version. Collaborative UI and repository authoring use governed changesets; this route never deploys production. Node positions are optional \u2014 omit them and the server fills a deterministic swimlane auto-layout.",
         "tags": [
           "Flows"
         ],
@@ -3667,6 +3639,38 @@
         }
       }
     },
+    "/v1/comments/{subject_type}/{subject_id}/{comment_id}/resolve": {
+      "post": {
+        "tags": ["Comments"],
+        "summary": "Resolve one review discussion item",
+        "parameters": [
+          { "name": "subject_type", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "subject_id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "comment_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Comment resolved, or the identical retry accepted." },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/comments/{subject_type}/{subject_id}/{comment_id}/reopen": {
+      "post": {
+        "tags": ["Comments"],
+        "summary": "Reopen one resolved review discussion item",
+        "parameters": [
+          { "name": "subject_type", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "subject_id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "comment_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Comment reopened, or the identical retry accepted." },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/v1/notifications": {
       "get": {
         "tags": ["Notifications"],
@@ -4558,6 +4562,90 @@
         "requestBody": { "content": { "application/json": { "schema": { "type": "object", "properties": { "indices": { "type": "array", "items": { "type": "integer" } } } } } } },
         "responses": { "202": { "description": "Failed items requeued." }, "400": { "$ref": "#/components/responses/Error" } }
       }
+    },
+    "/v1/authoring/import": {
+      "post": {
+        "tags": ["authoring"],
+        "summary": "Import a canonical flow into a durable draft",
+        "description": "Creates or resolves the flow identity and creates a recoverable revision-1 draft. Import never publishes or deploys; the draft follows the same changeset, required-check, independent-review, and publication path as the visual builder.",
+        "parameters": [{ "$ref": "#/components/parameters/RequiredIdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["format_version", "kind", "slug", "name", "graph"], "properties": { "format_version": { "type": "string", "enum": ["intraktible.authoring/v1"] }, "kind": { "type": "string", "enum": ["flow"] }, "slug": { "type": "string" }, "name": { "type": "string" }, "description": { "type": "string" }, "graph": { "$ref": "#/components/schemas/FlowGraph" }, "input_schema": {} } } } } },
+        "responses": { "201": { "description": "Canonical source imported as a durable draft.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AuthoringImportResult" } } } }, "400": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/v1/authoring/import-bundle": {
+      "post": {
+        "tags": ["authoring"],
+        "summary": "Import a canonical flow bundle into durable drafts",
+        "description": "Validates the complete versioned bundle before creating one independently reviewable draft per flow.",
+        "parameters": [{ "$ref": "#/components/parameters/RequiredIdempotencyKey" }],
+        "responses": { "201": { "description": "Canonical sources imported as durable drafts.", "content": { "application/json": { "schema": { "type": "object", "required": ["imports", "seq"], "properties": { "imports": { "type": "array", "items": { "$ref": "#/components/schemas/AuthoringImportResult" } }, "seq": { "type": "integer", "minimum": 0 } } } } } }, "400": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/v1/authoring/drafts": {
+      "get": { "tags": ["authoring"], "summary": "List collaborative drafts", "parameters": [{ "name": "flow_id", "in": "query", "schema": { "type": "string" } }], "responses": { "200": { "description": "Tenant-scoped draft summaries." } } },
+      "post": { "tags": ["authoring"], "summary": "Create a durable flow draft", "parameters": [{ "$ref": "#/components/parameters/RequiredIdempotencyKey" }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["flow_id", "title", "graph"], "properties": { "flow_id": { "type": "string" }, "base_version": { "type": "integer", "minimum": 0 }, "title": { "type": "string" }, "graph": { "$ref": "#/components/schemas/FlowGraph" }, "input_schema": {} } } } } }, "responses": { "201": { "description": "Draft created or original result returned for an identical retry." }, "400": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/authoring/drafts/{draft_id}": {
+      "get": { "tags": ["authoring"], "summary": "Read the current draft revision", "parameters": [{ "name": "draft_id", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "Current durable draft." }, "404": { "$ref": "#/components/responses/Error" } } },
+      "put": { "tags": ["authoring"], "summary": "Optimistically autosave a full draft snapshot", "description": "A stale expected_revision returns 409 with the authoritative current snapshot.", "parameters": [{ "name": "draft_id", "in": "path", "required": true, "schema": { "type": "string" } }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["expected_revision", "title", "graph"], "properties": { "expected_revision": { "type": "integer", "minimum": 1 }, "title": { "type": "string" }, "graph": { "$ref": "#/components/schemas/FlowGraph" }, "input_schema": {} } } } } }, "responses": { "200": { "description": "New revision accepted." }, "409": { "$ref": "#/components/responses/Error" } } },
+      "delete": { "tags": ["authoring"], "summary": "Archive a draft", "parameters": [{ "name": "draft_id", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "Draft archived." }, "404": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/authoring/drafts/{draft_id}/rebase": {
+      "post": { "tags": ["authoring"], "summary": "Record an explicitly resolved rebase", "parameters": [{ "name": "draft_id", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "Rebased revision accepted." }, "409": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/authoring/drafts/{draft_id}/revisions": {
+      "get": { "tags": ["authoring"], "summary": "List immutable draft checkpoints", "parameters": [{ "name": "draft_id", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "Revision history." } } }
+    },
+    "/v1/authoring/drafts/{draft_id}/export": {
+      "get": { "tags": ["authoring"], "summary": "Export a byte-stable canonical flow source", "description": "Excludes target-workspace versions, etags, deployment state, and generated layout coordinates; reusable assets use portable slugs, and the actor/revision export is recorded in audit.", "parameters": [{ "name": "draft_id", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "intraktible.authoring/v1 flow document.", "content": { "application/json": { "schema": { "type": "object" } } } }, "404": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/authoring/drafts/{draft_id}/presence": {
+      "get": { "tags": ["authoring"], "summary": "List active collaborator leases", "parameters": [{ "name": "draft_id", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "Unexpired presence." } } },
+      "put": { "tags": ["authoring"], "summary": "Renew this editor's presence lease", "parameters": [{ "name": "draft_id", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "Presence renewed." } } },
+      "delete": { "tags": ["authoring"], "summary": "Leave a collaborative draft", "parameters": [{ "name": "draft_id", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "204": { "description": "Presence removed." } } }
+    },
+    "/v1/authoring/components": {
+      "get": { "tags": ["authoring"], "summary": "List reusable decision components", "responses": { "200": { "description": "Reusable component registry." } } },
+      "post": { "tags": ["authoring"], "summary": "Create a reusable component identity", "parameters": [{ "$ref": "#/components/parameters/RequiredIdempotencyKey" }], "responses": { "201": { "description": "Component created or original result returned for an identical retry." }, "400": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/authoring/components/{component_id}": {
+      "get": { "tags": ["authoring"], "summary": "Read immutable component versions", "parameters": [{ "name": "component_id", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "Component and version history." }, "404": { "$ref": "#/components/responses/Error" } } },
+      "delete": { "tags": ["authoring"], "summary": "Retire a component", "parameters": [{ "name": "component_id", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "Component retired; existing exact pins remain valid." } } }
+    },
+    "/v1/authoring/components/{component_id}/versions": {
+      "post": { "tags": ["authoring"], "summary": "Publish an immutable component version", "description": "The server compares adjacent input/output contracts. Incompatible versions require allow_breaking plus a reason and remain blocked from automatic consumer upgrade.", "parameters": [{ "name": "component_id", "in": "path", "required": true, "schema": { "type": "string" } }, { "$ref": "#/components/parameters/RequiredIdempotencyKey" }], "responses": { "201": { "description": "Exact version, content hash, and compatibility evidence." }, "400": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/authoring/components/{component_id}/compatibility": {
+      "get": { "tags": ["authoring"], "summary": "Assess an exact component upgrade and affected consumers", "parameters": [{ "name": "component_id", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "from_version", "in": "query", "required": true, "schema": { "type": "integer", "minimum": 1 } }, { "name": "to_version", "in": "query", "required": true, "schema": { "type": "integer", "minimum": 1 } }], "responses": { "200": { "description": "Server-derived compatibility report, upgradeability, and direct/transitive consumers." }, "400": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/authoring/components/{component_id}/upgrade-drafts": {
+      "post": { "tags": ["authoring"], "summary": "Create governed drafts for selected compatible flow consumers", "description": "Rewrites direct exact pins only after server compatibility passes. Transitive consumers must upgrade their direct parent component first. This endpoint creates drafts and never publishes or deploys consumers.", "parameters": [{ "name": "component_id", "in": "path", "required": true, "schema": { "type": "string" } }, { "$ref": "#/components/parameters/RequiredIdempotencyKey" }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["from_version", "to_version", "flow_ids"], "properties": { "from_version": { "type": "integer", "minimum": 1 }, "to_version": { "type": "integer", "minimum": 1 }, "flow_ids": { "type": "array", "minItems": 1, "maxItems": 100, "uniqueItems": true, "items": { "type": "string" } }, "title": { "type": "string" } } } } } }, "responses": { "201": { "description": "One recoverable governed draft per selected current flow consumer." }, "400": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/authoring/components/{component_id}/versions/{version}/consumers": {
+      "get": { "tags": ["authoring"], "summary": "List direct and transitive consumers of an exact component version", "parameters": [{ "name": "component_id", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "version", "in": "path", "required": true, "schema": { "type": "integer", "minimum": 1 } }], "responses": { "200": { "description": "Exact consumer lineage." } } }
+    },
+    "/v1/authoring/changesets": {
+      "get": { "tags": ["authoring"], "summary": "List governed changesets", "parameters": [{ "name": "flow_id", "in": "query", "schema": { "type": "string" } }], "responses": { "200": { "description": "Changeset queue." } } },
+      "post": { "tags": ["authoring"], "summary": "Pin a draft revision for review", "parameters": [{ "$ref": "#/components/parameters/RequiredIdempotencyKey" }], "responses": { "201": { "description": "Immutable review artifact created or original result returned for an identical retry." }, "400": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/authoring/changesets/{changeset_id}": {
+      "get": { "tags": ["authoring"], "summary": "Read pinned review content and evidence", "parameters": [{ "name": "changeset_id", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "Changeset detail." }, "404": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/authoring/changesets/{changeset_id}/diff": {
+      "get": { "tags": ["authoring"], "summary": "Compute canonical server-side semantic differences", "parameters": [{ "name": "changeset_id", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "Execution-relevant node, edge, schema, and dependency changes." } } }
+    },
+    "/v1/authoring/changesets/{changeset_id}/checks": {
+      "post": { "tags": ["authoring"], "summary": "Record a required check result", "parameters": [{ "name": "changeset_id", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "Check evidence recorded." }, "400": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/authoring/changesets/{changeset_id}/submit": {
+      "post": { "tags": ["authoring"], "summary": "Submit a pinned changeset for review", "parameters": [{ "name": "changeset_id", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "Review requested." }, "400": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/authoring/changesets/{changeset_id}/review": {
+      "post": { "tags": ["authoring"], "summary": "Approve or request changes as an independent reviewer", "parameters": [{ "name": "changeset_id", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "Review decision recorded." }, "400": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/authoring/changesets/{changeset_id}/publish": {
+      "post": { "tags": ["authoring"], "summary": "Publish the exact approved artifact", "parameters": [{ "name": "changeset_id", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "201": { "description": "Reviewed version published with source and dependency lineage." }, "400": { "$ref": "#/components/responses/Error" } } }
     }
   },
   "components": {
@@ -5317,6 +5405,72 @@
           },
           "input_schema": {
             "type": "object"
+          }
+        }
+      },
+      "AuthoringImportResult": {
+        "type": "object",
+        "required": [
+          "flow_id",
+          "draft_id",
+          "revision",
+          "created",
+          "migration_report"
+        ],
+        "properties": {
+          "flow_id": {
+            "type": "string"
+          },
+          "draft_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "created": {
+            "type": "boolean"
+          },
+          "migration_report": {
+            "type": "object",
+            "required": [
+              "rewrites"
+            ],
+            "properties": {
+              "rewrites": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "path",
+                    "from",
+                    "to",
+                    "reason"
+                  ],
+                  "properties": {
+                    "path": {
+                      "type": "string"
+                    },
+                    "from": {
+                      "type": "string"
+                    },
+                    "to": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "event_id": {
+            "type": "string"
+          },
+          "seq": {
+            "type": "integer",
+            "minimum": 0
           }
         }
       },

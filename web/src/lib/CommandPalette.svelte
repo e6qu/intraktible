@@ -19,7 +19,10 @@
     listModels,
     listEntities,
     listExperiments,
-    listPopulationJobs
+    listPopulationJobs,
+    listDrafts,
+    listChangeSets,
+    listReusableComponents
   } from '$lib/api';
   import { appHref } from '$lib/paths';
   import { toast } from '$lib/toast';
@@ -189,6 +192,45 @@
           icon: 'engine',
           keywords: `flow ${f.name} ${f.slug}`,
           run: () => goto(appHref(`/engine/${f.flow_id}`))
+        })
+      )
+    );
+    appendDynamic(seq, 'drafts', listDrafts(''), (drafts) =>
+      drafts.map(
+        (draft): Cmd => ({
+          id: `draft:${draft.draft_id}`,
+          section: 'Drafts',
+          label: draft.title,
+          hint: `${draft.state} · revision ${draft.revision}`,
+          icon: 'engine',
+          keywords: `draft revision ${draft.title} ${draft.updated_by}`,
+          run: () => goto(appHref(`/engine/${draft.flow_id}`))
+        })
+      )
+    );
+    appendDynamic(seq, 'changesets', listChangeSets(''), (changesets) =>
+      changesets.map(
+        (change): Cmd => ({
+          id: `changeset:${change.changeset_id}`,
+          section: 'Changesets',
+          label: change.title,
+          hint: `${change.state} · revision ${change.draft_revision}`,
+          icon: 'check',
+          keywords: `changeset review ${change.title} ${change.state} ${change.created_by}`,
+          run: () => goto(appHref(`/engine/${change.flow_id}`))
+        })
+      )
+    );
+    appendDynamic(seq, 'components', listReusableComponents(''), (components) =>
+      components.map(
+        (component): Cmd => ({
+          id: `component:${component.component_id}`,
+          section: 'Reusable components',
+          label: component.name,
+          hint: `${component.slug} · v${component.latest}`,
+          icon: 'subflow',
+          keywords: `component reusable subflow dependency ${component.name} ${component.slug}`,
+          run: () => goto(appHref('/components'))
         })
       )
     );

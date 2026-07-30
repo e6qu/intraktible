@@ -60,6 +60,141 @@ func TestClientMapsErrorBody(t *testing.T) {
 	}
 }
 
+func TestAuthoringSDKResourceSurface(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/v1/authoring/import-bundle":
+			_, _ = w.Write([]byte(`{"imports":[]}`))
+		case r.URL.Path == "/v1/authoring/drafts" && r.Method == http.MethodPost:
+			_, _ = w.Write([]byte(`{"draft_id":"d1"}`))
+		case r.URL.Path == "/v1/authoring/drafts" && r.Method == http.MethodGet:
+			_, _ = w.Write([]byte(`{"drafts":[]}`))
+		case r.URL.Path == "/v1/authoring/drafts/d1" && r.Method == http.MethodPut:
+			_, _ = w.Write([]byte(`{"revision":2}`))
+		case r.URL.Path == "/v1/authoring/drafts/d1" && r.Method == http.MethodGet:
+			_, _ = w.Write([]byte(`{"draft_id":"d1","revision":2}`))
+		case r.URL.Path == "/v1/authoring/drafts/d1" && r.Method == http.MethodDelete:
+			_, _ = w.Write([]byte(`{"event_id":"archived"}`))
+		case r.URL.Path == "/v1/authoring/drafts/d1/rebase":
+			_, _ = w.Write([]byte(`{"revision":3}`))
+		case r.URL.Path == "/v1/authoring/drafts/d1/revisions":
+			_, _ = w.Write([]byte(`{"revisions":[{"draft_id":"d1","revision":2}]}`))
+		case r.URL.Path == "/v1/authoring/drafts/d1/presence" &&
+			r.Method == http.MethodPut:
+			_, _ = w.Write([]byte(`{"draft_id":"d1","actor":"sdk","revision":2}`))
+		case r.URL.Path == "/v1/authoring/drafts/d1/presence" &&
+			r.Method == http.MethodGet:
+			_, _ = w.Write([]byte(`{"presence":[{"draft_id":"d1","actor":"sdk","revision":2}]}`))
+		case r.URL.Path == "/v1/authoring/drafts/d1/presence" &&
+			r.Method == http.MethodDelete:
+			w.WriteHeader(http.StatusNoContent)
+		case r.URL.Path == "/v1/authoring/changesets" && r.Method == http.MethodPost:
+			_, _ = w.Write([]byte(`{"changeset_id":"c1"}`))
+		case r.URL.Path == "/v1/authoring/changesets/c1":
+			_, _ = w.Write([]byte(`{"changeset_id":"c1","flow_id":"f1","state":"in_review"}`))
+		case r.URL.Path == "/v1/authoring/components" && r.Method == http.MethodGet:
+			_, _ = w.Write([]byte(`{"components":[]}`))
+		case r.URL.Path == "/v1/authoring/components" && r.Method == http.MethodPost:
+			_, _ = w.Write([]byte(`{"component_id":"component-1"}`))
+		case r.URL.Path == "/v1/authoring/components/component-1/versions":
+			_, _ = w.Write([]byte(`{"version":1,"etag":"etag-1"}`))
+		case r.URL.Path == "/v1/authoring/components/component-1/compatibility":
+			_, _ = w.Write([]byte(`{"upgradeable":true}`))
+		case r.URL.Path == "/v1/authoring/components/component-1/upgrade-drafts":
+			_, _ = w.Write([]byte(`{"drafts":[]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	ctx := context.Background()
+	c := client.New(srv.URL, "key", client.WithHTTPClient(srv.Client()))
+	if _, err := c.ImportCanonicalBundle(ctx, nil, "bundle-key"); err != nil {
+		t.Fatal(err)
+	}
+	if id, err := c.CreateDraft(ctx, client.DraftWrite{
+		FlowID: "f1", Title: "Draft", Graph: json.RawMessage(`{}`),
+	}, "draft-key"); err != nil || id != "d1" {
+		t.Fatalf("create draft = %q err=%v", id, err)
+	}
+	if drafts, err := c.ListDrafts(ctx, ""); err != nil || len(drafts) != 0 {
+		t.Fatalf("list drafts = %+v err=%v", drafts, err)
+	}
+	if revision, err := c.SaveDraft(ctx, "d1", client.DraftSave{
+		ExpectedRevision: 1, Title: "Draft", Graph: json.RawMessage(`{}`),
+	}); err != nil || revision != 2 {
+		t.Fatalf("save draft = %d err=%v", revision, err)
+	}
+	if draft, err := c.GetDraft(ctx, "d1"); err != nil || draft.Revision != 2 {
+		t.Fatalf("get draft = %+v err=%v", draft, err)
+	}
+	if revision, err := c.RebaseDraft(ctx, "d1", client.DraftRebase{
+		ExpectedRevision: 2, BaseVersion: 1, Title: "Draft",
+		Graph: json.RawMessage(`{}`),
+	}); err != nil || revision != 3 {
+		t.Fatalf("rebase draft = %d err=%v", revision, err)
+	}
+	if revisions, err := c.ListDraftRevisions(ctx, "d1"); err != nil ||
+		len(revisions) != 1 || revisions[0].Revision != 2 {
+		t.Fatalf("list draft revisions = %+v err=%v", revisions, err)
+	}
+	if presence, err := c.RenewDraftPresence(
+		ctx, "d1", map[string]any{"revision": 2},
+	); err != nil || presence.Actor != "sdk" {
+		t.Fatalf("renew draft presence = %+v err=%v", presence, err)
+	}
+	if presence, err := c.ListDraftPresence(ctx, "d1"); err != nil ||
+		len(presence) != 1 {
+		t.Fatalf("list draft presence = %+v err=%v", presence, err)
+	}
+	if err := c.LeaveDraftPresence(ctx, "d1"); err != nil {
+		t.Fatalf("leave draft presence: %v", err)
+	}
+	if err := c.ArchiveDraft(ctx, "d1"); err != nil {
+		t.Fatalf("archive draft: %v", err)
+	}
+	if changeSet, err := c.GetChangeSet(ctx, "c1"); err != nil || changeSet.ChangeSetID != "c1" {
+		t.Fatalf("get changeset = %+v err=%v", changeSet, err)
+	}
+	if id, err := c.CreateChangeSet(ctx, map[string]any{"draft_id": "d1"}, "changeset-key"); err != nil ||
+		id != "c1" {
+		t.Fatalf("create changeset = %q err=%v", id, err)
+	}
+	if components, err := c.ListReusableComponents(ctx); err != nil || len(components) != 0 {
+		t.Fatalf("list components = %+v err=%v", components, err)
+	}
+	componentID, err := c.CreateReusableComponent(
+		ctx, map[string]any{"slug": "score"}, "component-key",
+	)
+	if err != nil || componentID != "component-1" {
+		t.Fatalf("create component = %q err=%v", componentID, err)
+	}
+	if version, etag, err := c.PublishReusableComponent(
+		ctx, componentID, map[string]any{"graph": map[string]any{}}, "version-key",
+	); err != nil || version != 1 || etag != "etag-1" {
+		t.Fatalf("publish component = %d %q err=%v", version, etag, err)
+	}
+	if _, err := c.AssessComponentCompatibility(ctx, componentID, 1, 2); err != nil {
+		t.Fatalf("assess component compatibility: %v", err)
+	}
+	if _, err := c.CreateComponentUpgradeDrafts(
+		ctx, componentID,
+		map[string]any{"from_version": 1, "to_version": 2, "flow_ids": []string{"f1"}},
+		"upgrade-key",
+	); err != nil {
+		t.Fatalf("create component upgrade drafts: %v", err)
+	}
+	conflict := &client.APIError{
+		Status: http.StatusConflict,
+		Body:   json.RawMessage(`{"current":{"draft_id":"d1","revision":3}}`),
+	}
+	if current, ok := client.DraftConflict(conflict); !ok ||
+		current.DraftID != "d1" || current.Revision != 3 {
+		t.Fatalf("draft conflict = %+v ok=%v", current, ok)
+	}
+}
+
 func TestEnterpriseE2ClientRoutes(t *testing.T) {
 	t.Parallel()
 
@@ -301,16 +436,20 @@ func TestClientAgainstEngine(t *testing.T) {
 		t.Fatalf("Me() = %+v, err=%v", me, err)
 	}
 
-	// Import a tiny flow as code (creates the flow and publishes v1).
+	// Create a tiny published fixture for the runtime SDK journey. Repository
+	// imports use ImportCanonicalFlow and governed drafts (covered above).
 	graph := json.RawMessage(`{"nodes":[` +
 		`{"id":"in","type":"input"},` +
 		`{"id":"a","type":"assignment","config":{"assignments":[{"target":"decision","expr":"'OK'"}]}},` +
 		`{"id":"out","type":"output","config":{"fields":["decision"]}}` +
 		`],"edges":[{"from":"in","to":"a"},{"from":"a","to":"out"}]}`)
-	imp, err := c.ImportFlow(ctx, client.FlowDoc{Slug: "sdk-demo", Name: "SDK Demo", Graph: graph})
-	if err != nil || !imp.Created || imp.Version != 1 {
-		t.Fatalf("ImportFlow = %+v, err=%v", imp, err)
+	fixtureFlowID, err := c.CreateFlow(ctx, "sdk-demo", "SDK Demo")
+	if err != nil {
+		t.Fatalf("CreateFlow fixture: %v", err)
 	}
+	api.Request(t, http.MethodPost, "/v1/flows/"+fixtureFlowID+"/versions",
+		map[string]any{"graph": graph}, http.StatusCreated, nil)
+	imp := client.ImportResult{FlowID: fixtureFlowID, Version: 1, Created: true, Published: true}
 
 	// CreateFlow makes a separate empty flow.
 	otherID, err := c.CreateFlow(ctx, "sdk-other", "Other")
@@ -385,12 +524,13 @@ func TestClientAgainstEngine(t *testing.T) {
 		t.Fatalf("Promote = %+v", prom)
 	}
 
-	// Import a bundle of two flows in one call.
-	bundle, err := c.ImportBundle(ctx, []client.FlowDoc{
+	// Legacy direct-publication bundles fail loudly with the governed migration.
+	_, err = c.ImportBundle(ctx, []client.FlowDoc{
 		{Slug: "sdk-bundle-a", Graph: graph},
 		{Slug: "sdk-bundle-b", Graph: graph},
 	})
-	if err != nil || bundle.Published != 2 || bundle.Failed != 0 {
-		t.Fatalf("ImportBundle = %+v, err=%v", bundle, err)
+	apiErr = nil
+	if !errors.As(err, &apiErr) || apiErr.Status != http.StatusGone {
+		t.Fatalf("legacy ImportBundle error = %#v", err)
 	}
 }

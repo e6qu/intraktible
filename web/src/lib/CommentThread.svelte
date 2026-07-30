@@ -5,7 +5,9 @@
      subject type + id. -->
 <script lang="ts">
   import RelativeTime from '$lib/RelativeTime.svelte';
-  import { listComments, postComment, type Comment } from '$lib/api';
+  import { listComments, postComment, setCommentResolved, type Comment } from '$lib/api';
+  import { user } from '$lib/session';
+  import { roleAtLeast } from '$lib/roles';
   import { toast } from '$lib/toast';
 
   let {
@@ -19,6 +21,7 @@
   let draft = $state('');
   let replyTo = $state(''); // comment_id being replied to ('' = top-level)
   let busy = $state(false);
+  let resolutionBusy = $state('');
   let error = $state('');
   let loading = $state(true);
 
@@ -64,6 +67,17 @@
       busy = false;
     }
   }
+  async function setResolved(comment: Comment, resolved: boolean) {
+    resolutionBusy = comment.comment_id;
+    try {
+      await setCommentResolved(key, subjectType, subjectId, comment.comment_id, resolved);
+      await load();
+    } catch (e) {
+      toast.error(msg(e));
+    } finally {
+      resolutionBusy = '';
+    }
+  }
   // Reload whenever the subject changes, so a caller that swaps subjectId in place
   // (without a keyed remount) shows the right thread instead of the first one
   // forever. Reading subjectType/subjectId registers them as effect dependencies.
@@ -83,10 +97,25 @@
   {:else if topLevel.length > 0}
     <ul>
       {#each topLevel as c (c.comment_id)}
-        <li>
+        <li class:resolved={c.resolved}>
           <span class="meta"><b>{c.author}</b> · <RelativeTime value={c.at} /></span>
           <span class="body">{c.body}</span>
-          <button class="reply-btn" onclick={() => (replyTo = c.comment_id)}>Reply</button>
+          <div class="comment-actions">
+            <button class="reply-btn" onclick={() => (replyTo = c.comment_id)}>Reply</button>
+            {#if roleAtLeast($user?.role, 'operator')}
+              <button
+                class="reply-btn"
+                onclick={() => setResolved(c, !c.resolved)}
+                disabled={resolutionBusy === c.comment_id}
+                aria-label={`${c.resolved ? 'Reopen' : 'Resolve'} comment by ${c.author}`}
+              >
+                {resolutionBusy === c.comment_id ? 'Saving…' : c.resolved ? 'Reopen' : 'Resolve'}
+              </button>
+            {/if}
+            {#if c.resolved}
+              <span class="resolved-state">Resolved by {c.resolved_by}</span>
+            {/if}
+          </div>
           {#each repliesTo(c.comment_id) as rep (rep.comment_id)}
             <div class="reply">
               <span class="meta"><b>{rep.author}</b> · <RelativeTime value={rep.at} /></span>
@@ -158,7 +187,6 @@
     font-size: 0.9rem;
   }
   .reply-btn {
-    align-self: flex-start;
     margin-top: 0.15rem;
     background: none;
     border: none;
@@ -167,6 +195,18 @@
     font-size: 0.78rem;
     color: var(--accent-ink);
     cursor: pointer;
+  }
+  .comment-actions {
+    display: flex;
+    align-items: baseline;
+    gap: 0.65rem;
+  }
+  li.resolved .body {
+    color: var(--fg-subtle);
+  }
+  .resolved-state {
+    font-size: 0.76rem;
+    color: var(--ok);
   }
   .reply {
     margin: 0.3rem 0 0 0.9rem;

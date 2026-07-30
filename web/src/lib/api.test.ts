@@ -10,8 +10,12 @@ import {
   decide,
   publishVersion,
   exportFlow,
+  exportAuthoringDraft,
   importFlow,
   importFlowBundle,
+  createDraft,
+  assessComponentCompatibility,
+  createComponentUpgradeDrafts,
   exportDecision,
   listDecisions,
   listDecisionsPage,
@@ -239,50 +243,191 @@ describe('export', () => {
     await expect(exportFlow('k', 'f1', 'mermaid', textFetcher(404, ''))).rejects.toThrow(/404/);
   });
 
+  it('exports the durable draft through the canonical authoring route', async () => {
+    const fetcher = textFetcher(200, '{"format_version":"intraktible.authoring/v1"}');
+    const out = await exportAuthoringDraft('k', 'draft/1', fetcher);
+    expect(out).toContain('intraktible.authoring/v1');
+    expect(fetcher.mock.calls[0][0]).toBe('/v1/authoring/drafts/draft%2F1/export');
+  });
+
   it('importFlow posts the document and returns the result', async () => {
     const fetcher = fetcherReturning(201, {
       flow_id: 'f9',
-      slug: 'iac',
-      version: 2,
-      etag: 'e',
+      draft_id: 'd1',
+      revision: 1,
       created: false,
-      published: true
+      event_id: 'evt',
+      seq: 12
     });
     const doc = { slug: 'iac', name: 'IaC', graph: { nodes: [], edges: [] } };
-    const out = await importFlow('k', doc, fetcher);
-    expect(out).toMatchObject({ flow_id: 'f9', version: 2, published: true });
+    const out = await importFlow('k', doc, fetcher, 'commit-1');
+    expect(out).toMatchObject({ flow_id: 'f9', draft_id: 'd1', revision: 1 });
     const [url, init] = fetcher.mock.calls[0];
-    expect(url).toBe('/v1/flows/import');
+    expect(url).toBe('/v1/authoring/import');
     expect(init?.method).toBe('POST');
-    expect(JSON.parse(init?.body as string)).toEqual(doc);
-  });
-
-  it('importFlowBundle posts the bundle and returns the per-flow report', async () => {
-    const fetcher = fetcherReturning(200, {
-      results: [
-        { slug: 'a', flow_id: 'f1', version: 1, created: true, published: true },
-        { slug: 'bad', created: false, published: false, error: 'invalid slug' }
-      ],
-      published: 1,
-      failed: 1,
-      unchanged: 0
+    expect(init?.headers).toMatchObject({ 'Idempotency-Key': 'commit-1' });
+    expect(JSON.parse(init?.body as string)).toEqual({
+      ...doc,
+      format_version: 'intraktible.authoring/v1',
+      kind: 'flow'
     });
-    const out = await importFlowBundle('k', { flows: [{ slug: 'a' }, { slug: 'bad' }] }, fetcher);
-    expect(out.published).toBe(1);
-    expect(out.failed).toBe(1);
-    expect(out.results[1].error).toBe('invalid slug');
-    expect(fetcher.mock.calls[0][0]).toBe('/v1/flows/import-bundle');
   });
 
-  it('importFlow accepts a raw JSON string body', async () => {
-    const fetcher = fetcherReturning(200, {
+  it('drops target metadata from a recognized legacy flow export', async () => {
+    const fetcher = fetcherReturning(201, {
       flow_id: 'f9',
-      slug: 'iac',
-      version: 1,
-      published: false
+      draft_id: 'd1',
+      revision: 1,
+      created: true,
+      migration_report: { rewrites: [] }
     });
-    await importFlow('k', '{"slug":"iac"}', fetcher);
-    expect(fetcher.mock.calls[0][1]?.body).toBe('{"slug":"iac"}');
+    await importFlow(
+      'k',
+      {
+        slug: 'portable',
+        name: 'Portable',
+        version: 7,
+        etag: 'target-etag',
+        graph: { nodes: [], edges: [] }
+      },
+      fetcher,
+      'legacy-1'
+    );
+    expect(JSON.parse(fetcher.mock.calls[0][1]?.body as string)).toEqual({
+      format_version: 'intraktible.authoring/v1',
+      kind: 'flow',
+      slug: 'portable',
+      name: 'Portable',
+      graph: { nodes: [], edges: [] }
+    });
+  });
+
+  it('preserves unknown fields on marked canonical source for strict server rejection', async () => {
+    const fetcher = fetcherReturning(400, { error: 'unknown field "versoin"' });
+    await expect(
+      importFlow(
+        'k',
+        {
+          format_version: 'intraktible.authoring/v1',
+          kind: 'flow',
+          slug: 'strict',
+          name: 'Strict',
+          graph: { nodes: [], edges: [] },
+          versoin: 7
+        },
+        fetcher,
+        'strict-1'
+      )
+    ).rejects.toThrow(/unknown field/);
+    expect(JSON.parse(fetcher.mock.calls[0][1]?.body as string).versoin).toBe(7);
+  });
+
+  it('importFlowBundle posts the versioned bundle and returns its drafts', async () => {
+    const fetcher = fetcherReturning(201, {
+      imports: [
+        { flow_id: 'f1', draft_id: 'd1', revision: 1, created: true },
+        { flow_id: 'f2', draft_id: 'd2', revision: 1, created: true }
+      ],
+      seq: 14
+    });
+    const flows = [
+      { slug: 'a', name: 'A', graph: { nodes: [], edges: [] } },
+      { slug: 'b', name: 'B', graph: { nodes: [], edges: [] } }
+    ];
+    const out = await importFlowBundle('k', { flows }, fetcher, 'bundle-1');
+    expect(out.imports).toHaveLength(2);
+    expect(out.seq).toBe(14);
+    expect(fetcher.mock.calls[0][0]).toBe('/v1/authoring/import-bundle');
+    expect(JSON.parse(fetcher.mock.calls[0][1]?.body as string)).toEqual({
+      format_version: 'intraktible.authoring/v1',
+      kind: 'bundle',
+      flows: flows.map((flow) => ({
+        ...flow,
+        format_version: 'intraktible.authoring/v1',
+        kind: 'flow'
+      }))
+    });
+  });
+
+  it('importFlow rejects a non-object before issuing a request', async () => {
+    const fetcher = fetcherReturning(201, {});
+    await expect(importFlow('k', '{"slug":"iac"}', fetcher)).rejects.toThrow(/JSON object/);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it('preserves explicit canonical versions so the server rejects unsupported semantics', async () => {
+    const fetcher = fetcherReturning(400, { error: 'unsupported canonical format' });
+    await expect(
+      importFlow(
+        'k',
+        {
+          format_version: 'intraktible.authoring/v2',
+          kind: 'flow',
+          slug: 'future',
+          graph: { nodes: [], edges: [] }
+        },
+        fetcher
+      )
+    ).rejects.toThrow(/unsupported canonical format/);
+    expect(JSON.parse(fetcher.mock.calls[0][1]?.body as string).format_version).toBe(
+      'intraktible.authoring/v2'
+    );
+  });
+
+  it('uses durable retry identities for authoring create and upgrade mutations', async () => {
+    const draftFetcher = fetcherReturning(201, {
+      draft_id: 'd1',
+      revision: 1,
+      event_id: 'e1',
+      seq: 2
+    });
+    await createDraft(
+      'k',
+      {
+        flow_id: 'f1',
+        base_version: 1,
+        title: 'Draft',
+        graph: { nodes: [], edges: [] }
+      },
+      draftFetcher,
+      'draft-key'
+    );
+    expect(draftFetcher.mock.calls[0][1]?.headers).toMatchObject({
+      'Idempotency-Key': 'draft-key'
+    });
+
+    const upgradeFetcher = fetcherReturning(201, {
+      drafts: [{ flow_id: 'f1', draft_id: 'd2', base_version: 1, revision: 1 }],
+      seq: 3
+    });
+    const upgraded = await createComponentUpgradeDrafts(
+      'k',
+      'component/1',
+      { from_version: 1, to_version: 2, flow_ids: ['f1'] },
+      upgradeFetcher,
+      'upgrade-key'
+    );
+    expect(upgraded.drafts[0].draft_id).toBe('d2');
+    expect(upgradeFetcher.mock.calls[0][0]).toBe(
+      '/v1/authoring/components/component%2F1/upgrade-drafts'
+    );
+    expect(upgradeFetcher.mock.calls[0][1]?.headers).toMatchObject({
+      'Idempotency-Key': 'upgrade-key'
+    });
+  });
+
+  it('reads server-owned component compatibility evidence', async () => {
+    const fetcher = fetcherReturning(200, {
+      component_id: 'c1',
+      report: { from_version: 1, to_version: 2, status: 'compatible' },
+      consumers: [],
+      upgradeable: true
+    });
+    const assessment = await assessComponentCompatibility('k', 'c1', 1, 2, fetcher);
+    expect(assessment.upgradeable).toBe(true);
+    expect(fetcher.mock.calls[0][0]).toBe(
+      '/v1/authoring/components/c1/compatibility?from_version=1&to_version=2'
+    );
   });
 });
 

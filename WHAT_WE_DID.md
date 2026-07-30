@@ -718,3 +718,66 @@ Linux, entirely that VM's fsync path.
   `30547883192` is terminal green across all nine jobs, including real
   PostgreSQL, Shauth SSO, 130 native browser journeys, 83 real-Wasm journeys,
   the embedded artifact, and the full Go race/security gate.
+- 2026-07-30: Reconciled merged E3 as authoritative `origin/main` `89bca6a`,
+  confirmed the review queue empty, and cut
+  `enterprise/e4-collaborative-authoring` from that exact merge.
+- 2026-07-30: Replaced the coarse remaining roadmap with a whole-product
+  journey/gap map and five detailed serialized verticals in `PLAN.md`
+  §§8b.5–8b.9: E4 collaboration, E5 governed agent operations and case
+  assistance, E6 model/context data science, E7 scale/tenancy/DR, and E8
+  ecosystem/regulated packs, each including full-stack scope, dependency gates,
+  non-goals, and exit evidence.
+- 2026-07-30: Implemented and focused-tested E4's first authoring core:
+  revision-conflicted drafts, disposable presence, immutable recursive
+  component pins and consumer lineage, semantic diff, required-check
+  maker-checker changesets, crash-reconciled publication, and replayed
+  source/dependency lineage; authoring/domain/flow/command/server tests pass.
+- 2026-07-30: Closed E4 review-material drift and incomplete-draft semantics:
+  each changeset pins its exact source/schema/compiled dependencies/base,
+  autosave accepts work in progress, and the server validation check owns the
+  publication gate. Added Go/TypeScript SDK and OpenAPI contracts, authoring
+  notifications, durable builder autosave/conflict/presence/review UI, and the
+  reusable component registry; frontend check/lint and all 232 units pass.
+- 2026-07-30: Replaced the UI flow-as-code publication shortcut with strict
+  byte-stable `intraktible.authoring/v1` imports that validate exact pins and
+  create idempotent durable drafts; added canonical draft export, Go/TypeScript
+  SDKs, CLI validate/import/status/diff/impact/submit/publish commands, daily
+  review reminders, protected 90-day stale-draft archival, and notification
+  resolution. `make check`, Go lint, frontend build, and 233 units pass.
+- 2026-07-30: Closed E4 compatibility and collaboration integrity:
+  server-derived component compatibility plus breaking evidence and compatible
+  consumer-upgrade drafts; actor-scoped lost-response idempotency; governed
+  8,733-event demo history; environment impact; and one shared runtime dry
+  compiler for review and publication. Focused Go tests, zero-warning frontend
+  checks, 236 units, and three real-browser conflict/review/component-owner
+  journeys pass.
+- 2026-07-30: Closed E4 revision and review UX: immutable checkpoint restore,
+  explicit archive-and-fresh-draft, assigned reviewers, referenced evidence,
+  object discussion resolution/reopen, and visible pinned subflow contents are
+  covered by four keyboard-driven browser journeys; frontend check/lint and 238
+  units pass.
+- 2026-07-30: Closed E4 canonical migration and privacy boundaries: portable
+  component slugs produce deterministic target-id rewrite reports, bundles
+  resolve/compile every member before the first append, unsupported format
+  versions fail explicitly, classified graph fixtures block export, and
+  high-signal PII is rejected from comments/review text before append; focused
+  privacy/AI/comments/authoring and replay regressions pass.
+- 2026-07-30: Closed the promotion-policy acknowledgement race: promotion now
+  enforces the authoritative event-stream policy even before its projection
+  lands; a deterministic stale-projection HTTP regression and ten retry-free
+  browser repetitions pass.
+- 2026-07-30: Closed the draft-save/review race: a durability action now drains
+  an older in-flight autosave and persists any newer canvas fingerprint before
+  pinning the reviewed revision; the editor also waits for its exact draft
+  before becoming interactive. Twenty parallel retry-free invalid-review
+  journeys pass.
+- 2026-07-30: Reconciled real-Wasm demo journeys with governed authoring:
+  templates now request independent review before publication, canonical
+  export/import starts from a durable draft, legacy unversioned exports shed
+  target-owned metadata while canonical documents remain strict, and revision
+  history meets WCAG contrast. The focused Wasm paths pass.
+- 2026-07-30: Closed the E4 final matrix at the final source: 134 retry-free
+  native browser journeys, 84 real-Wasm journeys over 8,729 replayed events, 4
+  embedded-binary journeys, 240 frontend units plus production build/check/lint,
+  full race-enabled Go CI with zero reachable vulnerabilities, Terraform,
+  container publication/retention and workflow timeout checks all pass.

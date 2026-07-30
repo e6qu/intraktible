@@ -31,6 +31,27 @@ test('a created flow survives a full reload', async ({ page }) => {
   await expect(page.getByRole('cell', { name: slug })).toBeVisible();
 });
 
+test('a collaborative draft autosaves and recovers through the real Wasm backend', async ({
+  page
+}) => {
+  await forcePersona(page, 'builder');
+  await gotoReady(page, 'engine');
+  const slug = token('persist-draft');
+  await page.getByLabel('slug', { exact: true }).fill(slug);
+  await page.getByLabel('name', { exact: true }).fill('Wasm collaborative draft');
+  await page.getByRole('button', { name: 'Create flow' }).click();
+  await expect(page.getByTestId('draft-save-state')).toHaveText('Saved · r1');
+
+  const title = `Recovered Wasm draft ${slug}`;
+  await page.getByLabel('Review title').fill(title);
+  await expect(page.getByTestId('draft-save-state')).toHaveText('Saved · r2', {
+    timeout: 20_000
+  });
+  await page.reload();
+  await expect(page.getByLabel('Review title')).toHaveValue(title);
+  await expect(page.getByTestId('draft-save-state')).toHaveText('Saved · r2');
+});
+
 test('a defined agent survives a full reload', async ({ page }) => {
   await forcePersona(page, 'developer');
   await gotoReady(page, 'agents');

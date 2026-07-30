@@ -3,11 +3,14 @@
 package comments_test
 
 import (
+	"context"
 	"net/http"
 	"testing"
 
 	"github.com/e6qu/intraktible/platform/comments"
 	"github.com/e6qu/intraktible/platform/identity"
+	"github.com/e6qu/intraktible/platform/projection"
+	"github.com/e6qu/intraktible/platform/store"
 	"github.com/e6qu/intraktible/platform/testutil"
 )
 
@@ -21,6 +24,9 @@ func TestCommentThreadOverHTTP(t *testing.T) {
 	api.Request(t, http.MethodPost, "/v1/comments/deployment_request/r1", map[string]any{"body": "looks risky"}, http.StatusCreated, nil)
 	api.Request(t, http.MethodPost, "/v1/comments/deployment_request/r1", map[string]any{"body": "checked the backtest, ok"}, http.StatusCreated, nil)
 	api.Request(t, http.MethodPost, "/v1/comments/deployment_request/r1", map[string]any{"body": "   "}, http.StatusBadRequest, nil)
+	api.Request(t, http.MethodPost, "/v1/comments/deployment_request/r1", map[string]any{
+		"body": "customer SSN 123-45-6789",
+	}, http.StatusBadRequest, nil)
 	// A different subject keeps its own thread.
 	api.Request(t, http.MethodPost, "/v1/comments/decision/d9", map[string]any{"body": "why declined?"}, http.StatusCreated, nil)
 
@@ -78,6 +84,80 @@ func TestCommentThreadOverHTTP(t *testing.T) {
 	if reply != 1 {
 		t.Fatalf("expected exactly one reply to %s: %+v", parent, threaded.Comments)
 	}
+
+	// Review discussions have an explicit, replayable resolution state.
+	resolvePath := "/v1/comments/deployment_request/r1/" + parent + "/resolve"
+	api.Request(t, http.MethodPost, resolvePath, map[string]any{}, http.StatusOK, nil)
+	// Lost-response retry is a no-op success, not a duplicate transition.
+	api.Request(t, http.MethodPost, resolvePath, map[string]any{}, http.StatusOK, nil)
+	var resolution struct {
+		Comments []struct {
+			CommentID  string `json:"comment_id"`
+			Resolved   bool   `json:"resolved"`
+			ResolvedBy string `json:"resolved_by"`
+		} `json:"comments"`
+	}
+	if !testutil.Eventually(t, func() bool {
+		resolution.Comments = nil
+		api.Request(
+			t, http.MethodGet, "/v1/comments/deployment_request/r1",
+			nil, http.StatusOK, &resolution,
+		)
+		for _, comment := range resolution.Comments {
+			if comment.CommentID == parent {
+				return comment.Resolved && comment.ResolvedBy == "alice"
+			}
+		}
+		return false
+	}) {
+		t.Fatalf("comment did not resolve: %+v", resolution.Comments)
+	}
+	replayed := store.NewMemory()
+	if _, err := projection.New(
+		log, replayed, comments.Projector{},
+	).RebuildTo(context.Background(), 0); err != nil {
+		t.Fatalf("rebuild resolved discussion: %v", err)
+	}
+	replayedThread, err := comments.List(
+		context.Background(), replayed, id, "deployment_request", "r1",
+	)
+	if err != nil {
+		t.Fatalf("read replayed discussion: %v", err)
+	}
+	resolvedAfterReplay := false
+	for _, comment := range replayedThread {
+		if comment.CommentID == parent {
+			resolvedAfterReplay = comment.Resolved && comment.ResolvedBy == "alice"
+		}
+	}
+	if !resolvedAfterReplay {
+		t.Fatalf("resolved state did not survive replay: %+v", replayedThread)
+	}
+	api.Request(
+		t, http.MethodPost,
+		"/v1/comments/deployment_request/r1/"+parent+"/reopen",
+		map[string]any{}, http.StatusOK, nil,
+	)
+	if !testutil.Eventually(t, func() bool {
+		resolution.Comments = nil
+		api.Request(
+			t, http.MethodGet, "/v1/comments/deployment_request/r1",
+			nil, http.StatusOK, &resolution,
+		)
+		for _, comment := range resolution.Comments {
+			if comment.CommentID == parent {
+				return !comment.Resolved && comment.ResolvedBy == ""
+			}
+		}
+		return false
+	}) {
+		t.Fatalf("comment did not reopen: %+v", resolution.Comments)
+	}
+	api.Request(
+		t, http.MethodPost,
+		"/v1/comments/deployment_request/r1/unknown/resolve",
+		map[string]any{}, http.StatusBadRequest, nil,
+	)
 
 	// The other subject's thread is isolated.
 	var other struct {

@@ -206,6 +206,11 @@ const (
 	NodeManualReview  NodeType = "manual_review"
 	NodeReason        NodeType = "reason"
 	NodeOutput        NodeType = "output"
+	// NodeSubflow is an authoring-only reference to an immutable reusable
+	// component version. The authoring compiler expands it into ordinary runtime
+	// nodes before FlowVersionPublished.Graph is recorded; the decision
+	// interpreter therefore never executes a mutable component lookup.
+	NodeSubflow NodeType = "subflow"
 )
 
 // Node is one vertex of a flow graph. Config is opaque per-type configuration,
@@ -244,6 +249,15 @@ type Graph struct {
 	Edges []Edge `json:"edges"`
 }
 
+// FlowDependency pins one reusable component version used to compile a
+// published flow. ComponentID is the stable registry identity; Version and Etag
+// prove the exact immutable content used.
+type FlowDependency struct {
+	ComponentID string `json:"component_id"`
+	Version     int    `json:"version"`
+	Etag        string `json:"etag"`
+}
+
 // FlowCreated records a new (empty, unversioned) flow. Slug is the stable,
 // URL-safe identifier used in the decide path; it is unique per tenant.
 // Description is optional prose about what the flow decides; events recorded
@@ -275,6 +289,13 @@ type FlowVersionPublished struct {
 	Etag        string          `json:"etag"`
 	Graph       Graph           `json:"graph"`
 	InputSchema json.RawMessage `json:"input_schema,omitempty"`
+	// SourceGraph is the author-facing graph before reusable subflows were
+	// expanded. It is absent on pre-E4 and direct runtime-only publications.
+	SourceGraph   *Graph           `json:"source_graph,omitempty"`
+	Dependencies  []FlowDependency `json:"dependencies,omitempty"`
+	ChangeSetID   string           `json:"changeset_id,omitempty"`
+	DraftID       string           `json:"draft_id,omitempty"`
+	DraftRevision int              `json:"draft_revision,omitempty"`
 }
 
 // FlowVersionDeployed records which version is live in an environment, optionally

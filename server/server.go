@@ -41,6 +41,7 @@ import (
 	contextservice "github.com/e6qu/intraktible/context-layer/service"
 	"github.com/e6qu/intraktible/decision-engine/analytics"
 	"github.com/e6qu/intraktible/decision-engine/assertions"
+	"github.com/e6qu/intraktible/decision-engine/authoring"
 	enginecmd "github.com/e6qu/intraktible/decision-engine/command"
 	"github.com/e6qu/intraktible/decision-engine/experiments"
 	"github.com/e6qu/intraktible/decision-engine/flows"
@@ -322,6 +323,7 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 	var populationHandler *population.Handler
 	var populationScheduler *population.Scheduler
 	var experimentScheduler *experiments.Scheduler
+	var authoringScheduler *authoring.Scheduler
 	// Outbound webhook delivery (egress-guarded, retried, recorded) — shared by the
 	// monitor/drift pushes and the case SLA escalation, so both reach the same
 	// operator-configured webhooks.
@@ -369,6 +371,9 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 		}
 		engineSvc.UseCopilot(aiCompleter{reg: aiRegistry})
 		engineSvc.Routes(api)
+		authoringHandler := authoring.NewHandler(log, st, engineCmd).WithNow(now)
+		authoring.New(authoringHandler, st).Routes(api)
+		authoringScheduler = authoring.NewScheduler(authoringHandler, st).WithNow(now)
 		experiments.New(experimentHandler, st, engineCmd).Routes(api)
 		experimentScheduler = experiments.NewScheduler(experimentHandler, st).WithNow(now)
 		outcomes.New(outcomes.NewHandler(log, st).WithNow(now), st).Routes(api)
@@ -584,6 +589,9 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 	}
 	if runSchedulers && experimentScheduler != nil {
 		sweeps = append(sweeps, namedTimedSweeper{name: "experiment_windows", runner: experimentScheduler})
+	}
+	if runSchedulers && authoringScheduler != nil {
+		sweeps = append(sweeps, namedTimedSweeper{name: "authoring", runner: authoringScheduler})
 	}
 	if runSchedulers && caseScheduler != nil {
 		sweeps = append(sweeps, namedTimedSweeper{name: "case_sla", runner: caseScheduler})
@@ -972,7 +980,7 @@ func Projectors(modules string) []projection.Projector {
 		ps = append(ps, stats.Projector{})
 	}
 	if enabled(modules, "decision-engine") {
-		ps = append(ps, flows.Projector{}, history.Projector{}, analytics.Projector{}, policy.Projector{}, preapproval.Projector{}, monitor.Projector{}, notify.Projector{}, assertions.Projector{}, shadow.Projector{}, schedule.Projector{}, grants.Projector{}, enginemodels.Projector{}, enginemodels.DriftProjector{}, experiments.Projector{}, outcomes.Projector{}, population.Projector{})
+		ps = append(ps, flows.Projector{}, authoring.Projector{}, history.Projector{}, analytics.Projector{}, policy.Projector{}, preapproval.Projector{}, monitor.Projector{}, notify.Projector{}, assertions.Projector{}, shadow.Projector{}, schedule.Projector{}, grants.Projector{}, enginemodels.Projector{}, enginemodels.DriftProjector{}, experiments.Projector{}, outcomes.Projector{}, population.Projector{})
 	}
 	if enabled(modules, "case-manager") {
 		ps = append(ps, cases.Projector{})

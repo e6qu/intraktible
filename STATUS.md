@@ -6,15 +6,16 @@
 
 ## Task
 
-Enterprise capability audit: compare the proposed whole-product scope and every
-key Builder, Developer, Operator, Manager, Product, Executive, Evaluator, and
-Admin journey with the implementation and Taktile's currently published product
-surface. Distinguish working foundations from enterprise-depth gaps, then order
-the next implementation tranche by correctness and operational risk.
+Turn the whole-product capability audit into the detailed plan-of-record: map
+every key Builder, Developer, Agent Designer, Reviewer, Operator, Modeler,
+Validator, Admin, SRE, Domain Owner, and Executive journey to what is real and
+what remains, then carve the remaining work into serialized large-to-huge
+full-stack pull requests. The next implementation tranche is E4, collaborative
+authoring and governed delivery.
 
 ## Standing rules (user-issued, non-negotiable)
 
-1. **SERIALIZED BIG/HUGE PRs E1–E7.** Each enterprise tranche is one large
+1. **SERIALIZED BIG/HUGE PRs E1–E8.** Each enterprise tranche is one large
    vertical PR. Never keep more than one PR open; merge the current tranche,
    fetch and reconcile authoritative `origin/main`, then cut the next branch.
    Do not fragment a tranche into anemic PRs.
@@ -34,71 +35,107 @@ the next implementation tranche by correctness and operational risk.
 
 ## Phase
 
-**Enterprise PR E3 — enterprise case operations is implementation-complete and
-in closeout on `enterprise/e3-case-operations` from authoritative merged
-`origin/main` commit `565e1d2`.** PR #161 merged at that exact commit, its remote
-branch is deleted, and the GitHub review queue was empty when E3 was cut.
+**Enterprise PR E3 — enterprise case operations is merged.** Authoritative
+`origin/main` is merge commit `89bca6a`, containing E3 head `7e55c3d`; its final
+hosted run `30547883192` was green across all nine jobs. Fresh reconciliation
+found no open PR before `enterprise/e4-collaborative-authoring` was cut exactly
+from that merged main.
 
-The complete `PLAN.md` §8b.4 vertical is now real across domain, event log,
-projections, API, scheduler, Go/TypeScript SDKs, UI, and demo history. Immutable
-case-type versions govern typed fields, dynamic state transitions,
-dispositions/reasons, priorities, business calendars, evidence requirements,
-PII read policy, and role scan order. Opens pin an exact definition and deadline;
-pre-E3 work stays explicit version `0`. Ordered queue rules cover attributes,
-skills, capacity, jurisdiction, priority, age windows, and conflicts. Initial
-routing, reassignment/rebalance, and SLA queue escalation use permanent
-cross-replica claims; every tick reconciles durable breaches so a crash between
-breach and queue movement cannot strand work.
+The whole-product audit is now represented directly in `PLAN.md` §8b. It defines
+the complete enterprise operating loop, maps ten persona journeys to the
+working foundation and remaining enterprise-depth gaps, and records five
+remaining serialized verticals:
 
-Search, actor-owned saved views, opaque duplicate groups, authoritative bounded
-idempotent bulk manifests, queue rebalance, workload/capacity/SLA/ageing/first-
-action/resolution/QA analytics, audit export, case notifications, and durable
-webhook attempt/retry/dead-letter rounds are exposed to operators. Evidence
-links, required-evidence gates, attachment hash/metadata, lawful basis,
-retention/hold/erasure, reasoned outcomes, deterministic QA sampling,
-independent second review, disagreement/override, feedback, and validated
-outcome feeds replay from events. Ordinary reads redact attachment storage
-capabilities; the operator-only purpose-bound access command records an audit
-event before returning the approved external pointer.
+- **E4:** collaborative authoring and governed delivery;
+- **E5:** governed agentic operations and human/AI learning;
+- **E6:** model and context data-science platform;
+- **E7:** production scale, tenancy, and disaster recovery; and
+- **E8:** ecosystem and regulated solution packs.
 
-The real UI administers types/queues/reviewers, opens governed work, edits only
-the pinned layout fields authorized for the caller's role through typed replayable
-commands, applies filters/saved views, reviews duplicates, performs all four
-server-owned bulk operations, routes/rebalances, follows role layouts, links evidence, registers
-and accesses attachments, records dispositions and QA, retries webhook
-deadletters, and reads analytics/export/governance state. The seeded real
-backend includes governed configuration and a complete enterprise case history.
-Focused domain/command/cases/scheduler/service tests pass, including competing
-route/terminal/escalation writers, restart reconciliation, replay, and audited
-attachment access. The complete local Go gate passes, including strict lint,
-SAST, race, dead-code, zero clone groups, zero reachable vulnerabilities, and
-licenses. Frontend formatting/lint/typecheck, all 232 unit tests, the production
-build, and all 130 native browser journeys pass. The browser walkthrough found
-and closed two integration defects: zero Go timestamps were serialized as
-truthy year-one values that made every active case look closed, and numeric
-field bindings reached the typed parser as numbers instead of strings. The
-regenerated 8,708-event real-backend history round-trips with 10 flows, 460
-decisions, 120 cases, 7 agents, 40 runs, 7 models, 8 preapprovals, 16 monitors,
-and 68 notifications. All 83 real-Wasm journeys and 3 embedded-production
-smokes pass; Helm lint/render, all 18 Terraform contracts, bounded-workflow
-checks, and the immutable container publication/retention contract are green.
-Diff/SPDX/OpenAPI/generated-asset hygiene is clean. Fresh remote reconciliation
-confirmed `origin/main` remains `565e1d2` with an empty review queue. The
-E3 branch is now sole PR #162. Hosted runs `30545905179` and `30546697212`
-exposed a cascade of pre-existing assembled E2 journey races: experiment
-create→start and outcome correction→read crossed asynchronous projections
-without observation. The widened journey waits for public projected create,
-running, corrected history, both exact-cohort exposures, and the corrected
-analysis label. Its handlers now share an injected clock, so the outcome is
-inside the observation window and the assertion proves one real analyzed fact
-rather than accepting stale collecting state. The exact regression passes 100
-consecutive race runs, and the complete local `make ci` gate is green again.
-Fresh reconciliation confirms unchanged `origin/main` `565e1d2`, remote E3
-head `cad7d2a`, and sole PR #162. Fix commit `7e55c3d` is terminal green across
-all nine hosted jobs in run `30547883192`: Go race/lint/SAST/dead-code/clone/
-vulnerability/license, web, native browser, real-Wasm demo, embedded artifact,
-real PostgreSQL, real Shauth SSO, Terraform, and container-release. E3 is ready
-to merge; E4 must wait for the user to merge #162 and for fresh reconciliation.
+Each tranche has a starting boundary, primary journeys, domain/event/API/UI/
+worker/security/migration scope, explicit non-goals and dependency gates, and
+end-to-end exit evidence. Agent operations is deliberately its own E5 tranche:
+the existing agent runtime/eval foundation is real, but reusable specialist
+agents, adversarial/repeated evaluation, untrusted-content containment,
+governed deployment, evidence-cited case assistance, and outcome learning form
+a complete product loop too large to hide inside model/data science.
+
+E4 implementation is in flight on the branch. The first vertical core now
+contains event-sourced revisioned drafts, optimistic save conflicts with the
+authoritative snapshot, disposable presence leases, immutable reusable
+component versions with recursive exact-pin expansion/cycle rejection and a
+consumer index, server-side semantic graph diff, governed changesets with
+required checks and independent review, crash-reconciled publication, and
+published source/dependency/draft lineage. Changesets retain the exact source,
+schema, compiled dependency pins, and base material reviewed even when the
+working draft advances; incomplete topology is accepted while editing and
+rejected at the changeset validation boundary. The server, scheduler,
+projector, HTTP/OpenAPI routes, Go/TypeScript SDKs, notification tasks, reusable
+component registry, and durable autosaving/conflict/review builder surfaces are
+wired. Versioned byte-stable canonical sources now import idempotently into
+validated drafts instead of publishing; the CLI drives validation/import/status/
+diff/impact/submission/publication, and the scheduler owns overdue review
+reminders plus protected stale-draft retention. Server-derived component
+compatibility, explicit breaking-change evidence, compatible consumer-upgrade
+drafts, create-key plus natural-resource retry idempotency, and governed
+real-demo history are implemented. Canonical bundle preflight now resolves and
+compiles every member before the first append; imports preserve explicit future
+format versions so unsupported semantics fail instead of being normalized down,
+and portable component-id rewrites are returned as a deterministic migration
+report. Canonical export fails closed on workspace-classified embedded
+fixtures, while review evidence/reasons and comments reject high-signal
+free-text PII before it reaches the log. Four real-browser journeys prove
+competing-editor recovery, exact maker/checker review with notification refresh
+and environment impact, durable revision restore/archive, and
+reusable-component consumer upgrades with visible pinned runtime contents. That
+walkthrough also aligned changeset validation with publication's runtime dry
+compiler. Comment resolution/reopen is event-sourced and replayed; the Go and
+TypeScript SDKs cover draft history/rebase/archive, component lifecycle,
+changesets, and presence. Promotion enforcement now reads the just-recorded
+policy from the authoritative flow stream instead of racing its projection; a
+deterministic stale-projection service regression and ten browser repetitions
+with retries disabled prove the maker-checker handoff. Review submission also
+drains an older autosave and persists any newer editor fingerprint before
+pinning its revision, and the editor stays non-interactive until flow metadata
+and its exact draft are committed together. Twenty parallel retry-free browser
+repetitions prove a just-added node cannot be overwritten or omitted from
+review. Legacy UI exports are normalized into the canonical governed import
+contract without forwarding target-owned publication metadata, while
+canonical-marked documents remain strict so unknown fields still fail loudly.
+The regenerated 8,729-event demo history and governed template/import journeys
+use the same review path as production. The complete verification matrix is
+green: 134 retry-free native browser journeys, 84 real-Wasm journeys, 4
+embedded-binary journeys, 240 frontend units, zero-warning typecheck/lint,
+production web build, full race-enabled Go CI with zero reachable
+vulnerabilities, Terraform tests, container publication/retention checks, and
+workflow timeout checks. Final diff/documentation review and the sole E4 PR
+remain.
+E5–E8 must not start or open concurrently.
+
+The first E4 seam audit establishes the implementation boundary:
+
+- `web/src/routes/engine/[flowId]/+page.svelte` keeps `editNodes`,
+  `editEdges`, and the saved fingerprint in browser memory, warns on navigation,
+  and explicitly says the canvas is in-memory until Publish. Reload/device
+  change loses the work; there is no revision or conflict contract.
+- `POST /v1/flows/{flow_id}/versions` validates and appends an immutable
+  version directly. Existing JSON import uses the same immediate publication
+  path. Production deployment still has maker-checker, but authoring evidence,
+  discussions, semantic diff, and review do not form one pinned changeset.
+- `web/src/lib/diff.ts` compares two published graphs only in the browser.
+  There is no canonical server diff or dependency impact contract.
+- `platform/comments` provides real durable subject threads and mentions, but
+  it has no object address, review assignment, required-check, or changeset
+  lifecycle semantics.
+- The flow graph has no reusable/subflow node, component registry, dependency
+  pins, expansion, cycle detection, consumer index, or exact component lineage.
+
+The chosen core is a new event-sourced authoring vertical: full-snapshot
+revisioned drafts with optimistic claims; disposable store-backed presence
+leases; changesets pinned to draft/base/dependency revisions; immutable typed
+component versions; pure canonicalization/diff/expansion; and a publish bridge
+that records exact source/dependency lineage while preserving the compiled
+runtime graph. No dependency is required for this core.
 
 **Enterprise PR E2 — experimentation, outcomes, and population automation is
 merged as authoritative commit `565e1d2`.** Its implementation commit
@@ -166,7 +203,7 @@ is random per invocation rather than stable by subject; and every API replica
 could recover the same unfinished async agent run without a distributed claim.
 E1 closes the first, second, and fourth blockers; stable experiments remain the
 deliberately serialized E2 scope.
-`PLAN.md` §8b now carves the remaining enterprise program into seven strictly
+`PLAN.md` §8b originally carved the enterprise program into seven strictly
 serialized large-to-huge vertical PRs (E1–E7), each with full-stack scope and
 exit evidence. E1 has replaced eager effect preparation with a pure resumable
 interpreter: Connect/AI/Predict are requested only when traversal reaches them
