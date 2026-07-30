@@ -790,3 +790,7 @@ Linux, entirely that VM's fsync path.
   acknowledged publishes before flow version 2 was publicly readable. The
   journey now observes exact `flow.latest == 2`; 100 consecutive race-enabled
   repetitions and the complete local `make ci` pass.
+- 2026-07-30: Proved fix head `b71f819` in hosted run `30570908349`: all nine
+  jobs pass, including real PostgreSQL, full race/security/license Go CI, 134
+  native, 84 real-Wasm, 4 embedded, real Shauth SSO, web, Terraform and
+  container contracts. PR #163 is ready for review and merge.

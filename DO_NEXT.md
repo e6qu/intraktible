@@ -16,7 +16,7 @@ DOC (a claim not backed by code).
 
 ## Queue
 
-1. **OPEN — Carry E4 pull request #163 through hosted validation and review.**
+1. **OPEN — Merge green E4 pull request #163 before starting E5.**
    The complete local final-source matrix is green: 134 retry-free native, 84
    real-Wasm over the regenerated 8,729-event history, 4 embedded-binary
    journeys, 240 frontend units/build/check/lint, race-enabled Go CI, Terraform,
@@ -24,9 +24,10 @@ DOC (a claim not backed by code).
    gates. Hosted PostgreSQL exposed the assembled E2 journey validating a just
    published version before its public flow projection caught up; the new
    `flow.latest == 2` observation passes 100 race-enabled repetitions and the
-   complete local `make ci` is green. Push the fix to the same sole mergeable
-   PR, inspect every fresh hosted result, and record the final green run before
-   merge.
+   complete local `make ci` is green. Fresh hosted run `30570908349` passes all
+   nine jobs, including the repaired real-PostgreSQL whole-suite gate. PR #163
+   is ready for review and merge; after merge, fetch and reconcile authoritative
+   `origin/main` and confirm the PR queue is empty before cutting E5.
 2. **OPEN — E5 through E8 remain serialized behind E4.** Do not implement or
    open them concurrently. After each merge, fetch and deliberately reconcile
    authoritative `origin/main`, confirm the PR queue empty, and only then cut

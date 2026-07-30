@@ -110,15 +110,16 @@ production web build, full race-enabled Go CI with zero reachable
 vulnerabilities, Terraform tests, container publication/retention checks, and
 workflow timeout checks. Final diff/documentation review and the sole E4 PR
 are complete. Pull request #163 is open and mergeable at implementation commit
-`01881f3` plus continuity commit `1695908`. Hosted run `30569499851` made
-Terraform, native browser, embedded-binary, and real Shauth SSO green, then its
-PostgreSQL whole-suite job exposed a latent assembled-E2 read-after-write race:
-experiment creation could validate version 2 before that published version
-reached the flow projection. The journey now observes public `flow.latest == 2`
-before creating the experiment and passes 100 consecutive race-enabled
-repetitions. The complete local `make ci` is green after the fix. It still needs
-to be pushed and proven by a fresh hosted final-head run. E4 is not complete
-until that run is green and the PR is merged.
+`01881f3`, continuity commit `1695908`, and hosted-race fix `b71f819`. Hosted run
+`30569499851` exposed a latent assembled-E2 read-after-write race: experiment
+creation could validate version 2 before that published version reached the
+flow projection. The journey now observes public `flow.latest == 2` before
+creating the experiment and passes 100 consecutive race-enabled repetitions.
+The complete local `make ci` is green after the fix. Fresh hosted run
+`30570908349` is green across all nine jobs, including real PostgreSQL,
+race/security/license Go CI, 134 native journeys, 84 real-Wasm journeys,
+embedded artifact, real Shauth SSO, web, Terraform, and container contracts.
+E4 is ready for review and merge; it is not complete until PR #163 is merged.
 E5–E8 must not start or open concurrently.
 
 The first E4 seam audit establishes the implementation boundary:
