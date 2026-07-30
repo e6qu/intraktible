@@ -86,6 +86,19 @@ func TestExperimentOutcomeAndPopulationHTTPJourney(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var (
+		projectedExperiment intraktible.Experiment
+		experimentReadErr   error
+	)
+	if !testutil.Eventually(t, func() bool {
+		projectedExperiment, experimentReadErr = sdk.GetExperiment(ctx, experimentID)
+		return experimentReadErr == nil
+	}) {
+		t.Fatalf(
+			"created experiment was not projected before its transition: experiment=%+v read_err=%v",
+			projectedExperiment, experimentReadErr,
+		)
+	}
 	if err := sdk.TransitionExperiment(ctx, experimentID, intraktible.ExperimentStart, ""); err != nil {
 		t.Fatal(err)
 	}

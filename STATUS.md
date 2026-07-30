@@ -85,8 +85,12 @@ checks, and the immutable container publication/retention contract are green.
 Diff/SPDX/OpenAPI/generated-asset hygiene is clean. Fresh remote reconciliation
 confirmed `origin/main` remains `565e1d2` with an empty review queue. The
 two-commit E3 branch (`1b9e8bf`, `ec8f756`) is now sole PR #162; hosted run
-`30545840816` is in progress. Remaining work is terminal green CI on the final
-PR head.
+`30545905179` exposed one pre-existing assembled E2 test race: it transitioned a
+durably created experiment before the projection-backed read boundary observed
+it. The test now waits through the public GET contract; the exact regression
+passes 50 consecutive race runs and the complete local Go gate is green again.
+Remaining work is pushing the fix and reaching terminal green CI on the
+replacement final PR head.
 
 **Enterprise PR E2 — experimentation, outcomes, and population automation is
 merged as authoritative commit `565e1d2`.** Its implementation commit

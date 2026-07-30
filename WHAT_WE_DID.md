@@ -703,3 +703,8 @@ Linux, entirely that VM's fsync path.
 - 2026-07-30: Reconciled fresh `origin/main` at `565e1d2`, confirmed the GitHub
   review queue empty, pushed E3 commits `1b9e8bf` and `ec8f756`, and opened sole
   PR #162 with hosted run `30545840816`.
+- 2026-07-30: Diagnosed final-head run `30545905179`'s hosted-only race failure:
+  the assembled E2 journey transitioned a durably created experiment before its
+  projection-backed GET became visible; aligned the test with the explicit
+  eventual-read contract before transition. The exact regression passes 50
+  consecutive race runs and the complete local Go gate passes.
