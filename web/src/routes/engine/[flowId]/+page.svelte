@@ -1917,6 +1917,11 @@
   function shadowReportFor(environment: string): EnvShadow | undefined {
     return Object.entries(shadow.report).find(([k]) => k === environment)?.[1];
   }
+  function championVersionFor(environment: string): number {
+    const deployed = Object.entries(flow?.deployments ?? {}).find(([k]) => k === environment)?.[1]
+      ?.version;
+    return deployed ?? (environment === 'sandbox' ? (flow?.latest ?? 0) : 0);
+  }
   async function updateShadow(environment: string, version: number) {
     error = '';
     shadowSaving = true;
@@ -2845,6 +2850,12 @@
             Run a candidate version alongside live decisions to measure how often it would diverge —
             its result is never returned to callers.
           </p>
+          <p class="shadow-warning">
+            Shadow runs use the same caller input and entity-feature snapshot, then invoke the
+            candidate’s own connectors, pinned agents, and models. Those calls can send data or
+            incur cost; the normal consent, sharing, egress, model-approval, and agent-version gates
+            still apply.
+          </p>
           {#if shadowError}
             <p class="err" data-testid="shadow-error">
               Shadow state unavailable: {shadowError}
@@ -2869,15 +2880,64 @@
                 >
                   <option value={0}>none</option>
                   {#each flow?.versions ?? [] as v (v.version)}
-                    <option value={v.version}>v{v.version}</option>
+                    <option value={v.version} disabled={v.version === championVersionFor(e)}
+                      >v{v.version}{v.version === championVersionFor(e)
+                        ? ' · live champion'
+                        : ''}</option
+                    >
                   {/each}
                 </select>
                 {#if rep && rep.total > 0}
-                  <span class="shadow-stats muted">
-                    {rep.matched}/{rep.total} match{rep.diverged
-                      ? `, ${rep.diverged} diverged`
-                      : ''}{rep.errored ? `, ${rep.errored} errored` : ''}
-                  </span>
+                  <div class="shadow-evidence" data-testid={`shadow-cohort-${e}`}>
+                    <span class="shadow-stats">
+                      {rep.matched}/{rep.total} match{rep.diverged
+                        ? `, ${rep.diverged} diverged`
+                        : ''}{rep.errored ? `, ${rep.errored} errored` : ''}
+                    </span>
+                    <span class="muted">
+                      live v{rep.live_version} vs candidate v{rep.shadow_version} · {rep.match_basis ===
+                      'policy'
+                        ? `same policy outcome${rep.policy_version ? ` (policy v${rep.policy_version})` : ''}`
+                        : 'same status and complete output'}
+                    </span>
+                    {#if (rep.samples?.length ?? 0) > 0}
+                      <ul class="shadow-samples" data-testid={`shadow-samples-${e}`}>
+                        {#each rep.samples ?? [] as sample (sample.decision_id)}
+                          <li>
+                            <a href={appHref(`/decisions/${sample.decision_id}`)}
+                              >decision {sample.decision_id.slice(0, 10)}…</a
+                            >
+                            {#if sample.error}
+                              <span class="err">candidate error: {sample.error}</span>
+                            {:else if rep.match_basis === 'policy'}
+                              <span class="muted">
+                                {sample.live_disposition || sample.live_status}{sample.live_code
+                                  ? ` (${sample.live_code})`
+                                  : ''} →
+                                {sample.shadow_disposition ||
+                                  sample.shadow_status}{sample.shadow_code
+                                  ? ` (${sample.shadow_code})`
+                                  : ''}
+                              </span>
+                              {#if sample.live_reason !== sample.shadow_reason}
+                                <span class="muted"
+                                  >reason: {sample.live_reason || 'none'} → {sample.shadow_reason ||
+                                    'none'}</span
+                                >
+                              {/if}
+                            {:else if (sample.changed_fields?.length ?? 0) > 0}
+                              <span class="muted">changed: {sample.changed_fields?.join(', ')}</span
+                              >
+                            {:else}
+                              <span class="muted"
+                                >{sample.live_status} → {sample.shadow_status || 'not run'}</span
+                              >
+                            {/if}
+                          </li>
+                        {/each}
+                      </ul>
+                    {/if}
+                  </div>
                 {:else}
                   <span class="muted">no comparisons yet</span>
                 {/if}
@@ -4108,7 +4168,10 @@
               {env === 'sandbox' ? 'Publish first' : `No ${env} deployment`}
             </span>
           {/if}
-          <label class="preview-toggle" title="Run the flow without recording a decision">
+          <label
+            class="preview-toggle"
+            title="Run without recording a decision or consent assertion; consent-gated connectors require standing consent"
+          >
             <input type="checkbox" bind:checked={preview} aria-label="preview (don't record)" />
             Preview (don't record)
           </label>
@@ -5578,6 +5641,15 @@
     cursor: pointer;
     color: var(--fg-muted);
   }
+  .shadow-warning {
+    margin: 0.55rem 0 0;
+    padding: 0.55rem 0.65rem;
+    border-left: 3px solid var(--warn);
+    background: color-mix(in srgb, var(--warn) 9%, transparent);
+    color: var(--fg-muted);
+    font-size: 0.78rem;
+    line-height: 1.45;
+  }
   .shadow-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
@@ -5600,6 +5672,24 @@
   }
   .shadow-stats {
     font-size: 0.78rem;
+    font-weight: 650;
+  }
+  .shadow-evidence {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    font-size: 0.75rem;
+  }
+  .shadow-samples {
+    display: grid;
+    gap: 0.25rem;
+    margin: 0.25rem 0 0;
+    padding: 0.4rem 0 0 1rem;
+    border-top: 1px solid var(--border);
+  }
+  .shadow-samples li {
+    display: grid;
+    gap: 0.1rem;
   }
   .requests {
     margin-top: 0.8rem;

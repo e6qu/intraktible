@@ -5,12 +5,16 @@ package models
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"math"
+	"reflect"
 	"testing"
 	"time"
 
 	"github.com/e6qu/intraktible/decision-engine/events"
 	"github.com/e6qu/intraktible/platform/eventlog"
+	"github.com/e6qu/intraktible/platform/identity"
+	"github.com/e6qu/intraktible/platform/projection"
 	"github.com/e6qu/intraktible/platform/store"
 )
 
@@ -96,5 +100,78 @@ func TestDriftProjectorRejectsAlertForMissingStats(t *testing.T) {
 	}, store.NewMemory())
 	if err == nil {
 		t.Fatal("alert transition for missing stats should fail loudly")
+	}
+}
+
+func TestModelVersionCohortResetsAndReplays(t *testing.T) {
+	ctx := context.Background()
+	log := eventlog.NewMemory()
+	defer func() { _ = log.Close() }()
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "builder"}
+	at := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
+	appendEvent := func(stream, typ string, payload any) {
+		t.Helper()
+		raw, err := json.Marshal(payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := log.Append(ctx, eventlog.Envelope{
+			Org: id.Org, Workspace: id.Workspace, Actor: id.Actor,
+			Stream: stream, Type: typ, Time: at, Payload: raw,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		at = at.Add(time.Second)
+	}
+	define := func() {
+		appendEvent(events.StreamModels, events.TypeModelDefined, events.ModelDefined{
+			Name: "risk", Spec: json.RawMessage(`{"kind":"logistic","coefficients":{"x":1}}`),
+		})
+	}
+	predict := func(decisionID, nodeID string, probability float64) {
+		appendEvent(events.StreamDecisions, events.TypeNodeEvaluated, events.NodeEvaluated{
+			DecisionID: decisionID, NodeID: nodeID, NodeType: events.NodePredict,
+			Output: json.RawMessage(
+				fmt.Sprintf(`{"risk":{"model":"risk","probability":%v}}`, probability),
+			),
+		})
+	}
+	outcome := func(version int, decisionID, nodeID string, probability, label float64) {
+		appendEvent(events.StreamModels, events.TypeModelOutcomeRecorded, events.ModelOutcomeRecorded{
+			Name: "risk", ModelVersion: version, Probability: probability, Label: label,
+			DecisionID: decisionID, NodeID: nodeID,
+		})
+	}
+
+	define()
+	predict("d1", "p1", 0.9)
+	outcome(1, "d1", "p1", 0.9, 1)
+	define() // v2 must retire every v1 prediction, baseline, and actual counter.
+	predict("d2", "p2", 0.2)
+	outcome(2, "d2", "p2", 0.2, 0)
+	// A cross-replica stale append remains visible as excluded evidence, never v2 data.
+	outcome(1, "d1-late", "p1", 0.9, 1)
+
+	rebuild := func() ModelStats {
+		t.Helper()
+		st := store.NewMemory()
+		if _, err := projection.New(log, st, DriftProjector{}).RebuildTo(ctx, 0); err != nil {
+			t.Fatal(err)
+		}
+		got, ok, err := store.GetDoc[ModelStats](
+			ctx, st, StatsCollection, store.Key(id.Org, id.Workspace, "risk"),
+		)
+		if err != nil || !ok {
+			t.Fatalf("read rebuilt stats: found=%v err=%v", ok, err)
+		}
+		return got
+	}
+	first := rebuild()
+	if first.ModelVersion != 2 || first.Count != 1 || first.ActualCount != 1 ||
+		first.Actuals[2].Neg != 1 || first.ExcludedActualCount != 1 {
+		t.Fatalf("v2 cohort = %+v", first)
+	}
+	if again := rebuild(); !reflect.DeepEqual(first, again) {
+		t.Fatalf("replay differs:\nfirst=%+v\nagain=%+v", first, again)
 	}
 }

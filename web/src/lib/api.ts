@@ -1431,13 +1431,32 @@ export async function setPromotionPolicy(
   return ((await res.json()) as { policy: Record<string, PromotionStagePolicy> }).policy;
 }
 
+export interface ShadowComparisonSample {
+  decision_id: string;
+  live_status: string;
+  shadow_status?: string;
+  live_disposition?: string;
+  shadow_disposition?: string;
+  live_code?: string;
+  shadow_code?: string;
+  live_reason?: string;
+  shadow_reason?: string;
+  changed_fields?: string[];
+  error?: string;
+}
+
 export interface EnvShadow {
+  live_version: number;
   shadow_version: number;
+  match_basis: 'output' | 'policy';
+  policy_id?: string;
+  policy_version?: number;
   total: number;
   matched: number;
   diverged: number;
   errored: number;
   sample_diverged?: string[];
+  samples?: ShadowComparisonSample[];
 }
 
 export interface ShadowState {
@@ -2558,6 +2577,7 @@ export interface FeatureDrift {
 
 export interface ModelDrift {
   model: string;
+  model_version?: number;
   count: number;
   hist: number[];
   window_days: number;
@@ -2578,8 +2598,10 @@ export interface Calibration {
 
 export interface ModelPerformance {
   model: string;
+  model_version?: number;
   count: number;
   positives: number;
+  excluded_actuals?: number;
   accuracy: number;
   brier: number;
   auc: number;
@@ -2600,12 +2622,12 @@ export async function getModelPerformance(
   return (await res.json()) as ModelPerformance;
 }
 
-// recordModelOutcome reconciles a realized outcome (label 0/1) with the probability a
-// model predicted, feeding live-performance metrics.
+// recordModelOutcome reconciles a realized label with an immutable prediction.
+// Probability and model version are recovered by the backend from the decision trace.
 export async function recordModelOutcome(
   key: string,
   name: string,
-  body: { probability: number; label: number; decision_id?: string },
+  body: { label: number; decision_id: string; node_id?: string },
   fetcher: typeof fetch = recordingFetch
 ): Promise<void> {
   const res = await fetcher(`/v1/models/${encodeURIComponent(name)}/outcomes`, {

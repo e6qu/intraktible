@@ -35,15 +35,32 @@ Fix every missing or misleading piece found; do not stop at documenting gaps.
 
 ## Phase
 
-**Fourth whole-product journey audit — governed dependencies complete; final
-review handoff complete.**
-PR #157 merged as `8622b7a`; the GitHub PR queue is empty, and the refreshed
+**Fifth whole-product journey audit — product work and local release matrix
+complete; remote reconciliation and PR delivery in progress.**
+PR #158 merged as `002e9d3`; the GitHub PR queue is empty, and the refreshed
 `hardening/production-readiness-audit` branch is fast-forwarded exactly to
-`origin/main`. The third audit's model-validation, exact issued-notice, and
-projection-test-race repairs are now the authoritative baseline. The fourth
-audit is re-walking every documented product journey across the UI/UX, HTTP
-boundary, command/event truth, projections, schedulers/notifications,
-restart/replay, and both native and real-Wasm browser paths.
+`origin/main`. The fourth audit's governed policy snapshots and immutable agent
+version pins are now the authoritative baseline.
+
+The walk found and closed two concrete cross-layer evidence defects. Shadow
+evaluation now independently resolves candidate-selected connector/AI/model
+dependencies from the same caller input and authoritative entity-feature
+snapshot, retains consent/egress and governed version/approval gates, compares
+the exact selected policy outcome when one is bound (otherwise the full output),
+and starts a new replay-safe cohort whenever the live version, candidate,
+comparison basis, or selected policy changes. Candidate errors and explanatory
+divergences are durable and visible; preview no longer persists consent; and
+A/B selection no longer destabilizes champion shadow cohorts.
+
+Model actuals are no longer caller-authored probabilities. A realized label
+must reference a completed recorded decision, and the command derives the exact
+Predict-node probability and historical model version from replayable evidence.
+Ambiguous, stale, unknown, spoofed, or duplicate lineage is rejected, with a
+tenant-wide permanent claim enforcing one outcome per decision/model/node
+across replicas. Model redefinition begins a fresh monitoring cohort; a narrow
+cross-replica stale append is excluded explicitly rather than blended.
+The API, OpenAPI, Models UI, projections, replay, and help journey all share the
+same contract. `DO_NEXT.md` has no open implementation item.
 
 That inventory is complete. Every documented journey retains a concrete UI or
 API entry and supporting end-to-end coverage. The two mutable decision
@@ -122,24 +139,21 @@ authenticated actor other than the model owner; the exact adverse-action bytes
 are retained, hash-verified, replayable, and downloaded separately from the
 current preview. `DO_NEXT.md` has no open implementation items.
 
-**Current local gates, all green:** the fourth-audit `make check` and `make ci`
+**Current local gates, all green:** the fifth-audit `make check` and `make ci`
 pass vet/build, strict lint, SAST, the complete race-enabled Go suite, deadcode,
 zero clone groups, zero reachable vulnerabilities, and dependency licenses.
-Prettier, zero-warning ESLint and Svelte check, all 220 Vitest tests, 124 native
-Playwright journeys, 81 real-Wasm journeys, and 3 embedded-binary smokes also
-pass. PR #157's final head repaired the
-node-trace projection-test race, passed its 100-run race stress test and the
-complete local `make ci` gate, then passed all nine remote jobs in run
-30487298842. The merged baseline is `8622b7a`, exactly matching fresh
-`origin/main`.
+Prettier, zero-warning ESLint and Svelte check, all 221 Vitest tests, 124 native
+Playwright journeys, 83 real-Wasm journeys, and 3 embedded-binary smokes also
+pass. The starting merged baseline is `002e9d3`; final remote reconciliation,
+commit, sole-PR creation, and remote CI remain.
 
 ## Ground truth established so far
 
-- Current branch `hardening/production-readiness-audit` is based on PR #157's
-  merge commit `8622b7a`; a fresh fetch confirms it exactly matches
+- Current branch `hardening/production-readiness-audit` is based on PR #158's
+  merge commit `002e9d3`; a fresh fetch confirms it exactly matches
   `origin/main`.
-- PR #157 is merged and the remote PR queue is empty — satisfies the
-  one-open-PR rule at the start of this round. PR #158 is now the sole open PR.
+- PR #158 is merged and the remote PR queue is empty — satisfies the
+  one-open-PR rule at the start of this round.
 - Fourth-audit product and artifact gates are green: policy replay/governance,
   the complete Decision Engine package, assembled policy HTTP serving, exact
   resume snapshots, immutable agent dispatch, notifications, route
@@ -150,6 +164,15 @@ complete local `make ci` gate, then passed all nine remote jobs in run
   dependency licenses. PR #158 run 30491363960 repeats the matrix remotely:
   container release, demo/Wasm, native and embedded e2e, Go, real PostgreSQL,
   Shauth SSO, Terraform, and web all pass.
+- Fifth-audit shadow evidence is independently resolved for the candidate,
+  cohort-dimensioned, replay-safe, policy-aware, and surfaced with errors and
+  explanatory decision links. Model actuals derive their prediction lineage
+  from the authoritative event log, are duplicate-safe across replicas, and
+  cannot blend across model versions. Focused core, HTTP, projection/replay,
+  OpenAPI, native UI, and real-Wasm tests cover both journeys.
+- The fifth-audit complete local matrix passes: `make check`, `make ci`, all 221
+  frontend units, 124 native browser journeys, 83 real-Wasm journeys, and 3
+  embedded-production smokes.
 - The model-validation endpoint now takes validator identity only from the
   authenticated actor, is approver-gated, rejects the model owner, requires
   substantive evidence, and approval requires the latest independent

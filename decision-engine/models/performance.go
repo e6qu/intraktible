@@ -77,20 +77,26 @@ type Calibration struct {
 
 // Performance is a model's live performance measured from reconciled actuals.
 type Performance struct {
-	Model       string        `json:"model"`
-	Count       int           `json:"count"`
-	Positives   int           `json:"positives"`
-	Accuracy    float64       `json:"accuracy"` // predicted class (p≥0.5) vs realized label
-	Brier       float64       `json:"brier"`    // mean squared error of probability vs label
-	AUC         float64       `json:"auc"`      // realized AUC from the bucketed outcomes
-	Calibration []Calibration `json:"calibration"`
+	Model           string        `json:"model"`
+	ModelVersion    int           `json:"model_version,omitempty"`
+	Count           int           `json:"count"`
+	Positives       int           `json:"positives"`
+	ExcludedActuals int           `json:"excluded_actuals,omitempty"`
+	Accuracy        float64       `json:"accuracy"` // predicted class (p≥0.5) vs realized label
+	Brier           float64       `json:"brier"`    // mean squared error of probability vs label
+	AUC             float64       `json:"auc"`      // realized AUC from the bucketed outcomes
+	Calibration     []Calibration `json:"calibration"`
 }
 
 // Performance derives live metrics from the per-decile actual counts. It uses the
 // bucket midpoint as the representative predicted probability (the raw probabilities
 // aren't retained — the deciles keep the projection bounded).
 func (st ModelStats) Performance() Performance {
-	perf := Performance{Model: st.Name, Count: st.ActualCount, Calibration: []Calibration{}}
+	perf := Performance{
+		Model: st.Name, ModelVersion: st.ModelVersion,
+		Count: st.ActualCount, ExcludedActuals: st.ExcludedActualCount,
+		Calibration: []Calibration{},
+	}
 	if st.ActualCount == 0 {
 		return perf
 	}

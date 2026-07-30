@@ -30,20 +30,40 @@ const (
 	TypeShadowEvaluated = "decision.run.shadow_evaluated"
 )
 
-// ShadowEvaluated records a shadow run: a candidate version evaluated over the
-// same input as a live decision, for divergence analysis only. The shadow's
-// outcome never affects the caller's result. Matched is whether the shadow
-// reached the same status and output as the live decision.
+// ShadowMatchBasis says which stable business contract was compared. A bound
+// operational policy makes its disposition/code/reason the governed outcome;
+// without one, the complete flow output remains the only available outcome.
+type ShadowMatchBasis string
+
+const (
+	ShadowMatchOutput ShadowMatchBasis = "output"
+	ShadowMatchPolicy ShadowMatchBasis = "policy"
+)
+
+// ShadowEvaluated records a shadow run: a candidate version evaluated from the
+// same caller input and authoritative entity-feature snapshot as a live decision,
+// for divergence analysis only. Candidate connector/AI/model dependencies are
+// resolved independently. The shadow's outcome never affects the caller's result.
 type ShadowEvaluated struct {
-	DecisionID    string `json:"decision_id"` // the live decision this shadows
-	FlowID        string `json:"flow_id"`
-	Environment   string `json:"environment"`
-	LiveVersion   int    `json:"live_version"`
-	ShadowVersion int    `json:"shadow_version"`
-	LiveStatus    string `json:"live_status"`
-	ShadowStatus  string `json:"shadow_status"`
-	Matched       bool   `json:"matched"`
-	ShadowError   string `json:"shadow_error,omitempty"`
+	DecisionID        string           `json:"decision_id"` // the live decision this shadows
+	FlowID            string           `json:"flow_id"`
+	Environment       string           `json:"environment"`
+	LiveVersion       int              `json:"live_version"`
+	ShadowVersion     int              `json:"shadow_version"`
+	MatchBasis        ShadowMatchBasis `json:"match_basis"`
+	PolicyID          string           `json:"policy_id,omitempty"`
+	PolicyVersion     int              `json:"policy_version,omitempty"`
+	LiveStatus        string           `json:"live_status"`
+	ShadowStatus      string           `json:"shadow_status"`
+	LiveDisposition   string           `json:"live_disposition,omitempty"`
+	ShadowDisposition string           `json:"shadow_disposition,omitempty"`
+	LiveCode          string           `json:"live_code,omitempty"`
+	ShadowCode        string           `json:"shadow_code,omitempty"`
+	LiveReason        string           `json:"live_reason,omitempty"`
+	ShadowReason      string           `json:"shadow_reason,omitempty"`
+	ChangedFields     []string         `json:"changed_fields,omitempty"`
+	Matched           bool             `json:"matched"`
+	ShadowError       string           `json:"shadow_error,omitempty"`
 }
 
 // DecisionStarted records the start of a decision: which flow version ran against

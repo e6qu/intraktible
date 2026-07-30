@@ -428,10 +428,16 @@ func TestShadowEvaluationOverHTTP(t *testing.T) {
 	}
 
 	type envShadow struct {
-		ShadowVersion int `json:"shadow_version"`
-		Total         int `json:"total"`
-		Matched       int `json:"matched"`
-		Diverged      int `json:"diverged"`
+		ShadowVersion int    `json:"shadow_version"`
+		LiveVersion   int    `json:"live_version"`
+		MatchBasis    string `json:"match_basis"`
+		Total         int    `json:"total"`
+		Matched       int    `json:"matched"`
+		Diverged      int    `json:"diverged"`
+		Samples       []struct {
+			DecisionID    string   `json:"decision_id"`
+			ChangedFields []string `json:"changed_fields"`
+		} `json:"samples"`
 	}
 	readReport := func() (map[string]int, envShadow) {
 		var got struct {
@@ -445,7 +451,16 @@ func TestShadowEvaluationOverHTTP(t *testing.T) {
 	// The shadow (v2 → "B") diverges from the live champion (v1 → "A").
 	if !testutil.Eventually(t, func() bool {
 		shadows, env := readReport()
-		return shadows["sandbox"] == 2 && env.ShadowVersion == 2 && env.Diverged >= 1 && env.Matched == 0
+		return shadows["sandbox"] == 2 &&
+			env.LiveVersion == 1 &&
+			env.ShadowVersion == 2 &&
+			env.MatchBasis == "output" &&
+			env.Diverged >= 1 &&
+			env.Matched == 0 &&
+			len(env.Samples) >= 1 &&
+			env.Samples[0].DecisionID != "" &&
+			len(env.Samples[0].ChangedFields) == 1 &&
+			env.Samples[0].ChangedFields[0] == "decision"
 	}) {
 		_, env := readReport()
 		t.Fatalf("expected divergence under shadow v2, got %+v", env)
@@ -3332,15 +3347,19 @@ func TestModelPerformanceAndCovariateDrift(t *testing.T) {
 		},
 	}, http.StatusCreated, nil)
 
-	decide := func(fico int) {
+	decide := func(fico int) string {
+		var decisionID string
 		testutil.Eventually(t, func() bool {
 			var res struct {
-				Status string `json:"status"`
+				Status     string `json:"status"`
+				DecisionID string `json:"decision_id"`
 			}
 			api.Request(t, http.MethodPost, "/v1/flows/riskf/sandbox/decide",
 				map[string]any{"data": map[string]any{"fico": fico}}, http.StatusOK, &res)
+			decisionID = res.DecisionID
 			return res.Status == "completed"
 		})
+		return decisionID
 	}
 	// A batch of decisions; the drift projector folds the fico values it saw.
 	for _, f := range []int{800, 780, 760, 820, 790} {
@@ -3384,14 +3403,19 @@ func TestModelPerformanceAndCovariateDrift(t *testing.T) {
 		t.Fatal("covariate drift never flagged the fico shift")
 	}
 
-	// Record actuals and read reconciled performance.
+	// Record actuals from immutable prediction lineage and read reconciled
+	// performance. The API accepts only the realized label; probability is recovered
+	// from each decision's Predict-node event.
+	actualDecisionIDs := make([]string, 0, 20)
 	for i := 0; i < 20; i++ {
-		prob, label := 0.9, 1.0 // confident-positive predictions that came true
+		fico, label := 900, 1.0 // confident-positive predictions that came true
 		if i%2 == 0 {
-			prob, label = 0.1, 0.0 // confident-negative that came true
+			fico, label = 300, 0.0 // confident-negative that came true
 		}
+		decisionID := decide(fico)
+		actualDecisionIDs = append(actualDecisionIDs, decisionID)
 		api.Request(t, http.MethodPost, "/v1/models/risk/outcomes",
-			map[string]any{"probability": prob, "label": label}, http.StatusAccepted, nil)
+			map[string]any{"decision_id": decisionID, "label": label}, http.StatusAccepted, nil)
 	}
 	if !testutil.Eventually(t, func() bool {
 		var perf struct {
@@ -3406,7 +3430,80 @@ func TestModelPerformanceAndCovariateDrift(t *testing.T) {
 
 	// A non-binary label is rejected.
 	api.Request(t, http.MethodPost, "/v1/models/risk/outcomes",
-		map[string]any{"probability": 0.5, "label": 2}, http.StatusBadRequest, nil)
+		map[string]any{"decision_id": actualDecisionIDs[0], "label": 2}, http.StatusBadRequest, nil)
+	// The probability is engine-owned, and one observation cannot be counted twice.
+	api.Request(t, http.MethodPost, "/v1/models/risk/outcomes",
+		map[string]any{"decision_id": actualDecisionIDs[0], "probability": 0.99, "label": 0},
+		http.StatusBadRequest, nil)
+	api.Request(t, http.MethodPost, "/v1/models/risk/outcomes",
+		map[string]any{"decision_id": actualDecisionIDs[0], "label": 0},
+		http.StatusConflict, nil)
+	api.Request(t, http.MethodPost, "/v1/models/risk/outcomes",
+		map[string]any{"decision_id": "not-a-decision", "label": 1},
+		http.StatusBadRequest, nil)
+
+	// Redefining the model starts a clean monitoring/performance cohort. Delayed
+	// labels from v1 cannot be blended into v2; a fresh v2 decision reconciles.
+	api.Request(t, http.MethodPost, "/v1/models", map[string]any{
+		"name": "risk",
+		"spec": map[string]any{"kind": "logistic", "intercept": -6, "coefficients": map[string]any{"fico": 0.01}},
+	}, http.StatusCreated, nil)
+	if !testutil.Eventually(t, func() bool {
+		var d struct {
+			ModelVersion int `json:"model_version"`
+			Count        int `json:"count"`
+		}
+		api.Request(t, http.MethodGet, "/v1/models/risk/drift", nil, http.StatusOK, &d)
+		return d.ModelVersion == 2 && d.Count == 0
+	}) {
+		t.Fatal("model redefine did not start a clean v2 drift cohort")
+	}
+	api.Request(t, http.MethodPost, "/v1/models/risk/outcomes",
+		map[string]any{"decision_id": actualDecisionIDs[1], "label": 1},
+		http.StatusBadRequest, nil)
+	v2DecisionID := decide(900)
+	api.Request(t, http.MethodPost, "/v1/models/risk/outcomes",
+		map[string]any{"decision_id": v2DecisionID, "label": 1},
+		http.StatusAccepted, nil)
+	if !testutil.Eventually(t, func() bool {
+		var perf struct {
+			ModelVersion int `json:"model_version"`
+			Count        int `json:"count"`
+		}
+		api.Request(t, http.MethodGet, "/v1/models/risk/performance", nil, http.StatusOK, &perf)
+		return perf.ModelVersion == 2 && perf.Count == 1
+	}) {
+		t.Fatal("v2 performance did not reconcile only the fresh v2 actual")
+	}
+
+	// A flow may invoke the same model more than once. The API refuses to guess;
+	// node_id selects the exact recorded observation, and each node may be reconciled
+	// once independently.
+	api.Request(t, http.MethodPost, "/v1/flows/"+flow.FlowID+"/versions", map[string]any{
+		"graph": map[string]any{
+			"nodes": []map[string]any{
+				{"id": "in", "type": "input"},
+				{"id": "p1", "type": "predict", "config": map[string]any{"model": "risk", "output": "first"}},
+				{"id": "p2", "type": "predict", "config": map[string]any{"model": "risk", "output": "second"}},
+				{"id": "out", "type": "output"},
+			},
+			"edges": []map[string]any{
+				{"from": "in", "to": "p1"}, {"from": "p1", "to": "p2"}, {"from": "p2", "to": "out"},
+			},
+		},
+	}, http.StatusCreated, nil)
+	multiDecisionID := decide(900)
+	api.Request(t, http.MethodPost, "/v1/models/risk/outcomes",
+		map[string]any{"decision_id": multiDecisionID, "label": 1},
+		http.StatusBadRequest, nil)
+	api.Request(t, http.MethodPost, "/v1/models/risk/outcomes",
+		map[string]any{"decision_id": multiDecisionID, "node_id": "missing", "label": 1},
+		http.StatusBadRequest, nil)
+	for _, nodeID := range []string{"p1", "p2"} {
+		api.Request(t, http.MethodPost, "/v1/models/risk/outcomes",
+			map[string]any{"decision_id": multiDecisionID, "node_id": nodeID, "label": 1},
+			http.StatusAccepted, nil)
+	}
 }
 
 // The champion/challenger journey (docs/JOURNEYS.md) has two halves: routing traffic

@@ -128,7 +128,7 @@ func TestModelMonitorThresholdPersists(t *testing.T) {
 	}
 }
 
-func TestModelMonitoringCommandsRejectUnknownModelAndPreserveFirstActual(t *testing.T) {
+func TestModelMonitoringCommandsRejectUnknownModelAndUnrecordedActual(t *testing.T) {
 	ctx := context.Background()
 	log, err := eventlog.OpenWAL(t.TempDir())
 	if err != nil {
@@ -144,7 +144,7 @@ func TestModelMonitoringCommandsRejectUnknownModelAndPreserveFirstActual(t *test
 	if _, err := cmd.CaptureModelBaseline(ctx, id, "missing"); err == nil {
 		t.Fatal("capturing a baseline for an unknown model should fail")
 	}
-	if _, err := cmd.RecordModelOutcome(ctx, id, "missing", 0.8, 1, "d1"); err == nil {
+	if _, err := cmd.RecordModelOutcome(ctx, id, "missing", 1, "d1", ""); err == nil {
 		t.Fatal("recording an outcome for an unknown model should fail")
 	}
 
@@ -152,21 +152,10 @@ func TestModelMonitoringCommandsRejectUnknownModelAndPreserveFirstActual(t *test
 		json.RawMessage(`{"kind":"logistic","coefficients":{"x":1}}`)); err != nil {
 		t.Fatal(err)
 	}
-	// An actual may arrive before this deployment has produced an in-platform
-	// prediction. It is still real ground truth and must not disappear.
-	if _, err := cmd.RecordModelOutcome(ctx, id, "risk", 0.8, 1, "d1"); err != nil {
-		t.Fatal(err)
-	}
-	st := store.NewMemory()
-	if err := projection.New(log, st, models.DriftProjector{}).Start(ctx); err != nil {
-		t.Fatal(err)
-	}
-	perf, err := models.ReadPerformance(ctx, st, id, "risk")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if perf.Count != 1 || perf.Positives != 1 {
-		t.Fatalf("first actual was not preserved: %+v", perf)
+	// Ground truth without an immutable in-platform prediction is not performance
+	// evidence; accepting it would let a caller author the model's probability.
+	if _, err := cmd.RecordModelOutcome(ctx, id, "risk", 1, "d1", ""); err == nil {
+		t.Fatal("recording an outcome without a decision prediction should fail")
 	}
 }
 

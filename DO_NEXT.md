@@ -16,11 +16,11 @@ DOC (a claim not backed by code).
 
 ## Queue
 
-Fourth whole-product audit from authoritative merged commit `8622b7a`.
+Fifth whole-product audit from authoritative merged commit `002e9d3`.
 
-No open implementation items. The governed policy-version and immutable
-agent-version slices are complete; final `make ci`, remote reconciliation, and
-the single-PR handoff remain release work rather than product gaps.
+No open implementation items remain from the fifth audit. Candidate-faithful
+shadow evidence and attributable, version-coherent model actuals are complete;
+their release evidence is recorded in `WHAT_WE_DID.md`.
 
 ---
 

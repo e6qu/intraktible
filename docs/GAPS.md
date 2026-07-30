@@ -123,12 +123,14 @@ weeks, **L** = a real project.
    per-feature running mean/variance (Welford), and `GET /v1/models/{name}/drift` reports
    each feature's standardized mean shift + variance ratio vs the captured baseline — a
    leading indicator that precedes prediction drift. **Actuals reconciliation**:
-   `POST /v1/models/{name}/outcomes {probability, label}` records realized outcomes,
-   bucketed by predicted decile, and `GET /v1/models/{name}/performance` reports
-   calibration, accuracy, Brier score, and realized AUC — live performance from ground
-   truth. Remaining (optional): full per-feature PSI histograms (mean/variance shift is
-   the bounded signal today) and decision-linked outcome recording (caller supplies the
-   probability today).
+   `POST /v1/models/{name}/outcomes {decision_id, label, node_id?}` resolves the exact
+   probability and model version from that completed decision's immutable Predict-node
+   trace (the caller cannot author either), refuses duplicate/stale/ambiguous lineage,
+   and buckets the realized outcome by predicted decile.
+   `GET /v1/models/{name}/performance` reports calibration, accuracy, Brier score, and
+   realized AUC for the current model version — live performance from ground truth.
+   Redefining a model starts a clean drift/performance cohort. Remaining (optional):
+   full per-feature PSI histograms (mean/variance shift is the bounded signal today).
 7. **Example/template library — DONE.** A "New from template" gallery on the Flows page
    ships 6 importable starters (Consumer Credit STP, CNP Fraud, Sanctions/PEP, KYB, BNPL,
    Chargeback) that exercise the differentiating node types. Remaining (optional): convert

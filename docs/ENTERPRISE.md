@@ -191,6 +191,13 @@ enterprise buyers; **P2** = differentiators / scale.
   a failing assertion suite, a firing monitor, a breaching SLO, a drifting model — so
   a model-risk team sees what needs review. Exportable as **JSON / CSV / Markdown**
   (the filed document), surfaced as a **Model risk** UI page.
+  Predictive-model actuals are attributable evidence rather than operator-authored
+  statistics: reconciliation requires a completed decision, derives probability and
+  model version from its immutable Predict-node trace, permits one label per
+  decision/model/node, and refuses stale or ambiguous lineage. Redefinition starts a
+  clean current-version drift/performance cohort (baseline, prediction distribution,
+  calibration, accuracy, Brier score, and realized AUC are never blended across
+  changed model logic).
 - **P2 — Data residency / region pinning.**
 
 ### Testing, validation & safety  (status: backtesting + a test-run in the builder)
@@ -202,14 +209,23 @@ enterprise buyers; **P2** = differentiators / scale.
   confidence check.
 - **P1 — Shadow / canary deploys — ✅ shadow done.** A per-environment **shadow
   version** (`PUT /v1/flows/{id}/shadow {environment, version}`, 0 clears) is
-  evaluated over the same input as every live decision in that environment; its
-  result is never returned to the caller. A `shadow.Projector` folds the
-  comparison into a per-env report (`GET …/shadow`) — total / matched / diverged /
-  errored with sample diverging decision ids — answering "how often would
-  promoting this candidate change the outcome?" at zero risk. Surfaced as a
-  **Shadow deploys** panel in the builder. The A/B challenger already covers canary
-  (a challenger takes a traffic share with its result returned). *Remaining: shadow
-  re-resolves connector/AI nodes against the live input only (not its own).*
+  evaluated from the same caller input and one authoritative entity-feature
+  snapshot as champion decisions in that environment (a served A/B challenger
+  already has its own observed metrics). The candidate independently
+  invokes the connectors, pinned agents, and models selected by its own graph under
+  the normal consent/sharing/egress and governed-version gates; those calls can send
+  data or incur cost, but their result is never served to the caller. A
+  `shadow.Projector` folds the comparison into a homogeneous per-env cohort
+  (`GET …/shadow`) — exact live/candidate/policy versions, comparison basis, total /
+  matched / diverged / errored, and value-free explanatory samples. A champion,
+  candidate, or policy change starts a fresh cohort rather than mixing unlike
+  evidence. With a bound policy, agreement means the exact policy
+  disposition/code/reason; without one, it means the same status and complete
+  output. Surfaced as a **Shadow deploys** panel in the builder. The A/B challenger
+  already covers canary (a challenger takes a traffic share with its result
+  returned). Assigning the current champion as its own shadow is refused; if a
+  later deployment makes the candidate champion, comparisons record a loud
+  configuration error until another candidate is chosen.
 - **P1 — Flow unit tests / assertions — ✅ done.** Input→expected cases stored
   with the flow (`decision-engine/assertions`), run through the pure core via
   `POST /v1/flows/{id}/assertions/run`, and enforced as a **pre-promote gate**

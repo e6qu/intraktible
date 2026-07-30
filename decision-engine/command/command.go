@@ -958,6 +958,26 @@ func (h *Handler) SetShadow(ctx context.Context, id identity.Identity, cmd domai
 	if cmd.Version > agg.latest {
 		return eventlog.Envelope{}, fmt.Errorf("decision-engine: shadow version %d not published (latest is %d)", cmd.Version, agg.latest)
 	}
+	if cmd.Version > 0 {
+		history, err := h.deployHistory(ctx, id, cmd.FlowID, cmd.Environment)
+		if err != nil {
+			return eventlog.Envelope{}, err
+		}
+		liveVersion := 0
+		if len(history) > 0 {
+			liveVersion = history[len(history)-1]
+		} else if domain.Environment(cmd.Environment) == domain.EnvSandbox {
+			// Sandbox is the one environment that serves latest without an explicit
+			// deployment; assigning latest there would silently compare nothing.
+			liveVersion = agg.latest
+		}
+		if cmd.Version == liveVersion {
+			return eventlog.Envelope{}, fmt.Errorf(
+				"decision-engine: shadow version %d is already the live champion in %s",
+				cmd.Version, cmd.Environment,
+			)
+		}
+	}
 	payload, err := json.Marshal(events.ShadowSet{FlowID: cmd.FlowID, Environment: cmd.Environment, Version: cmd.Version})
 	if err != nil {
 		return eventlog.Envelope{}, fmt.Errorf("decision-engine: marshal shadow set: %w", err)
@@ -1213,6 +1233,14 @@ func modelDecisionClaim(name, reqID string) string {
 	return "model.approval.decision\x00" + name + "\x00" + reqID
 }
 
+// modelOutcomeClaim makes one realized label per recorded model observation
+// atomic across replicas. Tenant scope is explicit because event-log claim indexes
+// are global for some durable backends.
+func modelOutcomeClaim(id identity.Identity, name, decisionID, nodeID string) string {
+	return "model.outcome\x00" + id.Org + "\x00" + id.Workspace + "\x00" +
+		name + "\x00" + decisionID + "\x00" + nodeID
+}
+
 // RequestModelApproval proposes the model's current version for review (the maker
 // side of four-eyes). It fails if the model is unknown, already approved at this
 // version, or already has a pending request.
@@ -1394,32 +1422,59 @@ func (h *Handler) CaptureModelBaseline(ctx context.Context, id identity.Identity
 	})
 }
 
-// RecordModelOutcome records a realized ground-truth outcome (label 0/1) for a
-// prediction a model made (probability in [0,1]), so live performance is measured
-// against actuals. decisionID is optional lineage.
-func (h *Handler) RecordModelOutcome(ctx context.Context, id identity.Identity, name string, probability, label float64, decisionID string) (eventlog.Envelope, error) {
+// RecordModelOutcome records a realized ground-truth outcome (label 0/1) for one
+// prediction in an immutable completed decision trace. The caller names the decision
+// (and, only when necessary, the Predict node); the command derives probability and
+// model version from the log so performance evidence cannot be authored or relinked.
+func (h *Handler) RecordModelOutcome(
+	ctx context.Context,
+	id identity.Identity,
+	name string,
+	label float64,
+	decisionID, nodeID string,
+) (eventlog.Envelope, error) {
 	if err := id.Valid(); err != nil {
 		return eventlog.Envelope{}, err
 	}
 	if strings.TrimSpace(name) == "" {
 		return eventlog.Envelope{}, fmt.Errorf("decision-engine: model name is required")
 	}
-	if math.IsNaN(probability) || math.IsInf(probability, 0) || probability < 0 || probability > 1 {
-		return eventlog.Envelope{}, fmt.Errorf("decision-engine: outcome probability %v: want a fraction in [0,1]", probability)
+	decisionID = strings.TrimSpace(decisionID)
+	nodeID = strings.TrimSpace(nodeID)
+	if decisionID == "" {
+		return eventlog.Envelope{}, fmt.Errorf("decision-engine: decision_id is required")
 	}
 	if label != 0 && label != 1 {
 		return eventlog.Envelope{}, fmt.Errorf("decision-engine: outcome label %v is not binary (0 or 1)", label)
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if err := h.requireModel(ctx, id, name); err != nil {
+	gov, err := h.foldModelGov(ctx, id, name)
+	if err != nil {
 		return eventlog.Envelope{}, err
 	}
-	payload, err := json.Marshal(events.ModelOutcomeRecorded{Name: name, Probability: probability, Label: label, DecisionID: decisionID})
+	if gov.version == 0 {
+		return eventlog.Envelope{}, fmt.Errorf("decision-engine: unknown model %q", name)
+	}
+	prediction, err := h.recordedPrediction(ctx, id, name, decisionID, nodeID)
+	if err != nil {
+		return eventlog.Envelope{}, err
+	}
+	if prediction.modelVersion != gov.version {
+		return eventlog.Envelope{}, fmt.Errorf(
+			"decision-engine: decision %q used model %q version %d, but current version is %d; current-version performance cannot mix stale lineage",
+			decisionID, name, prediction.modelVersion, gov.version,
+		)
+	}
+	payload, err := json.Marshal(events.ModelOutcomeRecorded{
+		Name: name, ModelVersion: prediction.modelVersion,
+		Probability: prediction.probability, Label: label,
+		DecisionID: decisionID, NodeID: prediction.nodeID,
+	})
 	if err != nil {
 		return eventlog.Envelope{}, fmt.Errorf("decision-engine: marshal model outcome: %w", err)
 	}
-	return h.log.Append(ctx, eventlog.Envelope{
+	e, err := h.log.Append(ctx, eventlog.Envelope{
 		Org:       id.Org,
 		Workspace: id.Workspace,
 		Actor:     id.Actor,
@@ -1427,7 +1482,162 @@ func (h *Handler) RecordModelOutcome(ctx context.Context, id identity.Identity, 
 		Type:      events.TypeModelOutcomeRecorded,
 		Time:      h.now(),
 		Payload:   payload,
+		Unique:    modelOutcomeClaim(id, name, decisionID, prediction.nodeID),
 	})
+	if errors.Is(err, eventlog.ErrConflict) {
+		return eventlog.Envelope{}, fmt.Errorf(
+			"decision-engine: outcome already recorded for decision %q model %q node %q: %w",
+			decisionID, name, prediction.nodeID, eventlog.ErrConflict,
+		)
+	}
+	return e, err
+}
+
+type recordedModelPrediction struct {
+	nodeID       string
+	probability  float64
+	modelVersion int
+	eventSeq     uint64
+}
+
+// recordedPrediction resolves one model observation from the authoritative decision
+// stream. The SQL logs answer this through their tenant/stream index; index-less demo
+// logs scan in memory. NodeID may be omitted only when the decision used the model
+// exactly once.
+func (h *Handler) recordedPrediction(
+	ctx context.Context,
+	id identity.Identity,
+	name, decisionID, nodeID string,
+) (recordedModelPrediction, error) {
+	evs, err := h.log.ReadTenantStream(ctx, id.Org, id.Workspace, events.StreamDecisions, 0)
+	if err != nil {
+		return recordedModelPrediction{}, err
+	}
+	found, completed := false, false
+	matches := []recordedModelPrediction{}
+	for _, e := range evs {
+		switch e.Type {
+		case events.TypeDecisionStarted:
+			var p events.DecisionStarted
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				return recordedModelPrediction{}, fmt.Errorf("decision-engine: decode decision start seq %d: %w", e.Seq, err)
+			}
+			if p.DecisionID == decisionID {
+				found = true
+			}
+		case events.TypeDecisionCompleted:
+			var p events.DecisionCompleted
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				return recordedModelPrediction{}, fmt.Errorf("decision-engine: decode decision completion seq %d: %w", e.Seq, err)
+			}
+			if p.DecisionID == decisionID {
+				completed = true
+			}
+		case events.TypeNodeEvaluated:
+			var p events.NodeEvaluated
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				return recordedModelPrediction{}, fmt.Errorf("decision-engine: decode node evaluation seq %d: %w", e.Seq, err)
+			}
+			if p.DecisionID != decisionID || p.NodeType != events.NodePredict ||
+				(nodeID != "" && p.NodeID != nodeID) {
+				continue
+			}
+			var out map[string]map[string]any
+			if err := json.Unmarshal(p.Output, &out); err != nil {
+				return recordedModelPrediction{}, fmt.Errorf(
+					"decision-engine: decode prediction for decision %q node %q: %w",
+					decisionID, p.NodeID, err,
+				)
+			}
+			for _, prediction := range out {
+				model, _ := prediction["model"].(string)
+				probability, ok := modelNumber(prediction["probability"])
+				if model != name || !ok || math.IsNaN(probability) ||
+					math.IsInf(probability, 0) || probability < 0 || probability > 1 {
+					continue
+				}
+				matches = append(matches, recordedModelPrediction{
+					nodeID: p.NodeID, probability: probability, eventSeq: e.Seq,
+				})
+			}
+		}
+	}
+	if !found {
+		return recordedModelPrediction{}, fmt.Errorf("decision-engine: decision %q not found", decisionID)
+	}
+	if !completed {
+		return recordedModelPrediction{}, fmt.Errorf("decision-engine: decision %q is not completed", decisionID)
+	}
+	if len(matches) == 0 {
+		if nodeID != "" {
+			return recordedModelPrediction{}, fmt.Errorf(
+				"decision-engine: decision %q node %q has no probability from model %q",
+				decisionID, nodeID, name,
+			)
+		}
+		return recordedModelPrediction{}, fmt.Errorf(
+			"decision-engine: decision %q has no probability from model %q",
+			decisionID, name,
+		)
+	}
+	if len(matches) > 1 {
+		return recordedModelPrediction{}, fmt.Errorf(
+			"decision-engine: decision %q used model %q more than once; supply node_id",
+			decisionID, name,
+		)
+	}
+	matches[0].modelVersion, err = h.modelVersionAt(ctx, id, name, matches[0].eventSeq)
+	if err != nil {
+		return recordedModelPrediction{}, err
+	}
+	return matches[0], nil
+}
+
+func modelNumber(v any) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case json.Number:
+		x, err := n.Float64()
+		return x, err == nil
+	default:
+		return 0, false
+	}
+}
+
+func (h *Handler) modelVersionAt(
+	ctx context.Context,
+	id identity.Identity,
+	name string,
+	throughSeq uint64,
+) (int, error) {
+	evs, err := h.log.ReadTenantStream(ctx, id.Org, id.Workspace, events.StreamModels, 0)
+	if err != nil {
+		return 0, err
+	}
+	version := 0
+	for _, e := range evs {
+		if e.Seq > throughSeq {
+			break
+		}
+		if e.Type != events.TypeModelDefined {
+			continue
+		}
+		var p events.ModelDefined
+		if err := json.Unmarshal(e.Payload, &p); err != nil {
+			return 0, fmt.Errorf("decision-engine: decode model definition seq %d: %w", e.Seq, err)
+		}
+		if p.Name == name {
+			version++
+		}
+	}
+	if version == 0 {
+		return 0, fmt.Errorf(
+			"decision-engine: recorded prediction references model %q before its definition",
+			name,
+		)
+	}
+	return version, nil
 }
 
 // SetModelMonitor sets (threshold > 0) or clears (<= 0) the PSI drift threshold a

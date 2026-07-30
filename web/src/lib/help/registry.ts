@@ -609,6 +609,7 @@ export const HELP = new Map<string, PageHelp>([
         'Define a model from a spec.',
         'See each model’s owner and drift status at a glance.',
         'Capture a baseline and set a drift (PSI) monitor per model.',
+        'Reconcile realized outcomes to immutable decision predictions.',
         'Open Discuss on a model’s row to coordinate changes — @mentions notify.'
       ],
       journeys: [
@@ -627,6 +628,15 @@ export const HELP = new Map<string, PageHelp>([
             'Once predictions exist, click Capture baseline — PSI compares later traffic against it.',
             'Set alert PSI > and click Set monitor to alert when drift crosses the threshold.',
             'Read the panel: the PSI value and its label (stable, moderate shift, significant drift), the decile histogram, and ⚠ firing when over threshold.'
+          ]
+        },
+        {
+          name: 'Reconcile ground truth',
+          steps: [
+            'Click Drift on the model’s row and find Reconcile a realized outcome.',
+            'Paste the completed Decision ID and choose the realized binary outcome.',
+            'If that decision used this model more than once, enter the Predict node ID shown in its trace; otherwise leave it blank.',
+            'Click Record actual — the backend derives the exact probability and model version, then refreshes current-version AUC, accuracy, and Brier score.'
           ]
         }
       ]

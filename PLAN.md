@@ -314,13 +314,16 @@ delivered, by theme:
 - **Governance & change control:** RBAC (viewer→operator→editor→approver→admin); **four-eyes
   maker-checker** on flow deploys, model versions, and operational policy versions, with pre-approval
   binding + environment-scope gating; immutable AI-agent version pins in governed flows; flow
-  **assertions + promotion gates**; **shadow deploys**; instant rollback; comment threads + @-mention
-  notifications inbox on every reviewable subject.
+  **assertions + promotion gates**; candidate-faithful **shadow deploys** with independently resolved
+  dependencies, policy-aware matching, and homogeneous evidence cohorts; instant rollback; comment
+  threads + @-mention notifications inbox on every reviewable subject.
 - **Enterprise identity:** OIDC SSO (Google, Cognito, generic) + **SAML 2.0**; **SCIM** user/group
   provisioning + deprovisioning honored by live sessions.
 - **Decisioning depth:** decision-table hit policies + aggregators; **ML model hosting**
   (logistic/GBM/expression/external) with a **Predict node**; an external-decision compatibility API;
-  champion/challenger + monitors (**PSI drift**, covariate drift, actuals reconciliation) + SLOs.
+  champion/challenger + monitors (**PSI drift**, covariate drift, decision-linked
+  **actuals reconciliation** with engine-derived probability/version and homogeneous
+  model-version cohorts) + SLOs.
 - **Model-risk & governance packaging:** **SR 11-7 / SS1/23 model inventory** (`mrm/`) across flows,
   models, and agents; AI/ML governance — agent registry/versioning, offline eval, guardrails, cost
   attribution; structured **reason codes** end-to-end.

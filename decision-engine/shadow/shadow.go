@@ -25,14 +25,38 @@ const Collection = "decision_shadow"
 // sampleCap bounds how many diverging decision ids a report retains.
 const sampleCap = 10
 
-// EnvShadow is the comparison summary for one environment's shadow version.
+// ComparisonSample explains one non-matching or errored comparison without
+// retaining either output's subject values. ChangedFields contains top-level
+// output keys only; the linked live decision remains the value-bearing record.
+type ComparisonSample struct {
+	DecisionID        string   `json:"decision_id"`
+	LiveStatus        string   `json:"live_status"`
+	ShadowStatus      string   `json:"shadow_status,omitempty"`
+	LiveDisposition   string   `json:"live_disposition,omitempty"`
+	ShadowDisposition string   `json:"shadow_disposition,omitempty"`
+	LiveCode          string   `json:"live_code,omitempty"`
+	ShadowCode        string   `json:"shadow_code,omitempty"`
+	LiveReason        string   `json:"live_reason,omitempty"`
+	ShadowReason      string   `json:"shadow_reason,omitempty"`
+	ChangedFields     []string `json:"changed_fields,omitempty"`
+	Error             string   `json:"error,omitempty"`
+}
+
+// EnvShadow is one homogeneous comparison cohort. Changing the live version,
+// candidate version, comparison basis, or exact policy selection starts a new
+// cohort so the aggregate never blends unlike deployment evidence.
 type EnvShadow struct {
-	ShadowVersion  int      `json:"shadow_version"`
-	Total          int      `json:"total"`
-	Matched        int      `json:"matched"`
-	Diverged       int      `json:"diverged"`
-	Errored        int      `json:"errored"`
-	SampleDiverged []string `json:"sample_diverged,omitempty"` // live decision ids
+	LiveVersion    int                     `json:"live_version"`
+	ShadowVersion  int                     `json:"shadow_version"`
+	MatchBasis     events.ShadowMatchBasis `json:"match_basis"`
+	PolicyID       string                  `json:"policy_id,omitempty"`
+	PolicyVersion  int                     `json:"policy_version,omitempty"`
+	Total          int                     `json:"total"`
+	Matched        int                     `json:"matched"`
+	Diverged       int                     `json:"diverged"`
+	Errored        int                     `json:"errored"`
+	SampleDiverged []string                `json:"sample_diverged,omitempty"` // compatibility: diverging live decision ids
+	Samples        []ComparisonSample      `json:"samples,omitempty"`
 }
 
 // Report is the materialized shadow comparison for one flow, by environment.
@@ -75,14 +99,24 @@ func (Projector) Apply(ctx context.Context, e eventlog.Envelope, s store.Store) 
 		rep.ByEnv = map[string]EnvShadow{}
 	}
 	env := rep.ByEnv[p.Environment]
-	// A new shadow target restarts the comparison for that environment.
-	if env.ShadowVersion != p.ShadowVersion {
-		env = EnvShadow{ShadowVersion: p.ShadowVersion}
+	// Any cohort dimension changing restarts the evidence for that environment.
+	// Most importantly, deploying a new champion or approving a new policy must
+	// not leave the old comparison ratio looking applicable.
+	if env.LiveVersion != p.LiveVersion ||
+		env.ShadowVersion != p.ShadowVersion ||
+		env.MatchBasis != p.MatchBasis ||
+		env.PolicyID != p.PolicyID ||
+		env.PolicyVersion != p.PolicyVersion {
+		env = EnvShadow{
+			LiveVersion: p.LiveVersion, ShadowVersion: p.ShadowVersion,
+			MatchBasis: p.MatchBasis, PolicyID: p.PolicyID, PolicyVersion: p.PolicyVersion,
+		}
 	}
 	env.Total++
 	switch {
 	case p.ShadowError != "":
 		env.Errored++
+		env.addSample(p)
 	case p.Matched:
 		env.Matched++
 	default:
@@ -90,10 +124,25 @@ func (Projector) Apply(ctx context.Context, e eventlog.Envelope, s store.Store) 
 		if len(env.SampleDiverged) < sampleCap {
 			env.SampleDiverged = append(env.SampleDiverged, p.DecisionID)
 		}
+		env.addSample(p)
 	}
 	rep.ByEnv[p.Environment] = env
 	rep.UpdatedAt = e.Time
 	return store.PutDoc(ctx, s, Collection, key, rep)
+}
+
+func (s *EnvShadow) addSample(p events.ShadowEvaluated) {
+	if len(s.Samples) >= sampleCap {
+		return
+	}
+	s.Samples = append(s.Samples, ComparisonSample{
+		DecisionID: p.DecisionID,
+		LiveStatus: p.LiveStatus, ShadowStatus: p.ShadowStatus,
+		LiveDisposition: p.LiveDisposition, ShadowDisposition: p.ShadowDisposition,
+		LiveCode: p.LiveCode, ShadowCode: p.ShadowCode,
+		LiveReason: p.LiveReason, ShadowReason: p.ShadowReason,
+		ChangedFields: p.ChangedFields, Error: p.ShadowError,
+	})
 }
 
 // Read returns the shadow report for a flow (false when none yet).

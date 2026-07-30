@@ -130,6 +130,24 @@ func TestStandingConsentPermitsPull(t *testing.T) {
 	}
 }
 
+func TestPreviewDoesNotPersistAssertedConsent(t *testing.T) {
+	e := consentTestSetup(t)
+
+	_, err := e.dh.Preview(e.ctx, e.id, "credit", "sandbox", map[string]any{
+		"amount":  1000,
+		"consent": map[string]any{"purposes": []string{"credit_underwriting"}, "basis": "consent"},
+	}, applicant())
+	if err == nil || !strings.Contains(err.Error(), "consent") {
+		t.Fatalf("record-free preview should require standing consent, got %v", err)
+	}
+	if len(e.gate.recorded) != 0 {
+		t.Fatalf("preview persisted consent despite its record-free contract: %v", e.gate.recorded)
+	}
+	if e.conn.fetched != 0 {
+		t.Fatalf("preview fetched the bureau without standing consent: %d", e.conn.fetched)
+	}
+}
+
 func TestConsentRequiredButNoSubjectFails(t *testing.T) {
 	e := consentTestSetup(t)
 

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { test, expect, type Page } from '@playwright/test';
+import { api } from './helpers';
 
 // Realism regressions from the demo deep-audit: interactions a prospect tries
 // must behave like the real product, not silently snap back or hide evidence.
@@ -101,4 +102,56 @@ test('four-eyes approval collects its reason inline', async ({ page }) => {
 
   await expect(requests.getByText('approved by', { exact: false }).first()).toBeVisible();
   await expect(requests.getByText('Backtest green; shipping.').first()).toBeVisible();
+});
+
+test('shadow evidence explains its cohort and real candidate effects', async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('intraktible-persona', 'builder'));
+  await openFlow(page, 'payout-risk');
+  await page.getByRole('button', { name: 'Deploy & versions' }).click();
+  const panel = page.getByTestId('shadow-panel');
+  await panel.locator('summary').click();
+
+  await expect(panel).toContainText('candidate’s own connectors, pinned agents, and models');
+  const cohort = page.getByTestId('shadow-cohort-staging');
+  await expect(cohort).toBeVisible();
+  await expect(cohort).toContainText(/live v\d+ vs candidate v1/);
+  await expect(cohort).toContainText('same policy outcome');
+});
+
+test('model actuals derive probability from a real seeded decision', async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('intraktible-persona', 'builder'));
+  await page.goto('models');
+  const lineage = await api(page, async () => {
+    const listed = (await fetch('/v1/decisions?limit=500').then((r) => r.json())) as {
+      decisions: { decision_id: string }[];
+    };
+    for (const summary of listed.decisions) {
+      const decision = (await fetch(`/v1/decisions/${summary.decision_id}`).then((r) =>
+        r.json()
+      )) as {
+        nodes?: { node_id: string; type: string; output?: Record<string, unknown> }[];
+      };
+      for (const node of decision.nodes ?? []) {
+        if (node.type !== 'predict' || !node.output) continue;
+        for (const raw of Object.values(node.output)) {
+          const prediction = raw as { model?: string; probability?: number };
+          if (prediction.model && typeof prediction.probability === 'number') {
+            return {
+              decisionID: summary.decision_id,
+              nodeID: node.node_id,
+              model: prediction.model
+            };
+          }
+        }
+      }
+    }
+    throw new Error('seed has no decision-linked probabilistic prediction');
+  });
+
+  const row = page.locator('tbody tr').filter({ hasText: lineage.model }).first();
+  await row.getByRole('button', { name: 'Drift' }).click();
+  await page.getByLabel('actual decision id').fill(lineage.decisionID);
+  await page.getByLabel('actual predict node id').fill(lineage.nodeID);
+  await page.getByRole('button', { name: 'Record actual' }).click();
+  await expect(page.getByTestId('model-performance')).toContainText('recorded actual');
 });

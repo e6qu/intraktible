@@ -7,7 +7,10 @@ test.beforeEach(async ({ page }) => {
   await page.context().request.post('/v1/login', { data: { api_key: KEY } });
 });
 
-test('defines a predictive model from the registry page', async ({ page }) => {
+test('defines a predictive model and reconciles decision-linked ground truth', async ({
+  page,
+  request
+}) => {
   await page.goto('/models');
   await expect(page.getByRole('heading', { name: 'Models' })).toBeVisible();
 
@@ -26,16 +29,48 @@ test('defines a predictive model from the registry page', async ({ page }) => {
   await expect(driftRow).toBeVisible();
   await expect(driftRow).toContainText('No predictions recorded yet');
 
-  // Ground truth can arrive before this deployment has produced an in-platform
-  // prediction. Recording it through the real UI must preserve it and immediately
-  // turn the previously read-only performance panel into measured evidence.
-  await page.getByLabel('actual predicted probability').fill('0.9');
+  // Produce one real prediction through the flow engine. Ground truth must link to
+  // this immutable trace; the UI never asks the operator to retype a probability.
+  const suffix = Math.random().toString(36).slice(2, 8);
+  const flowRes = await request.post('/v1/flows', {
+    headers: { 'X-Api-Key': KEY },
+    data: { slug: `actual-${suffix}`, name: 'Actual lineage' }
+  });
+  expect(flowRes.ok()).toBeTruthy();
+  const { flow_id } = await flowRes.json();
+  const published = await request.post(`/v1/flows/${flow_id}/versions`, {
+    headers: { 'X-Api-Key': KEY },
+    data: {
+      graph: {
+        nodes: [
+          { id: 'in', type: 'input' },
+          { id: 'predict-risk', type: 'predict', config: { model: name, output: 'risk' } },
+          { id: 'out', type: 'output' }
+        ],
+        edges: [
+          { from: 'in', to: 'predict-risk' },
+          { from: 'predict-risk', to: 'out' }
+        ]
+      }
+    }
+  });
+  expect(published.ok()).toBeTruthy();
+  const decided = await request.post(`/v1/flows/actual-${suffix}/sandbox/decide`, {
+    headers: { 'X-Api-Key': KEY },
+    data: { data: { fico: 780 } }
+  });
+  expect(decided.ok()).toBeTruthy();
+  const { decision_id } = await decided.json();
+
   await page.getByLabel('actual outcome').selectOption('1');
-  await page.getByLabel('actual decision id').fill('decision-lineage-1');
-  await page.getByRole('button', { name: 'Record actual' }).click();
-  await expect(page.getByTestId('model-performance')).toContainText(
-    'Live performance (from 1 recorded actual)'
+  await page.getByLabel('actual decision id').fill(decision_id);
+  const outcomeRequest = page.waitForRequest(
+    (req) => req.url().endsWith(`/v1/models/${name}/outcomes`) && req.method() === 'POST'
   );
+  await page.getByRole('button', { name: 'Record actual' }).click();
+  expect((await outcomeRequest).postDataJSON()).toEqual({ decision_id, label: 1 });
+  await expect(page.getByTestId('model-performance')).toContainText('model v1');
+  await expect(page.getByTestId('model-performance')).toContainText('from 1 recorded actual');
 
   // The author can request review but cannot approve their own model.
   await row.getByRole('button', { name: 'Governance' }).click();

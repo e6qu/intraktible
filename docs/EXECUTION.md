@@ -79,7 +79,9 @@ Two execution modes share this engine:
   audit log. The flow builder's test run records to the **sandbox** environment so you
   can inspect its trace.
 - **Preview** — a dry run (`"preview": true` on the decide call, or the builder's
-  *Preview* toggle) that returns the full result but records nothing.
+  *Preview* toggle) that returns the full result but records nothing. In particular,
+  a consent block in preview input is not written to the consent ledger; a connector
+  that requires consent must use consent already recorded for the referenced subject.
 
 ## Human-in-the-loop
 
