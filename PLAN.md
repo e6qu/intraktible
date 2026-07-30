@@ -337,6 +337,11 @@ delivered, by theme:
   guardrail analysis, and safe promotion; durable decision/backtest population jobs with immutable
   manifests, per-item idempotency, cross-replica worker recovery, full lifecycle control, partial
   failure, downloadable results, and retention.
+- **Enterprise case operations:** immutable case-type versions with dynamic state/disposition/evidence
+  contracts; ordered skills/capacity/jurisdiction/priority/age/conflict routing with atomic claims,
+  rebalance, and restart-safe SLA queue escalation; search, saved views, duplicate review, durable bulk
+  manifests, independent QA/validated outcomes, workload/SLA/quality analytics, governed attachment
+  metadata and audited capability access, notification/webhook operations, and PII/lifecycle-aware UI.
 - **Model-risk & governance packaging:** **SR 11-7 / SS1/23 model inventory** (`mrm/`) across flows,
   models, and agents; AI/ML governance — agent registry/versioning, offline eval, guardrails, cost
   attribution; structured **reason codes** end-to-end.
@@ -550,6 +555,35 @@ the UI never labels an underpowered or invalid experiment a winner.
 
 **Outcome:** Case Manager becomes a configurable operational workbench for high-volume review teams,
 not only a durable generic review queue.
+
+**Implemented in the E3 branch:** immutable published definitions pin typed fields,
+dynamic state transitions, dispositions/reasons, priorities, business calendars,
+evidence requirements, PII read policies, and role layouts to every governed case.
+Role-editable fields use a validated, concurrency-safe command/event/projection path
+under that exact pin rather than a presentation-only layout;
+legacy cases retain explicit version `0`. Durable ordered queue and reviewer
+definitions drive a pure attribute/skill/capacity/jurisdiction/priority/age/conflict
+router. Initial claims, takeover/rebalance, competing terminal actions, and
+SLA-triggered queue escalation use permanent event-log claims; each scheduler tick
+reconciles already-recorded breaches so restart cannot strand the move.
+
+The operational surface includes full-text and structured filters, actor-owned saved
+views, opaque duplicate candidates, bounded idempotent bulk manifests for assignment,
+status, priority, and disposition, queue rebalance, workload/capacity, first-action,
+resolution, ageing, SLA, routing, and QA analytics, audit export, case notifications,
+and durable webhook attempt/retry/dead-letter rounds. Evidence requirements gate
+outcomes. Typed links and immutable attachment hash/metadata retain lawful-basis,
+retention, hold, and erasure state without embedding binary bytes or adding a storage
+dependency. Ordinary reads redact storage capabilities; a purpose-bound operator
+command records access before returning the approved external pointer.
+
+Independent second review keeps required-review cases open, enforces a different
+actor, records agreement/disagreement/override and feedback, and exposes only
+agreement- or override-backed validated outcomes. The OpenAPI document, Go and
+TypeScript SDKs, real UI administration/workbench (including typed role-authorized
+field editing), seeded real-Wasm history,
+notifications, scheduler, replay tests, and browser specifications share these
+contracts.
 
 **Scope:**
 

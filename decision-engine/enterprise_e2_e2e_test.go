@@ -37,11 +37,16 @@ func TestExperimentOutcomeAndPopulationHTTPJourney(t *testing.T) {
 	log, st := testutil.NewLogStore(t)
 	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "maker"}
 	clock := time.Date(2026, 7, 30, 10, 0, 0, 0, time.UTC)
-	flowHandler := command.NewHandler(log)
-	experimentHandler := experiments.NewHandler(log, st)
-	decideHandler := command.NewDecideHandler(log, st, command.WithExperiments(experimentHandler))
+	flowHandler := command.NewHandler(log).WithNow(func() time.Time { return clock })
+	experimentHandler := experiments.NewHandler(log, st).WithNow(func() time.Time { return clock })
+	decideHandler := command.NewDecideHandler(
+		log, st,
+		command.WithNow(func() time.Time { return clock }),
+		command.WithExperiments(experimentHandler),
+	)
 	outcomeHandler := outcomes.NewHandler(log, st).WithNow(func() time.Time { return clock })
-	populationHandler := population.NewHandler(log, st, decideHandler, experimentHandler)
+	populationHandler := population.NewHandler(log, st, decideHandler, experimentHandler).
+		WithNow(func() time.Time { return clock })
 	engine := engineservice.New(
 		flowHandler, decideHandler, preapproval.NewHandler(log), st,
 	)
@@ -86,8 +91,30 @@ func TestExperimentOutcomeAndPopulationHTTPJourney(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var (
+		projectedExperiment intraktible.Experiment
+		experimentReadErr   error
+	)
+	if !testutil.Eventually(t, func() bool {
+		projectedExperiment, experimentReadErr = sdk.GetExperiment(ctx, experimentID)
+		return experimentReadErr == nil
+	}) {
+		t.Fatalf(
+			"created experiment was not projected before its transition: experiment=%+v read_err=%v",
+			projectedExperiment, experimentReadErr,
+		)
+	}
 	if err := sdk.TransitionExperiment(ctx, experimentID, intraktible.ExperimentStart, ""); err != nil {
 		t.Fatal(err)
+	}
+	if !testutil.EventuallyWithin(t, 3*time.Second, func() bool {
+		projectedExperiment, experimentReadErr = sdk.GetExperiment(ctx, experimentID)
+		return experimentReadErr == nil && projectedExperiment.State == "running"
+	}) {
+		t.Fatalf(
+			"started experiment was not projected before decisions: experiment=%+v read_err=%v",
+			projectedExperiment, experimentReadErr,
+		)
 	}
 
 	first, err := sdk.Decide(ctx, "offers", "sandbox", intraktible.DecideRequest{
@@ -126,20 +153,41 @@ func TestExperimentOutcomeAndPopulationHTTPJourney(t *testing.T) {
 	}, "outcome-correction-1"); err != nil {
 		t.Fatal(err)
 	}
-	recorded, err := sdk.ListOutcomes(ctx, first.DecisionID, "converted")
-	if err != nil {
-		t.Fatal(err)
+	var (
+		recorded    []intraktible.BusinessOutcome
+		recordedErr error
+	)
+	if !testutil.EventuallyWithin(t, 3*time.Second, func() bool {
+		recorded, recordedErr = sdk.ListOutcomes(ctx, first.DecisionID, "converted")
+		return recordedErr == nil && len(recorded) == 1 && len(recorded[0].History) == 2
+	}) {
+		t.Fatalf("corrected outcome was not projected: outcomes=%+v read_err=%v", recorded, recordedErr)
 	}
-	if len(recorded) != 1 || len(recorded[0].History) != 2 ||
-		!strings.Contains(string(recorded[0].Treatment), experimentID) {
+	if !strings.Contains(string(recorded[0].Treatment), experimentID) {
 		t.Fatalf("outcome lost treatment or correction lineage: %+v", recorded)
 	}
-	report, err := sdk.ExperimentAnalysis(ctx, experimentID)
-	if err != nil {
-		t.Fatal(err)
+	var (
+		report    intraktible.ExperimentAnalysis
+		reportErr error
+	)
+	if !testutil.EventuallyWithin(t, 3*time.Second, func() bool {
+		report, reportErr = sdk.ExperimentAnalysis(ctx, experimentID)
+		if reportErr != nil {
+			return false
+		}
+		exposures, outcomes := 0, 0
+		for _, count := range report.ExposureCounts {
+			exposures += count
+		}
+		for _, arm := range report.Primary.Arms {
+			outcomes += arm.Count
+		}
+		return exposures == 2 && outcomes == 1 && report.Primary.LabelVersion == "conversion-v2"
+	}) {
+		t.Fatalf("analysis did not observe the exact corrected cohort: report=%+v read_err=%v", report, reportErr)
 	}
-	if report.Status == "winner" {
-		t.Fatalf("underpowered cohort was declared a winner: %+v", report)
+	if report.Status != "underpowered" {
+		t.Fatalf("single-outcome cohort was not underpowered: %+v", report)
 	}
 
 	jobID, err := sdk.CreatePopulationJob(ctx, intraktible.PopulationJobCreate{

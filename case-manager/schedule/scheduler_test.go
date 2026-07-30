@@ -209,3 +209,71 @@ func TestRetryableBreachDeliverySurvivesRestartWithoutDuplicatingSuccess(t *test
 		t.Fatalf("successful escalation was delivered again: attempts=%d", attempts)
 	}
 }
+
+func TestRetryableDeliveryDeadLettersAndExplicitRetryStartsNewRound(t *testing.T) {
+	ctx := context.Background()
+	log, err := eventlog.OpenWAL(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = log.Close() }()
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "operator"}
+	handler := command.NewHandler(log)
+	caseID, _, err := handler.RequestReview(ctx, id, domain.RequestReview{
+		CompanyName: "Acme", CaseType: "aml", SLADays: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rebuild := func() store.Store {
+		st := store.NewMemory()
+		if err := projection.New(log, st, cases.Projector{}).Start(ctx); err != nil {
+			t.Fatal(err)
+		}
+		return st
+	}
+	now := time.Now().UTC().AddDate(0, 0, 10)
+	outcome := DeliveryRetry
+	scheduler := (&Scheduler{
+		store: rebuild(), cmd: handler, now: func() time.Time { return now },
+	}).WithNotify(func(_ context.Context, _ identity.Identity, _ string) (DeliveryOutcome, error) {
+		return outcome, nil
+	})
+	for attempt := 1; attempt <= maxDeliveryAttempts; attempt++ {
+		summary, err := scheduler.Tick(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if attempt < maxDeliveryAttempts && summary.Retrying != 1 {
+			t.Fatalf("attempt %d summary = %+v, want retrying", attempt, summary)
+		}
+		if attempt == maxDeliveryAttempts && summary.PermanentFailures != 1 {
+			t.Fatalf("dead-letter summary = %+v", summary)
+		}
+	}
+	if _, err := handler.RetrySLAEscalation(ctx, id, caseID, "webhook endpoint repaired"); err != nil {
+		t.Fatal(err)
+	}
+	outcome = DeliverySucceeded
+	scheduler.store = rebuild()
+	summary, err := scheduler.Tick(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.Delivered != 1 {
+		t.Fatalf("explicit retry delivery summary = %+v", summary)
+	}
+	projected := rebuild()
+	view, found, err := cases.Read(ctx, projected, id, caseID)
+	if err != nil || !found {
+		t.Fatalf("read case: found=%v err=%v", found, err)
+	}
+	if view.SLAEscalationStatus != events.SLAEscalationDelivered ||
+		view.SLAEscalationRound != 1 || len(view.SLADeliveryAttempts) != maxDeliveryAttempts+1 {
+		t.Fatalf("replayed SLA attempts = %+v", view)
+	}
+	last := view.SLADeliveryAttempts[len(view.SLADeliveryAttempts)-1]
+	if last.Round != 1 || last.Attempt != 1 || last.Outcome != events.SLADeliveryDelivered {
+		t.Fatalf("new-round attempt = %+v", last)
+	}
+}

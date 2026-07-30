@@ -332,6 +332,7 @@ func requiredRole(method, path string) auth.Role {
 	if path == "/v1/audit" || strings.HasPrefix(path, "/v1/audit/") ||
 		strings.HasPrefix(path, "/v1/api-keys") || strings.HasPrefix(path, "/v1/erasure") ||
 		strings.HasPrefix(path, "/v1/mrm") || strings.HasPrefix(path, "/v1/fairlending") ||
+		strings.HasPrefix(path, "/v1/case-reviewers") ||
 		strings.Contains(path, "/grants") {
 		// Managing per-flow access grants (and listing who holds them) is an admin
 		// action regardless of method — checked before the general read rule.
@@ -384,6 +385,11 @@ func requiredRole(method, path string) auth.Role {
 	if strings.HasPrefix(path, "/v1/notifications") {
 		return auth.RoleViewer
 	}
+	// Saved case views are personal presentation preferences, not operational
+	// mutations; any authenticated viewer may manage their own.
+	if strings.HasPrefix(path, "/v1/case-views") {
+		return auth.RoleViewer
+	}
 	switch {
 	case strings.Contains(path, "/deployments"), // a direct deploy (non-prod)
 		strings.HasSuffix(path, "/promote"),          // promote a live version up the chain
@@ -411,6 +417,8 @@ func isAuthoringPath(path string) bool {
 		path == "/v1/policies" || // create a policy
 		path == "/v1/preapprovals" || // grant a pre-approval (material)
 		path == "/v1/experiments" || // define a governed cohort
+		path == "/v1/case-types" || // publish a governed case definition
+		strings.HasPrefix(path, "/v1/case-queues") || // configure operational routing
 		(strings.HasPrefix(path, "/v1/experiments/") &&
 			(strings.HasSuffix(path, "/start") || !strings.Contains(strings.TrimPrefix(path, "/v1/experiments/"), "/"))) || // update or request launch
 		strings.HasSuffix(path, "/preapprove/batch") || // bulk-grant pre-approvals from a run

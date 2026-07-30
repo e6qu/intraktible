@@ -97,3 +97,101 @@ func TestTaskNotificationsFromCaseLifecycle(t *testing.T) {
 		t.Fatalf("a non-reviewer must not see the queue: %+v", no)
 	}
 }
+
+func TestGovernedTerminalStatusResolvesTaskNotifications(t *testing.T) {
+	ctx := context.Background()
+	log, _ := testutil.NewLogStore(t)
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "operator"}
+	now := time.Now().UTC()
+	for _, item := range []struct {
+		typ     string
+		payload any
+	}{
+		{cmevents.TypeReviewRequested, cmevents.ReviewRequested{
+			CaseID: "case_dynamic", CompanyName: "Acme", CaseType: "edd", CaseTypeVersion: 3,
+		}},
+		{cmevents.TypeCaseAssigned, cmevents.CaseAssigned{CaseID: "case_dynamic", Assignee: "alice"}},
+		{cmevents.TypeCaseStatusChanged, cmevents.CaseStatusChanged{
+			CaseID: "case_dynamic", Status: "declined", Terminal: true,
+		}},
+	} {
+		if _, err := eventlog.AppendJSON(
+			ctx, log, id.Org, id.Workspace, id.Actor,
+			cmevents.StreamCases, item.typ, now, item.payload,
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+	st := store.NewMemory()
+	if err := projection.New(log, st, notifications.Projector{}).Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, access := range []struct {
+		actor string
+		value notifications.Access
+	}{
+		{"alice", notifications.Access{}},
+		{"reviewer", notifications.Access{ReviewTasks: true}},
+	} {
+		got, err := notifications.List(ctx, st, identity.Identity{
+			Org: id.Org, Workspace: id.Workspace, Actor: access.actor,
+		}, access.value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 0 {
+			t.Fatalf("%s still sees resolved governed task: %+v", access.actor, got)
+		}
+	}
+}
+
+func TestResolvedCaseIgnoresLateAssignmentAndSLAEvents(t *testing.T) {
+	ctx := context.Background()
+	log, _ := testutil.NewLogStore(t)
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "operator"}
+	now := time.Now().UTC()
+	for _, item := range []struct {
+		typ     string
+		payload any
+	}{
+		{cmevents.TypeReviewRequested, cmevents.ReviewRequested{
+			CaseID: "case_closed", CompanyName: "Acme", CaseType: "edd",
+		}},
+		{cmevents.TypeCaseStatusChanged, cmevents.CaseStatusChanged{
+			CaseID: "case_closed", Status: "completed", Terminal: true,
+		}},
+		{cmevents.TypeCaseAssigned, cmevents.CaseAssigned{
+			CaseID: "case_closed", Assignee: "alice",
+		}},
+		{cmevents.TypeCaseSLAReminder, cmevents.CaseSLAReminder{CaseID: "case_closed"}},
+		{cmevents.TypeCaseSLABreached, cmevents.CaseSLABreached{CaseID: "case_closed"}},
+	} {
+		if _, err := eventlog.AppendJSON(
+			ctx, log, id.Org, id.Workspace, id.Actor,
+			cmevents.StreamCases, item.typ, now, item.payload,
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+	st := store.NewMemory()
+	if err := projection.New(log, st, notifications.Projector{}).Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, access := range []struct {
+		actor string
+		value notifications.Access
+	}{
+		{"alice", notifications.Access{}},
+		{"reviewer", notifications.Access{ReviewTasks: true}},
+	} {
+		got, err := notifications.List(ctx, st, identity.Identity{
+			Org: id.Org, Workspace: id.Workspace, Actor: access.actor,
+		}, access.value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 0 {
+			t.Fatalf("%s sees a late task after closure: %+v", access.actor, got)
+		}
+	}
+}

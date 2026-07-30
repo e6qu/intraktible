@@ -5,7 +5,8 @@
 Open-source MVPs of a commercial **Agentic Decision Platform**, in four components:
 
 - **decision-engine/** — drag-and-drop builder + execution runtime for versioned decision flows
-- **case-manager/** — human-review queues & dashboards for escalated decisions
+- **case-manager/** — governed case types/fields, atomic routing/queues, bulk review, evidence/attachments,
+  independent QA, SLA delivery operations, analytics, and exact suspended-decision resume
 - **context-layer/** — entities/events/features data model + connectors
 - **agent-manager/** — configure/run/monitor LLM task-agents inside flows
 

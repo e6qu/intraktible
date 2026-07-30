@@ -22,7 +22,6 @@ import type {
   Role,
   Scope,
   Environment,
-  CaseStatus,
   SLAState,
   AgentRunStatus,
   ModelKind,
@@ -1824,19 +1823,205 @@ export interface Case {
   case_id: string;
   company_name: string;
   case_type: string;
-  status: CaseStatus;
+  case_type_version: number;
+  status: string;
+  priority: 'low' | 'normal' | 'high' | 'critical';
+  queue?: string;
+  routing_explanation?: string;
   assignee?: string;
+  jurisdiction?: string;
+  subject?: string;
+  subject_governance?: {
+    subject: string;
+    retained: boolean;
+    retain_until?: string;
+    legal_hold?: boolean;
+    erased?: boolean;
+  };
   sla_days: number;
+  deadline?: string;
   days_left: number;
   sla_state?: SLAState;
   sla_breached?: boolean;
   sla_escalation_status?: 'pending' | 'delivered' | 'no_channel' | 'permanent_failure';
+  sla_escalation_round?: number;
+  sla_delivery_attempts: Array<{
+    round: number;
+    attempt: number;
+    outcome: 'delivered' | 'retryable' | 'no_channel' | 'permanent_failure';
+    at: string;
+    actor: string;
+  }>;
   source_decision_id?: string;
   context?: unknown;
+  disposition?: string;
+  reason_code?: string;
+  disposition_note?: string;
+  disposition_override?: boolean;
+  evidence: CaseEvidence[];
+  attachments: CaseAttachment[];
+  qa?: CaseQA;
   notes: CaseNote[];
   audit: CaseAudit[];
   created_at: string;
+  first_action_at?: string;
+  resolved_at?: string;
   updated_at: string;
+}
+
+export interface CaseEvidence {
+  evidence_id: string;
+  requirement?: string;
+  kind: string;
+  subject_type: string;
+  subject_id: string;
+  label: string;
+  content_hash?: string;
+}
+
+export interface CaseAttachment {
+  attachment_id: string;
+  name: string;
+  media_type: string;
+  size: number;
+  sha256: string;
+  storage_ref?: string;
+  requirement?: string;
+  subject?: string;
+  lawful_basis?: string;
+  retain_until?: string;
+  legal_hold?: boolean;
+  erased?: boolean;
+  access_count: number;
+}
+
+export interface CaseQA {
+  sample_id: string;
+  primary_actor: string;
+  reviewer: string;
+  status: string;
+  disposition?: string;
+  reason_code?: string;
+  agreement?: boolean;
+  override?: boolean;
+  validated?: boolean;
+  disputed?: boolean;
+  effective_disposition?: string;
+  effective_reason_code?: string;
+  note?: string;
+  feedback?: string;
+}
+
+export interface CaseFieldDefinition {
+  key: string;
+  label: string;
+  kind: 'string' | 'number' | 'boolean' | 'object' | 'array';
+  required?: boolean;
+  pii?: boolean;
+  read_by?: string[];
+}
+
+export interface CaseTypeDefinition {
+  key: string;
+  name: string;
+  description?: string;
+  initial_state: string;
+  fields: CaseFieldDefinition[];
+  transitions: Array<{ from: string; to: string; roles?: string[] }>;
+  dispositions: Array<{
+    key: string;
+    label: string;
+    reason_codes: string[];
+    terminal_state: string;
+    requires_second_review?: boolean;
+  }>;
+  priorities: Array<'low' | 'normal' | 'high' | 'critical'>;
+  service_calendar: {
+    timezone: string;
+    weekdays: number[];
+    start_hour: number;
+    end_hour: number;
+    holidays?: string[];
+    sla_hours: number;
+    escalation_hours?: number;
+  };
+  evidence_requirements: Array<{
+    key: string;
+    label: string;
+    kinds: string[];
+    required?: boolean;
+  }>;
+  layouts: Array<{ role: string; sections: string[]; editable?: string[] }>;
+}
+
+export interface CaseTypeView {
+  key: string;
+  version: number;
+  definition: CaseTypeDefinition;
+  published_by: string;
+  published_at: string;
+}
+
+export interface CaseQueueDefinition {
+  key: string;
+  name: string;
+  order?: number;
+  case_types?: string[];
+  priorities?: Array<'low' | 'normal' | 'high' | 'critical'>;
+  jurisdictions?: string[];
+  required_skills?: string[];
+  capacity: number;
+  escalation_queue?: string;
+  min_age_hours?: number;
+  max_age_hours?: number;
+  conflict_context_keys?: string[];
+  context_equals?: Record<string, string>;
+}
+
+export interface CaseReviewerProfile {
+  actor: string;
+  skills: string[];
+  jurisdictions: string[];
+  capacity: number;
+  active: boolean;
+  conflicts?: string[];
+}
+
+export interface CaseAnalytics {
+  total: number;
+  open: number;
+  completed: number;
+  unassigned: number;
+  unrouted: number;
+  due_soon: number;
+  overdue: number;
+  sla_breached: number;
+  average_first_action_seconds: number;
+  average_resolution_seconds: number;
+  ageing: Record<string, number>;
+  by_status: Record<string, number>;
+  by_priority: Record<string, number>;
+  workloads: Array<{ actor: string; open: number; capacity: number; utilization: number }>;
+  queues: Array<{
+    queue: string;
+    open: number;
+    capacity: number;
+    utilization: number;
+    oldest_age_hours: number;
+  }>;
+  qa_selected: number;
+  qa_completed: number;
+  qa_disagreements: number;
+  qa_overrides: number;
+}
+
+export interface CaseBulkResult {
+  batch_id: string;
+  operation: 'assign' | 'status' | 'priority' | 'disposition';
+  status: string;
+  succeeded: number;
+  failed: number;
+  items: Array<{ case_id: string; success: boolean; error?: string }>;
 }
 
 export interface CaseSummary {
@@ -1851,6 +2036,26 @@ export interface CaseFilter {
   status?: string;
   type?: string;
   assignee?: string;
+  queue?: string;
+  priority?: string;
+  jurisdiction?: string;
+  subject?: string;
+  q?: string;
+  sla_state?: string;
+}
+
+export interface CaseSavedView {
+  view_id: string;
+  name: string;
+  owner: string;
+  query: CaseFilter;
+  updated_at: string;
+}
+
+export interface CaseDuplicateGroup {
+  key: string;
+  reason: string;
+  case_ids: string[];
 }
 
 function caseQuery(filter: CaseFilter): string {
@@ -1858,6 +2063,12 @@ function caseQuery(filter: CaseFilter): string {
   if (filter.status) q.set('status', filter.status);
   if (filter.type) q.set('type', filter.type);
   if (filter.assignee) q.set('assignee', filter.assignee);
+  if (filter.queue) q.set('queue', filter.queue);
+  if (filter.priority) q.set('priority', filter.priority);
+  if (filter.jurisdiction) q.set('jurisdiction', filter.jurisdiction);
+  if (filter.subject) q.set('subject', filter.subject);
+  if (filter.q) q.set('q', filter.q);
+  if (filter.sla_state) q.set('sla_state', filter.sla_state);
   const qs = q.toString();
   return qs ? '?' + qs : '';
 }
@@ -2978,7 +3189,16 @@ export async function getCase(
 
 export async function requestReview(
   key: string,
-  body: { company_name: string; case_type: string; sla_days: number },
+  body: {
+    company_name: string;
+    case_type: string;
+    priority?: string;
+    jurisdiction?: string;
+    subject?: string;
+    sla_days?: number;
+    context?: Record<string, unknown>;
+    source_decision_id?: string;
+  },
   fetcher: typeof fetch = recordingFetch
 ): Promise<{ case_id: string }> {
   const res = await fetcher('/v1/cases', {
@@ -2997,15 +3217,16 @@ async function caseAction(
   caseID: string,
   action: string,
   body: Record<string, unknown>,
-  fetcher: typeof fetch
+  fetcher: typeof fetch,
+  method: 'POST' | 'PATCH' = 'POST'
 ): Promise<void> {
   const res = await fetcher(`/v1/cases/${caseID}/${action}`, {
-    method: 'POST',
+    method,
     headers: jsonHeaders(key),
     body: JSON.stringify(body)
   });
   if (!res.ok) {
-    return errorOrStatus(res, `POST /v1/cases/${caseID}/${action}`);
+    return errorOrStatus(res, `${method} /v1/cases/${caseID}/${action}`);
   }
 }
 
@@ -3024,10 +3245,338 @@ export function assignCase(
 export function setCaseStatus(
   key: string,
   caseID: string,
-  status: CaseStatus,
+  status: string,
   fetcher: typeof fetch = recordingFetch
 ): Promise<void> {
   return caseAction(key, caseID, 'status', { status }, fetcher);
+}
+
+export async function listCaseTypes(
+  key: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<CaseTypeView[]> {
+  const res = await fetcher('/v1/case-types', { headers: authHeaders(key) });
+  if (!res.ok) return errorOrStatus(res, 'GET /v1/case-types');
+  return ((await res.json()) as { case_types: CaseTypeView[] }).case_types ?? [];
+}
+
+export async function publishCaseType(
+  key: string,
+  definition: CaseTypeDefinition,
+  fetcher: typeof fetch = recordingFetch
+): Promise<{ key: string; version: number }> {
+  const res = await fetcher('/v1/case-types', {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify(definition)
+  });
+  if (!res.ok) return errorOrStatus(res, 'POST /v1/case-types');
+  return (await res.json()) as { key: string; version: number };
+}
+
+export async function getCaseTypeVersion(
+  key: string,
+  typeKey: string,
+  version: number,
+  fetcher: typeof fetch = recordingFetch
+): Promise<CaseTypeView> {
+  const res = await fetcher(`/v1/case-types/${encodeURIComponent(typeKey)}/versions/${version}`, {
+    headers: authHeaders(key)
+  });
+  if (!res.ok) return errorOrStatus(res, 'GET /v1/case-types/{key}/versions/{version}');
+  return (await res.json()) as CaseTypeView;
+}
+
+export async function listCaseQueues(
+  key: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<Array<{ definition: CaseQueueDefinition }>> {
+  const res = await fetcher('/v1/case-queues', { headers: authHeaders(key) });
+  if (!res.ok) return errorOrStatus(res, 'GET /v1/case-queues');
+  return (
+    ((await res.json()) as { queues: Array<{ definition: CaseQueueDefinition }> }).queues ?? []
+  );
+}
+
+export async function configureCaseQueue(
+  key: string,
+  definition: CaseQueueDefinition,
+  fetcher: typeof fetch = recordingFetch
+): Promise<void> {
+  const res = await fetcher(`/v1/case-queues/${encodeURIComponent(definition.key)}`, {
+    method: 'PUT',
+    headers: jsonHeaders(key),
+    body: JSON.stringify(definition)
+  });
+  if (!res.ok) return errorOrStatus(res, 'PUT /v1/case-queues/{key}');
+}
+
+export async function listCaseReviewers(
+  key: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<Array<{ profile: CaseReviewerProfile }>> {
+  const res = await fetcher('/v1/case-reviewers', { headers: authHeaders(key) });
+  if (!res.ok) return errorOrStatus(res, 'GET /v1/case-reviewers');
+  return (
+    ((await res.json()) as { reviewers: Array<{ profile: CaseReviewerProfile }> }).reviewers ?? []
+  );
+}
+
+export async function configureCaseReviewer(
+  key: string,
+  profile: CaseReviewerProfile,
+  fetcher: typeof fetch = recordingFetch
+): Promise<void> {
+  const res = await fetcher(`/v1/case-reviewers/${encodeURIComponent(profile.actor)}`, {
+    method: 'PUT',
+    headers: jsonHeaders(key),
+    body: JSON.stringify(profile)
+  });
+  if (!res.ok) return errorOrStatus(res, 'PUT /v1/case-reviewers/{actor}');
+}
+
+export async function bulkCases(
+  key: string,
+  request: {
+    operation: CaseBulkResult['operation'];
+    case_ids: string[];
+    target: string;
+    reason_code?: string;
+    note?: string;
+    reassign?: boolean;
+    override?: boolean;
+  },
+  idempotencyKey: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<CaseBulkResult> {
+  const res = await fetcher('/v1/cases/bulk', {
+    method: 'POST',
+    headers: { ...jsonHeaders(key), 'Idempotency-Key': idempotencyKey },
+    body: JSON.stringify(request)
+  });
+  if (!res.ok) return errorOrStatus(res, 'POST /v1/cases/bulk');
+  return (await res.json()) as CaseBulkResult;
+}
+
+export async function listCaseSavedViews(
+  key: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<CaseSavedView[]> {
+  const res = await fetcher('/v1/case-views', { headers: authHeaders(key) });
+  if (!res.ok) return errorOrStatus(res, 'GET /v1/case-views');
+  const body = (await res.json()) as { views: CaseSavedView[] };
+  return body.views;
+}
+
+export async function saveCaseView(
+  key: string,
+  name: string,
+  query: CaseFilter,
+  viewID = '',
+  fetcher: typeof fetch = recordingFetch
+): Promise<{ view_id: string }> {
+  const res = await fetcher('/v1/case-views', {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify({ view_id: viewID, name, query })
+  });
+  if (!res.ok) return errorOrStatus(res, 'POST /v1/case-views');
+  return (await res.json()) as { view_id: string };
+}
+
+export async function deleteCaseView(
+  key: string,
+  viewID: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<void> {
+  const res = await fetcher(`/v1/case-views/${encodeURIComponent(viewID)}`, {
+    method: 'DELETE',
+    headers: authHeaders(key)
+  });
+  if (!res.ok) return errorOrStatus(res, 'DELETE /v1/case-views/{view_id}');
+}
+
+export async function listCaseDuplicates(
+  key: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<CaseDuplicateGroup[]> {
+  const res = await fetcher('/v1/cases/duplicates', { headers: authHeaders(key) });
+  if (!res.ok) return errorOrStatus(res, 'GET /v1/cases/duplicates');
+  const body = (await res.json()) as { duplicate_groups: CaseDuplicateGroup[] };
+  return body.duplicate_groups;
+}
+
+export async function getCaseAnalytics(
+  key: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<CaseAnalytics> {
+  const res = await fetcher('/v1/cases/analytics', { headers: authHeaders(key) });
+  if (!res.ok) return errorOrStatus(res, 'GET /v1/cases/analytics');
+  return (await res.json()) as CaseAnalytics;
+}
+
+export async function exportCaseAudit(
+  key: string,
+  format: 'csv' | 'json' | 'markdown',
+  filter: CaseFilter = {},
+  fetcher: typeof fetch = recordingFetch
+): Promise<Blob> {
+  const separator = caseQuery(filter) ? '&' : '?';
+  const res = await fetcher(`/v1/cases/export${caseQuery(filter)}${separator}format=${format}`, {
+    headers: authHeaders(key)
+  });
+  if (!res.ok) return errorOrStatus(res, 'GET /v1/cases/export');
+  return res.blob();
+}
+
+export async function routeCase(
+  key: string,
+  caseID: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<void> {
+  return caseAction(key, caseID, 'route', {}, fetcher);
+}
+
+export async function rebalanceCases(
+  key: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<{ moved: string[]; failures: Record<string, string> }> {
+  const res = await fetcher('/v1/cases/rebalance', {
+    method: 'POST',
+    headers: authHeaders(key)
+  });
+  if (!res.ok) return errorOrStatus(res, 'POST /v1/cases/rebalance');
+  return (await res.json()) as { moved: string[]; failures: Record<string, string> };
+}
+
+export function setCasePriority(
+  key: string,
+  caseID: string,
+  priority: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<void> {
+  return caseAction(key, caseID, 'priority', { priority }, fetcher);
+}
+
+export function updateCaseFields(
+  key: string,
+  caseID: string,
+  fields: Record<string, unknown>,
+  fetcher: typeof fetch = recordingFetch
+): Promise<void> {
+  return caseAction(key, caseID, 'fields', { fields }, fetcher, 'PATCH');
+}
+
+export function dispositionCase(
+  key: string,
+  caseID: string,
+  disposition: string,
+  reasonCode: string,
+  note = '',
+  override = false,
+  fetcher: typeof fetch = recordingFetch
+): Promise<void> {
+  return caseAction(
+    key,
+    caseID,
+    'disposition',
+    { disposition, reason_code: reasonCode, note, override },
+    fetcher
+  );
+}
+
+export function linkCaseEvidence(
+  key: string,
+  caseID: string,
+  evidence: Omit<CaseEvidence, 'evidence_id'> & { evidence_id?: string },
+  fetcher: typeof fetch = recordingFetch
+): Promise<void> {
+  return caseAction(key, caseID, 'evidence', evidence, fetcher);
+}
+
+export function registerCaseAttachment(
+  key: string,
+  caseID: string,
+  attachment: Omit<CaseAttachment, 'access_count' | 'storage_ref'> & { storage_ref: string },
+  fetcher: typeof fetch = recordingFetch
+): Promise<void> {
+  return caseAction(key, caseID, 'attachments', attachment, fetcher);
+}
+
+export async function accessCaseAttachment(
+  key: string,
+  caseID: string,
+  attachmentID: string,
+  purpose: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<string> {
+  const res = await fetcher(
+    `/v1/cases/${encodeURIComponent(caseID)}/attachments/${encodeURIComponent(attachmentID)}/access`,
+    {
+      method: 'POST',
+      headers: jsonHeaders(key),
+      body: JSON.stringify({ purpose })
+    }
+  );
+  if (!res.ok)
+    return errorOrStatus(res, 'POST /v1/cases/{case_id}/attachments/{attachment_id}/access');
+  const body = (await res.json()) as { storage_ref: string };
+  return body.storage_ref;
+}
+
+export function selectCaseQA(
+  key: string,
+  caseID: string,
+  sampleID: string,
+  reviewer: string,
+  rateBPS: number,
+  fetcher: typeof fetch = recordingFetch
+): Promise<void> {
+  return caseAction(
+    key,
+    caseID,
+    'qa/select',
+    { sample_id: sampleID, reviewer, rate_bps: rateBPS },
+    fetcher
+  );
+}
+
+export function reviewCaseQA(
+  key: string,
+  caseID: string,
+  sampleID: string,
+  disposition: string,
+  reasonCode: string,
+  note: string,
+  override: boolean,
+  fetcher: typeof fetch = recordingFetch
+): Promise<void> {
+  return caseAction(
+    key,
+    caseID,
+    'qa/review',
+    { sample_id: sampleID, disposition, reason_code: reasonCode, note, override },
+    fetcher
+  );
+}
+
+export function addCaseQAFeedback(
+  key: string,
+  caseID: string,
+  sampleID: string,
+  text: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<void> {
+  return caseAction(key, caseID, 'qa/feedback', { sample_id: sampleID, text }, fetcher);
+}
+
+export function retryCaseWebhook(
+  key: string,
+  caseID: string,
+  reason: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<void> {
+  return caseAction(key, caseID, 'webhook/retry', { reason }, fetcher);
 }
 
 export function addCaseNote(

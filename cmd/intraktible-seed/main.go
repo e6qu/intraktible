@@ -130,6 +130,7 @@ func buildSeed() []eventlog.Envelope {
 	acts = append(acts, s.keyActions(cfg)...)
 	acts = append(acts, s.contextConfigActions(cfg)...)
 	acts = append(acts, s.agentConfigActions(cfg)...)
+	acts = append(acts, s.caseConfigActions(cfg)...)
 	acts = append(acts, s.flowActions(cfg)...)
 	acts = append(acts, s.policyActions(cfg)...)
 	acts = append(acts, s.deployActions(cfg)...)
@@ -148,6 +149,7 @@ func buildSeed() []eventlog.Envelope {
 	acts = append(acts, s.experimentActions(anchor)...)
 	acts = append(acts, s.populationActions(anchor)...)
 	acts = append(acts, s.caseWorkActions(bySeed, anchor)...)
+	acts = append(acts, s.enterpriseCaseActions(anchor)...)
 	// Membership is re-derived per hygiene pass: designated slots gain their
 	// decision ids as the traffic runs.
 	acts = append(acts, s.hygieneActions(slots[0].at, anchor, func(decisionID string) bool {

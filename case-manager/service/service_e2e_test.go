@@ -81,6 +81,40 @@ func TestCaseAPIEndToEnd(t *testing.T) {
 	if sum.Total != 1 || sum.ByStatus["in_progress"] != 1 {
 		t.Fatalf("summary = %+v, want total 1 / in_progress 1", sum)
 	}
+
+	// Storage references are capabilities: list/detail reads redact them, and
+	// the purpose-bound access command returns one only after recording the
+	// audit event.
+	const storageRef = "s3://approved/cases/acme-registry"
+	api.Request(t, http.MethodPost, "/v1/cases/"+opened.CaseID+"/attachments",
+		map[string]any{
+			"attachment_id": "registry", "name": "registry.pdf",
+			"media_type": "application/pdf", "size": 42,
+			"sha256":      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			"storage_ref": storageRef,
+		}, http.StatusAccepted, nil)
+	if !testutil.Eventually(t, func() bool {
+		var read cases.CaseView
+		api.Request(t, http.MethodGet, "/v1/cases/"+opened.CaseID, nil, http.StatusOK, &read)
+		return len(read.Attachments) == 1 && read.Attachments[0].StorageRef == ""
+	}) {
+		t.Fatal("ordinary case read did not expose redacted attachment metadata")
+	}
+	var accessed struct {
+		StorageRef string `json:"storage_ref"`
+	}
+	api.Request(t, http.MethodPost, "/v1/cases/"+opened.CaseID+"/attachments/registry/access",
+		map[string]string{"purpose": "case review"}, http.StatusAccepted, &accessed)
+	if accessed.StorageRef != storageRef {
+		t.Fatalf("audited access storage_ref = %q, want %q", accessed.StorageRef, storageRef)
+	}
+	if !testutil.Eventually(t, func() bool {
+		var read cases.CaseView
+		api.Request(t, http.MethodGet, "/v1/cases/"+opened.CaseID, nil, http.StatusOK, &read)
+		return len(read.Attachments) == 1 && read.Attachments[0].AccessCount == 1
+	}) {
+		t.Fatal("attachment access audit was not projected")
+	}
 }
 
 func TestCaseSLASweepBreachesOverdue(t *testing.T) {

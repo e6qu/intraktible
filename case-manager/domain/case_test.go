@@ -34,8 +34,11 @@ func TestLifecycleCommandValidate(t *testing.T) {
 	if err := (domain.SetStatus{CaseID: "c1", Status: domain.StatusInProgress}).Validate(); err != nil {
 		t.Fatalf("valid status rejected: %v", err)
 	}
-	if err := (domain.SetStatus{CaseID: "c1", Status: "bogus"}).Validate(); err == nil {
-		t.Fatal("invalid status should be rejected")
+	if err := (domain.SetStatus{CaseID: "c1", Status: "BAD STATUS"}).Validate(); err == nil {
+		t.Fatal("malformed status key should be rejected")
+	}
+	if err := (domain.SetStatus{CaseID: "c1", Status: "investigating"}).Validate(); err != nil {
+		t.Fatalf("well-formed configured status key rejected: %v", err)
 	}
 	if err := (domain.AddNote{CaseID: "c1", Text: "hi"}).Validate(); err != nil {
 		t.Fatalf("valid note rejected: %v", err)

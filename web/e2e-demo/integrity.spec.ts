@@ -7,30 +7,48 @@
 import { test, expect, type Page } from '@playwright/test';
 import { forcePersona, gotoReady, openFlow, api, switchRole } from './helpers';
 
-// The queue summary strip is the case projection's own counts — assert each cell
-// equals what /v1/cases/summary returns.
+async function visibleCaseSummary(page: Page): Promise<{
+  total: number;
+  by_status: { needs_review?: number; in_progress?: number };
+  unassigned: number;
+  due_soon: number;
+  overdue: number;
+}> {
+  const filter = {
+    status: await page.getByLabel('status filter').inputValue(),
+    queue: await page.getByLabel('queue filter').inputValue(),
+    priority: await page.getByLabel('priority filter').inputValue(),
+    q: await page.getByLabel('search cases').inputValue()
+  };
+  return page.evaluate(async (active) => {
+    const params = new URLSearchParams(
+      Object.entries(active).filter((entry): entry is [string, string] => Boolean(entry[1]))
+    );
+    const suffix = params.size > 0 ? `?${params}` : '';
+    return (await fetch(`/v1/cases/summary${suffix}`).then((response) => response.json())) as {
+      total: number;
+      by_status: { needs_review?: number; in_progress?: number };
+      unassigned: number;
+      due_soon: number;
+      overdue: number;
+    };
+  }, filter);
+}
+
+// The queue summary strip is the case projection's filtered counts — assert each
+// cell equals /v1/cases/summary for the exact filters visible in the UI.
 test('the case queue summary matches the backend summary', async ({ page }) => {
   await forcePersona(page, 'operator');
   await gotoReady(page, 'cases');
-  const s = await api(
-    page,
-    async () =>
-      (await fetch('/v1/cases/summary').then((r) => r.json())) as {
-        total: number;
-        by_status: { needs_review: number; in_progress: number };
-        unassigned: number;
-        due_soon: number;
-        overdue: number;
-      }
-  );
+  const s = await visibleCaseSummary(page);
 
   const strip = page.getByLabel('queue summary');
   await expect(strip.locator('.stat', { hasText: 'Total' })).toContainText(String(s.total));
   await expect(strip.locator('.stat', { hasText: 'Needs review' })).toContainText(
-    String(s.by_status.needs_review)
+    String(s.by_status.needs_review ?? 0)
   );
   await expect(strip.locator('.stat', { hasText: 'In progress' })).toContainText(
-    String(s.by_status.in_progress)
+    String(s.by_status.in_progress ?? 0)
   );
   await expect(strip.locator('.stat', { hasText: 'Unassigned' })).toContainText(
     String(s.unassigned)
@@ -222,10 +240,7 @@ test('read-model numbers reconcile for a viewer as well', async ({ page }) => {
   await gotoReady(page, 'cases');
   await switchRole(page, 'viewer');
   await page.reload();
-  const s = await api(
-    page,
-    async () => (await fetch('/v1/cases/summary').then((r) => r.json())).total as number
-  );
+  const s = (await visibleCaseSummary(page)).total;
   await expect(
     page.getByLabel('queue summary').locator('.stat', { hasText: 'Total' })
   ).toContainText(String(s));

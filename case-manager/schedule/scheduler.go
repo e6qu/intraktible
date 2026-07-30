@@ -22,8 +22,11 @@ const sweepActor = "sla-sweeper"
 // Cmd is the narrow command surface the scheduler drives (kept narrow to avoid a
 // command↔schedule import cycle and to make the scheduler testable with a fake).
 type Cmd interface {
+	RoutePending(ctx context.Context, id identity.Identity) (map[string]string, []string, error)
+	EscalateBreached(ctx context.Context, id identity.Identity, caseIDs []string) (map[string]string, []string, error)
 	SweepSLA(ctx context.Context, id identity.Identity, now time.Time) ([]string, error)
 	PendingSLAEscalations(ctx context.Context, id identity.Identity) ([]string, error)
+	RecordSLADeliveryAttempt(ctx context.Context, id identity.Identity, caseID string, outcome events.SLADeliveryOutcome) (int, error)
 	RecordSLAEscalation(ctx context.Context, id identity.Identity, caseID string, status events.SLAEscalationStatus) error
 }
 
@@ -70,12 +73,17 @@ const (
 
 // TickSummary reports what one sweep did.
 type TickSummary struct {
+	Routed            int
+	RoutingFailures   int
 	Breached          int
+	QueueEscalated    int
 	Delivered         int
 	NoChannel         int
 	PermanentFailures int
 	Retrying          int
 }
+
+const maxDeliveryAttempts = 5
 
 // Tick sweeps every tenant's open cases once, recording SLA breaches. SweepSLA is
 // idempotent per case, so repeated ticks do not double-emit. Exported for
@@ -92,11 +100,31 @@ func (s *Scheduler) Tick(ctx context.Context) (TickSummary, error) {
 	now := s.now()
 	var sum TickSummary
 	for id := range tenants {
+		routed, failures, err := s.cmd.RoutePending(ctx, id)
+		if err != nil {
+			return sum, err
+		}
+		sum.Routed += len(routed)
+		sum.RoutingFailures += len(failures)
+		if len(failures) > 0 {
+			return sum, fmt.Errorf("case router: %d case(s) could not be routed: %v", len(failures), failures)
+		}
 		breached, err := s.cmd.SweepSLA(ctx, id, now)
 		if err != nil {
 			return sum, err
 		}
 		sum.Breached += len(breached)
+		// Reconcile every durable breach, not only the ones emitted above: a
+		// prior process may have died after recording the breach and before
+		// moving the queue.
+		escalated, failures, err := s.cmd.EscalateBreached(ctx, id, nil)
+		if err != nil {
+			return sum, err
+		}
+		sum.QueueEscalated += len(escalated)
+		if len(failures) > 0 {
+			return sum, fmt.Errorf("case queue escalation: %d case(s) could not be escalated: %v", len(failures), failures)
+		}
 		pending, err := s.cmd.PendingSLAEscalations(ctx, id)
 		if err != nil {
 			return sum, err
@@ -109,23 +137,37 @@ func (s *Scheduler) Tick(ctx context.Context) (TickSummary, error) {
 					return sum, err
 				}
 			}
-			if outcome == DeliveryRetry {
-				sum.Retrying++
-				continue
-			}
 			var status events.SLAEscalationStatus
+			var recordedOutcome events.SLADeliveryOutcome
 			switch outcome {
 			case DeliverySucceeded:
 				status = events.SLAEscalationDelivered
+				recordedOutcome = events.SLADeliveryDelivered
 				sum.Delivered++
 			case DeliveryNoChannel:
 				status = events.SLAEscalationNoChannel
+				recordedOutcome = events.SLADeliveryNoChannel
 				sum.NoChannel++
 			case DeliveryPermanentFailure:
 				status = events.SLAEscalationPermanentFailure
+				recordedOutcome = events.SLADeliveryPermanentFailure
 				sum.PermanentFailures++
+			case DeliveryRetry:
+				recordedOutcome = events.SLADeliveryRetryable
 			default:
 				return sum, fmt.Errorf("sla sweeper: unknown delivery outcome %q", outcome)
+			}
+			attempt, err := s.cmd.RecordSLADeliveryAttempt(ctx, id, caseID, recordedOutcome)
+			if err != nil {
+				return sum, err
+			}
+			if outcome == DeliveryRetry {
+				if attempt < maxDeliveryAttempts {
+					sum.Retrying++
+					continue
+				}
+				status = events.SLAEscalationPermanentFailure
+				sum.PermanentFailures++
 			}
 			if err := s.cmd.RecordSLAEscalation(ctx, id, caseID, status); err != nil {
 				return sum, err
@@ -153,9 +195,11 @@ func (s *Scheduler) Run(ctx context.Context, interval time.Duration, report func
 				continue
 			}
 			report(nil)
-			if summary.Breached > 0 || summary.Delivered > 0 || summary.Retrying > 0 ||
+			if summary.Routed > 0 || summary.Breached > 0 || summary.QueueEscalated > 0 ||
+				summary.Delivered > 0 || summary.Retrying > 0 ||
 				summary.PermanentFailures > 0 {
-				slog.Info("sla sweeper", "breached", summary.Breached, "delivered", summary.Delivered,
+				slog.Info("case scheduler", "routed", summary.Routed, "breached", summary.Breached,
+					"queue_escalated", summary.QueueEscalated, "delivered", summary.Delivered,
 					"retrying", summary.Retrying, "permanent_failures", summary.PermanentFailures)
 			}
 			metrics.RecordSchedulerTick("case_sla", "ok")

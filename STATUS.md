@@ -34,14 +34,76 @@ the next implementation tranche by correctness and operational risk.
 
 ## Phase
 
+**Enterprise PR E3 — enterprise case operations is implementation-complete and
+in closeout on `enterprise/e3-case-operations` from authoritative merged
+`origin/main` commit `565e1d2`.** PR #161 merged at that exact commit, its remote
+branch is deleted, and the GitHub review queue was empty when E3 was cut.
+
+The complete `PLAN.md` §8b.4 vertical is now real across domain, event log,
+projections, API, scheduler, Go/TypeScript SDKs, UI, and demo history. Immutable
+case-type versions govern typed fields, dynamic state transitions,
+dispositions/reasons, priorities, business calendars, evidence requirements,
+PII read policy, and role scan order. Opens pin an exact definition and deadline;
+pre-E3 work stays explicit version `0`. Ordered queue rules cover attributes,
+skills, capacity, jurisdiction, priority, age windows, and conflicts. Initial
+routing, reassignment/rebalance, and SLA queue escalation use permanent
+cross-replica claims; every tick reconciles durable breaches so a crash between
+breach and queue movement cannot strand work.
+
+Search, actor-owned saved views, opaque duplicate groups, authoritative bounded
+idempotent bulk manifests, queue rebalance, workload/capacity/SLA/ageing/first-
+action/resolution/QA analytics, audit export, case notifications, and durable
+webhook attempt/retry/dead-letter rounds are exposed to operators. Evidence
+links, required-evidence gates, attachment hash/metadata, lawful basis,
+retention/hold/erasure, reasoned outcomes, deterministic QA sampling,
+independent second review, disagreement/override, feedback, and validated
+outcome feeds replay from events. Ordinary reads redact attachment storage
+capabilities; the operator-only purpose-bound access command records an audit
+event before returning the approved external pointer.
+
+The real UI administers types/queues/reviewers, opens governed work, edits only
+the pinned layout fields authorized for the caller's role through typed replayable
+commands, applies filters/saved views, reviews duplicates, performs all four
+server-owned bulk operations, routes/rebalances, follows role layouts, links evidence, registers
+and accesses attachments, records dispositions and QA, retries webhook
+deadletters, and reads analytics/export/governance state. The seeded real
+backend includes governed configuration and a complete enterprise case history.
+Focused domain/command/cases/scheduler/service tests pass, including competing
+route/terminal/escalation writers, restart reconciliation, replay, and audited
+attachment access. The complete local Go gate passes, including strict lint,
+SAST, race, dead-code, zero clone groups, zero reachable vulnerabilities, and
+licenses. Frontend formatting/lint/typecheck, all 232 unit tests, the production
+build, and all 130 native browser journeys pass. The browser walkthrough found
+and closed two integration defects: zero Go timestamps were serialized as
+truthy year-one values that made every active case look closed, and numeric
+field bindings reached the typed parser as numbers instead of strings. The
+regenerated 8,708-event real-backend history round-trips with 10 flows, 460
+decisions, 120 cases, 7 agents, 40 runs, 7 models, 8 preapprovals, 16 monitors,
+and 68 notifications. All 83 real-Wasm journeys and 3 embedded-production
+smokes pass; Helm lint/render, all 18 Terraform contracts, bounded-workflow
+checks, and the immutable container publication/retention contract are green.
+Diff/SPDX/OpenAPI/generated-asset hygiene is clean. Fresh remote reconciliation
+confirmed `origin/main` remains `565e1d2` with an empty review queue. The
+E3 branch is now sole PR #162. Hosted runs `30545905179` and `30546697212`
+exposed a cascade of pre-existing assembled E2 journey races: experiment
+create→start and outcome correction→read crossed asynchronous projections
+without observation. The widened journey waits for public projected create,
+running, corrected history, both exact-cohort exposures, and the corrected
+analysis label. Its handlers now share an injected clock, so the outcome is
+inside the observation window and the assertion proves one real analyzed fact
+rather than accepting stale collecting state. The exact regression passes 100
+consecutive race runs, and the complete local `make ci` gate is green again.
+Fresh reconciliation confirms unchanged `origin/main` `565e1d2`, remote E3
+head `cad7d2a`, and sole PR #162. Fix commit `7e55c3d` is terminal green across
+all nine hosted jobs in run `30547883192`: Go race/lint/SAST/dead-code/clone/
+vulnerability/license, web, native browser, real-Wasm demo, embedded artifact,
+real PostgreSQL, real Shauth SSO, Terraform, and container-release. E3 is ready
+to merge; E4 must wait for the user to merge #162 and for fresh reconciliation.
+
 **Enterprise PR E2 — experimentation, outcomes, and population automation is
-implementation-complete on `enterprise/e2-experiments-population` from merged
-`origin/main` commit `fea2a7e`.** PR #161 is the repository's sole open review
-at implementation commit `0eaa5a5`; do not begin E3 until it merges. The tranche
-delivers the complete `PLAN.md` §8b.3 vertical outcome: first-class governed
-experiments, deterministic cohorts and reached-treatment exposures,
-attributable/correctable business outcomes, statistical analysis, and durable
-multi-worker population jobs with complete operator UI and contracts.
+merged as authoritative commit `565e1d2`.** Its implementation commit
+`0eaa5a5` passed all nine hosted jobs in run `30527793916`; final evidence head
+`0ea67ec` repeated the complete matrix in run `30528560455` before merge.
 
 The E2 core is now implemented end to end: governed experiment lifecycle and
 maker-checker launch, deterministic exact-version assignments and reached

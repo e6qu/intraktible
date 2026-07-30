@@ -2064,6 +2064,319 @@
         }
       }
     },
+    "/v1/case-types": {
+      "get": {
+        "tags": ["Cases"],
+        "summary": "List active case-type definition versions.",
+        "responses": { "200": { "description": "Active case types." } }
+      },
+      "post": {
+        "tags": ["Cases"],
+        "summary": "Publish the next immutable case-type definition version.",
+        "responses": {
+          "202": { "description": "Definition version published." },
+          "400": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/case-types/{key}/versions/{version}": {
+      "get": {
+        "tags": ["Cases"],
+        "summary": "Read one immutable case-type definition version.",
+        "parameters": [
+          { "name": "key", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "version", "in": "path", "required": true, "schema": { "type": "integer", "minimum": 1 } }
+        ],
+        "responses": {
+          "200": { "description": "Pinned case-type version." },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/case-queues": {
+      "get": {
+        "tags": ["Cases"],
+        "summary": "List active case-routing queues.",
+        "responses": { "200": { "description": "Configured queues." } }
+      }
+    },
+    "/v1/case-queues/{key}": {
+      "put": {
+        "tags": ["Cases"],
+        "summary": "Configure a case-routing queue.",
+        "parameters": [
+          { "name": "key", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "202": { "description": "Queue configuration recorded." },
+          "400": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/case-reviewers": {
+      "get": {
+        "tags": ["Cases"],
+        "summary": "List reviewer routing profiles (admin).",
+        "responses": { "200": { "description": "Reviewer profiles." } }
+      }
+    },
+    "/v1/case-reviewers/{actor}": {
+      "put": {
+        "tags": ["Cases"],
+        "summary": "Configure a reviewer skill, capacity, jurisdiction, and conflict profile.",
+        "parameters": [
+          { "name": "actor", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "202": { "description": "Reviewer profile recorded." },
+          "400": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/case-views": {
+      "get": {
+        "tags": ["Cases"],
+        "summary": "List the caller's saved case views.",
+        "responses": { "200": { "description": "Saved views." } }
+      },
+      "post": {
+        "tags": ["Cases"],
+        "summary": "Create or update an actor-owned saved case view.",
+        "responses": {
+          "202": { "description": "Saved view recorded." },
+          "400": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/case-views/{view_id}": {
+      "delete": {
+        "tags": ["Cases"],
+        "summary": "Delete an actor-owned saved case view.",
+        "parameters": [
+          { "name": "view_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "202": { "description": "Saved view deletion recorded." } }
+      }
+    },
+    "/v1/case-bulk": {
+      "get": {
+        "tags": ["Cases"],
+        "summary": "List durable backend-owned bulk case operations.",
+        "responses": { "200": { "description": "Bulk operation manifests." } }
+      }
+    },
+    "/v1/case-bulk/{batch_id}": {
+      "get": {
+        "tags": ["Cases"],
+        "summary": "Read one durable bulk case-operation manifest.",
+        "parameters": [
+          { "name": "batch_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Bulk operation manifest." },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/case-validated-outcomes": {
+      "get": {
+        "tags": ["Cases"],
+        "summary": "List independently validated case outcomes for agent and model evaluation.",
+        "responses": {
+          "200": { "description": "Agreement- or override-backed outcomes; unresolved disagreements are excluded." }
+        }
+      }
+    },
+    "/v1/cases/bulk": {
+      "post": {
+        "tags": ["Cases"],
+        "summary": "Execute a bounded idempotent backend-owned bulk operation.",
+        "parameters": [
+          {
+            "name": "Idempotency-Key", "in": "header", "required": true,
+            "schema": { "type": "string", "maxLength": 256 }
+          }
+        ],
+        "responses": {
+          "200": { "description": "Completed authoritative per-item manifest." },
+          "400": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/cases/duplicates": {
+      "get": {
+        "tags": ["Cases"],
+        "summary": "List deterministic possible-duplicate case groups for human review.",
+        "responses": { "200": { "description": "Possible duplicate groups." } }
+      }
+    },
+    "/v1/cases/analytics": {
+      "get": {
+        "tags": ["Cases"],
+        "summary": "Read workload, capacity, timing, ageing, SLA, routing, QA, and bottleneck analytics.",
+        "responses": { "200": { "description": "Operational Case Manager KPIs." } }
+      }
+    },
+    "/v1/cases/export": {
+      "get": {
+        "tags": ["Cases"],
+        "summary": "Export the filtered case audit ledger as spreadsheet-safe CSV, JSON, or Markdown.",
+        "parameters": [
+          {
+            "name": "format", "in": "query",
+            "schema": { "type": "string", "enum": ["csv", "json", "markdown"], "default": "csv" }
+          }
+        ],
+        "responses": {
+          "200": { "description": "Portable case audit export." },
+          "400": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/cases/rebalance": {
+      "post": {
+        "tags": ["Cases"],
+        "summary": "Rebalance unassigned, inactive-reviewer, and over-capacity cases.",
+        "responses": {
+          "200": { "description": "Moved cases and explicit routing failures." },
+          "400": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/cases/route-pending": {
+      "post": {
+        "tags": ["Cases"],
+        "summary": "Route every pending case using active queue and reviewer configuration.",
+        "responses": { "200": { "description": "Per-case routing results and failures." } }
+      }
+    },
+    "/v1/cases/{case_id}/route": {
+      "post": {
+        "tags": ["Cases"],
+        "summary": "Atomically route one case.",
+        "parameters": [
+          { "name": "case_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "202": { "description": "Routing decision recorded." },
+          "400": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/cases/{case_id}/priority": {
+      "post": {
+        "tags": ["Cases"],
+        "summary": "Set a case priority allowed by its pinned definition.",
+        "parameters": [
+          { "name": "case_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "202": { "description": "Priority change recorded." } }
+      }
+    },
+    "/v1/cases/{case_id}/fields": {
+      "patch": {
+        "tags": ["Cases"],
+        "summary": "Update role-editable fields under the case's exact pinned definition.",
+        "parameters": [
+          { "name": "case_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "202": { "description": "Validated field update recorded." },
+          "400": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/cases/{case_id}/disposition": {
+      "post": {
+        "tags": ["Cases"],
+        "summary": "Record a reasoned disposition after required evidence is complete.",
+        "parameters": [
+          { "name": "case_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "202": { "description": "Disposition recorded." },
+          "400": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/cases/{case_id}/evidence": {
+      "post": {
+        "tags": ["Cases"],
+        "summary": "Link immutable typed evidence to a case.",
+        "parameters": [
+          { "name": "case_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "202": { "description": "Evidence link recorded." } }
+      }
+    },
+    "/v1/cases/{case_id}/attachments": {
+      "post": {
+        "tags": ["Cases"],
+        "summary": "Register immutable metadata for an externally stored attachment.",
+        "parameters": [
+          { "name": "case_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "202": { "description": "Attachment metadata recorded." } }
+      }
+    },
+    "/v1/cases/{case_id}/attachments/{attachment_id}/access": {
+      "post": {
+        "tags": ["Cases"],
+        "summary": "Audit access and return the approved external storage reference.",
+        "parameters": [
+          { "name": "case_id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "attachment_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "202": { "description": "Attachment access recorded; storage_ref returned." },
+          "404": { "$ref": "#/components/responses/Error" },
+          "410": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/cases/{case_id}/qa/select": {
+      "post": {
+        "tags": ["Cases"],
+        "summary": "Deterministically sample a disposed case for independent QA.",
+        "parameters": [
+          { "name": "case_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "202": { "description": "Selection result." } }
+      }
+    },
+    "/v1/cases/{case_id}/qa/review": {
+      "post": {
+        "tags": ["Cases"],
+        "summary": "Record the assigned independent QA review.",
+        "parameters": [
+          { "name": "case_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "202": { "description": "QA review recorded." } }
+      }
+    },
+    "/v1/cases/{case_id}/qa/feedback": {
+      "post": {
+        "tags": ["Cases"],
+        "summary": "Record reviewer feedback for a completed QA sample.",
+        "parameters": [
+          { "name": "case_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "202": { "description": "Reviewer feedback recorded." } }
+      }
+    },
+    "/v1/cases/{case_id}/webhook/retry": {
+      "post": {
+        "tags": ["Cases"],
+        "summary": "Explicitly requeue a terminal failed/no-channel SLA webhook delivery.",
+        "parameters": [
+          { "name": "case_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "202": { "description": "Escalation requeued for a new bounded attempt round." },
+          "400": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/v1/cases": {
       "get": {
         "summary": "List the case queue (filter by status/type/assignee).",

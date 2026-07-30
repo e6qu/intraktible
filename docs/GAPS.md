@@ -19,7 +19,12 @@ governed flows; RBAC, OIDC/SAML
 SSO, SCIM, AES-256-GCM at-rest encryption, crypto-shred erasure, and an SR 11-7 model
 inventory are all real and enforced. Stable-cohort governed experiments, corrected
 decision-linked outcomes, and durable multi-worker population decision/backtest jobs
-are also real. The decision table is DMN-grade (five hit policies + aggregation).
+are also real. Case Manager is a governed operational workbench rather than a generic
+task list: immutable type/state/evidence contracts, typed role-authorized field edits, atomic attribute/skill/capacity/
+age routing, saved/search/bulk/duplicate/rebalance operations, independent QA,
+validated outcomes, SLA delivery history, analytics, and lifecycle-aware evidence
+are event-sourced and exposed in the UI. The decision table is DMN-grade (five hit
+policies + aggregation).
 **None of the gaps below are facades** — they are honestly missing or honestly
 shallow capabilities.
 
@@ -32,7 +37,7 @@ full process-orchestration engine (Camunda-class), and does not claim to be.
 
 | Capability | Orchestration engines (Camunda) | intraktible |
 | --- | --- | --- |
-| Durable wait states / human tasks that suspend & resume | yes | **yes** — a `manual_review` node with `suspend` pauses the decision (event-sourced `DecisionSuspended`) and resumes via `POST /v1/decisions/{id}/resume`, injecting the reviewer's outcome |
+| Durable wait states / human tasks that suspend & resume | yes | **yes** — a `manual_review` node with `suspend` pauses the decision; its governed case routes and QA-escalates independently, and the exact recorded reviewer outcome resumes the pinned execution |
 | Long-running process instances | yes | **partial** — a suspended decision is a durable instance, but there is no separate process/instance model beyond the flow |
 | Timer-driven resume (a paused decision auto-resumes after a delay) | yes | **no — deliberate non-goal** — a human task waits for the human; time pressure is handled by *reminders* (due-soon + overdue notifications and a webhook escalation), not by auto-advancing the decision |
 | Message/signal events, correlation | yes | **no** (possible, unbuilt) — resume is reviewer-driven today |

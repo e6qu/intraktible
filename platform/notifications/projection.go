@@ -82,14 +82,24 @@ func (Projector) Apply(ctx context.Context, e eventlog.Envelope, s store.Store) 
 		return applyManualReviewRequested(ctx, e, s)
 	case cmevents.TypeCaseAssigned:
 		return applyCaseAssigned(ctx, e, s)
+	case cmevents.TypeCaseRouted:
+		return applyCaseRouted(ctx, e, s)
 	case cmevents.TypeCaseStatusChanged:
 		return applyCaseStatusChanged(ctx, e, s)
+	case cmevents.TypeCaseDispositionRecorded:
+		return applyCaseDisposition(ctx, e, s)
+	case cmevents.TypeCaseQASelected:
+		return applyCaseQASelected(ctx, e, s)
+	case cmevents.TypeCaseQAReviewed:
+		return applyCaseQAReviewed(ctx, e, s)
 	case deevents.TypeDecisionResumed:
 		return applyDecisionResumed(ctx, e, s)
 	case cmevents.TypeCaseSLAReminder:
 		return applySLAReminder(ctx, e, s)
 	case cmevents.TypeCaseSLABreached:
 		return applySLABreached(ctx, e, s)
+	case cmevents.TypeCaseSLAEscalationRetried:
+		return applySLAEscalationRetried(ctx, e, s)
 	case monitor.TypeAlerted:
 		return applyMonitorAlerted(ctx, e, s)
 	case monitor.TypeResolved:

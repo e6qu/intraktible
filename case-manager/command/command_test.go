@@ -117,6 +117,40 @@ func TestEscalatedCaseIsActionable(t *testing.T) {
 	}
 }
 
+func TestSuspendedDecisionOwnsItsCaseLifecycle(t *testing.T) {
+	ctx := context.Background()
+	log, _ := testutil.NewLogStore(t)
+	h := command.NewHandler(log)
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "adam"}
+	const caseID, decisionID = "esc-suspended", "decision-suspended"
+	now := time.Now().UTC()
+
+	if _, err := eventlog.AppendJSON(
+		ctx, log, id.Org, id.Workspace, "engine",
+		decisionevents.StreamDecisions, decisionevents.TypeDecisionSuspended, now,
+		decisionevents.DecisionSuspended{CaseID: caseID, DecisionID: decisionID, State: json.RawMessage(`{}`)},
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := eventlog.AppendJSON(
+		ctx, log, id.Org, id.Workspace, "engine",
+		decisionevents.StreamDecisions, decisionevents.TypeManualReviewRequested, now,
+		decisionevents.ManualReviewRequested{
+			CaseID: caseID, DecisionID: decisionID, NodeID: "review",
+			CompanyName: "Acme", CaseType: "aml", SLADays: 30,
+		},
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, status := range []domain.CaseStatus{domain.StatusInProgress, domain.StatusCompleted} {
+		if _, err := h.SetStatus(ctx, id, domain.SetStatus{CaseID: caseID, Status: status}); err == nil ||
+			!strings.Contains(err.Error(), "record its review outcome") {
+			t.Fatalf("status %q bypassed suspended decision lifecycle: %v", status, err)
+		}
+	}
+}
+
 func TestSweepSLASkipsCompleted(t *testing.T) {
 	ctx := context.Background()
 	log, _ := testutil.NewLogStore(t)
@@ -270,6 +304,72 @@ func TestSetStatusIsAtomicAcrossProcesses(t *testing.T) {
 	if status == domain.StatusCompleted {
 		if _, err := nodeA.SetStatus(ctx, id, domain.SetStatus{CaseID: caseID, Status: domain.StatusInProgress}); err == nil {
 			t.Fatal("a completed case must not reopen")
+		}
+	}
+}
+
+func TestTerminalTransitionAndSLASweepAreAtomicAcrossProcesses(t *testing.T) {
+	ctx := context.Background()
+	log, _ := testutil.NewLogStore(t)
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "adam"}
+
+	for iteration := range 32 {
+		nodeA, nodeB := command.NewHandler(log), command.NewHandler(log)
+		caseID, _, err := nodeA.RequestReview(ctx, id, domain.RequestReview{
+			CompanyName: "Acme " + strconv.Itoa(iteration),
+			CaseType:    "aml",
+			SLADays:     1,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		start := make(chan struct{})
+		done := make(chan struct{}, 2)
+		go func() {
+			<-start
+			_, _ = nodeA.SetStatus(ctx, id, domain.SetStatus{CaseID: caseID, Status: domain.StatusCompleted})
+			done <- struct{}{}
+		}()
+		go func() {
+			<-start
+			_, _ = nodeB.SweepSLA(ctx, id, time.Now().UTC().Add(48*time.Hour))
+			done <- struct{}{}
+		}()
+		close(start)
+		<-done
+		<-done
+	}
+
+	evs, err := log.Read(ctx, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	terminalSeq := map[string]uint64{}
+	for _, event := range evs {
+		if event.Type != events.TypeCaseStatusChanged {
+			continue
+		}
+		var payload events.CaseStatusChanged
+		if err := json.Unmarshal(event.Payload, &payload); err != nil {
+			t.Fatal(err)
+		}
+		if payload.Status == string(domain.StatusCompleted) {
+			terminalSeq[payload.CaseID] = event.Seq
+		}
+	}
+	if len(terminalSeq) != 32 {
+		t.Fatalf("terminal cases = %d, want 32", len(terminalSeq))
+	}
+	for _, event := range evs {
+		if event.Type != events.TypeCaseSLABreached {
+			continue
+		}
+		var payload events.CaseSLABreached
+		if err := json.Unmarshal(event.Payload, &payload); err != nil {
+			t.Fatal(err)
+		}
+		if event.Seq > terminalSeq[payload.CaseID] {
+			t.Fatalf("case %q breached at seq %d after terminal seq %d", payload.CaseID, event.Seq, terminalSeq[payload.CaseID])
 		}
 	}
 }

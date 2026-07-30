@@ -645,3 +645,76 @@ Linux, entirely that VM's fsync path.
 - 2026-07-30: Pushed the 79-file E2 implementation as `0eaa5a5`, opened sole
   PR #161, and babysat hosted run `30527793916` to terminal green across all
   nine jobs, including real PostgreSQL, real-Wasm, SSO, and release contracts.
+- 2026-07-30: Verified final E2 head `0ea67ec` repeated all nine hosted jobs
+  green in run `30528560455`; PR #161 then merged as authoritative `565e1d2`.
+- 2026-07-30: Fetched and reconciled merged `origin/main`, confirmed the E2
+  remote branch is deleted and the PR queue empty, and cut
+  `enterprise/e3-case-operations` directly from `565e1d2`.
+- 2026-07-30: Audited the complete Case Manager vertical and recorded six E3
+  failure groups: unversioned types, absent routing, absent evidence lifecycle,
+  browser-fanned bulk work, absent independent QA, and incomplete operations.
+- 2026-07-30: Implemented the first E3 core: versioned definitions and business
+  calendars, pinned governed opens, deterministic replica-safe routing,
+  evidence/attachment governance, dispositions, saved views, independent QA,
+  projections and HTTP/RBAC contracts; focused tests and whole-repo compile pass.
+- 2026-07-30: Completed E3 lifecycle truth: dynamic governed states replay,
+  status/disposition share one terminal claim, required second review keeps work
+  open until independent agreement/override, and validated outcomes exclude
+  unresolved disagreement; concurrency and replay tests pass.
+- 2026-07-30: Completed E3 operations: ordered attribute/priority/age routing,
+  restart-reconciled atomic SLA queue escalation, capacity-safe rebalance,
+  durable bounded idempotent bulk manifests, search/saved views/opaque duplicate
+  groups, analytics, webhook retry/dead-letter history, and notifications;
+  focused domain/command/cases/scheduler tests pass.
+- 2026-07-30: Completed E3 evidence/privacy boundaries: linked evidence,
+  required-evidence dispositions, immutable attachment metadata, lawful-basis
+  and retention/hold/erasure annotations, PII masking, audit export, and
+  capability-redacting reads whose purpose-bound access command records one
+  event before returning the external pointer; direct handler regression passes.
+- 2026-07-30: Completed E3 product surfaces: full Go/TypeScript SDK contracts,
+  OpenAPI/RBAC, type/queue/reviewer administration, role-layout case detail,
+  saved views, duplicate review, four backend-owned bulk operations,
+  evidence/attachment/QA/webhook workflows, analytics/export, and 8,708-event
+  governed real-demo history; frontend lint/typecheck and repository compilation
+  are green.
+- 2026-07-30: Closed the final E3 journey audit: dynamic terminal states now
+  stop SLA/routing/workload/notifications and render from `resolved_at`; lifecycle
+  claims order sweeps against closure; and layout-declared editable fields now
+  have typed role authorization, CAS serialization, API/SDK/UI support, replay,
+  and concurrent-editor/browser regressions.
+- 2026-07-30: Closed the E3 multi-replica and notification races: a suspended
+  decision now owns every case lifecycle transition until resume, queue/reviewer
+  validation is deterministic, and resolved cases permanently suppress late
+  assignment and SLA tasks; focused concurrency/replay regressions pass.
+- 2026-07-30: Closed the real-browser case audit: zero lifecycle timestamps are
+  omitted from the wire instead of making active work appear closed, numeric
+  typed fields accept Svelte's runtime number binding, and all 130 native
+  Playwright journeys pass over the assembled Go API.
+- 2026-07-30: Completed the first E3 release matrix pass: `make check` and
+  `make ci` pass with strict lint, SAST, race, zero dead code, zero clone groups,
+  zero reachable vulnerabilities, and licenses; frontend formatting, lint,
+  zero-warning typecheck, 232 units, and production build pass; the regenerated
+  8,708-event seed round-trips through the real backend.
+- 2026-07-30: Closed the complete local E3 release matrix at the final source:
+  130 native and 83 real-Wasm browser journeys, 3 embedded-production smokes,
+  Helm lint/render, 18 Terraform contracts, bounded-workflow validation,
+  container publication/retention, and diff/SPDX/OpenAPI/generated-asset
+  hygiene all pass.
+- 2026-07-30: Reconciled fresh `origin/main` at `565e1d2`, confirmed the GitHub
+  review queue empty, pushed E3 commits `1b9e8bf` and `ec8f756`, and opened sole
+  PR #162 with hosted run `30545840816`.
+- 2026-07-30: Diagnosed final-head run `30545905179`'s hosted-only race failure:
+  the assembled E2 journey transitioned a durably created experiment before its
+  projection-backed GET became visible; aligned the test with the explicit
+  eventual-read contract before transition. The exact regression passes 50
+  consecutive race runs and the complete local Go gate passes.
+- 2026-07-30: Followed the hosted E2 projection-race cascade through running
+  state, corrected outcome history, exposures, and analysis; injected one
+  deterministic journey clock and strengthened the assertion to prove the
+  corrected in-window cohort. The exact journey passes 100 consecutive race
+  runs; full `make ci` passes strict lint/SAST/race/dead-code/clone/vulnerability/
+  license gates.
+- 2026-07-30: Pushed E3 projection-cascade fix `7e55c3d`; hosted run
+  `30547883192` is terminal green across all nine jobs, including real
+  PostgreSQL, Shauth SSO, 130 native browser journeys, 83 real-Wasm journeys,
+  the embedded artifact, and the full Go race/security gate.

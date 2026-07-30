@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+
 # Case Manager
 
 A component of **intraktible** (see [../PLAN.md](../PLAN.md) §4.2). New here? Start at [../AGENTS.md](../AGENTS.md).
@@ -11,9 +13,22 @@ cases/       # events -> JSONB read model (queue/detail + an audit log built fro
 service/     # HTTP handlers + wiring (imperative shell)
 ```
 
-Status: **done (Phase 2).**
+Status: **enterprise case operations complete (`PLAN.md` §8b.4).**
 
-Done — case lifecycle + queues + flow escalation + SLA tracking (command→event→projection→API, durable & replayable):
+Immutable case-type versions define typed/required fields, dynamic transitions
+and roles, dispositions/reasons, priorities, business calendars, evidence
+requirements, PII readers, and role layouts. Governed cases validate context and
+pin their exact version/deadline; historical cases remain explicit compatibility
+version `0`. Layout-declared editable fields have a role-authorized, typed,
+concurrency-safe event path and replay into the same context projection. Durable
+ordered queues and reviewer profiles route by attributes,
+skills, capacity, jurisdiction, priority, age, and conflicts. Permanent claims
+protect initial routing, takeover/rebalance, escalation, and terminal actions
+across replicas. Scheduler reconciliation recovers a crash after a breach was
+recorded but before its queue move.
+
+Done — complete case operations vertical (command→event→projection→API/UI,
+durable and replayable):
 - A case is opened either via the API (**ReviewRequested**) or by a **decision flow** — a
   `manual_review` node makes the engine emit `decision.manual_review_requested`, which the `cases`
   projector consumes to open a case linked by `source_decision_id` (the components talk only through
@@ -29,18 +44,35 @@ Done — case lifecycle + queues + flow escalation + SLA tracking (command→eve
   a scheduler/cron to call) finds open cases past their deadline as of now and emits a
   `CaseSLABreached` event for each — an effect computed against the clock and then *recorded* (so
   replay stays stable), idempotent (a breached case is skipped). The projection marks `sla_breached`
-  and audits it; read-time `days_left`/`sla_state` are unchanged.
+  and audits it; the scheduler reconciles configured queue escalation and bounded external webhook
+  attempts on every tick, including after restart. Delivery attempts, dead-letter outcome, and
+  explicit retry rounds are projected.
+- **Operational workbench:** text and structured search, personal saved views, opaque duplicate
+  candidates, deterministic queue rebalance, and bounded idempotent server-side bulk manifests for
+  assignment, status, priority, and disposition. Analytics cover workload/capacity, first action,
+  resolution, backlog age, SLA/routing state, and QA.
+- **Evidence and review truth:** typed links, immutable attachment hash/metadata, required-evidence
+  gates, reasoned dispositions, deterministic QA sampling, independent second review,
+  agreement/disagreement/override, and reviewer feedback. Only agreement/override-backed outcomes
+  enter the validated-outcome feed.
+- **Privacy/lifecycle:** exact-version PII masking, lawful basis, statutory retention, legal hold,
+  erasure, audit export, and audited attachment access. Binary bytes remain in an approved external
+  artifact system: ordinary reads redact the storage pointer; a purpose-bound operator command
+  records access before returning it.
 - HTTP (under `/v1/`, X-Api-Key / session auth, org+workspace scoped):
-  - `POST /v1/cases` — open `{company_name, case_type, sla_days, context?}` → `{case_id}`
-  - `GET /v1/cases?status=&type=&assignee=` — the queue, filtered (each case includes `days_left`/`sla_state`)
+  - `/v1/case-types`, `/v1/case-queues`, `/v1/case-reviewers` — immutable type publication and active
+    routing configuration
+  - `POST /v1/cases` — open governed work; `GET /v1/cases?...` — search/filter queue
   - `GET /v1/cases/summary?status=&type=&assignee=` — the queue roll-up
   - `GET /v1/cases/{case_id}` — detail + notes + audit
-  - `POST /v1/cases/{case_id}/assign|status|notes`
-  - `POST /v1/cases/sla-sweep` — emit SLA-breach events for overdue open cases → `{breached, count}`
-- **Dashboard UI** (`web/src/routes/cases`): a queue (status filter + open-case form, a summary
-  banner, and per-row days-left) and a case-detail view (fields incl. days-left, notes, **audit
-  log**, and assign / set-status / add-note actions).
+  - case actions: route/assign/status/priority/fields/disposition/notes/evidence/attachments/QA/webhook retry
+  - `/v1/case-views`, `/v1/cases/bulk`, `/v1/cases/duplicates`, `/v1/cases/rebalance`,
+    `/v1/cases/analytics`, `/v1/cases/export`, `/v1/case-validated-outcomes`
+- **Dashboard UI** (`web/src/routes/cases`): governed type/queue/reviewer administration; queue
+  search, saved views, duplicates, four bulk operations, analytics and export; role-ordered detail
+  with routing, lifecycle, typed field editing, evidence/attachment access, disposition, independent QA, webhook history,
+  notes, immutable activity, and discussion.
 - Run it: `intraktible serve --modules=case-manager` (UI dev: `make dev`).
 
-SLA breaches are now pushed via the sweep (D12) and the case context renders as a key-value view
-(D13).
+The Go and TypeScript SDKs and OpenAPI document expose the same contracts. The seeded hosted demo
+uses these actual handlers through WebAssembly; there is no case-management mock.

@@ -15,6 +15,7 @@ import (
 	"io"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -66,11 +67,53 @@ func (h *Handler) RequestReview(ctx context.Context, id identity.Identity, cmd d
 	if err := cmd.Validate(); err != nil {
 		return "", eventlog.Envelope{}, err
 	}
+	caseTypeVersion := 0
+	initialState := domain.StatusNeedsReview
+	priority := cmd.Priority
+	if priority == "" {
+		priority = domain.PriorityNormal
+	}
+	deadline := ""
+	published, governed, err := h.latestCaseType(ctx, id, cmd.CaseType)
+	if err != nil {
+		return "", eventlog.Envelope{}, err
+	}
+	if governed {
+		if err := published.Definition.ValidateContext(cmd.Context); err != nil {
+			return "", eventlog.Envelope{}, err
+		}
+		if !published.Definition.AllowsPriority(priority) {
+			return "", eventlog.Envelope{}, fmt.Errorf(
+				"case-manager: priority %q is not permitted by case type %q version %d",
+				priority, cmd.CaseType, published.Version,
+			)
+		}
+		location, err := time.LoadLocation(published.Definition.Calendar.Timezone)
+		if err != nil {
+			return "", eventlog.Envelope{}, fmt.Errorf(
+				"case-manager: load service-calendar timezone %q: %w",
+				published.Definition.Calendar.Timezone, err,
+			)
+		}
+		due, err := domain.BusinessDeadline(h.now(), published.Definition.Calendar, location)
+		if err != nil {
+			return "", eventlog.Envelope{}, err
+		}
+		caseTypeVersion = published.Version
+		initialState = published.Definition.InitialState
+		deadline = due.Format(time.RFC3339)
+	}
 	caseID := h.newID()
 	payload, err := json.Marshal(events.ReviewRequested{
 		CaseID:           caseID,
 		CompanyName:      cmd.CompanyName,
 		CaseType:         cmd.CaseType,
+		CaseTypeVersion:  caseTypeVersion,
+		InitialState:     string(initialState),
+		Priority:         string(priority),
+		Jurisdiction:     cmd.Jurisdiction,
+		Subject:          cmd.Subject,
+		Deadline:         deadline,
 		SLADays:          cmd.SLADays,
 		Context:          cmd.Context,
 		SourceDecisionID: cmd.SourceDecisionID,
@@ -139,10 +182,6 @@ func (h *Handler) SetStatus(ctx context.Context, id identity.Identity, cmd domai
 	if err := cmd.Validate(); err != nil {
 		return eventlog.Envelope{}, err
 	}
-	b, err := json.Marshal(events.CaseStatusChanged{CaseID: cmd.CaseID, Status: string(cmd.Status)})
-	if err != nil {
-		return eventlog.Envelope{}, fmt.Errorf("case-manager: marshal %s: %w", events.TypeCaseStatusChanged, err)
-	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for attempt := 0; ; attempt++ {
@@ -150,14 +189,51 @@ func (h *Handler) SetStatus(ctx context.Context, id identity.Identity, cmd domai
 		if err != nil {
 			return eventlog.Envelope{}, err
 		}
-		if !st.status.CanTransitionTo(cmd.Status) {
-			return eventlog.Envelope{}, fmt.Errorf("case-manager: cannot transition case %q from %s to %s", cmd.CaseID, st.status, cmd.Status)
-		}
-		if cmd.Status == domain.StatusCompleted && st.sourceDecisionSuspended {
+		if st.sourceDecisionSuspended {
 			return eventlog.Envelope{}, fmt.Errorf(
-				"case-manager: case %q belongs to suspended decision %q — record its review outcome to complete the case",
+				"case-manager: case %q belongs to suspended decision %q — record its review outcome to change the case lifecycle",
 				cmd.CaseID, st.sourceDecisionID,
 			)
+		}
+		terminal := cmd.Status == domain.StatusCompleted
+		if st.caseTypeVersion > 0 {
+			if st.pendingSecondReview {
+				return eventlog.Envelope{}, fmt.Errorf(
+					"case-manager: case %q is awaiting required second review",
+					cmd.CaseID,
+				)
+			}
+			published, err := h.caseTypeAtVersion(ctx, id, st.caseType, st.caseTypeVersion)
+			if err != nil {
+				return eventlog.Envelope{}, err
+			}
+			if published.Definition.IsTerminal(st.status) && !published.Definition.IsTerminal(cmd.Status) {
+				return eventlog.Envelope{}, fmt.Errorf(
+					"case-manager: terminal governed case %q cannot reopen from %s to %s",
+					cmd.CaseID, st.status, cmd.Status,
+				)
+			}
+			if !published.Definition.CanTransition(st.status, cmd.Status, cmd.Role) {
+				return eventlog.Envelope{}, fmt.Errorf(
+					"case-manager: role %q cannot transition governed case %q from %s to %s",
+					cmd.Role, cmd.CaseID, st.status, cmd.Status,
+				)
+			}
+			if published.Definition.IsDispositionTerminal(cmd.Status) {
+				return eventlog.Envelope{}, fmt.Errorf(
+					"case-manager: governed terminal state %q requires a reasoned disposition",
+					cmd.Status,
+				)
+			}
+			terminal = published.Definition.IsTerminal(cmd.Status)
+		} else if !st.status.CanTransitionTo(cmd.Status) {
+			return eventlog.Envelope{}, fmt.Errorf("case-manager: cannot transition case %q from %s to %s", cmd.CaseID, st.status, cmd.Status)
+		}
+		b, err := json.Marshal(events.CaseStatusChanged{
+			CaseID: cmd.CaseID, Status: string(cmd.Status), Terminal: terminal,
+		})
+		if err != nil {
+			return eventlog.Envelope{}, fmt.Errorf("case-manager: marshal %s: %w", events.TypeCaseStatusChanged, err)
 		}
 		e, err := h.appendUnique(ctx, id, events.TypeCaseStatusChanged, b, statusClaim(cmd.CaseID, st.statusCount))
 		if errors.Is(err, eventlog.ErrConflict) && attempt < maxClaimRetries {
@@ -187,22 +263,29 @@ func (h *Handler) caseState(ctx context.Context, id identity.Identity, caseID st
 }
 
 // The claims below make each fold-then-append atomic across processes. Assign and
-// status carry the count of prior events of their kind, so they are an expected-
-// version check; the SLA claims are per-case-once, so a second sweep on another
-// node cannot double-emit a breach.
+// lifecycle carry the count of prior events of their kind, so they are an
+// expected-version check. Status changes, dispositions, QA completion, SLA
+// reminders, and breaches share the lifecycle claim: a stale sweep can therefore
+// never append after a concurrent terminal transition.
 func assignClaim(caseID string, seen int) string {
 	return "case.assign\x00" + caseID + "\x00" + strconv.Itoa(seen)
 }
 
 func statusClaim(caseID string, seen int) string {
-	return "case.status\x00" + caseID + "\x00" + strconv.Itoa(seen)
+	return "case.lifecycle\x00" + caseID + "\x00" + strconv.Itoa(seen)
 }
 
-func slaBreachClaim(caseID string) string { return "case.sla_breach\x00" + caseID }
+func slaEscalationClaim(caseID string, round int) string {
+	return "case.sla_escalation\x00" + caseID + "\x00" + strconv.Itoa(round)
+}
 
-func slaReminderClaim(caseID string) string { return "case.sla_reminder\x00" + caseID }
+func slaDeliveryAttemptClaim(caseID string, round, attempt int) string {
+	return "case.sla_delivery\x00" + caseID + "\x00" + strconv.Itoa(round) + "\x00" + strconv.Itoa(attempt)
+}
 
-func slaEscalationClaim(caseID string) string { return "case.sla_escalation\x00" + caseID }
+func slaRetryClaim(caseID string, round int) string {
+	return "case.sla_retry\x00" + caseID + "\x00" + strconv.Itoa(round)
+}
 
 // AddNote appends a note to an existing case.
 func (h *Handler) AddNote(ctx context.Context, id identity.Identity, cmd domain.AddNote) (eventlog.Envelope, error) {
@@ -213,17 +296,29 @@ func (h *Handler) AddNote(ctx context.Context, id identity.Identity, cmd domain.
 // slaCaseState is the folded state of one case: what the SLA sweep needs, plus the
 // current assignee and the per-kind event counts the CAS claims pin an append to.
 type slaCaseState struct {
-	createdAt time.Time
-	slaDays   int
-	status    domain.CaseStatus
-	breached  bool
-	reminded  bool
-	escalated events.SLAEscalationStatus
+	createdAt        time.Time
+	deadline         time.Time
+	slaDays          int
+	status           domain.CaseStatus
+	caseType         string
+	caseTypeVersion  int
+	priority         domain.Priority
+	jurisdiction     string
+	context          json.RawMessage
+	contextCount     int
+	queue            string
+	terminal         bool
+	breached         bool
+	reminded         bool
+	escalated        events.SLAEscalationStatus
+	deliveryAttempts int
+	escalationRound  int
 
 	assignee                 string
 	assignCount, statusCount int
 	sourceDecisionID         string
 	sourceDecisionSuspended  bool
+	pendingSecondReview      bool
 }
 
 // SweepSLA finds the tenant's open cases whose SLA deadline has passed as of now
@@ -259,10 +354,21 @@ func (h *Handler) SweepSLAWithSeq(ctx context.Context, id identity.Identity, now
 	var finalSeq uint64
 	for _, cid := range ids {
 		st := states[cid]
-		if st.status == domain.StatusCompleted {
+		if st.terminal {
 			continue
 		}
-		switch domain.SLAState(st.createdAt, st.slaDays, now) {
+		slaState := domain.SLAState(st.createdAt, st.slaDays, now)
+		if !st.deadline.IsZero() {
+			switch {
+			case !now.Before(st.deadline):
+				slaState = domain.SLAOverdue
+			case st.deadline.Sub(now) <= 24*time.Hour:
+				slaState = domain.SLADueSoon
+			default:
+				slaState = domain.SLAOnTrack
+			}
+		}
+		switch slaState {
 		case domain.SLAOverdue:
 			if st.breached {
 				continue
@@ -271,11 +377,9 @@ func (h *Handler) SweepSLAWithSeq(ctx context.Context, id identity.Identity, now
 			if err != nil {
 				return breached, finalSeq, fmt.Errorf("case-manager: marshal sla_breached: %w", err)
 			}
-			// The fold above dedupes within this process; the claim dedupes across
-			// them, so a second scheduler (or a manual sweep on another node) racing
-			// this one cannot breach the same case twice and fire its escalation and
-			// webhook twice. Losing the claim means someone else recorded it.
-			event, err := h.appendUnique(ctx, id, events.TypeCaseSLABreached, b, slaBreachClaim(cid))
+			// The shared lifecycle claim dedupes scheduler replicas and orders this
+			// write against a concurrent status/disposition/QA terminal transition.
+			event, err := h.appendUnique(ctx, id, events.TypeCaseSLABreached, b, statusClaim(cid, st.statusCount))
 			if err != nil {
 				if errors.Is(err, eventlog.ErrConflict) {
 					continue
@@ -293,7 +397,7 @@ func (h *Handler) SweepSLAWithSeq(ctx context.Context, id identity.Identity, now
 			if err != nil {
 				return breached, finalSeq, fmt.Errorf("case-manager: marshal sla_reminder: %w", err)
 			}
-			event, err := h.appendUnique(ctx, id, events.TypeCaseSLAReminder, b, slaReminderClaim(cid))
+			event, err := h.appendUnique(ctx, id, events.TypeCaseSLAReminder, b, statusClaim(cid, st.statusCount))
 			if err != nil {
 				if errors.Is(err, eventlog.ErrConflict) {
 					continue
@@ -322,7 +426,7 @@ func (h *Handler) PendingSLAEscalations(ctx context.Context, id identity.Identit
 	}
 	var pending []string
 	for caseID, st := range states {
-		if st.breached && !st.escalated.Terminal() {
+		if st.breached && !st.terminal && !st.escalated.Terminal() {
 			pending = append(pending, caseID)
 		}
 	}
@@ -355,13 +459,74 @@ func (h *Handler) RecordSLAEscalation(ctx context.Context, id identity.Identity,
 	if err != nil {
 		return fmt.Errorf("case-manager: marshal sla_escalated: %w", err)
 	}
-	if _, err := h.appendUnique(ctx, id, events.TypeCaseSLAEscalated, b, slaEscalationClaim(caseID)); err != nil {
+	if _, err := h.appendUnique(ctx, id, events.TypeCaseSLAEscalated, b, slaEscalationClaim(caseID, st.escalationRound)); err != nil {
 		if errors.Is(err, eventlog.ErrConflict) {
 			return nil
 		}
 		return err
 	}
 	return nil
+}
+
+// RecordSLADeliveryAttempt durably records every external delivery result and
+// returns the one-based attempt number.
+func (h *Handler) RecordSLADeliveryAttempt(
+	ctx context.Context,
+	id identity.Identity,
+	caseID string,
+	outcome events.SLADeliveryOutcome,
+) (int, error) {
+	if err := id.Valid(); err != nil {
+		return 0, err
+	}
+	if !outcome.Valid() {
+		return 0, fmt.Errorf("case-manager: invalid SLA delivery outcome %q", outcome)
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	st, err := h.caseState(ctx, id, caseID)
+	if err != nil {
+		return 0, err
+	}
+	if !st.breached || st.escalated.Terminal() {
+		return 0, fmt.Errorf("case-manager: case %q has no pending SLA escalation", caseID)
+	}
+	attempt := st.deliveryAttempts + 1
+	payload, err := json.Marshal(events.CaseSLADeliveryAttempted{
+		CaseID: caseID, Round: st.escalationRound, Attempt: attempt, Outcome: outcome,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("case-manager: marshal SLA delivery attempt: %w", err)
+	}
+	if _, err := h.appendUnique(ctx, id, events.TypeCaseSLADeliveryAttempted, payload, slaDeliveryAttemptClaim(caseID, st.escalationRound, attempt)); err != nil {
+		return 0, err
+	}
+	return attempt, nil
+}
+
+// RetrySLAEscalation explicitly requeues a terminal failed/no-channel delivery.
+func (h *Handler) RetrySLAEscalation(ctx context.Context, id identity.Identity, caseID, reason string) (eventlog.Envelope, error) {
+	if err := id.Valid(); err != nil {
+		return eventlog.Envelope{}, err
+	}
+	if strings.TrimSpace(reason) == "" {
+		return eventlog.Envelope{}, errors.New("case-manager: retry reason is required")
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	st, err := h.caseState(ctx, id, caseID)
+	if err != nil {
+		return eventlog.Envelope{}, err
+	}
+	if st.escalated != events.SLAEscalationNoChannel && st.escalated != events.SLAEscalationPermanentFailure {
+		return eventlog.Envelope{}, fmt.Errorf("case-manager: case %q escalation status %q is not retryable by an operator", caseID, st.escalated)
+	}
+	round := st.escalationRound + 1
+	payload, err := json.Marshal(events.CaseSLAEscalationRetried{CaseID: caseID, Reason: reason, Round: round})
+	if err != nil {
+		return eventlog.Envelope{}, fmt.Errorf("case-manager: marshal SLA escalation retry: %w", err)
+	}
+	return h.appendUnique(ctx, id, events.TypeCaseSLAEscalationRetried, payload, slaRetryClaim(caseID, round))
 }
 
 // caseStates folds the tenant's case stream into current per-case SLA state,
@@ -374,26 +539,99 @@ func (h *Handler) caseStates(ctx context.Context, id identity.Identity) (map[str
 	}
 	states := make(map[string]slaCaseState)
 	suspendedDecisions := make(map[string]bool)
+	latestTypes := make(map[string]PublishedCaseType)
+	type typeVersion struct {
+		key     string
+		version int
+	}
+	exactTypes := make(map[typeVersion]domain.CaseTypeDefinition)
+	isTerminal := func(state slaCaseState, status domain.CaseStatus) (bool, error) {
+		if state.caseTypeVersion == 0 {
+			return status == domain.StatusCompleted, nil
+		}
+		definition, found := exactTypes[typeVersion{key: state.caseType, version: state.caseTypeVersion}]
+		if !found {
+			return false, fmt.Errorf(
+				"case-manager: missing case type %q version %d while folding status",
+				state.caseType, state.caseTypeVersion,
+			)
+		}
+		return definition.IsTerminal(status), nil
+	}
 	for _, e := range evs {
 		if e.Org != id.Org || e.Workspace != id.Workspace {
 			continue
 		}
 		switch e.Type {
+		case events.TypeCaseTypePublished:
+			var p events.CaseTypePublished
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				return nil, fmt.Errorf("case-manager: decode case type seq %d: %w", e.Seq, err)
+			}
+			var definition domain.CaseTypeDefinition
+			if err := json.Unmarshal(p.Definition, &definition); err != nil {
+				return nil, fmt.Errorf("case-manager: decode case type definition seq %d: %w", e.Seq, err)
+			}
+			if err := definition.Validate(); err != nil {
+				return nil, fmt.Errorf("case-manager: invalid case type definition seq %d: %w", e.Seq, err)
+			}
+			latestTypes[p.Key] = PublishedCaseType{Version: p.Version, Definition: definition}
+			exactTypes[typeVersion{key: p.Key, version: p.Version}] = definition
 		case events.TypeReviewRequested:
 			var p events.ReviewRequested
 			if err := json.Unmarshal(e.Payload, &p); err != nil {
 				return nil, fmt.Errorf("case-manager: decode requested seq %d: %w", e.Seq, err)
 			}
-			states[p.CaseID] = slaCaseState{createdAt: e.Time, slaDays: domain.NormalizeSLADays(p.SLADays), status: domain.StatusNeedsReview}
+			status := domain.StatusNeedsReview
+			if p.InitialState != "" {
+				parsed, valid := domain.ParseStateKey(p.InitialState)
+				if !valid {
+					return nil, fmt.Errorf("case-manager: case %q has invalid initial state %q at seq %d", p.CaseID, p.InitialState, e.Seq)
+				}
+				status = parsed
+			}
+			priority := domain.Priority(p.Priority)
+			if priority == "" {
+				priority = domain.PriorityNormal
+			}
+			var deadline time.Time
+			if p.Deadline != "" {
+				deadline, err = time.Parse(time.RFC3339, p.Deadline)
+				if err != nil {
+					return nil, fmt.Errorf("case-manager: case %q has invalid deadline at seq %d: %w", p.CaseID, e.Seq, err)
+				}
+			}
+			states[p.CaseID] = slaCaseState{
+				createdAt: e.Time, slaDays: domain.NormalizeSLADays(p.SLADays), status: status,
+				deadline: deadline, caseType: p.CaseType, caseTypeVersion: p.CaseTypeVersion, priority: priority,
+				jurisdiction: p.Jurisdiction, context: p.Context,
+			}
 		case decisionevents.TypeManualReviewRequested:
 			var p decisionevents.ManualReviewRequested
 			if err := json.Unmarshal(e.Payload, &p); err != nil {
 				return nil, fmt.Errorf("case-manager: decode escalated seq %d: %w", e.Seq, err)
 			}
+			status, priority, version := domain.StatusNeedsReview, domain.PriorityNormal, 0
+			var deadline time.Time
+			if published, governed := latestTypes[p.CaseType]; governed {
+				status, version = published.Definition.InitialState, published.Version
+				if !published.Definition.AllowsPriority(priority) {
+					priority = published.Definition.Priorities[0]
+				}
+				location, loadErr := time.LoadLocation(published.Definition.Calendar.Timezone)
+				if loadErr != nil {
+					return nil, fmt.Errorf("case-manager: load case type timezone at seq %d: %w", e.Seq, loadErr)
+				}
+				deadline, err = domain.BusinessDeadline(e.Time, published.Definition.Calendar, location)
+				if err != nil {
+					return nil, err
+				}
+			}
 			states[p.CaseID] = slaCaseState{
 				createdAt: e.Time, slaDays: domain.NormalizeSLADays(p.SLADays),
-				status: domain.StatusNeedsReview, sourceDecisionID: p.DecisionID,
+				status: status, deadline: deadline, sourceDecisionID: p.DecisionID,
 				sourceDecisionSuspended: suspendedDecisions[p.DecisionID],
+				caseType:                p.CaseType, caseTypeVersion: version, priority: priority, context: p.Context,
 			}
 		case decisionevents.TypeDecisionSuspended:
 			var p decisionevents.DecisionSuspended
@@ -421,6 +659,7 @@ func (h *Handler) caseStates(ctx context.Context, id identity.Identity) (map[str
 					)
 				}
 				st.status = domain.StatusCompleted
+				st.terminal = true
 				st.sourceDecisionSuspended = false
 				states[p.CaseID] = st
 			}
@@ -434,6 +673,19 @@ func (h *Handler) caseStates(ctx context.Context, id identity.Identity) (map[str
 				st.assignCount++
 				states[p.CaseID] = st
 			}
+		case events.TypeCaseRouted:
+			var p events.CaseRouted
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				return nil, fmt.Errorf("case-manager: decode routed seq %d: %w", e.Seq, err)
+			}
+			if st, ok := states[p.CaseID]; ok {
+				st.queue = p.Queue
+				if p.Assignee != "" {
+					st.assignee = p.Assignee
+					st.assignCount++
+				}
+				states[p.CaseID] = st
+			}
 		case events.TypeCaseStatusChanged:
 			var p events.CaseStatusChanged
 			if err := json.Unmarshal(e.Payload, &p); err != nil {
@@ -442,11 +694,65 @@ func (h *Handler) caseStates(ctx context.Context, id identity.Identity) (map[str
 			if st, ok := states[p.CaseID]; ok {
 				// A status the domain no longer knows must not be silently dropped:
 				// keeping the prior status would sweep a case that actually closed.
-				status, valid := domain.ParseStatus(p.Status)
+				status, valid := domain.ParseStateKey(p.Status)
 				if !valid {
 					return nil, fmt.Errorf("case-manager: case %q has unknown status %q at seq %d", p.CaseID, p.Status, e.Seq)
 				}
 				st.status = status
+				st.terminal, err = isTerminal(st, status)
+				if err != nil {
+					return nil, err
+				}
+				st.statusCount++
+				states[p.CaseID] = st
+			}
+		case events.TypeCaseFieldsUpdated:
+			var p events.CaseFieldsUpdated
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				return nil, fmt.Errorf("case-manager: decode field update seq %d: %w", e.Seq, err)
+			}
+			if st, ok := states[p.CaseID]; ok {
+				st.context, err = domain.PatchContext(st.context, p.Fields)
+				if err != nil {
+					return nil, fmt.Errorf("case-manager: apply field update seq %d: %w", e.Seq, err)
+				}
+				st.contextCount++
+				states[p.CaseID] = st
+			}
+		case events.TypeCaseQAReviewed:
+			var p events.CaseQAReviewed
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				return nil, fmt.Errorf("case-manager: decode QA review seq %d: %w", e.Seq, err)
+			}
+			if st, ok := states[p.CaseID]; ok && p.State != "" {
+				status, valid := domain.ParseStateKey(p.State)
+				if !valid {
+					return nil, fmt.Errorf("case-manager: case %q has invalid QA state %q at seq %d", p.CaseID, p.State, e.Seq)
+				}
+				st.status = status
+				st.terminal, err = isTerminal(st, status)
+				if err != nil {
+					return nil, err
+				}
+				st.pendingSecondReview = false
+				st.statusCount++
+				states[p.CaseID] = st
+			}
+		case events.TypeCaseDispositionRecorded:
+			var p events.CaseDispositionRecorded
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				return nil, fmt.Errorf("case-manager: decode disposition seq %d: %w", e.Seq, err)
+			}
+			if st, ok := states[p.CaseID]; ok {
+				status, valid := domain.ParseStateKey(p.State)
+				if !valid {
+					return nil, fmt.Errorf("case-manager: case %q has invalid disposition state %q at seq %d", p.CaseID, p.State, e.Seq)
+				}
+				if !p.RequiresSecondReview {
+					st.status = status
+					st.terminal = true
+				}
+				st.pendingSecondReview = p.RequiresSecondReview
 				st.statusCount++
 				states[p.CaseID] = st
 			}
@@ -457,6 +763,7 @@ func (h *Handler) caseStates(ctx context.Context, id identity.Identity) (map[str
 			}
 			if st, ok := states[p.CaseID]; ok {
 				st.breached = true
+				st.statusCount++
 				states[p.CaseID] = st
 			}
 		case events.TypeCaseSLAReminder:
@@ -466,6 +773,7 @@ func (h *Handler) caseStates(ctx context.Context, id identity.Identity) (map[str
 			}
 			if st, ok := states[p.CaseID]; ok {
 				st.reminded = true
+				st.statusCount++
 				states[p.CaseID] = st
 			}
 		case events.TypeCaseSLAEscalated:
@@ -478,6 +786,38 @@ func (h *Handler) caseStates(ctx context.Context, id identity.Identity) (map[str
 			}
 			if st, ok := states[p.CaseID]; ok {
 				st.escalated = p.Status
+				states[p.CaseID] = st
+			}
+		case events.TypeCaseSLADeliveryAttempted:
+			var p events.CaseSLADeliveryAttempted
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				return nil, fmt.Errorf("case-manager: decode SLA delivery attempt seq %d: %w", e.Seq, err)
+			}
+			if !p.Outcome.Valid() {
+				return nil, fmt.Errorf("case-manager: case %q has invalid SLA delivery outcome %q at seq %d", p.CaseID, p.Outcome, e.Seq)
+			}
+			if st, ok := states[p.CaseID]; ok {
+				if p.Round != st.escalationRound || p.Attempt != st.deliveryAttempts+1 {
+					return nil, fmt.Errorf(
+						"case-manager: case %q SLA round/attempt %d/%d is not sequential at seq %d",
+						p.CaseID, p.Round, p.Attempt, e.Seq,
+					)
+				}
+				st.deliveryAttempts = p.Attempt
+				states[p.CaseID] = st
+			}
+		case events.TypeCaseSLAEscalationRetried:
+			var p events.CaseSLAEscalationRetried
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				return nil, fmt.Errorf("case-manager: decode SLA escalation retry seq %d: %w", e.Seq, err)
+			}
+			if st, ok := states[p.CaseID]; ok {
+				if p.Round != st.escalationRound+1 {
+					return nil, fmt.Errorf("case-manager: case %q SLA retry round %d is not sequential at seq %d", p.CaseID, p.Round, e.Seq)
+				}
+				st.escalationRound = p.Round
+				st.deliveryAttempts = 0
+				st.escalated = events.SLAEscalationPending
 				states[p.CaseID] = st
 			}
 		}

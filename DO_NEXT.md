@@ -16,15 +16,12 @@ DOC (a claim not backed by code).
 
 ## Queue
 
-Enterprise roadmap execution from authoritative E1 merge `fea2a7e`.
+No open implementation item. Enterprise E3 commit `7e55c3d` is terminal green
+across all nine jobs in hosted run `30547883192`; sole PR #162 is ready to merge.
+Do not start E4 until the user merges it, then fetch and reconcile the new
+authoritative `origin/main` before cutting the next vertical branch.
 
-1. **OPEN — PR E2 · REVIEW: merge sole PR #161 before starting E3.**
-   E2 implementation commit `0eaa5a5` and hosted run `30527793916` are green
-   across all nine required jobs. This final evidence commit must repeat the
-   hosted matrix successfully; then wait for the user to merge PR #161, fetch
-   and reconcile authoritative `origin/main`, and only then cut E3.
-
-PRs E3–E7 remain ordered behind E2 in `PLAN.md` §§8b.4–8b.8. Do not open or
+PRs E4–E7 remain ordered behind E3 in `PLAN.md` §§8b.5–8b.8. Do not open or
 implement them concurrently; after each merge, reconcile fresh `origin/main`
 before starting the next vertical tranche.
 

@@ -42,6 +42,13 @@ These are real strengths, not placeholders:
 - **Multi-tenancy** — every event and projection is org/workspace scoped.
 - **Operational tooling** — `serve | log | replay | export`, health/degraded
   surfacing, crash-safe WAL.
+- **Enterprise case operations** — immutable case definitions, typed role-authorized field editing, and role layouts;
+  cross-replica atomic routing/reassignment/escalation over skills, capacity,
+  jurisdiction, priority, age and conflicts; durable bulk/search/saved-view/
+  duplicate/rebalance operations; evidence and purpose-audited external attachment
+  access; independent QA and validated outcomes; replay-derived workload/SLA/
+  resolution/quality analytics. Suspended decisions resume only from the exact
+  case-owned human outcome.
 
 ## 2. Gaps, by category (what "complete" requires)
 
