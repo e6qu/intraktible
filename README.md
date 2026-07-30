@@ -98,8 +98,9 @@ docker compose --profile pg up        # add a Postgres projection store
 ```
 
 **Production** — deploy on Kubernetes with the Helm chart in [`deploy/helm/intraktible`](deploy/helm/intraktible)
-(API tier + singleton scheduler tier, `/healthz`+`/readyz` probes, HPA/PDB, hardened
-securityContext), or single-host with [`deploy/docker-compose.prod.yml`](deploy/docker-compose.prod.yml).
+(API tier + scalable durable-worker tier + singleton scheduler tier,
+`/healthz`+`/readyz` probes, HPA/PDB, hardened securityContext), or single-host
+with [`deploy/docker-compose.prod.yml`](deploy/docker-compose.prod.yml).
 Set `INTRAKTIBLE_ENV=production` and the server refuses to boot on insecure config. Full
 runbook: [docs/DEPLOY.md](docs/DEPLOY.md); backups/DR: [docs/DR.md](docs/DR.md).
 
@@ -117,6 +118,8 @@ runbook: [docs/DEPLOY.md](docs/DEPLOY.md); backups/DR: [docs/DR.md](docs/DR.md).
 | `INTRAKTIBLE_AI_RATE_LIMIT_RPS` · `_BURST` | Per-provider AI rate limit (token bucket; off by default) |
 | `INTRAKTIBLE_AI_GUARDRAIL_PII` · `_REDACT_FIELDS` · `_BLOCK_INJECTION` | AI guardrails: redact PII in prompts/output, mask structured fields (CSV), block prompt-injection (off by default) |
 | `INTRAKTIBLE_LOGIN_RATE_LIMIT_RPS` · `_BURST` | Per-client login token bucket (defaults 10 requests/s, burst 30; RPS `0` disables). Invalid/negative values, or a zero burst while enabled, refuse startup |
+| `INTRAKTIBLE_PROCESS_ROLE` | Background ownership: `all` (single-process default), `api`, `worker`, or `scheduler`. Production HA uses separate roles so API replicas never recover durable work |
+| `INTRAKTIBLE_DECISION_RECOVERY_INTERVAL` | Positive worker scan cadence for interrupted decisions (default `5s`); malformed/non-positive values refuse startup |
 | `INTRAKTIBLE_MONITOR_INTERVAL` · `INTRAKTIBLE_MODEL_DRIFT_WINDOW` | Scheduler cadence (e.g. `1m`) and optional recent model-drift window in non-negative days; malformed values refuse startup |
 | `INTRAKTIBLE_DECIDE_EVAL_TIMEOUT` | Positive Go duration limiting expression/Code evaluation per decision (for example `2s`); malformed/non-positive values refuse startup |
 | `INTRAKTIBLE_ENCRYPTION_KEY` · `_KEYS_PREVIOUS` | Encryption at rest for event payloads + projection store (base64/hex 32-byte key; previous keys retained for zero-downtime rotation; off by default) |

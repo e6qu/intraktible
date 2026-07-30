@@ -82,36 +82,42 @@ func TestDecideInjectsFeatures(t *testing.T) {
 		t.Fatalf("want low, got %+v", res.Output)
 	}
 
-	// The recorded DecisionStarted carries the entity ref and the injected
-	// features in its data — so the run replays from the log alone.
+	// DecisionStarted retains the caller input and entity ref; the separate
+	// context event retains the authoritative feature snapshot for recovery.
 	evs, err := log.Read(ctx, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var found bool
+	var foundStarted, foundPrepared bool
 	for _, e := range evs {
-		if e.Type != events.TypeDecisionStarted {
-			continue
+		switch e.Type {
+		case events.TypeDecisionStarted:
+			var p events.DecisionStarted
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				t.Fatal(err)
+			}
+			if p.EntityType != "customer" || p.EntityID != "c1" {
+				t.Fatalf("entity ref not recorded: %+v", p)
+			}
+			foundStarted = true
+		case events.TypeContextPrepared:
+			var p events.DecisionContextPrepared
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				t.Fatal(err)
+			}
+			var data map[string]any
+			if err := json.Unmarshal(p.Data, &data); err != nil {
+				t.Fatal(err)
+			}
+			feats, ok := data["features"].(map[string]any)
+			if !ok || feats["txn_count_24h"] == nil {
+				t.Fatalf("features not recorded in prepared context: %v", data)
+			}
+			foundPrepared = true
 		}
-		var p events.DecisionStarted
-		if err := json.Unmarshal(e.Payload, &p); err != nil {
-			t.Fatal(err)
-		}
-		if p.EntityType != "customer" || p.EntityID != "c1" {
-			t.Fatalf("entity ref not recorded: %+v", p)
-		}
-		var data map[string]any
-		if err := json.Unmarshal(p.Data, &data); err != nil {
-			t.Fatal(err)
-		}
-		feats, ok := data["features"].(map[string]any)
-		if !ok || feats["txn_count_24h"] == nil {
-			t.Fatalf("features not recorded in data: %v", data)
-		}
-		found = true
 	}
-	if !found {
-		t.Fatal("no DecisionStarted event recorded")
+	if !foundStarted || !foundPrepared {
+		t.Fatalf("started=%v prepared=%v, want both", foundStarted, foundPrepared)
 	}
 }
 

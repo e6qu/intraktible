@@ -66,9 +66,11 @@ Done — custom entities + events + feature engine + connectors (command→event
   - `GET /v1/context/connectors/{name}/fetches` — the recorded fetch history, newest first
 - Run it: `intraktible serve --modules=context-layer`.
 
-Consumed by the decision engine: a flow's **Connect node** calls a defined connector (the shell
-pre-resolves it via the `connectors.Provider` adapter and injects the response under `connect.<output>`),
-and Rule nodes read computed features — both through ports so the engine never imports this layer.
+Consumed by the decision engine: when traversal reaches a flow's **Connect node**, the pure
+interpreter yields the exact current record; the shell calls the defined connector through the
+`connectors.Provider` adapter, records the effect evidence, and resumes under `connect.<output>`.
+Rule nodes read the separately recorded feature snapshot. Both use ports so the engine never imports
+this layer.
 
 The HTTP connector enforces an **egress policy** (SSRF guard, D15): it dials only after DNS
 resolution through a `net.Dialer` Control hook that refuses loopback / private (RFC1918, ULA) /

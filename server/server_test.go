@@ -291,3 +291,44 @@ func TestRuntimeEnvironmentDefaultsOnlyWhenAbsent(t *testing.T) {
 		t.Fatalf("default drift window = %v, %v", window, err)
 	}
 }
+
+func TestProcessRoleValidation(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{input: "", want: processRoleAll},
+		{input: "all", want: processRoleAll},
+		{input: " API ", want: processRoleAPI},
+		{input: "worker", want: processRoleWorker},
+		{input: "scheduler", want: processRoleScheduler},
+	}
+	for _, test := range tests {
+		got, err := normalizeProcessRole(test.input)
+		want := test.want
+		if err != nil || got != want {
+			t.Fatalf("normalizeProcessRole(%q) = %q, %v; want %q", test.input, got, err, want)
+		}
+	}
+	if _, err := normalizeProcessRole("api-and-worker"); err == nil {
+		t.Fatal("combined unknown process role was accepted")
+	}
+}
+
+func TestDecisionRecoveryIntervalMustBePositive(t *testing.T) {
+	t.Setenv("INTRAKTIBLE_DECISION_RECOVERY_INTERVAL", "0s")
+	if _, err := positiveEnvDuration(
+		"INTRAKTIBLE_DECISION_RECOVERY_INTERVAL",
+		time.Second,
+	); err == nil {
+		t.Fatal("zero recovery interval was accepted")
+	}
+	t.Setenv("INTRAKTIBLE_DECISION_RECOVERY_INTERVAL", "250ms")
+	got, err := positiveEnvDuration(
+		"INTRAKTIBLE_DECISION_RECOVERY_INTERVAL",
+		time.Second,
+	)
+	if err != nil || got != 250*time.Millisecond {
+		t.Fatalf("recovery interval = %v, %v", got, err)
+	}
+}

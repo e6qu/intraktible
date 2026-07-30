@@ -14,6 +14,9 @@
   import {
     getAgent,
     runAgent,
+    startAgentRun,
+    cancelAgentRun,
+    retryAgentRun,
     listAgentRuns,
     escalateRun,
     listAgentVersions,
@@ -56,7 +59,25 @@
   let loading = $state(true);
 
   let prompt = $state('');
+  let asyncRun = $state(true);
+  let runVersion = $state(0);
+  let timeoutMs = $state(60_000);
+  let maxAttempts = $state(3);
+  let idempotencyKey = $state('');
+  let businessReference = $state('');
+  let correlationId = $state('');
   let lastRunID = $state('');
+  const runControlsValid = $derived(
+    Number.isInteger(runVersion) &&
+      runVersion >= 0 &&
+      (!asyncRun ||
+        (Number.isInteger(timeoutMs) &&
+          timeoutMs >= 1 &&
+          timeoutMs <= 600_000 &&
+          Number.isInteger(maxAttempts) &&
+          maxAttempts >= 1 &&
+          maxAttempts <= 10))
+  );
   // The just-completed (non-stream) run's result, shown inline so a Run gives
   // visible output instead of silently appending to the Runs list.
   let lastResult = $state<RunResult | null>(null);
@@ -70,15 +91,26 @@
   // rather than showing the first agent's data.
   const name = $derived($page.params.name ?? '');
 
-  async function load() {
+  let pollTimer: ReturnType<typeof setTimeout> | undefined;
+  function schedulePoll() {
+    if (pollTimer) clearTimeout(pollTimer);
+    if (runs.some((r) => r.status === 'running' || r.status === 'retrying')) {
+      pollTimer = setTimeout(() => void load(true), 1_000);
+    }
+  }
+
+  async function load(background = false) {
+    if (pollTimer) clearTimeout(pollTimer);
     error = '';
     notFound = false;
-    loading = true;
-    // Clear the prior agent so a failed reload can't leave the previous agent's data on
-    // screen under an error.
-    agent = null;
-    runs = [];
-    versions = [];
+    if (!background) {
+      loading = true;
+      // Clear the prior agent so a failed navigation can't leave the previous
+      // agent's data on screen under an error.
+      agent = null;
+      runs = [];
+      versions = [];
+    }
     // Drop a stale response when sibling navigation changes name mid-flight.
     const reqName = name;
     try {
@@ -90,6 +122,17 @@
       ]);
       if (name !== reqName) return;
       [agent, runs, versions] = [a, r, v];
+      const tracked = lastRunID ? r.find((run) => run.run_id === lastRunID) : undefined;
+      if (tracked) {
+        lastResult = {
+          run_id: tracked.run_id,
+          status: tracked.status,
+          text: tracked.text,
+          structured: tracked.structured,
+          error: tracked.error,
+          seq: tracked.seq
+        };
+      }
       evalText = ec.length > 0 ? JSON.stringify(ec, null, 2) : '';
     } catch (e) {
       if (name === reqName) {
@@ -97,7 +140,10 @@
         else error = e instanceof Error ? e.message : String(e);
       }
     } finally {
-      if (name === reqName) loading = false;
+      if (name === reqName) {
+        if (!background) loading = false;
+        schedulePoll();
+      }
     }
   }
 
@@ -133,18 +179,72 @@
     error = '';
     running = true;
     try {
-      const res = await runAgent(key, name, prompt);
+      const res = asyncRun
+        ? await startAgentRun(key, name, prompt, {
+            version: runVersion,
+            timeoutMs,
+            maxAttempts,
+            idempotencyKey: idempotencyKey.trim() || undefined,
+            businessReference: businessReference.trim() || undefined,
+            correlationId: correlationId.trim() || undefined
+          })
+        : await runAgent(key, name, prompt, runVersion);
       lastRunID = res.run_id;
       lastResult = res;
-      await load();
+      await load(true);
       // The inline panel already shows the output; a toast confirms the run landed (and
       // flags a failed run, which reads the same as success without it).
       if (res.status === 'failed') toast.error('Agent run failed');
+      else if (res.status === 'running') toast.success('Run accepted by the durable worker queue');
       else toast.success('Run complete');
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     } finally {
       running = false;
+    }
+  }
+
+  let runAction = $state('');
+  function canRetry(r: AgentRun): boolean {
+    return (
+      ['failed', 'cancelled', 'timed_out', 'dead_letter'].includes(r.status) &&
+      (r.attempt ?? 1) < (r.max_attempts ?? 3)
+    );
+  }
+  async function cancelRun(r: AgentRun) {
+    if (runAction || !confirm('Cancel this asynchronous run?')) return;
+    runAction = r.run_id;
+    try {
+      await cancelAgentRun(key, r.run_id);
+      toast.success('Cancellation requested');
+      await load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      runAction = '';
+    }
+  }
+  async function retryRun(r: AgentRun) {
+    if (runAction) return;
+    const reason = window.prompt('Why is this run safe and necessary to retry?')?.trim();
+    if (!reason) return;
+    const acknowledge = r.status === 'dead_letter';
+    if (
+      acknowledge &&
+      !confirm(
+        'This provider call may already have completed. Retrying can repeat an external side effect. Acknowledge and continue?'
+      )
+    )
+      return;
+    runAction = r.run_id;
+    try {
+      await retryAgentRun(key, r.run_id, reason, acknowledge);
+      toast.success('Retry accepted');
+      await load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      runAction = '';
     }
   }
 
@@ -323,14 +423,17 @@
     void load();
   });
 
-  onDestroy(closeStream);
+  onDestroy(() => {
+    closeStream();
+    if (pollTimer) clearTimeout(pollTimer);
+  });
 </script>
 
 <main>
   <p><a href={appHref('/agents')}>← agents</a></p>
   {#if !notFound}
     <div class="row reload-row">
-      <button onclick={load} title="Re-fetch this agent, its runs, and evals"
+      <button onclick={() => void load()} title="Re-fetch this agent, its runs, and evals"
         ><Icon name="reload" size={15} /> Reload</button
       >
     </div>
@@ -367,13 +470,60 @@
     <section class="actions">
       <div class="row">
         <input bind:value={prompt} placeholder="prompt" aria-label="prompt" />
+        <label class="inline-check">
+          <input type="checkbox" bind:checked={asyncRun} />
+          durable async
+        </label>
         <button
           onclick={run}
-          disabled={running || !roleAtLeast($user?.role, 'operator')}
+          disabled={running || !runControlsValid || !roleAtLeast($user?.role, 'operator')}
           title={!roleAtLeast($user?.role, 'operator') ? 'Requires the operator role' : undefined}
           >{running ? 'Running…' : 'Run'}</button
         >
       </div>
+      <details class="run-controls">
+        <summary>Execution and tracking</summary>
+        <div class="control-grid">
+          <label
+            >Version
+            <input type="number" min="0" bind:value={runVersion} aria-label="agent version" />
+            <small>0 = latest</small>
+          </label>
+          {#if asyncRun}
+            <label
+              >Timeout (ms)
+              <input type="number" min="1" max="600000" bind:value={timeoutMs} />
+            </label>
+            <label
+              >Max attempts
+              <input type="number" min="1" max="10" bind:value={maxAttempts} />
+            </label>
+            <label
+              >Idempotency key
+              <input bind:value={idempotencyKey} maxlength="256" placeholder="application-run-42" />
+            </label>
+            <label
+              >Business reference
+              <input bind:value={businessReference} maxlength="256" placeholder="application-42" />
+            </label>
+            <label
+              >Correlation ID
+              <input bind:value={correlationId} maxlength="256" placeholder="trace-42" />
+            </label>
+          {/if}
+        </div>
+        {#if asyncRun}
+          <p class="muted small">
+            Accepted work is durable before this page returns. Any worker replica can claim it;
+            idempotent retries return the original run.
+          </p>
+        {/if}
+      </details>
+      {#if !runControlsValid}
+        <p class="err small">
+          Version must be non-negative; async timeout is 1–600000 ms and attempts are 1–10.
+        </p>
+      {/if}
       {#if lastResult}
         <div class="run-output" data-testid="run-result">
           <div class="run-output-head">
@@ -496,6 +646,25 @@
             <Badge tone={statusTone(r.status)}>{r.status}</Badge>
             <span class="muted"><RelativeTime value={r.at} /></span>
             {#if r.case_id}<span class="muted">· escalated</span>{/if}
+            {#if r.status === 'running' || r.status === 'retrying'}
+              <button
+                class="escalate"
+                onclick={() => cancelRun(r)}
+                disabled={runAction === r.run_id || !roleAtLeast($user?.role, 'operator')}
+                aria-label={`cancel ${r.run_id}`}
+              >
+                {runAction === r.run_id ? 'Cancelling…' : 'Cancel'}
+              </button>
+            {:else if canRetry(r)}
+              <button
+                class="escalate"
+                onclick={() => retryRun(r)}
+                disabled={runAction === r.run_id || !roleAtLeast($user?.role, 'operator')}
+                aria-label={`retry ${r.run_id}`}
+              >
+                {runAction === r.run_id ? 'Retrying…' : 'Retry'}
+              </button>
+            {/if}
             {#if canEscalate(r)}
               <button
                 class="escalate"
@@ -515,6 +684,21 @@
               <a href={appHref(`/cases/${r.case_id}`)}>→ Open case {r.case_id}</a>
             </p>
           {/if}
+          <p class="run-meta muted">
+            {#if r.attempt}attempt {r.attempt}/{r.max_attempts ?? 3}{/if}
+            {#if r.version}
+              · version {r.version}{/if}
+            {#if r.timeout_ms}
+              · timeout {r.timeout_ms} ms{/if}
+            {#if r.worker_owner}
+              · worker {r.worker_owner.slice(0, 8)}{/if}
+            {#if r.business_reference}
+              · ref {r.business_reference}{/if}
+            {#if r.correlation_id}
+              · correlation {r.correlation_id}{/if}
+            {#if r.cancel_requested}
+              · cancellation requested{/if}
+          </p>
           {#if r.prompt}<p class="run-prompt" title={r.prompt}>{truncate(r.prompt, 120)}</p>{/if}
           <pre class:err={r.status === 'failed'}>{outputText(r)}</pre>
         </li>
@@ -565,6 +749,41 @@
     padding: 0.6rem;
     background: #8881;
     border-radius: 0.5rem;
+  }
+  .inline-check {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    color: var(--fg-muted);
+  }
+  .inline-check input {
+    width: auto;
+  }
+  .run-controls {
+    margin-top: 0.6rem;
+  }
+  .run-controls summary {
+    cursor: pointer;
+    color: var(--fg-muted);
+  }
+  .control-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+    gap: 0.55rem;
+    margin-top: 0.65rem;
+  }
+  .control-grid label {
+    display: grid;
+    gap: 0.2rem;
+    color: var(--fg-muted);
+    font-size: 0.82rem;
+  }
+  .control-grid small {
+    color: var(--fg-subtle);
+  }
+  .run-meta {
+    margin: 0.35rem 0;
+    font-size: 0.78rem;
   }
   ul {
     padding-left: 1rem;

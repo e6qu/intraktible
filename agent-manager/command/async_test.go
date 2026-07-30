@@ -78,16 +78,17 @@ func TestStartRunCompletesAsynchronously(t *testing.T) {
 	}
 }
 
-// TestStartRunRejectsFullQueue proves admission stays bounded: saturation is
-// reported before an accepted/running event is recorded, and no overflow
-// goroutine is created outside the worker pool.
-func TestStartRunRejectsFullQueue(t *testing.T) {
+// TestStartRunPersistsBeyondLocalWakeQueue proves the local bounded channel is
+// only a wake-up optimization. Durable acceptance must not depend on which API
+// replica happens to receive the request; a worker poller can discover every
+// recorded run even after this process's queue fills.
+func TestStartRunPersistsBeyondLocalWakeQueue(t *testing.T) {
 	log, st := testutil.NewLogStore(t)
 	reg := ai.NewRegistry()
 	reg.Register(ai.Stub{})
 	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "dev"}
 	h := command.NewHandler(log, st, reg)
-	// Deliberately start NO workers, so the queue never drains and fills up.
+	// Deliberately start NO workers, so the local wake-up queue fills.
 	seedAgent(t, st, id, "echo")
 
 	// Fill the buffered queue (asyncQueueSize = 256) so the next call overflows.
@@ -98,8 +99,8 @@ func TestStartRunRejectsFullQueue(t *testing.T) {
 		}
 	}
 
-	if runID, err := h.StartRun(context.Background(), id, "echo", "overflow"); err == nil || runID != "" {
-		t.Fatalf("full queue accepted overflow run: id=%q err=%v", runID, err)
+	if runID, err := h.StartRun(context.Background(), id, "echo", "overflow"); err != nil || runID == "" {
+		t.Fatalf("durable run was coupled to full local queue: id=%q err=%v", runID, err)
 	}
 	evs, err := log.Read(context.Background(), 0)
 	if err != nil {
@@ -111,8 +112,8 @@ func TestStartRunRejectsFullQueue(t *testing.T) {
 			started++
 		}
 	}
-	if started != queueSize {
-		t.Fatalf("recorded %d accepted runs, want exactly queue capacity %d", started, queueSize)
+	if started != queueSize+1 {
+		t.Fatalf("recorded %d accepted runs, want %d", started, queueSize+1)
 	}
 }
 

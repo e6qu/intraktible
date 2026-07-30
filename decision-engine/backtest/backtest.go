@@ -4,8 +4,9 @@
 // optionally compares two versions — using the pure, deterministic execution
 // core. It performs NO I/O and records NO production decisions: it is a
 // side-effect-free simulation, the confidence tool you run before deploying a
-// change. Inputs are the full flow inputs (with any pre-resolved
-// features.*/connect.*/ai.* the flow reads), so execution stays pure.
+// change. Inputs are the full simulation context (including any explicit
+// features.*/connect.*/ai.*/predict.* values the flow reads), so execution stays
+// pure and never calls a provider.
 package backtest
 
 import (

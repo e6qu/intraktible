@@ -37,10 +37,17 @@ test('a decision run shows in the history and its detail has the node trace', as
 
   // Decide (retry until the flow projection is live), capturing the decision id.
   let decisionId = '';
+  const idempotencyKey = `decision-${slug}`;
   await expect(async () => {
     const r = await request.post(`/v1/flows/${slug}/sandbox/decide`, {
-      headers: { 'X-Api-Key': KEY },
-      data: { data: {} }
+      headers: { 'X-Api-Key': KEY, 'Idempotency-Key': idempotencyKey },
+      data: {
+        data: {},
+        business_reference: 'application-42',
+        correlation_id: 'trace-42',
+        metadata: { channel: 'browser' },
+        control: { timeout_ms: 2000 }
+      }
     });
     const body = await r.json();
     expect(body.status).toBe('completed');
@@ -49,6 +56,8 @@ test('a decision run shows in the history and its detail has the node trace', as
 
   // It appears in the history list.
   await page.goto('/decisions');
+  await page.getByLabel('search decisions').fill('application-42');
+  await page.getByRole('button', { name: 'Apply' }).click();
   const row = page.locator('tr', { hasText: slug }).first();
   await expect(row).toBeVisible();
   await expect(row.getByText('completed')).toBeVisible();
@@ -58,6 +67,11 @@ test('a decision run shows in the history and its detail has the node trace', as
   await expect(page.getByRole('heading', { name: slug })).toBeVisible();
   await expect(page.locator('ol.trace')).toContainText('assignment');
   await expect(page.getByRole('button', { name: 'Sequence', exact: true })).toBeVisible();
+  await expect(page.getByText('application-42')).toBeVisible();
+  await expect(page.getByText('trace-42')).toBeVisible();
+  await expect(page.getByText('2000 ms')).toBeVisible();
+  await page.getByText('Caller metadata').click();
+  await expect(page.getByText('"channel": "browser"')).toBeVisible();
 
   // The run trace exports as DOT and JSON (the decision record).
   for (const [name, file] of [
@@ -73,9 +87,62 @@ test('a decision run shows in the history and its detail has the node trace', as
 
   // The decision id is click-to-copy (a developer DX affordance).
   await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
-  await page.getByTestId('copyable').click();
+  await page.getByRole('button', { name: 'Copy decision id' }).click();
   await expect(page.getByText('Copied decision id')).toBeVisible();
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(decisionId);
+});
+
+test('a reached provider effect exposes durable delivery evidence', async ({ page, request }) => {
+  const H = { 'X-Api-Key': KEY };
+  const slug = uniqueSlug();
+  const connector = `flags-${slug}`;
+  await request.post('/v1/context/connectors', {
+    headers: H,
+    data: { name: connector, type: 'static', config: { data: { risk_score: 720 } } }
+  });
+  const created = await request.post('/v1/flows', {
+    headers: H,
+    data: { slug, name: 'Effect Evidence' }
+  });
+  const { flow_id } = await created.json();
+  await request.post(`/v1/flows/${flow_id}/versions`, {
+    headers: H,
+    data: {
+      graph: {
+        nodes: [
+          { id: 'in', type: 'input' },
+          {
+            id: 'bureau',
+            type: 'connect',
+            config: { connector, output: 'report' }
+          },
+          { id: 'out', type: 'output' }
+        ],
+        edges: [
+          { from: 'in', to: 'bureau' },
+          { from: 'bureau', to: 'out' }
+        ]
+      }
+    }
+  });
+
+  let decisionId = '';
+  await expect(async () => {
+    const response = await request.post(`/v1/flows/${slug}/sandbox/decide`, {
+      headers: { ...H, 'Idempotency-Key': `effect-${slug}` },
+      data: { data: {} }
+    });
+    const body = await response.json();
+    expect(body.status).toBe('completed');
+    decisionId = body.decision_id;
+  }).toPass({ timeout: 5000 });
+
+  await page.goto(`/decisions/${decisionId}`);
+  const evidence = page.getByTestId('effect-evidence');
+  await expect(evidence).toContainText('succeeded');
+  await expect(evidence).toContainText('bureau');
+  await expect(evidence).toContainText('replay safe');
+  await expect(evidence).toContainText('automatic recovery supported');
 });
 
 test('the decision trace surfaces the split branch it routed through', async ({
@@ -452,7 +519,7 @@ test('Reload keeps the applied filter and long JSON stays contained on the detai
   await expect(row).toBeVisible();
 
   // A draft (un-applied) filter must not leak into Reload — the row stays.
-  await page.getByLabel('filter by decision id substring').fill('zzz-no-such-decision');
+  await page.getByLabel('search decisions').fill('zzz-no-such-decision');
   await Promise.all([
     page.waitForResponse((r) => r.url().includes('/v1/decisions')),
     page.getByRole('button', { name: 'Reload' }).click()

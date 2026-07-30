@@ -60,6 +60,11 @@ output "api_service_name" {
   value       = aws_ecs_service.api.name
 }
 
+output "worker_service_name" {
+  description = "Durable execution worker ECS service name."
+  value       = aws_ecs_service.worker.name
+}
+
 output "scheduler_service_name" {
   description = "Scheduler ECS service name (singleton timed sweeps)."
   value       = aws_ecs_service.scheduler.name

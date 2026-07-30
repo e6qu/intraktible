@@ -103,8 +103,14 @@ Spans: **Flow builder** test panel or the decision API → **Decisions** (`/deci
 
 1. Run a decision: either from the builder's test panel, or by calling
    `POST /v1/flows/{slug}/{env}/decide` with input data (a batch variant exists for a
-   dataset). The engine walks the deployed graph: it threads the input record through
-   assignment, predict, AI, and split nodes. A split evaluates one boolean condition
+   dataset). For retried integrations, supply an `Idempotency-Key`; the same
+   payload returns the original logical decision while a conflicting reuse is
+   refused. Business reference, correlation id, entity coordinates, bounded
+   metadata, and a timeout can be attached at admission. The engine walks the deployed
+   graph: it threads the input record through assignment, predict, AI, and split nodes.
+   Connect, Predict, and AI calls occur only when their node is actually reached,
+   receive the record after every upstream mutation, and leave durable
+   requested/succeeded/failed evidence. A split evaluates one boolean condition
    and follows the edge labelled with the answer — `yes` or `no`. (Both edges are
    required at publish, so a live split can never take a branch that isn't wired. For
    more than two ways out, chain splits.) Outcome: a recorded decision with a status
@@ -113,15 +119,17 @@ Spans: **Flow builder** test panel or the decision API → **Decisions** (`/deci
    to the flow — a **disposition** (`approve`, `decline`, or `refer`).
    Outside sandbox, the deployed graph must pin every AI node to a positive,
    immutable agent version, and the engine uses only the policy version a separate
-   checker approved. Both dependencies are resolved before execution; a suspended
-   decision records its exact policy selection and reuses it after human review
+   checker approved. A suspended decision records its exact policy selection and reuses it after human review
    rather than re-reading whatever is current at resume time.
-2. On Decisions, filter by flow, environment, status, variant (champion/challenger),
-   or decision id to find the run. Outcome: a list showing status, disposition, and
-   latency per run.
+2. On Decisions, filter by flow, environment, status, business/correlation
+   reference, entity, scalar metadata, or free-text decision id to find the run.
+   Outcome: a list showing status, disposition, and latency per run. Running,
+   retrying, suspended, abandoned, failed, and completed are distinct operational
+   states.
 3. Open the decision. Outcome: the **trace** — the verdict and its reason codes, the
-   node-by-node path with the branch taken at each split, and the input and output
-   payloads at each step. You can export the trace, and if the flow routed to manual
+   node-by-node path with the branch taken at each split, input/output payloads at
+   each step, caller tracking fields, recovery owner/attempt/error, and effect
+   delivery evidence. You can export the trace, and if the flow routed to manual
    review, open the **case** it opened.
 
 ### Explain and challenge a decision
@@ -137,7 +145,10 @@ Spans: **Decision trace** (`/decisions/[decisionId]`) → **Flow builder** analy
    decisions traverse it. Outcome: where traffic actually flows, at a glance.
 3. Run **Coverage / red-team** on the builder's Test tab. Outcome: a synthetic fan of
    inputs sweeps the graph and reports dead branches and unreached nodes — the paths
-   your traffic and your tests never exercise.
+   your traffic and your tests never exercise. For an effectful graph, provide
+   explicit dependency mocks in the Test section; Coverage records nothing,
+   never calls a connector/model/agent, reports failed synthetic runs separately,
+   and refuses a reached dependency with no mock.
 
 ### Screen fair-lending impact and serve an adverse-action notice
 
@@ -227,9 +238,14 @@ Spans: **Agent Manager** (`/agents`) → **Agent** (`/agents/[name]`) → **Case
 1. On Agent Manager, define an agent: a prompt/system, a model, optional tools, and an
    optional structured-output schema. Outcome: a versioned agent with run/cost stats
    across the workspace.
-2. Open the agent and **run** it (request/response or streamed) with a prompt.
-   Outcome: an output recorded as a run, with the run added to the agent's history and
-   its token/cost rollups.
+2. Open the agent and **run** it with a prompt. Durable async is the normal
+   operator path: choose the immutable version, timeout, maximum attempts, and
+   optional business/correlation references. Outcome: admission returns
+   immediately and the page follows the worker-owned attempt through running,
+   retrying, completed, failed, cancelled, timed-out, or dead-letter state.
+   Cancel requests and explicit retry (with acknowledgement after dead-letter)
+   are available in place. Request/response and token streaming remain available
+   for interactive use. Every terminal output is recorded in history and token/cost rollups.
 3. Review the **run history** and the offline **eval** pass-rate (the agent scored
    against a set of eval cases). Outcome: a view of how the agent behaves and where it
    regresses across versions.

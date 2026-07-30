@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/e6qu/intraktible/decision-engine/events"
+	"github.com/e6qu/intraktible/platform/effect"
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/store"
@@ -282,6 +283,28 @@ func (p Provider) ApprovedForServing(ctx context.Context, id identity.Identity, 
 	return mv.Approved(), nil
 }
 
+// EffectDelivery reports whether a prediction may safely be repeated during
+// recovery. In-process model kinds are deterministic over the recorded features;
+// an external serving endpoint is at-least-once unless that provider independently
+// deduplicates the propagated effect key.
+func (p Provider) EffectDelivery(ctx context.Context, id identity.Identity, model string) (effect.Delivery, error) {
+	mv, ok, err := Read(ctx, p.Store, id, model)
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "", unknownRefError{msg: fmt.Sprintf("models: unknown model %q", model)}
+	}
+	spec, err := ParseSpec(mv.Spec)
+	if err != nil {
+		return "", err
+	}
+	if spec.Kind == KindExternal {
+		return effect.AtLeastOnce, nil
+	}
+	return effect.ReplaySafe, nil
+}
+
 func (p Provider) Predict(ctx context.Context, id identity.Identity, model string, features map[string]any) (json.RawMessage, error) {
 	mv, ok, err := Read(ctx, p.Store, id, model)
 	if err != nil {
@@ -351,6 +374,9 @@ func (p Provider) predictExternal(ctx context.Context, spec Spec, features map[s
 		return nil, fmt.Errorf("models: external request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if invocation, ok := effect.FromContext(ctx); ok {
+		req.Header.Set("Idempotency-Key", invocation.Key)
+	}
 	resp, err := p.HTTP.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("models: external model call: %w", err)

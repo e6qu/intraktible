@@ -61,8 +61,9 @@ input → connect(bureau) → ai(assess) → split(connect.bureau.risk_score >= 
                                           └─ no  → assignment(decision=APPROVE) → output
 ```
 
-The shell pre-resolves the connector and agent before execution (so the pure core
-does no I/O) and records the results in the decision; `decide` returns the trace:
+The pure interpreter yields the connector and agent only when traversal reaches
+them. The shell performs and records each effect, then feeds the result back, so
+the core does no I/O and untaken branches call nothing; `decide` returns the trace:
 
 ```sh
 curl ... -d '{"data":{"subject":"Acme Corp"}}' localhost:8080/v1/flows/onboard/sandbox/decide

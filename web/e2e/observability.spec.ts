@@ -12,6 +12,7 @@ test.beforeEach(async ({ page }) => {
 test('shows AI usage and the SLO surface', async ({ page }) => {
   await page.goto('/observability');
   await expect(page.getByRole('heading', { name: 'Observability' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Durable decision execution' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'AI usage & cost' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Service-level objectives' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Request tracing' })).toBeVisible();

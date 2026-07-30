@@ -13,8 +13,15 @@ function lookup(m: Map<string, Tone>, v: string | undefined): Tone {
 const STATUS = new Map<string, Tone>([
   ['completed', 'ok'],
   ['failed', 'danger'],
-  ['started', 'info'],
-  ['suspended', 'warn']
+  ['running', 'info'],
+  ['retrying', 'warn'],
+  ['suspended', 'warn'],
+  ['cancelled', 'neutral'],
+  ['timed_out', 'danger'],
+  ['dead_letter', 'danger'],
+  ['abandoned', 'danger'],
+  ['requested', 'info'],
+  ['succeeded', 'ok']
 ]);
 export const statusTone = (s: string | undefined): Tone => lookup(STATUS, s);
 

@@ -61,9 +61,19 @@ func (e *APIError) Error() string {
 // DecideRequest is the input to a decision: the data to decide on, plus an
 // optional Context Layer entity whose features are injected.
 type DecideRequest struct {
-	Data       map[string]any `json:"data"`
-	EntityType string         `json:"entity_type,omitempty"`
-	EntityID   string         `json:"entity_id,omitempty"`
+	Data              map[string]any    `json:"data"`
+	EntityType        string            `json:"entity_type,omitempty"`
+	EntityID          string            `json:"entity_id,omitempty"`
+	BusinessReference string            `json:"business_reference,omitempty"`
+	CorrelationID     string            `json:"correlation_id,omitempty"`
+	Metadata          map[string]any    `json:"metadata,omitempty"`
+	Control           *ExecutionControl `json:"control,omitempty"`
+	// IdempotencyKey is sent in the Idempotency-Key header and never serialized.
+	IdempotencyKey string `json:"-"`
+}
+
+type ExecutionControl struct {
+	TimeoutMS int64 `json:"timeout_ms,omitempty"`
 }
 
 // DecideResult is a recorded decision. A flow whose logic errors completes with
@@ -84,12 +94,17 @@ type BatchResult struct {
 
 // Decision is a row of recorded decision history.
 type Decision struct {
-	DecisionID  string `json:"decision_id"`
-	Slug        string `json:"slug"`
-	Version     int    `json:"version"`
-	Environment string `json:"environment"`
-	Status      string `json:"status"`
-	Disposition string `json:"disposition,omitempty"`
+	DecisionID        string         `json:"decision_id"`
+	Slug              string         `json:"slug"`
+	Version           int            `json:"version"`
+	Environment       string         `json:"environment"`
+	Status            string         `json:"status"`
+	Disposition       string         `json:"disposition,omitempty"`
+	EntityType        string         `json:"entity_type,omitempty"`
+	EntityID          string         `json:"entity_id,omitempty"`
+	BusinessReference string         `json:"business_reference,omitempty"`
+	CorrelationID     string         `json:"correlation_id,omitempty"`
+	Metadata          map[string]any `json:"metadata,omitempty"`
 }
 
 // Flow is a flow summary.
@@ -154,7 +169,13 @@ type BundleResult struct {
 // Decide runs the live version of slug in env against req and returns the
 // recorded decision.
 func (c *Client) Decide(ctx context.Context, slug, env string, req DecideRequest) (DecideResult, error) {
-	return do[DecideResult](ctx, c, http.MethodPost, decidePath(slug, env, "decide"), req)
+	headers := map[string]string{}
+	if req.IdempotencyKey != "" {
+		headers["Idempotency-Key"] = req.IdempotencyKey
+	}
+	return doWithHeaders[DecideResult](
+		ctx, c, http.MethodPost, decidePath(slug, env, "decide"), req, headers,
+	)
 }
 
 // DecideBatch runs each row of dataset through the recorded decide path.
@@ -239,6 +260,16 @@ func decidePath(slug, env, tail string) string {
 // a 2xx JSON body into T. A non-2xx response becomes an *APIError carrying the
 // server's {error} message when present.
 func do[T any](ctx context.Context, c *Client, method, path string, body any) (T, error) {
+	return doWithHeaders[T](ctx, c, method, path, body, nil)
+}
+
+func doWithHeaders[T any](
+	ctx context.Context,
+	c *Client,
+	method, path string,
+	body any,
+	headers map[string]string,
+) (T, error) {
 	var zero T
 	var reader io.Reader
 	if body != nil {
@@ -256,6 +287,9 @@ func do[T any](ctx context.Context, c *Client, method, path string, body any) (T
 	req.Header.Set("Accept", "application/json")
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	for name, value := range headers {
+		req.Header.Set(name, value)
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {

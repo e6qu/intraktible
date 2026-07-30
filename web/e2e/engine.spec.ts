@@ -170,6 +170,21 @@ test('the test-run input guards invalid JSON and prefills a schema sample', asyn
   ).toBeEnabled();
   await expect(page.getByTestId('test-target')).toHaveText('v1 in sandbox');
 
+  // Preview exposes deterministic dependency mocks as an explicit JSON contract.
+  // Invalid mock input blocks execution instead of silently falling through to a
+  // live provider, and a pure preview produces no recorded decision id.
+  await page.getByLabel("preview (don't record)").check();
+  await page.getByText('Preview dependency mocks').click();
+  await page.getByLabel('preview dependency mocks').fill('{ invalid');
+  await expect(page.getByText('Mocks must be a valid JSON object.')).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Run published version', exact: true })
+  ).toBeDisabled();
+  await page.getByLabel('preview dependency mocks').fill('{}');
+  await page.getByRole('button', { name: 'Run published version', exact: true }).click();
+  await expect(page.getByTestId('run-result')).toContainText('"decision_id": ""');
+  await expect(page.getByTestId('run-verdict')).toContainText('preview · not recorded');
+
   // A named non-sandbox environment means its governed deployed version; it
   // must never fall through to an unpublished/unapproved latest version.
   await page.getByLabel('environment').selectOption('staging');

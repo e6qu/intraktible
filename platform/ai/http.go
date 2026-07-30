@@ -12,6 +12,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/e6qu/intraktible/platform/effect"
 )
 
 // httpTimeout bounds a single completion call. HTTPTimeout exposes it so the
@@ -219,6 +221,9 @@ func (h HTTP) Complete(ctx context.Context, req Request) (Response, error) {
 	httpReq.Header.Set("Content-Type", "application/json")
 	if h.apiKey != "" {
 		httpReq.Header.Set("Authorization", "Bearer "+h.apiKey)
+	}
+	if invocation, ok := effect.FromContext(ctx); ok {
+		httpReq.Header.Set("Idempotency-Key", invocation.Key)
 	}
 
 	resp, err := h.client.Do(httpReq)

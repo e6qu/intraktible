@@ -19,8 +19,8 @@ import (
 	"github.com/e6qu/intraktible/platform/store"
 )
 
-// stubAgent is a fixed agent source returning canned JSON, proving the decide path
-// pre-resolves AI nodes without depending on the Agent Manager.
+// stubAgent is a fixed agent source returning canned JSON, proving the decide
+// shell resolves a yielded AI effect without depending on the Agent Manager.
 type stubAgent string
 
 func (s stubAgent) RunAgent(_ context.Context, _ identity.Identity, _, _ string, _ int) (json.RawMessage, error) {

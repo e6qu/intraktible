@@ -19,15 +19,20 @@ type RunStatus string
 
 // Agent run statuses.
 const (
-	RunRunning   RunStatus = "running" // an async run that has started but not yet finished
-	RunCompleted RunStatus = "completed"
-	RunFailed    RunStatus = "failed"
+	RunRunning    RunStatus = "running" // accepted or actively leased
+	RunRetrying   RunStatus = "retrying"
+	RunCompleted  RunStatus = "completed"
+	RunFailed     RunStatus = "failed"
+	RunCancelled  RunStatus = "cancelled"
+	RunTimedOut   RunStatus = "timed_out"
+	RunDeadLetter RunStatus = "dead_letter"
 )
 
 // Valid reports whether s is a known run status.
 func (s RunStatus) Valid() bool {
 	switch s {
-	case RunRunning, RunCompleted, RunFailed:
+	case RunRunning, RunRetrying, RunCompleted, RunFailed,
+		RunCancelled, RunTimedOut, RunDeadLetter:
 		return true
 	default:
 		return false

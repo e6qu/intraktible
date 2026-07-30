@@ -26,9 +26,8 @@ const nodeStatsScan = 500
 
 // deriveDisposition assigns a disposition over a run's output by applying the
 // flow's bound policy, reusing the exact lookup+Apply path the decide handler
-// uses (policy.ActiveForFlow → ver.Spec.Apply). No policy bound → empty
-// disposition; a policy that cannot evaluate refers (matching decide), so a
-// re-run never fails on a policy problem. Only a store error is returned.
+// uses (policy.ActiveForFlow → ver.Spec.Apply). No policy bound yields an empty
+// disposition; an invalid evaluation fails loudly, matching the decide command.
 func (s *Service) deriveDisposition(ctx context.Context, id identity.Identity, slug string, output map[string]any) (policy.Disposition, error) {
 	_, ver, ok, err := policy.ActiveForFlow(ctx, s.store, id, slug)
 	if err != nil {
@@ -37,14 +36,11 @@ func (s *Service) deriveDisposition(ctx context.Context, id identity.Identity, s
 	if !ok {
 		return "", nil
 	}
-	out, applyErr := ver.Spec.Apply(output)
-	// A policy that can't evaluate this output falls back to a safe manual referral
-	// rather than aborting the probe (structured so the nil return isn't masking err).
-	disp := policy.Refer
-	if applyErr == nil {
-		disp = out.Disposition
+	out, err := ver.Spec.Apply(output)
+	if err != nil {
+		return "", err
 	}
-	return disp, nil
+	return out.Disposition, nil
 }
 
 // publishedGraph returns the flow's published graph for the requested version (0
@@ -210,6 +206,14 @@ func (s *Service) counterfactual(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusNotFound, fmt.Errorf("decision not found"))
 		return
 	}
+	if rec.Status != string(domain.StatusCompleted) {
+		httpx.Error(
+			w,
+			http.StatusConflict,
+			fmt.Errorf("counterfactual requires a completed decision, got %q", rec.Status),
+		)
+		return
+	}
 	// The counterfactual echoes recorded field values (flip from/to), so it sits
 	// at the same read boundary as every other decision read: unseal + mask first.
 	// A masked field's value is no longer numeric, so field discovery below
@@ -251,9 +255,11 @@ func (s *Service) counterfactual(w http.ResponseWriter, r *http.Request) {
 	if data == nil {
 		data = map[string]any{}
 	}
-	// The recorded input already carries any pre-resolved engine namespaces
-	// (features/connect/ai/predict). Re-running over the same map keeps those nodes
-	// from failing, since the pure re-run has no provider to re-resolve them.
+	effectOutputs, err := counterfactualEffects(rec)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, err)
+		return
+	}
 
 	searched := 0
 	var flips []flip
@@ -271,7 +277,21 @@ func (s *Service) counterfactual(w http.ResponseWriter, r *http.Request) {
 		if budget > cfEvalsPerField {
 			budget = cfEvalsPerField
 		}
-		f, used := s.searchFlip(r.Context(), id, fv.Slug, graph, data, field, original, budget)
+		f, used, err := s.searchFlip(
+			r.Context(),
+			id,
+			fv.Slug,
+			graph,
+			data,
+			effectOutputs,
+			field,
+			original,
+			budget,
+		)
+		if err != nil {
+			httpx.Error(w, http.StatusConflict, err)
+			return
+		}
 		searched += used
 		if f != nil {
 			flips = append(flips, *f)
@@ -329,14 +349,25 @@ func graphTargets(graph events.Graph) map[string]bool {
 // directions over [value/8 .. value*8] (with a small absolute floor so a near-zero
 // value still has room to move) and returns the smaller |to-from| flip found, plus
 // the number of evaluations used (bounded by budget).
-func (s *Service) searchFlip(ctx context.Context, id identity.Identity, slug string, graph events.Graph, data map[string]any, field string, original policy.Disposition, budget int) (*flip, int) {
+func (s *Service) searchFlip(
+	ctx context.Context,
+	id identity.Identity,
+	slug string,
+	graph events.Graph,
+	data map[string]any,
+	effects map[string]counterfactualEffect,
+	field string,
+	original policy.Disposition,
+	budget int,
+) (*flip, int, error) {
 	val := data[field].(float64)
 	// A non-finite field value has no meaningful threshold to search toward and would
 	// poison the span/direction math (NaN comparisons, Inf±Inf), so it is not a lever.
 	if math.IsNaN(val) || math.IsInf(val, 0) {
-		return nil, 0
+		return nil, 0, nil
 	}
 	used := 0
+	var evaluationErr error
 	eval := func(x float64) (policy.Disposition, bool) {
 		if used >= budget {
 			return "", false
@@ -347,12 +378,17 @@ func (s *Service) searchFlip(ctx context.Context, id identity.Identity, slug str
 			perturbed[k] = v
 		}
 		perturbed[field] = x
-		run := domain.Execute(graph, perturbed)
+		run, err := executeCounterfactual(ctx, graph, perturbed, effects)
+		if err != nil {
+			evaluationErr = err
+			return "", false
+		}
 		if run.Status != domain.StatusCompleted {
 			return "", true
 		}
 		disp, err := s.deriveDisposition(ctx, id, slug, run.Output)
 		if err != nil {
+			evaluationErr = err
 			return "", false
 		}
 		return disp, true
@@ -382,10 +418,16 @@ func (s *Service) searchFlip(ctx context.Context, id identity.Identity, slug str
 
 	up := boundFlip(eval, val, hi, better)
 	down := boundFlip(eval, val, lo, better)
+	if evaluationErr != nil {
+		return nil, used, fmt.Errorf(
+			"counterfactual cannot replay decision effects: %w",
+			evaluationErr,
+		)
+	}
 
 	best := closestFlip(val, up, down)
 	if best == nil {
-		return nil, used
+		return nil, used, nil
 	}
 	rising := best.to > val
 	to := roundCF(best.to)
@@ -399,7 +441,7 @@ func (s *Service) searchFlip(ctx context.Context, id identity.Identity, slug str
 		}
 	}
 	if to == val { // boundary sits on the current value — not a useful lever
-		return nil, used
+		return nil, used, nil
 	}
 	dir := "increase"
 	if !rising {
@@ -407,7 +449,106 @@ func (s *Service) searchFlip(ctx context.Context, id identity.Identity, slug str
 	}
 	return &flip{
 		Field: field, From: val, To: to, Direction: dir, Disposition: string(best.disp),
-	}, used
+	}, used, nil
+}
+
+type counterfactualEffect struct {
+	kind  domain.EffectKind
+	value any
+}
+
+// counterfactualEffects extracts the exact live provider outputs observed by the
+// recorded decision. Counterfactual analysis holds those external facts fixed
+// while perturbing caller-controlled fields; it never calls a provider or invents
+// a new external observation.
+func counterfactualEffects(rec history.Record) (map[string]counterfactualEffect, error) {
+	out := make(map[string]counterfactualEffect)
+	for _, recorded := range rec.Effects {
+		if recorded.Scope != "live" || recorded.Status != "succeeded" {
+			continue
+		}
+		kind := domain.EffectKind(recorded.Kind)
+		switch kind {
+		case domain.EffectConnect, domain.EffectAI, domain.EffectPredict:
+		default:
+			return nil, fmt.Errorf(
+				"counterfactual: decision %q has unknown effect kind %q",
+				rec.DecisionID,
+				recorded.Kind,
+			)
+		}
+		if _, exists := out[recorded.NodeID]; exists {
+			return nil, fmt.Errorf(
+				"counterfactual: decision %q has multiple successful live effects for node %q",
+				rec.DecisionID,
+				recorded.NodeID,
+			)
+		}
+		var value any
+		if err := json.Unmarshal(recorded.Output, &value); err != nil {
+			return nil, fmt.Errorf(
+				"counterfactual: decode decision %q effect %q: %w",
+				rec.DecisionID,
+				recorded.EffectID,
+				err,
+			)
+		}
+		out[recorded.NodeID] = counterfactualEffect{kind: kind, value: value}
+	}
+	return out, nil
+}
+
+func executeCounterfactual(
+	ctx context.Context,
+	graph events.Graph,
+	input map[string]any,
+	effects map[string]counterfactualEffect,
+) (domain.Run, error) {
+	state := domain.StartExecution(graph, input)
+	for {
+		step := domain.AdvanceExecution(ctx, graph, state, nil)
+		if step.Run != nil {
+			return *step.Run, nil
+		}
+		req := *step.Effect
+		recorded, ok := effects[req.NodeID]
+		if !ok {
+			// Decisions recorded before durable effect events stored the resolved
+			// namespace in their input. This explicit event-shape compatibility
+			// path keeps those immutable historical records analyzable.
+			value, found := legacyEffectValue(step.State.Record, req)
+			if !found {
+				return domain.Run{}, fmt.Errorf(
+					"no recorded output for %s node %q",
+					req.Kind,
+					req.NodeID,
+				)
+			}
+			recorded = counterfactualEffect{kind: req.Kind, value: value}
+		}
+		if recorded.kind != req.Kind {
+			return domain.Run{}, fmt.Errorf(
+				"recorded effect for node %q is %q, graph requests %q",
+				req.NodeID,
+				recorded.kind,
+				req.Kind,
+			)
+		}
+		next, err := domain.ResolveEffect(graph, step.State, req, recorded.value)
+		if err != nil {
+			return domain.Run{}, err
+		}
+		state = next
+	}
+}
+
+func legacyEffectValue(record map[string]any, req domain.EffectRequest) (any, bool) {
+	bucket, ok := record[string(req.Kind)].(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	value, ok := bucket[req.Output]
+	return value, ok
 }
 
 // flipPoint is a found favorable perturbation: the field value and the disposition it yields.
@@ -460,7 +601,7 @@ func closestFlip(val float64, a, b *flipPoint) *flipPoint {
 }
 
 // numericFields returns the sorted top-level numeric input field names (engine
-// namespaces are skipped — they are pre-resolved context, not levers a caller controls).
+// namespaces are skipped — they are authoritative context/effects, not levers a caller controls).
 func numericFields(data map[string]any) []string {
 	var fields []string
 	for k, v := range data {

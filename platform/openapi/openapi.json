@@ -56,6 +56,9 @@
           },
           {
             "$ref": "#/components/parameters/Env"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
           }
         ],
         "requestBody": {
@@ -86,6 +89,9 @@
             "$ref": "#/components/responses/Error"
           },
           "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
             "$ref": "#/components/responses/Error"
           }
         }
@@ -612,7 +618,7 @@
         "summary": "List recorded decisions",
         "parameters": [
           {
-            "name": "slug",
+            "name": "flow",
             "in": "query",
             "schema": {
               "type": "string"
@@ -620,12 +626,106 @@
             "description": "Filter by flow slug."
           },
           {
+            "name": "env",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Filter by execution environment."
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": ["running", "retrying", "completed", "failed", "suspended", "abandoned"]
+            },
+            "description": "Filter by durable execution state."
+          },
+          {
+            "name": "variant",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Filter by assigned experiment variant."
+          },
+          {
+            "name": "entity_type",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Filter by Context Layer entity type."
+          },
+          {
+            "name": "entity_id",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Filter by Context Layer entity id."
+          },
+          {
+            "name": "business_reference",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Filter by exact caller-owned business reference."
+          },
+          {
+            "name": "correlation_id",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Filter by exact workflow correlation id."
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Search decision id, business reference, correlation id, and entity identity."
+          },
+          {
+            "name": "metadata",
+            "in": "query",
+            "style": "deepObject",
+            "explode": true,
+            "schema": {
+              "type": "object",
+              "additionalProperties": {
+                "oneOf": [
+                  { "type": "string" },
+                  { "type": "number" },
+                  { "type": "integer" },
+                  { "type": "boolean" }
+                ]
+              }
+            },
+            "description": "Exact-match top-level scalar metadata fields, encoded as metadata[field]=value. Nested values remain stored but are not indexed."
+          },
+          {
             "name": "limit",
             "in": "query",
             "schema": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 200
             },
-            "description": "Maximum rows to return."
+            "description": "Maximum rows to return; zero or omitted returns all matches."
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "description": "Number of matching rows to skip."
           },
           {
             "name": "start_time",
@@ -669,6 +769,20 @@
           "401": {
             "$ref": "#/components/responses/Error"
           }
+        }
+      }
+    },
+    "/v1/decisions/summary": {
+      "get": {
+        "tags": ["decisions"],
+        "summary": "Durable decision execution summary",
+        "description": "Counts durable decision states and returns the ten newest active, recovering, or abandoned decisions needing operator visibility.",
+        "responses": {
+          "200": {
+            "description": "The tenant's durable execution overview.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DecisionExecutionSummary" } } }
+          },
+          "401": { "$ref": "#/components/responses/Error" }
         }
       }
     },
@@ -2017,15 +2131,17 @@
           }
         },
         "responses": {
-          "200": {
-            "description": "OK"
+          "202": {
+            "description": "Agent definition accepted.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventAck" } } }
           }
         }
       }
     },
     "/v1/agents/{name}/run": {
       "post": {
-        "summary": "Run an agent synchronously.",
+        "summary": "Run an agent synchronously or durably enqueue it.",
+        "description": "Set async=true to persist acceptance before returning. Worker replicas claim attempts with leases; use Idempotency-Key to deduplicate submission.",
         "tags": [
           "Agents"
         ],
@@ -2038,12 +2154,32 @@
               "type": "string"
             },
             "description": "path parameter"
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": { "type": "string", "maxLength": 256 },
+            "description": "Deduplicates asynchronous run acceptance."
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/AgentRunRequest" }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "OK"
-          }
+            "description": "Synchronous terminal result."
+          },
+          "202": {
+            "description": "Durable asynchronous run accepted.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentRunAck" } } }
+          },
+          "400": { "$ref": "#/components/responses/Error" }
         }
       }
     },
@@ -2721,7 +2857,7 @@
       "post": {
         "tags": ["flows"],
         "summary": "Reachability / dead-path coverage report",
-        "description": "Generates a deterministic fan of synthetic inputs over the numeric fields the graph references, runs each through the pure engine, and tallies per-node hits, per-branch hits, and the disposition distribution. Nodes/branches with zero hits are reported as dead. Records nothing.",
+        "description": "Generates a deterministic fan of synthetic inputs over the numeric fields the graph references, runs each through the pure engine, and tallies per-node hits, per-branch hits, failed runs, and the governed disposition distribution. Effectful graphs require explicit record-free mock_data for every reached dependency. Nodes/branches with zero hits are reported as dead. Records nothing.",
         "parameters": [ { "$ref": "#/components/parameters/FlowID" } ],
         "requestBody": {
           "required": false,
@@ -2731,7 +2867,12 @@
                 "type": "object",
                 "properties": {
                   "version": { "type": "integer", "description": "0 = latest published." },
-                  "runs": { "type": "integer", "description": "Synthetic runs (default 200, max 2000)." }
+                  "runs": { "type": "integer", "description": "Synthetic runs (default 200, max 2000)." },
+                  "mock_data": {
+                    "type": "object",
+                    "description": "Explicit record-free dependency outputs under features/connect/ai/predict. Every reached effect must have a matching namespace/output key.",
+                    "additionalProperties": { "type": "object" }
+                  }
                 }
               }
             }
@@ -2746,6 +2887,7 @@
                   "type": "object",
                   "properties": {
                     "runs": { "type": "integer" },
+                    "failed_runs": { "type": "integer" },
                     "fields": { "type": "array", "items": { "type": "string" } },
                     "nodes": { "type": "array", "items": { "type": "object" } },
                     "branches": { "type": "array", "items": { "type": "object" } },
@@ -3854,7 +3996,7 @@
         "responses": {
           "200": {
             "description": "The agent's runs.",
-            "content": { "application/json": { "schema": { "type": "object", "properties": { "runs": { "type": "array", "items": { "type": "object" } } } } } }
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "runs": { "type": "array", "items": { "$ref": "#/components/schemas/AgentRun" } } } } } }
           },
           "401": { "$ref": "#/components/responses/Error" }
         }
@@ -3901,7 +4043,7 @@
         "responses": {
           "200": {
             "description": "The tenant's agent runs.",
-            "content": { "application/json": { "schema": { "type": "object", "properties": { "runs": { "type": "array", "items": { "type": "object" } } } } } }
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "runs": { "type": "array", "items": { "$ref": "#/components/schemas/AgentRun" } } } } } }
           },
           "401": { "$ref": "#/components/responses/Error" }
         }
@@ -3915,7 +4057,7 @@
         "responses": {
           "200": {
             "description": "The run summary.",
-            "content": { "application/json": { "schema": { "type": "object" } } }
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentRunSummary" } } }
           },
           "401": { "$ref": "#/components/responses/Error" }
         }
@@ -3931,8 +4073,54 @@
         "responses": {
           "200": {
             "description": "The agent run.",
-            "content": { "application/json": { "schema": { "type": "object" } } }
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentRun" } } }
           },
+          "401": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/agent-runs/{run_id}/cancel": {
+      "post": {
+        "tags": ["Agents"],
+        "summary": "Request cancellation of a durable agent run",
+        "description": "Records a cancellation request. The active worker observes it before publishing a terminal cancelled result.",
+        "parameters": [
+          { "name": "run_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "202": {
+            "description": "Cancellation was durably requested.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventAck" } } }
+          },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/agent-runs/{run_id}/retry": {
+      "post": {
+        "tags": ["Agents"],
+        "summary": "Explicitly retry a terminal agent run",
+        "description": "Requeues a failed, timed-out, cancelled, or dead-letter run. Retrying a dead-letter run requires acknowledgement that a provider attempt may have completed without durable evidence.",
+        "parameters": [
+          { "name": "run_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/AgentRunRetryRequest" }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "The run was durably requeued.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventAck" } } }
+          },
+          "400": { "$ref": "#/components/responses/Error" },
           "401": { "$ref": "#/components/responses/Error" },
           "404": { "$ref": "#/components/responses/Error" }
         }
@@ -3978,6 +4166,16 @@
         "schema": {
           "type": "string"
         }
+      },
+      "IdempotencyKey": {
+        "name": "Idempotency-Key",
+        "in": "header",
+        "required": false,
+        "description": "Deduplicates one logical submission within the flow and environment. Repeating the same key and request returns the original decision; reusing it with a different request is rejected.",
+        "schema": {
+          "type": "string",
+          "maxLength": 256
+        }
       }
     },
     "responses": {
@@ -4020,21 +4218,40 @@
             "type": "string",
             "description": "Optional Context Layer entity id."
           },
+          "business_reference": {
+            "type": "string",
+            "maxLength": 256,
+            "description": "Caller-owned business identifier used to find and reconcile this decision."
+          },
+          "correlation_id": {
+            "type": "string",
+            "maxLength": 256,
+            "description": "Caller trace or workflow correlation identifier. X-Correlation-ID is accepted when this field is absent."
+          },
           "preview": {
             "type": "boolean",
             "description": "Run the flow without recording anything (no decision event, case, metrics, or audit) — the builder's \"Test decision\". The response carries the same shape but an empty decision_id."
           },
           "mock_data": {
             "type": "object",
-            "description": "Overrides for pre-resolved engine namespaces (features/connect/ai/predict) used when previewing, so a flow can be tested without live providers."
+            "description": "Preview-only outputs for reached features/connect/ai/predict dependencies, so a flow can be tested without live providers. Rejected on recorded decisions."
           },
           "metadata": {
             "type": "object",
-            "description": "Opaque caller metadata recorded with the decision."
+            "description": "Opaque caller metadata recorded, indexed with the decision record, and capped at 16 KiB."
           },
           "control": {
             "type": "object",
-            "description": "Per-call execution controls passed through to the engine."
+            "additionalProperties": false,
+            "properties": {
+              "timeout_ms": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 120000,
+                "description": "Execution deadline for pure nodes and reached provider effects; zero uses the server default."
+              }
+            },
+            "description": "Validated and persisted per-call execution controls."
           }
         }
       },
@@ -4120,6 +4337,15 @@
             "items": {
               "$ref": "#/components/schemas/Decision"
             }
+          },
+          "total": {
+            "type": "integer"
+          },
+          "limit": {
+            "type": "integer"
+          },
+          "offset": {
+            "type": "integer"
           }
         }
       },
@@ -4127,6 +4353,13 @@
         "type": "object",
         "properties": {
           "decision_id": {
+            "type": "string"
+          },
+          "generation": {
+            "type": "integer",
+            "description": "Execution generation, incremented when a suspended decision is resumed."
+          },
+          "flow_id": {
             "type": "string"
           },
           "slug": {
@@ -4141,17 +4374,159 @@
           "status": {
             "type": "string",
             "enum": [
+              "running",
+              "retrying",
               "completed",
-              "failed"
+              "failed",
+              "suspended",
+              "abandoned"
             ]
+          },
+          "variant": {
+            "type": "string"
+          },
+          "entity_type": {
+            "type": "string"
+          },
+          "entity_id": {
+            "type": "string"
+          },
+          "business_reference": {
+            "type": "string"
+          },
+          "correlation_id": {
+            "type": "string"
+          },
+          "metadata": {
+            "type": "object"
+          },
+          "control": {
+            "type": "object",
+            "properties": {
+              "timeout_ms": { "type": "integer" }
+            }
+          },
+          "data": {
+            "type": "object"
+          },
+          "output": {
+            "type": "object"
           },
           "disposition": {
             "type": "string"
+          },
+          "disposition_code": {
+            "type": "string"
+          },
+          "disposition_reason": {
+            "type": "string"
+          },
+          "case_id": {
+            "type": "string"
+          },
+          "human_reviewed": {
+            "type": "boolean"
+          },
+          "error": {
+            "type": "string"
+          },
+          "recovery_attempt": {
+            "type": "integer"
+          },
+          "recovery_owner": {
+            "type": "string"
+          },
+          "recovery_lease_until": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "recovery_after": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "last_recovery_error": {
+            "type": "string"
+          },
+          "effects": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DecisionEffect"
+            }
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "ended_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "duration_ms": {
+            "type": "integer"
           },
           "reason_codes": {
             "type": "array",
             "items": {
               "type": "object"
+            }
+          }
+        }
+      },
+      "DecisionEffect": {
+        "type": "object",
+        "required": ["effect_id", "node_id", "kind", "delivery", "status", "attempt"],
+        "properties": {
+          "effect_id": { "type": "string" },
+          "scope": { "type": "string", "enum": ["live", "shadow"] },
+          "node_id": { "type": "string" },
+          "kind": { "type": "string", "enum": ["connect", "ai", "predict"] },
+          "reference": { "type": "string" },
+          "provider_version": { "type": "integer" },
+          "output_key": { "type": "string" },
+          "input_hash": { "type": "string" },
+          "attempt": { "type": "integer" },
+          "delivery": {
+            "type": "string",
+            "enum": ["replay_safe", "provider_idempotent", "at_least_once"],
+            "description": "The recovery guarantee recorded before the provider call."
+          },
+          "status": {
+            "type": "string",
+            "enum": ["requested", "succeeded", "failed"]
+          },
+          "output": {},
+          "error": { "type": "string" },
+          "requested_at": { "type": "string", "format": "date-time" },
+          "ended_at": { "type": "string", "format": "date-time" },
+          "duration_ms": { "type": "integer" }
+        }
+      },
+      "DecisionExecutionSummary": {
+        "type": "object",
+        "required": ["total", "running", "retrying", "suspended", "completed", "failed", "abandoned", "recovery_attempts", "attention"],
+        "properties": {
+          "total": { "type": "integer" },
+          "running": { "type": "integer" },
+          "retrying": { "type": "integer" },
+          "suspended": { "type": "integer" },
+          "completed": { "type": "integer" },
+          "failed": { "type": "integer" },
+          "abandoned": { "type": "integer" },
+          "recovery_attempts": { "type": "integer" },
+          "attention": {
+            "type": "array",
+            "maxItems": 10,
+            "items": {
+              "type": "object",
+              "required": ["decision_id", "slug", "status"],
+              "properties": {
+                "decision_id": { "type": "string" },
+                "slug": { "type": "string" },
+                "status": { "type": "string", "enum": ["running", "retrying", "abandoned"] },
+                "recovery_attempt": { "type": "integer" },
+                "recovery_owner": { "type": "string" },
+                "last_recovery_error": { "type": "string" }
+              }
             }
           }
         }
@@ -5055,6 +5430,114 @@
             "items": {
               "type": "string"
             }
+          }
+        }
+      },
+      "AgentRunRequest": {
+        "type": "object",
+        "required": ["prompt"],
+        "properties": {
+          "prompt": { "type": "string" },
+          "async": {
+            "type": "boolean",
+            "description": "Persist acceptance and execute on a worker when true."
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Immutable agent version; zero selects latest at acceptance."
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 600000
+          },
+          "max_attempts": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10
+          },
+          "business_reference": {
+            "type": "string",
+            "maxLength": 256
+          },
+          "correlation_id": {
+            "type": "string",
+            "maxLength": 256
+          }
+        }
+      },
+      "AgentRunAck": {
+        "type": "object",
+        "required": ["run_id", "status", "event_id", "seq"],
+        "properties": {
+          "run_id": { "type": "string" },
+          "status": { "type": "string", "enum": ["running"] },
+          "event_id": { "type": "string" },
+          "seq": { "type": "integer" }
+        }
+      },
+      "AgentRun": {
+        "type": "object",
+        "required": ["run_id", "agent", "prompt", "status", "seq", "at"],
+        "properties": {
+          "run_id": { "type": "string" },
+          "agent": { "type": "string" },
+          "model": { "type": "string" },
+          "prompt": { "type": "string" },
+          "status": {
+            "type": "string",
+            "enum": ["running", "retrying", "completed", "failed", "cancelled", "timed_out", "dead_letter"]
+          },
+          "text": { "type": "string" },
+          "structured": {},
+          "tool_calls": { "type": "array", "items": { "type": "object" } },
+          "error": { "type": "string" },
+          "version": { "type": "integer" },
+          "attempt": { "type": "integer" },
+          "max_attempts": { "type": "integer" },
+          "timeout_ms": { "type": "integer" },
+          "worker_owner": { "type": "string" },
+          "lease_until": { "type": "string", "format": "date-time" },
+          "cancel_requested": { "type": "boolean" },
+          "business_reference": { "type": "string" },
+          "correlation_id": { "type": "string" },
+          "prompt_tokens": { "type": "integer" },
+          "completion_tokens": { "type": "integer" },
+          "case_id": { "type": "string" },
+          "seq": { "type": "integer" },
+          "at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "AgentRunSummary": {
+        "type": "object",
+        "required": ["total", "completed", "failed", "running", "retrying", "cancelled", "timed_out", "dead_letter"],
+        "properties": {
+          "total": { "type": "integer" },
+          "completed": { "type": "integer" },
+          "failed": { "type": "integer" },
+          "running": { "type": "integer" },
+          "retrying": { "type": "integer" },
+          "cancelled": { "type": "integer" },
+          "timed_out": { "type": "integer" },
+          "dead_letter": { "type": "integer" },
+          "by_agent": { "type": "object", "additionalProperties": { "type": "integer" } },
+          "prompt_tokens": { "type": "integer" },
+          "completion_tokens": { "type": "integer" },
+          "by_model": { "type": "object", "additionalProperties": { "type": "object" } },
+          "priced": { "type": "boolean" },
+          "total_cost_usd": { "type": "number" },
+          "cost_by_model": { "type": "object", "additionalProperties": { "type": "number" } }
+        }
+      },
+      "AgentRunRetryRequest": {
+        "type": "object",
+        "required": ["reason"],
+        "properties": {
+          "reason": { "type": "string", "minLength": 1 },
+          "acknowledge_at_least_once": {
+            "type": "boolean",
+            "description": "Required for a dead-letter run whose provider completion is indeterminate."
           }
         }
       },

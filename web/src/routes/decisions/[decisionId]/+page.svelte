@@ -194,6 +194,12 @@
   function pretty(v: unknown): string {
     return v === undefined || v === null ? '—' : JSON.stringify(v, null, 2);
   }
+  function deliveryLabel(delivery: string): string {
+    if (delivery === 'replay_safe') return 'replay safe';
+    if (delivery === 'provider_idempotent') return 'provider idempotent';
+    if (delivery === 'at_least_once') return 'at least once';
+    return delivery;
+  }
   // A split node records which way it routed as { branch: "yes" | "no" }; surface
   // that as the decisive routing rather than leaving it buried in the raw output.
   function branchOf(output: unknown): string | null {
@@ -317,6 +323,39 @@
       <h1>{d.slug} <Badge tone={statusTone(d.status)}>{d.status}</Badge></h1>
     </div>
 
+    {#if d.status === 'running' || d.status === 'retrying' || d.status === 'abandoned'}
+      <div class="recovery-state {d.status}" data-testid="decision-recovery-state">
+        <b>
+          {d.status === 'running'
+            ? 'Execution is in progress'
+            : d.status === 'retrying'
+              ? 'Recovery worker owns this execution'
+              : 'Automatic recovery stopped'}
+        </b>
+        {#if d.status === 'running'}
+          <p>
+            The synchronous owner still holds its bounded lease{d.recovery_after
+              ? ` until ${new Date(d.recovery_after).toLocaleString()}`
+              : ''}. A worker will claim it only if that owner disappears.
+          </p>
+        {:else if d.status === 'retrying'}
+          <p>
+            Attempt {d.recovery_attempt ?? '—'} · worker {d.recovery_owner ??
+              '—'}{d.recovery_lease_until
+              ? ` · lease until ${new Date(d.recovery_lease_until).toLocaleString()}`
+              : ''}.
+          </p>
+        {:else}
+          <p>
+            An effect had an indeterminate at-least-once outcome, or recovery exhausted its bounded
+            attempts. The platform refused to duplicate the provider call; inspect the effect
+            evidence before resolving this business operation manually.
+          </p>
+        {/if}
+        {#if d.last_recovery_error}<code>{d.last_recovery_error}</code>{/if}
+      </div>
+    {/if}
+
     {#if d.status === 'suspended'}
       {@const cannotResume = resuming || !roleAtLeast($user?.role, 'operator')}
       <div class="resume" data-testid="resume-panel">
@@ -373,8 +412,26 @@
       <dd>{d.environment}</dd>
       <dt>variant</dt>
       <dd>{d.variant ?? '—'}</dd>
+      <dt>generation</dt>
+      <dd>{d.generation ?? 1}</dd>
       <dt>duration</dt>
       <dd>{d.duration_ms != null ? `${d.duration_ms} ms` : '—'}</dd>
+      {#if d.business_reference}
+        <dt>business reference</dt>
+        <dd><Copyable value={d.business_reference} label="business reference" /></dd>
+      {/if}
+      {#if d.correlation_id}
+        <dt>correlation id</dt>
+        <dd><Copyable value={d.correlation_id} label="correlation id" /></dd>
+      {/if}
+      {#if d.entity_id}
+        <dt>entity</dt>
+        <dd>{d.entity_type ?? 'entity'} · <Copyable value={d.entity_id} label="entity id" /></dd>
+      {/if}
+      {#if d.control?.timeout_ms}
+        <dt>execution timeout</dt>
+        <dd>{d.control.timeout_ms} ms</dd>
+      {/if}
       {#if d.policy_id}
         <dt>policy</dt>
         <dd>
@@ -392,6 +449,12 @@
     </dl>
 
     {#if d.error}<p class="err">Error: {d.error}</p>{/if}
+    {#if d.metadata && Object.keys(d.metadata).length > 0}
+      <details class="caller-metadata">
+        <summary>Caller metadata</summary>
+        <pre>{pretty(d.metadata)}</pre>
+      </details>
+    {/if}
 
     <h2>
       Reason codes
@@ -668,6 +731,41 @@
     {/if}
 
     <h2>
+      Effect evidence
+      <Hint label="Effect evidence"
+        >Every reached connector, agent, or model call records its stable logical identity, delivery
+        guarantee, attempt, and outcome. “At least once” calls are never replayed after an
+        indeterminate crash; provider-idempotent calls reuse the same key.</Hint
+      >
+    </h2>
+    {#if d.effects && d.effects.length}
+      <ol class="effects" data-testid="effect-evidence">
+        {#each d.effects as effect (`${effect.effect_id}:${effect.attempt}`)}
+          <li>
+            <div class="effect-head">
+              <Badge tone={statusTone(effect.status)}>{effect.status}</Badge>
+              <b>{effect.node_id}</b>
+              <span>{effect.kind} · {effect.reference}</span>
+              <span class="muted">{effect.scope} · attempt {effect.attempt}</span>
+            </div>
+            <div class="effect-meta">
+              <code>{deliveryLabel(effect.delivery)}</code>
+              <span class:danger={effect.delivery === 'at_least_once'}>
+                {effect.delivery === 'at_least_once'
+                  ? 'manual reconciliation if outcome is indeterminate'
+                  : 'automatic recovery supported'}
+              </span>
+              {#if effect.duration_ms != null}<span>{effect.duration_ms} ms</span>{/if}
+            </div>
+            {#if effect.error}<pre class="err">{effect.error}</pre>{/if}
+          </li>
+        {/each}
+      </ol>
+    {:else}
+      <p class="muted">This path reached no external connector, agent, or model effect.</p>
+    {/if}
+
+    <h2>
       Node trace
       <Hint label="Node trace"
         >The node-by-node path the engine walked for this decision: each step is a node, its output,
@@ -750,6 +848,51 @@
     border: 1px solid color-mix(in srgb, var(--warn) 40%, var(--border));
     border-radius: 0.6rem;
     background: color-mix(in srgb, var(--warn) 10%, var(--surface));
+  }
+  .recovery-state {
+    margin: 0.5rem 0 1rem;
+    padding: 0.8rem 1rem;
+    border: 1px solid color-mix(in srgb, var(--info, #4f7cff) 42%, var(--border));
+    border-radius: 0.6rem;
+    background: color-mix(in srgb, var(--info, #4f7cff) 9%, var(--surface));
+  }
+  .recovery-state.retrying {
+    border-color: color-mix(in srgb, var(--warn) 45%, var(--border));
+    background: color-mix(in srgb, var(--warn) 9%, var(--surface));
+  }
+  .recovery-state.abandoned {
+    border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
+    background: color-mix(in srgb, var(--danger) 9%, var(--surface));
+  }
+  .recovery-state p {
+    margin: 0.35rem 0;
+  }
+  .effects {
+    display: grid;
+    gap: 0.55rem;
+    padding: 0;
+    list-style: none;
+  }
+  .effects li {
+    padding: 0.65rem 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: 0.55rem;
+    background: var(--surface);
+  }
+  .effect-head,
+  .effect-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.45rem 0.7rem;
+  }
+  .effect-meta {
+    margin-top: 0.45rem;
+    font-size: 0.82rem;
+    color: var(--fg-muted);
+  }
+  .effect-meta .danger {
+    color: var(--danger);
   }
   .resume-body p {
     margin: 0.3rem 0 0;

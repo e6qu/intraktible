@@ -50,6 +50,13 @@ test('runs an agent and escalates the run to a case', async ({ page, request }) 
   await expect(page.getByLabel('prompt', { exact: true })).toBeVisible();
 
   await page.getByLabel('prompt', { exact: true }).fill('is this suspicious?');
+  await page.getByText('Execution and tracking').click();
+  await page.getByLabel('agent version').fill('1');
+  await page.getByLabel('Timeout (ms)').fill('45000');
+  await page.getByLabel('Max attempts').fill('4');
+  await page.getByLabel('Idempotency key').fill(`job-${name}`);
+  await page.getByLabel('Business reference').fill('application-42');
+  await page.getByLabel('Correlation ID').fill('trace-42');
   await page.getByRole('button', { name: 'Run', exact: true }).click();
 
   // The run appears in the log (the stub echoes the prompt) and run count updates.
@@ -57,6 +64,10 @@ test('runs an agent and escalates the run to a case', async ({ page, request }) 
     await page.getByRole('button', { name: 'Reload' }).click();
     await expect(page.getByTestId('runs').locator('li')).toHaveCount(1);
     await expect(page.getByTestId('run-count')).toHaveText('1');
+    await expect(page.getByTestId('runs').locator('li')).toContainText('attempt 1/4');
+    await expect(page.getByTestId('runs').locator('li')).toContainText('version 1');
+    await expect(page.getByTestId('runs').locator('li')).toContainText('ref application-42');
+    await expect(page.getByTestId('runs').locator('li')).toContainText('correlation trace-42');
   }).toPass({ timeout: 5000 });
 
   // Escalate the run; it opens a case (no UI error surfaces).

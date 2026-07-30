@@ -1,12 +1,12 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 # intraktible on AWS — scale-to-zero compute (ECS + API Gateway + S3 + fck-rds)
 
-A Terraform root module that deploys intraktible into a **private VPC** where compute
-scales to zero when idle while durable state resides in the shared always-on **fck-rds**
-PostgreSQL service. The app still loads from **S3** in the
-meantime. There is **no always-on load balancer**: API Gateway (request-priced) reaches
-the ECS tasks privately via a VPC Link + Cloud Map, so at idle the fixed cost is a single
-small fck-nat instance plus storage.
+A Terraform root module that deploys intraktible into a **private VPC** where API
+and scheduled-sweep compute scale to zero when idle while a warm durable-worker
+pool continues accepted work and durable state resides in the shared always-on
+**fck-rds** PostgreSQL service. The app still loads from **S3** in the meantime.
+There is **no always-on load balancer**: API Gateway (request-priced) reaches the
+ECS API tasks privately via a VPC Link + Cloud Map.
 
 ## What it provisions
 
@@ -25,13 +25,16 @@ small fck-nat instance plus storage.
                                      waker λ ─────┘          └──────────────────────┐
                                         │                                           │
                             scales API service 0→1                          ┌───────▼────────┐
-                                                                            │ ECS Fargate    │ 0↔N
-   EventBridge:                                                             │ api + scheduler│
-     reaper (5m)  ── idle? → API 0                                          └───────┬────────┘
-     sweep (cron) ── scheduled scheduler wake/sleep                                 │
-                                                                            ┌───────▼────────┐
-   egress: private subnets ──▶ fck-nat (public subnet)                     │ fck-rds Postgres│ EFS-backed
-                                                                            └────────────────┘
+                                                                            │ Fargate API    │ 0↔N
+   EventBridge:                                                             └───────┬────────┘
+     reaper (5m)  ── idle? → API 0                                                  │
+     sweep (cron) ── scheduler wake/sleep                   ┌───────────────────────┤
+                                                            │ Fargate workers (warm)│
+                                                            └───────────┬───────────┘
+                                                                        │
+                                                              ┌─────────▼──────────┐
+   egress: private subnets ──▶ fck-nat (public subnet)       │ fck-rds Postgres   │ EFS-backed
+                                                              └────────────────────┘
 ```
 
 - **VPC** with public + private subnets across `az_count` AZs. ECS tasks are in
@@ -49,17 +52,20 @@ small fck-nat instance plus storage.
   `existing_api_gateway_vpc_link_security_group_id` to reuse an environment-level link;
   the module then creates neither dedicated resource and admits that security group on
   the Intraktible task port.
-- **ECS Fargate**, two services on one cluster:
+- **ECS Fargate**, three role-separated services on one cluster:
   - `api` — stateless, `desired=0` at idle, woken `0→1` by the **waker Lambda** on
     `POST /wake`, scaled `1→N` by CPU target-tracking, scaled back to `0` by the **reaper**
     when the edge is idle for `idle_scale_in_minutes`.
+  - `worker` — a warm durable-execution pool (two tasks by default) that claims
+    interrupted decisions and asynchronous agent attempts with leases. It does
+    not scale to zero because accepted work must continue after the request ends.
   - `scheduler` — the singleton timed-sweep runner (monitor/drift alerts, timed deploy
     activation, SLA breach), running the **same image** with `INTRAKTIBLE_MONITOR_INTERVAL`
     set. See *Scheduler modes* below.
 - **Database** (`database_url_secret_arn`): a tenant-specific URL supplied by the shared
   **fck-rds** PostgreSQL service. It is used as both the event log (`--log=postgres`) and
-  projection store (`--store=postgres`), so N stateless API tasks share one ordered log and
-  durable read models. fck-rds owns the isolated database and role; Intraktible can read only
+  projection store (`--store=postgres`), so all API, worker, and scheduler tasks
+  share one ordered log and durable read models. fck-rds owns the isolated database and role; Intraktible can read only
   its own URL secret and connect from its task security group.
 - **Secrets Manager** for the at-rest encryption key, the bootstrap admin key, and the
   composed Postgres DSN, injected into the task at runtime.
@@ -160,13 +166,15 @@ Two ways to put the app on your own domain:
 | CloudFront       | ~$0 (per-request)                 | per-request + egress            |
 | S3               | pennies (storage)                 | + per-request                   |
 | API Gateway      | $0 (per-request)                  | per-request                     |
-| ECS Fargate      | **$0 (0 tasks)**                  | per running task-second         |
+| ECS Fargate API/scheduler | **$0 (0 tasks)**         | per running task-second         |
+| ECS Fargate workers | two warm tasks by default     | fixed worker pool + resizing    |
 | fck-rds          | shared always-on PostgreSQL + EFS  | shared service cost              |
 | fck-nat          | ~$3/mo (one small instance)       | + egress data                   |
 | Secrets/logs     | pennies                           | pennies                         |
 
-The intended idle floor is roughly **fck-nat + storage** — no hourly load balancer, no
-running Intraktible compute; fck-rds remains the shared database service.
+The intended idle floor is roughly **the worker pool + fck-nat + storage** — no
+hourly load balancer and no idle API or scheduler compute; fck-rds remains the
+shared database service.
 
 ## Wake and "hydration" — what works, and the seam
 

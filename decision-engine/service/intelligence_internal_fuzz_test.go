@@ -141,7 +141,20 @@ func FuzzSearchFlip(f *testing.F) {
 			if budget > cfEvalsPerField {
 				budget = cfEvalsPerField
 			}
-			fl, used := s.searchFlip(ctx, id, "missing-slug", g, data, field, policy.Decline, budget)
+			fl, used, searchErr := s.searchFlip(
+				ctx,
+				id,
+				"missing-slug",
+				g,
+				data,
+				map[string]counterfactualEffect{},
+				field,
+				policy.Decline,
+				budget,
+			)
+			if searchErr != nil {
+				t.Fatalf("searchFlip: %v", searchErr)
+			}
 			// INVARIANT: each field's search stays within its budget.
 			if used > budget {
 				t.Fatalf("searchFlip used %d > budget %d", used, budget)
@@ -270,7 +283,18 @@ func FuzzCoverageDiscovery(f *testing.F) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		rep := s.runCoverage(context.Background(), id, "missing", g, fields, runs)
+		rep, runErr := s.runCoverage(
+			context.Background(),
+			id,
+			"missing",
+			g,
+			fields,
+			runs,
+			map[string]any{},
+		)
+		if runErr != nil {
+			t.Fatalf("runCoverage: %v", runErr)
+		}
 		if rep.Runs != runs {
 			t.Fatalf("rep.Runs %d != runs %d", rep.Runs, runs)
 		}

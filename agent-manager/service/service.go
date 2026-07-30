@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/e6qu/intraktible/agent-manager/agents"
 	"github.com/e6qu/intraktible/agent-manager/command"
@@ -61,6 +62,8 @@ func (s *Service) Routes(mux *http.ServeMux) {
 		{Method: "GET", Pattern: "/v1/agent-runs", Handler: s.listRuns},
 		{Method: "GET", Pattern: "/v1/agent-runs/summary", Handler: s.runSummary},
 		{Method: "GET", Pattern: "/v1/agent-runs/{run_id}", Handler: s.getRun},
+		{Method: "POST", Pattern: "/v1/agent-runs/{run_id}/cancel", Handler: s.cancelRun},
+		{Method: "POST", Pattern: "/v1/agent-runs/{run_id}/retry", Handler: s.retryRun},
 	})
 }
 
@@ -87,9 +90,13 @@ func (s *Service) runAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Prompt  string `json:"prompt"`
-		Async   bool   `json:"async,omitempty"`
-		Version int    `json:"version,omitempty"` // 0 = latest; pin a published version
+		Prompt            string `json:"prompt"`
+		Async             bool   `json:"async,omitempty"`
+		Version           int    `json:"version,omitempty"` // 0 = latest; pin a published version
+		TimeoutMS         int64  `json:"timeout_ms,omitempty"`
+		MaxAttempts       int    `json:"max_attempts,omitempty"`
+		BusinessReference string `json:"business_reference,omitempty"`
+		CorrelationID     string `json:"correlation_id,omitempty"`
 	}
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.Error(w, http.StatusBadRequest, err)
@@ -98,7 +105,19 @@ func (s *Service) runAgent(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	// Async: queue the run and return 202 immediately; the caller polls the run.
 	if req.Async {
-		runID, event, err := s.cmd.StartRunWithSeq(r.Context(), id, name, req.Prompt)
+		correlationID := req.CorrelationID
+		if correlationID == "" {
+			correlationID = r.Header.Get("X-Correlation-ID")
+		}
+		runID, event, err := s.cmd.StartRunWithOptions(
+			r.Context(), id, name, req.Prompt,
+			command.AsyncRunOptions{
+				Version: req.Version, Timeout: time.Duration(req.TimeoutMS) * time.Millisecond,
+				MaxAttempts:       req.MaxAttempts,
+				IdempotencyKey:    r.Header.Get("Idempotency-Key"),
+				BusinessReference: req.BusinessReference, CorrelationID: correlationID,
+			},
+		)
 		if err != nil {
 			httpx.Error(w, http.StatusBadRequest, err)
 			return
@@ -118,6 +137,49 @@ func (s *Service) runAgent(w http.ResponseWriter, r *http.Request) {
 		"text": res.Text, "structured": res.Structured, "error": res.Error,
 		"seq": res.EventSeq,
 	})
+}
+
+func (s *Service) cancelRun(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	event, err := s.cmd.CancelRun(r.Context(), id, r.PathValue("run_id"))
+	writeAcceptedRunCommand(w, "cancelling", event, err)
+}
+
+func writeAcceptedRunCommand(
+	w http.ResponseWriter,
+	status string,
+	event eventlog.Envelope,
+	err error,
+) {
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	httpx.JSON(w, http.StatusAccepted, map[string]any{
+		"status": status, "event_id": event.ID, "seq": event.Seq,
+	})
+}
+
+func (s *Service) retryRun(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		Reason                 string `json:"reason"`
+		AcknowledgeAtLeastOnce bool   `json:"acknowledge_at_least_once,omitempty"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	event, err := s.cmd.RetryRun(
+		r.Context(), id, r.PathValue("run_id"), req.Reason, req.AcknowledgeAtLeastOnce,
+	)
+	writeAcceptedRunCommand(w, "retrying", event, err)
 }
 
 func (s *Service) listAgents(w http.ResponseWriter, r *http.Request) {

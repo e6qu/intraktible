@@ -26,6 +26,7 @@ import (
 
 	"github.com/e6qu/intraktible/context-layer/domain"
 	"github.com/e6qu/intraktible/context-layer/events"
+	"github.com/e6qu/intraktible/platform/effect"
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/store"
@@ -407,6 +408,42 @@ func (p Provider) Fetch(ctx context.Context, id identity.Identity, connector str
 	return InvokeWithSecrets(ctx, p.Store, id, connector, params, p.Egress, p.Secrets)
 }
 
+// EffectDelivery reports the recovery guarantee for a connector before it is
+// called. Deterministic in-process connectors are replay-safe. Custom HTTP and
+// GraphQL connectors are provider-idempotent only when their definition names an
+// idempotency header; every other external/data-source call is explicitly
+// at-least-once.
+func (p Provider) EffectDelivery(ctx context.Context, id identity.Identity, connector string) (effect.Delivery, error) {
+	def, ok, err := Read(ctx, p.Store, id, connector)
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "", unknownRefError{msg: fmt.Sprintf("context-layer: unknown connector %q", connector)}
+	}
+	switch def.Type {
+	case domain.ConnectorStatic, domain.ConnectorMockBureau, domain.ConnectorSanctions:
+		return effect.ReplaySafe, nil
+	case domain.ConnectorHTTP:
+		var cfg httpConfig
+		if err := json.Unmarshal(def.Config, &cfg); err != nil {
+			return "", fmt.Errorf("context-layer: http connector config: %w", err)
+		}
+		if cfg.IdempotencyHeader != "" {
+			return effect.ProviderIdempotent, nil
+		}
+	case domain.ConnectorGraphQL:
+		var cfg graphqlConfig
+		if err := json.Unmarshal(def.Config, &cfg); err != nil {
+			return "", fmt.Errorf("context-layer: graphql connector config: %w", err)
+		}
+		if cfg.IdempotencyHeader != "" {
+			return effect.ProviderIdempotent, nil
+		}
+	}
+	return effect.AtLeastOnce, nil
+}
+
 // ValidateConfig checks a connector's type-specific config by attempting to
 // construct it (construction only — no network or database I/O), so a malformed
 // definition fails loudly at define time instead of deferring the error to the
@@ -446,18 +483,20 @@ func build(def ConnectorView, egress EgressPolicy) (Connector, error) {
 // --- HTTP connector ---
 
 type httpConfig struct {
-	URL     string            `json:"url"`
-	Method  string            `json:"method"`
-	Headers map[string]string `json:"headers,omitempty"`
-	Auth    *authConfig       `json:"auth,omitempty"`
+	URL               string            `json:"url"`
+	Method            string            `json:"method"`
+	Headers           map[string]string `json:"headers,omitempty"`
+	Auth              *authConfig       `json:"auth,omitempty"`
+	IdempotencyHeader string            `json:"idempotency_header,omitempty"`
 }
 
 type httpConnector struct {
-	url     string
-	method  string
-	headers map[string]string
-	auth    *authConfig
-	client  *http.Client
+	url               string
+	method            string
+	headers           map[string]string
+	auth              *authConfig
+	client            *http.Client
+	idempotencyHeader string
 }
 
 func newHTTP(config json.RawMessage, egress EgressPolicy) (httpConnector, error) {
@@ -478,11 +517,14 @@ func newHTTP(config json.RawMessage, egress EgressPolicy) (httpConnector, error)
 	if err := cfg.Auth.validate(); err != nil {
 		return httpConnector{}, err
 	}
+	if err := validateIdempotencyHeader(cfg.IdempotencyHeader); err != nil {
+		return httpConnector{}, err
+	}
 	// The egress policy is enforced at dial time (after DNS resolution) so it
 	// guards every redirect hop and resists DNS rebinding.
 	return httpConnector{
 		url: cfg.URL, method: method, headers: cfg.Headers, auth: cfg.Auth,
-		client: egress.Client(fetchTimeout),
+		client: egress.Client(fetchTimeout), idempotencyHeader: cfg.IdempotencyHeader,
 	}, nil
 }
 
@@ -503,6 +545,7 @@ func (h httpConnector) Fetch(ctx context.Context, params json.RawMessage) (json.
 		req.Header.Set("Content-Type", "application/json")
 	}
 	applyHeaders(req, h.headers)
+	applyEffectIdempotency(req, h.idempotencyHeader)
 	if err := h.auth.authorize(ctx, req, h.client); err != nil {
 		return nil, err
 	}
@@ -541,18 +584,20 @@ func (h httpConnector) Fetch(ctx context.Context, params json.RawMessage) (json.
 // --- GraphQL connector ---
 
 type graphqlConfig struct {
-	URL     string            `json:"url"`
-	Query   string            `json:"query"`
-	Headers map[string]string `json:"headers,omitempty"`
-	Auth    *authConfig       `json:"auth,omitempty"`
+	URL               string            `json:"url"`
+	Query             string            `json:"query"`
+	Headers           map[string]string `json:"headers,omitempty"`
+	Auth              *authConfig       `json:"auth,omitempty"`
+	IdempotencyHeader string            `json:"idempotency_header,omitempty"`
 }
 
 type graphqlConnector struct {
-	url     string
-	query   string
-	headers map[string]string
-	auth    *authConfig
-	client  *http.Client
+	url               string
+	query             string
+	headers           map[string]string
+	auth              *authConfig
+	client            *http.Client
+	idempotencyHeader string
 }
 
 func newGraphQL(config json.RawMessage, egress EgressPolicy) (graphqlConnector, error) {
@@ -572,9 +617,12 @@ func newGraphQL(config json.RawMessage, egress EgressPolicy) (graphqlConnector, 
 	if err := cfg.Auth.validate(); err != nil {
 		return graphqlConnector{}, err
 	}
+	if err := validateIdempotencyHeader(cfg.IdempotencyHeader); err != nil {
+		return graphqlConnector{}, err
+	}
 	return graphqlConnector{
 		url: cfg.URL, query: cfg.Query, headers: cfg.Headers, auth: cfg.Auth,
-		client: egress.Client(fetchTimeout),
+		client: egress.Client(fetchTimeout), idempotencyHeader: cfg.IdempotencyHeader,
 	}, nil
 }
 
@@ -599,6 +647,7 @@ func (g graphqlConnector) Fetch(ctx context.Context, params json.RawMessage) (js
 	}
 	req.Header.Set("Content-Type", "application/json")
 	applyHeaders(req, g.headers)
+	applyEffectIdempotency(req, g.idempotencyHeader)
 	if err := g.auth.authorize(ctx, req, g.client); err != nil {
 		return nil, err
 	}
@@ -641,6 +690,30 @@ func (g graphqlConnector) Fetch(ctx context.Context, params json.RawMessage) (js
 		return nil, fmt.Errorf("context-layer: graphql connector returned %d error(s)", len(envelope.Errors))
 	}
 	return json.RawMessage(b), nil
+}
+
+func applyEffectIdempotency(req *http.Request, header string) {
+	if header == "" {
+		return
+	}
+	if invocation, ok := effect.FromContext(req.Context()); ok {
+		req.Header.Set(header, invocation.Key)
+	}
+}
+
+func validateIdempotencyHeader(header string) error {
+	if header == "" {
+		return nil
+	}
+	for i := 0; i < len(header); i++ {
+		c := header[i]
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+			(c >= '0' && c <= '9') || strings.ContainsRune("!#$%&'*+-.^_`|~", rune(c)) {
+			continue
+		}
+		return fmt.Errorf("context-layer: invalid idempotency_header %q", header)
+	}
+	return nil
 }
 
 // mustJSONString JSON-encodes s as a quoted string (for embedding the query).

@@ -4,6 +4,8 @@ package history
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
@@ -22,14 +24,23 @@ const IndexCollection = "decision_history_index"
 
 // IndexEntry is one decision's list summary.
 type IndexEntry struct {
-	Org         string    `json:"org"`
-	Workspace   string    `json:"workspace"`
-	DecisionID  string    `json:"decision_id"`
-	Slug        string    `json:"slug"`
-	Environment string    `json:"environment"`
-	Variant     string    `json:"variant,omitempty"`
-	Status      string    `json:"status"`
-	StartedAt   time.Time `json:"started_at"`
+	Org               string            `json:"org"`
+	Workspace         string            `json:"workspace"`
+	DecisionID        string            `json:"decision_id"`
+	Slug              string            `json:"slug"`
+	Environment       string            `json:"environment"`
+	Variant           string            `json:"variant,omitempty"`
+	Status            string            `json:"status"`
+	EntityType        string            `json:"entity_type,omitempty"`
+	EntityID          string            `json:"entity_id,omitempty"`
+	BusinessReference string            `json:"business_reference,omitempty"`
+	CorrelationID     string            `json:"correlation_id,omitempty"`
+	Metadata          map[string]string `json:"metadata,omitempty"`
+	RecoveryAttempt   int               `json:"recovery_attempt,omitempty"`
+	RecoveryAttempts  int               `json:"recovery_attempts,omitempty"`
+	RecoveryOwner     string            `json:"recovery_owner,omitempty"`
+	LastRecoveryError string            `json:"last_recovery_error,omitempty"`
+	StartedAt         time.Time         `json:"started_at"`
 }
 
 // applyIndex maintains a decision's index entry across its lifecycle. The full-record
@@ -45,10 +56,17 @@ func applyIndex(ctx context.Context, e eventlog.Envelope, s store.Store) error {
 		if err != nil {
 			return err
 		}
+		metadata, err := indexMetadata(p.Metadata)
+		if err != nil {
+			return fmt.Errorf("decision history index: decision %q metadata: %w", p.DecisionID, err)
+		}
 		return store.PutDoc(ctx, s, IndexCollection, indexKey(e.Org, e.Workspace, p.DecisionID), IndexEntry{
 			Org: e.Org, Workspace: e.Workspace, DecisionID: p.DecisionID,
 			Slug: p.Slug, Environment: p.Environment, Variant: p.Variant,
-			Status: "started", StartedAt: e.Time,
+			EntityType: p.EntityType, EntityID: p.EntityID,
+			BusinessReference: p.BusinessReference, CorrelationID: p.CorrelationID,
+			Metadata: metadata,
+			Status:   "running", StartedAt: e.Time,
 		})
 	case events.TypeDecisionCompleted:
 		p, err := decode[events.DecisionCompleted](e)
@@ -62,6 +80,39 @@ func applyIndex(ctx context.Context, e eventlog.Envelope, s store.Store) error {
 			return err
 		}
 		return indexStatus(ctx, s, e, p.DecisionID, "failed")
+	case events.TypeDecisionAbandoned:
+		p, err := decode[events.DecisionAbandoned](e)
+		if err != nil {
+			return err
+		}
+		return updateIndex(ctx, s, e, p.DecisionID, func(entry *IndexEntry) {
+			entry.Status, entry.RecoveryAttempt = "abandoned", p.Attempt
+			entry.LastRecoveryError, entry.RecoveryOwner = p.Error, ""
+		})
+	case events.TypeRecoveryClaimed:
+		p, err := decode[events.DecisionRecoveryClaimed](e)
+		if err != nil {
+			return err
+		}
+		return updateIndex(ctx, s, e, p.DecisionID, func(entry *IndexEntry) {
+			if entry.Status == "running" || entry.Status == "retrying" {
+				entry.Status = "retrying"
+			}
+			entry.RecoveryAttempt, entry.RecoveryOwner = p.Attempt, p.Owner
+			entry.RecoveryAttempts++
+			entry.LastRecoveryError = p.PreviousErr
+		})
+	case events.TypeExecutionInterrupted:
+		p, err := decode[events.DecisionExecutionInterrupted](e)
+		if err != nil {
+			return err
+		}
+		return updateIndex(ctx, s, e, p.DecisionID, func(entry *IndexEntry) {
+			if entry.Status == "running" {
+				entry.Status = "retrying"
+			}
+			entry.LastRecoveryError = p.Error
+		})
 	case events.TypeDecisionSuspended:
 		p, err := decode[events.DecisionSuspended](e)
 		if err != nil {
@@ -73,10 +124,26 @@ func applyIndex(ctx context.Context, e eventlog.Envelope, s store.Store) error {
 		if err != nil {
 			return err
 		}
-		return indexStatus(ctx, s, e, p.DecisionID, "started")
+		return indexStatus(ctx, s, e, p.DecisionID, "running")
 	default:
 		return nil
 	}
+}
+
+func updateIndex(
+	ctx context.Context,
+	s store.Store,
+	e eventlog.Envelope,
+	decisionID string,
+	mutate func(*IndexEntry),
+) error {
+	key := indexKey(e.Org, e.Workspace, decisionID)
+	entry, ok, err := store.GetDoc[IndexEntry](ctx, s, IndexCollection, key)
+	if err != nil || !ok {
+		return err
+	}
+	mutate(&entry)
+	return store.PutDoc(ctx, s, IndexCollection, key, entry)
 }
 
 // indexStatus updates an entry's status. A missing entry (a status event with no
@@ -129,13 +196,146 @@ func indexMatch(e IndexEntry, f Filter) bool {
 		return false
 	case f.Variant != "" && e.Variant != f.Variant:
 		return false
+	case f.EntityType != "" && e.EntityType != f.EntityType:
+		return false
+	case f.EntityID != "" && e.EntityID != f.EntityID:
+		return false
+	case f.BusinessReference != "" && e.BusinessReference != f.BusinessReference:
+		return false
+	case f.CorrelationID != "" && e.CorrelationID != f.CorrelationID:
+		return false
+	case !metadataMatches(e.Metadata, f.Metadata):
+		return false
 	case !f.Since.IsZero() && e.StartedAt.Before(f.Since):
 		return false
 	case !f.Until.IsZero() && e.StartedAt.After(f.Until):
 		return false
-	case f.query() != "" && !containsFold(e.DecisionID, f.query()):
+	case f.query() != "" &&
+		!containsFold(e.DecisionID, f.query()) &&
+		!containsFold(e.BusinessReference, f.query()) &&
+		!containsFold(e.CorrelationID, f.query()) &&
+		!containsFold(e.EntityID, f.query()):
 		return false
 	default:
 		return true
 	}
+}
+
+// indexMetadata retains the top-level scalar subset promised by the history
+// query contract. Nested objects and arrays remain in the full decision record,
+// but are deliberately not treated as indexed values.
+func indexMetadata(raw json.RawMessage) (map[string]string, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return nil, err
+	}
+	indexed := make(map[string]string)
+	for key, value := range fields {
+		value = json.RawMessage(strings.TrimSpace(string(value)))
+		if len(value) == 0 {
+			return nil, fmt.Errorf("field %q has an empty JSON value", key)
+		}
+		switch value[0] {
+		case '{', '[':
+			continue
+		case '"':
+			var text string
+			if err := json.Unmarshal(value, &text); err != nil {
+				return nil, fmt.Errorf("field %q: %w", key, err)
+			}
+			indexed[key] = text
+		default:
+			var scalar any
+			if err := json.Unmarshal(value, &scalar); err != nil {
+				return nil, fmt.Errorf("field %q: %w", key, err)
+			}
+			if scalar == nil {
+				indexed[key] = "null"
+			} else {
+				indexed[key] = string(value)
+			}
+		}
+	}
+	if len(indexed) == 0 {
+		return nil, nil
+	}
+	return indexed, nil
+}
+
+func metadataMatches(indexed, wanted map[string]string) bool {
+	for key, value := range wanted {
+		if indexed[key] != value {
+			return false
+		}
+	}
+	return true
+}
+
+// ExecutionAttention is one recent decision that is still active, under
+// recovery, or stopped for manual reconciliation.
+type ExecutionAttention struct {
+	DecisionID        string `json:"decision_id"`
+	Slug              string `json:"slug"`
+	Status            string `json:"status"`
+	RecoveryAttempt   int    `json:"recovery_attempt,omitempty"`
+	RecoveryOwner     string `json:"recovery_owner,omitempty"`
+	LastRecoveryError string `json:"last_recovery_error,omitempty"`
+}
+
+// ExecutionSummary is the lightweight operator roll-up for durable decisions.
+type ExecutionSummary struct {
+	Total            int                  `json:"total"`
+	Running          int                  `json:"running"`
+	Retrying         int                  `json:"retrying"`
+	Suspended        int                  `json:"suspended"`
+	Completed        int                  `json:"completed"`
+	Failed           int                  `json:"failed"`
+	Abandoned        int                  `json:"abandoned"`
+	RecoveryAttempts int                  `json:"recovery_attempts"`
+	Attention        []ExecutionAttention `json:"attention"`
+}
+
+// SummarizeExecution scans only the compact decision index. Attention is capped
+// newest-first so the operator page stays bounded even when a tenant retains a
+// long history of manually reconciled decisions.
+func SummarizeExecution(ctx context.Context, s store.Store, id identity.Identity) (ExecutionSummary, error) {
+	entries, err := listIndex(ctx, s, id, Filter{})
+	if err != nil {
+		return ExecutionSummary{}, err
+	}
+	summary := ExecutionSummary{Total: len(entries), Attention: []ExecutionAttention{}}
+	for _, entry := range entries {
+		summary.RecoveryAttempts += entry.RecoveryAttempts
+		switch entry.Status {
+		case "running":
+			summary.Running++
+		case "retrying":
+			summary.Retrying++
+		case "suspended":
+			summary.Suspended++
+		case "completed":
+			summary.Completed++
+		case "failed":
+			summary.Failed++
+		case "abandoned":
+			summary.Abandoned++
+		default:
+			return ExecutionSummary{}, fmt.Errorf(
+				"decision history index: decision %q has unknown status %q",
+				entry.DecisionID, entry.Status,
+			)
+		}
+		if len(summary.Attention) < 10 &&
+			(entry.Status == "running" || entry.Status == "retrying" || entry.Status == "abandoned") {
+			summary.Attention = append(summary.Attention, ExecutionAttention{
+				DecisionID: entry.DecisionID, Slug: entry.Slug, Status: entry.Status,
+				RecoveryAttempt: entry.RecoveryAttempt, RecoveryOwner: entry.RecoveryOwner,
+				LastRecoveryError: entry.LastRecoveryError,
+			})
+		}
+	}
+	return summary, nil
 }

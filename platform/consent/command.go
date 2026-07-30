@@ -48,6 +48,29 @@ type GrantCmd struct {
 // "freely given" given the power imbalance (GDPR Art. 6; ICO). Evidence, when present,
 // must be well formed.
 func (h *Handler) Grant(ctx context.Context, id identity.Identity, cmd GrantCmd) (eventlog.Envelope, error) {
+	return h.grant(ctx, id, cmd, "")
+}
+
+// GrantUnique records a grant under a tenant-global idempotency claim. It is
+// used when consent is an immediate side effect of another durable command.
+func (h *Handler) GrantUnique(
+	ctx context.Context,
+	id identity.Identity,
+	cmd GrantCmd,
+	unique string,
+) (eventlog.Envelope, error) {
+	if strings.TrimSpace(unique) == "" {
+		return eventlog.Envelope{}, fmt.Errorf("consent: unique claim is required")
+	}
+	return h.grant(ctx, id, cmd, unique)
+}
+
+func (h *Handler) grant(
+	ctx context.Context,
+	id identity.Identity,
+	cmd GrantCmd,
+	unique string,
+) (eventlog.Envelope, error) {
 	if err := id.Valid(); err != nil {
 		return eventlog.Envelope{}, err
 	}
@@ -78,7 +101,7 @@ func (h *Handler) Grant(ctx context.Context, id identity.Identity, cmd GrantCmd)
 	if err != nil {
 		return eventlog.Envelope{}, fmt.Errorf("consent: marshal granted: %w", err)
 	}
-	return h.append(ctx, id, TypeConsentGranted, b)
+	return h.appendUnique(ctx, id, TypeConsentGranted, b, unique)
 }
 
 // Withdraw records a subject withdrawing consent for a purpose. It is deliberately
@@ -100,8 +123,19 @@ func (h *Handler) Withdraw(ctx context.Context, id identity.Identity, subject, p
 }
 
 func (h *Handler) append(ctx context.Context, id identity.Identity, typ string, payload []byte) (eventlog.Envelope, error) {
+	return h.appendUnique(ctx, id, typ, payload, "")
+}
+
+func (h *Handler) appendUnique(
+	ctx context.Context,
+	id identity.Identity,
+	typ string,
+	payload []byte,
+	unique string,
+) (eventlog.Envelope, error) {
 	return h.log.Append(ctx, eventlog.Envelope{
 		Org: id.Org, Workspace: id.Workspace, Actor: id.Actor,
 		Stream: StreamConsent, Type: typ, Time: h.now(), Payload: payload,
+		Unique: unique,
 	})
 }

@@ -4,19 +4,25 @@
   import EmptyState from '$lib/EmptyState.svelte';
   import Skeleton from '$lib/Skeleton.svelte';
   import SloCard from '$lib/SloCard.svelte';
+  import Badge from '$lib/Badge.svelte';
   import { compact } from '$lib/dashboard';
+  import { statusTone } from '$lib/badge';
+  import { appHref } from '$lib/paths';
   import {
     listFlows,
     getRunSummary,
+    getDecisionExecutionSummary,
     getFlowSLO,
     type Flow,
     type RunSummary,
+    type DecisionExecutionSummary,
     type SLOResponse
   } from '$lib/api';
 
   // API calls authenticate via the session cookie (empty key -> no X-Api-Key header).
   const key = '';
   let summary = $state<RunSummary | null>(null);
+  let decisionSummary = $state<DecisionExecutionSummary | null>(null);
   let flows = $state<Flow[]>([]);
   // Map (not a plain object) so per-flow lookups don't trip the object-injection lint.
   let slos = $state<Map<string, SLOResponse>>(new Map());
@@ -27,8 +33,13 @@
     loading = true;
     error = '';
     try {
-      const [s, fl] = await Promise.all([getRunSummary(key), listFlows(key)]);
+      const [s, ds, fl] = await Promise.all([
+        getRunSummary(key),
+        getDecisionExecutionSummary(key),
+        listFlows(key)
+      ]);
       summary = s;
+      decisionSummary = ds;
       flows = fl;
       // A failed read must not become "no SLO": that would invite an operator to
       // overwrite an objective whose state is merely unavailable.
@@ -74,6 +85,38 @@
   {:else if error}
     <p class="err">{error} <button class="link" onclick={() => load()}>Retry</button></p>
   {:else}
+    <h2>Durable decision execution</h2>
+    {#if decisionSummary}
+      <div class="summary" aria-label="durable decision execution summary">
+        <span class="stat">Running <b>{compact(decisionSummary.running)}</b></span>
+        <span class="stat">Recovering <b>{compact(decisionSummary.retrying)}</b></span>
+        <span class="stat">Suspended <b>{compact(decisionSummary.suspended)}</b></span>
+        <span class="stat">Failed <b>{compact(decisionSummary.failed)}</b></span>
+        <span class="stat danger">Abandoned <b>{compact(decisionSummary.abandoned)}</b></span>
+        <span class="stat"
+          >Recovery attempts <b>{compact(decisionSummary.recovery_attempts)}</b></span
+        >
+      </div>
+      {#if decisionSummary.attention.length > 0}
+        <ul class="attention" data-testid="decision-execution-attention">
+          {#each decisionSummary.attention as decision (decision.decision_id)}
+            <li>
+              <Badge tone={statusTone(decision.status)}>{decision.status}</Badge>
+              <a href={appHref(`/decisions/${decision.decision_id}`)}>{decision.slug}</a>
+              {#if decision.recovery_attempt}
+                <span class="muted">attempt {decision.recovery_attempt}</span>
+              {/if}
+              {#if decision.last_recovery_error}
+                <code>{decision.last_recovery_error}</code>
+              {/if}
+            </li>
+          {/each}
+        </ul>
+      {:else}
+        <p class="muted note">No active recovery or manual-reconciliation work.</p>
+      {/if}
+    {/if}
+
     <h2>AI usage &amp; cost</h2>
     {#if summary}
       <div class="summary" aria-label="ai usage summary">
@@ -186,6 +229,27 @@
   }
   .stat.cost b {
     color: var(--accent, var(--fg));
+  }
+  .stat.danger b {
+    color: var(--danger);
+  }
+  .attention {
+    display: grid;
+    gap: 0.45rem;
+    padding: 0;
+    list-style: none;
+  }
+  .attention li {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+    padding: 0.45rem 0.6rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+  }
+  .attention code {
+    color: var(--danger);
   }
   table {
     border-collapse: collapse;

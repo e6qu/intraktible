@@ -29,11 +29,14 @@ Done — agent definitions + runs (command→event→projection→API, durable &
   Every tool call (name, arguments, result/error) is recorded on the run, so a tool-using run is fully
   auditable and replay-stable. The reference `tools.ConnectorToolbox` exposes Context Layer connectors
   as tools. The OpenAI-compatible HTTP provider supports tool-calling; the **Stub** answers directly.
-- **Async runs** (event-sourced): `run {async:true}` records an `AgentRunStarted` (status `running`)
-  and queues the work, returning `202 {run_id, status:"running"}` immediately; a worker pool invokes
-  the provider and records the terminal `AgentRunRecorded` (poll the run for the outcome). In-flight
-  runs finish on graceful shutdown, and a run left `running` by a crash is re-enqueued at boot
-  (`RecoverRunning` folds the log). The synchronous path is unchanged.
+- **Async runs** (event-sourced): `run {async:true}` durably accepts one
+  idempotent logical run before returning `202 {run_id, status:"running"}`. A
+  scalable worker pool claims each attempt with an owner, lease, and heartbeat,
+  then records completed, failed, cancelled, timed-out, or dead-letter state.
+  Explicit retry increments the bounded attempt count; a conflicting
+  `Idempotency-Key` reuse is refused. A worker lost mid-attempt is recoverable
+  after lease expiry without every API replica independently re-enqueuing it.
+  The synchronous and streaming paths remain available.
 - **Streaming runs** (token-by-token, configurable transport): the provider boundary gained a
   `StreamingProvider` (Stub chunks word-by-word; the HTTP provider parses OpenAI SSE deltas), and
   `StreamRun` streams deltas while still recording the terminal run. Two transports: **SSE**
@@ -44,9 +47,14 @@ Done — agent definitions + runs (command→event→projection→API, durable &
 - HTTP (under `/v1/`, X-Api-Key / session auth, org+workspace scoped):
   - `POST /v1/agents` — define `{name, provider?, model?, system?, schema?, tools?}`
   - `GET /v1/agents` · `GET /v1/agents/{name}` — the agent registry
-  - `POST /v1/agents/{name}/run` — run `{prompt, async?}` → sync `{run_id, status, text?, structured?, error?}` or async `202 {run_id, status:"running"}`
+  - `POST /v1/agents/{name}/run` — run `{prompt, async?, version?,
+    timeout_ms?, max_attempts?, business_reference?, correlation_id?}`; async
+    requests may use `Idempotency-Key`
   - `GET /v1/agents/{name}/run/stream` (SSE) · `GET /v1/agents/{name}/run/ws` (WebSocket) — stream a run
-  - `GET /v1/agents/{name}/runs` — the agent's run log · `GET /v1/agent-runs/{run_id}` — one run
+  - `GET /v1/agents/{name}/runs` — the agent's run log · `GET
+    /v1/agent-runs/{run_id}` — one run · `POST
+    /v1/agent-runs/{run_id}/cancel` — request cancellation · `POST
+    /v1/agent-runs/{run_id}/retry` — explicitly retry a failed terminal run
   - `POST /v1/agents/{name}/runs/{run_id}/escalate` — open a case from a run → `{case_id}`
   - `GET /v1/agent-runs` — all runs · `GET /v1/agent-runs/summary` — run monitoring roll-up
 - **Human-in-the-loop**: escalating a run opens a **Case Manager** case. Because the Agent Manager is
@@ -59,10 +67,11 @@ Done — agent definitions + runs (command→event→projection→API, durable &
   per-agent view that runs the agent, shows the run log, and escalates a run to a case.
 - Run it: `intraktible serve --modules=agent-manager` (UI dev: `make dev`).
 
-Consumed by the decision engine: a flow's **AI node** runs an agent (the shell pre-resolves it via the
-`agents.Provider` adapter and injects the output — structured when the agent has a schema, else
-`{"text": …}` — under `ai.<output>`), through an `AgentProvider` port so the engine never imports this
-layer. The node can name an immutable agent `version`: `0` follows latest for sandbox iteration, while
+Consumed by the decision engine: when traversal reaches a flow's **AI node**,
+the shell invokes the `agents.Provider` adapter with the exact current record
+and records the effect before resuming with structured output (or
+`{"text": …}`) under `ai.<output>`. The `AgentProvider` port keeps the engine
+from importing this layer. The node can name an immutable agent `version`: `0` follows latest for sandbox iteration, while
 staging and production decisions and previews require a positive version and invoke exactly that
 historical config. Updating an agent therefore cannot change governed flow behavior until an author
 publishes and deploys a reviewed flow version that pins the new agent version.

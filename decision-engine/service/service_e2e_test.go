@@ -31,6 +31,7 @@ import (
 	"github.com/e6qu/intraktible/decision-engine/service"
 	"github.com/e6qu/intraktible/decision-engine/shadow"
 	"github.com/e6qu/intraktible/platform/auth"
+	"github.com/e6qu/intraktible/platform/effect"
 	"github.com/e6qu/intraktible/platform/entity"
 	"github.com/e6qu/intraktible/platform/erasure"
 	"github.com/e6qu/intraktible/platform/identity"
@@ -149,6 +150,10 @@ type fieldSealer struct {
 
 func (f fieldSealer) SealPII(ctx context.Context, id identity.Identity, subject string, doc json.RawMessage) (json.RawMessage, error) {
 	return f.v.SealFields(ctx, id, subject, doc, f.fields)
+}
+
+func (f fieldSealer) OpenPII(ctx context.Context, id identity.Identity, subject string, doc json.RawMessage) (json.RawMessage, error) {
+	return f.v.OpenFields(ctx, id, subject, doc)
 }
 
 func TestDecisionRecordErasure(t *testing.T) {
@@ -953,6 +958,73 @@ func TestDecideAppliesPolicyOverHTTP(t *testing.T) {
 		return m.ByDisposition["approve"] >= 1 && m.ByDisposition["refer"] >= 1
 	}) {
 		t.Fatalf("disposition breakdown not in metrics: %+v", m)
+	}
+}
+
+func TestPolicyEvaluationFailureFailsDecision(t *testing.T) {
+	api := startEngine(t)
+	var created struct {
+		FlowID string `json:"flow_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows", map[string]any{
+		"slug": "policy-failure", "name": "Policy failure",
+	}, http.StatusCreated, &created)
+	api.Request(
+		t,
+		http.MethodPost,
+		"/v1/flows/"+created.FlowID+"/versions",
+		map[string]any{"graph": flowtest.ConstGraph("APPROVE")},
+		http.StatusCreated,
+		nil,
+	)
+	var pol struct {
+		PolicyID string `json:"policy_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/policies", map[string]any{
+		"name": "requires-score", "flow_slug": "policy-failure",
+	}, http.StatusCreated, &pol)
+	api.Request(t, http.MethodPost, "/v1/policies/"+pol.PolicyID+"/versions", map[string]any{
+		"spec": map[string]any{
+			"rules": []map[string]any{{
+				"when": "score >= 0.8", "disposition": "approve",
+			}},
+			"default": "decline",
+		},
+	}, http.StatusCreated, nil)
+
+	var result struct {
+		DecisionID string `json:"decision_id"`
+		Status     string `json:"status"`
+		Error      string `json:"error"`
+	}
+	if !testutil.Eventually(t, func() bool {
+		result = struct {
+			DecisionID string `json:"decision_id"`
+			Status     string `json:"status"`
+			Error      string `json:"error"`
+		}{}
+		api.Request(t, http.MethodPost, "/v1/flows/policy-failure/sandbox/decide",
+			map[string]any{"data": map[string]any{}}, http.StatusOK, &result)
+		return result.Status == "failed" && strings.Contains(result.Error, "score")
+	}) {
+		t.Fatalf("policy evaluation did not fail the decision: %+v", result)
+	}
+	var record history.Record
+	if !testutil.Eventually(t, func() bool {
+		record = history.Record{}
+		code := api.RequestStatus(
+			t,
+			http.MethodGet,
+			"/v1/decisions/"+result.DecisionID,
+			nil,
+			&record,
+		)
+		return code == http.StatusOK && record.Status == "failed"
+	}) {
+		t.Fatalf("failed policy decision was not projected: %+v", record)
+	}
+	if record.Disposition != "" || !strings.Contains(record.Error, "score") {
+		t.Fatalf("policy failure was converted into a disposition: %+v", record)
 	}
 }
 
@@ -2299,6 +2371,10 @@ func (s stubConnector) Fetch(_ context.Context, _ identity.Identity, connector s
 	return json.RawMessage(r), nil
 }
 
+func (stubConnector) EffectDelivery(context.Context, identity.Identity, string) (effect.Delivery, error) {
+	return effect.ReplaySafe, nil
+}
+
 func TestDecideWithConnectorOverHTTP(t *testing.T) {
 	api := startEngine(t, command.WithConnectors(stubConnector{"bureau": `{"score":80}`}))
 
@@ -2326,6 +2402,10 @@ type stubAgent string
 
 func (s stubAgent) RunAgent(_ context.Context, _ identity.Identity, _, _ string, _ int) (json.RawMessage, error) {
 	return json.RawMessage(s), nil
+}
+
+func (stubAgent) EffectDelivery(context.Context, identity.Identity, string) (effect.Delivery, error) {
+	return effect.ReplaySafe, nil
 }
 
 func TestDecideWithAINodeOverHTTP(t *testing.T) {
@@ -3168,6 +3248,10 @@ func (stubConnectorProvider) Fetch(context.Context, identity.Identity, string, j
 	return nil, unknownRefStub{}
 }
 
+func (stubConnectorProvider) EffectDelivery(context.Context, identity.Identity, string) (effect.Delivery, error) {
+	return "", unknownRefStub{}
+}
+
 func TestDecideUnknownProviderRefIsBadRequest(t *testing.T) {
 	api := startEngine(t, command.WithConnectors(stubConnectorProvider{}))
 	var created struct {
@@ -3192,6 +3276,9 @@ func TestDecideUnknownProviderRefIsBadRequest(t *testing.T) {
 	}) {
 		t.Fatal("decide against an undefined connector must be a 400, not a 500")
 	}
+	api.Request(t, http.MethodPost, "/v1/flows/misref/sandbox/decide",
+		map[string]any{"data": map[string]any{}, "preview": true},
+		http.StatusBadRequest, nil)
 }
 
 // TestTrainModelOverHTTP fits a logistic model from a posted dataset, then serves it
@@ -3595,6 +3682,11 @@ func TestDecisionsRefusesMalformedTimeBounds(t *testing.T) {
 		"until=2026-13-45",
 		"start_time=not-a-time",
 		"end_time=1750000000", // a unix timestamp is not RFC3339
+		"limit=many",
+		"limit=201",
+		"offset=-1",
+		"metadata%5B%5D=value",
+		"metadata%5Bchannel=value",
 	} {
 		t.Run(q, func(t *testing.T) {
 			api.Request(t, http.MethodGet, "/v1/decisions?"+q, nil, http.StatusBadRequest, nil)
@@ -3604,4 +3696,49 @@ func TestDecisionsRefusesMalformedTimeBounds(t *testing.T) {
 	// A well-formed bound still works, and an absent one still means "no bound".
 	api.Request(t, http.MethodGet, "/v1/decisions?since=2026-01-01T00:00:00Z", nil, http.StatusOK, nil)
 	api.Request(t, http.MethodGet, "/v1/decisions", nil, http.StatusOK, nil)
+}
+
+func TestDecisionsFilterTopLevelScalarMetadata(t *testing.T) {
+	api := startEngine(t)
+	var created struct {
+		FlowID string `json:"flow_id"`
+	}
+	api.Request(t, http.MethodPost, "/v1/flows",
+		map[string]any{"slug": "metadata-search", "name": "Metadata Search"},
+		http.StatusCreated, &created)
+	api.Request(t, http.MethodPost, "/v1/flows/"+created.FlowID+"/versions",
+		map[string]any{"graph": flowtest.ConstGraph("ok")}, http.StatusCreated, nil)
+
+	api.Request(t, http.MethodPost, "/v1/flows/metadata-search/sandbox/decide",
+		map[string]any{
+			"data": map[string]any{},
+			"metadata": map[string]any{
+				"channel": "branch", "priority": 2, "reviewed": true,
+				"nested": map[string]any{"region": "eu"},
+			},
+		}, http.StatusOK, nil)
+
+	var page struct {
+		Decisions []history.Record `json:"decisions"`
+	}
+	if !testutil.Eventually(t, func() bool {
+		page.Decisions = nil
+		api.Request(t, http.MethodGet,
+			"/v1/decisions?metadata%5Bchannel%5D=branch&metadata%5Bpriority%5D=2&metadata%5Breviewed%5D=true",
+			nil, http.StatusOK, &page)
+		return len(page.Decisions) == 1
+	}) {
+		t.Fatal("scalar metadata filter never found the recorded decision")
+	}
+	var summary history.ExecutionSummary
+	api.Request(t, http.MethodGet, "/v1/decisions/summary", nil, http.StatusOK, &summary)
+	if summary.Total != 1 || summary.Completed != 1 {
+		t.Fatalf("decision execution summary = %+v", summary)
+	}
+	api.Request(t, http.MethodGet,
+		"/v1/decisions?metadata%5Bnested%5D=%7B%22region%22%3A%22eu%22%7D",
+		nil, http.StatusOK, &page)
+	if len(page.Decisions) != 0 {
+		t.Fatalf("nested metadata must not be presented as indexed: %+v", page.Decisions)
+	}
 }

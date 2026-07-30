@@ -99,7 +99,7 @@ func tierBranch(cond, head string) events.Graph {
 
 // ConnectGraph is a flow that calls a connector then branches on its response:
 // input -> connect(bureau) -> split(connect.bureau.score >= 50) -> high/low ->
-// output(tier). The connector call is pre-resolved by the shell.
+// output(tier). The interpreter yields the connector when it reaches node c.
 func ConnectGraph() events.Graph {
 	g := tierBranch("connect.bureau.score >= 50", "c")
 	g.Nodes = append([]events.Node{
@@ -124,7 +124,7 @@ func AIGraph() events.Graph {
 
 // PredictGraph is a flow that scores an input with a model then branches on the
 // prediction: input -> predict(risk) -> split(predict.risk.probability >= 0.5) ->
-// high/low -> output(tier). The model evaluation is pre-resolved by the shell.
+// high/low -> output(tier). The interpreter yields the model at node p.
 func PredictGraph() events.Graph {
 	g := tierBranch("predict.risk.probability >= 0.5", "p")
 	g.Nodes = append([]events.Node{

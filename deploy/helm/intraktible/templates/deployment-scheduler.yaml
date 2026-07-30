@@ -31,7 +31,7 @@ spec:
         - name: intraktible
           image: {{ include "intraktible.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          args: ["serve", "--addr=:8080", "--data-dir=/data", "--store={{ .Values.store }}", "--log={{ .Values.log }}"]
+          args: ["serve", "--process-role=scheduler", "--addr=:8080", "--data-dir=/data", "--store={{ .Values.store }}", "--log={{ .Values.log }}"]
           ports:
             - { name: http, containerPort: 8080 }
           envFrom:

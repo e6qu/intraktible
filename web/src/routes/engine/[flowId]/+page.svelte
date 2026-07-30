@@ -430,7 +430,11 @@
     if (coverageBusy) return;
     coverageBusy = true;
     try {
-      coverageReport = await flowCoverage(key, flowId, { runs: 300 });
+      if (!previewMocksValid) throw new Error('Dependency mocks must be a valid JSON object.');
+      coverageReport = await flowCoverage(key, flowId, {
+        runs: 300,
+        mock_data: JSON.parse(previewMocks) as Record<string, unknown>
+      });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
     } finally {
@@ -454,6 +458,12 @@
     return deployed || (env === 'sandbox' ? flow.latest : 0);
   });
   let dataText = $state('{}');
+  let previewMocks = $state('{}');
+  let decisionIdempotencyKey = $state('');
+  let decisionBusinessReference = $state('');
+  let decisionCorrelationID = $state('');
+  let decisionMetadata = $state('{}');
+  let decisionTimeoutMS = $state(5_000);
   // Live JSON validity for the test-run input, and a one-click skeleton built from
   // the flow's input schema so you don't have to hand-write the shape.
   const dataValid = $derived.by(() => {
@@ -464,6 +474,25 @@
       return false;
     }
   });
+  const previewMocksValid = $derived.by(() => {
+    try {
+      const parsed: unknown = JSON.parse(previewMocks);
+      return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed);
+    } catch (_parseError) {
+      return false;
+    }
+  });
+  const decisionMetadataValid = $derived.by(() => {
+    try {
+      const parsed: unknown = JSON.parse(decisionMetadata);
+      return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed);
+    } catch (_parseError) {
+      return false;
+    }
+  });
+  const decisionTimeoutValid = $derived(
+    Number.isInteger(decisionTimeoutMS) && decisionTimeoutMS >= 0 && decisionTimeoutMS <= 120_000
+  );
   type SchemaProp = { type?: string; example?: unknown; default?: unknown; enum?: unknown[] };
   // Prefer a representative value from the schema (example/default/enum) so the sample
   // input exercises a real branch instead of zeros — a test run that routes and returns
@@ -1427,7 +1456,19 @@
     const startedAt = performance.now();
     try {
       const entity = entityType && entityID ? { type: entityType, id: entityID } : undefined;
-      const res = await decide(key, flow.slug, env, JSON.parse(dataText), entity, fetch, preview);
+      const res = await decide(key, flow.slug, env, JSON.parse(dataText), entity, fetch, preview, {
+        mockData: preview ? JSON.parse(previewMocks) : undefined,
+        idempotencyKey:
+          !preview && decisionIdempotencyKey.trim() ? decisionIdempotencyKey.trim() : undefined,
+        businessReference:
+          !preview && decisionBusinessReference.trim()
+            ? decisionBusinessReference.trim()
+            : undefined,
+        correlationId:
+          !preview && decisionCorrelationID.trim() ? decisionCorrelationID.trim() : undefined,
+        metadata: !preview ? JSON.parse(decisionMetadata) : undefined,
+        control: !preview ? { timeout_ms: decisionTimeoutMS } : undefined
+      });
       runMs = Math.round(performance.now() - startedAt);
       runResult = res;
       lastDecisionId = res.decision_id ?? '';
@@ -4058,9 +4099,17 @@
             disposition spread. A red-team for your policy.</Hint
           >
         </h2>
-        <button onclick={runCoverage} disabled={coverageBusy} data-testid="run-coverage">
+        <button
+          onclick={runCoverage}
+          disabled={coverageBusy || !previewMocksValid}
+          data-testid="run-coverage"
+        >
           {coverageBusy ? 'Fuzzing…' : 'Run coverage'}
         </button>
+        <p class="muted">
+          Effectful graphs use the explicit dependency mocks in the Test decision section below.
+          Missing reached dependencies fail loudly; untaken mocks are ignored.
+        </p>
         {#if coverageReport}
           <div class="coverage" data-testid="coverage-report">
             <p class="muted">
@@ -4071,6 +4120,13 @@
                 ? ` (${coverageReport.fields.join(', ')})`
                 : ''}.
             </p>
+            {#if coverageReport.failed_runs > 0}
+              <p class="err">
+                {coverageReport.failed_runs} synthetic run{coverageReport.failed_runs === 1
+                  ? ''
+                  : 's'} failed in flow logic; inspect the graph before treating uncovered paths as dead.
+              </p>
+            {/if}
             {#if coverageReport.dispositions.approve + coverageReport.dispositions.refer + coverageReport.dispositions.decline > 0}
               <div class="cov-dispo">
                 <Badge tone={dispositionTone('approve')}
@@ -4143,7 +4199,12 @@
           </select>
           <button
             onclick={run}
-            disabled={!flow || running || !dataValid || testVersion === 0}
+            disabled={!flow ||
+              running ||
+              !dataValid ||
+              (preview && !previewMocksValid) ||
+              (!preview && (!decisionMetadataValid || !decisionTimeoutValid)) ||
+              testVersion === 0}
             title={testVersion === 0
               ? env === 'sandbox'
                 ? 'Publish a version before running it'
@@ -4190,9 +4251,77 @@
             size="16"
           />
         </div>
+        {#if !preview}
+          <details class="invocation-controls">
+            <summary>Invocation and tracking</summary>
+            <div class="invocation-grid">
+              <label>
+                Idempotency key
+                <input
+                  bind:value={decisionIdempotencyKey}
+                  maxlength="256"
+                  placeholder="application-decision-42"
+                />
+              </label>
+              <label>
+                Business reference
+                <input
+                  bind:value={decisionBusinessReference}
+                  maxlength="256"
+                  placeholder="application-42"
+                />
+              </label>
+              <label>
+                Correlation ID
+                <input bind:value={decisionCorrelationID} maxlength="256" placeholder="trace-42" />
+              </label>
+              <label>
+                Timeout (ms)
+                <input type="number" min="0" max="120000" bind:value={decisionTimeoutMS} />
+              </label>
+            </div>
+            <label class="metadata-label">
+              Caller metadata
+              <textarea
+                bind:value={decisionMetadata}
+                aria-label="decision caller metadata"
+                rows="3"
+                class:invalid={!decisionMetadataValid}
+              ></textarea>
+            </label>
+            {#if !decisionMetadataValid}
+              <p class="json-err">Caller metadata must be a valid JSON object.</p>
+            {/if}
+            {#if !decisionTimeoutValid}
+              <p class="json-err">Timeout must be a whole number from 0 to 120000 ms.</p>
+            {/if}
+            <p class="muted">
+              Reusing an idempotency key with the same payload returns the original decision;
+              conflicting reuse is rejected. References and scalar metadata are searchable in
+              decision history.
+            </p>
+          </details>
+        {/if}
         <textarea bind:value={dataText} aria-label="input data" rows="3" class:invalid={!dataValid}
         ></textarea>
         {#if !dataValid}<p class="json-err">Not valid JSON — fix it before running.</p>{/if}
+        <details class="preview-mocks">
+          <summary>Preview dependency mocks</summary>
+          <p class="muted">
+            Supply deterministic outputs for reached connector, agent, model, or feature
+            dependencies during record-free Preview and Coverage. Unreached mocks are ignored;
+            missing reached dependencies fail loudly. Live decisions always use real providers.
+          </p>
+          <textarea
+            bind:value={previewMocks}
+            aria-label="preview dependency mocks"
+            rows="5"
+            class:invalid={!previewMocksValid}
+          ></textarea>
+          {#if !previewMocksValid}
+            <p class="json-err">Mocks must be a valid JSON object.</p>
+          {/if}
+        </details>
         {#if runError}<p class="err" data-testid="run-error">{runError}</p>{/if}
         {#if runResult}
           <div
@@ -4812,6 +4941,26 @@
     color: var(--fg-muted);
     cursor: pointer;
     white-space: nowrap;
+  }
+  .invocation-controls {
+    margin: 0.55rem 0;
+  }
+  .invocation-controls summary {
+    cursor: pointer;
+    color: var(--fg-muted);
+  }
+  .invocation-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+    gap: 0.55rem;
+    margin: 0.65rem 0;
+  }
+  .invocation-grid label,
+  .metadata-label {
+    display: grid;
+    gap: 0.2rem;
+    color: var(--fg-muted);
+    font-size: 0.82rem;
   }
   .verdict-err {
     margin: 0.5rem 0 0;

@@ -17,6 +17,7 @@ import (
 	"github.com/e6qu/intraktible/agent-manager/events"
 	caseevents "github.com/e6qu/intraktible/case-manager/events"
 	"github.com/e6qu/intraktible/platform/ai"
+	"github.com/e6qu/intraktible/platform/effect"
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/schema"
@@ -76,22 +77,31 @@ func (a AgentView) config() AgentConfig {
 
 // RunView is one recorded agent invocation.
 type RunView struct {
-	Org              string            `json:"org"`
-	Workspace        string            `json:"workspace"`
-	RunID            string            `json:"run_id"`
-	Agent            string            `json:"agent"`
-	Model            string            `json:"model,omitempty"`
-	Prompt           string            `json:"prompt"`
-	Status           domain.RunStatus  `json:"status"`
-	Text             string            `json:"text,omitempty"`
-	Structured       json.RawMessage   `json:"structured,omitempty"`
-	ToolCalls        []events.ToolCall `json:"tool_calls,omitempty"`
-	Error            string            `json:"error,omitempty"`
-	PromptTokens     int               `json:"prompt_tokens,omitempty"`
-	CompletionTokens int               `json:"completion_tokens,omitempty"`
-	CaseID           string            `json:"case_id,omitempty"`
-	Seq              uint64            `json:"seq"`
-	At               time.Time         `json:"at"`
+	Org               string            `json:"org"`
+	Workspace         string            `json:"workspace"`
+	RunID             string            `json:"run_id"`
+	Agent             string            `json:"agent"`
+	Model             string            `json:"model,omitempty"`
+	Prompt            string            `json:"prompt"`
+	Status            domain.RunStatus  `json:"status"`
+	Text              string            `json:"text,omitempty"`
+	Structured        json.RawMessage   `json:"structured,omitempty"`
+	ToolCalls         []events.ToolCall `json:"tool_calls,omitempty"`
+	Error             string            `json:"error,omitempty"`
+	Version           int               `json:"version,omitempty"`
+	Attempt           int               `json:"attempt,omitempty"`
+	MaxAttempts       int               `json:"max_attempts,omitempty"`
+	TimeoutMS         int64             `json:"timeout_ms,omitempty"`
+	WorkerOwner       string            `json:"worker_owner,omitempty"`
+	LeaseUntil        time.Time         `json:"lease_until,omitempty"`
+	CancelRequested   bool              `json:"cancel_requested,omitempty"`
+	BusinessReference string            `json:"business_reference,omitempty"`
+	CorrelationID     string            `json:"correlation_id,omitempty"`
+	PromptTokens      int               `json:"prompt_tokens,omitempty"`
+	CompletionTokens  int               `json:"completion_tokens,omitempty"`
+	CaseID            string            `json:"case_id,omitempty"`
+	Seq               uint64            `json:"seq"`
+	At                time.Time         `json:"at"`
 }
 
 // Projector folds agent events into the registry + run-log read models.
@@ -110,6 +120,16 @@ func (Projector) Apply(ctx context.Context, e eventlog.Envelope, s store.Store) 
 		return applyDefined(ctx, e, s)
 	case events.TypeAgentRunStarted:
 		return applyRunStarted(ctx, e, s)
+	case events.TypeAgentRunClaimed:
+		return applyRunClaimed(ctx, e, s)
+	case events.TypeAgentRunHeartbeat:
+		return applyRunHeartbeat(ctx, e, s)
+	case events.TypeAgentRunRetryRequested:
+		return applyRunRetryRequested(ctx, e, s)
+	case events.TypeAgentRunCancelRequested:
+		return applyRunCancelRequested(ctx, e, s)
+	case events.TypeAgentRunDeadLettered:
+		return applyRunDeadLettered(ctx, e, s)
 	case events.TypeAgentRunRecorded:
 		return applyRun(ctx, e, s)
 	case caseevents.TypeReviewRequested:
@@ -129,9 +149,101 @@ func applyRunStarted(ctx context.Context, e eventlog.Envelope, s store.Store) er
 	run := RunView{
 		Org: e.Org, Workspace: e.Workspace,
 		RunID: p.RunID, Agent: p.Agent, Prompt: p.Prompt,
+		Version: p.Version, TimeoutMS: p.TimeoutMS, MaxAttempts: p.MaxAttempts,
+		BusinessReference: p.BusinessReference, CorrelationID: p.CorrelationID,
 		Status: domain.RunRunning, Seq: e.Seq, At: p.At,
 	}
 	return store.PutDoc(ctx, s, CollectionRuns, store.Key(e.Org, e.Workspace, p.RunID), run)
+}
+
+func applyRunClaimed(ctx context.Context, e eventlog.Envelope, s store.Store) error {
+	var p events.AgentRunClaimed
+	if err := decode(e, &p); err != nil {
+		return err
+	}
+	return updateRun(ctx, e, s, p.RunID, func(run *RunView) {
+		run.Status, run.WorkerOwner = domain.RunRunning, p.Owner
+		run.Attempt, run.LeaseUntil, run.CancelRequested = p.Attempt, p.LeaseUntil, false
+	})
+}
+
+func applyRunHeartbeat(ctx context.Context, e eventlog.Envelope, s store.Store) error {
+	var p events.AgentRunHeartbeat
+	if err := decode(e, &p); err != nil {
+		return err
+	}
+	return updateRun(ctx, e, s, p.RunID, func(run *RunView) {
+		if run.WorkerOwner == p.Owner && run.Attempt == p.Attempt {
+			run.LeaseUntil = p.LeaseUntil
+		}
+	})
+}
+
+func applyRunRetryRequested(ctx context.Context, e eventlog.Envelope, s store.Store) error {
+	var p events.AgentRunRetryRequested
+	if err := decode(e, &p); err != nil {
+		return err
+	}
+	return updateRun(ctx, e, s, p.RunID, func(run *RunView) {
+		run.Status, run.Error = domain.RunRetrying, p.Reason
+		run.CancelRequested = false
+	})
+}
+
+func applyRunCancelRequested(ctx context.Context, e eventlog.Envelope, s store.Store) error {
+	var p events.AgentRunCancelRequested
+	if err := decode(e, &p); err != nil {
+		return err
+	}
+	return updateRun(ctx, e, s, p.RunID, func(run *RunView) {
+		run.CancelRequested = true
+	})
+}
+
+func applyRunDeadLettered(ctx context.Context, e eventlog.Envelope, s store.Store) error {
+	var p events.AgentRunDeadLettered
+	if err := decode(e, &p); err != nil {
+		return err
+	}
+	key := store.Key(e.Org, e.Workspace, p.RunID)
+	previous, ok, err := store.GetDoc[RunView](ctx, s, CollectionRuns, key)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("agents: %s seq %d references unknown run %q", e.Type, e.Seq, p.RunID)
+	}
+	if err := updateRun(ctx, e, s, p.RunID, func(run *RunView) {
+		run.Status, run.Error = domain.RunDeadLetter, p.Error
+		run.Attempt, run.Seq, run.At = p.Attempt, e.Seq, p.At
+		run.WorkerOwner, run.LeaseUntil = "", time.Time{}
+	}); err != nil {
+		return err
+	}
+	if terminalRunStatus(previous.Status) {
+		return nil
+	}
+	return incrementAgentRunCount(ctx, s, e.Org, e.Workspace, previous.Agent)
+}
+
+func updateRun(
+	ctx context.Context,
+	e eventlog.Envelope,
+	s store.Store,
+	runID string,
+	mutate func(*RunView),
+) error {
+	key := store.Key(e.Org, e.Workspace, runID)
+	run, ok, err := store.GetDoc[RunView](ctx, s, CollectionRuns, key)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("agents: %s seq %d references unknown run %q", e.Type, e.Seq, runID)
+	}
+	mutate(&run)
+	run.Seq = e.Seq
+	return store.PutDoc(ctx, s, CollectionRuns, key, run)
 }
 
 func applyDefined(ctx context.Context, e eventlog.Envelope, s store.Store) error {
@@ -199,20 +311,39 @@ func applyRun(ctx context.Context, e eventlog.Envelope, s store.Store) error {
 		RunID: p.RunID, Agent: p.Agent, Model: p.Model, Prompt: p.Prompt,
 		Status: status, Text: p.Text, Structured: p.Structured, ToolCalls: p.ToolCalls, Error: p.Error,
 		PromptTokens: p.PromptTokens, CompletionTokens: p.CompletionTokens,
+		Version: prev.Version, Attempt: p.Attempt, MaxAttempts: prev.MaxAttempts, TimeoutMS: prev.TimeoutMS,
+		BusinessReference: prev.BusinessReference, CorrelationID: prev.CorrelationID,
 		CaseID: prev.CaseID, Seq: e.Seq, At: p.At,
 	}
 	if err := store.PutDoc(ctx, s, CollectionRuns, runKey, run); err != nil {
 		return err
 	}
-	// First terminal recording = the run was absent (a sync run) or still "running"
-	// (the async started→recorded transition); a re-record of an already-terminal
-	// run does not re-count.
-	if prevExists && prev.Status != domain.RunRunning {
+	// First terminal recording = the run was absent (a sync run) or previously
+	// non-terminal. Retried logical runs retain one count across all attempts.
+	if prevExists && terminalRunStatus(prev.Status) {
 		return nil
 	}
-	// Bump the agent's run counter (the agent may not exist if it was deleted; a
-	// run for an unknown agent still lands in the run log).
-	key := store.Key(e.Org, e.Workspace, p.Agent)
+	return incrementAgentRunCount(ctx, s, e.Org, e.Workspace, p.Agent)
+}
+
+func terminalRunStatus(status domain.RunStatus) bool {
+	switch status {
+	case domain.RunCompleted, domain.RunFailed, domain.RunCancelled,
+		domain.RunTimedOut, domain.RunDeadLetter:
+		return true
+	default:
+		return false
+	}
+}
+
+func incrementAgentRunCount(
+	ctx context.Context,
+	s store.Store,
+	org, workspace, agent string,
+) error {
+	// The agent may not exist if it was deleted; the run remains auditable even
+	// when no registry counter can be updated.
+	key := store.Key(org, workspace, agent)
 	c, ok, err := store.GetDoc[AgentView](ctx, s, CollectionAgents, key)
 	if err != nil || !ok {
 		return err
@@ -319,6 +450,11 @@ type RunSummary struct {
 	Total            int                   `json:"total"`
 	Completed        int                   `json:"completed"`
 	Failed           int                   `json:"failed"`
+	Running          int                   `json:"running"`
+	Retrying         int                   `json:"retrying"`
+	Cancelled        int                   `json:"cancelled"`
+	TimedOut         int                   `json:"timed_out"`
+	DeadLetter       int                   `json:"dead_letter"`
 	ByAgent          map[string]int        `json:"by_agent"`
 	PromptTokens     int                   `json:"prompt_tokens"`
 	CompletionTokens int                   `json:"completion_tokens"`
@@ -337,6 +473,16 @@ func SummarizeRuns(runs []RunView) RunSummary {
 			s.Completed++
 		case domain.RunFailed:
 			s.Failed++
+		case domain.RunRunning:
+			s.Running++
+		case domain.RunRetrying:
+			s.Retrying++
+		case domain.RunCancelled:
+			s.Cancelled++
+		case domain.RunTimedOut:
+			s.TimedOut++
+		case domain.RunDeadLetter:
+			s.DeadLetter++
 		}
 		s.PromptTokens += r.PromptTokens
 		s.CompletionTokens += r.CompletionTokens
@@ -658,6 +804,19 @@ type Provider struct {
 	Store    store.Store
 	Registry *ai.Registry
 	Tools    Toolbox
+}
+
+// EffectDelivery is deliberately conservative: model completions and tool loops
+// may consume money or call external systems, and the generic provider contract
+// does not promise deduplication. The stable effect key is still propagated to
+// HTTP providers, but recovery treats an unrecorded outcome as indeterminate.
+func (p Provider) EffectDelivery(ctx context.Context, id identity.Identity, agent string) (effect.Delivery, error) {
+	if _, ok, err := Read(ctx, p.Store, id, agent); err != nil {
+		return "", err
+	} else if !ok {
+		return "", unknownRefError{msg: fmt.Sprintf("agent-manager: unknown agent %q", agent)}
+	}
+	return effect.AtLeastOnce, nil
 }
 
 // RunAgent runs the named agent version against prompt and returns its output as

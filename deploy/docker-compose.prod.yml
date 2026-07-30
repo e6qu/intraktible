@@ -3,7 +3,7 @@
 # + log, encryption at rest, secure cookies, and healthchecks. Copy deploy/.env.example
 # to deploy/.env and fill it in (do NOT commit secrets). Run:
 #   docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env up -d
-# For multi-replica HA, k8s, and the API/scheduler split, use deploy/helm/intraktible
+# For multi-replica HA and the API/worker/scheduler split, use deploy/helm/intraktible
 # (see docs/DEPLOY.md). TLS terminates at a reverse proxy in front of :8080.
 services:
   app:

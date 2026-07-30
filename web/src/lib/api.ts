@@ -88,11 +88,10 @@ export const recordingFetch: typeof fetch = async (input, init) => {
 };
 
 // Composite / UI-only unions that build on the generated ones (not a 1:1 Go enum):
-// a recorded decision is 'started' until its terminal event projects (the history
-// read model writes 'started' on DecisionStarted), unlike the synchronous
-// DecideResult which only ever returns a terminal status; batch/preapprove adds a
-// client-rejected row state.
-export type DecisionStatus = RunStatus | 'started';
+// A recorded decision is running while its synchronous owner holds the execution
+// lease, retrying after recovery claims it, or abandoned when an indeterminate
+// at-least-once effect makes automatic replay unsafe.
+export type DecisionStatus = RunStatus | 'running' | 'retrying' | 'abandoned';
 export type BatchStatus = RunStatus | 'rejected';
 
 // assertNever flags a missing case in an exhaustive switch at compile time: passing
@@ -425,6 +424,25 @@ export interface ReasonCode {
   description: string;
 }
 
+export interface DecisionEffect {
+  effect_id: string;
+  scope: 'live' | 'shadow';
+  node_id: string;
+  kind: 'connect' | 'ai' | 'predict';
+  reference: string;
+  provider_version?: number;
+  output_key: string;
+  input_hash: string;
+  attempt: number;
+  delivery: 'replay_safe' | 'provider_idempotent' | 'at_least_once';
+  status: 'requested' | 'succeeded' | 'failed';
+  output?: unknown;
+  error?: string;
+  requested_at: string;
+  ended_at?: string;
+  duration_ms?: number;
+}
+
 export interface Decision {
   decision_id: string;
   flow_id: string;
@@ -433,6 +451,13 @@ export interface Decision {
   environment: Environment;
   variant?: Variant;
   status: DecisionStatus;
+  generation?: number;
+  entity_type?: string;
+  entity_id?: string;
+  business_reference?: string;
+  correlation_id?: string;
+  metadata?: Record<string, unknown>;
+  control?: { timeout_ms?: number };
   data?: unknown;
   output?: unknown;
   reason_codes?: ReasonCode[];
@@ -444,7 +469,13 @@ export interface Decision {
   case_id?: string; // set when the decision routed to manual_review and opened a case
   human_reviewed?: boolean; // set when a suspended decision was resumed by a person
   error?: string;
+  recovery_attempt?: number;
+  recovery_owner?: string;
+  recovery_lease_until?: string;
+  recovery_after?: string;
+  last_recovery_error?: string;
   nodes?: NodeRecord[];
+  effects?: DecisionEffect[];
   started_at: string;
   ended_at?: string;
   duration_ms?: number;
@@ -468,7 +499,12 @@ export interface DecisionFilter {
   env?: Environment;
   status?: DecisionStatus;
   variant?: Variant;
-  q?: string; // decision-id search (substring)
+  entity_type?: string;
+  entity_id?: string;
+  business_reference?: string;
+  correlation_id?: string;
+  metadata?: Record<string, string | number | boolean>;
+  q?: string; // decision id/reference/correlation/entity search (substring)
   since?: string; // RFC3339
   until?: string; // RFC3339
   limit?: number;
@@ -482,6 +518,36 @@ export interface DecisionPage {
   offset: number;
 }
 
+export interface DecisionExecutionAttention {
+  decision_id: string;
+  slug: string;
+  status: 'running' | 'retrying' | 'abandoned';
+  recovery_attempt?: number;
+  recovery_owner?: string;
+  last_recovery_error?: string;
+}
+
+export interface DecisionExecutionSummary {
+  total: number;
+  running: number;
+  retrying: number;
+  suspended: number;
+  completed: number;
+  failed: number;
+  abandoned: number;
+  recovery_attempts: number;
+  attention: DecisionExecutionAttention[];
+}
+
+export async function getDecisionExecutionSummary(
+  key: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<DecisionExecutionSummary> {
+  const res = await fetcher('/v1/decisions/summary', { headers: authHeaders(key) });
+  if (!res.ok) return errorOrStatus(res, 'GET /v1/decisions/summary failed');
+  return (await res.json()) as DecisionExecutionSummary;
+}
+
 // listDecisionsPage is the filtered/paginated decisions query backing the list UI.
 export async function listDecisionsPage(
   key: string,
@@ -490,7 +556,13 @@ export async function listDecisionsPage(
 ): Promise<DecisionPage> {
   const qs = new URLSearchParams();
   for (const [k, v] of Object.entries(filter)) {
-    if (v !== undefined && v !== '' && v !== null) qs.set(k, String(v));
+    if (k === 'metadata' && v && typeof v === 'object') {
+      for (const [field, value] of Object.entries(v)) {
+        qs.set(`metadata[${field}]`, String(value));
+      }
+    } else if (v !== undefined && v !== '' && v !== null) {
+      qs.set(k, String(v));
+    }
   }
   const url = `/v1/decisions${qs.toString() ? `?${qs}` : ''}`;
   const res = await fetcher(url, { headers: authHeaders(key) });
@@ -1559,6 +1631,16 @@ export interface EntityRef {
   id: string;
 }
 
+export interface DecisionInvocationOptions {
+  idempotencyKey?: string;
+  businessReference?: string;
+  correlationId?: string;
+  metadata?: Record<string, unknown>;
+  control?: { timeout_ms?: number };
+  // Preview-only authoritative values for reached dependency namespaces.
+  mockData?: Record<string, unknown>;
+}
+
 export async function decide(
   key: string,
   slug: string,
@@ -1568,17 +1650,25 @@ export async function decide(
   fetcher: typeof fetch = recordingFetch,
   // preview runs the flow WITHOUT recording a decision (no history/metrics/audit) —
   // used by the builder's test run. The result then carries no decision_id.
-  preview = false
+  preview = false,
+  options: DecisionInvocationOptions = {}
 ): Promise<DecideResult> {
   const body: Record<string, unknown> = { data };
   if (preview) body.preview = true;
+  if (options.businessReference) body.business_reference = options.businessReference;
+  if (options.correlationId) body.correlation_id = options.correlationId;
+  if (options.metadata) body.metadata = options.metadata;
+  if (options.control) body.control = options.control;
+  if (options.mockData) body.mock_data = options.mockData;
   if (entity?.type && entity?.id) {
     body.entity_type = entity.type;
     body.entity_id = entity.id;
   }
+  const headers = jsonHeaders(key);
+  if (options.idempotencyKey) headers['Idempotency-Key'] = options.idempotencyKey;
   const res = await fetcher(`/v1/flows/${slug}/${env}/decide`, {
     method: 'POST',
-    headers: jsonHeaders(key),
+    headers,
     body: JSON.stringify(body)
   });
   if (!res.ok) {
@@ -2537,6 +2627,7 @@ export interface CoverageBranch {
 }
 export interface Coverage {
   runs: number;
+  failed_runs: number;
   fields: string[];
   nodes: { node_id: string; type: string; hits: number }[];
   branches: { from: string; to: string; branch: string; hits: number }[];
@@ -2549,7 +2640,7 @@ export interface Coverage {
 export async function flowCoverage(
   key: string,
   flowId: string,
-  opts: { version?: number; runs?: number } = {},
+  opts: { version?: number; runs?: number; mock_data?: Record<string, unknown> } = {},
   fetcher: typeof fetch = recordingFetch
 ): Promise<Coverage> {
   const res = await fetcher(`/v1/flows/${flowId}/coverage`, {
@@ -2913,7 +3004,19 @@ export interface AgentRun {
   text?: string;
   structured?: unknown;
   error?: string;
+  version?: number;
+  attempt?: number;
+  max_attempts?: number;
+  timeout_ms?: number;
+  worker_owner?: string;
+  lease_until?: string;
+  cancel_requested?: boolean;
+  business_reference?: string;
+  correlation_id?: string;
+  prompt_tokens?: number;
+  completion_tokens?: number;
   case_id?: string;
+  seq: number;
   at: string;
 }
 
@@ -2936,6 +3039,11 @@ export interface RunSummary {
   total: number;
   completed: number;
   failed: number;
+  running: number;
+  retrying: number;
+  cancelled: number;
+  timed_out: number;
+  dead_letter: number;
   by_agent: Record<string, number>;
   prompt_tokens: number;
   completion_tokens: number;
@@ -3007,6 +3115,77 @@ export async function runAgent(
     return errorOrStatus(res, `POST /v1/agents/${name}/run`);
   }
   return (await res.json()) as RunResult;
+}
+
+export interface AsyncAgentRunOptions {
+  version?: number;
+  timeoutMs?: number;
+  maxAttempts?: number;
+  idempotencyKey?: string;
+  businessReference?: string;
+  correlationId?: string;
+}
+
+export async function startAgentRun(
+  key: string,
+  name: string,
+  prompt: string,
+  options: AsyncAgentRunOptions = {},
+  fetcher: typeof fetch = recordingFetch
+): Promise<RunResult> {
+  const headers = jsonHeaders(key);
+  if (options.idempotencyKey) headers['Idempotency-Key'] = options.idempotencyKey;
+  if (options.correlationId) headers['X-Correlation-ID'] = options.correlationId;
+  const res = await fetcher(`/v1/agents/${name}/run`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      prompt,
+      async: true,
+      version: options.version || undefined,
+      timeout_ms: options.timeoutMs || undefined,
+      max_attempts: options.maxAttempts || undefined,
+      business_reference: options.businessReference || undefined,
+      correlation_id: options.correlationId || undefined
+    })
+  });
+  if (!res.ok) {
+    return errorOrStatus(res, `POST /v1/agents/${name}/run`);
+  }
+  return (await res.json()) as RunResult;
+}
+
+export async function cancelAgentRun(
+  key: string,
+  runID: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<{ status: 'cancelling'; seq: number }> {
+  const res = await fetcher(`/v1/agent-runs/${runID}/cancel`, {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: '{}'
+  });
+  if (!res.ok) return errorOrStatus(res, `POST /v1/agent-runs/${runID}/cancel`);
+  return (await res.json()) as { status: 'cancelling'; seq: number };
+}
+
+export async function retryAgentRun(
+  key: string,
+  runID: string,
+  reason: string,
+  acknowledgeAtLeastOnce = false,
+  fetcher: typeof fetch = recordingFetch
+): Promise<{ status: 'retrying'; seq: number }> {
+  const res = await fetcher(`/v1/agent-runs/${runID}/retry`, {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify({
+      reason,
+      acknowledge_at_least_once: acknowledgeAtLeastOnce || undefined
+    })
+  });
+  if (!res.ok) return errorOrStatus(res, `POST /v1/agent-runs/${runID}/retry`);
+  return (await res.json()) as { status: 'retrying'; seq: number };
 }
 
 export interface AgentVersion {

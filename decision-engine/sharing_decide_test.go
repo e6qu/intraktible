@@ -63,9 +63,9 @@ func TestSharingBlockedWhenOptedOut(t *testing.T) {
 	e := sharingTestSetup(t)
 	e.gate.optedOut["applicant/a1"] = true
 
-	_, err := e.dh.Decide(e.ctx, e.id, "share", "sandbox", map[string]any{"amount": 1000}, applicant())
-	if err == nil || !strings.Contains(err.Error(), "opted out") {
-		t.Fatalf("expected an opt-out error, got %v", err)
+	res, err := e.dh.Decide(e.ctx, e.id, "share", "sandbox", map[string]any{"amount": 1000}, applicant())
+	if err != nil || res.Status != "failed" || !strings.Contains(res.Error, "opted out") {
+		t.Fatalf("expected a recorded opt-out failure, got result=%+v err=%v", res, err)
 	}
 	if e.conn.fetched != 0 {
 		t.Fatalf("the NPI-sharing connector was fetched %d times despite the opt-out", e.conn.fetched)
@@ -88,9 +88,9 @@ func TestSharingNoSubjectFails(t *testing.T) {
 	e := sharingTestSetup(t)
 
 	// No entity ref → no subject whose opt-out can be checked → the share is refused.
-	_, err := e.dh.Decide(e.ctx, e.id, "share", "sandbox", map[string]any{"amount": 1000}, command.EntityRef{})
-	if err == nil || !strings.Contains(err.Error(), "no subject") {
-		t.Fatalf("expected a no-subject error, got %v", err)
+	res, err := e.dh.Decide(e.ctx, e.id, "share", "sandbox", map[string]any{"amount": 1000}, command.EntityRef{})
+	if err != nil || res.Status != "failed" || !strings.Contains(res.Error, "no subject") {
+		t.Fatalf("expected a recorded no-subject failure, got result=%+v err=%v", res, err)
 	}
 	if e.conn.fetched != 0 {
 		t.Fatal("the connector must not be fetched without a subject")

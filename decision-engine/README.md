@@ -35,8 +35,10 @@ Done — flow model + versioning (vertical slice, command→event→projection�
     per-node traversal counts over recorded decisions (the builder heatmap); `POST
     /v1/decisions/{id}/counterfactual` — the minimal single-field input change that flips a
     non-favorable decision (binary-searches each numeric field); `POST /v1/flows/{flow_id}/coverage`
-    — fuzz synthetic inputs through the graph → node/branch coverage, disposition spread, and dead
-    (unreachable) branches. A copilot turns a natural-language requirement into a validated graph
+    — fuzz synthetic inputs through the graph → node/branch coverage, failed-run
+    count, disposition spread, and dead branches. Effectful graphs require
+    explicit record-free dependency mocks; Coverage never calls a provider. A
+    copilot turns a natural-language requirement into a validated graph
     via `POST /v1/copilot/generate` (with `…/explain` and `…/suggest`).
   - `POST /v1/flows/{slug}/{env}/decide` · `…/decide/batch` — decide one input / an array of rows;
     the API key's `Scope` (`sandbox`/`production`/`*`) must permit `{env}` (else 403)
@@ -48,9 +50,11 @@ Done — flow model + versioning (vertical slice, command→event→projection�
     `POST /v1/models/train` **fits** a logistic model from a labelled dataset (deterministic gradient
     descent + k-fold cross-validation + feature importance) and defines it — a servable model from data,
     not hand-authored coefficients. A
-    **Predict** node references one by name; the shell evaluates (or, for `external`, calls) it and injects
-    `predict.<output>` ({score, probability}) — pre-resolved + recorded like Connect/AI, so it stays
-    replayable. The in-process kinds need no external runtime (the §9 ONNX-at-scale non-goal stands);
+    **Predict** node references one by name; when graph traversal reaches it, the
+    interpreter yields the exact current record to the shell, which evaluates
+    (or, for `external`, calls) it and records the result before resuming under
+    `predict.<output>` ({score, probability}). The in-process kinds need no external runtime
+    (the §9 ONNX-at-scale non-goal stands);
     `external` is the bring-your-own-serving escape hatch. **Drift:** `GET /v1/models/{name}/drift`
     reports the model's predicted-probability distribution (deciles) + the PSI vs a captured baseline
     (`POST …/baseline`) — `<0.1` stable, `0.1–0.25` moderate, `>0.25` significant — **and per-input-feature
@@ -65,8 +69,12 @@ Done — flow model + versioning (vertical slice, command→event→projection�
     monitor) sweeps every tenant's models and **pushes the ok→firing PSI edge to webhooks** — deduped
     via `drift_alerted`/`drift_resolved` events (the report's `alerting` flag), so a steadily-drifting
     model is sent once; `INTRAKTIBLE_MODEL_DRIFT_WINDOW` narrows the firing window.
-  - `GET /v1/decisions` — history; filter by `flow`/`env`/`status`/`q`, an RFC3339 range
-    (`start_time`/`end_time`), and `include_node_results=false` to omit the per-node trace
+  - `GET /v1/decisions` — history; filter by `flow`/`env`/`status`, business
+    reference, correlation id, entity, exact top-level scalar metadata, `q`, an
+    RFC3339 range (`start_time`/`end_time`), and
+    `include_node_results=false` to omit the per-node trace
+  - `GET /v1/decisions/summary` — durable-execution status and recovery-attempt
+    roll-up with bounded attention items
 - Run it: `intraktible serve --modules=decision-engine`.
 
 Done — execution runtime + decide API + decision history (the decision event stream, PLAN.md §3.3):
@@ -82,12 +90,21 @@ Done — execution runtime + decide API + decision history (the decision event s
   Conditions/expressions use **expr-lang**; the **Code** node runs **Starlark** (no
   clock/random/IO, recursion off, bounded by a step limit) with the context as a `data` dict and its
   top-level assignments merged back. Both surfaces are a stable, versioned contract — see
-  [docs/EXPRESSIONS.md](../docs/EXPRESSIONS.md). A **Connect** node calls a Context Layer connector and an **AI**
-  node runs an Agent Manager agent — both pre-resolved by the shell, with the result injected under
-  `connect.<output>` / `ai.<output>` (see below).
-- Each `/decide` records a stream — `DecisionStarted` → `NodeEvaluated`…  → `DecisionCompleted` /
-  `DecisionFailed` — so a run is replayable node-by-node; a flow-logic error is a recorded **failed**
-  decision (HTTP 200, `status: "failed"`), not a swallowed error.
+  [docs/EXPRESSIONS.md](../docs/EXPRESSIONS.md). A **Connect** node calls a
+  Context Layer connector and an **AI** node runs an Agent Manager agent. The
+  pure interpreter yields each reached effect with the current upstream-mutated
+  record; the shell records requested/succeeded/failed evidence and resumes
+  under `connect.<output>` / `ai.<output>` (see below). Untaken branches perform
+  no authorization or provider call.
+- Each `/decide` records a stream — `DecisionStarted` →
+  `DecisionEffectRequested` / `DecisionEffectSucceeded` /
+  `DecisionEffectFailed` and `NodeEvaluated` steps → `DecisionCompleted` /
+  `DecisionFailed` / `DecisionSuspended` — so a run is replayable node-by-node.
+  A flow-logic error is a recorded **failed** decision (HTTP 200,
+  `status: "failed"`), not a swallowed error. Interrupted runs are claimed by
+  one worker at a time; recorded successes are reused, providers receive the
+  stable effect idempotency key where supported, and an indeterminate
+  at-least-once effect is explicitly abandoned rather than silently duplicated.
 - **Versioning / rollout:** `POST /v1/flows/{flow_id}/deployments` pins which version is live per
   environment and configures an optional **A/B challenger** taking `challenger_pct` of decisions.
   Decide routes accordingly and records the chosen version + variant (champion/challenger), so replay
@@ -131,7 +148,9 @@ Done — execution runtime + decide API + decision history (the decision event s
   (volume, completed/failed, average duration, and breakdowns by environment, version, and
   **variant** — so champion vs challenger outcome rates are directly comparable). `GET
   /v1/flows/{flow_id}/metrics`.
-- HTTP: `POST /v1/flows/{slug}/{env}/decide` → `{decision_id, status, data}`;
+- HTTP: `POST /v1/flows/{slug}/{env}/decide` accepts an `Idempotency-Key`
+  header plus `business_reference`, `correlation_id`, bounded `metadata`, and a
+  positive `control.timeout_ms`, then returns `{decision_id, status, data}`;
   `GET /v1/decisions` · `GET /v1/decisions/{decision_id}` — history with the full node trace + variant.
   These reads honor the workspace's **PII masking** config (`platform/privacy`): fields named in
   `GET/PUT /v1/privacy` are redacted in the returned input/output/node-traces and in JSON exports, at the
@@ -221,11 +240,12 @@ Done — execution runtime + decide API + decision history (the decision event s
   builder + decision-detail UI (download/copy per format).
 - **Context + agents (Phase 3/4):** a decide call may carry `{entity_type, entity_id}`; the shell folds
   that entity's computed features into the input under `features.*` (so a Rule/Split expression can
-  read `features.txn_count_24h`). A flow's **Connect** nodes are likewise pre-resolved (the shell
-  invokes each named connector with the current input and injects the response under `connect.<output>`)
-  and its **AI** nodes run an Agent Manager agent (the node's literal prompt, or the current input,
-  injected under `ai.<output>`). All are recorded in `DecisionStarted` for replay stability, and the
-  pure core performs no I/O. The engine reaches the (later-built) Context Layer / Agent Manager only
+  read `features.txn_count_24h`). When traversal reaches a **Connect** node, the
+  shell invokes its named connector with the record at that exact point and
+  resumes with the response under `connect.<output>`; an **AI** node similarly
+  runs its pinned Agent Manager version and resumes under `ai.<output>`. The
+  request and result are separate durable effect events, and the pure core
+  performs no I/O. The engine reaches the Context Layer / Agent Manager only
   through `FeatureProvider` / `ConnectorProvider` / `AgentProvider` **ports** in `command/`, satisfied
   by `features.Provider` / `connectors.Provider` / `agents.Provider` adapters wired at the composition
   root — so the dependency direction stays one-way. `WithFeatures` / `WithConnectors` / `WithAgents`

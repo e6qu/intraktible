@@ -43,6 +43,11 @@ func ForFlow(slug, name string, inputSchema json.RawMessage) ([]byte, error) {
 		"description": "Target environment.",
 		"schema":      map[string]any{"type": "string", "enum": []string{"sandbox", "production"}},
 	}
+	idempotencyParam := map[string]any{
+		"name": "Idempotency-Key", "in": "header", "required": false,
+		"description": "Deduplicates one logical submission within this flow and environment.",
+		"schema":      map[string]any{"type": "string", "maxLength": 256},
+	}
 	decideResponse := map[string]any{
 		"type": "object",
 		"properties": map[string]any{
@@ -80,16 +85,37 @@ func ForFlow(slug, name string, inputSchema json.RawMessage) ([]byte, error) {
 			base + "/decide": map[string]any{
 				"post": map[string]any{
 					"summary":    "Decide a single input against this flow",
-					"parameters": []any{envParam},
+					"parameters": []any{envParam, idempotencyParam},
 					"requestBody": jsonBody(map[string]any{
 						"type": "object", "required": []string{"data"},
 						"properties": map[string]any{
 							"data":        dataSchema,
 							"entity_type": map[string]any{"type": "string"},
 							"entity_id":   map[string]any{"type": "string"},
+							"business_reference": map[string]any{
+								"type": "string", "maxLength": 256,
+							},
+							"correlation_id": map[string]any{
+								"type": "string", "maxLength": 256,
+							},
+							"metadata": map[string]any{
+								"type": "object", "description": "Persisted caller metadata, capped at 16 KiB.",
+							},
+							"control": map[string]any{
+								"type": "object", "additionalProperties": false,
+								"properties": map[string]any{
+									"timeout_ms": map[string]any{
+										"type": "integer", "minimum": 0, "maximum": 120000,
+									},
+								},
+							},
 						},
 					}),
-					"responses": map[string]any{"200": jsonResp("The decision result.", decideResponse)},
+					"responses": map[string]any{
+						"200": jsonResp("The decision result.", decideResponse),
+						"400": map[string]any{"description": "Invalid input or conflicting idempotency-key reuse."},
+						"409": map[string]any{"description": "The original idempotent invocation is still in progress."},
+					},
 				},
 			},
 			base + "/decide/batch": map[string]any{

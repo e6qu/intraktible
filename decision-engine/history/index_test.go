@@ -103,6 +103,49 @@ func TestListPageIndexFilters(t *testing.T) {
 	}
 }
 
+func TestListPageIndexSearchesTrackingDimensions(t *testing.T) {
+	st := store.NewMemory()
+	apply(t, st, 1, events.TypeDecisionStarted, events.DecisionStarted{
+		DecisionID: "dec-1", FlowID: "f", Slug: "credit", Version: 1, Environment: "production",
+		EntityType: "applicant", EntityID: "customer-77",
+		BusinessReference: "application/ABC-123", CorrelationID: "trace-partner-9",
+		Metadata: json.RawMessage(`{"channel":"branch","priority":2,"reviewed":true,"nested":{"region":"eu"}}`),
+		Data:     json.RawMessage(`{}`),
+	})
+
+	cases := []history.Filter{
+		{EntityType: "applicant", EntityID: "customer-77"},
+		{BusinessReference: "application/ABC-123"},
+		{CorrelationID: "trace-partner-9"},
+		{Metadata: map[string]string{"channel": "branch"}},
+		{Metadata: map[string]string{"priority": "2", "reviewed": "true"}},
+		{Query: "abc-123"},
+		{Query: "PARTNER-9"},
+		{Query: "CUSTOMER-77"},
+	}
+	for _, filter := range cases {
+		page, err := history.ListPage(idxCtx, st, idxID, filter)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if page.Total != 1 || page.Records[0].DecisionID != "dec-1" {
+			t.Fatalf("filter %+v returned %+v", filter, page)
+		}
+	}
+	for _, filter := range []history.Filter{
+		{Metadata: map[string]string{"channel": "mobile"}},
+		{Metadata: map[string]string{"nested": `{"region":"eu"}`}},
+	} {
+		page, err := history.ListPage(idxCtx, st, idxID, filter)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if page.Total != 0 {
+			t.Fatalf("unsupported or mismatched metadata filter %+v returned %+v", filter, page)
+		}
+	}
+}
+
 func TestListPageIndexTracksStatusTransition(t *testing.T) {
 	st := store.NewMemory()
 	startDecision(t, st, 1, "d1", "credit", "production", "")
@@ -119,6 +162,70 @@ func TestListPageIndexTracksStatusTransition(t *testing.T) {
 	}
 	if p, _ := history.ListPage(idxCtx, st, idxID, history.Filter{Status: "started"}); p.Total != 0 {
 		t.Fatalf("after completion: started total=%d, want 0", p.Total)
+	}
+}
+
+func TestExecutionSummaryTracksRecoveryAndAttention(t *testing.T) {
+	st := store.NewMemory()
+	startDecision(t, st, 1, "running", "credit", "production", "")
+	startDecision(t, st, 2, "recovering", "fraud", "production", "")
+	apply(t, st, 3, events.TypeRecoveryClaimed, events.DecisionRecoveryClaimed{
+		DecisionID: "recovering", Owner: "worker-a", Attempt: 2,
+		LeaseUntil: time.Unix(100, 0).UTC(), PreviousErr: "worker lost",
+	})
+	startDecision(t, st, 4, "abandoned", "credit", "production", "")
+	apply(t, st, 5, events.TypeRecoveryClaimed, events.DecisionRecoveryClaimed{
+		DecisionID: "abandoned", Owner: "worker-b", Attempt: 3,
+		LeaseUntil: time.Unix(101, 0).UTC(), PreviousErr: "provider timeout",
+	})
+	apply(t, st, 6, events.TypeDecisionAbandoned, events.DecisionAbandoned{
+		DecisionID: "abandoned", FlowID: "f", Version: 1,
+		Error: "provider outcome indeterminate", Attempt: 3,
+	})
+	startDecision(t, st, 7, "completed", "credit", "sandbox", "")
+	apply(t, st, 8, events.TypeDecisionCompleted, events.DecisionCompleted{
+		DecisionID: "completed", FlowID: "f", Version: 1, Output: json.RawMessage(`{}`),
+	})
+
+	summary, err := history.SummarizeExecution(idxCtx, st, idxID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.Total != 4 || summary.Running != 1 || summary.Retrying != 1 ||
+		summary.Abandoned != 1 || summary.Completed != 1 || summary.RecoveryAttempts != 2 {
+		t.Fatalf("summary = %+v", summary)
+	}
+	if len(summary.Attention) != 3 ||
+		summary.Attention[0].DecisionID != "abandoned" ||
+		summary.Attention[0].LastRecoveryError != "provider outcome indeterminate" {
+		t.Fatalf("attention = %+v", summary.Attention)
+	}
+}
+
+func TestProjectorTracksEffectLifecycle(t *testing.T) {
+	st := store.NewMemory()
+	startDecision(t, st, 1, "d1", "credit", "production", "")
+	apply(t, st, 2, events.TypeEffectRequested, events.DecisionEffectRequested{
+		DecisionID: "d1", EffectID: "fx1", Scope: "live", FlowID: "f", Version: 1,
+		NodeID: "bureau", Kind: "connect", Reference: "credit-bureau",
+		Output: "report", InputHash: "abc", Attempt: 1,
+	})
+	apply(t, st, 3, events.TypeEffectSucceeded, events.DecisionEffectSucceeded{
+		DecisionID: "d1", EffectID: "fx1", NodeID: "bureau", Kind: "connect",
+		Attempt: 1, Output: json.RawMessage(`{"score":780}`), DurationMS: 12,
+	})
+
+	record, ok, err := history.Read(idxCtx, st, idxID, "d1")
+	if err != nil || !ok {
+		t.Fatalf("read: ok=%v err=%v", ok, err)
+	}
+	if len(record.Effects) != 1 {
+		t.Fatalf("effects = %+v", record.Effects)
+	}
+	effect := record.Effects[0]
+	if effect.Status != "succeeded" || effect.Reference != "credit-bureau" ||
+		effect.DurationMS != 12 || string(effect.Output) != `{"score":780}` {
+		t.Fatalf("effect = %+v", effect)
 	}
 }
 

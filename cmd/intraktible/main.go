@@ -73,12 +73,17 @@ func serveCmd(args []string) error {
 	addr := fs.String("addr", ":8080", "listen address")
 	dataDir := fs.String("data-dir", "./data", "event-log data directory")
 	modules := fs.String("modules", "all", "comma-separated modules (or 'all')")
+	processRole := fs.String(
+		"process-role",
+		envOr("INTRAKTIBLE_PROCESS_ROLE", "all"),
+		"background role: all | api | worker | scheduler",
+	)
 	devKey := fs.String("dev-api-key", "dev-sandbox-key", "seed a dev admin API key (in-memory store only; ignored with a durable store; empty to disable)")
 	storeKind := fs.String("store", "memory", "projection store: memory | sqlite (<data-dir>/projections.db) | postgres (INTRAKTIBLE_POSTGRES_DSN)")
 	logKind := fs.String("log", "file", "event log: file (single-process WAL) | memory (in-RAM, NOT durable; tests/wasm) | sqlite (shared across processes, for the split profile) | postgres (networked HA; INTRAKTIBLE_POSTGRES_DSN) | nats (JetStream HA; INTRAKTIBLE_NATS_URL)")
 	env := fs.String("env", envOr("INTRAKTIBLE_ENV", "development"), "deployment environment: development | production (production refuses insecure config and forces secure cookies)")
 	_ = fs.Parse(args)
-	return run(*addr, *dataDir, *modules, *devKey, *storeKind, *logKind, *env)
+	return run(*addr, *dataDir, *modules, *processRole, *devKey, *storeKind, *logKind, *env)
 }
 
 func envOr(key, def string) string {
@@ -88,7 +93,7 @@ func envOr(key, def string) string {
 	return def
 }
 
-func run(addr, dataDir, modules, devKey, storeKind, logKind, env string) error {
+func run(addr, dataDir, modules, processRole, devKey, storeKind, logKind, env string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -132,7 +137,10 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind, env string) error {
 	// log/store; this shell only wraps it with the listener + signal-driven
 	// shutdown. Close is deferred after the log/store closers so (LIFO) the
 	// agent workers drain before the log closes.
-	backend, err := server.New(ctx, server.Config{Modules: modules, DevAPIKey: devKey, StoreKind: storeKind, LogKind: logKind, Env: env}, log, st)
+	backend, err := server.New(ctx, server.Config{
+		Modules: modules, ProcessRole: processRole,
+		DevAPIKey: devKey, StoreKind: storeKind, LogKind: logKind, Env: env,
+	}, log, st)
 	if err != nil {
 		return err
 	}
@@ -151,7 +159,7 @@ func run(addr, dataDir, modules, devKey, storeKind, logKind, env string) error {
 	}
 	errc := make(chan error, 1)
 	go func() {
-		slog.Info("listening", "addr", addr, "modules", modules)
+		slog.Info("listening", "addr", addr, "modules", modules, "process_role", processRole)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errc <- err
 		}

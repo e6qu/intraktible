@@ -1,10 +1,14 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# Two ECS Fargate services on one cluster, both able to scale to zero:
+# Three ECS Fargate services on one cluster:
 #   - api:       the stateless read/write surface. Woken 0->1 by the waker Lambda on a
 #                /wake request, scaled out 1->N by CPU target-tracking under load, and
 #                scaled back to 0 by the reaper when the edge sees no traffic. Registered
 #                in Cloud Map so API Gateway's VPC Link reaches it with no load balancer.
+#   - worker:    the durable execution owner. A warm pool claims interrupted decisions
+#                and asynchronous agent attempts with leases. It is deliberately not
+#                traffic-scaled to zero: accepted work must keep progressing after the
+#                request that admitted it has ended.
 #   - scheduler: the singleton timed-sweep runner (monitor/drift alerts, timed deploy
 #                activation, SLA breach). Runs the SAME image with INTRAKTIBLE_MONITOR_
 #                INTERVAL set. In 'scheduled' mode it sits at 0 and is woken briefly on a
@@ -105,8 +109,11 @@ locals {
   oidc_secrets = var.oidc_provider_name == "" ? [] : [{ name = "INTRAKTIBLE_OIDC_${upper(var.oidc_provider_name)}_CLIENT_SECRET", valueFrom = aws_secretsmanager_secret.oidc_client[0].arn }]
 
   # The image's ENTRYPOINT hard-codes --store=sqlite; override it for the networked
-  # Postgres log + store that lets N stateless tasks share one ordered log.
-  app_command = ["serve", "--addr=:${var.container_port}", "--log=postgres", "--store=postgres"]
+  # Postgres log + store that lets every tier share one ordered log. Roles are
+  # explicit so API and scheduler replicas never compete for durable executions.
+  api_command       = ["serve", "--process-role=api", "--addr=:${var.container_port}", "--log=postgres", "--store=postgres"]
+  worker_command    = ["serve", "--process-role=worker", "--addr=:${var.container_port}", "--log=postgres", "--store=postgres"]
+  scheduler_command = ["serve", "--process-role=scheduler", "--addr=:${var.container_port}", "--log=postgres", "--store=postgres"]
 
   # Pull credentials for a private registry (e.g. a private GHCR package). Empty when the
   # image is public. Merged into each container definition below.
@@ -140,13 +147,42 @@ resource "aws_ecs_task_definition" "api" {
     image       = var.container_image
     essential   = true
     entryPoint  = ["/intraktible"]
-    command     = local.app_command
+    command     = local.api_command
     environment = concat(local.base_environment, local.oidc_environment)
     secrets     = concat(local.app_secrets, local.oidc_secrets)
     portMappings = [{
       containerPort = var.container_port
       protocol      = "tcp"
     }]
+    logConfiguration = {
+      logDriver = "awslogs"
+      options   = local.log_options
+    }
+  }, local.pull_credentials)])
+}
+
+resource "aws_ecs_task_definition" "worker" {
+  family                   = "${local.name}-worker"
+  requires_compatibilities = ["FARGATE"]
+  network_mode             = "awsvpc"
+  cpu                      = var.worker_task_cpu
+  memory                   = var.worker_task_memory
+  execution_role_arn       = aws_iam_role.task_execution.arn
+  task_role_arn            = aws_iam_role.task.arn
+
+  runtime_platform {
+    operating_system_family = "LINUX"
+    cpu_architecture        = "ARM64"
+  }
+
+  container_definitions = jsonencode([merge({
+    name        = "app"
+    image       = var.container_image
+    essential   = true
+    entryPoint  = ["/intraktible"]
+    command     = local.worker_command
+    environment = concat(local.base_environment, local.oidc_environment)
+    secrets     = concat(local.app_secrets, local.oidc_secrets)
     logConfiguration = {
       logDriver = "awslogs"
       options   = local.log_options
@@ -173,7 +209,7 @@ resource "aws_ecs_task_definition" "scheduler" {
     image      = var.container_image
     essential  = true
     entryPoint = ["/intraktible"]
-    command    = local.app_command
+    command    = local.scheduler_command
     environment = concat(local.base_environment, local.oidc_environment, [
       { name = "INTRAKTIBLE_MONITOR_INTERVAL", value = var.monitor_interval },
     ])
@@ -226,6 +262,32 @@ resource "aws_ecs_service" "api" {
     # In always-on mode the reaper is absent and the initial desired count stays at one.
     ignore_changes = [desired_count]
   }
+}
+
+resource "aws_ecs_service" "worker" {
+  name                   = "${local.name}-worker"
+  cluster                = local.ecs_cluster_arn
+  task_definition        = aws_ecs_task_definition.worker.arn
+  desired_count          = var.worker_tasks
+  launch_type            = "FARGATE"
+  enable_execute_command = true
+
+  network_configuration {
+    subnets          = local.private_subnet_ids
+    security_groups  = [aws_security_group.ecs_tasks.id]
+    assign_public_ip = false
+  }
+
+  deployment_circuit_breaker {
+    enable   = true
+    rollback = true
+  }
+
+  depends_on = [
+    aws_secretsmanager_secret_version.bootstrap_api_key,
+    aws_secretsmanager_secret_version.encryption_key,
+    aws_secretsmanager_secret_version.oidc_client,
+  ]
 }
 
 resource "aws_ecs_service" "scheduler" {
