@@ -16,14 +16,14 @@ DOC (a claim not backed by code).
 
 ## Queue
 
-1. **OPEN — Package the verified E4 vertical as the sole pull request.** The
-   complete final-source matrix is green: 134 retry-free native, 84 real-Wasm
-   over the regenerated 8,729-event history, 4 embedded-binary journeys, 240
-   frontend units/build/check/lint, race-enabled Go CI, Terraform, container,
-   workflow, accessibility, security, license, dead-code and clone gates.
-   Perform the final diff/SPDX/OpenAPI/docs audit, reconcile authoritative
-   `origin/main` and the remote PR queue, then commit, push and open the one
-   large E4 PR.
+1. **OPEN — Carry E4 pull request #163 through hosted validation and review.**
+   The complete local final-source matrix is green: 134 retry-free native, 84
+   real-Wasm over the regenerated 8,729-event history, 4 embedded-binary
+   journeys, 240 frontend units/build/check/lint, race-enabled Go CI, Terraform,
+   container, workflow, accessibility, security, license, dead-code and clone
+   gates. PR #163 is the sole open PR and is mergeable; inspect every hosted
+   failure to the bottom, push fixes to the same branch, and record the final
+   green run before merge.
 2. **OPEN — E5 through E8 remain serialized behind E4.** Do not implement or
    open them concurrently. After each merge, fetch and deliberately reconcile
    authoritative `origin/main`, confirm the PR queue empty, and only then cut

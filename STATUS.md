@@ -109,7 +109,9 @@ embedded-binary journeys, 240 frontend units, zero-warning typecheck/lint,
 production web build, full race-enabled Go CI with zero reachable
 vulnerabilities, Terraform tests, container publication/retention checks, and
 workflow timeout checks. Final diff/documentation review and the sole E4 PR
-remain.
+are complete. Pull request #163 is open and mergeable at implementation commit
+`01881f3`; its nine hosted CI jobs are queued. E4 is ready for hosted validation
+and review, but is not complete until that final head is green and merged.
 E5–E8 must not start or open concurrently.
 
 The first E4 seam audit establishes the implementation boundary:
