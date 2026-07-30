@@ -5,6 +5,7 @@ package fairlending
 import (
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/e6qu/intraktible/decision-engine/history"
@@ -61,7 +62,18 @@ func (s *Service) report(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
-	p := Params{FlowID: q.Get("flow"), Attribute: q.Get("attribute"), Environment: q.Get("env")}
+	p := Params{
+		FlowID: q.Get("flow"), Attribute: q.Get("attribute"), Environment: q.Get("env"),
+		ExperimentID: q.Get("experiment"), Arm: q.Get("arm"),
+	}
+	if raw := q.Get("cohort"); raw != "" {
+		cohort, err := strconv.Atoi(raw)
+		if err != nil || cohort < 1 {
+			httpx.Error(w, http.StatusBadRequest, fmt.Errorf("cohort must be a positive integer"))
+			return
+		}
+		p.Cohort = cohort
+	}
 	if p.FlowID == "" {
 		httpx.Error(w, http.StatusBadRequest, fmt.Errorf("flow is required"))
 		return

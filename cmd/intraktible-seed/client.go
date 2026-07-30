@@ -48,6 +48,16 @@ type seeder struct {
 // call performs one request as actor and decodes the JSON response into out
 // (out may be nil). Any non-2xx response aborts the seed with the body printed.
 func (s *seeder) call(actor, method, path string, body, out any) {
+	s.callWithHeaders(actor, method, path, nil, body, out)
+}
+
+// callWithHeaders is call with explicit integration headers such as
+// Idempotency-Key. Header values are fixed seed data, never credentials.
+func (s *seeder) callWithHeaders(
+	actor, method, path string,
+	headers map[string]string,
+	body, out any,
+) {
 	var reqBody []byte
 	if body != nil {
 		b, err := json.Marshal(body)
@@ -62,6 +72,9 @@ func (s *seeder) call(actor, method, path string, body, out any) {
 		fatalf("%s %s: no API key for actor %q", method, path, actor)
 	}
 	req.Header.Set("X-Api-Key", key)
+	for name, value := range headers {
+		req.Header.Set(name, value)
+	}
 	if reqBody != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}

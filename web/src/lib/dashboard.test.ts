@@ -89,10 +89,22 @@ describe('personaHomeStats', () => {
         }
       }
     ] as DashboardData['models'],
+    experiments: [
+      {
+        experiment_id: 'experiment-1',
+        state: 'running',
+        cohort: 1,
+        spec: { name: 'Offer test' }
+      }
+    ] as DashboardData['experiments'],
     decisions: [
       dec('2026-06-15T00:00:00Z', 'completed', 10),
       dec('2026-06-15T00:00:00Z', 'failed', 20),
-      { ...dec('2026-06-15T00:00:00Z', 'completed', 30), variant: 'challenger' } as Decision
+      {
+        ...dec('2026-06-15T00:00:00Z', 'completed', 30),
+        experiment_id: 'experiment-1',
+        experiment_arm: 'treatment'
+      } as Decision
     ],
     cases: {
       total: 5,
@@ -108,7 +120,7 @@ describe('personaHomeStats', () => {
     const tiles = personaHomeStats(['failed', 'challenger', 'needs_review', 'overdue'], data);
     expect(tiles.map((t) => t.id)).toEqual(['failed', 'challenger', 'needs_review', 'overdue']);
     expect(tiles[0].value).toBe(1); // one failed decision
-    expect(tiles[1].value).toBe(1); // one challenger-variant decision
+    expect(tiles[1].value).toBe(1); // one reached experiment treatment
     expect(tiles[2].value).toBe(3); // needs_review from the case summary
     expect(tiles[3].value).toBe(1); // overdue from the case summary
   });
@@ -119,17 +131,23 @@ describe('personaHomeStats', () => {
     expect(String(rate.value)).toMatch(/%$/);
   });
 
-  it('counts flow and model governance requests as pending approvals', () => {
+  it('counts flow, model, and experiment governance requests as pending approvals', () => {
     const withFlowRequest = {
       ...data,
       flows: [
         {
           deployment_requests: [{ status: 'pending' }]
         }
-      ] as DashboardData['flows']
+      ] as DashboardData['flows'],
+      experiments: [
+        {
+          experiment_id: 'experiment-2',
+          state: 'pending_launch'
+        }
+      ] as DashboardData['experiments']
     };
     const [pending] = personaHomeStats(['pending_approvals'], withFlowRequest);
-    expect(pending.value).toBe(2);
+    expect(pending.value).toBe(3);
     expect(pending.href).toBe('/#pending-approvals');
   });
 });

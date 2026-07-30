@@ -16,20 +16,16 @@ DOC (a claim not backed by code).
 
 ## Queue
 
-Sixth whole-product audit from authoritative merged commit `7a7be66`.
+Enterprise roadmap execution from authoritative E1 merge `fea2a7e`.
 
-1. **OPEN — PR E1 · publish and babysit durable execution integrity.**
-   The implementation and complete local exit matrix in `PLAN.md` §8b.2 are
-   green. A fresh authoritative fetch confirms local `HEAD == origin/main ==
-   7a7be66` and the GitHub PR queue is empty. Commit `8dddb44` contains the
-   reconciled 95-file vertical slice. PR #160 is the sole open review queue;
-   hosted run `30514807479` is green across all nine jobs. Verify the final
-   continuity-only head, fix any cascade in the same branch, and wait for
-   merge. Do not start E2 until E1 merges.
-2. **OPEN — PR E2 · CORRECT: experimentation, outcomes, and population jobs.**
-   Begin only after E1 merges. `decision-engine/command/decide.go:1505-1513`
-   rolls a fresh variant per invocation; replace it with the first-class stable
-   experiment and durable population-job journeys in `PLAN.md` §8b.3.
+1. **OPEN — PR E2 · CI: complete the release matrix and open the sole PR.**
+   The §8b.3 implementation, project-wide journey/docs reconciliation, seed,
+   contracts, scheduler failure tests, and three real-backend browser journeys
+   are complete. Run diff/SPDX/OpenAPI hygiene, `make check`, `make ci`, the
+   complete frontend unit/build matrix, all native + real-Wasm + embedded
+   browser journeys, and deployment contract gates. Fix every failure, record
+   exact evidence in `PLAN.md`/continuity, fetch/reconcile `origin/main`, then
+   commit, push, open one E2 PR, and babysit its hosted checks.
 
 PRs E3–E7 remain ordered behind E2 in `PLAN.md` §§8b.4–8b.8. Do not open or
 implement them concurrently; after each merge, reconcile fresh `origin/main`

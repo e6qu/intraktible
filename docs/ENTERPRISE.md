@@ -33,8 +33,10 @@ These are real strengths, not placeholders:
   responses) are captured in events, so a decision replays to the identical result.
 - **Full decision lineage** — every `/decide` records a node-by-node trace
   (input → … → output) retrievable by id and exportable (Mermaid/BPMN).
-- **Versioning + environments + A/B** — immutable, etag'd versions; per-environment
-  deployment; champion/challenger split with per-variant metrics.
+- **Versioning + governed experimentation** — immutable, etag'd versions;
+  per-environment deployment; stable subject cohorts over exact versions, reached
+  exposure, corrected business outcomes, statistical evidence, and maker-checker
+  production launches.
 - **Durable, pluggable storage** — SQLite/Postgres projection stores + a shared
   SQLite event log, with incremental resume.
 - **Multi-tenancy** — every event and projection is org/workspace scoped.
@@ -97,8 +99,9 @@ enterprise buyers; **P2** = differentiators / scale.
   deploy must be *proposed* by one user and *approved* by a *different* one. The
   builder now has a **Deployment panel**: live-version-per-environment badges,
   deploy-to-sandbox, propose-for-production, and a requests queue (pending +
-  decided) with approve/reject (self-approval is refused — four-eyes), plus A/B
-  challenger %. Approve and reject both capture an **explanation** recorded on the
+  decided) with approve/reject (self-approval is refused — four-eyes). Governed
+  experiments separately control multi-arm allocation over exact versions. Approve
+  and reject both capture an **explanation** recorded on the
   request, and each request carries a comment thread, so the who/why is durable.
 - **P0 — Governed decision dependencies — ✅ done (backend + UI).** Operational
   policy versions use their own four-eyes handoff: publishing makes an immutable
@@ -191,11 +194,12 @@ enterprise buyers; **P2** = differentiators / scale.
   a failing assertion suite, a firing monitor, a breaching SLO, a drifting model — so
   a model-risk team sees what needs review. Exportable as **JSON / CSV / Markdown**
   (the filed document), surfaced as a **Model risk** UI page.
-  Predictive-model actuals are attributable evidence rather than operator-authored
-  statistics: reconciliation requires a completed decision, derives probability and
-  model version from its immutable Predict-node trace, permits one label per
-  decision/model/node, and refuses stale or ambiguous lineage. Redefinition starts a
-  clean current-version drift/performance cohort (baseline, prediction distribution,
+  Generalized business outcomes are attributable, correctable evidence rather than
+  operator-authored model statistics: ingestion requires a completed decision,
+  records source/event/label-version lineage, derives flow/version/environment,
+  experiment treatment, probability, and model version from immutable execution
+  evidence, and preserves correction history. Redefinition starts a clean
+  current-version drift/performance cohort (baseline, prediction distribution,
   calibration, accuracy, Brier score, and realized AUC are never blended across
   changed model logic).
 - **P2 — Data residency / region pinning.**
@@ -207,23 +211,34 @@ enterprise buyers; **P2** = differentiators / scale.
   I/O is performed. The builder exposes it as a panel that flags the records whose
   outcome changed. The deterministic engine makes this a natural, safe pre-deploy
   confidence check.
-- **P1 — Shadow / canary deploys — ✅ shadow done.** A per-environment **shadow
+- **P0 — Controlled experimentation — ✅ done.** First-class experiments bind a
+  hypothesis, owner, stable subject key, salted allocation, eligibility, exact flow
+  versions, primary KPI, minimum sample/effect, guardrails, and time window into one
+  event-sourced aggregate. Assignment remains stable across retries and replicas;
+  only reached and completed treatment records exposure. Decision-linked business
+  outcomes retain source and correction lineage. Analysis distinguishes collecting,
+  underpowered, sample-ratio mismatch, guardrail regression, inconclusive, and
+  supported-winner states using confidence intervals and effect sizes. Production
+  starts require an independent maker-checker approval, and replay reconstructs the
+  same cohorts and evidence.
+- **P1 — Shadow / canary deploys — ✅ done.** A per-environment **shadow
   version** (`PUT /v1/flows/{id}/shadow {environment, version}`, 0 clears) is
   evaluated from the same caller input and one authoritative entity-feature
-  snapshot as champion decisions in that environment (a served A/B challenger
-  already has its own observed metrics). The candidate independently
+  snapshot as champion decisions in that environment (a served experiment arm has
+  its own exposure/outcome evidence). The candidate independently
   invokes the connectors, pinned agents, and models selected by its own graph under
   the normal consent/sharing/egress and governed-version gates; those calls can send
   data or incur cost, but their result is never served to the caller. A
-  `shadow.Projector` folds the comparison into a homogeneous per-env cohort
-  (`GET …/shadow`) — exact live/candidate/policy versions, comparison basis, total /
-  matched / diverged / errored, and value-free explanatory samples. A champion,
-  candidate, or policy change starts a fresh cohort rather than mixing unlike
-  evidence. With a bound policy, agreement means the exact policy
+  `shadow.Projector` folds comparisons into retained exact cohorts (`GET
+  …/shadow`) — live/candidate/policy versions, experiment/cohort/arm dimensions,
+  comparison basis, total / matched / diverged / errored, and value-free
+  explanatory samples. A dimension change starts a fresh cohort rather than mixing
+  unlike evidence, while prior cohorts remain inspectable. With a bound policy,
+  agreement means the exact policy
   disposition/code/reason; without one, it means the same status and complete
-  output. Surfaced as a **Shadow deploys** panel in the builder. The A/B challenger
-  already covers canary (a challenger takes a traffic share with its result
-  returned). Assigning the current champion as its own shadow is refused; if a
+  output. Surfaced as a **Shadow deploys** panel in the builder. Governed
+  experiments provide stable canary allocation with reached exposure and outcome
+  analysis. Assigning the current champion as its own shadow is refused; if a
   later deployment makes the candidate champion, comparisons record a loud
   configuration error until another candidate is chosen.
 - **P1 — Flow unit tests / assertions — ✅ done.** Input→expected cases stored
@@ -313,7 +328,11 @@ enterprise buyers; **P2** = differentiators / scale.
 - **P1 — Batch decisioning** (score a file / a population) — **DONE.** `POST
   /v1/flows/{slug}/{env}/decide/batch` runs a dataset through the recorded decide
   path (each row a real decision in history/metrics/audit; capped at 500), with a
-  summary + per-row results and a builder panel. *A feature store remains.*
+  summary + per-row results and a builder panel. For durable work, first-class
+  population jobs add immutable manifests, per-item idempotency, bounded concurrency,
+  cross-replica leases, progress, pause/cancel/resume/retry, partial failure,
+  downloadable NDJSON results, and retention for both decisions and backtests.
+  *A feature store remains.*
 - **P2 — Streaming ingestion** for real-time features.
 
 ### AI / ML governance  (status: provider + tool-calling + structured output + cost + guardrails + registry/versioning + eval)

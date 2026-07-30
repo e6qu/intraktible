@@ -76,7 +76,12 @@ import {
   issuedAdverseActionNotice,
   recordContest,
   recordReconsideration,
-  recordModelOutcome
+  getModelPerformance,
+  recordModelOutcome,
+  createExperiment,
+  transitionExperiment,
+  recordOutcome,
+  createPopulationJob
 } from './api';
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -527,6 +532,21 @@ describe('shadow', () => {
             }
           ]
         }
+      },
+      cohorts: {
+        exact: {
+          environment: 'sandbox',
+          experiment_id: 'exp-1',
+          experiment_cohort: 2,
+          experiment_arm: 'champion',
+          live_version: 1,
+          shadow_version: 2,
+          match_basis: 'output',
+          total: 10,
+          matched: 7,
+          diverged: 3,
+          errored: 0
+        }
       }
     });
     const s = await getShadow('k', 'f1', fetcher);
@@ -534,6 +554,7 @@ describe('shadow', () => {
     expect(s.report.sandbox.diverged).toBe(3);
     expect(s.report.sandbox.match_basis).toBe('output');
     expect(s.report.sandbox.samples?.[0].changed_fields).toEqual(['decision']);
+    expect(s.cohorts.exact.experiment_cohort).toBe(2);
     expect(fetcher.mock.calls[0][0]).toBe('/v1/flows/f1/shadow');
   });
 
@@ -1148,6 +1169,111 @@ describe('model actuals', () => {
       node_id: 'predict-risk',
       label: 1
     });
+  });
+
+  it('selects corrected business outcomes by exact experiment cohort', async () => {
+    const fetcher = fetcherReturning(200, { model: 'risk', count: 0, calibration: [] });
+    await getModelPerformance(
+      'k',
+      'risk/v2',
+      {
+        outcome_key: 'defaulted_90d',
+        node_id: 'predict-risk',
+        environment: 'production',
+        experiment_id: 'exp-1',
+        cohort: 3,
+        arm: 'challenger'
+      },
+      fetcher
+    );
+    const [url] = fetcher.mock.calls[0];
+    expect(url).toBe(
+      '/v1/models/risk%2Fv2/performance?outcome_key=defaulted_90d&node_id=predict-risk&env=production&experiment=exp-1&cohort=3&arm=challenger'
+    );
+  });
+});
+
+describe('experimentation and population automation', () => {
+  it('creates an exact-version cohort and starts it', async () => {
+    const spec = {
+      name: 'Offer lift',
+      hypothesis: 'The challenger lifts conversion',
+      owner: 'product',
+      flow_id: 'flow-1',
+      environment: 'sandbox' as const,
+      subject_key_expression: 'customer_id',
+      salt: 'salt-1',
+      arms: [
+        {
+          key: 'champion',
+          name: 'Champion',
+          kind: 'champion' as const,
+          version: 1,
+          allocation_bps: 5000
+        },
+        {
+          key: 'challenger',
+          name: 'Challenger',
+          kind: 'challenger' as const,
+          version: 2,
+          allocation_bps: 5000
+        }
+      ],
+      primary_metric: {
+        key: 'converted',
+        name: 'Conversion',
+        kind: 'binary' as const,
+        direction: 'increase' as const
+      },
+      minimum_sample_per_arm: 100,
+      minimum_effect: 0.01,
+      confidence: 0.95,
+      observation_window_days: 30
+    };
+    const createFetch = fetcherReturning(201, { experiment_id: 'exp-1', seq: 8 });
+    await createExperiment('k', spec, createFetch);
+    expect(createFetch.mock.calls[0][0]).toBe('/v1/experiments');
+    expect(JSON.parse(createFetch.mock.calls[0][1]?.body as string)).toEqual(spec);
+
+    const startFetch = fetcherReturning(202, { status: 'running', seq: 9 });
+    await transitionExperiment('k', 'exp/1', 'start', '', startFetch);
+    expect(startFetch.mock.calls[0][0]).toBe('/v1/experiments/exp%2F1/start');
+  });
+
+  it('requires an idempotency header for observed outcomes and population jobs', async () => {
+    const outcomeFetch = fetcherReturning(202, { outcome_id: 'out-1', revision: 1, seq: 10 });
+    await recordOutcome(
+      'k',
+      {
+        decision_id: 'd1',
+        key: 'converted',
+        kind: 'binary',
+        value: 1,
+        event_time: '2026-07-30T10:00:00Z',
+        source: { system: 'loan-core', record_id: 'loan-1' },
+        label_version: 'v1'
+      },
+      'outcome-key',
+      outcomeFetch
+    );
+    expect(outcomeFetch.mock.calls[0][1]?.headers).toMatchObject({
+      'Idempotency-Key': 'outcome-key'
+    });
+
+    const jobFetch = fetcherReturning(202, { job_id: 'job-1', state: 'queued', seq: 11 });
+    await createPopulationJob(
+      'k',
+      {
+        kind: 'backtest',
+        slug: 'offers',
+        environment: 'sandbox',
+        items: [{ data: { customer_id: 'c1' } }]
+      },
+      'job-key',
+      jobFetch
+    );
+    expect(jobFetch.mock.calls[0][0]).toBe('/v1/population-jobs');
+    expect(jobFetch.mock.calls[0][1]?.headers).toMatchObject({ 'Idempotency-Key': 'job-key' });
   });
 });
 

@@ -20,13 +20,18 @@
     decisionExplanation,
     getContest,
     recordContest,
+    listOutcomes,
+    recordOutcome,
+    correctOutcome,
     ApiError,
     type Decision,
     type Counterfactual,
     type RunExportFormat,
     type AdverseActionIssuance,
     type Reconsideration,
-    type Contest
+    type Contest,
+    type BusinessOutcome,
+    type OutcomeKind
   } from '$lib/api';
   import { toast } from '$lib/toast';
   import { appHref } from '$lib/paths';
@@ -46,9 +51,91 @@
   // A missing decision (real 404) gets the "stale link" copy; any other failure
   // surfaces the server's actual message rather than masquerading as not-found.
   let notFound = $state(false);
+  let outcomes = $state<BusinessOutcome[]>([]);
+  let outcomeBusy = $state(false);
+  let outcomeEditing = $state<BusinessOutcome | null>(null);
+  let outcomeKey = $state('');
+  let outcomeKind = $state<OutcomeKind>('binary');
+  let outcomeValue = $state(1);
+  let outcomeTime = $state('');
+  let outcomeWindow = $state(30);
+  let outcomeSystem = $state('');
+  let outcomeRecord = $state('');
+  let outcomeLineage = $state('');
+  let outcomeLabelVersion = $state('v1');
+  let outcomeReason = $state('');
 
   function msg(e: unknown): string {
     return e instanceof Error ? e.message : String(e);
+  }
+  function localNow(): string {
+    const date = new Date();
+    return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+  }
+  function editOutcome(outcome: BusinessOutcome): void {
+    outcomeEditing = outcome;
+    outcomeKey = outcome.key;
+    outcomeKind = outcome.kind;
+    outcomeValue = outcome.current.value;
+    outcomeTime = localNow();
+    outcomeWindow = outcome.current.observation_window_days ?? 0;
+    outcomeSystem = outcome.current.source.system;
+    outcomeRecord = outcome.current.source.record_id;
+    outcomeLineage = outcome.current.source.lineage ?? '';
+    outcomeLabelVersion = outcome.current.label_version;
+    outcomeReason = '';
+  }
+  function resetOutcomeForm(): void {
+    outcomeEditing = null;
+    outcomeKey = '';
+    outcomeKind = 'binary';
+    outcomeValue = 1;
+    outcomeTime = localNow();
+    outcomeWindow = 30;
+    outcomeSystem = '';
+    outcomeRecord = '';
+    outcomeLineage = '';
+    outcomeLabelVersion = 'v1';
+    outcomeReason = '';
+  }
+  async function submitOutcome(): Promise<void> {
+    if (outcomeBusy) return;
+    outcomeBusy = true;
+    try {
+      const observation = {
+        value: outcomeValue,
+        event_time: new Date(outcomeTime).toISOString(),
+        observation_window_days: outcomeWindow,
+        source: {
+          system: outcomeSystem.trim(),
+          record_id: outcomeRecord.trim(),
+          lineage: outcomeLineage.trim() || undefined
+        },
+        label_version: outcomeLabelVersion.trim()
+      };
+      if (outcomeEditing) {
+        await correctOutcome(
+          key,
+          outcomeEditing.outcome_id,
+          { ...observation, reason: outcomeReason.trim() },
+          globalThis.crypto.randomUUID()
+        );
+        toast.success('Outcome correction appended');
+      } else {
+        await recordOutcome(
+          key,
+          { decision_id: id, key: outcomeKey.trim(), kind: outcomeKind, ...observation },
+          globalThis.crypto.randomUUID()
+        );
+        toast.success('Business outcome recorded');
+      }
+      resetOutcomeForm();
+      outcomes = await listOutcomes(key, { decision_id: id });
+    } catch (e) {
+      toast.error(msg(e));
+    } finally {
+      outcomeBusy = false;
+    }
   }
 
   let notifying = $state(false);
@@ -233,9 +320,14 @@
     // load for the previous decision can't clobber the one now shown.
     const reqId = id;
     try {
-      const got = await getDecision(key, id);
+      const [got, facts] = await Promise.all([
+        getDecision(key, id),
+        listOutcomes(key, { decision_id: id })
+      ]);
       if (id !== reqId) return;
       d = got;
+      outcomes = facts;
+      outcomeTime ||= localNow();
       if (d.disposition === 'decline') {
         await loadRegulatory(reqId);
       }
@@ -412,6 +504,14 @@
       <dd>{d.environment}</dd>
       <dt>variant</dt>
       <dd>{d.variant ?? '—'}</dd>
+      {#if d.experiment_id}
+        <dt>experiment</dt>
+        <dd>
+          <a href={appHref(`/experiments/${d.experiment_id}`)}
+            >{d.experiment_arm_name ?? d.experiment_arm} · cohort #{d.experiment_cohort} →</a
+          >
+        </dd>
+      {/if}
       <dt>generation</dt>
       <dd>{d.generation ?? 1}</dd>
       <dt>duration</dt>
@@ -447,6 +547,122 @@
       <dt>decision id</dt>
       <dd><Copyable value={d.decision_id} label="decision id" /></dd>
     </dl>
+
+    <section class="business-outcomes">
+      <div class="outcome-head">
+        <div>
+          <h2>Business outcomes</h2>
+          <p>
+            Observed facts linked to this exact decision. Treatment and model lineage are derived
+            from the trace and cannot be supplied by the caller.
+          </p>
+        </div>
+        <Badge tone="neutral">{outcomes.length}</Badge>
+      </div>
+      {#if outcomes.length}
+        <table class="outcome-table">
+          <thead
+            ><tr
+              ><th>Metric</th><th>Current</th><th>Source</th><th>Label</th><th>Revision</th><th
+              ></th></tr
+            ></thead
+          >
+          <tbody>
+            {#each outcomes as outcome (outcome.outcome_id)}
+              <tr>
+                <td>{outcome.key}<small>{outcome.kind}</small></td>
+                <td>{outcome.current.value}</td>
+                <td
+                  >{outcome.current.source.system}<small>{outcome.current.source.record_id}</small
+                  ></td
+                >
+                <td>{outcome.current.label_version}</td>
+                <td>{outcome.current.revision} / {outcome.history.length}</td>
+                <td
+                  >{#if roleAtLeast($user?.role, 'operator')}<button
+                      onclick={() => editOutcome(outcome)}>Correct</button
+                    >{/if}</td
+                >
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      {/if}
+      {#if roleAtLeast($user?.role, 'operator') && d.status === 'completed'}
+        <form
+          class="outcome-form"
+          onsubmit={(event) => {
+            event.preventDefault();
+            void submitOutcome();
+          }}
+        >
+          <strong
+            >{outcomeEditing
+              ? `Append correction to ${outcomeEditing.key}`
+              : 'Record observed fact'}</strong
+          >
+          {#if !outcomeEditing}
+            <label
+              ><span>Metric key</span><input
+                bind:value={outcomeKey}
+                required
+                placeholder="converted"
+              /></label
+            >
+            <label
+              ><span>Kind</span><select bind:value={outcomeKind}
+                ><option value="binary">binary</option><option value="continuous">continuous</option
+                ></select
+              ></label
+            >
+          {/if}
+          <label
+            ><span>Value</span><input type="number" step="any" bind:value={outcomeValue} /></label
+          >
+          <label
+            ><span>Event time</span><input
+              type="datetime-local"
+              bind:value={outcomeTime}
+              required
+            /></label
+          >
+          <label
+            ><span>Observation window days</span><input
+              type="number"
+              min="0"
+              max="3650"
+              bind:value={outcomeWindow}
+            /></label
+          >
+          <label
+            ><span>Source system</span><input
+              bind:value={outcomeSystem}
+              required
+              placeholder="loan-core"
+            /></label
+          >
+          <label><span>Source record ID</span><input bind:value={outcomeRecord} required /></label>
+          <label><span>Source lineage</span><input bind:value={outcomeLineage} /></label>
+          <label
+            ><span>Label version</span><input bind:value={outcomeLabelVersion} required /></label
+          >
+          {#if outcomeEditing}<label
+              ><span>Correction reason</span><input bind:value={outcomeReason} required /></label
+            >{/if}
+          <div class="outcome-actions">
+            <button class="primary" disabled={outcomeBusy}
+              >{outcomeBusy
+                ? 'Saving…'
+                : outcomeEditing
+                  ? 'Append correction'
+                  : 'Record outcome'}</button
+            >
+            {#if outcomeEditing}<button type="button" onclick={resetOutcomeForm}>Cancel</button
+              >{/if}
+          </div>
+        </form>
+      {/if}
+    </section>
 
     {#if d.error}<p class="err">Error: {d.error}</p>{/if}
     {#if d.metadata && Object.keys(d.metadata).length > 0}
@@ -1271,6 +1487,75 @@
     border-radius: 6px;
     background: var(--surface);
     color: var(--fg);
+  }
+  .business-outcomes {
+    margin: 1.25rem 0;
+    padding: 1rem;
+    border: 1px solid var(--border);
+    border-radius: 0.7rem;
+    background: var(--surface);
+  }
+  .outcome-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+  .outcome-head h2,
+  .outcome-head p {
+    margin-top: 0;
+  }
+  .outcome-head p,
+  .outcome-table small,
+  .outcome-form label span {
+    color: var(--fg-muted);
+  }
+  .outcome-table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  .outcome-table th,
+  .outcome-table td {
+    padding: 0.55rem;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+  }
+  .outcome-table small {
+    display: block;
+  }
+  .outcome-form {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.75rem;
+    margin-top: 1rem;
+    padding: 0.8rem;
+    background: var(--surface-2);
+    border-radius: 0.55rem;
+  }
+  .outcome-form > strong,
+  .outcome-actions {
+    grid-column: 1 / -1;
+  }
+  .outcome-form label {
+    display: grid;
+    gap: 0.25rem;
+  }
+  .outcome-form input,
+  .outcome-form select {
+    width: 100%;
+    box-sizing: border-box;
+  }
+  .outcome-actions {
+    display: flex;
+    gap: 0.5rem;
+  }
+  @media (max-width: 720px) {
+    .outcome-form {
+      grid-template-columns: 1fr;
+    }
+    .business-outcomes {
+      overflow-x: auto;
+    }
   }
   .err {
     color: var(--danger);

@@ -30,6 +30,9 @@ type IndexEntry struct {
 	Slug              string            `json:"slug"`
 	Environment       string            `json:"environment"`
 	Variant           string            `json:"variant,omitempty"`
+	ExperimentID      string            `json:"experiment_id,omitempty"`
+	ExperimentCohort  int               `json:"experiment_cohort,omitempty"`
+	ExperimentArm     string            `json:"experiment_arm,omitempty"`
 	Status            string            `json:"status"`
 	EntityType        string            `json:"entity_type,omitempty"`
 	EntityID          string            `json:"entity_id,omitempty"`
@@ -63,7 +66,9 @@ func applyIndex(ctx context.Context, e eventlog.Envelope, s store.Store) error {
 		return store.PutDoc(ctx, s, IndexCollection, indexKey(e.Org, e.Workspace, p.DecisionID), IndexEntry{
 			Org: e.Org, Workspace: e.Workspace, DecisionID: p.DecisionID,
 			Slug: p.Slug, Environment: p.Environment, Variant: p.Variant,
-			EntityType: p.EntityType, EntityID: p.EntityID,
+			ExperimentID: p.ExperimentID, ExperimentCohort: p.ExperimentCohort,
+			ExperimentArm: p.ExperimentArm,
+			EntityType:    p.EntityType, EntityID: p.EntityID,
 			BusinessReference: p.BusinessReference, CorrelationID: p.CorrelationID,
 			Metadata: metadata,
 			Status:   "running", StartedAt: e.Time,

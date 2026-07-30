@@ -19,10 +19,13 @@ import (
 	ctxdomain "github.com/e6qu/intraktible/context-layer/domain"
 	dedomain "github.com/e6qu/intraktible/decision-engine/domain"
 	"github.com/e6qu/intraktible/decision-engine/events"
+	"github.com/e6qu/intraktible/decision-engine/experiments"
 	"github.com/e6qu/intraktible/decision-engine/flows"
 	"github.com/e6qu/intraktible/decision-engine/models"
 	"github.com/e6qu/intraktible/decision-engine/monitor"
+	"github.com/e6qu/intraktible/decision-engine/outcomes"
 	"github.com/e6qu/intraktible/decision-engine/policy"
+	"github.com/e6qu/intraktible/decision-engine/population"
 	"github.com/e6qu/intraktible/decision-engine/preapproval"
 	"github.com/e6qu/intraktible/platform/auth"
 )
@@ -72,6 +75,24 @@ var enums = []tsEnum{
 		monitor.MetricApproveRate, monitor.MetricDeclineRate, monitor.MetricAvgLatencyMS,
 		monitor.MetricVolume, monitor.MetricDistributionDrift,
 		monitor.MetricDistributionDriftPSI, monitor.MetricDistributionDriftKL,
+	)},
+	{"ExperimentState", "", strs(
+		experiments.StateDraft, experiments.StatePendingLaunch, experiments.StateRunning,
+		experiments.StatePaused, experiments.StateCompleted, experiments.StateCancelled,
+	)},
+	{"ExperimentArmKind", "", strs(experiments.ArmChampion, experiments.ArmChallenger)},
+	{"ExperimentMetricKind", "", strs(experiments.MetricBinary, experiments.MetricContinuous)},
+	{"ExperimentDirection", "", strs(experiments.DirectionIncrease, experiments.DirectionDecrease)},
+	{"ExperimentAnalysisStatus", "", strs(
+		experiments.StatusCollecting, experiments.StatusInvalid, experiments.StatusUnderpowered,
+		experiments.StatusInconclusive, experiments.StatusGuardrailFailed, experiments.StatusWinner,
+	)},
+	{"OutcomeKind", "", strs(outcomes.KindBinary, outcomes.KindContinuous)},
+	{"PopulationJobKind", "", strs(population.KindDecision, population.KindBacktest)},
+	{"PopulationJobState", "", strs(
+		population.StateQueued, population.StateRunning, population.StatePaused,
+		population.StateCancelling, population.StateCancelled, population.StateCompleted,
+		population.StateCompletedWithErrors, population.StateExpired,
 	)},
 }
 

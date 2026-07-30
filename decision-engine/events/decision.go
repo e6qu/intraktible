@@ -150,6 +150,9 @@ type ShadowEvaluated struct {
 	DecisionID        string           `json:"decision_id"` // the live decision this shadows
 	FlowID            string           `json:"flow_id"`
 	Environment       string           `json:"environment"`
+	ExperimentID      string           `json:"experiment_id,omitempty"`
+	ExperimentCohort  int              `json:"experiment_cohort,omitempty"`
+	ExperimentArm     string           `json:"experiment_arm,omitempty"`
 	LiveVersion       int              `json:"live_version"`
 	ShadowVersion     int              `json:"shadow_version"`
 	MatchBasis        ShadowMatchBasis `json:"match_basis"`
@@ -172,15 +175,23 @@ type ShadowEvaluated struct {
 // what caller input, in which environment. DecisionContextPrepared records the
 // authoritative feature/consent snapshot used by the interpreter.
 type DecisionStarted struct {
-	DecisionID  string          `json:"decision_id"`
-	FlowID      string          `json:"flow_id"`
-	Slug        string          `json:"slug"`
-	Version     int             `json:"version"`
-	Environment string          `json:"environment"`
-	Variant     string          `json:"variant,omitempty"` // champion | challenger
-	EntityType  string          `json:"entity_type,omitempty"`
-	EntityID    string          `json:"entity_id,omitempty"`
-	Data        json.RawMessage `json:"data"`
+	DecisionID  string `json:"decision_id"`
+	FlowID      string `json:"flow_id"`
+	Slug        string `json:"slug"`
+	Version     int    `json:"version"`
+	Environment string `json:"environment"`
+	Variant     string `json:"variant,omitempty"` // champion | challenger
+	// Experiment lineage is populated only when a governed cohort selected the
+	// exact flow version. SubjectHash is a one-way stable cohort digest; the raw
+	// subject expression result is never copied into the event.
+	ExperimentID          string          `json:"experiment_id,omitempty"`
+	ExperimentCohort      int             `json:"experiment_cohort,omitempty"`
+	ExperimentArm         string          `json:"experiment_arm,omitempty"`
+	ExperimentArmName     string          `json:"experiment_arm_name,omitempty"`
+	ExperimentSubjectHash string          `json:"experiment_subject_hash,omitempty"`
+	EntityType            string          `json:"entity_type,omitempty"`
+	EntityID              string          `json:"entity_id,omitempty"`
+	Data                  json.RawMessage `json:"data"`
 	// Caller identity and retry fields are first-class tracking dimensions. Only
 	// the idempotency-key digest is retained; the caller's secret key is not.
 	IdempotencyKeyHash string           `json:"idempotency_key_hash,omitempty"`

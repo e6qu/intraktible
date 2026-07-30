@@ -3,7 +3,7 @@
   "info": {
     "title": "intraktible Decision API",
     "version": "0.1.0",
-    "description": "The public integration contract for intraktible: execute decision flows, read decision history, manage flows as code, and drive the deployment lifecycle (deploy / promote) for CI/CD. Other administrative endpoints (RBAC, audit, secrets) are out of scope of this document. Authenticate every request with an API key in the X-Api-Key header.",
+    "description": "The public integration contract for intraktible: execute and inspect decisions, manage flows as code, govern deterministic experiments, record correctable business outcomes, and operate durable population jobs. Administrative endpoints such as RBAC, audit, and secrets are outside this document. Authenticate every request with an API key in the X-Api-Key header.",
     "license": {
       "name": "AGPL-3.0-or-later",
       "identifier": "AGPL-3.0-or-later"
@@ -40,6 +40,18 @@
     {
       "name": "identity",
       "description": "Caller introspection."
+    },
+    {
+      "name": "experiments",
+      "description": "Govern deterministic champion/challenger cohorts, exposures, analysis, and promotion."
+    },
+    {
+      "name": "outcomes",
+      "description": "Record decision-linked business actuals and auditable corrections."
+    },
+    {
+      "name": "population",
+      "description": "Run durable version-pinned bulk decisions and backtests."
     }
   ],
   "paths": {
@@ -49,7 +61,7 @@
           "decide"
         ],
         "summary": "Execute a flow",
-        "description": "Runs the live version of the flow (champion, or A/B challenger) in the given environment against the supplied data and records the decision.",
+        "description": "Runs the deployed or deterministically assigned experiment version of the flow in the given environment against the supplied data and records the decision, cohort, reached exposure, and exact version lineage.",
         "parameters": [
           {
             "$ref": "#/components/parameters/Slug"
@@ -349,9 +361,15 @@
       "get": {
         "tags": ["models"],
         "summary": "Live performance reconciled against recorded actuals",
-        "description": "Returns the model's live performance measured from recorded ground-truth outcomes: calibration (realized positive rate per predicted decile), accuracy, Brier score, and realized AUC.",
+        "description": "Returns calibration, accuracy, Brier score, and realized AUC. With outcome_key, performance is joined to the current revision of generalized decision-linked business outcomes using engine-derived exact model/version/node lineage; experiment dimensions select a coherent treatment cohort. Without outcome_key, the endpoint retains the legacy model-specific actual cohort.",
         "parameters": [
-          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "outcome_key", "in": "query", "schema": { "type": "string" }, "description": "Generalized binary business-outcome key. Selects corrected business outcomes instead of the legacy actual stream." },
+          { "name": "node_id", "in": "query", "schema": { "type": "string" }, "description": "Exact Predict node when a flow invokes this model more than once." },
+          { "name": "env", "in": "query", "schema": { "type": "string" } },
+          { "name": "experiment", "in": "query", "schema": { "type": "string" } },
+          { "name": "cohort", "in": "query", "schema": { "type": "integer", "minimum": 1 }, "description": "Immutable experiment cohort; experiment is required." },
+          { "name": "arm", "in": "query", "schema": { "type": "string" }, "description": "Experiment arm key; experiment is required." }
         ],
         "responses": {
           "200": {
@@ -366,7 +384,8 @@
       "post": {
         "tags": ["models"],
         "summary": "Record a realized outcome for a model prediction",
-        "description": "Reconciles a realized ground-truth label (0/1) with an immutable Predict-node observation from a completed decision. The backend derives probability and model version from the recorded trace; one outcome may be recorded per decision/model/node.",
+        "description": "Compatibility endpoint for model-specific actuals. New integrations should record a generalized decision-linked binary business outcome at POST /v1/outcomes and select its key on the performance endpoint. This endpoint reconciles a label with an immutable Predict-node observation; the backend derives probability and model version.",
+        "deprecated": true,
         "parameters": [
           { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
         ],
@@ -3517,12 +3536,15 @@
       "get": {
         "tags": ["MRM"],
         "summary": "Disparate-impact (fair-lending) report",
-        "description": "Adverse-impact ratio (four-fifths rule, ECOA / Reg B) of favorable-outcome rates across a protected-class attribute, folded from the flow's recorded decisions. flow and attribute are required. ?format=csv or ?format=md; default JSON.",
+        "description": "Adverse-impact ratio (four-fifths rule, ECOA / Reg B) of favorable-outcome rates across a protected-class attribute, folded from the flow's recorded decisions. flow and attribute are required. Governed experiment, immutable cohort, and arm filters permit version-coherent experiment slices. ?format=csv or ?format=md; default JSON.",
         "parameters": [
           { "name": "flow", "in": "query", "required": true, "schema": { "type": "string" } },
           { "name": "attribute", "in": "query", "required": true, "schema": { "type": "string" }, "description": "Dot-path into the decision input naming the protected class, e.g. applicant.gender." },
           { "name": "favorable", "in": "query", "schema": { "type": "string", "enum": ["approve", "decline", "refer"] } },
           { "name": "env", "in": "query", "schema": { "type": "string" } },
+          { "name": "experiment", "in": "query", "schema": { "type": "string" }, "description": "Restrict the report to decisions attributed to this governed experiment." },
+          { "name": "cohort", "in": "query", "schema": { "type": "integer", "minimum": 1 }, "description": "Restrict the report to this immutable experiment cohort. experiment is required." },
+          { "name": "arm", "in": "query", "schema": { "type": "string" }, "description": "Restrict the report to one experiment arm. experiment is required." },
           { "name": "format", "in": "query", "schema": { "type": "string", "enum": ["csv", "md", "markdown"] } }
         ],
         "responses": {
@@ -4125,6 +4147,104 @@
           "404": { "$ref": "#/components/responses/Error" }
         }
       }
+    },
+    "/v1/experiments": {
+      "get": { "tags": ["experiments"], "summary": "List governed experiments", "responses": { "200": { "description": "Tenant experiments." } } },
+      "post": {
+        "tags": ["experiments"], "summary": "Create an experiment draft",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ExperimentSpec" } } } },
+        "responses": { "201": { "description": "Draft created." }, "400": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/v1/experiments/{experiment_id}": {
+      "get": { "tags": ["experiments"], "summary": "Read an experiment cohort", "parameters": [{ "$ref": "#/components/parameters/ExperimentID" }], "responses": { "200": { "description": "Experiment view.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Experiment" } } } }, "404": { "$ref": "#/components/responses/Error" } } },
+      "put": {
+        "tags": ["experiments"], "summary": "Update a draft as a new cohort",
+        "parameters": [{ "$ref": "#/components/parameters/ExperimentID" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ExperimentSpec" } } } },
+        "responses": { "202": { "description": "Draft updated." }, "400": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/v1/experiments/{experiment_id}/start": {
+      "post": { "tags": ["experiments"], "summary": "Start or request production launch", "parameters": [{ "$ref": "#/components/parameters/ExperimentID" }], "responses": { "202": { "description": "Started or pending review." }, "400": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/experiments/{experiment_id}/launch-requests/{request_id}/approve": {
+      "post": { "tags": ["experiments"], "summary": "Approve a production launch", "parameters": [{ "$ref": "#/components/parameters/ExperimentID" }, { "$ref": "#/components/parameters/RequestID" }], "requestBody": { "$ref": "#/components/requestBodies/Reason" }, "responses": { "202": { "description": "Launch approved." }, "400": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/experiments/{experiment_id}/launch-requests/{request_id}/reject": {
+      "post": { "tags": ["experiments"], "summary": "Reject a production launch", "parameters": [{ "$ref": "#/components/parameters/ExperimentID" }, { "$ref": "#/components/parameters/RequestID" }], "requestBody": { "$ref": "#/components/requestBodies/Reason" }, "responses": { "202": { "description": "Launch rejected." }, "400": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/experiments/{experiment_id}/pause": {
+      "post": { "tags": ["experiments"], "summary": "Pause experiment assignment", "parameters": [{ "$ref": "#/components/parameters/ExperimentID" }], "requestBody": { "$ref": "#/components/requestBodies/Reason" }, "responses": { "202": { "description": "Paused." }, "400": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/experiments/{experiment_id}/resume": {
+      "post": { "tags": ["experiments"], "summary": "Resume experiment assignment", "parameters": [{ "$ref": "#/components/parameters/ExperimentID" }], "requestBody": { "$ref": "#/components/requestBodies/Reason" }, "responses": { "202": { "description": "Resumed." }, "400": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/experiments/{experiment_id}/complete": {
+      "post": { "tags": ["experiments"], "summary": "Complete an experiment cohort", "parameters": [{ "$ref": "#/components/parameters/ExperimentID" }], "requestBody": { "$ref": "#/components/requestBodies/Reason" }, "responses": { "202": { "description": "Completed." }, "400": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/experiments/{experiment_id}/cancel": {
+      "post": { "tags": ["experiments"], "summary": "Cancel an experiment", "parameters": [{ "$ref": "#/components/parameters/ExperimentID" }], "requestBody": { "$ref": "#/components/requestBodies/Reason" }, "responses": { "202": { "description": "Cancelled." }, "400": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/experiments/{experiment_id}/analysis": {
+      "get": { "tags": ["experiments"], "summary": "Analyse exact-cohort outcomes", "parameters": [{ "$ref": "#/components/parameters/ExperimentID" }], "responses": { "200": { "description": "Statistical report.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ExperimentAnalysis" } } } }, "404": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/experiments/{experiment_id}/exposures": {
+      "get": { "tags": ["experiments"], "summary": "List reached-treatment exposures", "parameters": [{ "$ref": "#/components/parameters/ExperimentID" }], "responses": { "200": { "description": "Exact-cohort exposures." }, "404": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/experiments/{experiment_id}/promote": {
+      "post": { "tags": ["experiments"], "summary": "Open a governed deployment for a valid winner", "parameters": [{ "$ref": "#/components/parameters/ExperimentID" }], "responses": { "202": { "description": "Deployment request opened." }, "409": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/outcomes": {
+      "get": { "tags": ["outcomes"], "summary": "List business outcomes", "parameters": [{ "name": "decision_id", "in": "query", "schema": { "type": "string" } }, { "name": "key", "in": "query", "schema": { "type": "string" } }], "responses": { "200": { "description": "Current outcomes and correction history." } } },
+      "post": {
+        "tags": ["outcomes"], "summary": "Record an observed business outcome",
+        "parameters": [{ "$ref": "#/components/parameters/RequiredIdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OutcomeRecordRequest" } } } },
+        "responses": { "202": { "description": "Outcome recorded." }, "400": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/v1/outcomes/{outcome_id}": {
+      "get": { "tags": ["outcomes"], "summary": "Read an outcome and correction chain", "parameters": [{ "$ref": "#/components/parameters/OutcomeID" }], "responses": { "200": { "description": "Business outcome.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BusinessOutcome" } } } }, "404": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/outcomes/{outcome_id}/corrections": {
+      "post": {
+        "tags": ["outcomes"], "summary": "Append an outcome correction",
+        "parameters": [{ "$ref": "#/components/parameters/OutcomeID" }, { "$ref": "#/components/parameters/RequiredIdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OutcomeCorrectionRequest" } } } },
+        "responses": { "202": { "description": "Correction appended." }, "400": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/v1/population-jobs": {
+      "get": { "tags": ["population"], "summary": "List durable population jobs", "responses": { "200": { "description": "Job summaries." } } },
+      "post": {
+        "tags": ["population"], "summary": "Create a durable population job",
+        "parameters": [{ "$ref": "#/components/parameters/RequiredIdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PopulationJobCreateRequest" } } } },
+        "responses": { "202": { "description": "Immutable manifest queued." }, "400": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/v1/population-jobs/{job_id}": {
+      "get": { "tags": ["population"], "summary": "Read population manifest and progress", "parameters": [{ "$ref": "#/components/parameters/PopulationJobID" }], "responses": { "200": { "description": "Population job.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PopulationJob" } } } }, "404": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/population-jobs/{job_id}/results": {
+      "get": { "tags": ["population"], "summary": "Download terminal result manifest", "parameters": [{ "$ref": "#/components/parameters/PopulationJobID" }], "responses": { "200": { "description": "NDJSON result rows.", "content": { "application/x-ndjson": { "schema": { "type": "string" } } } }, "409": { "$ref": "#/components/responses/Error" }, "410": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/population-jobs/{job_id}/pause": {
+      "post": { "tags": ["population"], "summary": "Pause a job", "parameters": [{ "$ref": "#/components/parameters/PopulationJobID" }], "requestBody": { "$ref": "#/components/requestBodies/Reason" }, "responses": { "202": { "description": "Pause recorded." }, "400": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/population-jobs/{job_id}/resume": {
+      "post": { "tags": ["population"], "summary": "Resume a job", "parameters": [{ "$ref": "#/components/parameters/PopulationJobID" }], "requestBody": { "$ref": "#/components/requestBodies/Reason" }, "responses": { "202": { "description": "Resume recorded." }, "400": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/population-jobs/{job_id}/cancel": {
+      "post": { "tags": ["population"], "summary": "Cancel a job", "parameters": [{ "$ref": "#/components/parameters/PopulationJobID" }], "requestBody": { "$ref": "#/components/requestBodies/Reason" }, "responses": { "202": { "description": "Cancellation recorded." }, "400": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/population-jobs/{job_id}/retry": {
+      "post": {
+        "tags": ["population"], "summary": "Retry failed items", "parameters": [{ "$ref": "#/components/parameters/PopulationJobID" }],
+        "requestBody": { "content": { "application/json": { "schema": { "type": "object", "properties": { "indices": { "type": "array", "items": { "type": "integer" } } } } } } },
+        "responses": { "202": { "description": "Failed items requeued." }, "400": { "$ref": "#/components/responses/Error" } }
+      }
     }
   },
   "components": {
@@ -4176,6 +4296,51 @@
           "type": "string",
           "maxLength": 256
         }
+      },
+      "RequiredIdempotencyKey": {
+        "name": "Idempotency-Key",
+        "in": "header",
+        "required": true,
+        "description": "Durably identifies one logical submission. Repeating the same key and request returns the original result; reusing it with different content is rejected.",
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "ExperimentID": {
+        "name": "experiment_id",
+        "in": "path",
+        "required": true,
+        "schema": { "type": "string" }
+      },
+      "RequestID": {
+        "name": "request_id",
+        "in": "path",
+        "required": true,
+        "schema": { "type": "string" }
+      },
+      "OutcomeID": {
+        "name": "outcome_id",
+        "in": "path",
+        "required": true,
+        "schema": { "type": "string" }
+      },
+      "PopulationJobID": {
+        "name": "job_id",
+        "in": "path",
+        "required": true,
+        "schema": { "type": "string" }
+      }
+    },
+    "requestBodies": {
+      "Reason": {
+        "required": false,
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/ReasonRequest" }
+          }
+        }
       }
     },
     "responses": {
@@ -4191,6 +4356,186 @@
       }
     },
     "schemas": {
+      "ReasonRequest": {
+        "type": "object",
+        "properties": { "reason": { "type": "string" } }
+      },
+      "ExperimentArm": {
+        "type": "object",
+        "required": ["key", "name", "kind", "version", "allocation_bps"],
+        "properties": {
+          "key": { "type": "string" },
+          "name": { "type": "string" },
+          "kind": { "type": "string", "enum": ["champion", "challenger"] },
+          "version": { "type": "integer", "minimum": 1 },
+          "allocation_bps": { "type": "integer", "minimum": 1, "maximum": 9999 }
+        }
+      },
+      "ExperimentMetric": {
+        "type": "object",
+        "required": ["key", "name", "kind", "direction"],
+        "properties": {
+          "key": { "type": "string" },
+          "name": { "type": "string" },
+          "kind": { "type": "string", "enum": ["binary", "continuous"] },
+          "direction": { "type": "string", "enum": ["increase", "decrease"] },
+          "max_regression": { "type": "number", "minimum": 0 }
+        }
+      },
+      "ExperimentSpec": {
+        "type": "object",
+        "required": ["name", "hypothesis", "owner", "flow_id", "environment", "subject_key_expression", "salt", "arms", "primary_metric", "minimum_sample_per_arm", "minimum_effect", "confidence", "observation_window_days"],
+        "properties": {
+          "name": { "type": "string", "maxLength": 200 },
+          "hypothesis": { "type": "string", "maxLength": 4000 },
+          "owner": { "type": "string" },
+          "flow_id": { "type": "string" },
+          "environment": { "type": "string", "enum": ["sandbox", "staging", "production"] },
+          "subject_key_expression": { "type": "string" },
+          "eligibility_expression": { "type": "string" },
+          "salt": { "type": "string", "maxLength": 256 },
+          "arms": { "type": "array", "minItems": 2, "items": { "$ref": "#/components/schemas/ExperimentArm" } },
+          "primary_metric": { "$ref": "#/components/schemas/ExperimentMetric" },
+          "guardrails": { "type": "array", "items": { "$ref": "#/components/schemas/ExperimentMetric" } },
+          "minimum_sample_per_arm": { "type": "integer", "minimum": 2 },
+          "minimum_effect": { "type": "number", "minimum": 0 },
+          "confidence": { "type": "number", "minimum": 0.8, "exclusiveMaximum": 1 },
+          "observation_window_days": { "type": "integer", "minimum": 0, "maximum": 3650 },
+          "start_at": { "type": "string", "format": "date-time" },
+          "stop_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "Experiment": {
+        "type": "object",
+        "required": ["experiment_id", "cohort", "state", "spec", "created_by", "created_at", "updated_by", "updated_at"],
+        "properties": {
+          "experiment_id": { "type": "string" },
+          "cohort": { "type": "integer", "minimum": 1 },
+          "state": { "type": "string", "enum": ["draft", "pending_launch", "running", "paused", "completed", "cancelled"] },
+          "spec": { "$ref": "#/components/schemas/ExperimentSpec" },
+          "created_by": { "type": "string" },
+          "created_at": { "type": "string", "format": "date-time" },
+          "updated_by": { "type": "string" },
+          "updated_at": { "type": "string", "format": "date-time" },
+          "started_at": { "type": "string", "format": "date-time" },
+          "ended_at": { "type": "string", "format": "date-time" },
+          "launch": { "type": "object" }
+        }
+      },
+      "ExperimentAnalysis": {
+        "type": "object",
+        "required": ["experiment_id", "cohort", "state", "status", "reason", "exposure_counts", "srm_p_value", "primary", "guardrails", "assumptions"],
+        "properties": {
+          "experiment_id": { "type": "string" },
+          "cohort": { "type": "integer" },
+          "state": { "type": "string" },
+          "status": { "type": "string", "enum": ["collecting", "invalid", "underpowered", "inconclusive", "guardrail_failed", "winner"] },
+          "reason": { "type": "string" },
+          "winner_arm_key": { "type": "string" },
+          "exposure_counts": { "type": "object", "additionalProperties": { "type": "integer" } },
+          "srm_p_value": { "type": "number" },
+          "primary": { "type": "object" },
+          "guardrails": { "type": "array", "items": { "type": "object" } },
+          "assumptions": { "type": "array", "items": { "type": "string" } }
+        }
+      },
+      "OutcomeSource": {
+        "type": "object",
+        "required": ["system", "record_id"],
+        "properties": {
+          "system": { "type": "string" },
+          "record_id": { "type": "string" },
+          "lineage": { "type": "string" }
+        }
+      },
+      "OutcomeRecordRequest": {
+        "type": "object",
+        "required": ["decision_id", "key", "kind", "value", "event_time", "source", "label_version"],
+        "properties": {
+          "decision_id": { "type": "string" },
+          "key": { "type": "string", "maxLength": 200 },
+          "kind": { "type": "string", "enum": ["binary", "continuous"] },
+          "value": { "type": "number" },
+          "event_time": { "type": "string", "format": "date-time" },
+          "observation_window_days": { "type": "integer", "minimum": 0, "maximum": 3650 },
+          "source": { "$ref": "#/components/schemas/OutcomeSource" },
+          "label_version": { "type": "string" }
+        }
+      },
+      "OutcomeCorrectionRequest": {
+        "type": "object",
+        "required": ["value", "event_time", "source", "label_version", "reason"],
+        "properties": {
+          "value": { "type": "number" },
+          "event_time": { "type": "string", "format": "date-time" },
+          "observation_window_days": { "type": "integer", "minimum": 0, "maximum": 3650 },
+          "source": { "$ref": "#/components/schemas/OutcomeSource" },
+          "label_version": { "type": "string" },
+          "reason": { "type": "string", "minLength": 1 }
+        },
+        "description": "Immutable decision, metric, and kind linkage is recovered from the original outcome."
+      },
+      "BusinessOutcome": {
+        "type": "object",
+        "required": ["outcome_id", "decision_id", "key", "kind", "flow_id", "flow_version", "environment", "current", "history"],
+        "properties": {
+          "outcome_id": { "type": "string" },
+          "decision_id": { "type": "string" },
+          "key": { "type": "string" },
+          "kind": { "type": "string", "enum": ["binary", "continuous"] },
+          "flow_id": { "type": "string" },
+          "flow_version": { "type": "integer" },
+          "environment": { "type": "string" },
+          "treatment": { "type": "object" },
+          "predictions": { "type": "array", "items": { "type": "object" } },
+          "current": { "type": "object" },
+          "history": { "type": "array", "items": { "type": "object" } }
+        }
+      },
+      "PopulationItemInput": {
+        "type": "object",
+        "required": ["data"],
+        "properties": {
+          "data": { "type": "object", "additionalProperties": true },
+          "entity_type": { "type": "string" },
+          "entity_id": { "type": "string" },
+          "business_reference": { "type": "string" },
+          "correlation_id": { "type": "string" },
+          "metadata": { "type": "object", "additionalProperties": true }
+        }
+      },
+      "PopulationJobCreateRequest": {
+        "type": "object",
+        "required": ["kind", "slug", "environment", "items"],
+        "properties": {
+          "kind": { "type": "string", "enum": ["decision", "backtest"] },
+          "slug": { "type": "string" },
+          "environment": { "type": "string", "enum": ["sandbox", "staging", "production"] },
+          "items": { "type": "array", "minItems": 1, "maxItems": 100000, "items": { "$ref": "#/components/schemas/PopulationItemInput" } },
+          "max_attempts": { "type": "integer", "minimum": 1, "maximum": 10, "default": 3 },
+          "concurrency": { "type": "integer", "minimum": 1, "maximum": 32, "default": 4 },
+          "retention_days": { "type": "integer", "minimum": 1, "maximum": 3650, "default": 30 }
+        }
+      },
+      "PopulationJob": {
+        "type": "object",
+        "required": ["job_id", "state", "manifest", "manifest_hash", "items", "total", "pending", "running", "succeeded", "failed"],
+        "properties": {
+          "job_id": { "type": "string" },
+          "state": { "type": "string", "enum": ["queued", "running", "paused", "cancelling", "cancelled", "completed", "completed_with_errors", "expired"] },
+          "manifest": { "type": "object", "description": "Immutable inputs, exact flow version, and optional exact experiment assignment for every item." },
+          "manifest_hash": { "type": "string" },
+          "max_attempts": { "type": "integer" },
+          "concurrency": { "type": "integer" },
+          "items": { "type": "array", "items": { "type": "object" } },
+          "total": { "type": "integer" },
+          "pending": { "type": "integer" },
+          "running": { "type": "integer" },
+          "succeeded": { "type": "integer" },
+          "failed": { "type": "integer" },
+          "expires_at": { "type": "string", "format": "date-time" }
+        }
+      },
       "Error": {
         "type": "object",
         "properties": {
@@ -4259,6 +4604,15 @@
         "type": "object",
         "properties": {
           "decision_id": {
+            "type": "string"
+          },
+          "experiment_id": {
+            "type": "string"
+          },
+          "experiment_cohort": {
+            "type": "integer"
+          },
+          "experiment_arm": {
             "type": "string"
           },
           "status": {
@@ -4747,11 +5101,13 @@
           },
           "challenger_version": {
             "type": "integer",
-            "description": "Optional A/B challenger version."
+            "deprecated": true,
+            "description": "Legacy request-time challenger version. Use the first-class /v1/experiments resource for new controlled tests."
           },
           "challenger_pct": {
             "type": "integer",
-            "description": "Percent of traffic routed to the challenger."
+            "deprecated": true,
+            "description": "Legacy request-time challenger percentage. Use stable subject allocations on /v1/experiments."
           }
         }
       },
@@ -5093,6 +5449,15 @@
           "decision_id": {
             "type": "string"
           },
+          "experiment_id": {
+            "type": "string"
+          },
+          "experiment_cohort": {
+            "type": "integer"
+          },
+          "experiment_arm": {
+            "type": "string"
+          },
           "live_status": {
             "type": "string"
           },
@@ -5140,6 +5505,18 @@
           "errored"
         ],
         "properties": {
+          "environment": {
+            "type": "string"
+          },
+          "experiment_id": {
+            "type": "string"
+          },
+          "experiment_cohort": {
+            "type": "integer"
+          },
+          "experiment_arm": {
+            "type": "string"
+          },
           "live_version": {
             "type": "integer"
           },
@@ -5200,6 +5577,13 @@
           },
           "report": {
             "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ShadowCohort"
+            }
+          },
+          "cohorts": {
+            "type": "object",
+            "description": "Every exact comparison cohort, keyed by opaque stable dimensions. report retains the latest per environment for compatibility.",
             "additionalProperties": {
               "$ref": "#/components/schemas/ShadowCohort"
             }

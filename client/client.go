@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 )
 
 // Client calls an intraktible instance. Construct it with New; it is safe for
@@ -72,6 +73,7 @@ type DecideRequest struct {
 	IdempotencyKey string `json:"-"`
 }
 
+// ExecutionControl bounds one decision invocation.
 type ExecutionControl struct {
 	TimeoutMS int64 `json:"timeout_ms,omitempty"`
 }
@@ -79,11 +81,14 @@ type ExecutionControl struct {
 // DecideResult is a recorded decision. A flow whose logic errors completes with
 // Status "failed" and a populated Error (it is not a transport error).
 type DecideResult struct {
-	DecisionID  string         `json:"decision_id"`
-	Status      string         `json:"status"`
-	Data        map[string]any `json:"data,omitempty"`
-	Disposition string         `json:"disposition,omitempty"`
-	Error       string         `json:"error,omitempty"`
+	DecisionID       string         `json:"decision_id"`
+	Status           string         `json:"status"`
+	Data             map[string]any `json:"data,omitempty"`
+	Disposition      string         `json:"disposition,omitempty"`
+	Error            string         `json:"error,omitempty"`
+	ExperimentID     string         `json:"experiment_id,omitempty"`
+	ExperimentCohort int            `json:"experiment_cohort,omitempty"`
+	ExperimentArm    string         `json:"experiment_arm,omitempty"`
 }
 
 // BatchResult is the outcome of a batch decide: a summary plus per-row results.
@@ -105,6 +110,10 @@ type Decision struct {
 	BusinessReference string         `json:"business_reference,omitempty"`
 	CorrelationID     string         `json:"correlation_id,omitempty"`
 	Metadata          map[string]any `json:"metadata,omitempty"`
+	ExperimentID      string         `json:"experiment_id,omitempty"`
+	ExperimentCohort  int            `json:"experiment_cohort,omitempty"`
+	ExperimentArm     string         `json:"experiment_arm,omitempty"`
+	ExperimentArmName string         `json:"experiment_arm_name,omitempty"`
 }
 
 // Flow is a flow summary.
@@ -164,6 +173,239 @@ type BundleResult struct {
 	Published int `json:"published"`
 	Failed    int `json:"failed"`
 	Unchanged int `json:"unchanged"`
+}
+
+// ExperimentAction is a lifecycle transition accepted by TransitionExperiment.
+type ExperimentAction string
+
+const (
+	// ExperimentStart begins a non-production experiment or requests production review.
+	ExperimentStart ExperimentAction = "start"
+	// ExperimentPause stops new treatment assignment without losing the cohort.
+	ExperimentPause ExperimentAction = "pause"
+	// ExperimentResume resumes treatment assignment for a paused cohort.
+	ExperimentResume ExperimentAction = "resume"
+	// ExperimentComplete closes observation for the current cohort.
+	ExperimentComplete ExperimentAction = "complete"
+	// ExperimentCancel permanently cancels the experiment.
+	ExperimentCancel ExperimentAction = "cancel"
+)
+
+// Valid reports whether action is accepted by the experiment lifecycle endpoint.
+func (action ExperimentAction) Valid() bool {
+	switch action {
+	case ExperimentStart, ExperimentPause, ExperimentResume, ExperimentComplete, ExperimentCancel:
+		return true
+	default:
+		return false
+	}
+}
+
+// LaunchDecision is an independent checker decision on a production launch.
+type LaunchDecision string
+
+const (
+	// LaunchApprove starts the reviewed production experiment.
+	LaunchApprove LaunchDecision = "approve"
+	// LaunchReject returns the experiment to draft.
+	LaunchReject LaunchDecision = "reject"
+)
+
+// Valid reports whether decision is an accepted launch-review action.
+func (decision LaunchDecision) Valid() bool {
+	return decision == LaunchApprove || decision == LaunchReject
+}
+
+// PopulationAction is a lifecycle transition accepted by TransitionPopulationJob.
+type PopulationAction string
+
+const (
+	// PopulationPause stops new item claims while preserving progress.
+	PopulationPause PopulationAction = "pause"
+	// PopulationResume resumes claims for a paused job.
+	PopulationResume PopulationAction = "resume"
+	// PopulationCancel requests cancellation and fences further claims.
+	PopulationCancel PopulationAction = "cancel"
+)
+
+// Valid reports whether action is accepted by the population lifecycle endpoint.
+func (action PopulationAction) Valid() bool {
+	return action == PopulationPause || action == PopulationResume || action == PopulationCancel
+}
+
+// ExperimentArm pins one allocation arm to an immutable flow version.
+type ExperimentArm struct {
+	Key           string `json:"key"`
+	Name          string `json:"name"`
+	Kind          string `json:"kind"`
+	Version       int    `json:"version"`
+	AllocationBPS int    `json:"allocation_bps"`
+}
+
+// ExperimentMetric defines a primary KPI or guardrail backed by business outcomes.
+type ExperimentMetric struct {
+	Key           string  `json:"key"`
+	Name          string  `json:"name"`
+	Kind          string  `json:"kind"`
+	Direction     string  `json:"direction"`
+	MaxRegression float64 `json:"max_regression,omitempty"`
+}
+
+// ExperimentSpec is the complete immutable configuration for one experiment cohort.
+type ExperimentSpec struct {
+	Name                  string             `json:"name"`
+	Hypothesis            string             `json:"hypothesis"`
+	Owner                 string             `json:"owner"`
+	FlowID                string             `json:"flow_id"`
+	Environment           string             `json:"environment"`
+	SubjectKeyExpression  string             `json:"subject_key_expression"`
+	EligibilityExpression string             `json:"eligibility_expression,omitempty"`
+	Salt                  string             `json:"salt"`
+	Arms                  []ExperimentArm    `json:"arms"`
+	PrimaryMetric         ExperimentMetric   `json:"primary_metric"`
+	Guardrails            []ExperimentMetric `json:"guardrails,omitempty"`
+	MinimumSamplePerArm   int                `json:"minimum_sample_per_arm"`
+	MinimumEffect         float64            `json:"minimum_effect"`
+	Confidence            float64            `json:"confidence"`
+	ObservationWindowDays int                `json:"observation_window_days"`
+	StartAt               *time.Time         `json:"start_at,omitempty"`
+	StopAt                *time.Time         `json:"stop_at,omitempty"`
+}
+
+// Experiment is the current governed experiment projection.
+type Experiment struct {
+	ExperimentID string          `json:"experiment_id"`
+	Cohort       int             `json:"cohort"`
+	State        string          `json:"state"`
+	Spec         ExperimentSpec  `json:"spec"`
+	Launch       json.RawMessage `json:"launch,omitempty"`
+}
+
+// ExperimentInterval is a confidence interval.
+type ExperimentInterval struct {
+	Low  float64 `json:"low"`
+	High float64 `json:"high"`
+}
+
+// ExperimentArmMetric summarizes observations for one arm.
+type ExperimentArmMetric struct {
+	ArmKey   string             `json:"arm_key"`
+	Count    int                `json:"count"`
+	Mean     float64            `json:"mean"`
+	StdDev   float64            `json:"std_dev"`
+	Interval ExperimentInterval `json:"interval"`
+}
+
+// ExperimentComparison describes a treatment effect relative to the champion.
+type ExperimentComparison struct {
+	ArmKey     string             `json:"arm_key"`
+	Effect     float64            `json:"effect"`
+	EffectSize float64            `json:"effect_size"`
+	Interval   ExperimentInterval `json:"interval"`
+	Favorable  bool               `json:"favorable"`
+}
+
+// ExperimentMetricAnalysis is the exact-cohort analysis for one metric.
+type ExperimentMetricAnalysis struct {
+	Metric       ExperimentMetric       `json:"metric"`
+	Arms         []ExperimentArmMetric  `json:"arms"`
+	Comparisons  []ExperimentComparison `json:"comparisons"`
+	Excluded     int                    `json:"excluded"`
+	LabelVersion string                 `json:"label_version,omitempty"`
+}
+
+// ExperimentAnalysis is the reproducible, conservative winner report.
+type ExperimentAnalysis struct {
+	ExperimentID   string                     `json:"experiment_id"`
+	Cohort         int                        `json:"cohort"`
+	State          string                     `json:"state"`
+	Status         string                     `json:"status"`
+	Reason         string                     `json:"reason"`
+	WinnerArmKey   string                     `json:"winner_arm_key,omitempty"`
+	ExposureCounts map[string]int             `json:"exposure_counts"`
+	SRMPValue      float64                    `json:"srm_p_value"`
+	Primary        ExperimentMetricAnalysis   `json:"primary"`
+	Guardrails     []ExperimentMetricAnalysis `json:"guardrails"`
+	Assumptions    []string                   `json:"assumptions"`
+}
+
+// OutcomeSource identifies the upstream business record and its lineage.
+type OutcomeSource struct {
+	System   string `json:"system"`
+	RecordID string `json:"record_id"`
+	Lineage  string `json:"lineage,omitempty"`
+}
+
+// OutcomeRecord is a new immutable observed fact for one completed decision.
+type OutcomeRecord struct {
+	DecisionID            string        `json:"decision_id"`
+	Key                   string        `json:"key"`
+	Kind                  string        `json:"kind"`
+	Value                 float64       `json:"value"`
+	EventTime             time.Time     `json:"event_time"`
+	ObservationWindowDays int           `json:"observation_window_days,omitempty"`
+	Source                OutcomeSource `json:"source"`
+	LabelVersion          string        `json:"label_version"`
+}
+
+// OutcomeCorrection appends a reasoned revision without overwriting history.
+type OutcomeCorrection struct {
+	Value                 float64       `json:"value"`
+	EventTime             time.Time     `json:"event_time"`
+	ObservationWindowDays int           `json:"observation_window_days,omitempty"`
+	Source                OutcomeSource `json:"source"`
+	LabelVersion          string        `json:"label_version"`
+	Reason                string        `json:"reason"`
+}
+
+// BusinessOutcome is the current fact plus its complete correction and decision lineage.
+type BusinessOutcome struct {
+	OutcomeID   string            `json:"outcome_id"`
+	DecisionID  string            `json:"decision_id"`
+	Key         string            `json:"key"`
+	Kind        string            `json:"kind"`
+	FlowID      string            `json:"flow_id"`
+	FlowVersion int               `json:"flow_version"`
+	Environment string            `json:"environment"`
+	Treatment   json.RawMessage   `json:"treatment,omitempty"`
+	Predictions []json.RawMessage `json:"predictions,omitempty"`
+	Current     json.RawMessage   `json:"current"`
+	History     []json.RawMessage `json:"history"`
+}
+
+// PopulationItem is one immutable input row in a durable population job.
+type PopulationItem struct {
+	Data              map[string]any `json:"data"`
+	EntityType        string         `json:"entity_type,omitempty"`
+	EntityID          string         `json:"entity_id,omitempty"`
+	BusinessReference string         `json:"business_reference,omitempty"`
+	CorrelationID     string         `json:"correlation_id,omitempty"`
+	Metadata          map[string]any `json:"metadata,omitempty"`
+}
+
+// PopulationJobCreate configures a version-pinned decision or record-free backtest.
+type PopulationJobCreate struct {
+	Kind          string           `json:"kind"`
+	Slug          string           `json:"slug"`
+	Environment   string           `json:"environment"`
+	Items         []PopulationItem `json:"items"`
+	MaxAttempts   int              `json:"max_attempts,omitempty"`
+	Concurrency   int              `json:"concurrency,omitempty"`
+	RetentionDays int              `json:"retention_days,omitempty"`
+}
+
+// PopulationJob is the current durable manifest, progress, and per-item result view.
+type PopulationJob struct {
+	JobID        string            `json:"job_id"`
+	State        string            `json:"state"`
+	Manifest     json.RawMessage   `json:"manifest"`
+	ManifestHash string            `json:"manifest_hash"`
+	Total        int               `json:"total"`
+	Pending      int               `json:"pending"`
+	Running      int               `json:"running"`
+	Succeeded    int               `json:"succeeded"`
+	Failed       int               `json:"failed"`
+	Items        []json.RawMessage `json:"items"`
 }
 
 // Decide runs the live version of slug in env against req and returns the
@@ -247,9 +489,229 @@ func (c *Client) Promote(ctx context.Context, flowID, from, to string, force boo
 		map[string]any{"from": from, "to": to, "force": force})
 }
 
+// ListExperiments returns the tenant's governed experiment cohorts.
+func (c *Client) ListExperiments(ctx context.Context) ([]Experiment, error) {
+	out, err := do[struct {
+		Experiments []Experiment `json:"experiments"`
+	}](ctx, c, http.MethodGet, "/v1/experiments", nil)
+	return out.Experiments, err
+}
+
+// GetExperiment reads one experiment by id.
+func (c *Client) GetExperiment(ctx context.Context, experimentID string) (Experiment, error) {
+	return do[Experiment](ctx, c, http.MethodGet, "/v1/experiments/"+url.PathEscape(experimentID), nil)
+}
+
+// CreateExperiment creates a governed experiment draft and returns its id.
+func (c *Client) CreateExperiment(ctx context.Context, spec ExperimentSpec) (string, error) {
+	out, err := do[struct {
+		ExperimentID string `json:"experiment_id"`
+	}](ctx, c, http.MethodPost, "/v1/experiments", spec)
+	return out.ExperimentID, err
+}
+
+// UpdateExperiment replaces a draft specification and advances its immutable cohort.
+func (c *Client) UpdateExperiment(ctx context.Context, experimentID string, spec ExperimentSpec) error {
+	_, err := do[map[string]any](
+		ctx, c, http.MethodPut, "/v1/experiments/"+url.PathEscape(experimentID), spec,
+	)
+	return err
+}
+
+// TransitionExperiment applies a typed start, pause, resume, complete, or cancel action.
+func (c *Client) TransitionExperiment(
+	ctx context.Context,
+	experimentID string,
+	action ExperimentAction,
+	reason string,
+) error {
+	if !action.Valid() {
+		return fmt.Errorf("intraktible: invalid experiment action %q", action)
+	}
+	body := any(nil)
+	if action != "start" {
+		body = map[string]string{"reason": reason}
+	}
+	_, err := do[map[string]any](
+		ctx, c, http.MethodPost,
+		"/v1/experiments/"+url.PathEscape(experimentID)+"/"+url.PathEscape(string(action)), body,
+	)
+	return err
+}
+
+// DecideExperimentLaunch approves or rejects a pending production launch as checker.
+func (c *Client) DecideExperimentLaunch(
+	ctx context.Context,
+	experimentID, requestID string,
+	decision LaunchDecision,
+	reason string,
+) error {
+	if !decision.Valid() {
+		return fmt.Errorf("intraktible: invalid experiment launch decision %q", decision)
+	}
+	_, err := do[map[string]any](
+		ctx, c, http.MethodPost,
+		"/v1/experiments/"+url.PathEscape(experimentID)+"/launch-requests/"+
+			url.PathEscape(requestID)+"/"+url.PathEscape(string(decision)),
+		map[string]string{"reason": reason},
+	)
+	return err
+}
+
+// ExperimentAnalysis returns the current exact-cohort statistical report.
+func (c *Client) ExperimentAnalysis(ctx context.Context, experimentID string) (ExperimentAnalysis, error) {
+	return do[ExperimentAnalysis](
+		ctx, c, http.MethodGet,
+		"/v1/experiments/"+url.PathEscape(experimentID)+"/analysis", nil,
+	)
+}
+
+// PromoteExperimentWinner opens the governed deployment for a completed valid winner.
+func (c *Client) PromoteExperimentWinner(ctx context.Context, experimentID string) (PromoteResult, error) {
+	return do[PromoteResult](
+		ctx, c, http.MethodPost,
+		"/v1/experiments/"+url.PathEscape(experimentID)+"/promote", nil,
+	)
+}
+
+// ListOutcomes returns current decision-linked facts, optionally filtered by decision and key.
+func (c *Client) ListOutcomes(ctx context.Context, decisionID, key string) ([]BusinessOutcome, error) {
+	query := url.Values{}
+	if decisionID != "" {
+		query.Set("decision_id", decisionID)
+	}
+	if key != "" {
+		query.Set("key", key)
+	}
+	path := "/v1/outcomes"
+	if encoded := query.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	out, err := do[struct {
+		Outcomes []BusinessOutcome `json:"outcomes"`
+	}](ctx, c, http.MethodGet, path, nil)
+	return out.Outcomes, err
+}
+
+// RecordOutcome records one externally observed business fact idempotently.
+func (c *Client) RecordOutcome(
+	ctx context.Context,
+	outcome OutcomeRecord,
+	idempotencyKey string,
+) (string, error) {
+	out, err := doWithHeaders[struct {
+		OutcomeID string `json:"outcome_id"`
+	}](ctx, c, http.MethodPost, "/v1/outcomes", outcome,
+		map[string]string{"Idempotency-Key": idempotencyKey})
+	return out.OutcomeID, err
+}
+
+// CorrectOutcome appends an auditable revision to an existing outcome.
+func (c *Client) CorrectOutcome(
+	ctx context.Context,
+	outcomeID string,
+	correction OutcomeCorrection,
+	idempotencyKey string,
+) error {
+	_, err := doWithHeaders[map[string]any](
+		ctx, c, http.MethodPost,
+		"/v1/outcomes/"+url.PathEscape(outcomeID)+"/corrections", correction,
+		map[string]string{"Idempotency-Key": idempotencyKey},
+	)
+	return err
+}
+
+// ListPopulationJobs returns durable population-job progress summaries.
+func (c *Client) ListPopulationJobs(ctx context.Context) ([]PopulationJob, error) {
+	out, err := do[struct {
+		Jobs []PopulationJob `json:"jobs"`
+	}](ctx, c, http.MethodGet, "/v1/population-jobs", nil)
+	return out.Jobs, err
+}
+
+// GetPopulationJob reads a job's immutable manifest, progress, and item results.
+func (c *Client) GetPopulationJob(ctx context.Context, jobID string) (PopulationJob, error) {
+	return do[PopulationJob](ctx, c, http.MethodGet, "/v1/population-jobs/"+url.PathEscape(jobID), nil)
+}
+
+// CreatePopulationJob resolves and persists a version-pinned population manifest.
+func (c *Client) CreatePopulationJob(
+	ctx context.Context,
+	job PopulationJobCreate,
+	idempotencyKey string,
+) (string, error) {
+	out, err := doWithHeaders[struct {
+		JobID string `json:"job_id"`
+	}](ctx, c, http.MethodPost, "/v1/population-jobs", job,
+		map[string]string{"Idempotency-Key": idempotencyKey})
+	return out.JobID, err
+}
+
+// TransitionPopulationJob applies a typed pause, resume, or cancel action.
+func (c *Client) TransitionPopulationJob(
+	ctx context.Context,
+	jobID string,
+	action PopulationAction,
+	reason string,
+) error {
+	if !action.Valid() {
+		return fmt.Errorf("intraktible: invalid population action %q", action)
+	}
+	_, err := do[map[string]any](
+		ctx, c, http.MethodPost,
+		"/v1/population-jobs/"+url.PathEscape(jobID)+"/"+url.PathEscape(string(action)),
+		map[string]string{"reason": reason},
+	)
+	return err
+}
+
+// RetryPopulationJob requeues selected failed items, or every retryable failure when indices is empty.
+func (c *Client) RetryPopulationJob(ctx context.Context, jobID string, indices []int) error {
+	_, err := do[map[string]any](
+		ctx, c, http.MethodPost,
+		"/v1/population-jobs/"+url.PathEscape(jobID)+"/retry",
+		map[string]any{"indices": indices},
+	)
+	return err
+}
+
+// PopulationResults downloads the immutable terminal NDJSON result manifest.
+func (c *Client) PopulationResults(ctx context.Context, jobID string) ([]byte, error) {
+	return doBytes(ctx, c, "/v1/population-jobs/"+url.PathEscape(jobID)+"/results")
+}
+
 // Me returns the authenticated caller's identity, scope, and role.
 func (c *Client) Me(ctx context.Context) (Identity, error) {
 	return do[Identity](ctx, c, http.MethodGet, "/v1/me", nil)
+}
+
+func doBytes(ctx context.Context, c *Client, path string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, http.NoBody)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("X-Api-Key", c.apiKey)
+	req.Header.Set("Accept", "application/x-ndjson")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		message := strings.TrimSpace(string(data))
+		var payload struct {
+			Error string `json:"error"`
+		}
+		if json.Unmarshal(data, &payload) == nil && payload.Error != "" {
+			message = payload.Error
+		}
+		return nil, &APIError{Status: resp.StatusCode, Message: message}
+	}
+	return data, nil
 }
 
 func decidePath(slug, env, tail string) string {

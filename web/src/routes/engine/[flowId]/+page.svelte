@@ -1699,8 +1699,6 @@
 
   let depVersion = $state('');
   let depEnv = $state<Environment>('sandbox');
-  let depChallenger = $state('');
-  let depChallengerPct = $state('');
   let deploying = $state(false);
 
   function liveVersion(environment: string): number | undefined {
@@ -1714,24 +1712,7 @@
     error = '';
     if (!flow) return;
     const version = parseInt(depVersion, 10) || flow.latest;
-    const body: {
-      environment: Environment;
-      version: number;
-      challenger_version?: number;
-      challenger_pct?: number;
-    } = { environment: depEnv, version };
-    const cv = parseInt(depChallenger, 10);
-    const pct = parseInt(depChallengerPct, 10);
-    if (!Number.isNaN(cv) && cv > 0) {
-      body.challenger_version = cv;
-      if (!Number.isNaN(pct) && pct > 0) {
-        if (pct > 100) {
-          toast.error('Challenger traffic % must be between 1 and 100.');
-          return;
-        }
-        body.challenger_pct = pct;
-      }
-    }
+    const body = { environment: depEnv, version };
     deploying = true;
     try {
       // Production is gated by four-eyes: propose for review instead of deploying.
@@ -1931,7 +1912,7 @@
   }
 
   // --- Shadow deploys (evaluate a candidate version alongside live decisions) ---
-  let shadow = $state<ShadowState>({ shadows: {}, report: {} });
+  let shadow = $state<ShadowState>({ shadows: {}, report: {}, cohorts: {} });
   let shadowSaving = $state(false);
   let shadowLoaded = $state(false);
   let shadowError = $state('');
@@ -1946,7 +1927,7 @@
       shadowLoaded = true;
     } catch (e) {
       if (flowId === requested) {
-        shadow = { shadows: {}, report: {} };
+        shadow = { shadows: {}, report: {}, cohorts: {} };
         shadowError = msg(e);
       }
     }
@@ -1957,6 +1938,16 @@
   }
   function shadowReportFor(environment: string): EnvShadow | undefined {
     return Object.entries(shadow.report).find(([k]) => k === environment)?.[1];
+  }
+  function shadowCohortsFor(environment: string): EnvShadow[] {
+    return Object.values(shadow.cohorts)
+      .filter((cohort) => cohort.environment === environment)
+      .sort(
+        (a, b) =>
+          (b.experiment_cohort ?? 0) - (a.experiment_cohort ?? 0) ||
+          b.live_version - a.live_version ||
+          b.shadow_version - a.shadow_version
+      );
   }
   function championVersionFor(environment: string): number {
     const deployed = Object.entries(flow?.deployments ?? {}).find(([k]) => k === environment)?.[1]
@@ -2773,20 +2764,6 @@
             <option value="staging">staging</option>
             <option value="production">production (four-eyes)</option>
           </select>
-          <input
-            bind:value={depChallenger}
-            placeholder="challenger ver (optional)"
-            aria-label="challenger version"
-            size="18"
-            inputmode="numeric"
-          />
-          <input
-            bind:value={depChallengerPct}
-            placeholder="challenger %"
-            aria-label="challenger pct"
-            size="10"
-            inputmode="numeric"
-          />
           <button
             class="primary"
             onclick={submitDeploy}
@@ -2799,7 +2776,9 @@
         </div>
         <p class="hint muted">
           Production deploys require maker-checker approval: proposing creates a request that a
-          <em>different</em> user must approve.
+          <em>different</em> user must approve. Compare versions through
+          <a href={appHref('/experiments')}>governed experiments</a>, which provide stable subject
+          cohorts, reached-treatment exposure, and outcome-backed promotion evidence.
         </p>
 
         <div class="row promote-row">
@@ -2906,6 +2885,7 @@
           <div class="shadow-grid">
             {#each ENVIRONMENTS as e (e)}
               {@const rep = shadowReportFor(e)}
+              {@const exactCohorts = shadowCohortsFor(e)}
               <div class="shadow-stage">
                 <b>{e}</b>
                 <select
@@ -2941,6 +2921,12 @@
                         ? `same policy outcome${rep.policy_version ? ` (policy v${rep.policy_version})` : ''}`
                         : 'same status and complete output'}
                     </span>
+                    {#if rep.experiment_id}
+                      <span class="muted">
+                        experiment {rep.experiment_id} · cohort {rep.experiment_cohort} ·
+                        {rep.experiment_arm}
+                      </span>
+                    {/if}
                     {#if (rep.samples?.length ?? 0) > 0}
                       <ul class="shadow-samples" data-testid={`shadow-samples-${e}`}>
                         {#each rep.samples ?? [] as sample (sample.decision_id)}
@@ -2977,6 +2963,25 @@
                           </li>
                         {/each}
                       </ul>
+                    {/if}
+                    {#if exactCohorts.length > 1}
+                      <details class="shadow-cohorts">
+                        <summary>{exactCohorts.length} exact comparison cohorts</summary>
+                        <ul>
+                          {#each exactCohorts as cohort (`${cohort.environment}:${cohort.live_version}:${cohort.shadow_version}:${cohort.policy_id ?? ''}:${cohort.policy_version ?? 0}:${cohort.experiment_id ?? ''}:${cohort.experiment_cohort ?? 0}:${cohort.experiment_arm ?? ''}`)}
+                            <li>
+                              v{cohort.live_version} → v{cohort.shadow_version} · {cohort.matched}/{cohort.total}
+                              match
+                              {#if cohort.experiment_id}
+                                · {cohort.experiment_id} cohort {cohort.experiment_cohort}
+                                {cohort.experiment_arm}
+                              {:else}
+                                · non-experiment traffic
+                              {/if}
+                            </li>
+                          {/each}
+                        </ul>
+                      </details>
                     {/if}
                   </div>
                 {:else}

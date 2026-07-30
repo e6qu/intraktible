@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+
 # User journeys
 
 intraktible is an agentic decision platform. You author a **decision flow** (a graph
@@ -156,9 +158,11 @@ Spans: **Fair lending** (`/fairlending`) → **Decision trace**
 (`/decisions/[decisionId]`) → **Compliance** (`/compliance`).
 
 1. On Fair lending, choose the protected-class attribute explicitly and run the
-   four-fifths screen for a flow. The platform does not infer protected class, and the
-   report is a screening signal rather than a legal conclusion. Outcome: selection
-   rates and impact ratios by group, with the configured threshold called out.
+   four-fifths screen for a flow. Optionally select an exact experiment, cohort, and
+   arm to inspect a governed treatment population without blending unlike versions.
+   The platform does not infer protected class, and the report is a screening signal
+   rather than a legal conclusion. Outcome: selection rates and impact ratios by
+   group, with the configured threshold and cohort dimensions called out.
 2. Configure the workspace creditor identification used in notices. If a notice is
    based on a consumer report, also configure the reporting agency; that path fails
    loudly rather than producing an incomplete FCRA disclosure.
@@ -275,14 +279,18 @@ Spans: **Models** (`/models`), referenced from a flow's **predict** node.
    threshold. Outcome: the model's drift status shows the current PSI versus the
    baseline and whether the monitor is firing; the drift state surfaces on the model
    list and in the model-risk inventory.
-5. Reconcile a realized binary outcome by entering the completed **Decision ID** (and
-   the Predict node ID only if that decision used this model more than once). You never
-   retype a probability: the backend derives the exact probability and model version
-   from the immutable decision trace, refuses duplicate or stale-version lineage, and
-   records one label per model observation. Outcome: current-version calibration,
-   accuracy, Brier score, and realized AUC are computed from attributable actuals
-   rather than caller-authored values or the prediction distribution.
-6. When model logic is redefined, recapture its drift baseline and collect new
+5. Record the realized business fact on the completed decision or its experiment:
+   choose an outcome key, binary or continuous value, event time, source-system
+   record, and label version. A later correction supersedes the prior value without
+   erasing its history. The backend derives the flow/version/environment, experiment
+   arm, and Predict-node/model lineage from immutable execution evidence; callers do
+   not author those facts.
+6. On Models, select that outcome key as **Performance evidence** (and the Predict node
+   only when the flow invokes the same model more than once). Outcome: current,
+   corrected binary outcomes produce calibration, accuracy, Brier score, and realized
+   AUC for the exact model-version and experiment cohort. The model-specific actuals
+   endpoint remains compatibility-only.
+7. When model logic is redefined, recapture its drift baseline and collect new
    current-version outcomes. Outcome: prediction, baseline, and performance evidence
    restart as one homogeneous version cohort instead of blending unlike models.
 
@@ -301,20 +309,36 @@ Spans: **Flow builder** Monitors tab → **Notifications** (the bell) / webhooks
    decisions show what moved. Fix the flow or its policy, republish, and watch the
    monitor return to `ok`.
 
-### Run a champion/challenger experiment
+### Run a governed experiment and act on valid evidence
 
-Spans: **Flow builder** Deploy tab → **Decisions** → flow metrics.
+Spans: **Experiments** (`/experiments`) → **Experiment detail** → **Decision trace** →
+flow deployment.
 
-1. Deploy a champion version and a **challenger** version with a traffic percentage
-   (e.g. v3 champion, v4 challenger at 20%). Outcome: the decide path routes that
-   share of traffic to the challenger; every decision records which **variant**
-   served it.
-2. On Decisions, filter by variant to compare arms; the flow's metrics break down
-   completed/failed and dispositions per variant. Outcome: an evidence-based read on
-   the challenger.
-3. Promote the winner (deploy it as champion — production via four-eyes) or drop the
-   challenger. Outcome: one version serves 100% again, and the experiment's decisions
-   remain in history, tagged by variant.
+1. Create a draft over exact published flow versions. State the hypothesis, owner,
+   environment, stable subject-key expression, eligibility expression, salted
+   allocations, primary KPI, minimum sample/effect, optional guardrails, and
+   start/stop window. Outcome: an immutable cohort definition instead of an
+   untracked per-request percentage.
+2. Start it directly in sandbox. A production start becomes a maker-checker request;
+   an independent approver must approve it before behavior changes. Outcome: the
+   launch decision and explanation are durable governance evidence.
+3. Repeatedly decide for the same subject. Assignment is stable across retries,
+   replicas, and restarts, while exposure is counted only after execution reaches and
+   completes the experimental treatment. The decision trace links back to its exact
+   experiment, cohort, and arm.
+4. Record decision-linked outcomes as the real-world facts arrive. Use a correction
+   when a source revises a fact; never overwrite history or tell the platform which
+   treatment/model produced it. Outcome: exposure and current corrected outcome join
+   through backend-derived lineage.
+5. Read live health and analysis: reached exposure, sample size, conversion or
+   continuous estimates, confidence intervals, effect size, sample-ratio mismatch,
+   and guardrail regressions. Drill into an exact decision when evidence looks wrong.
+   Outcome: collecting, underpowered, invalid, inconclusive, and winner states remain
+   distinct; directional movement alone is never labelled a winner.
+6. Pause, complete, or cancel with a recorded reason. Promote an arm only after the
+   evidence and normal deployment gates support it; production promotion still uses
+   four-eyes. Outcome: a complete hypothesis → assignment → exposure → outcome →
+   analysis → change-control trail survives replay.
 
 ### Batch decide a dataset, then promote it to pre-approvals
 
@@ -330,6 +354,24 @@ Spans: **Flow builder** Test tab → **Pre-approvals**.
    of standing approvals.
 3. Subsequent decide calls for those entities are honored instantly from their
    grants (each grant counts its honors) until expiry or revocation.
+
+### Run a durable population decision or backtest
+
+Spans: **Population jobs** (`/population`) → **Population job detail**.
+
+1. Create a decision or backtest job with an explicit flow, environment/version, and
+   bounded input dataset. The platform records an immutable manifest (including exact
+   experiment assignments where applicable) and per-item idempotency identities.
+   Outcome: a resumable resource, not a request whose client must keep alive.
+2. Start the job and watch progress, attempts, failures, and worker ownership. Pause
+   or cancel deliberately; resume paused work or retry failed items without
+   duplicating a logical row. Bounded concurrency and expiring worker leases allow
+   another replica to recover work after a process dies.
+3. Inspect partial failures while successful items remain available. When terminal,
+   download the NDJSON result manifest with each row's exact decision/backtest
+   result. Retention later expires result bodies without erasing the job's audit
+   evidence. The synchronous batch and streaming APIs remain useful conveniences;
+   this resource is the durable population contract.
 
 ### Author a policy, backtest it, publish
 
@@ -451,7 +493,7 @@ Spans: **Flow builder** (`/engine/[flowId]`), Deploy & versions tab.
 1. Set a **shadow** version for an environment (`PUT /v1/flows/{flow_id}/shadow`).
    Outcome: champion decisions in that environment also run through the shadow
    version from the same caller input and authoritative entity-feature snapshot. (A
-   served A/B challenger already has its own observed metrics.) The
+   served experiment arm already has its own observed outcome evidence.) The
    candidate resolves its own connectors, pinned agents, and models, so these calls can
    send data or incur cost; consent, sharing, egress, model-approval, and immutable
    agent-version gates still apply. The shadow's result is recorded and never served
@@ -460,9 +502,10 @@ Spans: **Flow builder** (`/engine/[flowId]`), Deploy & versions tab.
    The current champion cannot be selected as its own shadow; if a later deployment
    makes it champion, the cohort records a configuration error until another
    candidate is selected.
-2. Read the divergence cohort: exact live/candidate versions, the policy version when
-   one is bound, and how often the candidate matched, diverged, or errored. A live
-   version, candidate, or policy change starts a fresh cohort. Agreement means the
+2. Read the divergence cohorts: exact live/candidate versions, policy version,
+   experiment/cohort/arm dimensions, and how often the candidate matched, diverged,
+   or errored. The current exact cohort is prominent and prior unlike cohorts remain
+   inspectable rather than being overwritten or blended. Agreement means the
    exact governed policy outcome when a policy is bound, otherwise the same status and
    complete output. Follow a value-free sample to the live decision or inspect changed
    top-level fields / the candidate error. Outcome: explainable evidence about how one
@@ -541,7 +584,7 @@ lens on shared lists.
 | developer | Developer / Integrator    | Persona home   | Run decisions & read traces; API keys; agents          |
 | operator  | Risk Operator             | Operator home  | Manual review queue; pre-approvals; decisions          |
 | manager   | Team Manager              | Persona home   | Four-eyes approvals; case load; audit                  |
-| product   | Product / Experimentation | Persona home   | Policy backtests; A/B variants; models                 |
+| product   | Product / Experimentation | Persona home   | Governed experiments; population jobs; outcomes        |
 | showcase  | Executive                 | Showcase home  | KPIs, trends, governance posture                       |
 | evaluator | Evaluator / Guest         | Evaluator home | Guided look at builder, decisions, cases               |
 
@@ -560,9 +603,10 @@ lens on shared lists.
   approvals, cases needing review, and overdue cases; reviews the audit trail. Lives
   in _Promote with four-eyes_ and _Author a policy_ (as the approver), and the
   queue/oversight side of _Manual review_.
-- **Product / Experimentation.** Tunes impact. Lands on the **challenger** variant of
-  decisions, leading with the variant column; backtests flows and policy changes and
-  manages models. Lives in _Author a policy → backtest_ and _Register a model_.
+- **Product / Experimentation.** Tunes impact. Lands on experiment health, defines
+  stable cohorts and decision-linked KPIs, runs durable population backtests, and
+  promotes only supported changes. Lives in _Run a governed experiment_, _Run a
+  durable population decision or backtest_, and _Register a model_.
 - **Executive (showcase).** Reads posture, not detail: decision volume, trends, case
   health, and governance (MRM/audit, when admin). Lives in the read side of
   _Govern the workspace_.

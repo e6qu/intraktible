@@ -29,7 +29,15 @@ import type {
   PreApprovalStatus,
   DeploymentRequestStatus,
   MonitorOp,
-  MonitorMetric
+  MonitorMetric,
+  ExperimentState,
+  ExperimentArmKind,
+  ExperimentMetricKind,
+  ExperimentDirection,
+  ExperimentAnalysisStatus,
+  OutcomeKind,
+  PopulationJobKind,
+  PopulationJobState
 } from './enums.generated';
 export type {
   Disposition,
@@ -47,7 +55,15 @@ export type {
   PreApprovalStatus,
   DeploymentRequestStatus,
   MonitorOp,
-  MonitorMetric
+  MonitorMetric,
+  ExperimentState,
+  ExperimentArmKind,
+  ExperimentMetricKind,
+  ExperimentDirection,
+  ExperimentAnalysisStatus,
+  OutcomeKind,
+  PopulationJobKind,
+  PopulationJobState
 } from './enums.generated';
 export { ENVIRONMENTS, MONITOR_METRICS, AGGREGATIONS, ROLES, SCOPES } from './enums.generated';
 import { record } from './recorder';
@@ -233,6 +249,9 @@ export interface DecideResult {
   disposition?: Disposition; // when a policy is bound
   disposition_reason?: string; // the matched band, or "pre-approval honored"
   preapproval_id?: string; // set when served instantly from a pre-approval (flow skipped)
+  experiment_id?: string;
+  experiment_cohort?: number;
+  experiment_arm?: string;
   error?: string;
 }
 
@@ -466,6 +485,11 @@ export interface Decision {
   policy_id?: string;
   policy_version?: number;
   preapproval_id?: string; // set when served instantly from a pre-approval
+  experiment_id?: string;
+  experiment_cohort?: number;
+  experiment_arm?: string;
+  experiment_arm_name?: string;
+  experiment_subject_hash?: string;
   case_id?: string; // set when the decision routed to manual_review and opened a case
   human_reviewed?: boolean; // set when a suspended decision was resumed by a person
   error?: string;
@@ -1505,6 +1529,9 @@ export async function setPromotionPolicy(
 
 export interface ShadowComparisonSample {
   decision_id: string;
+  experiment_id?: string;
+  experiment_cohort?: number;
+  experiment_arm?: string;
   live_status: string;
   shadow_status?: string;
   live_disposition?: string;
@@ -1518,6 +1545,10 @@ export interface ShadowComparisonSample {
 }
 
 export interface EnvShadow {
+  environment: string;
+  experiment_id?: string;
+  experiment_cohort?: number;
+  experiment_arm?: string;
   live_version: number;
   shadow_version: number;
   match_basis: 'output' | 'policy';
@@ -1534,6 +1565,7 @@ export interface EnvShadow {
 export interface ShadowState {
   shadows: Record<string, number>;
   report: Record<string, EnvShadow>;
+  cohorts: Record<string, EnvShadow>;
 }
 
 // getShadow returns the per-environment shadow assignments and the divergence
@@ -1548,7 +1580,7 @@ export async function getShadow(
     return errorOrStatus(res, 'GET shadow');
   }
   const body = (await res.json()) as Partial<ShadowState>;
-  return { shadows: body.shadows ?? {}, report: body.report ?? {} };
+  return { shadows: body.shadows ?? {}, report: body.report ?? {}, cohorts: body.cohorts ?? {} };
 }
 
 // setShadow assigns (version 0 clears) the shadow version for an environment.
@@ -2690,6 +2722,12 @@ export interface Calibration {
 export interface ModelPerformance {
   model: string;
   model_version?: number;
+  outcome_key?: string;
+  node_id?: string;
+  environment?: Environment;
+  experiment_id?: string;
+  cohort?: number;
+  arm?: string;
   count: number;
   positives: number;
   excluded_actuals?: number;
@@ -2699,12 +2737,30 @@ export interface ModelPerformance {
   calibration: Calibration[];
 }
 
+export interface ModelPerformanceFilter {
+  outcome_key?: string;
+  node_id?: string;
+  environment?: Environment;
+  experiment_id?: string;
+  cohort?: number;
+  arm?: string;
+}
+
 export async function getModelPerformance(
   key: string,
   name: string,
+  filter: ModelPerformanceFilter = {},
   fetcher: typeof fetch = recordingFetch
 ): Promise<ModelPerformance> {
-  const res = await fetcher(`/v1/models/${encodeURIComponent(name)}/performance`, {
+  const query = new URLSearchParams();
+  if (filter.outcome_key) query.set('outcome_key', filter.outcome_key);
+  if (filter.node_id) query.set('node_id', filter.node_id);
+  if (filter.environment) query.set('env', filter.environment);
+  if (filter.experiment_id) query.set('experiment', filter.experiment_id);
+  if (filter.cohort) query.set('cohort', String(filter.cohort));
+  if (filter.arm) query.set('arm', filter.arm);
+  const suffix = query.size ? `?${query}` : '';
+  const res = await fetcher(`/v1/models/${encodeURIComponent(name)}/performance${suffix}`, {
     headers: authHeaders(key)
   });
   if (!res.ok) {
@@ -3385,6 +3441,9 @@ export interface FairLendingReport {
   attribute: string;
   favorable: string;
   environment?: string;
+  experiment_id?: string;
+  cohort?: number;
+  arm?: string;
   groups: FairLendingGroup[];
   reference: string;
   min_air: number;
@@ -3398,6 +3457,9 @@ export interface FairLendingParams {
   attribute: string;
   favorable?: string;
   env?: string;
+  experiment?: string;
+  cohort?: number;
+  arm?: string;
 }
 
 // fairLendingQuery serializes the report parameters, dropping the blank optionals
@@ -3406,6 +3468,9 @@ function fairLendingQuery(p: FairLendingParams): string {
   const q = new URLSearchParams({ flow: p.flow, attribute: p.attribute });
   if (p.favorable) q.set('favorable', p.favorable);
   if (p.env) q.set('env', p.env);
+  if (p.experiment) q.set('experiment', p.experiment);
+  if (p.cohort) q.set('cohort', String(p.cohort));
+  if (p.arm) q.set('arm', p.arm);
   return q.toString();
 }
 
@@ -4273,4 +4338,514 @@ export async function currentUser(
     return errorOrStatus(res, 'GET /v1/me');
   }
   return (await res.json()) as Identity;
+}
+
+// --- Experiments, business outcomes, and durable population jobs ----------------
+
+export interface ExperimentArm {
+  key: string;
+  name: string;
+  kind: ExperimentArmKind;
+  version: number;
+  allocation_bps: number;
+}
+
+export interface ExperimentMetric {
+  key: string;
+  name: string;
+  kind: ExperimentMetricKind;
+  direction: ExperimentDirection;
+  max_regression?: number;
+}
+
+export interface ExperimentSpec {
+  name: string;
+  hypothesis: string;
+  owner: string;
+  flow_id: string;
+  environment: Environment;
+  subject_key_expression: string;
+  eligibility_expression?: string;
+  salt: string;
+  arms: ExperimentArm[];
+  primary_metric: ExperimentMetric;
+  guardrails?: ExperimentMetric[];
+  minimum_sample_per_arm: number;
+  minimum_effect: number;
+  confidence: number;
+  observation_window_days: number;
+  start_at?: string;
+  stop_at?: string;
+}
+
+export interface ExperimentLaunchRequest {
+  request_id: string;
+  cohort: number;
+  status: 'pending' | 'approved' | 'rejected';
+  requested_by: string;
+  requested_at: string;
+  decided_by?: string;
+  decided_at?: string;
+  reason?: string;
+}
+
+export interface Experiment {
+  experiment_id: string;
+  cohort: number;
+  state: ExperimentState;
+  spec: ExperimentSpec;
+  created_by: string;
+  created_at: string;
+  updated_by: string;
+  updated_at: string;
+  started_at?: string;
+  ended_at?: string;
+  launch?: ExperimentLaunchRequest;
+}
+
+export interface ExperimentExposure {
+  experiment_id: string;
+  cohort: number;
+  decision_id: string;
+  flow_id: string;
+  environment: Environment;
+  arm_key: string;
+  arm_name: string;
+  arm_kind: ExperimentArmKind;
+  version: number;
+  subject_hash: string;
+  reached_at: string;
+}
+
+export interface ExperimentArmMetric {
+  arm_key: string;
+  count: number;
+  mean: number;
+  std_dev: number;
+  interval: { low: number; high: number };
+}
+
+export interface ExperimentComparison {
+  arm_key: string;
+  effect: number;
+  effect_size: number;
+  interval: { low: number; high: number };
+  favorable: boolean;
+}
+
+export interface ExperimentMetricAnalysis {
+  metric: ExperimentMetric;
+  arms: ExperimentArmMetric[];
+  comparisons: ExperimentComparison[];
+  excluded: number;
+  label_version?: string;
+}
+
+export interface ExperimentAnalysis {
+  experiment_id: string;
+  cohort: number;
+  state: ExperimentState;
+  status: ExperimentAnalysisStatus;
+  reason: string;
+  winner_arm_key?: string;
+  exposure_counts: Record<string, number>;
+  srm_p_value: number;
+  primary: ExperimentMetricAnalysis;
+  guardrails: ExperimentMetricAnalysis[];
+  assumptions: string[];
+}
+
+export async function listExperiments(
+  key: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<Experiment[]> {
+  const res = await fetcher('/v1/experiments', { headers: authHeaders(key) });
+  if (!res.ok) return errorOrStatus(res, 'GET /v1/experiments');
+  return ((await res.json()) as { experiments?: Experiment[] }).experiments ?? [];
+}
+
+export async function getExperiment(
+  key: string,
+  experimentId: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<Experiment> {
+  const res = await fetcher(`/v1/experiments/${encodeURIComponent(experimentId)}`, {
+    headers: authHeaders(key)
+  });
+  if (!res.ok) return errorOrStatus(res, `GET /v1/experiments/${experimentId}`);
+  return (await res.json()) as Experiment;
+}
+
+export async function createExperiment(
+  key: string,
+  spec: ExperimentSpec,
+  fetcher: typeof fetch = recordingFetch
+): Promise<{ experiment_id: string; seq: number }> {
+  const res = await fetcher('/v1/experiments', {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify(spec)
+  });
+  if (!res.ok) return errorOrStatus(res, 'POST /v1/experiments');
+  return (await res.json()) as { experiment_id: string; seq: number };
+}
+
+export async function updateExperiment(
+  key: string,
+  experimentId: string,
+  spec: ExperimentSpec,
+  fetcher: typeof fetch = recordingFetch
+): Promise<EventAck> {
+  const res = await fetcher(`/v1/experiments/${encodeURIComponent(experimentId)}`, {
+    method: 'PUT',
+    headers: jsonHeaders(key),
+    body: JSON.stringify(spec)
+  });
+  if (!res.ok) return errorOrStatus(res, `PUT /v1/experiments/${experimentId}`);
+  return (await res.json()) as EventAck;
+}
+
+export async function transitionExperiment(
+  key: string,
+  experimentId: string,
+  action: 'start' | 'pause' | 'resume' | 'complete' | 'cancel',
+  reason = '',
+  fetcher: typeof fetch = recordingFetch
+): Promise<EventAck & { status?: ExperimentState; request_id?: string }> {
+  const res = await fetcher(`/v1/experiments/${encodeURIComponent(experimentId)}/${action}`, {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: action === 'start' ? undefined : JSON.stringify({ reason })
+  });
+  if (!res.ok) return errorOrStatus(res, `POST experiment ${action}`);
+  return (await res.json()) as EventAck & { status?: ExperimentState; request_id?: string };
+}
+
+export async function decideExperimentLaunch(
+  key: string,
+  experimentId: string,
+  requestId: string,
+  decision: 'approve' | 'reject',
+  reason: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<EventAck> {
+  const res = await fetcher(
+    `/v1/experiments/${encodeURIComponent(experimentId)}/launch-requests/${encodeURIComponent(requestId)}/${decision}`,
+    { method: 'POST', headers: jsonHeaders(key), body: JSON.stringify({ reason }) }
+  );
+  if (!res.ok) return errorOrStatus(res, `POST experiment launch ${decision}`);
+  return (await res.json()) as EventAck;
+}
+
+export async function getExperimentAnalysis(
+  key: string,
+  experimentId: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<ExperimentAnalysis> {
+  const res = await fetcher(`/v1/experiments/${encodeURIComponent(experimentId)}/analysis`, {
+    headers: authHeaders(key)
+  });
+  if (!res.ok) return errorOrStatus(res, `GET experiment analysis`);
+  return (await res.json()) as ExperimentAnalysis;
+}
+
+export async function listExperimentExposures(
+  key: string,
+  experimentId: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<ExperimentExposure[]> {
+  const res = await fetcher(`/v1/experiments/${encodeURIComponent(experimentId)}/exposures`, {
+    headers: authHeaders(key)
+  });
+  if (!res.ok) return errorOrStatus(res, `GET experiment exposures`);
+  return ((await res.json()) as { exposures?: ExperimentExposure[] }).exposures ?? [];
+}
+
+export async function promoteExperimentWinner(
+  key: string,
+  experimentId: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<{ request_id: string; winner_arm_key: string; version: number; seq: number }> {
+  const res = await fetcher(`/v1/experiments/${encodeURIComponent(experimentId)}/promote`, {
+    method: 'POST',
+    headers: jsonHeaders(key)
+  });
+  if (!res.ok) return errorOrStatus(res, `POST experiment promote`);
+  return (await res.json()) as {
+    request_id: string;
+    winner_arm_key: string;
+    version: number;
+    seq: number;
+  };
+}
+
+export interface OutcomeSource {
+  system: string;
+  record_id: string;
+  lineage?: string;
+}
+
+export interface OutcomeRevision {
+  revision: number;
+  value: number;
+  event_time: string;
+  observation_window_days?: number;
+  source: OutcomeSource;
+  label_version: string;
+  reason?: string;
+  recorded_by: string;
+  recorded_at: string;
+}
+
+export interface BusinessOutcome {
+  outcome_id: string;
+  decision_id: string;
+  key: string;
+  kind: OutcomeKind;
+  flow_id: string;
+  flow_version: number;
+  environment: Environment;
+  treatment?: {
+    experiment_id: string;
+    cohort: number;
+    arm_key: string;
+    arm_name: string;
+    arm_kind: ExperimentArmKind;
+    version: number;
+  };
+  predictions?: Array<{
+    model: string;
+    model_version: number;
+    node_id: string;
+    probability: number;
+  }>;
+  current: OutcomeRevision;
+  history: OutcomeRevision[];
+}
+
+export interface RecordOutcomeRequest {
+  decision_id: string;
+  key: string;
+  kind: OutcomeKind;
+  value: number;
+  event_time: string;
+  observation_window_days?: number;
+  source: OutcomeSource;
+  label_version: string;
+}
+
+export async function listOutcomes(
+  key: string,
+  filter: { decision_id?: string; key?: string } = {},
+  fetcher: typeof fetch = recordingFetch
+): Promise<BusinessOutcome[]> {
+  const query = new URLSearchParams();
+  if (filter.decision_id) query.set('decision_id', filter.decision_id);
+  if (filter.key) query.set('key', filter.key);
+  const res = await fetcher(`/v1/outcomes${query.size ? `?${query}` : ''}`, {
+    headers: authHeaders(key)
+  });
+  if (!res.ok) return errorOrStatus(res, 'GET /v1/outcomes');
+  return ((await res.json()) as { outcomes?: BusinessOutcome[] }).outcomes ?? [];
+}
+
+export async function recordOutcome(
+  key: string,
+  request: RecordOutcomeRequest,
+  idempotencyKey: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<{ outcome_id: string; revision: number; seq: number }> {
+  const res = await fetcher('/v1/outcomes', {
+    method: 'POST',
+    headers: { ...jsonHeaders(key), 'Idempotency-Key': idempotencyKey },
+    body: JSON.stringify(request)
+  });
+  if (!res.ok) return errorOrStatus(res, 'POST /v1/outcomes');
+  return (await res.json()) as { outcome_id: string; revision: number; seq: number };
+}
+
+export async function correctOutcome(
+  key: string,
+  outcomeId: string,
+  request: Omit<RecordOutcomeRequest, 'decision_id' | 'key' | 'kind'> & { reason: string },
+  idempotencyKey: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<{ outcome_id: string; revision: number; seq: number }> {
+  const res = await fetcher(`/v1/outcomes/${encodeURIComponent(outcomeId)}/corrections`, {
+    method: 'POST',
+    headers: { ...jsonHeaders(key), 'Idempotency-Key': idempotencyKey },
+    body: JSON.stringify(request)
+  });
+  if (!res.ok) return errorOrStatus(res, `POST outcome correction`);
+  return (await res.json()) as { outcome_id: string; revision: number; seq: number };
+}
+
+export interface PopulationItemInput {
+  data: Record<string, unknown>;
+  entity_type?: string;
+  entity_id?: string;
+  business_reference?: string;
+  correlation_id?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface PopulationJobSummary {
+  job_id: string;
+  kind: PopulationJobKind;
+  slug: string;
+  environment: Environment;
+  state: PopulationJobState;
+  total: number;
+  pending: number;
+  running: number;
+  succeeded: number;
+  failed: number;
+  manifest_hash: string;
+  created_at: string;
+  updated_at: string;
+  expires_at: string;
+}
+
+export interface PopulationJob extends PopulationJobSummary {
+  manifest: {
+    kind: PopulationJobKind;
+    flow_id: string;
+    slug: string;
+    environment: Environment;
+    items: Array<{
+      index: number;
+      input: PopulationItemInput;
+      version: number;
+      assignment?: {
+        experiment_id: string;
+        cohort: number;
+        arm_key: string;
+        arm_name: string;
+        arm_kind: ExperimentArmKind;
+        version: number;
+        subject_hash: string;
+      };
+    }>;
+  };
+  max_attempts: number;
+  concurrency: number;
+  items: Array<{
+    index: number;
+    state: 'pending' | 'claimed' | 'succeeded' | 'failed';
+    attempt: number;
+    worker?: string;
+    lease_until?: string;
+    decision_id?: string;
+    status?: string;
+    output?: Record<string, unknown>;
+    disposition?: string;
+    error?: string;
+    retryable?: boolean;
+  }>;
+  created_by: string;
+}
+
+export async function listPopulationJobs(
+  key: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<PopulationJobSummary[]> {
+  const res = await fetcher('/v1/population-jobs', { headers: authHeaders(key) });
+  if (!res.ok) return errorOrStatus(res, 'GET /v1/population-jobs');
+  return ((await res.json()) as { jobs?: PopulationJobSummary[] }).jobs ?? [];
+}
+
+export async function getPopulationJob(
+  key: string,
+  jobId: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<PopulationJob> {
+  const res = await fetcher(`/v1/population-jobs/${encodeURIComponent(jobId)}`, {
+    headers: authHeaders(key)
+  });
+  if (!res.ok) return errorOrStatus(res, `GET /v1/population-jobs/${jobId}`);
+  const view = (await res.json()) as PopulationJob;
+  return {
+    ...view,
+    kind: view.manifest.kind,
+    slug: view.manifest.slug,
+    environment: view.manifest.environment
+  };
+}
+
+export async function createPopulationJob(
+  key: string,
+  request: {
+    kind: PopulationJobKind;
+    slug: string;
+    environment: Environment;
+    items: PopulationItemInput[];
+    max_attempts?: number;
+    concurrency?: number;
+    retention_days?: number;
+  },
+  idempotencyKey: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<{
+  job_id: string;
+  state: PopulationJobState;
+  manifest_hash: string;
+  total: number;
+  seq: number;
+}> {
+  const res = await fetcher('/v1/population-jobs', {
+    method: 'POST',
+    headers: { ...jsonHeaders(key), 'Idempotency-Key': idempotencyKey },
+    body: JSON.stringify(request)
+  });
+  if (!res.ok) return errorOrStatus(res, 'POST /v1/population-jobs');
+  return (await res.json()) as {
+    job_id: string;
+    state: PopulationJobState;
+    manifest_hash: string;
+    total: number;
+    seq: number;
+  };
+}
+
+export async function transitionPopulationJob(
+  key: string,
+  jobId: string,
+  action: 'pause' | 'resume' | 'cancel',
+  reason = '',
+  fetcher: typeof fetch = recordingFetch
+): Promise<EventAck> {
+  const res = await fetcher(`/v1/population-jobs/${encodeURIComponent(jobId)}/${action}`, {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify({ reason })
+  });
+  if (!res.ok) return errorOrStatus(res, `POST population job ${action}`);
+  return (await res.json()) as EventAck;
+}
+
+export async function retryPopulationJob(
+  key: string,
+  jobId: string,
+  indices: number[] = [],
+  fetcher: typeof fetch = recordingFetch
+): Promise<EventAck> {
+  const res = await fetcher(`/v1/population-jobs/${encodeURIComponent(jobId)}/retry`, {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify({ indices })
+  });
+  if (!res.ok) return errorOrStatus(res, 'POST population job retry');
+  return (await res.json()) as EventAck;
+}
+
+export async function downloadPopulationResults(
+  key: string,
+  jobId: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<Blob> {
+  const res = await fetcher(`/v1/population-jobs/${encodeURIComponent(jobId)}/results`, {
+    headers: authHeaders(key)
+  });
+  if (!res.ok) return errorOrStatus(res, 'GET population job results');
+  return res.blob();
 }

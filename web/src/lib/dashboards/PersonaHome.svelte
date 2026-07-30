@@ -35,16 +35,15 @@
       .sort(byNewest)
       .slice(0, 6)
   );
-  // experiment — champion vs challenger, with the challenger arm's recent runs (product).
-  const challengerRuns = $derived(
-    data.decisions
-      .filter((d) => d.variant === 'challenger')
-      .sort(byNewest)
+  // experiment — governed cohorts and reached-treatment volume (product).
+  const activeExperiments = $derived(
+    data.experiments
+      .filter((experiment) => ['pending_launch', 'running', 'paused'].includes(experiment.state))
       .slice(0, 6)
   );
-  const challengerCount = $derived(data.decisions.filter((d) => d.variant === 'challenger').length);
-  const championCount = $derived(data.decisions.length - challengerCount);
-  // approvals — production changes and model versions awaiting four-eyes sign-off
+  const exposureCount = (experimentId: string): number =>
+    data.decisions.filter((decision) => decision.experiment_id === experimentId).length;
+  // approvals — production changes, model versions, and experiments awaiting four-eyes sign-off
   // (the manager's complete governance queue, not entity pre-approvals).
   const approvals = $derived(
     [
@@ -70,6 +69,20 @@
                 href: `/models?governance=${encodeURIComponent(model.name)}`,
                 detail: `v${model.pending.version} · ${model.pending.requested_by.split('@')[0]}`,
                 requestedAt: model.pending.requested_at
+              }
+            ]
+          : []
+      ),
+      ...data.experiments.flatMap((experiment) =>
+        experiment.state === 'pending_launch' && experiment.launch
+          ? [
+              {
+                key: `experiment:${experiment.launch.request_id}`,
+                badge: 'experiment',
+                label: experiment.spec.name,
+                href: `/experiments/${experiment.experiment_id}`,
+                detail: `cohort ${experiment.cohort} · ${experiment.launch.requested_by.split('@')[0]}`,
+                requestedAt: experiment.launch.requested_at
               }
             ]
           : []
@@ -121,7 +134,7 @@
       <section id="pending-approvals" aria-label="Pending approvals">
         <h2>Pending approvals</h2>
         {#if approvals.length === 0}
-          <p class="empty">No flow or model approvals are pending.</p>
+          <p class="empty">No flow, model, or experiment approvals are pending.</p>
         {:else}
           <ul class="recent">
             {#each approvals as approval (approval.key)}
@@ -135,7 +148,8 @@
           </ul>
           <p class="more">
             <a href={appHref('/engine')}>Flow approvals</a> ·
-            <a href={appHref('/models')}>Model approvals</a>
+            <a href={appHref('/models')}>Model approvals</a> ·
+            <a href={appHref('/experiments')}>Experiment approvals</a>
           </p>
         {/if}
       </section>
@@ -159,26 +173,26 @@
         {/if}
       </section>
     {:else if panel === 'experiment'}
-      <section aria-label="Champion vs challenger">
-        <h2>Champion vs challenger</h2>
-        <p class="split">
-          <span><b>{championCount}</b> champion</span>
-          <span><b>{challengerCount}</b> challenger</span>
-        </p>
-        {#if challengerRuns.length === 0}
-          <p class="empty">No challenger arm running — promote a challenger to compare.</p>
+      <section aria-label="Governed experiments">
+        <h2>Governed experiments</h2>
+        {#if activeExperiments.length === 0}
+          <p class="empty">
+            No active cohorts — create an experiment to compare immutable versions.
+          </p>
         {:else}
           <ul class="recent">
-            {#each challengerRuns as d (d.decision_id)}
+            {#each activeExperiments as experiment (experiment.experiment_id)}
               <li>
-                <Badge tone={statusTone(d.status)}>{d.status}</Badge>
-                <a class="slug" href={appHref(`/decisions/${d.decision_id}`)}>{d.slug}</a>
-                <span class="env">{d.environment}</span>
-                <span class="when"><RelativeTime value={d.started_at} /></span>
+                <Badge tone={statusTone(experiment.state)}>{experiment.state}</Badge>
+                <a class="slug" href={appHref(`/experiments/${experiment.experiment_id}`)}
+                  >{experiment.spec.name}</a
+                >
+                <span class="env">cohort {experiment.cohort}</span>
+                <span class="when">{exposureCount(experiment.experiment_id)} exposures</span>
               </li>
             {/each}
           </ul>
-          <a class="more" href={appHref('/decisions')}>All decisions →</a>
+          <a class="more" href={appHref('/experiments')}>All experiments →</a>
         {/if}
       </section>
     {:else}
@@ -354,17 +368,5 @@
   .empty {
     color: var(--fg-subtle);
     font-size: 0.9rem;
-  }
-  .split {
-    display: flex;
-    gap: 1.3rem;
-    margin: 0 0 0.7rem;
-    font-size: 0.92rem;
-    color: var(--fg-muted);
-  }
-  .split b {
-    color: var(--fg);
-    font-size: 1.05rem;
-    font-variant-numeric: tabular-nums;
   }
 </style>

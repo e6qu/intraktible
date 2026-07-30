@@ -270,13 +270,44 @@ func (s *Service) modelDrift(w http.ResponseWriter, r *http.Request) {
 }
 
 // modelPerformance reports a model's live performance reconciled against recorded
-// actuals: calibration, accuracy, Brier score, and realized AUC.
+// actuals: calibration, accuracy, Brier score, and realized AUC. Supplying
+// outcome_key selects the generalized, corrected business-outcome stream and
+// supports exact experiment cohort dimensions; omitting it retains the legacy
+// model-actual cohort for API compatibility.
 func (s *Service) modelPerformance(w http.ResponseWriter, r *http.Request) {
 	id, ok := httpx.Caller(w, r)
 	if !ok {
 		return
 	}
-	perf, err := models.ReadPerformance(r.Context(), s.store, id, r.PathValue("name"))
+	var (
+		perf models.Performance
+		err  error
+	)
+	q := r.URL.Query()
+	if outcomeKey := strings.TrimSpace(q.Get("outcome_key")); outcomeKey != "" {
+		filter := models.OutcomePerformanceFilter{
+			OutcomeKey: outcomeKey, NodeID: strings.TrimSpace(q.Get("node_id")),
+			Environment:  strings.TrimSpace(q.Get("env")),
+			ExperimentID: strings.TrimSpace(q.Get("experiment")),
+			Arm:          strings.TrimSpace(q.Get("arm")),
+		}
+		if raw := q.Get("cohort"); raw != "" {
+			filter.Cohort, err = strconv.Atoi(raw)
+			if err != nil || filter.Cohort < 1 {
+				httpx.Error(w, http.StatusBadRequest, fmt.Errorf("cohort must be a positive integer"))
+				return
+			}
+		}
+		if (filter.Cohort > 0 || filter.Arm != "") && filter.ExperimentID == "" {
+			httpx.Error(w, http.StatusBadRequest, fmt.Errorf("experiment is required when cohort or arm is set"))
+			return
+		}
+		perf, err = models.ReadOutcomePerformance(
+			r.Context(), s.store, id, r.PathValue("name"), filter,
+		)
+	} else {
+		perf, err = models.ReadPerformance(r.Context(), s.store, id, r.PathValue("name"))
+	}
 	if err != nil {
 		httpx.Error(w, http.StatusInternalServerError, err)
 		return
@@ -973,7 +1004,9 @@ func (s *Service) getShadow(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusInternalServerError, err)
 		return
 	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"shadows": fv.Shadows, "report": report.ByEnv})
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"shadows": fv.Shadows, "report": report.ByEnv, "cohorts": report.Cohorts,
+	})
 }
 
 // setShadow assigns (or clears, with version 0) the shadow version for an env.
@@ -1283,6 +1316,9 @@ type decideResponse struct {
 	// served from one — the caller-visible evidence that the flow never ran.
 	DispositionReason string `json:"disposition_reason,omitempty"`
 	PreApprovalID     string `json:"preapproval_id,omitempty"`
+	ExperimentID      string `json:"experiment_id,omitempty"`
+	ExperimentCohort  int    `json:"experiment_cohort,omitempty"`
+	ExperimentArm     string `json:"experiment_arm,omitempty"`
 	Error             string `json:"error,omitempty"`
 }
 
@@ -1456,6 +1492,8 @@ func (s *Service) runDecide(w http.ResponseWriter, r *http.Request) {
 		DecisionID: result.DecisionID, Status: string(result.Status), Data: result.Output,
 		Disposition: string(result.Disposition), DispositionReason: result.DispositionReason,
 		PreApprovalID: result.PreApprovalID, Error: result.Error, Seq: result.EventSeq,
+		ExperimentID: result.ExperimentID, ExperimentCohort: result.ExperimentCohort,
+		ExperimentArm: result.ExperimentArm,
 	})
 }
 

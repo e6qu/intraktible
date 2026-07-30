@@ -39,11 +39,14 @@ const SmallSampleN = 30
 
 // Params configures a disparate-impact analysis. FlowID and Attribute are required.
 type Params struct {
-	FlowID      string             // the flow whose decisions are analyzed
-	Attribute   string             // dot-path into the decision input naming the protected class (e.g. "applicant.gender")
-	Favorable   policy.Disposition // the disposition counted as favorable; defaults to approve
-	Environment string             // optional: restrict to one environment
-	Threshold   float64            // AIR threshold below which a group is flagged; <=0 uses FourFifths
+	FlowID       string             // the flow whose decisions are analyzed
+	Attribute    string             // dot-path into the decision input naming the protected class (e.g. "applicant.gender")
+	Favorable    policy.Disposition // the disposition counted as favorable; defaults to approve
+	Environment  string             // optional: restrict to one environment
+	ExperimentID string             // optional: restrict to one governed experiment
+	Cohort       int                // optional: restrict to one immutable experiment cohort
+	Arm          string             // optional: restrict to one experiment arm
+	Threshold    float64            // AIR threshold below which a group is flagged; <=0 uses FourFifths
 }
 
 // Group is one protected-class value's outcome tally and its AIR.
@@ -61,21 +64,24 @@ type Group struct {
 
 // Report is the disparate-impact analysis over one flow.
 type Report struct {
-	GeneratedAt time.Time          `json:"generated_at"`
-	Org         string             `json:"org"`
-	Workspace   string             `json:"workspace"`
-	FlowID      string             `json:"flow_id"`
-	Attribute   string             `json:"attribute"`
-	Favorable   policy.Disposition `json:"favorable"`
-	Environment string             `json:"environment,omitempty"`
-	Threshold   float64            `json:"threshold"` // the AIR threshold applied (the four-fifths default unless configured)
-	Groups      []Group            `json:"groups"`
-	Reference   string             `json:"reference"`  // value of the highest-rate group (the AIR denominator)
-	MinAIR      float64            `json:"min_air"`    // lowest AIR across the groups
-	Passes      bool               `json:"passes"`     // threshold holds across all groups
-	Decisions   int                `json:"decisions"`  // scored decisions folded into the groups
-	Excluded    int                `json:"excluded"`   // completed decisions dropped (referred, no disposition, or attribute absent)
-	Groups2Plus bool               `json:"two_groups"` // at least two protected-class values were present
+	GeneratedAt  time.Time          `json:"generated_at"`
+	Org          string             `json:"org"`
+	Workspace    string             `json:"workspace"`
+	FlowID       string             `json:"flow_id"`
+	Attribute    string             `json:"attribute"`
+	Favorable    policy.Disposition `json:"favorable"`
+	Environment  string             `json:"environment,omitempty"`
+	ExperimentID string             `json:"experiment_id,omitempty"`
+	Cohort       int                `json:"cohort,omitempty"`
+	Arm          string             `json:"arm,omitempty"`
+	Threshold    float64            `json:"threshold"` // the AIR threshold applied (the four-fifths default unless configured)
+	Groups       []Group            `json:"groups"`
+	Reference    string             `json:"reference"`  // value of the highest-rate group (the AIR denominator)
+	MinAIR       float64            `json:"min_air"`    // lowest AIR across the groups
+	Passes       bool               `json:"passes"`     // threshold holds across all groups
+	Decisions    int                `json:"decisions"`  // scored decisions folded into the groups
+	Excluded     int                `json:"excluded"`   // completed decisions dropped (referred, no disposition, or attribute absent)
+	Groups2Plus  bool               `json:"two_groups"` // at least two protected-class values were present
 }
 
 // Build aggregates the flow's recorded decisions into a disparate-impact report.
@@ -86,6 +92,12 @@ func Build(ctx context.Context, s store.Store, id identity.Identity, p Params, n
 	}
 	if p.Attribute == "" {
 		return Report{}, fmt.Errorf("fairlending: attribute is required")
+	}
+	if p.Cohort < 0 {
+		return Report{}, fmt.Errorf("fairlending: cohort cannot be negative")
+	}
+	if (p.Cohort > 0 || p.Arm != "") && p.ExperimentID == "" {
+		return Report{}, fmt.Errorf("fairlending: experiment is required when cohort or arm is set")
 	}
 	fav := p.Favorable
 	if fav == "" {
@@ -108,6 +120,15 @@ func Build(ctx context.Context, s store.Store, id identity.Identity, p Params, n
 			continue
 		}
 		if p.Environment != "" && r.Environment != p.Environment {
+			continue
+		}
+		if p.ExperimentID != "" && r.ExperimentID != p.ExperimentID {
+			continue
+		}
+		if p.Cohort > 0 && r.ExperimentCohort != p.Cohort {
+			continue
+		}
+		if p.Arm != "" && r.ExperimentArm != p.Arm {
 			continue
 		}
 		disp := policy.Disposition(r.Disposition)
@@ -138,6 +159,7 @@ func Build(ctx context.Context, s store.Store, id identity.Identity, p Params, n
 	rep := Report{
 		GeneratedAt: now, Org: id.Org, Workspace: id.Workspace,
 		FlowID: p.FlowID, Attribute: p.Attribute, Favorable: fav, Environment: p.Environment,
+		ExperimentID: p.ExperimentID, Cohort: p.Cohort, Arm: p.Arm,
 		Threshold: threshold, Excluded: excluded,
 	}
 	rep.Groups, rep.Reference, rep.MinAIR, rep.Passes = compute(tally, threshold)

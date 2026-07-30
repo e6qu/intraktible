@@ -142,6 +142,44 @@ describe('sdk Client', () => {
     expect(await c.listFlows()).toEqual([]);
   });
 
+  it('sends experiment, outcome, and population idempotency contracts', async () => {
+    const outcomeFetcher = fetcherReturning(202, { outcome_id: 'out-1', revision: 1 });
+    const outcomeClient = new Client({ apiKey: 'k', fetch: outcomeFetcher });
+    await outcomeClient.recordOutcome(
+      {
+        decision_id: 'd1',
+        key: 'converted',
+        kind: 'binary',
+        value: 1,
+        event_time: '2026-07-30T10:00:00Z',
+        source: { system: 'core', record_id: '1' },
+        label_version: 'v1'
+      },
+      'outcome-key'
+    );
+    expect(outcomeFetcher.mock.calls[0][0]).toBe('/v1/outcomes');
+    expect(outcomeFetcher.mock.calls[0][1]?.headers).toMatchObject({
+      'Idempotency-Key': 'outcome-key'
+    });
+
+    const populationFetcher = fetcherReturning(202, { job_id: 'job-1' });
+    const populationClient = new Client({ apiKey: 'k', fetch: populationFetcher });
+    expect(
+      await populationClient.createPopulationJob(
+        {
+          kind: 'backtest',
+          slug: 'offers',
+          environment: 'sandbox',
+          items: [{ data: { customer_id: 'c1' } }]
+        },
+        'job-key'
+      )
+    ).toBe('job-1');
+    expect(populationFetcher.mock.calls[0][1]?.headers).toMatchObject({
+      'Idempotency-Key': 'job-key'
+    });
+  });
+
   it('throws a typed ApiError carrying the server message', async () => {
     const c = new Client({
       apiKey: 'k',

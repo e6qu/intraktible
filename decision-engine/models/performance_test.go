@@ -3,8 +3,14 @@
 package models
 
 import (
+	"context"
 	"math"
 	"testing"
+	"time"
+
+	"github.com/e6qu/intraktible/decision-engine/outcomes"
+	"github.com/e6qu/intraktible/platform/identity"
+	"github.com/e6qu/intraktible/platform/store"
 )
 
 func TestPerformanceFromActuals(t *testing.T) {
@@ -45,6 +51,80 @@ func TestPerformanceEmpty(t *testing.T) {
 	var st ModelStats
 	if p := st.Performance(); p.Count != 0 || len(p.Calibration) != 0 {
 		t.Fatalf("empty performance = %+v", p)
+	}
+}
+
+func TestOutcomePerformanceUsesCorrectedExactCohortLineage(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemory()
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "operator"}
+	if err := store.PutDoc(ctx, st, StatsCollection, store.Key(id.Org, id.Workspace, "risk"), ModelStats{
+		Org: id.Org, Workspace: id.Workspace, Name: "risk", ModelVersion: 2,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	put := func(view outcomes.View) {
+		t.Helper()
+		if err := store.PutDoc(
+			ctx, st, outcomes.Collection,
+			store.Key(id.Org, id.Workspace, view.OutcomeID), view,
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+	revision := func(value float64) outcomes.Revision {
+		return outcomes.Revision{
+			Revision: 2, Value: value, EventTime: time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC),
+		}
+	}
+	put(outcomes.View{
+		OutcomeID: "positive", Key: "defaulted", Kind: outcomes.KindBinary, Environment: "production",
+		Treatment: &outcomes.TreatmentFact{ExperimentID: "exp-1", Cohort: 3, ArmKey: "challenger"},
+		Predictions: []outcomes.PredictionFact{
+			{Model: "risk", ModelVersion: 2, NodeID: "score", Probability: 0.91},
+		},
+		Current: revision(1),
+	})
+	put(outcomes.View{
+		OutcomeID: "negative", Key: "defaulted", Kind: outcomes.KindBinary, Environment: "production",
+		Treatment: &outcomes.TreatmentFact{ExperimentID: "exp-1", Cohort: 3, ArmKey: "challenger"},
+		Predictions: []outcomes.PredictionFact{
+			{Model: "risk", ModelVersion: 2, NodeID: "score", Probability: 0.09},
+		},
+		Current: revision(0),
+	})
+	// Stale model versions and a different arm are outside the exact cohort.
+	put(outcomes.View{
+		OutcomeID: "stale", Key: "defaulted", Kind: outcomes.KindBinary, Environment: "production",
+		Treatment: &outcomes.TreatmentFact{ExperimentID: "exp-1", Cohort: 3, ArmKey: "challenger"},
+		Predictions: []outcomes.PredictionFact{
+			{Model: "risk", ModelVersion: 1, NodeID: "score", Probability: 0.99},
+		},
+		Current: revision(1),
+	})
+	put(outcomes.View{
+		OutcomeID: "other-arm", Key: "defaulted", Kind: outcomes.KindBinary, Environment: "production",
+		Treatment: &outcomes.TreatmentFact{ExperimentID: "exp-1", Cohort: 3, ArmKey: "champion"},
+		Predictions: []outcomes.PredictionFact{
+			{Model: "risk", ModelVersion: 2, NodeID: "score", Probability: 0.99},
+		},
+		Current: revision(1),
+	})
+
+	perf, err := ReadOutcomePerformance(ctx, st, id, "risk", OutcomePerformanceFilter{
+		OutcomeKey: "defaulted", NodeID: "score", Environment: "production",
+		ExperimentID: "exp-1", Cohort: 3, Arm: "challenger",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perf.Count != 2 || perf.Positives != 1 || perf.ExcludedActuals != 1 ||
+		perf.Accuracy != 1 || perf.AUC != 1 {
+		t.Fatalf("performance = %+v", perf)
+	}
+	if perf.OutcomeKey != "defaulted" || perf.ExperimentID != "exp-1" ||
+		perf.Cohort != 3 || perf.Arm != "challenger" {
+		t.Fatalf("cohort lineage = %+v", perf)
 	}
 }
 

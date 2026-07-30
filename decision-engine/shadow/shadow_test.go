@@ -42,6 +42,7 @@ func TestProjectorKeepsHomogeneousCohortsAndReplaysSamples(t *testing.T) {
 
 	base := events.ShadowEvaluated{
 		FlowID: "flow-1", Environment: "production",
+		ExperimentID: "experiment-1", ExperimentCohort: 7, ExperimentArm: "champion",
 		LiveVersion: 3, ShadowVersion: 4,
 		MatchBasis: events.ShadowMatchPolicy,
 		PolicyID:   "policy-1", PolicyVersion: 2,
@@ -94,8 +95,29 @@ func TestProjectorKeepsHomogeneousCohortsAndReplaysSamples(t *testing.T) {
 		len(cohort.Samples) != 0 {
 		t.Fatalf("champion-change cohort = %+v", cohort)
 	}
+	if len(report.Cohorts) != 2 {
+		t.Fatalf("exact cohorts = %d, want original and new champion", len(report.Cohorts))
+	}
 
-	// Rebuilding into a fresh store yields the exact same current cohort.
+	// An experiment configuration change retains both exact cohorts; it never
+	// blends or discards the prior comparison evidence.
+	nextExperimentCohort := base
+	nextExperimentCohort.DecisionID = "decision-next-experiment"
+	nextExperimentCohort.ExperimentCohort = 8
+	nextExperimentCohort.Matched = true
+	appendEvaluation(t, ctx, log, id, at.Add(3*time.Second), nextExperimentCohort)
+	if _, err := projection.New(log, projected, shadow.Projector{}).RebuildTo(ctx, 0); err != nil {
+		t.Fatal(err)
+	}
+	report, _, err = shadow.Read(ctx, projected, id, "flow-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Cohorts) != 3 || report.ByEnv["production"].ExperimentCohort != 8 {
+		t.Fatalf("experiment shadow cohorts = %+v", report)
+	}
+
+	// Rebuilding into a fresh store yields every exact cohort identically.
 	fresh := store.NewMemory()
 	if _, err := projection.New(log, fresh, shadow.Projector{}).RebuildTo(ctx, 0); err != nil {
 		t.Fatal(err)

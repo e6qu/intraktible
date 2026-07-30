@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+
 # STATUS — where the work stands right now
 
 **Read this first** after any compaction or new session, then `DO_NEXT.md`.
@@ -31,6 +33,55 @@ the next implementation tranche by correctness and operational risk.
 6. No subagents, no workflows (system-prompt instruction).
 
 ## Phase
+
+**Enterprise PR E2 — experimentation, outcomes, and population automation is
+in progress on `enterprise/e2-experiments-population` from merged
+`origin/main` commit `fea2a7e`.** PR #160 merged at that exact commit, its
+remote branch is deleted, and the remote PR queue was empty when E2 was cut.
+The tranche will deliver the complete `PLAN.md` §8b.3 vertical outcome before
+opening one review: first-class governed experiments, deterministic cohorts and
+reached-treatment exposures, attributable/correctable business outcomes,
+statistical analysis, and durable multi-worker population jobs with complete
+operator UI and contracts.
+
+The E2 core is now implemented end to end: governed experiment lifecycle and
+maker-checker launch, deterministic exact-version assignments and reached
+exposures, correctable decision-linked outcomes with derived treatment/model
+lineage, reproducible statistical safety states, durable version-pinned
+population jobs, worker leases, scheduler retention, API/SDK/UI surfaces, real
+demo history, notifications, and assembled HTTP replay coverage. Cross-product
+cohort alignment now includes fair-lending slices, corrected business-outcome
+model performance, and retained exact shadow cohorts. Failure injection found
+and fixed a production recovery defect where an expired population claim still
+consumed the concurrency slot and could never be reclaimed; two racing
+replacement replicas now produce one successor claim and one result. Window
+scheduling also reconciles the event aggregate across projection lag. The real
+browser now proves stable repeated-subject assignment,
+reached-exposure drill-down, outcome recording/correction, underpowered
+no-winner presentation, durable backtest completion/result download, and
+production maker-to-independent-approver launch. That walkthrough also found
+and fixed missing SPA packaging for both dynamic detail routes and a null
+collecting-analysis shape. Focused Go tests for models, shadow, decisions,
+experiments, population, fair lending, notifications, and OpenAPI are green.
+The plan-of-record, issue ledger, component guide, honest gap/competitive
+analysis, and persona journeys now describe the implemented first-class
+experiment/outcome/population contracts instead of legacy request-time
+challengers or model-only actuals. Remaining closeout is the complete release
+matrix, final remote reconciliation, and the sole E2 review.
+
+The local release matrix is now green: `make check`; `make ci` (strict lint,
+SAST, race, dead-code, zero clone groups, zero reachable vulnerabilities, and
+licenses); frontend formatting/typecheck/lint, 232 units, and production build;
+128 native browser journeys; 83 real-Wasm journeys; 3 embedded-binary smokes;
+18 Terraform contracts; and the container release contract. CI itself found
+and drove fixes for six lint findings, four clone groups, twelve dead exports,
+and a race-only assembled-journey assumption that a durable population create
+was already projected. The latter now polls the explicit eventual-consistency
+boundary and passes five consecutive race runs. A local reproduction of the
+real-PostgreSQL job could not start because Docker Desktop returned
+`unable to upgrade to tcp, received 500` after pulling the repository's pinned
+`postgres:16` image; the exact disposable Created container was removed. The
+hosted PostgreSQL job remains required before merge.
 
 **Enterprise PR E1 — durable execution integrity is implementation-complete on
 `enterprise/e1-durable-execution` from merged `origin/main` commit `7a7be66`.**
@@ -91,13 +142,12 @@ is deleted and `gh pr list --state open` is empty. There is therefore no remote
 work to reconcile before the E1 commit.
 
 The 95-file E1 slice is commit `8dddb44` (`Make decision and agent execution
-durable`) with continuity evidence in `635ca00`. Both are pushed in PR #160,
-the repository's sole open review queue. Hosted run `30514807479` is terminal
+durable`) with continuity evidence in `635ca00`. Both merged through PR #160.
+Hosted run `30514807479` is terminal
 green across all nine jobs: Go race/security/dead-code/clone/vulnerability/
 license gates, native UI, real-Wasm demo, embedded artifact, web, real
-PostgreSQL, real Shauth SSO, Terraform, and container-release contracts. The
-only remaining E1 action is to verify the final continuity-only head and wait
-for the user to merge PR #160.
+PostgreSQL, real Shauth SSO, Terraform, and container-release contracts; final
+head `c177798` repeated that matrix in run `30515124922` before merge.
 
 **Fifth whole-product journey audit — complete in sole PR #159.**
 The audit began after PR #158 merged as `002e9d3`, with an empty GitHub queue

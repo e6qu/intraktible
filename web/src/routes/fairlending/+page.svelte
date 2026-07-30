@@ -8,6 +8,7 @@
   import { pct } from '$lib/dashboard';
   import {
     listFlows,
+    listExperiments,
     getFairLendingReport,
     fairLendingReportText,
     getFairLendingConfig,
@@ -18,6 +19,7 @@
     listAdverseActions,
     ApiError,
     type Flow,
+    type Experiment,
     type FairLendingReport,
     type FairLendingParams,
     type AdverseActionSettings,
@@ -28,11 +30,15 @@
 
   const key = '';
   let flows = $state<Flow[]>([]);
+  let experiments = $state<Experiment[]>([]);
   let flow = $state('');
   let attribute = $state('');
   let favorable = $state('approve');
   let threshold = $state(0.8);
   let env = $state('');
+  let experimentID = $state('');
+  let experimentCohort = $state(0);
+  let experimentArm = $state('');
   let savingConfig = $state(false);
 
   let report = $state<FairLendingReport | null>(null);
@@ -52,7 +58,7 @@
     error = '';
     forbidden = false;
     try {
-      flows = await listFlows(key);
+      [flows, experiments] = await Promise.all([listFlows(key), listExperiments(key)]);
       if (flows.length > 0) {
         flow = flows[0].flow_id;
         await loadConfig();
@@ -129,7 +135,10 @@
       flow,
       attribute: attribute.trim(),
       favorable,
-      env: env.trim() || undefined
+      env: env.trim() || undefined,
+      experiment: experimentID || undefined,
+      cohort: experimentCohort || undefined,
+      arm: experimentArm || undefined
     };
   }
 
@@ -175,6 +184,18 @@
       ? { tone: 'ok' as const, label: 'Passes (all groups ≥ 0.80)' }
       : { tone: 'danger' as const, label: 'Flagged — a group is below 0.80' };
   });
+  const flowExperiments = $derived(
+    experiments.filter((experiment) => experiment.spec.flow_id === flow)
+  );
+  const selectedExperiment = $derived(
+    flowExperiments.find((experiment) => experiment.experiment_id === experimentID)
+  );
+
+  function selectExperiment(): void {
+    experimentCohort = selectedExperiment?.cohort ?? 0;
+    experimentArm = '';
+    report = null;
+  }
 
   function noteFor(g: FairLendingReport['groups'][number]): string {
     const parts: string[] = [];
@@ -212,7 +233,15 @@
     <div class="controls">
       <label>
         <span>Flow</span>
-        <select bind:value={flow} onchange={loadConfig}>
+        <select
+          bind:value={flow}
+          onchange={() => {
+            experimentID = '';
+            experimentCohort = 0;
+            experimentArm = '';
+            void loadConfig();
+          }}
+        >
           {#each flows as f (f.flow_id)}
             <option value={f.flow_id}>{f.name}</option>
           {/each}
@@ -238,6 +267,28 @@
         <span>Environment <em>(optional)</em></span>
         <input bind:value={env} placeholder="all" spellcheck="false" />
       </label>
+      <label>
+        <span>Experiment cohort <em>(optional)</em></span>
+        <select bind:value={experimentID} onchange={selectExperiment}>
+          <option value="">all decisions</option>
+          {#each flowExperiments as experiment (experiment.experiment_id)}
+            <option value={experiment.experiment_id}
+              >{experiment.spec.name} · cohort {experiment.cohort}</option
+            >
+          {/each}
+        </select>
+      </label>
+      {#if selectedExperiment}
+        <label>
+          <span>Experiment arm <em>(optional)</em></span>
+          <select bind:value={experimentArm}>
+            <option value="">all arms</option>
+            {#each selectedExperiment.spec.arms as arm (arm.key)}
+              <option value={arm.key}>{arm.name}</option>
+            {/each}
+          </select>
+        </label>
+      {/if}
       <button class="btn primary" onclick={run} disabled={running || !flow}>
         {running ? 'Analysing…' : 'Run analysis'}
       </button>
@@ -263,6 +314,12 @@
           <span class="stat" class:warn={report.excluded > 0}
             >Excluded <b>{report.excluded}</b></span
           >
+          {#if report.experiment_id}
+            <span class="stat"
+              >Cohort <b>#{report.cohort}</b>{#if report.arm}
+                · <b>{report.arm}</b>{/if}</span
+            >
+          {/if}
           {#if report.reference}
             <span class="stat">Reference <b>{report.reference}</b></span>
             <span class="stat">Lowest AIR <b>{report.min_air.toFixed(2)}</b></span>

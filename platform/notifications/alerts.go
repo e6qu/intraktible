@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	deevents "github.com/e6qu/intraktible/decision-engine/events"
+	"github.com/e6qu/intraktible/decision-engine/experiments"
 	"github.com/e6qu/intraktible/decision-engine/monitor"
 	"github.com/e6qu/intraktible/decision-engine/policy"
 	"github.com/e6qu/intraktible/platform/eventlog"
@@ -115,6 +116,36 @@ func applyDeploymentRejected(ctx context.Context, e eventlog.Envelope, s store.S
 	return resolveApproval(ctx, e, s, p.RequestID)
 }
 
+func applyExperimentLaunchRequested(ctx context.Context, e eventlog.Envelope, s store.Store) error {
+	var p experiments.LaunchRequested
+	if err := json.Unmarshal(e.Payload, &p); err != nil {
+		return fmt.Errorf("notifications: decode experiment launch requested seq %d: %w", e.Seq, err)
+	}
+	return shared(
+		ctx, e, s, ApproverQueue, KindApproval, "experiment", p.ExperimentID,
+		fmt.Sprintf("Approval requested: production experiment cohort %d", p.Cohort), p.RequestID,
+	)
+}
+
+func applyExperimentLaunchApproved(ctx context.Context, e eventlog.Envelope, s store.Store) error {
+	var p experiments.LaunchApproved
+	if err := json.Unmarshal(e.Payload, &p); err != nil {
+		return fmt.Errorf("notifications: decode experiment launch approved seq %d: %w", e.Seq, err)
+	}
+	return resolveAndAlert(
+		ctx, e, s, p.RequestID, "experiment", p.ExperimentID,
+		fmt.Sprintf("Production experiment cohort %d started", p.Cohort),
+	)
+}
+
+func applyExperimentLaunchRejected(ctx context.Context, e eventlog.Envelope, s store.Store) error {
+	var p experiments.LaunchRejected
+	if err := json.Unmarshal(e.Payload, &p); err != nil {
+		return fmt.Errorf("notifications: decode experiment launch rejected seq %d: %w", e.Seq, err)
+	}
+	return resolveApproval(ctx, e, s, p.RequestID)
+}
+
 func applyModelApprovalRequested(ctx context.Context, e eventlog.Envelope, s store.Store) error {
 	var p deevents.ModelApprovalRequested
 	if err := json.Unmarshal(e.Payload, &p); err != nil {
@@ -131,11 +162,8 @@ func applyModelApprovalApproved(ctx context.Context, e eventlog.Envelope, s stor
 	if err := json.Unmarshal(e.Payload, &p); err != nil {
 		return fmt.Errorf("notifications: decode model_approval_approved seq %d: %w", e.Seq, err)
 	}
-	if err := resolveApproval(ctx, e, s, p.RequestID); err != nil {
-		return err
-	}
-	return shared(
-		ctx, e, s, OperatorQueue, KindAlert, "model", p.Name,
+	return resolveAndAlert(
+		ctx, e, s, p.RequestID, "model", p.Name,
 		fmt.Sprintf("Model approved: %s v%d", p.Name, p.Version),
 	)
 }
@@ -168,12 +196,23 @@ func applyPolicyApprovalApproved(ctx context.Context, e eventlog.Envelope, s sto
 	if err := json.Unmarshal(e.Payload, &p); err != nil {
 		return fmt.Errorf("notifications: decode policy approval approved seq %d: %w", e.Seq, err)
 	}
-	if err := resolveApproval(ctx, e, s, p.RequestID); err != nil {
+	return resolveAndAlert(
+		ctx, e, s, p.RequestID, "policy", p.PolicyID,
+		fmt.Sprintf("Policy approved for non-sandbox serving: v%d", p.Version),
+	)
+}
+
+func resolveAndAlert(
+	ctx context.Context,
+	e eventlog.Envelope,
+	s store.Store,
+	requestID, resourceType, resourceID, message string,
+) error {
+	if err := resolveApproval(ctx, e, s, requestID); err != nil {
 		return err
 	}
 	return shared(
-		ctx, e, s, OperatorQueue, KindAlert, "policy", p.PolicyID,
-		fmt.Sprintf("Policy approved for non-sandbox serving: v%d", p.Version),
+		ctx, e, s, OperatorQueue, KindAlert, resourceType, resourceID, message,
 	)
 }
 

@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+
 # intraktible
 
 Open-source MVPs of a commercial **Agentic Decision Platform**, in four components:
@@ -7,14 +9,20 @@ Open-source MVPs of a commercial **Agentic Decision Platform**, in four componen
 - **context-layer/** — entities/events/features data model + connectors
 - **agent-manager/** — configure/run/monitor LLM task-agents inside flows
 
+The Decision Engine also includes governed, stable-cohort experiments with
+decision-linked outcomes and statistical guardrails, plus durable multi-worker
+population decision/backtest jobs with pause, recovery, retry, and retained results.
+
 **Stack:** Go (functional core / imperative shell) backend · SvelteKit + Svelte Flow frontend ·
 pure-Go embedded append-only **event log** with **hybrid event sourcing** + JSONB projections
 (pluggable SQLite/Postgres) · modular monolith that also splits into services · pluggable AI provider.
 
-See **[PLAN.md](PLAN.md)** for the full architecture and roadmap. Status: **MVP complete** — all four
-components plus the shared core are built (Phases 0–5: PLAN §8), with replay/rollback operator tooling
-and a split-services profile. Start at **[AGENTS.md](AGENTS.md)**; a runnable end-to-end walkthrough is
-in **[docs/EXAMPLE.md](docs/EXAMPLE.md)**. Post-MVP backlog: **[BUGS.md](BUGS.md)**.
+See **[PLAN.md](PLAN.md)** for the full architecture and roadmap. Status: the **MVP and the first
+enterprise platform tracks are complete** — all four components, shared governance, durable execution,
+experimentation/outcomes, and population automation are built, with replay/rollback operator tooling
+and split-service deployment profiles. Start at **[AGENTS.md](AGENTS.md)**; a runnable end-to-end
+walkthrough is in **[docs/EXAMPLE.md](docs/EXAMPLE.md)**. The delivered audit is
+**[BUGS.md](BUGS.md)**.
 
 **Live demo:** the REAL Go backend, compiled to WebAssembly, runs entirely in the browser (no server;
 a seeded event log replays at boot) at
