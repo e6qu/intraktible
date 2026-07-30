@@ -45,6 +45,7 @@ describe('persona config', () => {
     expect(ids).toEqual([
       'decisions',
       'engine',
+      'components',
       'population',
       'keys',
       'agents',

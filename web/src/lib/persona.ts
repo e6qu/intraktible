@@ -22,6 +22,7 @@ export type Persona =
 // NavId names an entry in the shared navigation catalog below.
 export type NavId =
   | 'engine'
+  | 'components'
   | 'policies'
   | 'preapprovals'
   | 'experiments'
@@ -45,6 +46,7 @@ export type NavItem = { id: NavId; href: string; label: string; icon: string };
 // Map (not a plain object) so variable-key lookups don't trip the object-injection lint.
 export const NAV = new Map<NavId, NavItem>([
   ['engine', { id: 'engine', href: '/engine', label: 'Flows', icon: 'engine' }],
+  ['components', { id: 'components', href: '/components', label: 'Components', icon: 'subflow' }],
   ['policies', { id: 'policies', href: '/policies', label: 'Policies', icon: 'rule' }],
   [
     'preapprovals',
@@ -178,6 +180,7 @@ export const PERSONAS: PersonaConfig[] = [
     home: 'builder',
     nav: [
       'engine',
+      'components',
       'policies',
       'experiments',
       'population',
@@ -198,7 +201,17 @@ export const PERSONAS: PersonaConfig[] = [
     blurb: 'Integrate the decision API and debug traces',
     icon: 'agents',
     home: 'persona',
-    nav: ['decisions', 'engine', 'population', 'keys', 'agents', 'data', 'observability', 'audit'],
+    nav: [
+      'decisions',
+      'engine',
+      'components',
+      'population',
+      'keys',
+      'agents',
+      'data',
+      'observability',
+      'audit'
+    ],
     actions: [
       { label: 'Inspect decision traces', href: '/decisions', icon: 'diagram' },
       { label: 'Manage API keys', href: '/keys', icon: 'connect' },

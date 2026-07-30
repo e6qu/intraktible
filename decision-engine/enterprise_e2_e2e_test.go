@@ -74,6 +74,19 @@ func TestExperimentOutcomeAndPopulationHTTPJourney(t *testing.T) {
 		map[string]any{"graph": flowtest.ConstGraph("treatment")}, http.StatusCreated, nil)
 
 	sdk := intraktible.New(api.Server.URL, api.Key, intraktible.WithHTTPClient(api.Server.Client()))
+	var (
+		projectedFlow intraktible.Flow
+		flowReadErr   error
+	)
+	if !testutil.EventuallyWithin(t, 3*time.Second, func() bool {
+		projectedFlow, flowReadErr = sdk.GetFlow(ctx, created.FlowID)
+		return flowReadErr == nil && projectedFlow.Latest == 2
+	}) {
+		t.Fatalf(
+			"flow versions were not projected before experiment validation: flow=%+v read_err=%v",
+			projectedFlow, flowReadErr,
+		)
+	}
 	experimentID, err := sdk.CreateExperiment(ctx, intraktible.ExperimentSpec{
 		Name: "Offer conversion", Hypothesis: "the treatment increases conversion",
 		Owner: id.Actor, FlowID: created.FlowID, Environment: "sandbox",

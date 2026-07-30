@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Starter flows offered by the builder's "New from template" gallery. Each is a real
-// flow-as-code document imported through POST /v1/flows/import (the same path as the
+// flow-as-code document imported through POST /v1/authoring/import (the same path as the
 // in-product Import). They are authored to showcase the differentiating node types
 // (scorecard, decision_table, 2d_matrix, rule, code, reason, connect, ai, predict) and
 // to resolve against the demo's sample connector data, so a test run lands on a real

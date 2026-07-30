@@ -26,6 +26,41 @@ func New(cmd *Handler, st store.Store) *Service {
 func (s *Service) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/comments/{subject_type}/{subject_id}", s.list)
 	mux.HandleFunc("POST /v1/comments/{subject_type}/{subject_id}", s.post)
+	mux.HandleFunc(
+		"POST /v1/comments/{subject_type}/{subject_id}/{comment_id}/resolve",
+		s.resolve,
+	)
+	mux.HandleFunc(
+		"POST /v1/comments/{subject_type}/{subject_id}/{comment_id}/reopen",
+		s.reopen,
+	)
+}
+
+func (s *Service) resolve(w http.ResponseWriter, r *http.Request) {
+	s.setResolved(w, r, true)
+}
+
+func (s *Service) reopen(w http.ResponseWriter, r *http.Request) {
+	s.setResolved(w, r, false)
+}
+
+func (s *Service) setResolved(w http.ResponseWriter, r *http.Request, resolved bool) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	event, err := s.cmd.SetResolved(
+		r.Context(), id,
+		Subject{Type: r.PathValue("subject_type"), ID: r.PathValue("subject_id")},
+		r.PathValue("comment_id"), resolved,
+	)
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"event_id": event.ID, "seq": event.Seq, "resolved": resolved,
+	})
 }
 
 func (s *Service) list(w http.ResponseWriter, r *http.Request) {

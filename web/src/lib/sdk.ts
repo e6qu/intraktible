@@ -19,10 +19,12 @@ export interface ClientOptions {
 // its {error} message when present.
 export class ApiError extends Error {
   readonly status: number;
-  constructor(status: number, message: string) {
+  readonly body?: unknown;
+  constructor(status: number, message: string, body?: unknown) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
+    this.body = body;
   }
 }
 
@@ -72,6 +74,75 @@ export interface SdkFlow {
   latest: number;
 }
 
+export interface AuthoringDraft {
+  draft_id: string;
+  flow_id: string;
+  base_version: number;
+  revision: number;
+  state: 'active' | 'archived';
+  title: string;
+  graph: unknown;
+  input_schema?: unknown;
+  created_by: string;
+  created_at: string;
+  updated_by: string;
+  updated_at: string;
+}
+
+export interface AuthoringDraftRevision {
+  draft_id: string;
+  flow_id: string;
+  base_version: number;
+  revision: number;
+  title: string;
+  graph: unknown;
+  input_schema?: unknown;
+  actor: string;
+  at: string;
+  rebased?: boolean;
+}
+
+export interface AuthoringPresence {
+  draft_id: string;
+  actor: string;
+  display_name?: string;
+  revision: number;
+  selected_id?: string;
+  renewed_at: string;
+  expires_at: string;
+}
+
+export interface AuthoringChangeSet {
+  changeset_id: string;
+  flow_id: string;
+  base_version: number;
+  draft_id: string;
+  draft_revision: number;
+  title: string;
+  rationale?: string;
+  state: 'draft' | 'in_review' | 'changes_requested' | 'approved' | 'publishing' | 'published';
+  source_graph: unknown;
+  graph: unknown;
+  proposed_etag: string;
+  dependencies?: Array<{ component_id: string; version: number; etag: string }>;
+  required_checks?: string[];
+  reviewers?: string[];
+  checks?: Record<string, unknown>;
+  created_by: string;
+  submitted_by?: string;
+  published_version?: number;
+}
+
+export interface ReusableComponent {
+  component_id: string;
+  slug: string;
+  name: string;
+  description?: string;
+  latest: number;
+  versions?: Array<Record<string, unknown>>;
+  retired: boolean;
+}
+
 export interface FlowDoc {
   slug: string;
   name?: string;
@@ -81,10 +152,17 @@ export interface FlowDoc {
 
 export interface ImportResult {
   flow_id: string;
-  slug: string;
-  version: number;
+  draft_id: string;
+  revision: number;
   created: boolean;
-  published: boolean;
+  migration_report: {
+    rewrites: Array<{
+      path: string;
+      from: string;
+      to: string;
+      reason: string;
+    }>;
+  };
 }
 
 export interface Identity {
@@ -103,19 +181,16 @@ export interface PromoteResult {
 }
 
 export interface BundleFlowResult {
-  slug: string;
-  flow_id?: string;
-  version?: number;
+  flow_id: string;
+  draft_id: string;
+  revision: number;
   created: boolean;
-  published: boolean;
-  error?: string;
+  migration_report: ImportResult['migration_report'];
 }
 
 export interface BundleResult {
-  results: BundleFlowResult[];
-  published: number;
-  failed: number;
-  unchanged: number;
+  imports: BundleFlowResult[];
+  seq: number;
 }
 
 export interface ExperimentSpec {
@@ -260,14 +335,275 @@ export class Client {
     return this.request<SdkFlow>('GET', `/v1/flows/${encodeURIComponent(flowId)}`);
   }
 
-  // importFlow upserts a flow from a flow-as-code document.
-  importFlow(doc: FlowDoc): Promise<ImportResult> {
-    return this.request<ImportResult>('POST', '/v1/flows/import', doc);
+  async createDraft(
+    input: {
+      flow_id: string;
+      base_version: number;
+      title: string;
+      graph: unknown;
+      input_schema?: unknown;
+    },
+    idempotencyKey = crypto.randomUUID()
+  ): Promise<string> {
+    const out = await this.request<{ draft_id: string }>('POST', '/v1/authoring/drafts', input, {
+      'Idempotency-Key': idempotencyKey
+    });
+    return out.draft_id;
   }
 
-  // importBundle imports many flows in one request (best-effort per flow).
-  importBundle(docs: FlowDoc[]): Promise<BundleResult> {
-    return this.request<BundleResult>('POST', '/v1/flows/import-bundle', { flows: docs });
+  async listDrafts(flowId = ''): Promise<AuthoringDraft[]> {
+    const query = flowId ? `?flow_id=${encodeURIComponent(flowId)}` : '';
+    const out = await this.request<{ drafts?: AuthoringDraft[] }>(
+      'GET',
+      `/v1/authoring/drafts${query}`
+    );
+    return out.drafts ?? [];
+  }
+
+  saveDraft(
+    draftId: string,
+    input: { expected_revision: number; title: string; graph: unknown; input_schema?: unknown }
+  ): Promise<{ revision: number }> {
+    return this.request('PUT', `/v1/authoring/drafts/${encodeURIComponent(draftId)}`, input);
+  }
+
+  getDraft(draftId: string): Promise<AuthoringDraft> {
+    return this.request('GET', `/v1/authoring/drafts/${encodeURIComponent(draftId)}`);
+  }
+
+  rebaseDraft(
+    draftId: string,
+    input: {
+      expected_revision: number;
+      base_version: number;
+      title: string;
+      graph: unknown;
+      input_schema?: unknown;
+    }
+  ): Promise<{ revision: number }> {
+    return this.request(
+      'POST',
+      `/v1/authoring/drafts/${encodeURIComponent(draftId)}/rebase`,
+      input
+    );
+  }
+
+  async listDraftRevisions(draftId: string): Promise<AuthoringDraftRevision[]> {
+    const out = await this.request<{ revisions?: AuthoringDraftRevision[] }>(
+      'GET',
+      `/v1/authoring/drafts/${encodeURIComponent(draftId)}/revisions`
+    );
+    return out.revisions ?? [];
+  }
+
+  async archiveDraft(draftId: string): Promise<void> {
+    await this.request('DELETE', `/v1/authoring/drafts/${encodeURIComponent(draftId)}`);
+  }
+
+  renewDraftPresence(
+    draftId: string,
+    input: {
+      display_name?: string;
+      revision: number;
+      selected_id?: string;
+      ttl_seconds?: number;
+    }
+  ): Promise<AuthoringPresence> {
+    return this.request(
+      'PUT',
+      `/v1/authoring/drafts/${encodeURIComponent(draftId)}/presence`,
+      input
+    );
+  }
+
+  async listDraftPresence(draftId: string): Promise<AuthoringPresence[]> {
+    const out = await this.request<{ presence?: AuthoringPresence[] }>(
+      'GET',
+      `/v1/authoring/drafts/${encodeURIComponent(draftId)}/presence`
+    );
+    return out.presence ?? [];
+  }
+
+  async leaveDraftPresence(draftId: string): Promise<void> {
+    await this.request('DELETE', `/v1/authoring/drafts/${encodeURIComponent(draftId)}/presence`);
+  }
+
+  async createChangeSet(
+    input: {
+      draft_id: string;
+      draft_revision: number;
+      title: string;
+      rationale?: string;
+      required_checks?: string[];
+      reviewers?: string[];
+    },
+    idempotencyKey = crypto.randomUUID()
+  ): Promise<string> {
+    const out = await this.request<{ changeset_id: string }>(
+      'POST',
+      '/v1/authoring/changesets',
+      input,
+      { 'Idempotency-Key': idempotencyKey }
+    );
+    return out.changeset_id;
+  }
+
+  async listChangeSets(flowId = ''): Promise<AuthoringChangeSet[]> {
+    const query = flowId ? `?flow_id=${encodeURIComponent(flowId)}` : '';
+    const out = await this.request<{ changesets?: AuthoringChangeSet[] }>(
+      'GET',
+      `/v1/authoring/changesets${query}`
+    );
+    return out.changesets ?? [];
+  }
+
+  checkChangeSet(
+    changeSetId: string,
+    name = 'flow-validation',
+    status: 'passed' | 'failed' = 'passed',
+    evidence = ''
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      'POST',
+      `/v1/authoring/changesets/${encodeURIComponent(changeSetId)}/checks`,
+      { name, status, evidence: evidence || undefined }
+    );
+  }
+
+  submitChangeSet(changeSetId: string): Promise<Record<string, unknown>> {
+    return this.request(
+      'POST',
+      `/v1/authoring/changesets/${encodeURIComponent(changeSetId)}/submit`,
+      {}
+    );
+  }
+
+  reviewChangeSet(
+    changeSetId: string,
+    decision: 'approve' | 'request_changes',
+    reason = ''
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      'POST',
+      `/v1/authoring/changesets/${encodeURIComponent(changeSetId)}/review`,
+      { decision, reason }
+    );
+  }
+
+  publishChangeSet(changeSetId: string): Promise<{ version: number; etag: string }> {
+    return this.request(
+      'POST',
+      `/v1/authoring/changesets/${encodeURIComponent(changeSetId)}/publish`,
+      {}
+    );
+  }
+
+  async listReusableComponents(): Promise<ReusableComponent[]> {
+    const out = await this.request<{ components?: ReusableComponent[] }>(
+      'GET',
+      '/v1/authoring/components'
+    );
+    return out.components ?? [];
+  }
+
+  async createReusableComponent(
+    input: { slug: string; name: string; description?: string },
+    idempotencyKey = crypto.randomUUID()
+  ): Promise<string> {
+    const out = await this.request<{ component_id: string }>(
+      'POST',
+      '/v1/authoring/components',
+      input,
+      { 'Idempotency-Key': idempotencyKey }
+    );
+    return out.component_id;
+  }
+
+  publishReusableComponent(
+    componentId: string,
+    input: {
+      graph: unknown;
+      input_schema?: unknown;
+      output_schema?: unknown;
+      allow_breaking?: boolean;
+      breaking_change_reason?: string;
+    },
+    idempotencyKey = crypto.randomUUID()
+  ): Promise<{ version: number; etag: string }> {
+    return this.request(
+      'POST',
+      `/v1/authoring/components/${encodeURIComponent(componentId)}/versions`,
+      input,
+      { 'Idempotency-Key': idempotencyKey }
+    );
+  }
+
+  assessComponentCompatibility(
+    componentId: string,
+    fromVersion: number,
+    toVersion: number
+  ): Promise<{
+    report: {
+      from_version: number;
+      to_version: number;
+      status: 'compatible' | 'incompatible';
+      issues?: Array<{ path: string; code: string; message: string }>;
+    };
+    consumers: Array<Record<string, unknown>>;
+    upgradeable: boolean;
+  }> {
+    const query = new URLSearchParams({
+      from_version: String(fromVersion),
+      to_version: String(toVersion)
+    });
+    return this.request(
+      'GET',
+      `/v1/authoring/components/${encodeURIComponent(componentId)}/compatibility?${query}`
+    );
+  }
+
+  createComponentUpgradeDrafts(
+    componentId: string,
+    input: { from_version: number; to_version: number; flow_ids: string[]; title?: string },
+    idempotencyKey: string = crypto.randomUUID()
+  ): Promise<{
+    drafts: Array<{ flow_id: string; draft_id: string; base_version: number; revision: number }>;
+    seq: number;
+  }> {
+    return this.request(
+      'POST',
+      `/v1/authoring/components/${encodeURIComponent(componentId)}/upgrade-drafts`,
+      input,
+      { 'Idempotency-Key': idempotencyKey }
+    );
+  }
+
+  // importFlow creates a durable draft; it never bypasses changeset review.
+  importFlow(doc: FlowDoc, idempotencyKey: string): Promise<ImportResult> {
+    return this.request<ImportResult>(
+      'POST',
+      '/v1/authoring/import',
+      { ...doc, format_version: 'intraktible.authoring/v1', kind: 'flow' },
+      { 'Idempotency-Key': idempotencyKey }
+    );
+  }
+
+  // importBundle validates the full bundle before creating governed drafts.
+  importBundle(docs: FlowDoc[], idempotencyKey: string): Promise<BundleResult> {
+    return this.request<BundleResult>(
+      'POST',
+      '/v1/authoring/import-bundle',
+      {
+        format_version: 'intraktible.authoring/v1',
+        kind: 'bundle',
+        flows: docs.map((doc) => ({
+          ...doc,
+          format_version: 'intraktible.authoring/v1',
+          kind: 'flow'
+        }))
+      },
+      { 'Idempotency-Key': idempotencyKey }
+    );
   }
 
   // deploy makes a version live in an environment (a direct deploy).
@@ -437,16 +773,19 @@ export class Client {
     });
     if (!res.ok) {
       let message = String(res.status);
+      let body: unknown;
       try {
-        const e = (await res.json()) as { error?: string };
+        body = await res.json();
+        const e = body as { error?: string };
         if (e && typeof e.error === 'string' && e.error) {
           message = e.error;
         }
       } catch (_nonJSONErrorBody) {
         /* a non-JSON error body leaves the status as the message */
       }
-      throw new ApiError(res.status, message);
+      throw new ApiError(res.status, message, body);
     }
+    if (res.status === 204) return undefined as T;
     return (await res.json()) as T;
   }
 

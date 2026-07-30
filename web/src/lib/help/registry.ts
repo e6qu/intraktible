@@ -186,6 +186,39 @@ export const HELP = new Map<string, PageHelp>([
     }
   ],
   [
+    '/components',
+    {
+      title: 'Reusable components',
+      summary:
+        'Publish immutable decision subflows and understand every direct or transitive consumer before changing shared logic.',
+      capabilities: [
+        'Create a named reusable component identity.',
+        'Publish exact source, input schema, output schema, and recursively expanded dependency versions.',
+        'Inspect every flow or component consumer of each immutable version.',
+        'Retire a component without breaking existing exact-version pins.'
+      ],
+      journeys: [
+        {
+          name: 'Publish reusable decision logic',
+          steps: [
+            'Enter the component slug, name, and description, then click Create component.',
+            'Choose the component in Registry.',
+            'Edit its source graph and typed input/output schemas.',
+            'Click Publish vN — invalid topology, missing pins, cycles, and excessive expansion are rejected.'
+          ]
+        },
+        {
+          name: 'Assess impact before retirement',
+          steps: [
+            'Open the component in Registry.',
+            'Read each version’s direct and transitive consumer count and identities.',
+            'Click Retire and confirm; existing pins remain executable while new versions are blocked.'
+          ]
+        }
+      ]
+    }
+  ],
+  [
     '/engine',
     {
       title: 'Flows',
@@ -194,7 +227,8 @@ export const HELP = new Map<string, PageHelp>([
       capabilities: [
         'Create a flow from scratch, from a template, from an AI draft, or import one as code.',
         'See each flow’s latest version, its description, and what is deployed to sandbox and production.',
-        'Open a flow to build, version, test, and deploy it.'
+        'Open a flow to build a shared draft, request review, and deploy approved versions.',
+        'Open the reusable-component registry and inspect dependency impact.'
       ],
       journeys: [
         {
@@ -203,7 +237,7 @@ export const HELP = new Map<string, PageHelp>([
             'Enter a Slug (for example loan-origination), a Name, and an optional Description — it shows under the name in the list and in the builder.',
             'Click Create flow.',
             'You land in the builder — add nodes from the left rail and wire them input → output.',
-            'Click Publish version to create v1.'
+            'Wait for Saved, then click Request review to create the pinned review artifact.'
           ]
         },
         {
@@ -247,11 +281,11 @@ export const HELP = new Map<string, PageHelp>([
     {
       title: 'Flow builder',
       summary:
-        'Build a decision flow as a graph of nodes, then version, test, deploy, and monitor it. The active version is what the decision API runs.',
+        'Build a decision flow in a recoverable shared draft, then review, publish, deploy, and monitor it. The active deployed version is what the decision API runs.',
       capabilities: [
-        'Compose the graph on the canvas: add nodes from the left rail, wire them by dragging between handles, edit each node in the inspector.',
+        'Compose the graph on the shared canvas; every accepted revision autosaves, collaborators stay visible, and optimistic conflicts preserve both versions.',
         'Test-run, backtest, what-if, assert, and batch-decide from the Test & analyze tab.',
-        'Publish the draft as a new immutable version; diff any two versions.',
+        'Submit one pinned changeset with server validation for independent review and publication.',
         'Deploy per environment, promote to production with four-eyes review, or roll back.',
         'Watch the flow with monitors and webhooks; draft logic with the copilot.',
         'Edit the flow description inline (the ✎ under the title); click the circled robot for Analyze this flow with AI.'
@@ -265,7 +299,7 @@ export const HELP = new Map<string, PageHelp>([
             'Wire nodes by dragging between their handles; label a split’s outgoing edges via the edge inspector’s branch field.',
             'Select a node to open the node inspector and edit its name, lane, and type-specific config — edits apply to the draft as you type.',
             'Click Auto-layout to tidy the board.',
-            'Click Publish version — the draft becomes the new immutable version.'
+            'Wait for Saved, then click Request review — the exact revision enters the review queue.'
           ]
         },
         {
@@ -337,7 +371,7 @@ export const HELP = new Map<string, PageHelp>([
             'For more, open the Copilot tab.',
             'Click Explain this flow for a plain-language readout, or describe the logic you want in the prompt.',
             'Click Suggest logic for advice, or Generate & apply a flow to load a server-validated graph onto the canvas.',
-            'Review the generated draft, then click Publish version to keep it.'
+            'Review the generated draft, wait for autosave, then click Request review.'
           ]
         },
         {

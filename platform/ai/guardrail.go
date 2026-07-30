@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/e6qu/intraktible/platform/privacy"
 	"golang.org/x/time/rate"
 )
 
@@ -35,17 +36,6 @@ type Guardrails struct {
 // Enabled reports whether any protection is configured (else Guard is a passthrough).
 func (g Guardrails) Enabled() bool {
 	return g.RatePerSec > 0 || g.RedactPII || len(g.RedactFields) > 0 || g.BlockInjection
-}
-
-const redacted = "[redacted]"
-
-// piiPatterns match common free-text PII. Deliberately conservative (high-signal
-// shapes) so redaction doesn't mangle ordinary prompt text.
-var piiPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}`), // email
-	regexp.MustCompile(`\b\d{3}-\d{2}-\d{4}\b`),                            // US SSN
-	regexp.MustCompile(`\b(?:\d[ -]?){13,16}\b`),                           // card-like
-	regexp.MustCompile(`\b\+?\d[\d\s().\-]{8,}\d\b`),                       // phone-like
 }
 
 // injectionPatterns match well-known jailbreak / prompt-injection phrasings. A
@@ -107,7 +97,7 @@ func (g *guard) admit(ctx context.Context, req Request) (Request, error) {
 		return req, ErrBlockedByGuardrail
 	}
 	if g.cfg.RedactPII {
-		req.Prompt = redactText(req.Prompt)
+		req.Prompt = privacy.RedactTextPII(req.Prompt)
 	}
 	return req, nil
 }
@@ -115,7 +105,7 @@ func (g *guard) admit(ctx context.Context, req Request) (Request, error) {
 // guardResponse redacts the model's output per config.
 func (g *guard) guardResponse(resp Response) Response {
 	if g.cfg.RedactPII {
-		resp.Text = redactText(resp.Text)
+		resp.Text = privacy.RedactTextPII(resp.Text)
 	}
 	if len(g.fields) > 0 && len(resp.Structured) > 0 {
 		resp.Structured = maskFields(resp.Structured, g.fields)
@@ -164,14 +154,6 @@ func matchesAny(patterns []*regexp.Regexp, s string) bool {
 	return false
 }
 
-// redactText replaces PII-shaped substrings with a placeholder.
-func redactText(s string) string {
-	for _, p := range piiPatterns {
-		s = p.ReplaceAllString(s, redacted)
-	}
-	return s
-}
-
 // maskFields recursively replaces the values of named fields in a JSON object with
 // the placeholder, leaving structure and non-secret fields intact. On any decode
 // failure it returns the input unchanged (never drops the output).
@@ -193,7 +175,7 @@ func maskValue(v any, fields map[string]bool) any {
 	case map[string]any:
 		for k, val := range t {
 			if fields[strings.ToLower(k)] {
-				t[k] = redacted
+				t[k] = privacy.Redacted
 			} else {
 				t[k] = maskValue(val, fields)
 			}

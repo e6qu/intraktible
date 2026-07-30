@@ -10,7 +10,7 @@ export type RunStatus = 'completed' | 'failed' | 'suspended';
 
 export type Variant = 'champion' | 'challenger';
 
-export type NodeType = 'input' | 'rule' | 'split' | 'assignment' | 'scorecard' | 'decision_table' | '2d_matrix' | 'code' | 'ai' | 'connect' | 'predict' | 'manual_review' | 'reason' | 'output';
+export type NodeType = 'input' | 'rule' | 'split' | 'assignment' | 'scorecard' | 'decision_table' | '2d_matrix' | 'code' | 'ai' | 'connect' | 'predict' | 'manual_review' | 'reason' | 'subflow' | 'output';
 
 export type Aggregation = 'count' | 'sum' | 'avg' | 'min' | 'max' | 'last' | 'first' | 'count_distinct';
 export const AGGREGATIONS: readonly Aggregation[] = ['count', 'sum', 'avg', 'min', 'max', 'last', 'first', 'count_distinct'] as const;

@@ -17,6 +17,7 @@ import (
 	"github.com/e6qu/intraktible/decision-engine/analytics"
 	"github.com/e6qu/intraktible/decision-engine/assertions"
 	"github.com/e6qu/intraktible/decision-engine/command"
+	"github.com/e6qu/intraktible/decision-engine/domain"
 	"github.com/e6qu/intraktible/decision-engine/events"
 	"github.com/e6qu/intraktible/decision-engine/export"
 	"github.com/e6qu/intraktible/decision-engine/flows"
@@ -34,6 +35,7 @@ import (
 	"github.com/e6qu/intraktible/platform/effect"
 	"github.com/e6qu/intraktible/platform/entity"
 	"github.com/e6qu/intraktible/platform/erasure"
+	"github.com/e6qu/intraktible/platform/httpx"
 	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/privacy"
 	"github.com/e6qu/intraktible/platform/testutil"
@@ -59,88 +61,10 @@ func rawGet(t *testing.T, api *testutil.API, path string) (int, string) {
 
 func TestImportFlowOverHTTP(t *testing.T) {
 	api := startEngine(t)
-
-	v1 := map[string]any{
-		"slug": "iac",
-		"name": "Flow as Code",
-		"graph": map[string]any{
-			"nodes": []map[string]any{
-				{"id": "in", "type": "input"},
-				{"id": "out", "type": "output"},
-			},
-			"edges": []map[string]any{{"from": "in", "to": "out"}},
-		},
-	}
-
-	// First import creates the flow and publishes v1.
-	var imp struct {
-		FlowID    string `json:"flow_id"`
-		Version   int    `json:"version"`
-		Created   bool   `json:"created"`
-		Published bool   `json:"published"`
-	}
-	api.Request(t, http.MethodPost, "/v1/flows/import", v1, http.StatusCreated, &imp)
-	if !imp.Created || !imp.Published || imp.Version != 1 || imp.FlowID == "" {
-		t.Fatalf("first import: %+v", imp)
-	}
-	flowID := imp.FlowID
-
-	// Re-importing identical content is a no-op (200, nothing published) even
-	// back-to-back — the command folds the authoritative log, not the projection.
-	imp = struct {
-		FlowID    string `json:"flow_id"`
-		Version   int    `json:"version"`
-		Created   bool   `json:"created"`
-		Published bool   `json:"published"`
-	}{}
-	api.Request(t, http.MethodPost, "/v1/flows/import", v1, http.StatusOK, &imp)
-	if imp.Created || imp.Published || imp.Version != 1 || imp.FlowID != flowID {
-		t.Fatalf("idempotent re-import: %+v", imp)
-	}
-
-	// A changed graph under the same slug publishes v2 onto the same flow.
-	v2 := map[string]any{
-		"slug": "iac",
-		"graph": map[string]any{
-			"nodes": []map[string]any{
-				{"id": "in", "type": "input"},
-				{"id": "s", "type": "split", "name": "route", "config": map[string]any{"condition": "true"}},
-				{"id": "out", "type": "output"},
-				{"id": "decline", "type": "output"},
-			},
-			"edges": []map[string]any{
-				{"from": "in", "to": "s"},
-				{"from": "s", "to": "out", "branch": "yes"},
-				{"from": "s", "to": "decline", "branch": "no"},
-			},
-		},
-	}
-	api.Request(t, http.MethodPost, "/v1/flows/import", v2, http.StatusCreated, &imp)
-	if imp.Created || !imp.Published || imp.Version != 2 || imp.FlowID != flowID {
-		t.Fatalf("update import: %+v", imp)
-	}
-
-	// The flow ends up with both versions once the projection catches up.
-	if !testutil.Eventually(t, func() bool {
-		code, body := rawGet(t, api, "/v1/flows/"+flowID)
-		return code == http.StatusOK && strings.Contains(body, `"latest":2`)
-	}) {
-		t.Fatal("imported flow never reached latest version 2")
-	}
-
-	// An exported doc round-trips back through import unchanged (no-op).
-	code, raw := rawGet(t, api, "/v1/flows/"+flowID+"/export?format=json")
-	if code != http.StatusOK {
-		t.Fatalf("export for round-trip: %d\n%s", code, raw)
-	}
-	var fx export.FlowExport
-	if err := json.Unmarshal([]byte(raw), &fx); err != nil {
-		t.Fatalf("export not valid: %v", err)
-	}
-	api.Request(t, http.MethodPost, "/v1/flows/import", fx, http.StatusOK, &imp)
-	if imp.Published {
-		t.Fatalf("re-importing an export of the latest version should be a no-op: %+v", imp)
-	}
+	api.Request(
+		t, http.MethodPost, "/v1/flows/import", map[string]any{},
+		http.StatusGone, nil,
+	)
 }
 
 type fieldSealer struct {
@@ -497,62 +421,10 @@ func TestShadowEvaluationOverHTTP(t *testing.T) {
 
 func TestImportBundleOverHTTP(t *testing.T) {
 	api := startEngine(t)
-
-	okGraph := map[string]any{
-		"nodes": []map[string]any{
-			{"id": "in", "type": "input"},
-			{"id": "out", "type": "output"},
-		},
-		"edges": []map[string]any{{"from": "in", "to": "out"}},
-	}
-
-	// A bundle with two good flows and one invalid (bad slug) flow.
-	bundle := map[string]any{
-		"flows": []map[string]any{
-			{"slug": "iac-a", "name": "A", "graph": okGraph},
-			{"slug": "iac-b", "name": "B", "graph": okGraph},
-			{"slug": "Bad Slug", "name": "nope", "graph": okGraph},
-		},
-	}
-	var out struct {
-		Results []struct {
-			Slug      string `json:"slug"`
-			Version   int    `json:"version"`
-			Created   bool   `json:"created"`
-			Published bool   `json:"published"`
-			Error     string `json:"error"`
-		} `json:"results"`
-		Published int `json:"published"`
-		Failed    int `json:"failed"`
-		Unchanged int `json:"unchanged"`
-	}
-	api.Request(t, http.MethodPost, "/v1/flows/import-bundle", bundle, http.StatusOK, &out)
-	if out.Published != 2 || out.Failed != 1 || len(out.Results) != 3 {
-		t.Fatalf("bundle summary: %+v", out)
-	}
-	// The good flows are created; the invalid one carries an error and no version.
-	for _, r := range out.Results {
-		switch r.Slug {
-		case "iac-a", "iac-b":
-			if !r.Created || !r.Published || r.Version != 1 || r.Error != "" {
-				t.Fatalf("good flow %q: %+v", r.Slug, r)
-			}
-		case "Bad Slug":
-			if r.Error == "" || r.Published {
-				t.Fatalf("invalid flow should report an error: %+v", r)
-			}
-		}
-	}
-
-	// Re-importing the same bundle is a no-op for the valid flows (idempotent).
-	out.Published, out.Failed, out.Unchanged = 0, 0, 0
-	api.Request(t, http.MethodPost, "/v1/flows/import-bundle", bundle, http.StatusOK, &out)
-	if out.Published != 0 || out.Failed != 1 || out.Unchanged != 2 {
-		t.Fatalf("idempotent re-import summary: %+v", out)
-	}
-
-	// An empty bundle is a 400.
-	api.Request(t, http.MethodPost, "/v1/flows/import-bundle", map[string]any{"flows": []any{}}, http.StatusBadRequest, nil)
+	api.Request(
+		t, http.MethodPost, "/v1/flows/import-bundle", map[string]any{},
+		http.StatusGone, nil,
+	)
 }
 
 func TestExportFlowOverHTTP(t *testing.T) {
@@ -2915,6 +2787,84 @@ func TestPromotionPolicyOverHTTP(t *testing.T) {
 		map[string]any{"from": "sandbox", "to": "staging"}, http.StatusCreated, &promo)
 	if promo.Promoted || !promo.Pending || promo.RequestID == "" {
 		t.Fatalf("staging policy should open a request: %+v", promo)
+	}
+}
+
+func TestPromoteUsesPolicyEventAheadOfProjection(t *testing.T) {
+	ctx := context.Background()
+	log, st := testutil.NewLogStore(t)
+	cmd := command.NewHandler(log)
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "author"}
+
+	flowID, _, err := cmd.CreateFlow(ctx, id, domain.CreateFlow{Slug: "policy-race", Name: "Policy race"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := cmd.PublishVersion(ctx, id, domain.PublishVersion{
+		FlowID: flowID,
+		Graph:  flowtest.ConstGraph("approve"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmd.Deploy(ctx, id, domain.DeployVersion{
+		FlowID: flowID, Environment: "sandbox", Version: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Materialize only the state before the policy write. This deterministically
+	// models the browser issuing promote before the asynchronous projector catches
+	// up with the preceding policy response.
+	evs, err := log.Read(ctx, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projector := flows.Projector{}
+	for _, e := range evs {
+		if err := projector.Apply(ctx, e, st); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := cmd.SetPromotionPolicy(ctx, id, domain.SetPromotionPolicy{
+		FlowID: flowID,
+		Policy: map[string]events.PromotionStagePolicy{
+			"staging": {RequireReview: true},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	svc := service.New(cmd, nil, nil, st)
+	mux := http.NewServeMux()
+	svc.Routes(mux)
+	keys := auth.NewKeyring()
+	keys.Add("test-key", auth.APIKey{
+		ID: "test", Identity: id, Scope: auth.ScopeAll, Role: auth.RoleAdmin,
+	})
+	handler := httpx.Chain(mux, httpx.Authenticate(keys, auth.NewSessions()), httpx.Authorize)
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/flows/"+flowID+"/promote",
+		strings.NewReader(`{"from":"sandbox","to":"staging"}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Api-Key", "test-key")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("promote status = %d, want 201 (body: %s)", rec.Code, rec.Body.String())
+	}
+	var got struct {
+		Promoted bool   `json:"promoted"`
+		Pending  bool   `json:"pending"`
+		Request  string `json:"request_id"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Promoted || !got.Pending || got.Request == "" {
+		t.Fatalf("promote ignored unprojected review policy: %+v", got)
 	}
 }
 

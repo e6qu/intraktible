@@ -100,8 +100,9 @@
     templating = t.id;
     error = '';
     try {
-      const res = await importFlow(key, { ...t.doc, slug: uniqueSlug(t.doc.slug) });
-      toast.success(`Created ${res.slug} from "${t.name}"`);
+      const slug = uniqueSlug(t.doc.slug);
+      const res = await importFlow(key, { ...t.doc, slug });
+      toast.success(`Created ${slug} from "${t.name}"`);
       void goto(appHref(`/engine/${res.flow_id}`));
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
@@ -145,12 +146,13 @@
     if (!draftGraph) return;
     drafting = true;
     try {
+      const slug = uniqueSlug('ai-draft');
       const res = await importFlow(key, {
-        slug: uniqueSlug('ai-draft'),
+        slug,
         name: 'AI draft',
         graph: draftGraph
       });
-      toast.success(`Drafted ${res.slug} — opening in the builder`);
+      toast.success(`Drafted ${slug} — opening in the builder`);
       void goto(appHref(`/engine/${res.flow_id}`));
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
@@ -176,19 +178,24 @@
     try {
       if (isBundle(doc)) {
         const res = await importFlowBundle(key, doc);
-        const parts = [`${res.published} published`, `${res.unchanged} unchanged`];
-        if (res.failed) parts.push(`${res.failed} failed`);
-        toast.success(`Bundle: ${parts.join(', ')}`);
+        const rewrites = res.imports.reduce(
+          (count, imported) => count + imported.migration_report.rewrites.length,
+          0
+        );
+        toast.success(
+          `Imported ${res.imports.length} governed drafts` +
+            (rewrites ? ` · ${rewrites} target-workspace rewrites reported` : '')
+        );
         importText = '';
         await load();
       } else {
         const res = await importFlow(key, doc);
+        const rewrites = res.migration_report.rewrites.length;
         toast.success(
-          res.created
-            ? `Created ${res.slug} (v${res.version})`
-            : res.published
-              ? `Updated ${res.slug} → v${res.version}`
-              : `${res.slug} already at v${res.version} — no change`
+          (res.created
+            ? `Created the flow and imported draft revision ${res.revision}`
+            : `Imported draft revision ${res.revision} for review`) +
+            (rewrites ? ` · ${rewrites} target-workspace rewrites reported` : '')
         );
         importText = '';
         await load();
@@ -234,9 +241,10 @@
     <div class="head-titles">
       <h1>Flows</h1>
       <p class="subtitle">
-        Author decision flows on the canvas, publish versions, and deploy them across environments.
+        Author shared drafts, review changesets, and deploy exact approved versions.
       </p>
     </div>
+    <a href={appHref('/components')}><Icon name="subflow" size={15} /> Reusable components</a>
     <button onclick={load}><Icon name="reload" size={15} /> Reload</button>
   </div>
 
@@ -356,9 +364,9 @@
   <details class="import" data-testid="import-flow">
     <summary><Icon name="upload" size={14} /> Import flow (as code)</summary>
     <p class="muted">
-      Paste or upload a flow exported as JSON (the builder's Export → JSON), or a bundle
-      <code>{'{ "flows": [ … ] }'}</code> of several. Each flow is created if its slug is new, otherwise
-      a new version is published; re-importing identical content is a no-op.
+      Paste or upload a flow exported as JSON, or a bundle
+      <code>{'{ "flows": [ … ] }'}</code> of several. Each source becomes a durable draft and must pass
+      through changeset review before publication.
     </p>
     <textarea
       bind:value={importText}

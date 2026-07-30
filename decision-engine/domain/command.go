@@ -151,9 +151,14 @@ func (c ImportFlow) Validate() error {
 
 // PublishVersion is the command to publish a new immutable version of a flow.
 type PublishVersion struct {
-	FlowID      string
-	Graph       events.Graph
-	InputSchema json.RawMessage
+	FlowID        string
+	Graph         events.Graph
+	InputSchema   json.RawMessage
+	SourceGraph   *events.Graph
+	Dependencies  []events.FlowDependency
+	ChangeSetID   string
+	DraftID       string
+	DraftRevision int
 }
 
 // Validate requires a target flow and a structurally valid graph.
@@ -161,7 +166,25 @@ func (c PublishVersion) Validate() error {
 	if strings.TrimSpace(c.FlowID) == "" {
 		return errors.New("decision-engine: flow_id is required")
 	}
-	return ValidateFlow(c.Graph)
+	if err := ValidateFlow(c.Graph); err != nil {
+		return err
+	}
+	if c.SourceGraph != nil {
+		if err := ValidateAuthoringGraph(*c.SourceGraph); err != nil {
+			return fmt.Errorf("decision-engine: source graph: %w", err)
+		}
+		if c.ChangeSetID == "" || c.DraftID == "" || c.DraftRevision < 1 {
+			return errors.New("decision-engine: source graph requires changeset and draft revision lineage")
+		}
+	}
+	for _, dependency := range c.Dependencies {
+		if strings.TrimSpace(dependency.ComponentID) == "" ||
+			dependency.Version < 1 ||
+			strings.TrimSpace(dependency.Etag) == "" {
+			return errors.New("decision-engine: component dependencies require id, version, and etag")
+		}
+	}
+	return nil
 }
 
 // DeployVersion is the command to make a flow version live in an environment,

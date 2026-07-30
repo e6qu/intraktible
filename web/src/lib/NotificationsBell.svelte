@@ -79,6 +79,12 @@
     if (n.subject_type === 'experiment') {
       return appHref(`/experiments/${encodeURIComponent(n.subject_id)}`);
     }
+    if (n.subject_type === 'changeset' || n.subject_type === 'changeset_object') {
+      const separator = n.subject_id.indexOf(':');
+      if (separator < 1) return undefined;
+      const flowId = n.subject_id.slice(0, separator);
+      return appHref(`/engine/${encodeURIComponent(flowId)}#changeset-review`);
+    }
     if (n.subject_type === 'entity') {
       // The entity subject is "<type>/<id>" (one wire segment); split on the first
       // slash so each half is escaped into the /data/<type>/<id> route.

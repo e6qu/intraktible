@@ -395,8 +395,10 @@ func requiredRole(method, path string) auth.Role {
 		strings.HasSuffix(path, "/promote"),          // promote a live version up the chain
 		strings.HasSuffix(path, "/promotion-policy"), // configure promotion gates
 		strings.HasSuffix(path, "/validation"),       // independent model validation
-		strings.HasSuffix(path, "/approve"),          // the checker approving a deployment
-		strings.HasSuffix(path, "/reject"):           // the checker rejecting a deployment
+		strings.HasPrefix(path, "/v1/authoring/changesets/") &&
+			(strings.HasSuffix(path, "/review") || strings.HasSuffix(path, "/publish")),
+		strings.HasSuffix(path, "/approve"), // the checker approving a deployment
+		strings.HasSuffix(path, "/reject"):  // the checker rejecting a deployment
 		return auth.RoleApprover
 	case strings.HasSuffix(path, "/deployment-requests"), // proposing a deployment (maker)
 		isAuthoringPath(path),
@@ -411,9 +413,10 @@ func requiredRole(method, path string) auth.Role {
 // isAuthoringPath reports whether a mutating path defines/edits decision logic
 // (vs. running it). These are the create/publish endpoints.
 func isAuthoringPath(path string) bool {
-	return path == "/v1/flows" || // create a flow
-		path == "/v1/flows/import" || // import a flow-as-code document (create + publish)
-		path == "/v1/flows/import-bundle" || // import many flows at once (GitOps repo)
+	return strings.HasPrefix(path, "/v1/authoring/") ||
+		path == "/v1/flows" || // create a flow
+		path == "/v1/flows/import" || // authenticated 410 migration boundary
+		path == "/v1/flows/import-bundle" || // authenticated 410 migration boundary
 		path == "/v1/policies" || // create a policy
 		path == "/v1/preapprovals" || // grant a pre-approval (material)
 		path == "/v1/experiments" || // define a governed cohort

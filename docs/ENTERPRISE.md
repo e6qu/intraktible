@@ -404,26 +404,36 @@ enterprise buyers; **P2** = differentiators / scale.
   codegen/Swagger-UI/Postman can fetch it) plus a dependency-free reference page at
   `GET /docs`. The document (`platform/openapi`, embedded) covers the public
   data-plane surface — decide + batch-decide, decision history reads, flow
-  list/create/read, flow-as-code import, and `/v1/me` — with an `X-Api-Key` security
+  list/create/read, governed authoring import, and `/v1/me` — with an `X-Api-Key` security
   scheme. A typed **Go client SDK** (`client`) wraps that surface over net/http with
   no third-party deps — `client.New(baseURL, apiKey).Decide(…)` and friends, with
   errors surfaced as a typed `*APIError`; it is tested end-to-end against a live
   engine. A matching **TypeScript SDK** (`web/src/lib/sdk.ts`, framework-agnostic —
   fetch-only, independent of the app's SvelteKit `api.ts`) ships the same surface
   with a typed `ApiError`. Both SDKs and the spec now also cover the **deployment
-  lifecycle** — bulk import, `deploy`, and `promote` — so a CI/CD pipeline can drive
-  flows-as-code → deploy → promote programmatically. *Remaining: packaging/publishing
+  lifecycle** — governed canonical import, `deploy`, and `promote` — so a CI/CD pipeline can drive
+  flows-as-code → review → publish → promote programmatically. *Remaining: packaging/publishing
   the SDKs, and the remaining admin endpoints (RBAC/audit/secrets) in the spec.*
-- **P1 — Flow-as-code / IaC — ✅ first pass done.** Flows export as a JSON document
-  (`GET …/export?format=json`) and **import** back via `POST /v1/flows/import`: the flow
-  is created when its slug is new, otherwise the graph is published as a new version.
-  Import folds the authoritative log (not the read projection), so back-to-back/CI runs
-  are safe, and re-importing identical content is a no-op (`published:false`, 200) —
-  idempotent GitOps. Surfaced as an **Import flow (as code)** panel (paste or upload JSON)
-  on the engine list. **Bundle import** (`POST /v1/flows/import-bundle`,
-  `{flows:[…]}`) imports a whole repo of flows in one request, best-effort with a
-  per-flow result (a bad flow is reported, not fatal); the same panel accepts a
-  bundle. *Remaining: a CLI/GitOps action wrapping the endpoints.*
+- **P1 — Flow-as-code / IaC — ✅ governed path done.** Repository sources use the
+  strict, byte-stable `intraktible.authoring/v1` format. `POST /v1/authoring/import`
+  creates or resolves the flow and writes a durable draft; it validates/expands exact
+  reusable-component pins and never publishes or deploys. Canonical files identify
+  reusable assets by portable slug rather than a workspace-local id; target import
+  resolves the slug to an exact version and returns every rewrite in a deterministic
+  migration report. Required idempotency keys make lost-response retries return the
+  original draft, and bundle import resolves and compiles the complete document before
+  writing one reviewable draft per flow. The engine list,
+  Go/TypeScript SDKs, and `intraktible authoring` CLI use the governed
+  draft→changeset→check→independent-review→publish path. Canonical exports append
+  actor/revision audit evidence without copying source bytes into the audit event and
+  fail closed when graph configuration embeds values under workspace-classified
+  sensitive keys. Review evidence, review reasons, and comments reject high-signal
+  free-text PII and direct authors to immutable access-controlled evidence records.
+  The legacy `/v1/flows/import*` direct-publication routes return 410 with the
+  governed migration path. This canonical contract intentionally covers governed flow
+  source plus portable exact component pins; it does not relabel the domain-specific
+  policy/model/agent/experiment/case APIs as portable source formats before their E5,
+  E6, and E8 lifecycle work defines those semantics.
 
 ### Security  (status: API key + SameSite session, gosec-clean, SSRF guard, encryption at rest)
 - **P0 — Encryption at rest + secrets management — ✅ done.** A shared

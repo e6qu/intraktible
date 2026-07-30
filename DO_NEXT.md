@@ -16,14 +16,27 @@ DOC (a claim not backed by code).
 
 ## Queue
 
-No open implementation item. Enterprise E3 commit `7e55c3d` is terminal green
-across all nine jobs in hosted run `30547883192`; sole PR #162 is ready to merge.
-Do not start E4 until the user merges it, then fetch and reconcile the new
-authoritative `origin/main` before cutting the next vertical branch.
-
-PRs E4–E7 remain ordered behind E3 in `PLAN.md` §§8b.5–8b.8. Do not open or
-implement them concurrently; after each merge, reconcile fresh `origin/main`
-before starting the next vertical tranche.
+1. **OPEN — Close and merge E4 pull request #163 before starting E5.**
+   The complete local final-source matrix is green: 134 retry-free native, 84
+   real-Wasm over the regenerated 8,729-event history, 4 embedded-binary
+   journeys, 240 frontend units/build/check/lint, race-enabled Go CI, Terraform,
+   container, workflow, accessibility, security, license, dead-code and clone
+   gates. Hosted PostgreSQL exposed the assembled E2 journey validating a just
+   published version before its public flow projection caught up; the new
+   `flow.latest == 2` observation passes 100 race-enabled repetitions and the
+   complete local `make ci` is green. Hosted run `30570908349` passes all nine
+   jobs, including the repaired real-PostgreSQL whole-suite gate. Evidence-only
+   head run `30572498699` then exposed an agent-run test bypassing the shared
+   projection watermark; the duplicate helper is removed and the exact contract
+   passes 100 race-enabled repetitions. The complete local `make ci` gate is
+   green. Push the repair and require the new exact-head hosted matrix to pass
+   before merge. After merge, fetch and reconcile authoritative `origin/main`
+   and confirm the PR queue is empty before cutting E5.
+2. **OPEN — E5 through E8 remain serialized behind E4.** Do not implement or
+   open them concurrently. After each merge, fetch and deliberately reconcile
+   authoritative `origin/main`, confirm the PR queue empty, and only then cut
+   the next branch. Detailed boundaries and exit evidence are in `PLAN.md`
+   §§8b.6–8b.9.
 
 ---
 

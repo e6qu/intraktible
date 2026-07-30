@@ -20,7 +20,23 @@
     flowNodeStats,
     flowCoverage,
     type Coverage,
-    publishVersion,
+    createDraft,
+    listDrafts,
+    getDraft,
+    saveDraft,
+    rebaseDraft,
+    listDraftRevisions,
+    archiveDraft,
+    renewDraftPresence,
+    listDraftPresence,
+    createChangeSet,
+    listChangeSets,
+    getChangeSetDiff,
+    checkChangeSet,
+    submitChangeSet,
+    reviewChangeSet,
+    publishChangeSet,
+    listReusableComponents,
     updateFlow,
     copilotExplain,
     copilotSuggest,
@@ -29,6 +45,7 @@
     batchDecide,
     preapproveBatch,
     exportFlow,
+    exportAuthoringDraft,
     exportDecision,
     getFlowMetrics,
     listMonitors,
@@ -81,11 +98,18 @@
     type PreApproveBatchReport,
     type GraphNode,
     type GraphEdge,
+    type AuthoringDraft,
+    type DraftRevision,
+    type DraftPresence,
+    type ChangeSet,
+    type SemanticDifference,
+    type ReusableComponent,
     type Disposition,
     type MonitorOp,
     type MonitorMetric,
     type Environment,
-    ApiError
+    ApiError,
+    DraftConflictError
   } from '$lib/api';
   import { toast } from '$lib/toast';
   import { appHref } from '$lib/paths';
@@ -100,6 +124,7 @@
   import CodeSnippet from '$lib/CodeSnippet.svelte';
   import { statusTone, dispositionTone } from '$lib/badge';
   import CommentThread from '$lib/CommentThread.svelte';
+  import RelativeTime from '$lib/RelativeTime.svelte';
   import FlowNode from '$lib/FlowNode.svelte';
   import BpmnNode from '$lib/BpmnNode.svelte';
   import LaneBand from '$lib/LaneBand.svelte';
@@ -173,6 +198,39 @@
   // Engine-level editor model (the source of truth) and its Svelte Flow render.
   let editNodes = $state<EditNode[]>([]);
   let editEdges = $state<GraphEdge[]>([]);
+  let draft = $state<AuthoringDraft | null>(null);
+  let draftTitle = $state('');
+  let draftRevisions = $state<DraftRevision[]>([]);
+  let collaborators = $state<DraftPresence[]>([]);
+  let presenceError = $state('');
+  let saveState = $state<'saved' | 'unsaved' | 'saving' | 'conflict' | 'error'>('saved');
+  let saveError = $state('');
+  let conflict = $state<{ remote: AuthoringDraft; localRevision: number } | null>(null);
+  const conflictComparison = $derived.by(() => {
+    const activeConflict = conflict;
+    if (!activeConflict) return null;
+    const base = draftRevisions.find(
+      (revision) => revision.revision === activeConflict.localRevision
+    );
+    const localGraph = currentGraph();
+    return {
+      base,
+      baseToLocal: base ? diffGraphs(base.graph, localGraph) : null,
+      baseToRemote: base ? diffGraphs(base.graph, activeConflict.remote.graph) : null,
+      remoteToLocal: diffGraphs(activeConflict.remote.graph, localGraph)
+    };
+  });
+  let changesets = $state<ChangeSet[]>([]);
+  let changeSetDiffs = $state(new Map<string, SemanticDifference[]>());
+  let reusableComponents = $state<ReusableComponent[]>([]);
+  let requestingReview = $state(false);
+  let reviewAssignees = $state('');
+  let reviewEvidence = $state('');
+  let reviewBusy = $state('');
+  let reviewReason = $state('');
+  let archiveConfirm = $state(false);
+  let archiveBusy = $state(false);
+  let restoreBusy = $state(0);
   // The version's input schema is preserved across edits and republishes (the
   // builder edits the graph, not the schema) and can be brought in by an import.
   let inputSchema = $state<unknown>(undefined);
@@ -700,6 +758,21 @@
     syncCanvas();
   }
 
+  function useAuthoringGraph(graph: { nodes: GraphNode[]; edges: GraphEdge[] }, schema?: unknown) {
+    editNodes = graph.nodes.map((n) => ({
+      id: n.id,
+      type: n.type as NodeType,
+      name: n.name ?? '',
+      config: n.config === undefined ? '' : JSON.stringify(n.config),
+      pos: n.position,
+      lane: n.lane
+    }));
+    editEdges = graph.edges.map((e) => ({ from: e.from, to: e.to, branch: e.branch }));
+    inputSchema = schema;
+    counter = editNodes.length;
+    syncCanvas();
+  }
+
   async function load() {
     error = '';
     loading = true;
@@ -710,24 +783,52 @@
     try {
       const loaded = await getFlow(key, flowId);
       if (flowId !== requested) return;
-      flow = loaded;
+      // Do not expose the editor yet. Flow metadata and its active draft are one
+      // readiness boundary: rendering after only this request would let a user
+      // edit an empty canvas that the later draft response then overwrites.
       // Seed the editor from the flow's declared latest version, not the last
       // array element — the API does not guarantee versions are returned ordered.
-      const byVersion = [...flow.versions].sort((a, b) => a.version - b.version);
-      const version = flow.versions.find((v) => v.version === flow?.latest) ?? byVersion.at(-1);
+      const byVersion = [...loaded.versions].sort((a, b) => a.version - b.version);
+      const version = loaded.versions.find((v) => v.version === loaded.latest) ?? byVersion.at(-1);
+      const existingDrafts = await listDrafts(key, flowId);
+      if (flowId !== requested) return;
+      let activeDraft = existingDrafts.find((item) => item.state === 'active') ?? null;
+      if (!activeDraft && roleAtLeast($user?.role, 'editor')) {
+        const created = await createDraft(key, {
+          flow_id: flowId,
+          base_version: loaded.latest,
+          title: `${loaded.name} working draft`,
+          graph: version?.graph ?? { nodes: [], edges: [] },
+          input_schema: version?.input_schema
+        });
+        activeDraft = await getDraft(key, created.draft_id);
+      }
+      if (flowId !== requested) return;
+      draft = activeDraft;
+      if (activeDraft) {
+        draftTitle = activeDraft.title;
+        useAuthoringGraph(activeDraft.graph, activeDraft.input_schema);
+        draftRevisions = await listDraftRevisions(key, activeDraft.draft_id);
+      } else if (version) {
+        draftTitle = `${loaded.name} working draft`;
+        useAuthoringGraph(version.graph, version.input_schema);
+        draftRevisions = [];
+      } else {
+        draftTitle = `${loaded.name} working draft`;
+        useAuthoringGraph({ nodes: [], edges: [] });
+        draftRevisions = [];
+      }
+      changesets = await listChangeSets(key, flowId);
+      changeSetDiffs = new Map(
+        await Promise.all(
+          changesets.map(
+            async (change) =>
+              [change.changeset_id, await getChangeSetDiff(key, change.changeset_id)] as const
+          )
+        )
+      );
+      reusableComponents = await listReusableComponents(key);
       if (version) {
-        editNodes = version.graph.nodes.map((n) => ({
-          id: n.id,
-          type: n.type as NodeType, // wire boundary: server graph carries the type as string
-          name: n.name ?? '',
-          config: n.config ? JSON.stringify(n.config) : '',
-          pos: n.position,
-          lane: n.lane
-        }));
-        editEdges = version.graph.edges.map((e) => ({ from: e.from, to: e.to, branch: e.branch }));
-        inputSchema = version.input_schema;
-        counter = editNodes.length;
-        syncCanvas();
         // Prefill the test input from the schema so the FIRST Run routes a real branch
         // and returns a disposition, rather than failing "no branch matched" on {}.
         if (dataText === '{}') sampleFromSchema();
@@ -740,9 +841,15 @@
           byVersion[byVersion.length >= 2 ? byVersion.length - 2 : byVersion.length - 1].version
         );
       }
+      // Commit metadata last so the UI becomes interactive only after its exact
+      // draft, history, review state, and component catalog are ready.
+      flow = loaded;
       // Snapshot the just-loaded graph as the saved baseline, so an author's later
       // edits register as unsaved and the leave-guard can warn before they're lost.
       savedFingerprint = graphFingerprint();
+      saveState = 'saved';
+      saveError = '';
+      conflict = null;
     } catch (e) {
       // Page-level load failure renders in the banner (the whole panel is unusable).
       error = msg(e);
@@ -832,6 +939,7 @@
     'connect',
     'ai',
     'predict',
+    'subflow',
     'manual_review',
     'output',
     'assignment',
@@ -1194,11 +1302,8 @@
     return { nodes, edges: editEdges };
   }
 
-  // Unsaved-changes tracking. The builder holds every edit in memory until Publish,
-  // so leaving the page (a link, the browser back button, a reload) would silently
-  // discard it. graphFingerprint serializes the LOGIC (nodes + edges + config), not
-  // node positions — a pure re-layout is cosmetic and shouldn't nag. savedFingerprint
-  // is set to the current graph after each load/publish; dirty is the diff.
+  // The fingerprint includes layout and schema because a durable draft promises
+  // to reopen the exact accepted editor state, not only its executable logic.
   let savedFingerprint = $state('');
   function graphFingerprint(): string {
     return JSON.stringify({
@@ -1207,18 +1312,156 @@
         type: n.type,
         name: n.name,
         config: n.config,
-        lane: n.lane
+        lane: n.lane,
+        position: n.pos
       })),
-      edges: editEdges.map((e) => ({ from: e.from, to: e.to, branch: e.branch }))
+      edges: editEdges.map((e) => ({ from: e.from, to: e.to, branch: e.branch })),
+      input_schema: inputSchema,
+      title: draftTitle
     });
   }
   const dirty = $derived(flow !== null && !loading && graphFingerprint() !== savedFingerprint);
 
-  // Warn before a navigation that would drop unsaved edits (SvelteKit link/back).
+  let saveInFlight: Promise<number> | null = null;
+  async function saveCurrentDraft(): Promise<number> {
+    if (!draft) throw new Error('This flow has no editable draft');
+    if (conflict) throw new Error('Resolve the competing draft revision before saving');
+    // An older fingerprint may already be saving when a review/publish action
+    // requires the latest editor state. Drain it first, then re-evaluate dirty:
+    // if the canvas changed during that request, recurse once more and persist
+    // the newer fingerprint before returning a revision to pin.
+    if (saveInFlight) {
+      await saveInFlight;
+      return saveCurrentDraft();
+    }
+    if (!dirty) return draft.revision;
+    const expected = draft.revision;
+    const acceptedFingerprint = graphFingerprint();
+    const graph = currentGraph();
+    saveState = 'saving';
+    saveError = '';
+    saveInFlight = (async () => {
+      try {
+        const result = await saveDraft(key, draft.draft_id, {
+          expected_revision: expected,
+          title: draftTitle,
+          graph,
+          input_schema: inputSchema
+        });
+        if (!draft) throw new Error('Draft disappeared while its save was in flight');
+        draft = {
+          ...draft,
+          revision: result.revision,
+          title: draftTitle,
+          graph,
+          input_schema: inputSchema,
+          updated_by: $user?.actor ?? draft.updated_by,
+          updated_at: new Date().toISOString()
+        };
+        draftRevisions = await listDraftRevisions(key, draft.draft_id);
+        if (graphFingerprint() === acceptedFingerprint) {
+          savedFingerprint = acceptedFingerprint;
+          saveState = 'saved';
+        } else {
+          saveState = 'unsaved';
+        }
+        return result.revision;
+      } catch (e) {
+        if (e instanceof DraftConflictError) {
+          conflict = { remote: e.current, localRevision: expected };
+          saveState = 'conflict';
+          saveError = e.message;
+        } else {
+          saveState = 'error';
+          saveError = msg(e);
+        }
+        throw e;
+      } finally {
+        saveInFlight = null;
+      }
+    })();
+    return saveInFlight;
+  }
+
+  // Autosave is deliberately debounced. Every request carries the accepted
+  // revision; a competing browser gets a visible three-way resolution instead
+  // of an automatic last-write-wins retry.
+  $effect(() => {
+    const fingerprint = graphFingerprint();
+    const active = draft?.state === 'active';
+    const canEdit = roleAtLeast($user?.role, 'editor');
+    if (!active || !canEdit || loading || conflict || fingerprint === savedFingerprint) return;
+    saveState = 'unsaved';
+    const timer = window.setTimeout(() => {
+      void saveCurrentDraft().catch((e) => {
+        if (!(e instanceof DraftConflictError)) saveError = msg(e);
+      });
+    }, 800);
+    return () => window.clearTimeout(timer);
+  });
+
+  function acceptRemoteRevision() {
+    if (!conflict) return;
+    const remote = conflict.remote;
+    draft = remote;
+    draftTitle = remote.title;
+    useAuthoringGraph(remote.graph, remote.input_schema);
+    conflict = null;
+    savedFingerprint = graphFingerprint();
+    saveState = 'saved';
+    saveError = '';
+    toast.success(`Loaded ${remote.updated_by}'s revision ${remote.revision}`);
+  }
+
+  function keepLocalAsNextRevision() {
+    if (!conflict || !draft) return;
+    draft = conflict.remote;
+    conflict = null;
+    savedFingerprint = `remote-revision:${draft.revision}`;
+    saveState = 'unsaved';
+    saveError = '';
+  }
+
+  $effect(() => {
+    const draftId = draft?.draft_id;
+    const revision = draft?.revision;
+    const actor = $user?.actor;
+    const selected = selectedId ?? undefined;
+    if (!draftId || !actor || revision === undefined) {
+      collaborators = [];
+      return;
+    }
+    let cancelled = false;
+    const refreshPresence = async () => {
+      try {
+        await renewDraftPresence(key, draftId, {
+          display_name: actor,
+          revision,
+          selected_id: selected,
+          ttl_seconds: 45
+        });
+        const active = await listDraftPresence(key, draftId);
+        if (!cancelled) {
+          collaborators = active;
+          presenceError = '';
+        }
+      } catch (e) {
+        if (!cancelled) presenceError = msg(e);
+      }
+    };
+    void refreshPresence();
+    const timer = window.setInterval(() => void refreshPresence(), 15_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  });
+
+  // Warn only while the debounce/save/conflict has not made the draft durable.
   beforeNavigate((nav) => {
     if (
       dirty &&
-      !confirm('You have unsaved changes to this flow. Leave without publishing them?')
+      !confirm('This draft still has unsaved changes. Leave before autosave completes?')
     ) {
       nav.cancel();
     }
@@ -1231,22 +1474,179 @@
     return () => window.removeEventListener('beforeunload', handler);
   });
 
-  let publishing = $state(false);
-  async function publish() {
-    error = '';
-    publishing = true;
+  async function requestReview() {
+    if (!draft || requestingReview) return;
+    requestingReview = true;
     try {
-      foldPositions(); // persist the current canvas layout with the version
-      const r = await publishVersion(key, flowId, currentGraph(), inputSchema);
-      toast.success(
-        r.published === false ? `Already at v${r.version} — no change` : `Published v${r.version}`
-      );
+      foldPositions();
+      const revision = await saveCurrentDraft();
+      const reviewers = [
+        ...new Set(
+          reviewAssignees
+            .split(',')
+            .map((reviewer) => reviewer.trim())
+            .filter(Boolean)
+        )
+      ];
+      const evidence = reviewEvidence
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map((line) => {
+          const separator = line.indexOf('=');
+          if (separator < 1 || separator === line.length - 1) {
+            throw new Error(
+              'Each evidence line must use “check-name = immutable result or reference”'
+            );
+          }
+          return {
+            name: line.slice(0, separator).trim(),
+            evidence: line.slice(separator + 1).trim()
+          };
+        });
+      if (new Set(evidence.map((item) => item.name)).size !== evidence.length) {
+        throw new Error('Evidence check names must be unique');
+      }
+      if (evidence.some((item) => item.name === 'flow-validation')) {
+        throw new Error('flow-validation is server-owned and must not be supplied as evidence');
+      }
+      const created = await createChangeSet(key, {
+        draft_id: draft.draft_id,
+        draft_revision: revision,
+        title: draftTitle,
+        rationale: `Review revision ${revision} against flow version ${draft.base_version}.`,
+        required_checks: ['flow-validation', ...evidence.map((item) => item.name)],
+        reviewers: reviewers.length ? reviewers : undefined
+      });
+      await checkChangeSet(key, created.changeset_id);
+      for (const item of evidence) {
+        await checkChangeSet(key, created.changeset_id, item.name, 'passed', item.evidence);
+      }
+      await submitChangeSet(key, created.changeset_id);
+      changesets = await listChangeSets(key, flowId);
+      toast.success(`Revision ${revision} sent for independent review`);
+    } catch (e) {
+      toast.error(msg(e));
+    } finally {
+      requestingReview = false;
+    }
+  }
+
+  async function rebaseCurrentDraft() {
+    if (!draft || !flow || requestingReview || draft.base_version === flow.latest) return;
+    requestingReview = true;
+    try {
+      foldPositions();
+      if (dirty) await saveCurrentDraft();
+      const graph = currentGraph();
+      const result = await rebaseDraft(key, draft.draft_id, {
+        expected_revision: draft.revision,
+        base_version: flow.latest,
+        title: draftTitle,
+        graph,
+        input_schema: inputSchema
+      });
+      draft = { ...draft, revision: result.revision, base_version: flow.latest, graph };
+      draftRevisions = await listDraftRevisions(key, draft.draft_id);
+      savedFingerprint = graphFingerprint();
+      saveState = 'saved';
+      toast.success(`Rebased draft onto v${flow.latest}`);
+    } catch (e) {
+      if (e instanceof DraftConflictError) {
+        conflict = { remote: e.current, localRevision: draft.revision };
+        saveState = 'conflict';
+      }
+      toast.error(msg(e));
+    } finally {
+      requestingReview = false;
+    }
+  }
+
+  async function restoreDraftRevision(revision: DraftRevision) {
+    if (!draft || restoreBusy) return;
+    restoreBusy = revision.revision;
+    try {
+      useAuthoringGraph(revision.graph, revision.input_schema);
+      draftTitle = revision.title;
+      const accepted = await saveCurrentDraft();
+      toast.success(`Restored r${revision.revision} as new revision r${accepted}`);
+    } catch (e) {
+      toast.error(msg(e));
+    } finally {
+      restoreBusy = 0;
+    }
+  }
+
+  async function archiveCurrentDraft() {
+    if (!draft || archiveBusy) return;
+    archiveBusy = true;
+    try {
+      await archiveDraft(key, draft.draft_id);
+      archiveConfirm = false;
+      toast.success('Draft archived · opened a fresh working draft');
       await load();
     } catch (e) {
       toast.error(msg(e));
     } finally {
-      publishing = false;
+      archiveBusy = false;
     }
+  }
+
+  async function decideChangeSet(changeSetId: string, decision: 'approve' | 'request_changes') {
+    reviewBusy = changeSetId;
+    try {
+      await reviewChangeSet(key, changeSetId, decision, reviewReason.trim());
+      changesets = await listChangeSets(key, flowId);
+      reviewReason = '';
+      toast.success(decision === 'approve' ? 'Changeset approved' : 'Changes requested');
+    } catch (e) {
+      toast.error(msg(e));
+    } finally {
+      reviewBusy = '';
+    }
+  }
+
+  async function releaseChangeSet(changeSetId: string) {
+    reviewBusy = changeSetId;
+    try {
+      const result = await publishChangeSet(key, changeSetId);
+      toast.success(`Published reviewed version ${result.version}`);
+      await load();
+    } catch (e) {
+      toast.error(msg(e));
+    } finally {
+      reviewBusy = '';
+    }
+  }
+
+  function differencesFor(changeSetId: string): SemanticDifference[] {
+    return changeSetDiffs.get(changeSetId) ?? [];
+  }
+
+  function environmentImpact(change: ChangeSet): { environment: string; summary: string }[] {
+    const proposedVersion = change.published_version ?? change.base_version + 1;
+    return ENVIRONMENTS.map((environment) => {
+      const deployment = Object.entries(flow?.deployments ?? {}).find(
+        ([name]) => name === environment
+      )?.[1];
+      const pending = schedules
+        .filter((schedule) => schedule.environment === environment && schedule.status === 'pending')
+        .map((schedule) => `scheduled v${schedule.version} at ${schedule.at}`)
+        .join(', ');
+      let summary: string;
+      if (environment === 'sandbox' && !deployment) {
+        summary =
+          change.state === 'published'
+            ? `now resolves latest v${proposedVersion}`
+            : `will resolve v${proposedVersion} when this review is published`;
+      } else if (deployment) {
+        summary = `remains pinned to v${deployment.version} until a governed promotion`;
+      } else {
+        summary = 'remains undeployed until a governed promotion';
+      }
+      if (pending) summary += `; existing ${pending}`;
+      return { environment, summary };
+    });
   }
 
   // Inline description edit: pencil → textarea → save via PATCH. The save failure
@@ -1556,7 +1956,10 @@
   }
   async function downloadExport(format: ExportFormat) {
     try {
-      const text = await exportFlow(key, flowId, format);
+      const text =
+        format === 'json' && draft
+          ? await exportAuthoringDraft(key, draft.draft_id)
+          : await exportFlow(key, flowId, format);
       const url = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
       const a = document.createElement('a');
       a.href = url;
@@ -1572,7 +1975,11 @@
   }
   async function copyExport(format: ExportFormat) {
     try {
-      await navigator.clipboard.writeText(await exportFlow(key, flowId, format));
+      const text =
+        format === 'json' && draft
+          ? await exportAuthoringDraft(key, draft.draft_id)
+          : await exportFlow(key, flowId, format);
+      await navigator.clipboard.writeText(text);
       toast.success(`Copied ${format} to clipboard`);
     } catch (e) {
       toast.error(msg(e));
@@ -2255,6 +2662,19 @@
   // All per-flow UI state that must not leak across sibling navigation: run
   // output, node overlays and one-shot reports all describe the previous flow.
   function resetFlowScopedState() {
+    flow = null;
+    draft = null;
+    draftTitle = '';
+    draftRevisions = [];
+    collaborators = [];
+    presenceError = '';
+    saveState = 'saved';
+    saveError = '';
+    conflict = null;
+    changesets = [];
+    changeSetDiffs = new Map();
+    reusableComponents = [];
+    savedFingerprint = '';
     nodeTelemetry = new Map();
     heatOn = false;
     nodeHeat = new Map();
@@ -2278,6 +2698,11 @@
 
   $effect(() => {
     void flowId; // reload every panel when the route flow changes (covers mount + sibling nav)
+    // A notification can deep-link to #changeset-review while this exact flow page
+    // is already mounted. Treat that same-route navigation as a refresh boundary so
+    // newly approved or published review state is visible without a manual reload.
+    void $page.url.hash;
+    void $user?.actor; // demo/user switches must see that actor's grants and collaboration state
     resetFlowScopedState();
     void load();
     void loadMetrics();
@@ -2316,9 +2741,24 @@
     <div class="flowhead">
       <a href={appHref('/engine')} class="backlink" title="All flows">←</a>
       <h1>{flow.name}</h1>
-      {#if dirty}
-        <span class="unsaved" title="You have edits that aren't published yet">● Unsaved edits</span
+      {#if draft}
+        <span
+          class:unsaved={saveState !== 'saved'}
+          class="draft-state"
+          title={`Draft ${draft.draft_id}, revision ${draft.revision}`}
+          data-testid="draft-save-state"
         >
+          {#if saveState === 'saving'}Saving…
+          {:else if saveState === 'saved'}Saved · r{draft.revision}
+          {:else if saveState === 'conflict'}Conflict · remote r{conflict?.remote.revision}
+          {:else if saveState === 'error'}Save failed
+          {:else}Unsaved edits{/if}
+        </span>
+      {/if}
+      {#if collaborators.length}
+        <span class="collaborators" data-testid="draft-presence">
+          {collaborators.map((person) => person.display_name || person.actor).join(', ')}
+        </span>
       {/if}
       <div class="head-actions">
         <button
@@ -2336,13 +2776,95 @@
         >
         <button
           class="primary"
-          onclick={publish}
-          disabled={publishing || !roleAtLeast($user?.role, 'editor')}
+          onclick={requestReview}
+          disabled={requestingReview ||
+            saveState === 'conflict' ||
+            !draft ||
+            !roleAtLeast($user?.role, 'editor')}
           title={!roleAtLeast($user?.role, 'editor') ? 'Requires the editor role' : undefined}
-          ><Icon name="check" size={15} /> {publishing ? 'Publishing…' : 'Publish version'}</button
+          ><Icon name="check" size={15} />
+          {requestingReview ? 'Submitting…' : 'Request review'}</button
         >
       </div>
     </div>
+    {#if saveError && saveState !== 'conflict'}
+      <p class="err" data-testid="draft-save-error">{saveError}</p>
+    {/if}
+    {#if presenceError}
+      <p class="warn" data-testid="presence-error">
+        Collaborator presence is unavailable: {presenceError}. Draft autosave is still active.
+      </p>
+    {/if}
+    {#if conflict}
+      <section class="conflict-panel" data-testid="draft-conflict">
+        <h2>Competing draft revision</h2>
+        <p>
+          You edited from revision {conflict.localRevision}, but {conflict.remote.updated_by} saved revision
+          {conflict.remote.revision}. Your local canvas is still intact. Choose which meaning
+          becomes the next durable revision.
+        </p>
+        {#if conflictComparison}
+          <div class="conflict-compare" data-testid="draft-conflict-comparison">
+            <article>
+              <b>Common base · r{conflict.localRevision}</b>
+              <span>{conflictComparison.base?.title ?? 'checkpoint unavailable'}</span>
+            </article>
+            <article>
+              <b>Your canvas</b>
+              <span>{draftTitle}</span>
+              {#if conflictComparison.baseToLocal}
+                <small>
+                  {conflictComparison.baseToLocal.nodesAdded.length} added ·
+                  {conflictComparison.baseToLocal.nodesRemoved.length} removed ·
+                  {conflictComparison.baseToLocal.nodesChanged.length} changed nodes
+                </small>
+              {/if}
+            </article>
+            <article>
+              <b>Remote · r{conflict.remote.revision}</b>
+              <span>{conflict.remote.title}</span>
+              {#if conflictComparison.baseToRemote}
+                <small>
+                  {conflictComparison.baseToRemote.nodesAdded.length} added ·
+                  {conflictComparison.baseToRemote.nodesRemoved.length} removed ·
+                  {conflictComparison.baseToRemote.nodesChanged.length} changed nodes
+                </small>
+              {/if}
+            </article>
+          </div>
+          {#if !diffIsEmpty(conflictComparison.remoteToLocal)}
+            <details>
+              <summary>Execution differences between local and remote</summary>
+              <ul>
+                {#each conflictComparison.remoteToLocal.nodesAdded as node}
+                  <li>Local adds node <code>{node}</code></li>
+                {/each}
+                {#each conflictComparison.remoteToLocal.nodesRemoved as node}
+                  <li>Local removes node <code>{node}</code></li>
+                {/each}
+                {#each conflictComparison.remoteToLocal.nodesChanged as node}
+                  <li>Local changes node <code>{node}</code></li>
+                {/each}
+                {#each conflictComparison.remoteToLocal.edgesAdded as edge}
+                  <li>Local adds edge <code>{edge}</code></li>
+                {/each}
+                {#each conflictComparison.remoteToLocal.edgesRemoved as edge}
+                  <li>Local removes edge <code>{edge}</code></li>
+                {/each}
+              </ul>
+            </details>
+          {:else}
+            <p class="muted">The graph is identical; only draft metadata differs.</p>
+          {/if}
+        {/if}
+        <div class="row">
+          <button class="primary" onclick={keepLocalAsNextRevision}
+            >Keep my canvas as next revision</button
+          >
+          <button onclick={acceptRemoteRevision}>Load remote revision</button>
+        </div>
+      </section>
+    {/if}
     {#if descEditing}
       <div class="flow-desc" data-testid="flow-description">
         <textarea
@@ -2372,6 +2894,230 @@
         {/if}
       </p>
     {/if}
+    <section class="authoring-status" id="changeset-review" aria-label="Draft and review status">
+      <div>
+        <h2>Shared draft</h2>
+        {#if draft}
+          <label>
+            Review title
+            <input bind:value={draftTitle} disabled={!roleAtLeast($user?.role, 'editor')} />
+          </label>
+          <label>
+            Assigned reviewers
+            <input
+              bind:value={reviewAssignees}
+              disabled={!roleAtLeast($user?.role, 'editor')}
+              placeholder="actor names, comma-separated; blank allows any independent approver"
+            />
+          </label>
+          <label>
+            Required evidence
+            <textarea
+              bind:value={reviewEvidence}
+              disabled={!roleAtLeast($user?.role, 'editor')}
+              rows="2"
+              placeholder="assertion-suite = run/result id or immutable reference"
+            ></textarea>
+          </label>
+          <p class="muted">
+            Link immutable evidence records here. Do not paste customer data, credentials, or raw
+            sensitive fixtures into evidence or discussion text.
+          </p>
+          <p class="muted">
+            Based on v{draft.base_version} · {draftRevisions.length} durable checkpoint{draftRevisions.length ===
+            1
+              ? ''
+              : 's'} · last accepted by {draft.updated_by}
+          </p>
+          <details class="revision-history" data-testid="draft-revision-history">
+            <summary>Revision history ({draftRevisions.length})</summary>
+            <ol>
+              {#each [...draftRevisions].reverse() as revision (revision.revision)}
+                <li>
+                  <span>
+                    <b>r{revision.revision}</b> · v{revision.base_version} base · {revision.actor} ·
+                    <RelativeTime value={revision.at} />
+                    {revision.rebased ? ' · rebased' : ''}
+                  </span>
+                  <span>{revision.title}</span>
+                  {#if revision.revision !== draft.revision && roleAtLeast($user?.role, 'editor')}
+                    <button
+                      onclick={() => restoreDraftRevision(revision)}
+                      disabled={restoreBusy !== 0 || saveState === 'conflict'}
+                      aria-label={`Restore draft revision ${revision.revision} as a new revision`}
+                    >
+                      {restoreBusy === revision.revision
+                        ? 'Restoring…'
+                        : 'Restore as next revision'}
+                    </button>
+                  {/if}
+                </li>
+              {/each}
+            </ol>
+          </details>
+          {#if flow.latest > draft.base_version}
+            <p class="warn">
+              Published flow v{flow.latest} moved beyond this draft's v{draft.base_version} base.
+            </p>
+            <button
+              onclick={rebaseCurrentDraft}
+              disabled={requestingReview || saveState === 'conflict'}
+            >
+              Rebase current canvas onto v{flow.latest}
+            </button>
+          {/if}
+          {#if roleAtLeast($user?.role, 'editor')}
+            {#if archiveConfirm}
+              <div class="archive-confirm" role="group" aria-label="Confirm archive draft">
+                <span
+                  >Archive this working draft and start a fresh one from the published flow?</span
+                >
+                <button
+                  class="danger"
+                  onclick={archiveCurrentDraft}
+                  disabled={archiveBusy || saveState === 'conflict'}
+                >
+                  {archiveBusy ? 'Archiving…' : 'Confirm archive'}
+                </button>
+                <button onclick={() => (archiveConfirm = false)} disabled={archiveBusy}>
+                  Cancel
+                </button>
+              </div>
+            {:else}
+              <button onclick={() => (archiveConfirm = true)}>Archive draft</button>
+            {/if}
+          {/if}
+        {:else}
+          <p class="muted">Read-only published view. An editor can open a shared draft.</p>
+        {/if}
+      </div>
+      <div>
+        <h2>Review queue</h2>
+        {#if changesets.length === 0}
+          <p class="muted">No proposed changes yet.</p>
+        {:else}
+          <div class="changesets">
+            {#each changesets as change (change.changeset_id)}
+              <article data-testid={`changeset-${change.state}`}>
+                <div class="changeset-head">
+                  <b>{change.title}</b>
+                  <span class={`changeset-state ${change.state}`}
+                    >{change.state.replace('_', ' ')}</span
+                  >
+                </div>
+                <p class="muted">
+                  Revision {change.draft_revision} from v{change.base_version} · proposed by
+                  {change.created_by}
+                  {#if change.dependencies?.length}
+                    · {change.dependencies.length} pinned component{change.dependencies.length === 1
+                      ? ''
+                      : 's'}
+                  {/if}
+                </p>
+                <div class="changeset-impact" data-testid="changeset-environment-impact">
+                  <b>Environment impact</b>
+                  <ul>
+                    {#each environmentImpact(change) as impact (impact.environment)}
+                      <li><code>{impact.environment}</code> — {impact.summary}</li>
+                    {/each}
+                  </ul>
+                </div>
+                {#if change.reviewers?.length || change.required_checks?.length}
+                  <p class="muted">
+                    {#if change.reviewers?.length}
+                      Assigned reviewer{change.reviewers.length === 1 ? '' : 's'}:
+                      {change.reviewers.join(', ')}
+                    {:else}
+                      Any independent approver may review
+                    {/if}
+                    {#if change.required_checks?.length}
+                      · Required evidence: {change.required_checks.join(', ')}
+                    {/if}
+                  </p>
+                {/if}
+                {#if differencesFor(change.changeset_id).length}
+                  <details class="semantic-diff">
+                    <summary
+                      >{differencesFor(change.changeset_id).length} semantic change{differencesFor(
+                        change.changeset_id
+                      ).length === 1
+                        ? ''
+                        : 's'}</summary
+                    >
+                    <ul>
+                      {#each differencesFor(change.changeset_id) as difference (`${difference.kind}:${difference.object}`)}
+                        <li>
+                          <div>
+                            <code>{difference.kind.replaceAll('_', ' ')}</code>
+                            <span>{difference.object.replaceAll('\u0000', ' → ')}</span>
+                            <CommentThread
+                              subjectType="changeset_object"
+                              subjectId={`${flowId}:${change.changeset_id}:${difference.kind}:${difference.object}`}
+                              title="Object discussion"
+                            />
+                          </div>
+                        </li>
+                      {/each}
+                    </ul>
+                  </details>
+                {:else}
+                  <p class="muted">No execution-relevant semantic differences.</p>
+                {/if}
+                {#if change.checks}
+                  <ul class="checks">
+                    {#each Object.values(change.checks) as check (check.name)}
+                      <li>
+                        <b>{check.name}: {check.status}</b>
+                        {#if check.evidence}<span>{check.evidence}</span>{/if}
+                        <small>recorded by {check.recorded_by}</small>
+                      </li>
+                    {/each}
+                  </ul>
+                {/if}
+                {#if change.review}
+                  <p>
+                    {change.review.decision === 'approve' ? 'Approved' : 'Changes requested'} by
+                    {change.review.actor}{change.review.reason ? ` — ${change.review.reason}` : ''}
+                  </p>
+                {/if}
+                <CommentThread
+                  subjectType="changeset"
+                  subjectId={`${flowId}:${change.changeset_id}`}
+                  title="Changeset discussion"
+                />
+                {#if change.state === 'in_review' && roleAtLeast($user?.role, 'approver') && change.created_by !== $user?.actor && change.submitted_by !== $user?.actor}
+                  <label>
+                    Review note
+                    <input bind:value={reviewReason} placeholder="Evidence or requested change" />
+                  </label>
+                  <div class="row">
+                    <button
+                      class="primary"
+                      onclick={() => decideChangeSet(change.changeset_id, 'approve')}
+                      disabled={reviewBusy === change.changeset_id}>Approve</button
+                    >
+                    <button
+                      onclick={() => decideChangeSet(change.changeset_id, 'request_changes')}
+                      disabled={reviewBusy === change.changeset_id || !reviewReason.trim()}
+                      >Request changes</button
+                    >
+                  </div>
+                {:else if change.state === 'approved' && roleAtLeast($user?.role, 'approver')}
+                  <button
+                    class="primary"
+                    onclick={() => releaseChangeSet(change.changeset_id)}
+                    disabled={reviewBusy === change.changeset_id}
+                    >{reviewBusy === change.changeset_id
+                      ? 'Publishing…'
+                      : 'Publish reviewed version'}</button
+                  >
+                {/if}
+              </article>
+            {/each}
+          </div>
+        {/if}
+      </div>
+    </section>
     {#if analyzeOpen}
       <section class="analyze" data-testid="analyze-panel">
         <div class="analyze-head">
@@ -2456,7 +3202,7 @@
         <summary><Icon name="download" size={15} /> Import JSON</summary>
         <p class="importhint">
           Load a flow export (or a bare <code>graph</code> / <code>{'{nodes, edges}'}</code> object)
-          onto the canvas, then <b>Publish</b> to save it as a new version — the inverse of JSON export.
+          onto the canvas, then <b>Request review</b> — the inverse of canonical JSON export.
         </p>
         <div class="row">
           <input
@@ -3416,6 +4162,7 @@
             onconnect={onConnect}
             ondelete={onCanvasDelete}
             onnodeclick={({ node }) => selectNode(node.id)}
+            onnodedragstop={foldPositions}
             onedgeclick={({ edge }) => selectEdge(Number(edge.id.slice(1)))}
             onpaneclick={() => selectNode(null)}
             panOnDrag={tool === 'pan' ? true : [1, 2]}
@@ -3671,6 +4418,80 @@
                 <p class="muted">
                   Reads <code>predict.&lt;output&gt;.probability</code> / <code>.score</code> downstream.
                 </p>
+              {:else if selected.type === 'subflow'}
+                {#if reusableComponents.filter((component) => !component.retired && component.latest > 0).length === 0}
+                  <p class="warn">Publish a reusable component before adding this reference.</p>
+                {:else}
+                  <label>
+                    reusable component
+                    <select
+                      value={asText(nodeCfg().component_id)}
+                      onchange={(e) => {
+                        const component = reusableComponents.find(
+                          (item) => item.component_id === e.currentTarget.value
+                        );
+                        patchCfg({
+                          component_id: e.currentTarget.value,
+                          version: component?.latest
+                        });
+                      }}
+                      aria-label="reusable component"
+                    >
+                      <option value="">Choose a component</option>
+                      {#each reusableComponents.filter((component) => !component.retired && component.latest > 0) as component (component.component_id)}
+                        <option value={component.component_id}>{component.name}</option>
+                      {/each}
+                    </select>
+                  </label>
+                  {@const selectedComponent = reusableComponents.find(
+                    (component) => component.component_id === asText(nodeCfg().component_id)
+                  )}
+                  {#if selectedComponent}
+                    {@const selectedVersion = selectedComponent.versions?.find(
+                      (version) => String(version.version) === asNum(nodeCfg().version)
+                    )}
+                    <label>
+                      exact version
+                      <select
+                        value={asNum(nodeCfg().version)}
+                        onchange={(e) => patchCfg({ version: Number(e.currentTarget.value) })}
+                        aria-label="reusable component version"
+                      >
+                        {#each selectedComponent.versions ?? [] as version (version.version)}
+                          <option value={version.version}
+                            >v{version.version} · {version.etag.slice(0, 8)}</option
+                          >
+                        {/each}
+                      </select>
+                    </label>
+                    {#if selectedVersion}
+                      <details data-testid="subflow-runtime-contents">
+                        <summary>
+                          Pinned runtime contents · {selectedVersion.source_graph.nodes.length} nodes
+                        </summary>
+                        <ul>
+                          {#each selectedVersion.source_graph.nodes as node (node.id)}
+                            <li>
+                              <code>{node.id}</code> · {node.type}{node.name
+                                ? ` · ${node.name}`
+                                : ''}
+                            </li>
+                          {/each}
+                        </ul>
+                        <p class="muted">
+                          Contract:
+                          <code>{JSON.stringify(selectedVersion.input_schema ?? {})}</code>
+                          →
+                          <code>{JSON.stringify(selectedVersion.output_schema ?? {})}</code>
+                        </p>
+                      </details>
+                    {/if}
+                  {/if}
+                  <p class="muted">
+                    The exact immutable version is expanded and recorded when the changeset is
+                    reviewed.
+                  </p>
+                {/if}
               {:else if selected.type === 'manual_review'}
                 <label
                   >company_name expr <input
@@ -4187,15 +5008,16 @@
           Test run
           <Hint label="Test run"
             >Executes the version published/deployed in the selected environment on the same engine
-            production uses. Canvas edits are an in-memory draft until Publish. The result links to
-            the recorded trace (or tick Preview to record nothing).</Hint
+            production uses. Shared draft edits autosave, then move through independent review
+            before publication. The result links to the recorded trace (or tick Preview to record
+            nothing).</Hint
           >
         </h2>
         {#if dirty}
           <p class="warn" data-testid="published-test-warning">
-            Unpublished canvas changes are not part of this run. Publish the draft first to test its
-            logic; this panel always exercises the selected environment's published/deployed
-            version.
+            Draft changes are durable but are not part of this run. Request review and publish the
+            approved changeset first; this panel always exercises the selected environment's
+            published/deployed version.
           </p>
         {/if}
         <div class="row">
@@ -5354,6 +6176,194 @@
     color: var(--warn, #b26a00);
     white-space: nowrap;
   }
+  .draft-state,
+  .collaborators {
+    flex: none;
+    padding: 0.18rem 0.48rem;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    color: var(--fg-muted);
+    font-size: 0.72rem;
+    white-space: nowrap;
+  }
+  .collaborators {
+    max-width: 14rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .conflict-panel {
+    margin: 0 0 0.7rem;
+    padding: 0.75rem 0.9rem;
+    border: 1px solid var(--warn);
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--warn) 8%, var(--surface));
+  }
+  .conflict-panel h2 {
+    margin: 0;
+    font-size: 1rem;
+  }
+  .conflict-panel p {
+    margin: 0.45rem 0;
+  }
+  .conflict-compare {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.65rem;
+    margin: 0.75rem 0;
+  }
+  .conflict-compare article {
+    display: grid;
+    gap: 0.25rem;
+    padding: 0.65rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+  }
+  .conflict-compare span,
+  .conflict-compare small {
+    overflow-wrap: anywhere;
+  }
+  @media (max-width: 720px) {
+    .conflict-compare {
+      grid-template-columns: 1fr;
+    }
+  }
+  .authoring-status {
+    display: grid;
+    grid-template-columns: minmax(15rem, 0.8fr) minmax(20rem, 1.2fr);
+    gap: 0.8rem;
+    margin: 0 0 0.7rem;
+    padding: 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface);
+  }
+  .authoring-status h2 {
+    margin: 0 0 0.45rem;
+    font-size: 0.92rem;
+  }
+  .authoring-status label {
+    display: grid;
+    gap: 0.25rem;
+    color: var(--fg-muted);
+    font-size: 0.76rem;
+  }
+  .authoring-status input,
+  .authoring-status textarea {
+    width: 100%;
+    box-sizing: border-box;
+  }
+  .revision-history {
+    margin: 0.5rem 0;
+    font-size: 0.76rem;
+  }
+  .revision-history summary {
+    cursor: pointer;
+    color: var(--accent-ink);
+  }
+  .revision-history ol {
+    display: grid;
+    gap: 0.35rem;
+    max-height: 15rem;
+    margin: 0.4rem 0;
+    padding-left: 1.4rem;
+    overflow: auto;
+  }
+  .revision-history li {
+    display: grid;
+    justify-items: start;
+    gap: 0.18rem;
+  }
+  .archive-confirm {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem;
+    margin-top: 0.5rem;
+  }
+  .archive-confirm span {
+    flex-basis: 100%;
+    color: var(--fg-muted);
+    font-size: 0.76rem;
+  }
+  .changesets {
+    display: grid;
+    gap: 0.55rem;
+  }
+  .changesets article {
+    padding: 0.55rem 0.65rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface-1);
+  }
+  .changeset-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+  .changeset-state {
+    padding: 0.1rem 0.42rem;
+    border-radius: 999px;
+    background: var(--surface-2);
+    color: var(--fg-muted);
+    font-size: 0.7rem;
+    text-transform: capitalize;
+  }
+  .changeset-state.approved,
+  .changeset-state.published {
+    color: var(--ok);
+    background: color-mix(in srgb, var(--ok) 12%, transparent);
+  }
+  .changeset-state.changes_requested {
+    color: var(--danger);
+    background: color-mix(in srgb, var(--danger) 10%, transparent);
+  }
+  .checks {
+    display: grid;
+    gap: 0.25rem;
+    margin: 0.45rem 0;
+    padding: 0;
+    list-style: none;
+    color: var(--ok);
+    font-size: 0.76rem;
+  }
+  .checks li {
+    display: grid;
+  }
+  .checks span,
+  .checks small {
+    color: var(--fg-muted);
+  }
+  .changeset-impact {
+    margin: 0.5rem 0;
+    padding: 0.5rem 0.6rem;
+    border-radius: 7px;
+    background: var(--surface-2);
+    font-size: 0.76rem;
+  }
+  .changeset-impact ul {
+    margin: 0.3rem 0 0;
+    padding-left: 1.1rem;
+  }
+  .semantic-diff {
+    font-size: 0.76rem;
+  }
+  .semantic-diff summary {
+    cursor: pointer;
+    color: var(--accent);
+  }
+  .semantic-diff ul {
+    display: grid;
+    gap: 0.2rem;
+    margin: 0.4rem 0;
+    padding-left: 1.1rem;
+  }
+  .semantic-diff li {
+    display: flex;
+    gap: 0.45rem;
+    align-items: baseline;
+  }
   .backlink {
     font-size: 1.2rem;
     text-decoration: none;
@@ -5486,6 +6496,16 @@
       display: flex;
       flex-direction: column;
       gap: 0.6rem;
+    }
+    .flowhead {
+      flex-wrap: wrap;
+    }
+    .head-actions {
+      width: 100%;
+      margin-left: 0;
+    }
+    .authoring-status {
+      grid-template-columns: 1fr;
     }
     .canvas {
       display: flex;

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { test, expect } from '@playwright/test';
+import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
 
 const KEY = 'dev-sandbox-key';
 const uniqueSlug = () => 'ui-' + Math.random().toString(36).slice(2, 9);
@@ -13,8 +13,91 @@ test.beforeEach(async ({ page }) => {
 // board); these tests drive the typed add/edge flow, so open it explicitly and
 // use its select as the hydration marker.
 async function openTools(page: import('@playwright/test').Page) {
-  await page.getByTestId('toggle-panel').click();
-  await expect(page.getByLabel('new node type')).toBeVisible();
+  const nodeType = page.getByLabel('new node type');
+  if (!(await nodeType.isVisible())) {
+    await page.getByTestId('toggle-panel').click();
+  }
+  await expect(nodeType).toBeVisible();
+}
+
+async function publishReviewedDraft(
+  page: Page,
+  request: APIRequestContext,
+  flowId: string,
+  expectedVersion: number
+) {
+  const rebase = page.getByRole('button', { name: /Rebase current canvas onto v\d+/ });
+  if (await rebase.isVisible()) {
+    await rebase.click();
+    await expect(page.getByTestId('draft-save-state')).toHaveText(/Saved · r\d+/);
+  }
+
+  await page.getByRole('button', { name: 'Request review' }).click();
+  await expect(page.getByTestId('changeset-in_review').last()).toBeVisible();
+
+  let changeSetId = '';
+  await expect
+    .poll(async () => {
+      const response = await request.get(`/v1/authoring/changesets?flow_id=${flowId}`, {
+        headers: { 'X-Api-Key': KEY }
+      });
+      if (!response.ok()) return false;
+      const body = (await response.json()) as {
+        changesets?: { changeset_id: string; state: string }[];
+      };
+      const pending = body.changesets?.find((item) => item.state === 'in_review');
+      changeSetId = pending?.changeset_id ?? '';
+      return changeSetId !== '';
+    })
+    .toBe(true);
+
+  const reviewerActor = `engine-reviewer-${Math.random().toString(36).slice(2, 9)}`;
+  const keyResponse = await request.post('/v1/api-keys', {
+    headers: { 'X-Api-Key': KEY },
+    data: {
+      name: reviewerActor,
+      actor: reviewerActor,
+      role: 'approver',
+      scope: '*'
+    }
+  });
+  expect(keyResponse.ok(), await keyResponse.text()).toBeTruthy();
+  const reviewerKey = ((await keyResponse.json()) as { secret: string }).secret;
+  const reviewerHeaders = { 'X-Api-Key': reviewerKey };
+
+  const reviewed = await request.post(`/v1/authoring/changesets/${changeSetId}/review`, {
+    headers: reviewerHeaders,
+    data: {
+      decision: 'approve',
+      reason: 'Independent browser-journey review'
+    }
+  });
+  expect(reviewed.ok(), await reviewed.text()).toBeTruthy();
+  await expect
+    .poll(async () => {
+      const response = await request.get(`/v1/authoring/changesets/${changeSetId}`, {
+        headers: reviewerHeaders
+      });
+      return response.ok() ? ((await response.json()) as { state: string }).state : 'unavailable';
+    })
+    .toBe('approved');
+
+  const published = await request.post(`/v1/authoring/changesets/${changeSetId}/publish`, {
+    headers: reviewerHeaders,
+    data: {}
+  });
+  expect(published.ok(), await published.text()).toBeTruthy();
+  await expect
+    .poll(async () => {
+      const response = await request.get(`/v1/flows/${flowId}`, {
+        headers: reviewerHeaders
+      });
+      return response.ok() ? ((await response.json()) as { latest: number }).latest : -1;
+    })
+    .toBe(expectedVersion);
+
+  await page.reload();
+  await expect(page.getByTestId('changeset-published').last()).toBeVisible();
 }
 
 test('lists and creates a flow', async ({ page }) => {
@@ -235,7 +318,7 @@ test('runs a what-if sensitivity sweep from the builder', async ({ page, request
   await expect(rows.last()).toContainText('A');
 });
 
-test('imports a flow from an exported document', async ({ page }) => {
+test('imports a flow from an exported document as a governed draft', async ({ page, request }) => {
   const slug = uniqueSlug();
   const doc = JSON.stringify({
     slug,
@@ -257,12 +340,28 @@ test('imports a flow from an exported document', async ({ page }) => {
   // Import navigates straight into the new flow's builder.
   await expect(page).toHaveURL(/\/engine\/[a-f0-9]+$/);
 
-  // Re-importing the same document is a no-op (no new version).
+  // A subsequent import remains reviewable source: it creates another durable
+  // draft boundary and still cannot publish a version by itself.
   await page.goto('/engine');
   await page.getByTestId('import-flow').locator('summary').click();
   await page.getByLabel('flow document').fill(doc);
   await page.getByTestId('import-submit').click();
-  await expect(page.getByText(/already at v1 — no change/)).toBeVisible();
+  await expect(page).toHaveURL(/\/engine\/[a-f0-9]+$/);
+  const flowId = page.url().split('/').at(-1) ?? '';
+  const flow = await request.get(`/v1/flows/${flowId}`, {
+    headers: { 'X-Api-Key': KEY }
+  });
+  expect(flow.ok()).toBeTruthy();
+  expect(((await flow.json()) as { latest: number }).latest).toBe(0);
+  await expect
+    .poll(async () => {
+      const response = await request.get(`/v1/authoring/drafts?flow_id=${flowId}`, {
+        headers: { 'X-Api-Key': KEY }
+      });
+      if (!response.ok()) return 0;
+      return ((await response.json()) as { drafts?: unknown[] }).drafts?.length ?? 0;
+    })
+    .toBe(2);
 });
 
 test('assigns a shadow version from the builder', async ({ page, request }) => {
@@ -352,8 +451,9 @@ test('imports a bundle of flows', async ({ page }) => {
   await page.getByLabel('flow document').fill(bundle);
   await page.getByTestId('import-submit').click();
 
-  // A bundle reports a summary (and stays on the list) rather than navigating.
-  await expect(page.getByText(/Bundle: 2 published/)).toBeVisible();
+  // A bundle reports governed drafts (and stays on the list) rather than
+  // implying that pasted source bypassed review.
+  await expect(page.getByText(/Imported 2 governed drafts/)).toBeVisible();
   await expect(page.getByText(b)).toBeVisible();
 });
 
@@ -727,7 +827,7 @@ test('exports the flow as DOT and JSON', async ({ page, request }) => {
   }
 });
 
-test('imports a flow JSON onto the canvas and publishes it (round-trip)', async ({
+test('imports a flow JSON onto the canvas and publishes it after review (round-trip)', async ({
   page,
   request
 }) => {
@@ -770,10 +870,10 @@ test('imports a flow JSON onto the canvas and publishes it (round-trip)', async 
   await page.getByLabel('import flow json').fill(exported);
   await page.getByTestId('import-load').click();
 
-  // The imported graph is on the canvas, then published as B's first version.
+  // The imported graph is on the canvas, then submitted and independently
+  // approved as B's first version.
   await expect(page.locator('.svelte-flow__node')).toHaveCount(3);
-  await page.getByRole('button', { name: 'Publish version' }).click();
-  await expect(page.getByText(/Published v1/)).toBeVisible();
+  await publishReviewedDraft(page, request, bId, 1);
 
   // Round-trip integrity: B v1 carries the same graph and input schema.
   const got = await (await request.get(`/v1/flows/${bId}`, { headers: H })).json();
@@ -782,7 +882,7 @@ test('imports a flow JSON onto the canvas and publishes it (round-trip)', async 
   expect(v.input_schema).toEqual({ type: 'object', required: ['x'] });
 });
 
-test('builds a flow in the editor and publishes it', async ({ page, request }) => {
+test('builds a flow in the editor and publishes it after review', async ({ page, request }) => {
   const slug = uniqueSlug();
   const created = await request.post('/v1/flows', {
     headers: { 'X-Api-Key': KEY },
@@ -831,9 +931,8 @@ test('builds a flow in the editor and publishes it', async ({ page, request }) =
     page.getByRole('button', { name: 'Run published version', exact: true })
   ).toBeDisabled();
 
-  // Publish -> v1, and the canvas now shows the three nodes.
-  await page.getByRole('button', { name: 'Publish version' }).click();
-  await expect(page.getByText('Published v1')).toBeVisible();
+  // Independent review publishes v1, and the canvas now shows the three nodes.
+  await publishReviewedDraft(page, request, flow_id, 1);
   await expect(page.getByTestId('published-test-warning')).toHaveCount(0);
   await expect(page.getByTestId('test-target')).toHaveText('v1 in sandbox');
   await expect(page.locator('.svelte-flow__node')).toHaveCount(3);
@@ -867,8 +966,7 @@ test('adding a node does not move already-placed nodes (stable layout)', async (
   await page.getByLabel('edge from', { exact: true }).selectOption('n1');
   await page.getByLabel('edge to', { exact: true }).selectOption('n2');
   await page.getByRole('button', { name: 'Add edge' }).click();
-  await page.getByRole('button', { name: 'Publish version' }).click();
-  await expect(page.getByText('Published v1')).toBeVisible();
+  await publishReviewedDraft(page, request, flow_id, 1);
 
   // Positions are persisted with the version.
   type Flow = {
@@ -888,6 +986,7 @@ test('adding a node does not move already-placed nodes (stable layout)', async (
 
   // Add a third node, wire it in (the dry-compile rejects dangling nodes),
   // and republish — n1 must not have moved.
+  await openTools(page);
   await page.getByLabel('new node type').selectOption('assignment');
   await page.getByRole('button', { name: 'Add', exact: true }).click();
   await expect(page.locator('aside ul.nodes li')).toHaveCount(3);
@@ -897,8 +996,7 @@ test('adding a node does not move already-placed nodes (stable layout)', async (
   await page.getByLabel('edge from', { exact: true }).selectOption('n3');
   await page.getByLabel('edge to', { exact: true }).selectOption('n2');
   await page.getByRole('button', { name: 'Add edge' }).click();
-  await page.getByRole('button', { name: 'Publish version' }).click();
-  await expect(page.getByText('Published v2')).toBeVisible();
+  await publishReviewedDraft(page, request, flow_id, 2);
 
   const after = await posIn(2);
   expect(after).toEqual(before);
@@ -936,8 +1034,7 @@ test('assigns nodes to swimlanes that render and persist', async ({ page, reques
   await page.getByLabel('edge from', { exact: true }).selectOption('n1');
   await page.getByLabel('edge to', { exact: true }).selectOption('n2');
   await page.getByRole('button', { name: 'Add edge' }).click();
-  await page.getByRole('button', { name: 'Publish version' }).click();
-  await expect(page.getByText('Published v1')).toBeVisible();
+  await publishReviewedDraft(page, request, flow_id, 1);
   const flow = (await (
     await request.get(`/v1/flows/${flow_id}`, { headers: { 'X-Api-Key': KEY } })
   ).json()) as { versions: { graph: { nodes: { id: string; lane?: string }[] } }[] };
@@ -1205,7 +1302,7 @@ test('backtests a dataset and diffs two versions', async ({ page, request }) => 
   await expect(page.locator('.bt-table tbody tr')).toContainText('B');
 });
 
-test('shows the backend validation error when publishing an invalid graph', async ({
+test('shows the backend validation error when requesting review of an invalid graph', async ({
   page,
   request
 }) => {
@@ -1221,7 +1318,7 @@ test('shows the backend validation error when publishing an invalid graph', asyn
   await openTools(page);
   await page.getByLabel('new node type').selectOption('rule');
   await page.getByRole('button', { name: 'Add', exact: true }).click();
-  await page.getByRole('button', { name: 'Publish version' }).click();
+  await page.getByRole('button', { name: 'Request review' }).click();
   // A write failure now surfaces as a toast beside the action, not the old banner.
   await expect(page.locator('.toast.error')).toContainText('input');
 });
@@ -1282,6 +1379,9 @@ test('the node rail inserts a node and opens its inspector', async ({ page, requ
   const { flow_id } = await created.json();
 
   await page.goto(`/engine/${flow_id}`);
+  // Opening the tools panel is an explicit hydration barrier before exercising
+  // the icon rail's client-side insert handler.
+  await openTools(page);
   await expect(page.getByTestId('node-rail')).toBeVisible();
   await page.getByRole('button', { name: 'insert split node' }).click();
 

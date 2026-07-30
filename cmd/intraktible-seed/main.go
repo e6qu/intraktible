@@ -166,6 +166,7 @@ func buildSeed() []eventlog.Envelope {
 	acts = append(acts, s.slaSweepActions(slots[0].at, anchor)...)
 	acts = append(acts, s.agentRunActions(anchor)...)
 	acts = append(acts, s.grantActions(anchor)...)
+	acts = append(acts, s.authoringActions(anchor)...)
 	acts = append(acts, s.scheduleActions(anchor)...)
 	acts = append(acts, s.keyLifecycleActions(anchor)...)
 	acts = append(acts, s.baselineActions(slots, anchor)...)
@@ -277,6 +278,50 @@ func spotCheck(srv *server.Server) string {
 			fatalf("round trip: flow %s has no description", f.Slug)
 		}
 	}
+	var components struct {
+		Components []struct {
+			Latest   int `json:"latest"`
+			Versions []struct {
+				Compatibility struct {
+					Status string `json:"status"`
+				} `json:"compatibility"`
+			} `json:"versions"`
+		} `json:"components"`
+	}
+	get("/v1/authoring/components", &components)
+	requireEq("reusable components", len(components.Components), 1)
+	if components.Components[0].Latest != 3 ||
+		components.Components[0].Versions[1].Compatibility.Status != "compatible" ||
+		components.Components[0].Versions[2].Compatibility.Status != "incompatible" {
+		fatalf("round trip: reusable compatibility history drifted: %+v", components.Components[0])
+	}
+	var drafts struct {
+		Drafts []struct {
+			Revision int `json:"revision"`
+		} `json:"drafts"`
+	}
+	get("/v1/authoring/drafts", &drafts)
+	requireEq("collaborative drafts", len(drafts.Drafts), 3)
+	recoveredRevision := false
+	for _, draft := range drafts.Drafts {
+		recoveredRevision = recoveredRevision || draft.Revision == 2
+	}
+	if !recoveredRevision {
+		fatalf("round trip: no autosaved authoring revision survived replay")
+	}
+	var changeSets struct {
+		ChangeSets []struct {
+			State string `json:"state"`
+		} `json:"changesets"`
+	}
+	get("/v1/authoring/changesets", &changeSets)
+	requireEq("governed changesets", len(changeSets.ChangeSets), 2)
+	changeSetStates := map[string]int{}
+	for _, changeSet := range changeSets.ChangeSets {
+		changeSetStates[changeSet.State]++
+	}
+	requireEq("published changesets", changeSetStates["published"], 1)
+	requireEq("in-review changesets", changeSetStates["in_review"], 1)
 
 	// The fixed-key discussion threads (agents/model/entity are addressed by
 	// natural keys, so they are checkable without seed-run ids).

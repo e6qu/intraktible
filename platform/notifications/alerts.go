@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/e6qu/intraktible/decision-engine/authoring"
 	deevents "github.com/e6qu/intraktible/decision-engine/events"
 	"github.com/e6qu/intraktible/decision-engine/experiments"
 	"github.com/e6qu/intraktible/decision-engine/monitor"
@@ -91,6 +92,80 @@ func applyDeploymentRequested(ctx context.Context, e eventlog.Envelope, s store.
 		message = fmt.Sprintf("Approval requested: schedule v%d to %s at %s", p.Version, p.Environment, p.At.Format("2006-01-02 15:04Z"))
 	}
 	return shared(ctx, e, s, ApproverQueue, KindApproval, "flow", p.FlowID, message, p.RequestID)
+}
+
+func applyChangeSetSubmitted(ctx context.Context, e eventlog.Envelope, s store.Store) error {
+	var payload authoring.ChangeSetSubmitted
+	if err := json.Unmarshal(e.Payload, &payload); err != nil {
+		return fmt.Errorf("notifications: decode changeset submitted seq %d: %w", e.Seq, err)
+	}
+	if payload.ChangeSetID == "" || payload.FlowID == "" || payload.CreatedBy == "" {
+		return fmt.Errorf("notifications: changeset submitted seq %d lacks routing identity", e.Seq)
+	}
+	return deliverChangeSetReviewTask(
+		ctx, e, s, authoring.ChangeSetReviewReminded(payload), "Review requested",
+	)
+}
+
+func applyChangeSetReviewed(ctx context.Context, e eventlog.Envelope, s store.Store) error {
+	var payload authoring.ChangeSetReviewed
+	if err := json.Unmarshal(e.Payload, &payload); err != nil {
+		return fmt.Errorf("notifications: decode changeset reviewed seq %d: %w", e.Seq, err)
+	}
+	if payload.ChangeSetID == "" || payload.FlowID == "" || payload.CreatedBy == "" {
+		return fmt.Errorf("notifications: changeset reviewed seq %d lacks routing identity", e.Seq)
+	}
+	if err := resolveApproval(ctx, e, s, payload.ChangeSetID); err != nil {
+		return err
+	}
+	message := fmt.Sprintf("Changes requested: %s", payload.Title)
+	if payload.Decision == authoring.ReviewApprove {
+		message = fmt.Sprintf("Approved and ready to publish: %s", payload.Title)
+	}
+	return shared(
+		ctx, e, s, payload.CreatedBy, KindAlert,
+		"changeset", payload.FlowID+":"+payload.ChangeSetID, message,
+	)
+}
+
+func applyChangeSetReviewReminded(ctx context.Context, e eventlog.Envelope, s store.Store) error {
+	var payload authoring.ChangeSetReviewReminded
+	if err := json.Unmarshal(e.Payload, &payload); err != nil {
+		return fmt.Errorf("notifications: decode changeset reminder seq %d: %w", e.Seq, err)
+	}
+	if payload.ChangeSetID == "" || payload.FlowID == "" || payload.CreatedBy == "" {
+		return fmt.Errorf("notifications: changeset reminder seq %d lacks routing identity", e.Seq)
+	}
+	return deliverChangeSetReviewTask(ctx, e, s, payload, "Review overdue")
+}
+
+func deliverChangeSetReviewTask(
+	ctx context.Context,
+	e eventlog.Envelope,
+	s store.Store,
+	payload authoring.ChangeSetReviewReminded,
+	prefix string,
+) error {
+	subjectID := payload.FlowID + ":" + payload.ChangeSetID
+	message := fmt.Sprintf("%s: %s", prefix, payload.Title)
+	if len(payload.Reviewers) == 0 {
+		return shared(
+			ctx, e, s, ApproverQueue, KindApproval,
+			"changeset", subjectID, message, payload.ChangeSetID,
+		)
+	}
+	for _, reviewer := range payload.Reviewers {
+		if reviewer == "" || reviewer == payload.CreatedBy {
+			return fmt.Errorf("notifications: invalid reviewer on changeset %q", payload.ChangeSetID)
+		}
+		if err := shared(
+			ctx, e, s, reviewer, KindApproval,
+			"changeset", subjectID, message, payload.ChangeSetID,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func applyDeploymentApproved(ctx context.Context, e eventlog.Envelope, s store.Store) error {

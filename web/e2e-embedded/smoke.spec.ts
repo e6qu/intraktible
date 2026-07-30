@@ -43,6 +43,21 @@ test('the embedded UI boots in a browser and logs in', async ({ page }) => {
   await expect(page.getByRole('heading', { name: /Flows/i })).toBeVisible();
 });
 
+test('the embedded artifact serves durable collaborative authoring', async ({ page }) => {
+  await page.context().request.post('/v1/login', { data: { api_key: KEY } });
+  const slug = `embedded-draft-${Math.random().toString(36).slice(2, 9)}`;
+  await page.goto('/engine');
+  await page.getByLabel('slug', { exact: true }).fill(slug);
+  await page.getByLabel('name', { exact: true }).fill('Embedded collaborative draft');
+  await page.getByRole('button', { name: 'Create flow' }).click();
+  await expect(page.getByTestId('draft-save-state')).toHaveText('Saved · r1');
+
+  await page.getByLabel('Review title').fill(`Reviewed ${slug}`);
+  await expect(page.getByTestId('draft-save-state')).toHaveText('Saved · r2');
+  await page.reload();
+  await expect(page.getByLabel('Review title')).toHaveValue(`Reviewed ${slug}`);
+});
+
 // The launch origin must fail closed for a browser with no session. This asserts
 // it the way an external SSO validator observes it — the response to a real
 // navigation, before any client JS runs — because a client-side redirect looks

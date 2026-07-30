@@ -428,6 +428,71 @@ Every PR must:
 - announce and approve any new dependency before it is introduced, including its owner, license,
   security posture, and the in-repository alternative.
 
+#### Whole-product journey and gap map — 2026-07-30
+
+The comparison target is the complete operating loop of an enterprise decision platform, not a count
+of endpoints or canvas nodes:
+
+`context → rules/models/agents → governed change → execution → case/human action → outcome →`
+`experiment/evaluation → monitoring → feedback into the next governed change`
+
+Intraktible already closes that loop for deterministic decisions, governed releases, durable
+experiments, business outcomes, model actuals, human review, and replay. The remaining gaps are the
+depth needed for teams to collaborate on the loop, operate AI agents safely inside it, build
+reproducible data/model assets, prove the production topology, and adopt complete regulated
+workflows. The following map is the acceptance boundary for the remaining PRs:
+
+| Primary journey                                                         | Working foundation now                                                                                                                           | Enterprise-depth gap                                                                                                                                                                     | Owning PR                  |
+| ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
+| Builder/analyst authors, tests, reviews, and releases a decision        | Visual builder, typed nodes, preview/test, immutable publish, four-eyes production approval, scheduled deploy, export/import                     | Durable shared drafts, conflicts/presence, reusable typed subflows, one changeset joining diff/tests/evidence/review, canonical flow-as-code                                             | E4                         |
+| Developer integrates and promotes decision assets                       | OpenAPI, Go/TypeScript SDKs, JSON/bundle import/export, API keys, audit, environment deployments                                                 | Repository-grade canonical flow sources, semantic diff, dependency impact, CI validation/promotion, compatibility policy without a governance bypass                                      | E4                         |
+| Agent designer creates and proves a specialist agent                    | Versioned agent configurations, structured outputs, tool allowlists, async durable runs, offline eval cases, guardrails and cost records         | Reusable agent templates, rich evaluation datasets, repeated/adversarial reliability tests, untrusted-content controls, governed release/deploy lifecycle, bring-your-own-agent protocol | E5                         |
+| Case reviewer uses AI while retaining accountable judgment              | Governed case types, queues/routing, evidence, SLA, QA, dispositions, validated outcomes                                                         | Evidence-cited summaries/triage/drafts, explicit accept/edit/reject provenance, agent-to-case handoff, reviewer feedback and measured assist quality                                     | E5                         |
+| Team manager configures and improves review operations                  | Versioned case types, queues/reviewers, routing, bulk work, rebalance, SLA, QA and workload/quality analytics                                    | Agent-assist adoption, override, safety, cost and validated-quality signals joined to existing workforce operations                                                                      | E5; case core done in E3   |
+| Operator manages live decisions, agents, cases, and experiments         | Searchable histories, recovery/dead letter, analytics, notifications, experiment health, case workload/SLA/quality                               | Unified agent quality/safety/cost/latency operations, prompt/tool incidents, intervention controls, assist adoption/override learning                                                    | E5                         |
+| Product/experimentation owner proves and promotes a policy change       | Stable assignment, reached exposure, correctable outcomes, statistical guardrails, population jobs and maker-checker promotion                   | No reopened core experiment gap; richer data/model evidence and domain benchmarks feed the same shipped lifecycle                                                                        | E2 done; enriched by E6/E8 |
+| Data/model team prepares features, datasets, and releases               | Versioned entities/events/features, point-in-time feature reads and cache, logistic training, multiple model runtimes, validation/drift/fairness | Governed schemas/contracts, corrections/backfills, immutable dataset snapshots, reproducible training/artifacts, richer evaluation/explanation and online/offline parity                 | E6                         |
+| Model risk/compliance validates and monitors change                     | MRM inventory, independent validation, approvals, reason codes, outcomes, drift, fair-lending screen, evidence/audit                             | Examiner-reproducible model and dataset packages, broader statistical/fairness methods, complete lineage and retirement across data/model/agent dependencies                             | E6                         |
+| Tenant admin and platform operator establishes a safe production estate | Org/workspace scoping, RBAC, SSO/SCIM, encrypted stores, PII masking, Helm/ECS split tiers, health/readiness, OTel                               | Self-service tenant lifecycle, quotas/isolation/placement, scalable ownership, HA scheduler, mTLS/IP policy, measured SLOs, automated backup/restore/DR                                  | E7                         |
+| Domain owner adopts a complete regulated workflow                       | Generic connectors plus credit/fraud/AML primitives, policies, agents, cases, notices, consent/retention/erasure                                 | Conformant provider ecosystem, maintained end-to-end solution packs, real communication delivery, subject exports, regulatory preparation boundaries and pack-level evidence             | E8                         |
+| Executive or risk leader tracks value and control effectiveness         | Persona dashboards, operational/model/experiment/case analytics, audit and notifications                                                         | Cross-product value, quality, risk and cost rollups based on the new E5–E8 records rather than a separate reporting truth                                                                | E5–E8                      |
+
+This map is deliberately honest about current strengths. It does not re-open shipped E1–E3 semantics,
+and it does not call a polished UI around missing server behavior a completed journey.
+
+#### Market reference and ordered remaining delivery
+
+The 2026 comparison uses Taktile's published
+[Agentic Decision Platform](https://taktile.com/the-agentic-decision-platform),
+[Decision Engine](https://taktile.com/decision-engine),
+[AI Agent Manager](https://taktile.com/ai-agent-manager),
+[Case Manager](https://taktile.com/case-manager),
+[Context Layer](https://taktile.com/context-layer), and
+[enterprise infrastructure](https://www.taktile.com/enterprise-infrastructure) surfaces. Those pages
+make collaboration, specialist financial agents, AI-assisted case work, broad data connectivity,
+isolated infrastructure, and measured availability/latency part of the current category expectation.
+[Taktile Labs](https://labs.taktile.com/)' published prompt-injection and domain-agent evaluations also
+make agent safety and evaluation a first-class parity axis. These are vendor-published claims and
+positioning, not independent verification or a requirement to copy their architecture.
+
+The remaining queue is intentionally serial:
+
+1. **E4 — collaborative decision development:** make the core asset-authoring and governance substrate
+   safe for teams and reusable assets.
+2. **E5 — governed agentic operations and human/AI learning:** put AI agents and case assistance
+   inside that same release, evidence, outcome, and feedback loop.
+3. **E6 — model and context data science:** make the data/model supply chain reproducible and
+   examiner-ready.
+4. **E7 — production scale, tenancy, and disaster recovery:** harden the now-complete product surface
+   into measured isolation, capacity, and recovery profiles.
+5. **E8 — ecosystem and regulated solution packs:** stabilize the extension contracts and ship
+   maintained end-to-end adoption units rather than disconnected examples.
+
+E4 begins only from the merged E3 baseline. Each later tranche begins only after the previous PR is
+merged and a fresh remote reconciliation proves the review queue empty. A tranche may grow as
+cross-layer defects are found; it may not shed a required backend, UI, worker, security, migration, or
+test layer merely to reduce its diff.
+
 ### 8b.2 PR E1 — durable execution integrity
 
 **Outcome:** a caller can submit or resume a decision or agent run through failures, retries, restarts,
@@ -612,140 +677,618 @@ reproduces queue membership, timers, evidence, and metrics.
 
 ### 8b.5 PR E4 — collaborative authoring and governed delivery
 
-**Outcome:** teams can safely co-author and reuse decision assets without relying on one browser's
-in-memory canvas.
+**Outcome:** a team can move one proposed decision change from a recoverable shared draft through
+review, evidence, approval, and deployment, while reusing exact-version assets and never relying on one
+browser's in-memory canvas.
 
-**Scope:**
+**Starting boundary:** flow creation, visual editing, preview/test, immutable publish, comments,
+four-eyes approvals, environment deployment, and JSON/bundle export already work. Canvas edits are
+currently browser-local until Publish; comments, approvals, tests, and deployment evidence are related
+resources rather than one reviewable change; reusable subflows and server-side dependency impact do not
+exist. E4 replaces that boundary instead of layering collaborative decoration over it.
 
-- Add server-persisted flow drafts with autosave, explicit draft ownership, optimistic concurrency,
-  conflict presentation, recoverable local changes, and presence. Never silently overwrite another
-  editor's work.
-- Add versioned, immutable reusable subflows/components with typed input/output contracts, dependency
-  pins, impact analysis, cycle detection, upgrade previews, and exact runtime lineage.
-- Make comments, mentions, proposed changes, review assignments, diffs, assertions, backtests,
-  experiment evidence, and approvals part of one change-set journey. Show which deployed environments
-  and downstream assets a change affects.
-- Add repository-friendly export/import and validation commands for flows, policies, models,
-  experiments, case definitions, and environment bindings. Provide deterministic canonical formats,
-  semantic diff, CI validation, and guarded promotion without creating an alternate governance bypass.
-- Extend search and the command palette across drafts, reusable assets, experiments, case types, and
-  dependency relationships; preserve persona-specific density and WCAG-AA behavior.
+**Implemented in the E4 branch:** event-sourced full-snapshot drafts now autosave incomplete work,
+retain immutable revision history, expose deterministic three-way conflicts, and use disposable
+presence leases. Changesets pin the exact draft/base/schema/compiled dependency material under
+review, own server-derived validation and explicit evidence references, support object-addressed
+resolvable discussions and assigned independent reviewers, and publish through a crash-reconcilable
+request. Reusable components have immutable typed versions, exact recursive pins, bounded expansion,
+cycle rejection, compatibility reports, consumer impact, explicit breaking evidence, safe upgrade
+drafts, retirement, and recorded runtime lineage. The same contracts are available over HTTP,
+OpenAPI, Go/TypeScript SDKs, the CLI, the real-Wasm demo, and the embedded UI.
 
-**Exit evidence:** two browsers can edit one draft with visible conflicts and no data loss; a reusable
-subflow upgrade shows and tests every dependent flow before approval; imported/exported assets
-round-trip deterministically; and no Git/API/UI route can deploy unreviewed production logic.
+Repository source is deliberately a canonical **flow-source** contract, not a speculative universal
+wrapper over every aggregate. `intraktible.authoring/v1` normalizes graph/schema semantics, strips
+layout noise, represents reusable components by portable slug plus exact version, resolves
+target-workspace identifiers with a deterministic migration report, and imports only to a governed
+draft. Bundle preflight resolves and compiles every member before the first write. Policies, models,
+agents, experiments, and case definitions retain their existing domain-owned version/governance
+contracts; asset-native repository formats belong with the deeper lifecycle work in E5, E6, and E8.
+Calling those current APIs a canonical source format would create a false portability promise.
 
-### 8b.6 PR E5 — model and context data-science platform
+The final E4 matrix passes at the shipped source: 134 native browser journeys with retries disabled,
+84 real-Wasm journeys over a regenerated 8,729-event log, 4 embedded single-binary journeys, 240
+frontend units plus production build/check/lint, the complete race-enabled Go CI and security/license
+gates, Terraform tests, container publication/retention checks, and workflow timeout checks. The
+matrix includes keyboard-driven collaboration, independent maker/checker publication, scheduled
+promotion, exact reusable dependency lineage, sensitive-export/free-text PII refusal, canonical
+migration, restart/replay, accessibility, and legacy-export migration into governed drafts.
 
-**Outcome:** modelers can build reproducible datasets and governed model releases, while decision flows
-consume typed, observable, point-in-time-correct data.
+**Primary journeys:**
 
-**Scope:**
+- A Builder opens any machine, resumes an autosaved draft, sees who else is editing, understands
+  conflicts, runs version-pinned tests, and submits one coherent change for review.
+- A reviewer sees semantic logic/configuration/dependency differences, comments on exact objects,
+  requires changes or approves, and can prove the assertions, backtests, experiments, and policy checks
+  they relied on.
+- A platform developer stores canonical assets in a repository, validates and diffs them in CI, and
+  requests the same governed promotion the UI uses.
+- An owner publishes a reusable component, assesses all consumers, upgrades selected dependants, and
+  can trace the exact component version used by every execution.
 
-- Add versioned entity/event schemas, relationships, source ownership, freshness and completeness
-  contracts, data classifications, lineage, and quality incidents. Validate ingestion at the boundary
-  while retaining an explicit governed evolution path.
-- Add streaming ingestion and incremental/materialized features with late-event and correction
-  semantics, backfill jobs, point-in-time joins, freshness SLOs, lineage, and cost/cardinality
-  observability. Retain the deterministic on-demand feature path as a correctness reference.
-- Add a dataset registry with immutable snapshots/manifests, feature/label definitions, time cutoffs,
-  consent/purpose scope, train/validation/test partitions, provenance, retention, and reproducible
-  export.
-- Add training/evaluation jobs and a signed model-artifact registry. Support richer runtimes through a
-  versioned serving protocol or approved sandboxed artifact runtime; do not embed arbitrary Python or
-  native code in the decision process without an explicit isolation and dependency decision.
-- Add calibration, threshold optimization, segment analysis, faithful model-specific explanations,
-  multi-class/regression outcomes, automated label pipelines, performance confidence intervals, and
-  challenger comparison.
-- Extend fair-lending analysis beyond the current AIR screen with minimum-sample rules, confidence
-  intervals/significance, intersectional groups, regression or matched-pair methods, missing-data
-  treatment, documented limitations, and examiner-reproducible snapshots. Keep every report a screen,
-  not an automated legal conclusion.
-- Unify data, feature, dataset, model, validation, approval, deployment, prediction, explanation,
-  actual, drift, fairness, and retirement lineage in the Model Risk and UI journeys.
+**Domain, event, and compatibility scope:**
 
-**Exit evidence:** a model release can be reproduced from an immutable dataset snapshot and artifact;
-offline and online feature values agree on correction/late-event fixtures; stale or poor-quality data
-blocks or visibly degrades according to an explicit policy; explanation/calibration/fairness fixtures
-are independently reproducible; and deployment still requires current independent validation and
-four-eyes approval.
+- Add a persisted draft aggregate with base version, monotonic revision, author, collaborators,
+  editable graph/configuration, autosave checkpoints, explicit discard/archive, and optimistic
+  concurrency. A stale write returns the competing revision and merge material; it never silently wins.
+- Keep durable content/review state in the event log. Treat transient presence, selection, and cursor
+  leases as disposable coordination state with explicit expiry; they must not make replay
+  nondeterministic or block editing when presence infrastructure is unavailable.
+- Add a changeset aggregate that pins its subject revisions and dependencies and owns title/rationale,
+  proposed changes, object-addressed threads/mentions, review assignments, assertions, evidence,
+  required checks, decisions, approval invalidation, and environment impact. Any material mutation
+  invalidates stale review and production approval.
+- Add immutable reusable subflows/components with named typed inputs/outputs, defaults, compatibility
+  metadata, exact dependency pins, cycle detection, bounded expansion, and retirement. Preserve a
+  deterministic compatibility path for existing inline-only flows.
+- Define a semantic diff for nodes, edges, expressions, tables, exact policy/model/agent references
+  carried by node configuration, reusable dependencies, input contracts, and authoring metadata.
+  Environment impact is derived alongside the diff. Ignore representational ordering only where the
+  runtime does; never hide an execution-relevant change.
 
-### 8b.7 PR E6 — production scale, tenancy, and disaster recovery
+**Command, API, and delivery scope:**
 
-**Outcome:** the recommended production topology has measured capacity, durable work ownership,
-operator-controlled tenancy, and routinely tested recovery rather than a runbook-only promise.
+- Expose draft create/read/save/rebase/archive, presence leases, changesets, dependency graph/impact,
+  reusable asset lifecycle, validation, semantic diff, review, approval, and promotion through
+  capability-checked HTTP contracts and both SDKs. Use revision preconditions and idempotency on every
+  retryable mutation.
+- Make UI publish and Git/API import produce the same canonical changeset and invoke the same
+  validation, maker-checker, scheduled-deployment, audit, and notification paths. There is no
+  privileged “flow as code” route around production governance.
+- Provide deterministic canonical export/import for governed flow sources, including portable
+  reusable-component slugs and exact version pins. Add CLI commands for validate, semantic diff,
+  dependency impact, changeset submission/status, and guarded publication. Keep domain-native source
+  formats with the owning E5/E6/E8 lifecycles instead of freezing incomplete cross-asset semantics in
+  E4.
+- Version the canonical format and reject unsupported semantics explicitly. Migration reports identify
+  rewritten identifiers/defaults; round trips cannot depend on map order, local time, or generated
+  layout noise.
 
-**Scope:**
+**UI/UX and operational scope:**
 
-- Remove the global serialized-append ceiling without reintroducing commit-order gaps; partition work
-  and projections by explicit tenant/stream ownership, preserve a canonical ordering contract where
-  required, and publish the consistency model.
-- Horizontally scale projection and worker ownership with durable leases/rebalancing. Run schedulers as
-  redundant replicas with leader/work claims rather than a deployment-enforced singleton.
-- Establish published workload profiles and SLOs for interactive decisions, effectful decisions,
-  event ingestion, projections, agent jobs, cases, and population jobs. Add multi-hour endurance,
-  overload/backpressure, noisy-neighbor, rolling-deploy, dependency-outage, and regional-latency tests.
-- Automate encrypted backups, point-in-time recovery where supported, restore validation, integrity
-  reconciliation, and scheduled disaster-recovery exercises. Measure and publish achieved RPO/RTO;
-  surface last successful backup/restore drill and recovery health to operators.
-- Add organization/workspace lifecycle APIs and UI: creation, invitations, membership, local/SSO/SCIM
-  role mapping, workspace isolation, API-key/service-account ownership, quotas, rate limits, spend
-  limits, suspension, export, and deletion. Make tenant placement and data residency explicit.
-- Define and test workload-isolation profiles for self-hosted single tenant, shared control plane, and
-  stronger per-tenant compute/storage isolation. Prevent cross-tenant cache, log, metric, trace,
-  artifact, secret, and support-tool access.
-- Formalize API compatibility/deprecation policy, generated and packaged SDK releases, audit-log
-  export, operator upgrade/rollback procedures, schema/event compatibility checks, and zero-downtime
-  migrations.
+- Replace browser-only builder state with observable autosave state, unsaved/offline indication,
+  recovery after reload, named collaborators, presence, revision history, and a conflict-resolution
+  experience that compares base, local, and remote meaning.
+- Add changeset list/detail/review surfaces with object-level discussions, resolved/unresolved state,
+  reviewer ownership, check/evidence summaries, affected environments and consumers, and explicit
+  request-changes/approve/deploy actions. Notifications deep-link to the exact object/thread.
+- Add reusable-asset browse/detail/consumer/upgrade journeys and render collapsed subflows without
+  concealing their pinned runtime contents. Search and the command palette cover drafts, changesets,
+  reusable assets and their dependency keywords, experiments, and existing cases.
+- Schedule review reminders, stale-draft retention, and planned promotions through durable,
+  replica-safe work. Surface failures and conflicting scheduled changes in product health rather than
+  converting them into an apparently idle state.
+- Preserve keyboard operation, WCAG-AA, persona density, light/dark themes, responsive review layouts,
+  loading/error/empty states, double-submit prevention, and real-Wasm support.
 
-**Exit evidence:** the documented production profile survives replica loss and rolling upgrades with no
-lost committed work; sustained tests meet published SLOs with bounded queues; restore drills rebuild and
-reconcile a production-shaped tenant inside the published RPO/RTO; scheduler/worker failover is proven
-with multiple live replicas; and automated isolation tests attempt cross-tenant access at every storage
-and observability boundary.
+**Security and governance scope:**
 
-### 8b.8 PR E7 — ecosystem and regulated solution packs
+- Separate view, edit, share, review, approve, publish, and environment-promote capabilities. Enforce
+  tenant/workspace scoping on content, presence, search, mentions, dependency traversal, export, and
+  notifications.
+- Record who changed which semantic object from which base revision and who exported each canonical
+  draft revision. Reject high-signal PII in review evidence/reasons/comments at the write boundary;
+  reject canonical export when graph configuration embeds a value under a workspace-classified
+  sensitive key, rather than leaking it or silently replacing executable source with redaction.
+  Evidence fields carry immutable access-controlled references, not copied customer data.
+- Prevent expression/configuration imports, URLs, attachments, or generated suggestions from turning
+  validation into hidden network or code execution. Existing egress and AI policies remain fail-closed.
 
-**Outcome:** the platform is adoptable for complete credit, fraud, AML/KYB, and servicing workflows
-without pretending that a handful of generic adapters constitutes a data marketplace.
+**Explicit non-goals and dependency gates:**
 
-**Scope:**
+- E4 is not a general-purpose source-control host and does not invent a second identity/review system.
+  Git providers may call the canonical API; provider-specific apps/webhooks belong in E8.
+- Character-level CRDT collaboration is not required for completion. Revisioned optimistic concurrency
+  with durable conflict recovery and ephemeral presence satisfies the user journey unless measured
+  editing behavior proves a stronger algorithm necessary.
+- No collaboration, diff, parser, or Git dependency may be added until the required dependency
+  announcement and license/security review.
 
-- Publish a connector/provider SDK and conformance harness covering schemas, auth/secrets, egress,
-  idempotency, pagination, webhooks, rate limits, retries, circuit breaking, sandbox fixtures,
-  observability, data classification, consent/purpose, and replay evidence.
-- Deliver coherent provider packs prioritized by validated customer journeys, with normalized entities,
-  reason/evidence mapping, documented commercial prerequisites, and maintained contract tests. Provider
-  count is not a success metric; supported end-to-end journeys are.
-- Ship governed solution templates for credit origination/line management, fraud review, AML/KYB,
-  sanctions/adverse media, bank-statement analysis, and servicing. Include flow, policy, model/agent,
-  case type, queue, experiment, dashboard, compliance, and sample-data assets as one installable pack.
-- Add actual delivery providers and attempt tracking for adverse-action notices and other required
-  communications; retain the exact issued artifact independently of delivery. Add subject access and
-  portability exports over the governed data inventory.
-- Add AML investigation and regulatory-report preparation workflows, including evidence lineage,
-  approvals, amendments, submission/download boundaries, retention, and explicit human accountability.
-  Never represent generated narratives as filed reports unless a real filing integration confirms it.
-- Add domain-agent evaluation suites, reviewer-feedback loops, safety policies, cost/latency budgets,
-  escalation defaults, and aggregate quality reporting before marketing an agent as production-ready.
+**Exit evidence:**
 
-**Exit evidence:** each published solution pack runs as a seeded native/Wasm journey over real backend
-contracts; connector conformance failures block release; communications prove generation, delivery
-attempts, and exact artifacts separately; and every claimed regulatory workflow identifies which steps
-are automated, human-approved, externally submitted, or intentionally outside the product.
+- Two real browsers edit one draft concurrently, observe presence, encounter a deterministic conflict,
+  resolve it without data loss, reload, and recover exactly the accepted revision.
+- A reusable subflow upgrade identifies every direct/transitive consumer, blocks incompatible and
+  cyclic changes, tests the expanded exact versions, and leaves execution/history lineage intact after
+  replay.
+- UI and CLI canonical flow bundles round-trip byte-stably after normalization; semantic fixtures prove
+  execution-changing differences are never omitted.
+- Maker, independent reviewer, scheduled promoter, and competing writer journeys prove that no UI,
+  API, SDK, import, or Git route deploys stale or unreviewed production logic.
+- Native, real-Wasm, embedded, restart/replay, multi-replica, authorization, PII/export, keyboard, and
+  accessibility tests cover the complete collaboration journey.
 
-### 8b.9 Parallel organisational release track
+### 8b.6 PR E5 — governed agentic operations and human/AI learning
 
-No code PR can manufacture customer trust or regulatory evidence. In parallel with E1–E7, a production
+**Outcome:** specialist AI agents and AI-assisted case work operate as governed decision assets with
+measured quality, safety, cost, provenance, and human accountability—not as opaque provider calls.
+
+**Starting boundary:** Agent Manager already has versioned configuration, structured outputs, tool
+capability allowlists, durable asynchronous execution/recovery, eval cases, guardrails, costs, model
+risk inventory, approval dependencies, and monitoring summaries. Case Manager already has governed
+evidence, queues, dispositions, independent QA, validated outcomes, and reviewer feedback. Missing are
+a reusable agent product/library, production-grade adversarial and repeated evaluation, explicit
+untrusted-content controls, a governed agent release/deploy lifecycle, evidence-cited reviewer
+assistance, and a closed quality-learning loop between agent runs and case outcomes.
+
+**Primary journeys:**
+
+- An agent designer starts from a governed specialist template, binds approved models/tools/data,
+  defines a structured contract and human gates, evaluates it, obtains independent approval, and
+  deploys the exact version by environment.
+- An evaluator builds immutable representative and adversarial suites, repeats nondeterministic trials,
+  compares versions/providers, inspects evidence, sets acceptance thresholds, and blocks unsafe release.
+- A reviewer receives an evidence-cited summary, triage suggestion, or draft disposition inside the
+  case—not a second queue—then accepts, edits, rejects, or escalates it while remaining the accountable
+  actor.
+- An operator monitors agent quality, policy violations, prompt/tool incidents, latency, token/cost
+  budgets, case-assist adoption and overrides, pauses a deployment, and follows each metric to runs,
+  cases, outcomes, and exact versions.
+- A developer brings a separately hosted agent through a versioned protocol that preserves identity,
+  authorization, evidence, cancellation, timeout, idempotency, and replay boundaries.
+
+**Agent asset, release, and runtime scope:**
+
+- Introduce reusable agent templates and immutable releases containing instructions, model/provider
+  requirements, typed input/output, allowed tools and data purposes, evidence/citation requirements,
+  budgets, retry/timeout policy, escalation/human-review rules, and dependency pins. Treat provider
+  selection and material prompt/tool changes as governed release changes.
+- Add draft → evaluated → review-requested → approved/rejected → deployed/paused/retired lifecycle with
+  environment bindings, scheduled promotion/rollback, four-eyes separation, expiry when dependencies or
+  required evidence change, and exact run lineage.
+- Extend durable execution evidence with model/tool request identity, sanitized provider metadata,
+  referenced source/artifact identities, policy decisions, citations, token/cost/latency, retries,
+  human handoffs, and terminal reason. Secrets and raw sensitive content obey current masking/export
+  policy.
+- Define a bring-your-own-agent serving protocol and conformance harness. Remote implementations
+  receive scoped inputs and capability tokens, propagate idempotency/correlation/cancellation, return
+  typed evidence, and cannot claim platform tool execution that the platform did not authorize and
+  record.
+
+**Evaluation and safety scope:**
+
+- Replace one-pass eval summaries with immutable versioned datasets/suites, expected structured
+  outcomes, grading rubrics, exact/semantic/policy graders, segment tags, severity, human adjudication,
+  repeated trials, confidence intervals, variance, regressions, baseline/challenger comparison, and
+  reproducible exports.
+- Add adversarial suites for prompt injection, instruction hierarchy, untrusted documents/tool output,
+  data exfiltration, cross-tenant references, unsafe tool arguments, excessive agency, hallucinated
+  evidence, malformed output, timeout/cost exhaustion, and provider refusal/failure. A failed required
+  safety suite blocks approval or deployment.
+- Make trust boundaries explicit: tag content and tool results by source/trust/purpose, keep system
+  policy outside user-controlled context, validate every structured boundary, authorize each tool call
+  immediately before execution, and prevent model text from granting capabilities or changing budgets.
+- Add tool approval modes (`automatic`, `human-before-call`, `forbidden`), scoped capability
+  parameters, per-run and per-period budgets, circuit breaking, emergency pause, and auditable operator
+  intervention. Do not claim prompt injection can be eliminated; measure resistance and contain impact.
+
+**Case-assistance and learning scope:**
+
+- Add durable, version-linked case-assist requests/results for summarization, evidence extraction,
+  prioritization, next-best-action, and draft disposition/reason/narrative. Every claim cites governed
+  case evidence or is visibly marked unsupported; evidence unavailable to the reviewer cannot be
+  smuggled through the assist.
+- Present suggestions inside the existing case-type role layout with source previews, confidence and
+  limitations, stale-evidence indication, retry/escalation, and explicit accept/edit/reject. Acceptance
+  never silently performs a terminal case action; the reviewer confirms through the governed case
+  command.
+- Record suggestion-to-final diffs, reviewer action, QA agreement/override, validated outcome, time
+  saved, and optional reasoned feedback. Join them to exact agent/model/tool/data versions without
+  treating one reviewer or model-generated grade as ground truth.
+- Permit case definitions and routing policies to request eligible assists asynchronously, but make
+  queue entry, reviewer work, SLA, and resolution independent of provider availability. Agent failure
+  is visible and actionable; it cannot strand or auto-resolve a case.
+
+**UI/UX, operations, and APIs:**
+
+- Add agent template/library, draft/release/deployment, suite/dataset, comparison, run trace,
+  safety-incident, and quality/cost dashboards for Builder/Evaluator/Operator personas. Clearly
+  distinguish deterministic policy, model output, tool observation, human judgment, and validated
+  outcome.
+- Add case-assist controls and provenance to the reviewer workbench; notifications deep-link to failed
+  assists, human tool approvals, safety incidents, budget exhaustion, regressions, and deployment
+  actions.
+- Expose all lifecycle, evaluation, intervention, assist, feedback, and monitoring contracts through
+  OpenAPI and both SDKs. Scheduler/workers own repeated eval campaigns, deployment windows, expired
+  approvals, monitors, retry/dead letter, retention, and learning joins with replica-safe claims.
+- Aggregate quality by task, segment, template/release, provider/model, environment, tool, and time;
+  show denominator, uncertainty, missing outcomes, adoption/edit/reject rates, latency, and spend.
+
+**Data, privacy, and dependency boundaries:**
+
+- Add a governed text/document artifact contract for extracted text, metadata, immutable hash,
+  classification, lawful basis/purpose, retention/hold/erasure, and external storage capability. Do not
+  place arbitrary binary documents or provider secrets in the event log.
+- Agent templates, prompts, eval records, source text, traces, feedback, and exports participate in
+  tenant isolation, PII masking, audit, subject erasure/retention, and support-access controls.
+- Model/provider, vector/search, document extraction, grader, or sandbox dependencies require the
+  repository's advance ownership/license/security announcement. Prefer existing projection/search and
+  explicit external protocols until a measured need justifies an embedded runtime.
+
+**Explicit non-goals:**
+
+- E5 does not market autonomous legal, credit, fraud, AML, or filing judgment. High-impact actions use
+  deterministic policy and configured human gates; solution-specific accountability ships in E8.
+- “Continuous learning” means measured feedback informs a new governed version. Production prompts,
+  weights, thresholds, or policies never mutate themselves from reviewer behavior.
+
+**Exit evidence:**
+
+- A specialist template is configured, evaluated across deterministic, repeated, segmented, and
+  adversarial suites, independently approved, deployed, invoked, paused, rolled back, and replayed with
+  exact dependency/evidence lineage.
+- Prompt injection and malicious tool-output fixtures cannot expand capabilities, read another tenant,
+  bypass a human gate, exceed a budget, or create unrecorded effects; failures and containment are
+  visible in operator and audit surfaces.
+- A real reviewer receives a cited assist, inspects sources, edits or rejects it, performs the governed
+  case action, receives independent QA, and produces a version-attributable validated outcome without
+  provider availability controlling the case lifecycle.
+- Repeated worker death, lease loss, timeout, cancellation, provider refusal, malformed output, and
+  dead-letter tests yield one logical run/result and bounded side effects.
+- Native, real-Wasm, embedded, API/SDK, multi-replica, privacy/erasure, accessibility, and performance
+  suites prove the advertised agent and case-assist journeys.
+
+### 8b.7 PR E6 — model and context data-science platform
+
+**Outcome:** data and model teams can produce a point-in-time-correct, reproducible dataset and governed
+model release whose online behavior, explanations, monitoring, and retirement remain traceable to the
+same source facts.
+
+**Starting boundary:** Context Layer has versioned entities/events, features, point-in-time reads,
+materialized cache behavior, connectors, consent/purpose controls, lineage foundations, and corrections.
+Decision Engine supports logistic training plus logistic/GBM/expression/external serving, validations,
+approvals, predictions, actuals, drift, fairness, reason codes, and experiments. Missing are governed
+schema/data contracts, streaming correction/backfill operations, immutable dataset snapshots, a
+general reproducible training/artifact supply chain, richer statistically sound evaluation, and one
+complete lineage/retirement journey.
+
+**Primary journeys:**
+
+- A data owner versions an entity/event schema and quality contract, observes ingestion and freshness,
+  handles a breaking evolution or incident, corrects/backfills history, and proves affected assets.
+- A modeler defines features/labels and time cutoffs, materializes an immutable dataset split, trains or
+  registers an artifact, evaluates/calibrates/compares it, and reproduces the result later.
+- Independent validation reviews data provenance, leakage, assumptions, segments, explanations,
+  fairness, limitations, and challenger evidence before maker-checker deployment.
+- An operator follows stale data, feature skew, drift, performance, fairness, or expiring evidence to
+  the source/dataset/model/decision/outcome and executes a governed response.
+
+**Context and feature scope:**
+
+- Add immutable, versioned entity/event schemas with field types, nullability, identifiers,
+  relationships, source ownership, classifications, lawful purposes, compatibility rules, and
+  freshness/completeness/validity/uniqueness contracts. Boundary ingestion pins and validates a schema
+  version; breaking evolution requires explicit impact and migration.
+- Add quality observations/incidents with affected interval/subjects/assets, severity, owner,
+  acknowledgement, resolution, correction lineage, and notification. Data policy can block, refer, use
+  an explicitly approved stale value, or proceed with a visible warning; it may not silently substitute
+  data.
+- Add incremental/materialized feature processing and streaming ingestion semantics for idempotency,
+  event time versus receipt time, watermarks, late events, corrections/retractions, and deterministic
+  recomputation. Backfill jobs have immutable manifests, bounded concurrency, claims, pause/cancel/
+  resume/retry, progress, cost, validation, and atomic publication.
+- Make point-in-time joins and online/offline parity a public contract. Track source-to-feature lineage,
+  freshness SLO, cardinality/storage/compute cost, materialization status, last success/error, and
+  downstream consumers.
+
+**Dataset, training, and artifact scope:**
+
+- Add a dataset registry with immutable manifests/snapshots, entity population, feature/label versions,
+  observation and label windows, event-time cutoff, exclusion rules, consent/purpose scope, train/
+  validation/test partition method and salt, provenance, quality summary, retention, hash, and
+  reproducible export.
+- Add durable training/evaluation jobs with pinned dataset/code/runtime/parameters, resource request,
+  seed where supported, logs/metrics, artifact hash/signature, attempts, cancellation, timeout, and
+  worker ownership. Job records distinguish platform-trained from externally registered artifacts.
+- Add a signed model-artifact registry with format/runtime contract, size and dependency metadata,
+  vulnerability/provenance evidence where applicable, stage, owner, storage capability, retention, and
+  promotion. Never deserialize arbitrary code inside the API/decision process.
+- Support richer runtimes through a versioned isolated serving protocol or a separately approved
+  sandboxed artifact runner. Multi-class/regression and additional trained model families ship only
+  with faithful serving, explanation, validation, serialization, and resource-boundary tests.
+
+**Evaluation, governance, and monitoring scope:**
+
+- Add calibration and reliability plots, threshold/cost optimization, confusion/error analysis,
+  segment and intersectional analysis, leakage checks, stability, confidence intervals, temporal
+  validation, benchmark/challenger comparison, and documented limitations. Preserve raw counts and
+  denominators behind every summary.
+- Provide faithful model-specific local/global explanations where supported and explicit limitations
+  where not. Decision reason codes remain governed business reasons, not automatically copied feature
+  importance.
+- Extend outcomes and label pipelines to binary, multi-class, continuous, censored/delayed, corrected,
+  and versioned facts. Monitoring reports missing/late labels and cohort comparability before claiming
+  performance.
+- Extend fair-lending beyond the current AIR screen with minimum-sample rules, uncertainty/significance,
+  intersectional groups, documented missing-data treatment, and approved regression or matched-pair
+  methods. Reports remain examiner-reproducible screens, never automatic legal conclusions.
+- Unify source/schema/event/feature/dataset/job/artifact/model/validation/approval/deployment/prediction/
+  explanation/outcome/drift/fairness/issue/retirement lineage. Block retirement/deletion while governed
+  dependants or retention obligations exist; support replacement impact and archive/export.
+
+**UI/UX, API, scheduler, and compatibility scope:**
+
+- Add schema/source quality, feature/materialization, dataset builder/snapshot, training job/artifact,
+  evaluation comparison, lineage/impact, incident, and retirement surfaces with persona-appropriate
+  modeler, validator, operator, and executive views.
+- Expose all resources through OpenAPI and both SDKs, including streaming/bulk ingestion and job result
+  pagination/download. CLI supports contract validation, snapshot creation/verification, job submission,
+  artifact registration, lineage impact, and evidence export.
+- Scheduler/workers own incremental materialization, backfills, training/evaluation, label joins,
+  quality/freshness checks, monitoring, retention, and retirement with durable claims and visible
+  health.
+- Preserve deterministic replay of historical schemas/features/predictions and explicit behavior for
+  pre-E6 records. Large data/artifact bytes remain outside the event log behind hash-verified,
+  purpose-bound storage capabilities.
+
+**Exit evidence:**
+
+- Late, corrected, duplicated, and out-of-order event fixtures yield identical online and offline
+  feature values after replay and backfill; stale/poor data follows its declared fail/refer/warn policy.
+- A model release is reproduced from an immutable dataset and pinned runtime, yielding the same
+  supported metrics/artifact hash or an explicit documented nondeterminism envelope.
+- Independent validation and four-eyes deployment reject leakage, incompatible schema evolution,
+  missing evidence, expired approval, unfairness/performance guardrail failure, and untrusted artifact
+  provenance.
+- Multi-replica worker failure resumes materialization/training/backfill exactly once at the logical-job
+  level, with bounded duplicate external work and no partial dataset publication.
+- Native browser, API/SDK, real-Wasm-compatible read journeys, privacy/retention, replay, statistical
+  fixtures, and lineage/retirement tests make every data/model claim reproducible.
+
+### 8b.8 PR E7 — production scale, tenancy, and disaster recovery
+
+**Outcome:** the recommended production topology has measured capacity and availability, explicit
+tenant isolation/placement, durable distributed ownership, and routinely tested recovery instead of a
+single-node or runbook-only promise.
+
+**Starting boundary:** Postgres/NATS/event-WAL backends, JSONB projections, multi-replica-safe projection
+application, scalable API/worker tiers, a singleton scheduler, Helm and AWS ECS topology, health/
+readiness, OTel, encryption, SSO/SCIM, and baseline/soak/failure tests already exist. The Postgres event
+log deliberately serializes append order; projection/scheduler ownership and tenant administration are
+not yet a complete scale/isolation control plane; backup/restore evidence and published service levels
+remain incomplete.
+
+**Primary journeys:**
+
+- A tenant administrator creates and configures an organization/workspace, identity domains,
+  membership, service accounts, quotas/budgets, environment placement, residency, network policy,
+  export/suspension, and deletion with preview and audit.
+- A platform operator adds capacity, rolls a release, moves or drains ownership, diagnoses lag/
+  backpressure/noisy neighbors, rotates keys/secrets/certificates, and completes an upgrade without
+  losing committed work.
+- An SRE declares an incident, fails over workers/schedulers/dependencies, restores a tenant or region
+  to a verified point, reconciles integrity, and publishes achieved RPO/RTO evidence.
+- An enterprise integrator relies on stable API/SDK versions, idempotency/rate-limit semantics,
+  deprecation windows, upgrade checks, and environment-specific endpoints.
+
+**Scale and distributed ownership scope:**
+
+- Replace the global serialized-append ceiling only with a proven ordering design: partition by explicit
+  tenant/stream ownership where safe, retain canonical order where required, publish the consistency
+  model, and migrate checkpoints/replay without commit-order gaps.
+- Horizontally scale projection partitions and every worker class with durable leases, fencing,
+  heartbeat, rebalance/drain, lag/backlog visibility, bounded retries, and overload backpressure.
+  Work stealing cannot violate tenant placement or per-tenant concurrency.
+- Replace deployment-enforced singleton scheduling with redundant live replicas using leader/work
+  claims and fencing. Clock/window behavior, missed ticks, takeover, and duplicate reconciliation
+  remain deterministic.
+- Establish supported workload profiles and SLO/SLA evidence for interactive/effectful decisions,
+  ingestion, projections, agents, cases, population/backfill/training jobs, and notification/webhook
+  delivery. State payload/cardinality/concurrency/dependency assumptions with every result.
+
+**Tenant, isolation, network, and regional scope:**
+
+- Add organization/workspace lifecycle APIs and UI for creation, invitations, membership, local/SSO/
+  SCIM mappings, API keys/service accounts, environment ownership, quotas, rate limits, spend limits,
+  suspension, export, deletion, and status. Bootstrap and last-admin transitions fail safely.
+- Define supported isolation profiles: self-hosted single tenant, shared control plane with partitioned
+  data plane, and stronger dedicated compute/storage profiles. Make tenant placement, region/data
+  residency, encryption-key ownership, backup region, and migration state explicit.
+- Add ingress/egress network policy including mTLS for supported machine clients and services, trusted
+  proxy/origin rules, IP allowlists, private connectivity guidance, certificate rotation, and denied
+  access evidence. Do not promise a cloud/network feature the shipped deployment modules do not create.
+- Test and prevent cross-tenant access through logs, projections, caches, search, rate counters,
+  artifacts, backups, metrics/traces, secrets, exports, notifications, support tooling, and error
+  messages. Tenant identifiers in observability remain controlled labels, not unbounded sensitive data.
+
+**Reliability, recovery, and operations scope:**
+
+- Add multi-hour endurance, burst/overload, backpressure, hot-tenant/noisy-neighbor, replica churn,
+  rolling upgrade, schema migration, network partition, storage/provider outage, regional latency, and
+  recovery tests. Publish p50/p95/p99, throughput, saturation, error, lag, loss, and cost evidence.
+- Automate encrypted backups and point-in-time recovery where supported, manifest/hash validation,
+  restore into an isolated target, event/projection reconciliation, tenant-selective export/restore
+  where semantics permit, scheduled restore drills, and immutable drill evidence.
+- Define RPO/RTO by supported profile and expose last backup, last verified restore, checkpoint/lag,
+  recovery ownership, integrity result, and degraded dependencies through operator APIs/UI/alerts.
+- Add safe operational commands for drain, rebalance, pause/resume work classes, replay/rebuild,
+  consistency verification, tenant export, restore rehearsal, key rotation, and support access. All
+  mutations are scoped, confirmed, authorized, idempotent, and audited.
+
+**API, SDK, deployment, and migration scope:**
+
+- Formalize compatibility/deprecation/versioning, idempotency and eventual-read semantics, pagination/
+  streaming, rate-limit headers, retry guidance, error taxonomy, support windows, generated SDK release
+  artifacts, changelog, and conformance tests.
+- Add zero-downtime event/projection/schema migration gates, preflight compatibility inspection,
+  backward/forward mixed-version window, abort/rollback rules, and old-version replay fixtures.
+- Bring Helm, ECS/Terraform, container release, configuration reference, secrets, dashboards, alerts,
+  runbooks, and capacity calculators into parity with every supported isolation/HA/DR profile.
+
+**Explicit non-goals and evidence boundaries:**
+
+- E7 publishes only profiles actually exercised in automation or a documented controlled drill.
+  Availability, throughput, decision latency, residency, RPO, and RTO are measured claims with dates and
+  conditions, not copied competitor numbers.
+- Multi-region active-active semantics are not assumed. Ship them only if ordering, idempotency,
+  provider effects, identity, and failback are proven; otherwise document supported regional
+  active/passive recovery precisely.
+- New databases, brokers, service meshes, certificate systems, load tools, or cloud services require
+  the advance dependency/ownership/license/security announcement and an in-repo alternative analysis.
+
+**Exit evidence:**
+
+- The documented production profile survives API, worker, scheduler, and projection replica loss plus
+  rolling mixed-version upgrades with no lost committed work or duplicate logical terminal outcome.
+- Sustained production-shaped tests meet published latency/throughput/lag/error objectives with bounded
+  queues; overload rejects or backpressures according to the public contract and one hot tenant cannot
+  consume another's reserved capacity.
+- Automated isolation attacks cover every storage, artifact, observability, export, notification, and
+  support boundary; mTLS/IP/placement/residency policies are enforced and visible.
+- Backup and restore drills rebuild and reconcile production-shaped tenants within published RPO/RTO,
+  including key access, event integrity, projections, artifacts, identities, and post-restore workers.
+- Operator UI/API, alerts, runbooks, Helm/ECS plans, API/SDK conformance, native/embedded journeys, and
+  failure-injection evidence agree on the same supported topology.
+
+### 8b.9 PR E8 — ecosystem and regulated solution packs
+
+**Outcome:** teams can install, configure, validate, and operate complete credit, fraud, AML/KYB, and
+servicing journeys with maintained connectors and explicit human/external boundaries—without
+pretending a handful of adapters or demos is a data marketplace.
+
+**Starting boundary:** generic HTTP/provider connectors, credential/egress controls, context entities/
+events/features, rules/models/agents, case operations, consent/retention/erasure, adverse-action
+artifacts, experiments, and deployment packaging already work. Missing are a stable third-party
+extension contract, provider conformance and lifecycle operations, complete installable domain packs,
+real communication delivery, regulatory preparation boundaries, and pack-level evaluation/support
+evidence.
+
+**Primary journeys:**
+
+- An integration owner discovers a compatible provider, configures sandbox credentials and consent/
+  purpose, maps/test data, promotes it, watches health/rate/cost/contract changes, rotates credentials,
+  and changes provider without rewriting decision logic.
+- A domain owner installs a versioned solution pack into a new workspace, reviews required choices and
+  commercial/legal prerequisites, validates seeded scenarios, customizes through governed changes, and
+  upgrades with semantic impact and rollback.
+- A credit/fraud/AML/servicing operator follows one entity from data collection through decisions,
+  agents, cases, communications/report preparation, outcomes, monitoring, audit, retention, and subject
+  rights without leaving disconnected product surfaces.
+- A compliance owner can distinguish platform-generated evidence, human approval, delivery attempt,
+  external acceptance/submission, and deliberately unsupported legal responsibility.
+
+**Connector and provider ecosystem scope:**
+
+- Publish a connector/provider SDK and conformance harness covering manifest/version/compatibility,
+  typed schemas and normalized entities, auth/secrets rotation, egress, consent/purpose, idempotency,
+  pagination, webhook verification, event ordering, rate limits, retries/backoff, circuit breaking,
+  timeout/cancellation, sandbox fixtures, cost, observability, classification/retention, lineage,
+  corrections, replay evidence, and error taxonomy.
+- Add install/configure/test/approve/deploy/pause/upgrade/retire lifecycle with environment bindings,
+  health, quota/rate/cost visibility, expiring credentials/contracts, provider incidents, migration
+  assistance, notifications, and audit. Provider output never bypasses boundary schema or trust labels.
+- Deliver a small number of coherent provider packs prioritized by validated customer journeys, with
+  normalized entities, reason/evidence mapping, commercial prerequisites, sample/sandbox behavior,
+  maintained contract fixtures, and named ownership. Provider count is not a success metric.
+- Define an out-of-process extension protocol before accepting third-party runtime code. No marketplace
+  package executes arbitrary code inside the API/decision process or receives tenant-wide credentials.
+
+**Solution-pack scope:**
+
+- Define signed, versioned, dependency-pinned pack manifests containing flows, policies, features,
+  models/agents, eval suites, case types/queues, experiments, dashboards, reason codes, notices,
+  retention/consent settings, provider mappings, sample data, documentation, and upgrade migrations.
+- Ship governed reference packs for credit origination/line management, fraud prevention/review,
+  AML/KYB and sanctions/adverse media, bank-statement/cash-flow analysis, and servicing/collections.
+  Each pack states intended jurisdiction, assumptions, configurable policy points, required human
+  roles, data/vendor prerequisites, limitations, and prohibited unsupported claims.
+- Use E4 changesets for customization and upgrade; show drift from the upstream pack, semantic impact,
+  incompatible local edits, new permissions/data purposes, validation evidence, rollback, and retained
+  execution lineage.
+- Add pack-level seeded scenarios, domain-agent eval/adversarial suites, fairness/quality/operational
+  thresholds, performance budgets, and native plus real-Wasm demonstrations over the real backend.
+
+**Communications, reporting, and subject lifecycle scope:**
+
+- Add actual delivery-provider contracts and durable attempt/retry/dead-letter/status evidence for
+  adverse-action notices and other configured communications. Preserve generation, exact issued
+  artifact/hash, recipient/channel, human approval, delivery attempt, provider receipt, bounce/failure,
+  and confirmed delivery as distinct facts.
+- Add governed templates/localization/accessibility and recipient address/contact verification without
+  letting editable copy change recorded principal reasons or statutory facts. Resend/amendment creates
+  explicit lineage; it never overwrites the issued artifact.
+- Add subject access and portability exports across the governed entity/event/decision/agent/case/
+  communication inventory with identity verification, purpose, approval where configured, asynchronous
+  generation, redaction/third-party protection, retention, expiry, download access evidence, and
+  correction/contest links.
+- Add AML investigation and regulatory-report preparation with evidence citations, validation,
+  reviewer/approver separation, amendments, download/submission handoff, retention, and explicit human
+  accountability. Never label a generated narrative “filed” unless a real integration records external
+  acceptance.
+
+**UI/UX, API, scheduler, and operations scope:**
+
+- Add connector catalog/configuration/health, pack catalog/install/customize/upgrade, communication
+  operations, subject-request workbench, and regulatory-preparation journeys with role-appropriate
+  Builder/Operator/Admin/Showcase views.
+- Expose manifests, configuration, conformance, lifecycle, health, delivery, export, and preparation
+  resources through OpenAPI and both SDKs. CLI supports pack/provider validation, install plan, signed
+  bundle verification, upgrade impact, seeded acceptance, and evidence export.
+- Scheduler/workers own webhook ingestion, token/credential checks, provider health, retries/dead
+  letters, pack monitors, delivery status, subject exports, retention/expiry, and external reconciliation
+  with durable claims and surfaced failure.
+- Apply tenant isolation, secretbox, egress, PII masking, purpose/consent, audit, retention/hold/erasure,
+  support access, quotas, cost, and E5 untrusted-content/tool policies to every provider and pack.
+
+**Explicit non-goals and dependency gates:**
+
+- Pack policies and templates are governed starting points, not legal advice, automatic certification,
+  or a claim of suitability for every institution or jurisdiction. The adopting organization owns its
+  policy, validation, data-provider contracts, notices, and regulatory filings.
+- Commercial bureau/provider access, redistribution rights, production credentials, and regulator
+  submission agreements are organizational prerequisites; sample/sandbox paths must be clearly labeled.
+- Every provider library, container, service, schema license, model, dataset, and template requires the
+  advance dependency/license/security/data-rights review. AGPL compatibility and redistribution rights
+  are release gates.
+
+**Exit evidence:**
+
+- Every published connector passes the conformance harness across sandbox success, pagination/webhook,
+  duplicate/out-of-order input, throttling, credential rotation, timeout, retry/circuit, correction,
+  replay, privacy, and cross-tenant attack fixtures; conformance failure blocks release.
+- Each solution pack installs into an empty workspace, runs its seeded native and real-Wasm journeys,
+  produces governed decisions/agents/cases/outcomes/monitoring, survives upgrade with local
+  customization, and uninstalls/retires without orphaning historical lineage.
+- Communication journeys prove generation, human approval where required, exact artifact retention,
+  delivery attempts and provider status separately; subject export proves verified, redacted,
+  purpose-bound generation/download/expiry.
+- Regulatory workflows and documentation identify every automated, human-reviewed, externally
+  submitted, contract-dependent, and intentionally unsupported step; no UI or API overstates status.
+- OpenAPI/SDK/CLI, scheduler/recovery, security/privacy, accessibility, performance, packaging, license,
+  and operator evidence are complete enough for a third party to adopt a pack without reading source.
+
+### 8b.10 Parallel organisational release track
+
+No code PR can manufacture customer trust or regulatory evidence. In parallel with E1–E8, a production
 offering requires SOC 2 Type II and ISO 27001 programs, independent penetration tests, threat-model and
 incident-response exercises, on-call and support processes, privacy/legal review, model-validation
 staffing, data-provider agreements, regional subprocessors, recovery exercises, and reference
 deployments. Marketing and enterprise-readiness claims must distinguish implemented controls from
 audited certifications and operating history.
 
-### 8b.10 Earlier regulated-lending and production phases
+### 8b.11 Earlier regulated-lending and production phases
 
-The phases below record the already delivered or partially delivered track that preceded E1–E7. Open
+The phases below record the already delivered or partially delivered track that preceded E1–E8. Open
 tails have been absorbed into the PRs above; they remain here as architectural history, not a second
 competing queue.
 
@@ -925,7 +1468,7 @@ competing queue.
   replay. Still open: the ops-heavy scale tail (log compaction now shipped — a segmented,
   self-archiving WAL with soak + store-failure coverage; backup automation still open).
 
-The former parallel non-code track is now specified with release evidence in §8b.9; it remains
+The former parallel non-code track is now specified with release evidence in §8b.10; it remains
 independent of, and just as necessary as, the implementation PR sequence.
 
 ## 9. Scope boundaries (current)

@@ -498,14 +498,22 @@ Spans: any detail page → the **notifications** bell.
 
 Spans: **Flows** (`/engine`) → **Flow builder**.
 
-1. Export a flow version: `GET /v1/flows/{flow_id}/export` returns the graph as a
-   document (the builder also exports Mermaid, BPMN, Graphviz DOT). Outcome: the flow
-   as a file you can review, diff, and keep in version control.
-2. Import it elsewhere with `POST /v1/flows/import` (or `/import-bundle` for several
-   at once). Re-importing an identical document is a no-op; a changed one publishes a
-   new version on the same slug. Outcome: the same flow, versioned, in the target
-   workspace. Import runs the same publish-time dry compile, so a broken graph is
-   refused at the boundary.
+1. Open the flow's shared draft and export its canonical source:
+   `GET /v1/authoring/drafts/{draft_id}/export` returns byte-stable
+   `intraktible.authoring/v1`. Layout-only coordinates are removed, embedded JSON is
+   normalized, and exact reusable-component references use portable slugs. Export is
+   audited and refuses workspace-classified sensitive fixtures. (The published-version
+   export and Mermaid/BPMN/Graphviz downloads remain presentation/interchange tools,
+   not the repository source contract.)
+2. Import the canonical source with
+   `POST /v1/authoring/import` (or `/import-bundle` for several at once), supplying
+   an idempotency key. Bundle preflight resolves and compiles every flow before any is
+   written. Outcome: a validated, recoverable draft plus an explicit target-identifier
+   migration report in the target workspace—not an unreviewed publication.
+3. Submit the imported revision as a changeset, attach required check evidence, and
+   obtain independent review before publication and environment promotion. The UI,
+   SDK, and `intraktible authoring` CLI use this same path. Evidence and discussion
+   accept references rather than raw customer PII.
 
 ### Shadow-evaluate a candidate version on live traffic
 

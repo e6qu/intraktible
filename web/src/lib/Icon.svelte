@@ -89,6 +89,10 @@
     ],
     ['manual_review', '<circle cx="12" cy="8" r="3"/><path d="M5 21a7 7 0 0 1 14 0"/>'],
     ['assignment', '<path d="M5 12h14M12 5v14"/>'],
+    [
+      'subflow',
+      '<rect x="3" y="5" width="7" height="6" rx="1"/><rect x="14" y="13" width="7" height="6" rx="1"/><path d="M10 8h3a3 3 0 0 1 3 3v2"/>'
+    ],
     ['reason', '<path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5M9 13h6M9 17h4"/>'],
     ['user', '<circle cx="12" cy="8" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/>'],
     ['chevron-down', '<path d="M6 9l6 6 6-6"/>'],

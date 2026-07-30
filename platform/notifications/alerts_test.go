@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/e6qu/intraktible/decision-engine/authoring"
 	deevents "github.com/e6qu/intraktible/decision-engine/events"
 	"github.com/e6qu/intraktible/decision-engine/experiments"
 	"github.com/e6qu/intraktible/decision-engine/monitor"
@@ -18,6 +19,68 @@ import (
 	"github.com/e6qu/intraktible/platform/store"
 	"github.com/e6qu/intraktible/platform/testutil"
 )
+
+func TestChangeSetReviewReminderTargetsAssigneeAndReviewResolvesWork(t *testing.T) {
+	ctx := context.Background()
+	log, _ := testutil.NewLogStore(t)
+	maker := identity.Identity{Org: "demo", Workspace: "main", Actor: "maker"}
+	now := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
+	emit := func(typ string, payload any, actor string) {
+		if _, err := eventlog.AppendJSON(
+			ctx, log, maker.Org, maker.Workspace, actor,
+			authoring.Stream, typ, now, payload,
+		); err != nil {
+			t.Fatal(err)
+		}
+		now = now.Add(time.Second)
+	}
+	submitted := authoring.ChangeSetSubmitted{
+		ChangeSetID: "cs-1", FlowID: "flow-1", Title: "Raise threshold",
+		CreatedBy: "maker", Reviewers: []string{"checker"},
+	}
+	emit(authoring.TypeChangeSetSubmitted, submitted, "maker")
+	emit(
+		authoring.TypeChangeSetReviewReminded,
+		authoring.ChangeSetReviewReminded(submitted),
+		"authoring-scheduler",
+	)
+
+	st := store.NewMemory()
+	if _, err := projection.New(log, st, notifications.Projector{}).RebuildTo(ctx, 0); err != nil {
+		t.Fatal(err)
+	}
+	checker := identity.Identity{Org: maker.Org, Workspace: maker.Workspace, Actor: "checker"}
+	inbox, err := notifications.List(ctx, st, checker, notifications.Access{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(inbox) != 2 || inbox[0].ActionID != "cs-1" ||
+		inbox[0].SubjectID != "flow-1:cs-1" {
+		t.Fatalf("reviewer reminder inbox = %+v", inbox)
+	}
+
+	emit(authoring.TypeChangeSetReviewed, authoring.ChangeSetReviewed{
+		ChangeSetID: "cs-1", FlowID: "flow-1", Title: "Raise threshold",
+		CreatedBy: "maker", Decision: authoring.ReviewApprove,
+	}, "checker")
+	if _, err := projection.New(log, st, notifications.Projector{}).RebuildTo(ctx, 0); err != nil {
+		t.Fatal(err)
+	}
+	inbox, err = notifications.List(ctx, st, checker, notifications.Access{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range inbox {
+		if !item.Resolved {
+			t.Fatalf("terminal review left actionable reminder: %+v", item)
+		}
+	}
+	creator, err := notifications.List(ctx, st, maker, notifications.Access{})
+	if err != nil || len(creator) != 1 ||
+		creator[0].Snippet != "Approved and ready to publish: Raise threshold" {
+		t.Fatalf("creator review alert = %+v err=%v", creator, err)
+	}
+}
 
 func TestOperationalAndApprovalAlertsReachRoleQueues(t *testing.T) {
 	ctx := context.Background()

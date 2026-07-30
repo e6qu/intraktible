@@ -50,7 +50,7 @@ var enums = []tsEnum{
 		events.NodeInput, events.NodeRule, events.NodeSplit, events.NodeAssignment,
 		events.NodeScorecard, events.NodeDecisionTable, events.NodeMatrix2D, events.NodeCode,
 		events.NodeAI, events.NodeConnect, events.NodePredict, events.NodeManualReview,
-		events.NodeReason, events.NodeOutput,
+		events.NodeReason, events.NodeSubflow, events.NodeOutput,
 	)},
 	{"Aggregation", "AGGREGATIONS", strs(
 		ctxdomain.AggCount, ctxdomain.AggSum, ctxdomain.AggAvg, ctxdomain.AggMin,

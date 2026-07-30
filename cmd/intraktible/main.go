@@ -28,6 +28,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/e6qu/intraktible/client"
+	"github.com/e6qu/intraktible/decision-engine/authoring"
 	"github.com/e6qu/intraktible/decision-engine/export"
 	"github.com/e6qu/intraktible/decision-engine/flows"
 	"github.com/e6qu/intraktible/decision-engine/history"
@@ -54,6 +56,8 @@ func main() {
 		err = replayCmd(os.Args[2:])
 	case "export":
 		err = exportCmd(os.Args[2:])
+	case "authoring":
+		err = authoringCmd(os.Args[2:])
 	default:
 		usage()
 	}
@@ -64,8 +68,239 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: intraktible <serve|log|replay|export> [flags]")
+	fmt.Fprintln(os.Stderr, "usage: intraktible <serve|log|replay|export|authoring> [flags]")
 	os.Exit(2)
+}
+
+func authoringCmd(args []string) error {
+	if len(args) == 0 {
+		return errors.New(
+			"authoring: command required (validate|import|status|diff|submit|publish|impact)",
+		)
+	}
+	switch args[0] {
+	case "validate":
+		fs := flag.NewFlagSet("authoring validate", flag.ContinueOnError)
+		file := fs.String("file", "", "canonical flow JSON file")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		asset, err := readCanonicalFlow(*file)
+		if err != nil {
+			return err
+		}
+		document, err := authoring.MarshalCanonicalFlow(asset)
+		if err != nil {
+			return err
+		}
+		_, err = os.Stdout.Write(document)
+		return err
+	case "import":
+		fs := flag.NewFlagSet("authoring import", flag.ContinueOnError)
+		file := fs.String("file", "", "canonical flow JSON file")
+		serverURL := fs.String("server", "http://localhost:8080", "intraktible server URL")
+		apiKey := fs.String("api-key", os.Getenv("INTRAKTIBLE_API_KEY"), "API key")
+		idempotencyKey := fs.String("idempotency-key", "", "stable repository commit or job key")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if strings.TrimSpace(*idempotencyKey) == "" {
+			return errors.New("authoring import: --idempotency-key is required")
+		}
+		asset, err := readCanonicalFlow(*file)
+		if err != nil {
+			return err
+		}
+		graph, err := json.Marshal(asset.Graph)
+		if err != nil {
+			return fmt.Errorf("authoring import: marshal graph: %w", err)
+		}
+		result, err := client.New(*serverURL, *apiKey).ImportCanonicalFlow(
+			context.Background(),
+			client.CanonicalFlow{
+				FormatVersion: asset.FormatVersion, Kind: asset.Kind,
+				Slug: asset.Slug, Name: asset.Name, Description: asset.Description,
+				Graph: graph, InputSchema: asset.InputSchema,
+			},
+			*idempotencyKey,
+		)
+		if err != nil {
+			return err
+		}
+		return printJSON(result)
+	case "status":
+		fs := flag.NewFlagSet("authoring status", flag.ContinueOnError)
+		serverURL := fs.String("server", "http://localhost:8080", "intraktible server URL")
+		apiKey := fs.String("api-key", os.Getenv("INTRAKTIBLE_API_KEY"), "API key")
+		flowID := fs.String("flow", "", "optional flow id")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		items, err := client.New(*serverURL, *apiKey).ListChangeSets(
+			context.Background(), *flowID,
+		)
+		if err != nil {
+			return err
+		}
+		return printJSON(items)
+	case "diff":
+		fs := flag.NewFlagSet("authoring diff", flag.ContinueOnError)
+		serverURL := fs.String("server", "http://localhost:8080", "intraktible server URL")
+		apiKey := fs.String("api-key", os.Getenv("INTRAKTIBLE_API_KEY"), "API key")
+		changeSetID := fs.String("changeset", "", "changeset id")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if *changeSetID == "" {
+			return errors.New("authoring diff: --changeset is required")
+		}
+		diff, err := client.New(*serverURL, *apiKey).ChangeSetDiff(
+			context.Background(), *changeSetID,
+		)
+		if err != nil {
+			return err
+		}
+		return printRawJSON(diff)
+	case "submit":
+		return authoringSubmit(args[1:])
+	case "publish":
+		return authoringAction(args[1:], "publish")
+	case "impact":
+		fs := flag.NewFlagSet("authoring impact", flag.ContinueOnError)
+		serverURL := fs.String("server", "http://localhost:8080", "intraktible server URL")
+		apiKey := fs.String("api-key", os.Getenv("INTRAKTIBLE_API_KEY"), "API key")
+		componentID := fs.String("component", "", "reusable component id")
+		version := fs.Int("version", 0, "immutable component version")
+		toVersion := fs.Int("to-version", 0, "optional target version for compatibility assessment")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if *componentID == "" || *version < 1 {
+			return errors.New("authoring impact: --component and positive --version are required")
+		}
+		c := client.New(*serverURL, *apiKey)
+		if *toVersion > 0 {
+			assessment, err := c.AssessComponentCompatibility(
+				context.Background(), *componentID, *version, *toVersion,
+			)
+			if err != nil {
+				return err
+			}
+			return printRawJSON(assessment)
+		}
+		consumers, err := c.ComponentConsumers(context.Background(), *componentID, *version)
+		if err != nil {
+			return err
+		}
+		return printJSON(consumers)
+	default:
+		return fmt.Errorf("authoring: unknown command %q", args[0])
+	}
+}
+
+func authoringSubmit(args []string) error {
+	fs := flag.NewFlagSet("authoring submit", flag.ContinueOnError)
+	serverURL := fs.String("server", "http://localhost:8080", "intraktible server URL")
+	apiKey := fs.String("api-key", os.Getenv("INTRAKTIBLE_API_KEY"), "API key")
+	draftID := fs.String("draft", "", "draft id")
+	revision := fs.Int("revision", 0, "exact draft revision")
+	title := fs.String("title", "", "changeset title")
+	rationale := fs.String("rationale", "", "review rationale")
+	reviewers := fs.String("reviewers", "", "comma-separated reviewer actor ids")
+	idempotencyKey := fs.String("idempotency-key", "", "required retry identity for changeset creation")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *draftID == "" || *revision < 1 || strings.TrimSpace(*title) == "" ||
+		strings.TrimSpace(*idempotencyKey) == "" {
+		return errors.New(
+			"authoring submit: --draft, positive --revision, --title, and --idempotency-key are required",
+		)
+	}
+	c := client.New(*serverURL, *apiKey)
+	changeSetID, err := c.CreateChangeSet(context.Background(), map[string]any{
+		"draft_id": *draftID, "draft_revision": *revision,
+		"title": *title, "rationale": *rationale,
+		"required_checks": []string{"flow-validation"},
+		"reviewers":       commaSeparated(*reviewers),
+	}, *idempotencyKey)
+	if err != nil {
+		return err
+	}
+	if _, err := c.ChangeSetAction(
+		context.Background(), changeSetID, "checks",
+		map[string]any{"name": "flow-validation", "status": "passed"},
+	); err != nil {
+		return err
+	}
+	if _, err := c.ChangeSetAction(
+		context.Background(), changeSetID, "submit", map[string]any{},
+	); err != nil {
+		return err
+	}
+	return printJSON(map[string]string{"changeset_id": changeSetID, "state": "in_review"})
+}
+
+func authoringAction(args []string, action string) error {
+	fs := flag.NewFlagSet("authoring "+action, flag.ContinueOnError)
+	serverURL := fs.String("server", "http://localhost:8080", "intraktible server URL")
+	apiKey := fs.String("api-key", os.Getenv("INTRAKTIBLE_API_KEY"), "API key")
+	changeSetID := fs.String("changeset", "", "changeset id")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *changeSetID == "" {
+		return fmt.Errorf("authoring %s: --changeset is required", action)
+	}
+	result, err := client.New(*serverURL, *apiKey).ChangeSetAction(
+		context.Background(), *changeSetID, action, map[string]any{},
+	)
+	if err != nil {
+		return err
+	}
+	return printRawJSON(result)
+}
+
+func readCanonicalFlow(path string) (authoring.CanonicalFlow, error) {
+	if strings.TrimSpace(path) == "" {
+		return authoring.CanonicalFlow{}, errors.New("authoring: --file is required")
+	}
+	// #nosec G304 -- this local CLI command intentionally reads the exact path
+	// supplied by its operator; it is not derived from a remote request.
+	document, err := os.ReadFile(path)
+	if err != nil {
+		return authoring.CanonicalFlow{}, fmt.Errorf("authoring: read %s: %w", path, err)
+	}
+	return authoring.DecodeCanonicalFlow(document)
+}
+
+func printJSON(value any) error {
+	document, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		return err
+	}
+	document = append(document, '\n')
+	_, err = os.Stdout.Write(document)
+	return err
+}
+
+func commaSeparated(value string) []string {
+	parts := strings.Split(value, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if part = strings.TrimSpace(part); part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
+}
+
+func printRawJSON(value json.RawMessage) error {
+	var decoded any
+	if err := json.Unmarshal(value, &decoded); err != nil {
+		return err
+	}
+	return printJSON(decoded)
 }
 
 func serveCmd(args []string) error {

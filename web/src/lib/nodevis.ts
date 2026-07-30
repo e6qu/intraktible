@@ -28,6 +28,7 @@ export const NODE_TYPES: NodeType[] = [
   'connect',
   'ai',
   'predict',
+  'subflow',
   'reason',
   'manual_review',
   'output'
@@ -60,6 +61,8 @@ export function nodeTypeLabel(type: NodeType): string {
       return 'AI — LLM agent';
     case 'predict':
       return 'Predict — ML model';
+    case 'subflow':
+      return 'Reusable component — exact version';
     case 'reason':
       return 'Reason — adverse-action codes';
     case 'manual_review':
@@ -137,6 +140,11 @@ export function nodeSummary(type: string, config: string): string {
       return typeof c.agent === 'string' && c.agent ? String(c.agent) : 'AI';
     case 'predict':
       return typeof c.model === 'string' && c.model ? String(c.model) : 'prediction';
+    case 'subflow': {
+      const component = typeof c.component_id === 'string' ? c.component_id : 'component';
+      const version = typeof c.version === 'number' ? ` v${c.version}` : '';
+      return component + version;
+    }
     case 'reason':
       return plural(len(c.reasons), 'reason code');
     case 'manual_review':

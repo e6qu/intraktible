@@ -110,6 +110,7 @@
   --node-manual_review: #db2777;
   --node-assignment: #2563eb;
   --node-reason: #dc2626;
+  --node-subflow: #0f766e;
 }
 
 :root[data-theme='dark'] {

@@ -4,7 +4,7 @@
 // from the gallery), and its required list only names declared properties.
 //
 // It also guards their graphs against the engine's publish gate (domain.ValidateGraph).
-// Templates are imported through POST /v1/flows/import, so a template that violates it
+// Templates are imported through POST /v1/authoring/import, so a template that violates it
 // is a "New from template" button that 400s — which is how three of them shipped with
 // splits that had no condition and expression-shaped branch labels, a model the engine
 // has never had. Asserting the rules here catches that without booting wasm.

@@ -30,7 +30,12 @@ Done — flow model + versioning (vertical slice, command→event→projection�
   `$ref`. Unknown keywords stay lenient.
 - HTTP (under `/v1/`, X-Api-Key / session auth, org+workspace scoped):
   - `POST /v1/flows` — create `{slug, name}` → `{flow_id}`
-  - `POST /v1/flows/{flow_id}/versions` — publish `{graph, input_schema}` → `{version, etag}`
+  - `POST /v1/flows/{flow_id}/versions` — low-level immutable sandbox publication
+    `{graph, input_schema}` → `{version, etag}`; it never deploys production. Team and repository
+    authoring uses `/v1/authoring/drafts` + changesets instead.
+  - `POST /v1/authoring/import` · `…/import-bundle` — idempotently import
+    `intraktible.authoring/v1` into recoverable governed drafts. The retired
+    `/v1/flows/import*` direct-publication routes return 410 with this migration.
   - `GET /v1/flows` · `GET /v1/flows/{flow_id}` — registry read model
   - `POST /v1/flows/{flow_id}/backtest` — replay `{version?, compare_version?, dataset}` → outcome diff
   - **Decision intelligence (re-run the pure evaluator):** `GET /v1/flows/{flow_id}/node-stats` —
@@ -280,7 +285,12 @@ manual_review, output, code, assignment) and the nested-table ones (rule, scorec
 2d_matrix, with when→then / factor / row→output repeaters and a matrix cell grid) — with the raw-JSON
 textarea kept as a per-type advanced view. The canvas supports **drag-to-connect** (drag between node
 handles to add an edge) alongside the from/to form (D10). It also **imports a flow JSON** (paste or
-upload a JSON export, or a bare `{graph}` / `{nodes,edges}` object) onto the canvas — the inverse of the
-JSON export — to review and publish; `input_schema` is preserved across edits, imports, and republishes.
+upload a canonical flow source, a legacy flow export, or a bare `{graph}` / `{nodes,edges}` object)
+onto the shared autosaved draft to validate and submit as one changeset; `input_schema` is preserved
+across edits, imports, reviews, and publications. Canonical
+`intraktible.authoring/v1` export is the repository-grade path: it strips layout noise, uses portable
+component slugs with exact versions, records the exported actor/revision, and refuses graph fixtures
+under workspace-classified sensitive keys. Bundle import resolves and compiles every member before
+writing the first draft.
 (CEL as a second condition engine was closed by decision — expr-lang + Starlark already cover it; see
 the [expression-language contract](../docs/EXPRESSIONS.md).)
