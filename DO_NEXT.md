@@ -23,9 +23,11 @@ Enterprise roadmap execution from authoritative E2 merge `565e1d2`.
    frontend format/lint/typecheck, 232 units and production build; all 130 native
    browser journeys; all 83 real-Wasm journeys over the 8,708-event seed; 3
    embedded smokes; Helm lint/render; 18 Terraform contracts; bounded workflows;
-   and the container publication/retention contract. Fetch/reconcile
-   authoritative remote state, commit, push, open the sole E3 PR, and babysit
-   every hosted job to terminal green.
+   and the container publication/retention contract. Authoritative
+   `origin/main` remained `565e1d2`; branch commits `1b9e8bf` and `ec8f756`
+   are pushed as sole PR #162. Babysit hosted run `30545840816` and any
+   final-head rerun to terminal green; fix every failure before declaring E3
+   complete.
 
 PRs E4–E7 remain ordered behind E3 in `PLAN.md` §§8b.5–8b.8. Do not open or
 implement them concurrently; after each merge, reconcile fresh `origin/main`
