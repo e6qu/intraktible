@@ -27,8 +27,9 @@ DOC (a claim not backed by code).
    `intraktible tenancy` CLI + OpenAPI + RBAC pins + admin `/tenancy` UI, and
    `eventlog.AppendClaim` deduping the modeling/tenancy write shape. All local
    gates are green (`make ci` exit 0; 140 native incl. 2 tenancy journeys, 89
-   real-Wasm, 254 frontend units). It is the sole open review item. Remaining
-   E7 scope (separate serialized PRs): distributed append-order partitioning,
+   real-Wasm, 254 frontend units), and exact-head hosted run `30657445236`
+   (`cde166b`) is green across all nine jobs. It is the sole open review item;
+   await the user merge. Remaining E7 scope (separate serialized PRs): distributed append-order partitioning,
    HA scheduler leader/work claims, projection/worker scale-out + backpressure,
    network policy/mTLS, backup/restore + RPO/RTO evidence, workload SLO/SLA,
    cross-tenant isolation audit across every shared surface, and the deferred

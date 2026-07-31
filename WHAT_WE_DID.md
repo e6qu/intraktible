@@ -1042,3 +1042,11 @@ Linux, entirely that VM's fsync path.
   deduplicates the modeling/tenancy appendUnique shape. Focused command/
   projection/HTTP-e2e/Go-SDK tests plus 2 native browser journeys pass;
   `make ci` exits 0 and 140 native + 89 real-Wasm journeys are green.
+- 2026-07-31: E7 tenant-administration PR #167 exact-head hosted run
+  `30657445236` (`cde166b`) is green across all nine jobs: Go
+  race/security/license, real PostgreSQL, 140 native journeys, 89 real-Wasm
+  journeys, four embedded-artifact journeys, real Shauth SSO, web, Terraform,
+  and container contracts. The hosted matrix found two real Postgres issues:
+  tenancy read-model keys embedded NUL bytes (SQLSTATE 22021, only surfaced on
+  real Postgres — fixed to '/' separators) and the tenancy Postgres regression
+  test inherited a stale shared projection checkpoint (fixed by resetting it).
