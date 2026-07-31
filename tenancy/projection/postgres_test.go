@@ -31,7 +31,12 @@ func TestTenancyProjectionBootstrapOnPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = st.Close() }()
-	for _, collection := range (tenancyprojection.Projector{}).Collections() {
+	// Reset the tenancy collections AND the shared projection checkpoint: the
+	// DSN's Postgres is shared across the suite, and a checkpoint left by another
+	// test would make the durable bootstrap resume past these fresh events.
+	for _, collection := range append(
+		(tenancyprojection.Projector{}).Collections(), "_projection",
+	) {
 		if err := st.Reset(ctx, collection); err != nil {
 			t.Fatal(err)
 		}
