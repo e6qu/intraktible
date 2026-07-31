@@ -15,6 +15,8 @@ package server
 
 import (
 	"context"
+	cryptorand "crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -83,6 +85,7 @@ import (
 	"github.com/e6qu/intraktible/platform/openapi"
 	"github.com/e6qu/intraktible/platform/privacy"
 	"github.com/e6qu/intraktible/platform/projection"
+	platformscheduler "github.com/e6qu/intraktible/platform/scheduler"
 	"github.com/e6qu/intraktible/platform/scim"
 	"github.com/e6qu/intraktible/platform/secretbox"
 	"github.com/e6qu/intraktible/platform/sharing"
@@ -344,6 +347,14 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 	// by default — a tenant with no policy is never swept.
 	legalRetention := retentionGate{store: st, now: now}
 	retentionScheduler := erasure.NewScheduler(erasureVault).WithNow(now).WithRetentionGate(legalRetention)
+	// The leader handle shared by every timed sweep: epoch-based leader/work
+	// claims let redundant scheduler replicas run concurrently with exactly one
+	// tick per epoch across the fleet (no deployment-enforced singleton needed).
+	schedulerLeader := &platformscheduler.Leader{
+		Log: log, ID: identity.Identity{Org: "_platform", Workspace: "scheduler", Actor: "scheduler"},
+		Holder: newSchedulerHolder(), Now: now,
+	}
+	retentionScheduler = retentionScheduler.WithLeader(schedulerLeader)
 	erasurePIIFields := splitCSV(os.Getenv("INTRAKTIBLE_ERASURE_PII_FIELDS"))
 	// Consent: one handler backs both the /v1/consent surface and the decide-path
 	// gate (capture asserted consent + enforce permissible purpose on Connect nodes).
@@ -383,7 +394,7 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 		modelingService = modelingservice.New(
 			modelingHandler, st, modelingOptions...,
 		)
-		modelingScheduler = modelingservice.NewScheduler(modelingHandler, st).WithNow(now)
+		modelingScheduler = modelingservice.NewScheduler(modelingHandler, st).WithNow(now).WithLeader(schedulerLeader)
 		modelingService.Routes(api)
 	}
 	if enabled(cfg.Modules, "case-manager") || enabled(cfg.Modules, "agent-manager") {
@@ -441,13 +452,13 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 		engineSvc.Routes(api)
 		authoringHandler := authoring.NewHandler(log, st, engineCmd).WithNow(now)
 		authoring.New(authoringHandler, st).Routes(api)
-		authoringScheduler = authoring.NewScheduler(authoringHandler, st).WithNow(now)
+		authoringScheduler = authoring.NewScheduler(authoringHandler, st).WithNow(now).WithLeader(schedulerLeader)
 		experiments.New(experimentHandler, st, engineCmd).Routes(api)
-		experimentScheduler = experiments.NewScheduler(experimentHandler, st).WithNow(now)
+		experimentScheduler = experiments.NewScheduler(experimentHandler, st).WithNow(now).WithLeader(schedulerLeader)
 		outcomes.New(outcomes.NewHandler(log, st).WithNow(now), st).Routes(api)
 		populationHandler = population.NewHandler(log, st, decide, experimentHandler).WithNow(now)
 		population.New(populationHandler, st).WithNow(now).Routes(api)
-		populationScheduler = population.NewScheduler(log, st).WithNow(now)
+		populationScheduler = population.NewScheduler(log, st).WithNow(now).WithLeader(schedulerLeader)
 		// Policies are the operational disposition layer over flows (auto-approve/
 		// decline/refer); a first-class artifact alongside the flow registry.
 		policy.New(policy.NewHandler(log).WithNow(now), st).Routes(api)
@@ -460,7 +471,7 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 		// rate, automation rate, latency, volume); a check pushes firing rules to webhooks.
 		monCmd := monitor.NewHandler(log).WithNow(now)
 		monitor.New(monCmd, st, notifier).WithNow(now).Routes(api)
-		monitorScheduler = monitor.NewScheduler(st, monCmd, notifier).WithNow(now)
+		monitorScheduler = monitor.NewScheduler(st, monCmd, notifier).WithNow(now).WithLeader(schedulerLeader)
 		// Model drift: the same scheduler cadence sweeps every model's PSI vs its
 		// configured threshold and pushes the firing edge to webhooks. The window is
 		// cumulative by default; INTRAKTIBLE_MODEL_DRIFT_WINDOW (days) narrows it to a
@@ -469,10 +480,10 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 		if err != nil {
 			return nil, err
 		}
-		driftScheduler = enginemodels.NewScheduler(st, engineCmd, notifier, windowDays).WithNow(now)
+		driftScheduler = enginemodels.NewScheduler(st, engineCmd, notifier, windowDays).WithNow(now).WithLeader(schedulerLeader)
 		// Deploy scheduler: activates due scheduled deploys and reverts expired
 		// time-boxed ones on the same cadence as the monitor sweep.
-		deployScheduler = schedule.NewScheduler(st, engineCmd).WithNow(now)
+		deployScheduler = schedule.NewScheduler(st, engineCmd).WithNow(now).WithLeader(schedulerLeader)
 		// Flow assertions: input→expected test cases, run through the pure core and
 		// used as a pre-promote gate.
 		assertions.New(assertions.NewHandler(log).WithNow(now), st).Routes(api)
@@ -494,7 +505,7 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 		// is the on-demand alternative).
 		// Push an overdue human task to the operator-configured webhooks (the in-app
 		// inbox is driven separately off the same events) so reviewers are pulled to it.
-		caseScheduler = caseschedule.NewScheduler(st, caseCmd).WithNow(now).WithNotify(
+		caseScheduler = caseschedule.NewScheduler(st, caseCmd).WithNow(now).WithLeader(schedulerLeader).WithNotify(
 			func(ctx context.Context, id identity.Identity, caseID string) (caseschedule.DeliveryOutcome, error) {
 				summary, err := notifier.Deliver(ctx, id, "case.sla_breached",
 					map[string]any{"event": "case.overdue", "case_id": caseID})
@@ -568,7 +579,7 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 			),
 		)
 		agentGovernanceService.Routes(api)
-		agentGovernanceScheduler = agentgovernance.NewScheduler(st, governanceHandler).WithNow(now)
+		agentGovernanceScheduler = agentgovernance.NewScheduler(st, governanceHandler).WithNow(now).WithLeader(schedulerLeader)
 		agentHandler = agentcmd.NewHandler(
 			log, st, aiRegistry,
 			agentcmd.WithToolbox(toolbox),
@@ -1174,6 +1185,20 @@ func Projectors(modules string) []projection.Projector {
 }
 
 // enabled reports whether module m should run given the --modules selection.
+// newSchedulerHolder returns a stable, replica-unique holder name for the
+// epoch-based leader claims. Two scheduler processes never share one.
+func newSchedulerHolder() string {
+	host, err := os.Hostname()
+	if err != nil || host == "" {
+		host = "scheduler"
+	}
+	var b [8]byte
+	if _, err := cryptorand.Read(b[:]); err != nil {
+		panic("server: crypto/rand unavailable: " + err.Error())
+	}
+	return host + "-" + hex.EncodeToString(b[:])
+}
+
 func enabled(modules, m string) bool {
 	if modules == "all" || modules == "" {
 		return true

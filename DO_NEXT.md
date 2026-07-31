@@ -16,20 +16,19 @@ DOC (a claim not backed by code).
 
 ## Queue
 
-1. **OPEN — Land the E7 tenant-administration vertical as one PR, then continue
-   E7's scale/HA/DR slices.** The tenant administration control plane is
-   implemented on `enterprise/e7-production-scale-tenancy-dr`: governed
-   organization/workspace/membership lifecycle (`tenancy/` bounded context),
-   platform-principal org creation (new `Platform` flag through API key →
-   Principal → browser session; SSO never platform), org-scoped and
-   platform-cross-tenant workspace administration, quota enforcement,
-   dependent-aware org deletion, last-active-admin membership safety, Go SDK +
-   `intraktible tenancy` CLI + OpenAPI + RBAC pins + admin `/tenancy` UI, and
-   `eventlog.AppendClaim` deduping the modeling/tenancy write shape. All local
-   gates are green (`make ci` exit 0; 140 native incl. 2 tenancy journeys, 89
-   real-Wasm, 254 frontend units), and exact-head hosted run `30657445236`
-   (`cde166b`) is green across all nine jobs. It is the sole open review item;
-   await the user merge. Remaining E7 scope (separate serialized PRs): distributed append-order partitioning,
+1. **OPEN — Land the E7 HA-scheduler vertical as one PR, then continue E7's
+   scale/DR slices.** Redundant live scheduler replicas with epoch-based leader/
+   work claims are implemented on `enterprise/e7-ha-scheduler`: new `platform/
+   leader` (event-log epoch claims), `platform/scheduler.RunLeader`/`RunGated`/
+   `Gate`, all 9 timed sweeps leader-elected via a shared `Leader`, Helm scheduler
+   tier now `replicas: 2` + RollingUpdate (no Recreate singleton), and
+   multi-replica race tests proving exactly-one tick per epoch. `make ci` exits 0.
+   It is the sole open review item (stacked behind the merged tenant-admin PR
+   #167). Remaining E7 scope (separate serialized PRs): distributed append-order
+   partitioning, projection/worker scale-out + backpressure, network policy/mTLS,
+   backup/restore + RPO/RTO evidence, workload SLO/SLA, cross-tenant isolation
+   audit, and the deferred high-volume streaming/bulk ingestion + cursor
+   pagination. distributed append-order partitioning,
    HA scheduler leader/work claims, projection/worker scale-out + backpressure,
    network policy/mTLS, backup/restore + RPO/RTO evidence, workload SLO/SLA,
    cross-tenant isolation audit across every shared surface, and the deferred

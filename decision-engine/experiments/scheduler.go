@@ -10,7 +10,7 @@ import (
 
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/identity"
-	"github.com/e6qu/intraktible/platform/metrics"
+	platformscheduler "github.com/e6qu/intraktible/platform/scheduler"
 	"github.com/e6qu/intraktible/platform/store"
 )
 
@@ -20,6 +20,7 @@ type Scheduler struct {
 	handler *Handler
 	store   store.Store
 	now     func() time.Time
+	leader  *platformscheduler.Leader
 }
 
 func NewScheduler(handler *Handler, st store.Store) *Scheduler {
@@ -27,6 +28,12 @@ func NewScheduler(handler *Handler, st store.Store) *Scheduler {
 		handler: handler, store: st,
 		now: func() time.Time { return time.Now().UTC() },
 	}
+}
+
+// WithLeader elects one leader per sweep epoch across redundant replicas.
+func (s *Scheduler) WithLeader(ldr *platformscheduler.Leader) *Scheduler {
+	s.leader = ldr
+	return s
 }
 
 func (s *Scheduler) WithNow(now func() time.Time) *Scheduler {
@@ -69,20 +76,5 @@ func (s *Scheduler) Tick(ctx context.Context) error {
 }
 
 func (s *Scheduler) Run(ctx context.Context, interval time.Duration, report func(error)) {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			err := s.Tick(ctx)
-			if err != nil {
-				metrics.RecordSchedulerTick("experiment_windows", "error")
-			} else {
-				metrics.RecordSchedulerTick("experiment_windows", "ok")
-			}
-			report(err)
-		}
-	}
+	platformscheduler.RunGated(ctx, s.leader, "experiment_windows", interval, "experiment_windows", report, s.Tick)
 }

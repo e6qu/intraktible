@@ -40,12 +40,19 @@ type Scheduler struct {
 	notifier   Notifier
 	windowDays int // drift window for the firing decision (0 = cumulative)
 	now        func() time.Time
+	leader     *platformscheduler.Leader
 }
 
 // NewScheduler builds a drift Scheduler. windowDays selects the drift window used
 // for the firing decision (0 = all-time cumulative). notifier may be nil.
 func NewScheduler(st store.Store, cmd AlertCmd, n Notifier, windowDays int) *Scheduler {
 	return &Scheduler{store: st, cmd: cmd, notifier: n, windowDays: windowDays, now: func() time.Time { return time.Now().UTC() }}
+}
+
+// WithLeader elects one leader per sweep epoch across redundant replicas.
+func (s *Scheduler) WithLeader(ldr *platformscheduler.Leader) *Scheduler {
+	s.leader = ldr
+	return s
 }
 
 // WithNow overrides the clock (deterministic tests, the demo seeder) and
@@ -134,7 +141,7 @@ func (s *Scheduler) Tick(ctx context.Context) (TickSummary, error) {
 // later successful tick clears the failure.
 func (s *Scheduler) Run(ctx context.Context, interval time.Duration, report func(error)) {
 	slog.Info("model drift scheduler started", "interval", interval, "window_days", s.windowDays)
-	platformscheduler.Run(ctx, interval, "model_drift", "model drift", report, s.Tick, func(sum TickSummary) {
+	platformscheduler.RunLeader(ctx, s.leader, interval, "model_drift", "model drift", report, s.Tick, func(sum TickSummary) {
 		if sum.Alerted > 0 || sum.Resolved > 0 {
 			slog.Info("model drift scheduler tick", "alerted", sum.Alerted, "resolved", sum.Resolved, "delivered", sum.Delivered)
 		}
