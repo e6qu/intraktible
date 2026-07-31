@@ -317,17 +317,7 @@ func (h *Handler) appendUnique(
 	payload any,
 	claim string,
 ) (eventlog.Envelope, error) {
-	if claim == "" {
-		return eventlog.AppendJSON(
-			ctx, h.log, id.Org, id.Workspace, id.Actor,
-			events.StreamModeling, typ, h.now(), payload,
-		)
-	}
-	return eventlog.AppendJSONUnique(
-		ctx, h.log, id.Org, id.Workspace, id.Actor,
-		events.StreamModeling, typ, h.now(), payload,
-		id.Org+"\x00"+id.Workspace+"\x00"+claim,
-	)
+	return eventlog.AppendClaim(ctx, h.log, id, events.StreamModeling, typ, h.now(), payload, claim)
 }
 
 func decode(envelope eventlog.Envelope, payload any) error {

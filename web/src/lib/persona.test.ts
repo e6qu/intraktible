@@ -48,6 +48,7 @@ describe('persona config', () => {
       'components',
       'population',
       'keys',
+      'tenancy',
       'agents',
       'data',
       'observability',

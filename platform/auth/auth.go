@@ -111,6 +111,7 @@ type APIKey struct {
 	Identity identity.Identity
 	Scope    Scope
 	Role     Role
+	Platform bool
 }
 
 // Keyring resolves API-key secrets to identities. Secrets are stored hashed.
@@ -175,12 +176,13 @@ type Sessions struct {
 }
 
 type session struct {
-	id      identity.Identity
-	role    Role
-	scope   Scope
-	expires time.Time
-	sso     bool
-	ssoData SSOSession
+	id       identity.Identity
+	role     Role
+	scope    Scope
+	platform bool
+	expires  time.Time
+	sso      bool
+	ssoData  SSOSession
 }
 
 // NewSessions returns an empty session store using DefaultSessionTTL.
@@ -198,22 +200,23 @@ func (s *Sessions) TTL() time.Duration { return s.ttl }
 
 // Issue creates a session token for id with role and scope, valid for the TTL. The
 // scope is carried so a session minted from a scoped API key cannot silently widen
-// to every environment (see SessionStore). The in-memory store never fails; the
-// error is part of the SessionStore contract.
-func (s *Sessions) Issue(id identity.Identity, role Role, scope Scope) (string, error) {
-	return s.issue(id, role, scope, false, SSOSession{})
+// to every environment (see SessionStore). platform carries the key's org-creation
+// privilege; SSO logins never carry it. The in-memory store never fails; the error
+// is part of the SessionStore contract.
+func (s *Sessions) Issue(id identity.Identity, role Role, scope Scope, platform bool) (string, error) {
+	return s.issue(id, role, scope, platform, false, SSOSession{})
 }
 
 // IssueSSO is Issue for an SSO session, which Resolve revalidates each time.
 func (s *Sessions) IssueSSO(id identity.Identity, role Role, scope Scope, sso SSOSession) (string, error) {
-	return s.issue(id, role, scope, true, sso)
+	return s.issue(id, role, scope, false, true, sso)
 }
 
-func (s *Sessions) issue(id identity.Identity, role Role, scope Scope, sso bool, ssoData SSOSession) (string, error) {
+func (s *Sessions) issue(id identity.Identity, role Role, scope Scope, platform, sso bool, ssoData SSOSession) (string, error) {
 	tok := newToken()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.sessions[tok] = session{id: id, role: role, scope: scope, expires: s.now().Add(s.ttl), sso: sso, ssoData: ssoData}
+	s.sessions[tok] = session{id: id, role: role, scope: scope, platform: platform, expires: s.now().Add(s.ttl), sso: sso, ssoData: ssoData}
 	return tok, nil
 }
 
@@ -298,18 +301,18 @@ func (s *Sessions) SetValidator(v SessionValidator) {
 
 // Resolve returns the identity + role + scope for a token, treating an expired one
 // — or an SSO session the validator now rejects (e.g. SCIM-deactivated) — as absent.
-func (s *Sessions) Resolve(tok string) (identity.Identity, Role, Scope, bool) {
+func (s *Sessions) Resolve(tok string) (identity.Identity, Role, Scope, bool, bool) {
 	s.mu.RLock()
 	sess, ok := s.sessions[tok]
 	validate := s.validate
 	s.mu.RUnlock()
 	if !ok || s.now().After(sess.expires) {
-		return identity.Identity{}, "", "", false
+		return identity.Identity{}, "", "", false, false
 	}
 	if sess.sso && validate != nil && !validate(sess.id) {
-		return identity.Identity{}, "", "", false
+		return identity.Identity{}, "", "", false, false
 	}
-	return sess.id, sess.role, sess.scope, true
+	return sess.id, sess.role, sess.scope, sess.platform, true
 }
 
 // Revoke invalidates a session token (logout); unknown tokens are a no-op.

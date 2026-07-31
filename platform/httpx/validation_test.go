@@ -58,7 +58,7 @@ func TestValidationHandlerRendersVerifiedIdentityRoleRevisionAndLogout(t *testin
 			token, err := sessions.Issue(identity.Identity{
 				Org: "e6qu", Workspace: "dev", Actor: "ada@example.test",
 				Username: `ada<script>`, Email: `ada+validation@example.test`,
-			}, tc.role, auth.ScopeAll)
+			}, tc.role, auth.ScopeAll, false)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -104,7 +104,7 @@ func TestValidationHandlerFailsLoudWithoutVerifiedProfileOrRevision(t *testing.T
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("APPLICATION_RELEASE_REVISION", tc.revision)
 			sessions := auth.NewSessions()
-			token, err := sessions.Issue(tc.id, auth.RoleAdmin, auth.ScopeAll)
+			token, err := sessions.Issue(tc.id, auth.RoleAdmin, auth.ScopeAll, false)
 			if err != nil {
 				t.Fatal(err)
 			}

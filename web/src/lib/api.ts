@@ -8238,3 +8238,214 @@ export function compareGovernedModels(
     fetcher
   );
 }
+
+// ---------------------------------------------------------------------------
+// Tenancy administration (organization + workspace + membership lifecycle).
+
+export interface TenancyOrganizationConfig {
+  residency_region?: string;
+  plan?: string;
+  max_workspaces?: number;
+  max_decisions_per_month?: number;
+  max_artifacts?: number;
+}
+
+export interface TenancyOrganization {
+  key: string;
+  display: string;
+  status: 'active' | 'suspended' | 'deleted';
+  config: TenancyOrganizationConfig;
+  created_at: string;
+  updated_at: string;
+  deleted_at?: string;
+}
+
+export interface TenancyWorkspaceConfig {
+  max_spend_usd_per_month?: number;
+  max_decisions_per_month?: number;
+  max_artifacts?: number;
+  retention_days?: number;
+  feature_flags?: string[];
+}
+
+export interface TenancyWorkspace {
+  org_key: string;
+  key: string;
+  display: string;
+  status: 'active' | 'suspended' | 'deleted';
+  config: TenancyWorkspaceConfig;
+  created_at: string;
+  updated_at: string;
+  deleted_at?: string;
+}
+
+export interface TenancyMembership {
+  org_key: string;
+  workspace: string;
+  actor: string;
+  role: 'viewer' | 'operator' | 'editor' | 'approver' | 'admin';
+  status: 'active' | 'suspended' | 'removed';
+  granted_by: string;
+  granted_at: string;
+  revoked_at?: string;
+}
+
+export interface TenancyOrgCreated {
+  event_id: string;
+  seq: number;
+  org_key: string;
+  admin_key_id: string;
+  admin_key_secret: string;
+}
+
+export function createOrganization(
+  key: string,
+  request: {
+    key: string;
+    display: string;
+    config: TenancyOrganizationConfig;
+    admin_actor: string;
+    admin_name?: string;
+  },
+  fetcher: typeof fetch = recordingFetch
+): Promise<TenancyOrgCreated> {
+  return modelingJSON(key, '/v1/platform/orgs', 'POST', request, fetcher);
+}
+
+export function listOrganizations(
+  key: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<TenancyOrganization[]> {
+  return modelingJSON<{ orgs: TenancyOrganization[] }>(
+    key,
+    '/v1/platform/orgs',
+    'GET',
+    undefined,
+    fetcher
+  ).then((result) => result.orgs ?? []);
+}
+
+export function getOrganization(
+  key: string,
+  org: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<TenancyOrganization> {
+  return modelingJSON(
+    key,
+    `/v1/platform/orgs/${encodeURIComponent(org)}`,
+    'GET',
+    undefined,
+    fetcher
+  );
+}
+
+export function organizationAction(
+  key: string,
+  org: string,
+  action: 'suspend' | 'resume' | 'delete',
+  reason: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<EventAck> {
+  return modelingJSON(
+    key,
+    `/v1/platform/orgs/${encodeURIComponent(org)}/${action}`,
+    'POST',
+    action === 'resume' ? undefined : { reason },
+    fetcher
+  );
+}
+
+export function createWorkspace(
+  key: string,
+  org: string,
+  request: { key: string; display: string; config: TenancyWorkspaceConfig },
+  fetcher: typeof fetch = recordingFetch
+): Promise<EventAck> {
+  return modelingJSON(
+    key,
+    `/v1/orgs/${encodeURIComponent(org)}/workspaces`,
+    'POST',
+    request,
+    fetcher
+  );
+}
+
+export function listWorkspaces(
+  key: string,
+  org: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<TenancyWorkspace[]> {
+  return modelingJSON<{ workspaces: TenancyWorkspace[] }>(
+    key,
+    `/v1/orgs/${encodeURIComponent(org)}/workspaces`,
+    'GET',
+    undefined,
+    fetcher
+  ).then((result) => result.workspaces ?? []);
+}
+
+export function workspaceAction(
+  key: string,
+  org: string,
+  workspace: string,
+  action: 'suspend' | 'resume' | 'delete',
+  reason: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<EventAck> {
+  return modelingJSON(
+    key,
+    `/v1/orgs/${encodeURIComponent(org)}/workspaces/${encodeURIComponent(workspace)}/${action}`,
+    'POST',
+    action === 'resume' ? undefined : { reason },
+    fetcher
+  );
+}
+
+export function listMemberships(
+  key: string,
+  org: string,
+  workspace: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<TenancyMembership[]> {
+  return modelingJSON<{ memberships: TenancyMembership[] }>(
+    key,
+    `/v1/orgs/${encodeURIComponent(org)}/workspaces/${encodeURIComponent(workspace)}/memberships`,
+    'GET',
+    undefined,
+    fetcher
+  ).then((result) => result.memberships ?? []);
+}
+
+export function grantMembership(
+  key: string,
+  org: string,
+  workspace: string,
+  actor: string,
+  role: TenancyMembership['role'],
+  fetcher: typeof fetch = recordingFetch
+): Promise<EventAck> {
+  return modelingJSON(
+    key,
+    `/v1/orgs/${encodeURIComponent(org)}/workspaces/${encodeURIComponent(workspace)}/memberships`,
+    'POST',
+    { actor, role },
+    fetcher
+  );
+}
+
+export function revokeMembership(
+  key: string,
+  org: string,
+  workspace: string,
+  actor: string,
+  reason: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<EventAck> {
+  return modelingJSON(
+    key,
+    `/v1/orgs/${encodeURIComponent(org)}/workspaces/${encodeURIComponent(workspace)}/memberships/${encodeURIComponent(actor)}/revoke`,
+    'POST',
+    { reason },
+    fetcher
+  );
+}

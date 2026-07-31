@@ -1025,3 +1025,28 @@ Linux, entirely that VM's fsync path.
   PostgreSQL, 138 native journeys, 89 real-Wasm journeys, four embedded-artifact
   journeys, real Shauth SSO, web, Terraform, and container contracts. CI found
   and removed one unused `schemaSpec` helper in the native modeling spec.
+- 2026-07-31: Cut `enterprise/e7-production-scale-tenancy-dr` from merged E6
+  `a40b184` and built E7's first vertical — the tenant administration control
+  plane. New `tenancy/` bounded context (domain/events/command/projection/
+  service): organizations and workspaces as governed event-sourced entities
+  with create/configure/suspend/resume/delete lifecycle, quota enforcement on
+  workspace creation, dependent-aware org deletion (blocked while active
+  workspaces exist), and a membership directory with last-active-admin safety.
+  Platform authority (org creation) is a new `Platform` flag on auth.APIKey
+  carried through the middleware Principal and browser sessions (API-key logins
+  carry it; SSO never does), distinct from any tenant's admin role. Workspace/
+  membership administration is org-scoped for tenant admins and cross-tenant for
+  platform principals. Server bootstraps the default org as a governed entity;
+  Go SDK (`client/tenancy.go`), `intraktible tenancy` CLI, OpenAPI, RBAC pins,
+  and an admin `/tenancy` UI complete the surface. `eventlog.AppendClaim`
+  deduplicates the modeling/tenancy appendUnique shape. Focused command/
+  projection/HTTP-e2e/Go-SDK tests plus 2 native browser journeys pass;
+  `make ci` exits 0 and 140 native + 89 real-Wasm journeys are green.
+- 2026-07-31: E7 tenant-administration PR #167 exact-head hosted run
+  `30657445236` (`cde166b`) is green across all nine jobs: Go
+  race/security/license, real PostgreSQL, 140 native journeys, 89 real-Wasm
+  journeys, four embedded-artifact journeys, real Shauth SSO, web, Terraform,
+  and container contracts. The hosted matrix found two real Postgres issues:
+  tenancy read-model keys embedded NUL bytes (SQLSTATE 22021, only surfaced on
+  real Postgres — fixed to '/' separators) and the tenancy Postgres regression
+  test inherited a stale shared projection checkpoint (fixed by resetting it).

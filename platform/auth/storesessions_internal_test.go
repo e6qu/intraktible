@@ -26,8 +26,8 @@ func TestStoreSessions(t *testing.T) {
 	s.ttl = time.Hour
 	id := identity.Identity{Org: "o", Workspace: "w", Actor: "a"}
 
-	tok, _ := s.Issue(id, RoleEditor, Production)
-	got, _, scope, ok := s.Resolve(tok)
+	tok, _ := s.Issue(id, RoleEditor, Production, false)
+	got, _, scope, _, ok := s.Resolve(tok)
 	if !ok || got != id {
 		t.Fatalf("resolve fresh session: got=%v ok=%v", got, ok)
 	}
@@ -39,23 +39,23 @@ func TestStoreSessions(t *testing.T) {
 	// makes sessions survive a restart when the store is durable.
 	s2 := NewStoreSessions(st)
 	s2.now = func() time.Time { return clock }
-	if _, _, _, ok := s2.Resolve(tok); !ok {
+	if _, _, _, _, ok := s2.Resolve(tok); !ok {
 		t.Fatal("session should be readable from a second store-backed instance")
 	}
 
 	// Expiry.
 	clock = clock.Add(2 * time.Hour)
-	if _, _, _, ok := s.Resolve(tok); ok {
+	if _, _, _, _, ok := s.Resolve(tok); ok {
 		t.Fatal("expired session should not resolve")
 	}
 
 	// Revoke.
-	tok2, _ := s.Issue(id, RoleEditor, Sandbox)
-	if _, _, _, ok := s.Resolve(tok2); !ok {
+	tok2, _ := s.Issue(id, RoleEditor, Sandbox, false)
+	if _, _, _, _, ok := s.Resolve(tok2); !ok {
 		t.Fatal("fresh session should resolve")
 	}
 	_ = s.Revoke(tok2)
-	if _, _, _, ok := s.Resolve(tok2); ok {
+	if _, _, _, _, ok := s.Resolve(tok2); ok {
 		t.Fatal("revoked session should not resolve")
 	}
 }
@@ -71,9 +71,9 @@ func TestResolveDeletesExpiredSession(t *testing.T) {
 	s.ttl = time.Hour
 	id := identity.Identity{Org: "o", Workspace: "w", Actor: "a"}
 
-	tok, _ := s.Issue(id, RoleEditor, Production)
+	tok, _ := s.Issue(id, RoleEditor, Production, false)
 	clock = clock.Add(2 * time.Hour)
-	if _, _, _, ok := s.Resolve(tok); ok {
+	if _, _, _, _, ok := s.Resolve(tok); ok {
 		t.Fatal("expired session should not resolve")
 	}
 	if _, ok, _ := st.Get(context.Background(), sessionCollection, hash(tok)); ok {
@@ -92,17 +92,17 @@ func TestIssueSweepsExpiredSessions(t *testing.T) {
 	s.ttl = time.Hour
 	id := identity.Identity{Org: "o", Workspace: "w", Actor: "a"}
 
-	old1, _ := s.Issue(id, RoleEditor, Production)
+	old1, _ := s.Issue(id, RoleEditor, Production, false)
 	old2, _ := s.IssueSSO(id, RoleEditor, ScopeAll, SSOSession{})
 	clock = clock.Add(2 * time.Hour)
 
-	fresh, _ := s.Issue(id, RoleEditor, Production)
+	fresh, _ := s.Issue(id, RoleEditor, Production, false)
 	for _, tok := range []string{old1, old2} {
 		if _, ok, _ := st.Get(context.Background(), sessionCollection, hash(tok)); ok {
 			t.Fatal("issue should sweep previously-expired session rows")
 		}
 	}
-	if _, _, _, ok := s.Resolve(fresh); !ok {
+	if _, _, _, _, ok := s.Resolve(fresh); !ok {
 		t.Fatal("the freshly issued session must survive the sweep")
 	}
 	recs, _ := st.List(context.Background(), sessionCollection, "")
@@ -127,21 +127,21 @@ func TestSessionValidatorRevokesSSO(t *testing.T) {
 			grace := identity.Identity{Org: "o", Workspace: "w", Actor: "grace"}
 
 			ssoTok, _ := s.IssueSSO(ada, RoleEditor, ScopeAll, SSOSession{})
-			keyTok, _ := s.Issue(ada, RoleEditor, Production) // non-SSO, never revalidated
+			keyTok, _ := s.Issue(ada, RoleEditor, Production, false) // non-SSO, never revalidated
 			okTok, _ := s.IssueSSO(grace, RoleEditor, ScopeAll, SSOSession{})
 
-			if _, _, _, ok := s.Resolve(ssoTok); !ok {
+			if _, _, _, _, ok := s.Resolve(ssoTok); !ok {
 				t.Fatal("active SSO user should resolve")
 			}
 
 			deactivated["ada"] = true
-			if _, _, _, ok := s.Resolve(ssoTok); ok {
+			if _, _, _, _, ok := s.Resolve(ssoTok); ok {
 				t.Fatal("deactivated SSO user's session must not resolve")
 			}
-			if _, _, _, ok := s.Resolve(keyTok); !ok {
+			if _, _, _, _, ok := s.Resolve(keyTok); !ok {
 				t.Fatal("non-SSO session must be unaffected by the SSO validator")
 			}
-			if _, _, _, ok := s.Resolve(okTok); !ok {
+			if _, _, _, _, ok := s.Resolve(okTok); !ok {
 				t.Fatal("still-active SSO user's session should resolve")
 			}
 		})
@@ -192,7 +192,7 @@ func TestRevokeWithSSOReturnsMetadataAfterRemovingSession(t *testing.T) {
 			if err != nil || !ok || got != want {
 				t.Fatalf("RevokeWithSSO = %#v ok=%v err=%v, want %#v", got, ok, err, want)
 			}
-			if _, _, _, ok := sessions.Resolve(token); ok {
+			if _, _, _, _, ok := sessions.Resolve(token); ok {
 				t.Fatal("RevokeWithSSO returned before removing the session")
 			}
 			if got, ok, err := sessions.RevokeWithSSO(token); err != nil || ok || got != (SSOSession{}) {
@@ -222,13 +222,13 @@ func TestRevokeOIDCFrontChannelSessionsScopesByProviderIssuerAndSID(t *testing.T
 			if err := sessions.RevokeOIDCFrontChannelSessions("shauth", base.Issuer, base.SID); err != nil {
 				t.Fatal(err)
 			}
-			if _, _, _, ok := sessions.Resolve(matched); ok {
+			if _, _, _, _, ok := sessions.Resolve(matched); ok {
 				t.Fatal("front-channel sid-matched session remained")
 			}
-			if _, _, _, ok := sessions.Resolve(otherSIDToken); !ok {
+			if _, _, _, _, ok := sessions.Resolve(otherSIDToken); !ok {
 				t.Fatal("front-channel logout revoked a different sid")
 			}
-			if _, _, _, ok := sessions.Resolve(otherProviderToken); !ok {
+			if _, _, _, _, ok := sessions.Resolve(otherProviderToken); !ok {
 				t.Fatal("front-channel logout revoked a different provider")
 			}
 		})
@@ -256,19 +256,19 @@ func TestRevokeOIDCSessionsScopesByProviderIssuerSIDAndSubject(t *testing.T) {
 			if accepted, err := sessions.RevokeOIDCSessions("shauth", base.Issuer, "client", "jti-1", "sid-1", base.Subject, time.Now().Add(time.Hour)); err != nil || !accepted {
 				t.Fatal(err)
 			}
-			if _, _, _, ok := sessions.Resolve(firstToken); ok {
+			if _, _, _, _, ok := sessions.Resolve(firstToken); ok {
 				t.Fatal("sid-matched session remained")
 			}
-			if _, _, _, ok := sessions.Resolve(secondToken); !ok {
+			if _, _, _, _, ok := sessions.Resolve(secondToken); !ok {
 				t.Fatal("unrelated sid session was revoked")
 			}
 			if accepted, err := sessions.RevokeOIDCSessions("shauth", base.Issuer, "client", "jti-2", "", base.Subject, time.Now().Add(time.Hour)); err != nil || !accepted {
 				t.Fatal(err)
 			}
-			if _, _, _, ok := sessions.Resolve(secondToken); ok {
+			if _, _, _, _, ok := sessions.Resolve(secondToken); ok {
 				t.Fatal("subject-matched session remained")
 			}
-			if _, _, _, ok := sessions.Resolve(otherToken); !ok {
+			if _, _, _, _, ok := sessions.Resolve(otherToken); !ok {
 				t.Fatal("different provider session was revoked")
 			}
 		})
@@ -312,7 +312,7 @@ func TestOIDCLogoutReplayClaimSurvivesStoreRestart(t *testing.T) {
 	if err != nil || !accepted {
 		t.Fatalf("first logout accepted=%v err=%v", accepted, err)
 	}
-	if _, _, _, ok := sessions.Resolve(first); ok {
+	if _, _, _, _, ok := sessions.Resolve(first); ok {
 		t.Fatal("first matching session remained")
 	}
 	if err := st.Close(); err != nil {
@@ -330,7 +330,7 @@ func TestOIDCLogoutReplayClaimSurvivesStoreRestart(t *testing.T) {
 	if err != nil || accepted {
 		t.Fatalf("replayed logout accepted=%v err=%v", accepted, err)
 	}
-	if _, _, _, ok := sessions.Resolve(newSession); !ok {
+	if _, _, _, _, ok := sessions.Resolve(newSession); !ok {
 		t.Fatal("replayed logout revoked a session created after the first logout")
 	}
 }

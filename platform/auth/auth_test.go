@@ -95,14 +95,14 @@ func TestKeyringResolve(t *testing.T) {
 func TestSessionsIssueResolve(t *testing.T) {
 	s := auth.NewSessions()
 	id := identity.Identity{Org: "o", Workspace: "w", Actor: "u"}
-	tok, err := s.Issue(id, auth.RoleEditor, auth.Sandbox)
+	tok, err := s.Issue(id, auth.RoleEditor, auth.Sandbox, false)
 	if err != nil || tok == "" {
 		t.Fatalf("Issue must return a non-empty token: tok=%q err=%v", tok, err)
 	}
-	if tok2, _ := s.Issue(id, auth.RoleEditor, auth.Sandbox); tok2 == tok {
+	if tok2, _ := s.Issue(id, auth.RoleEditor, auth.Sandbox, false); tok2 == tok {
 		t.Fatal("each Issue must return a distinct token")
 	}
-	got, role, scope, ok := s.Resolve(tok)
+	got, role, scope, _, ok := s.Resolve(tok)
 	if !ok || got != id {
 		t.Fatalf("Resolve: got %+v ok=%v, want %+v true", got, ok, id)
 	}
@@ -111,7 +111,7 @@ func TestSessionsIssueResolve(t *testing.T) {
 	if role != auth.RoleEditor || scope != auth.Sandbox {
 		t.Fatalf("Resolve role/scope = %q/%q, want editor/sandbox", role, scope)
 	}
-	if _, _, _, ok := s.Resolve("nope"); ok {
+	if _, _, _, _, ok := s.Resolve("nope"); ok {
 		t.Fatal("unknown token must not resolve")
 	}
 }

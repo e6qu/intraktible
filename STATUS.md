@@ -10,8 +10,8 @@ Turn the whole-product capability audit into the detailed plan-of-record: map
 every key Builder, Developer, Agent Designer, Reviewer, Operator, Modeler,
 Validator, Admin, SRE, Domain Owner, and Executive journey to what is real and
 what remains, then carve the remaining work into serialized large-to-huge
-full-stack pull requests. The active implementation tranche is E6, the model
-and context data-science platform.
+full-stack pull requests. The active implementation tranche is E7, production
+scale, tenancy, and disaster recovery.
 
 ## Standing rules (user-issued, non-negotiable)
 
@@ -34,6 +34,29 @@ and context data-science platform.
 6. No subagents, no workflows (system-prompt instruction).
 
 ## Phase
+
+**Enterprise E6 — model and context data-science platform is merged** (vertical
+#165 as `c560b1d`, journeys+audit #166 as `a40b184`; both green across the full
+nine-job hosted matrix). Fresh reconciliation found the open-PR queue empty and
+`enterprise/e7-production-scale-tenancy-dr` was cut exactly from `a40b184`.
+
+The first E7 vertical is implemented on that branch: the **tenant
+administration control plane**. A new `tenancy/` bounded context makes
+organizations and workspaces governed event-sourced entities with
+create/configure/suspend/resume/delete lifecycle, quota enforcement on
+workspace creation, dependent-aware org deletion (blocked while active
+workspaces exist), and a membership directory with last-active-admin safety.
+Platform authority (organization creation) is a new `Platform` flag on
+`auth.APIKey` carried through the middleware `Principal` and browser sessions
+(API-key logins carry it; SSO never does) — distinct from any tenant's own
+admin role. Workspace/membership administration is org-scoped for tenant admins
+and cross-tenant for platform principals. The server bootstraps the default org
+as a governed entity. Go SDK, `intraktible tenancy` CLI, OpenAPI, RBAC pins,
+and an admin `/tenancy` UI complete the surface, and `eventlog.AppendClaim`
+deduplicates the modeling/tenancy write shape. Focused command/projection/
+HTTP-e2e/Go-SDK tests plus 2 native browser journeys pass; `make ci` exits 0
+and 140 native + 89 real-Wasm journeys are green. It is the sole open review
+item; remaining E7 scale/HA/DR slices and E8 follow in serialized PRs.
 
 **Enterprise PR E5 — governed agentic operations and human/AI learning is
 merged.** Authoritative `origin/main` is merge commit `593eda9`, containing

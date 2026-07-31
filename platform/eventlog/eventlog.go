@@ -11,6 +11,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/e6qu/intraktible/platform/identity"
 )
 
 // Envelope is the immutable, ordered record stored in the log. Streams are
@@ -138,4 +140,26 @@ func AppendJSONUnique(
 		Org: org, Workspace: workspace, Actor: actor,
 		Stream: stream, Type: typ, Time: at, Payload: b, Unique: unique,
 	})
+}
+
+// AppendClaim appends a typed event for an identity, prefixing the
+// optimistic-concurrency claim with the tenant so it is tenant-global. An empty
+// claim appends without a uniqueness fence. This is the shared write shape the
+// command modules' appendUnique helpers previously duplicated.
+func AppendClaim(
+	ctx context.Context,
+	log Log,
+	id identity.Identity,
+	stream, typ string,
+	at time.Time,
+	payload any,
+	claim string,
+) (Envelope, error) {
+	if claim == "" {
+		return AppendJSON(ctx, log, id.Org, id.Workspace, id.Actor, stream, typ, at, payload)
+	}
+	return AppendJSONUnique(
+		ctx, log, id.Org, id.Workspace, id.Actor, stream, typ, at, payload,
+		id.Org+"\x00"+id.Workspace+"\x00"+claim,
+	)
 }

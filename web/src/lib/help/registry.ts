@@ -1111,6 +1111,47 @@ export const HELP = new Map<string, PageHelp>([
     }
   ],
   [
+    '/tenancy',
+    {
+      title: 'Tenant administration',
+      summary:
+        'Manage organizations, their workspaces, and workspace memberships. An organization’s first admin credential is revealed once. Admin only.',
+      capabilities: [
+        'Create an organization; its first admin key is shown exactly once.',
+        'Suspend, resume, or delete an organization (deletion is blocked while workspaces exist).',
+        'Create and lifecycle-manage workspaces within an organization.',
+        'Grant and revoke workspace memberships; the last active admin is protected.'
+      ],
+      journeys: [
+        {
+          name: 'Create an organization',
+          steps: [
+            'Fill Key, Display name, Plan, and Initial admin under Create organization.',
+            'Click Create & mint admin key.',
+            'Copy the revealed admin key id and secret — they are shown once and cannot be retrieved again.',
+            'Use that key to manage the new org’s workspaces and memberships.'
+          ]
+        },
+        {
+          name: 'Suspend and resume an organization',
+          steps: [
+            'Click Suspend on an active organization and confirm the reason.',
+            'A suspended org cannot create workspaces and is marked suspended.',
+            'Click Resume to reactivate it.'
+          ]
+        },
+        {
+          name: 'Grant and revoke membership',
+          steps: [
+            'Select an organization, then a workspace.',
+            'Under Grant membership, enter the actor and pick a role, then Grant.',
+            'Revoke a member from the table; the last active admin cannot be revoked (grant another admin first).'
+          ]
+        }
+      ]
+    }
+  ],
+  [
     '/audit',
     {
       title: 'Audit log',
