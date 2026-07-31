@@ -16,23 +16,25 @@ DOC (a claim not backed by code).
 
 ## Queue
 
-1. **OPEN — Await the user merge of the E6 journeys+audit PR (#166).** The E6
-   vertical (#165) is merged as authoritative `origin/main` `c560b1d`. The
-   continuation PR closes the remaining §8b.7 scope: live native/Wasm browser
-   journeys for the modeling cockpit (3 native + 3 real-Wasm), a whole-scope
-   audit that implemented dependent-aware schema/model retirement (previously
-   unguarded) and narrowed the overstated streaming/bulk-ingestion claim to E7,
-   and phase-closing docs (PLAN §8b.7 delivered, BUGS E6, JOURNEYS modeling).
-   All local gates are green (`make ci` exit 0; 138 native, 89 real-Wasm, 254
-   frontend units, race Go CI, Terraform 18/18). Exact-head hosted run
-   `30639229920` (`0d52266`) is green across all nine jobs. It is the sole open
-   review item; do not start E7 before the user reports it merged.
-2. **OPEN — E7 and E8 remain serialized behind E6.** Do not implement or open
-   them concurrently. After the E6 continuation merges, fetch and deliberately
-   reconcile authoritative `origin/main`, confirm the PR queue empty, and only
-   then cut E7. Detailed boundaries and exit evidence are in `PLAN.md` §§8b.8–8b.9.
-   Note: high-volume streaming/bulk ingestion and cursor pagination were
-   explicitly deferred to E7's scale scope during the E6 audit.
+1. **OPEN — Land the E7 tenant-administration vertical as one PR, then continue
+   E7's scale/HA/DR slices.** The tenant administration control plane is
+   implemented on `enterprise/e7-production-scale-tenancy-dr`: governed
+   organization/workspace/membership lifecycle (`tenancy/` bounded context),
+   platform-principal org creation (new `Platform` flag through API key →
+   Principal → browser session; SSO never platform), org-scoped and
+   platform-cross-tenant workspace administration, quota enforcement,
+   dependent-aware org deletion, last-active-admin membership safety, Go SDK +
+   `intraktible tenancy` CLI + OpenAPI + RBAC pins + admin `/tenancy` UI, and
+   `eventlog.AppendClaim` deduping the modeling/tenancy write shape. All local
+   gates are green (`make ci` exit 0; 140 native incl. 2 tenancy journeys, 89
+   real-Wasm, 254 frontend units). It is the sole open review item. Remaining
+   E7 scope (separate serialized PRs): distributed append-order partitioning,
+   HA scheduler leader/work claims, projection/worker scale-out + backpressure,
+   network policy/mTLS, backup/restore + RPO/RTO evidence, workload SLO/SLA,
+   cross-tenant isolation audit across every shared surface, and the deferred
+   high-volume streaming/bulk ingestion + cursor pagination.
+2. **OPEN — E8 remains serialized behind E7.** Do not implement or open it
+   concurrently. Detailed boundaries are in `PLAN.md` §8b.9.
 
 ---
 

@@ -275,7 +275,7 @@ func TestOIDCCallbackVerifiesAndIssuesSession(t *testing.T) {
 		t.Fatal("callback did not issue a session cookie")
 	}
 	// The session maps to the OIDC identity, and the "admins" group → admin role.
-	id, role, scope, ok := sessions.Resolve(session)
+	id, role, scope, _, ok := sessions.Resolve(session)
 	if !ok || id.Actor != "ada@acme.com" || id.Username != "ada" || id.Email != "ada@acme.com" || id.Org != "demo" || role != auth.RoleAdmin {
 		t.Fatalf("session resolves to %+v role=%q ok=%v", id, role, ok)
 	}
@@ -370,7 +370,7 @@ func TestOIDCCallbackAugmentsRole(t *testing.T) {
 			session = c.Value
 		}
 	}
-	_, role, _, ok := sessions.Resolve(session)
+	_, role, _, _, ok := sessions.Resolve(session)
 	if !ok || role != auth.RoleEditor {
 		t.Fatalf("augmented session role = %q ok=%v, want editor", role, ok)
 	}
@@ -412,13 +412,13 @@ func TestOIDCBackChannelLogoutVerifiesRevokesAndRejectsReplay(t *testing.T) {
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("back-channel logout -> %d: %s", rec.Code, rec.Body.String())
 	}
-	if _, _, _, ok := sessions.Resolve(revoked); ok {
+	if _, _, _, _, ok := sessions.Resolve(revoked); ok {
 		t.Fatal("sid-matched session remained")
 	}
-	if _, _, _, ok := sessions.Resolve(kept); !ok {
+	if _, _, _, _, ok := sessions.Resolve(kept); !ok {
 		t.Fatal("unrelated sid session was revoked")
 	}
-	if _, _, _, ok := sessions.Resolve(almostSameToken); !ok {
+	if _, _, _, _, ok := sessions.Resolve(almostSameToken); !ok {
 		t.Fatal("a session with a non-exact trailing-slash issuer was revoked")
 	}
 	replay := httptest.NewRecorder()
@@ -527,7 +527,7 @@ func TestOIDCFrontChannelLogoutRequiresExactIssuerAndSID(t *testing.T) {
 		if rec.Code != http.StatusBadRequest {
 			t.Errorf("%s -> %d, want 400", name, rec.Code)
 		}
-		if _, _, _, ok := sessions.Resolve(matched); !ok {
+		if _, _, _, _, ok := sessions.Resolve(matched); !ok {
 			t.Fatalf("%s revoked the session", name)
 		}
 	}
@@ -541,7 +541,7 @@ func TestOIDCFrontChannelLogoutRequiresExactIssuerAndSID(t *testing.T) {
 	if rec.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("front-channel Cache-Control = %q", rec.Header().Get("Cache-Control"))
 	}
-	if _, _, _, ok := sessions.Resolve(matched); ok {
+	if _, _, _, _, ok := sessions.Resolve(matched); ok {
 		t.Fatal("valid front-channel logout retained the session")
 	}
 }
@@ -550,7 +550,7 @@ func TestOIDCSignedOutLandingClearsSessionWithoutStartingLogin(t *testing.T) {
 	h, sessions := oidcHandler(t)
 	mux := http.NewServeMux()
 	h.Routes(mux)
-	token, _ := sessions.Issue(testIdentity(), auth.RoleViewer, auth.ScopeAll)
+	token, _ := sessions.Issue(testIdentity(), auth.RoleViewer, auth.ScopeAll, false)
 	req := httptest.NewRequest(http.MethodGet, "/v1/auth/signed-out", http.NoBody)
 	req.AddCookie(&http.Cookie{Name: "session", Value: token})
 	rec := httptest.NewRecorder()
@@ -558,7 +558,7 @@ func TestOIDCSignedOutLandingClearsSessionWithoutStartingLogin(t *testing.T) {
 	if rec.Code != http.StatusOK || rec.Header().Get("Location") != "" {
 		t.Fatalf("signed-out landing -> %d location=%q", rec.Code, rec.Header().Get("Location"))
 	}
-	if _, _, _, ok := sessions.Resolve(token); ok {
+	if _, _, _, _, ok := sessions.Resolve(token); ok {
 		t.Fatal("signed-out landing retained local session")
 	}
 	body := rec.Body.String()

@@ -105,6 +105,6 @@ func hasSession(r *http.Request, sessions auth.SessionStore) bool {
 	if err != nil || cookie.Value == "" {
 		return false
 	}
-	_, _, _, ok := sessions.Resolve(cookie.Value)
+	_, _, _, _, ok := sessions.Resolve(cookie.Value)
 	return ok
 }

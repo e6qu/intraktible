@@ -52,8 +52,9 @@ const (
 // role without its scope — the gap that previously let a session minted from a
 // sandbox-scoped key silently widen to every environment.
 type Principal struct {
-	Role  auth.Role
-	Scope auth.Scope
+	Role     auth.Role
+	Scope    auth.Scope
+	Platform bool
 }
 
 // contentSecurityPolicy is the CSP served on every response. The embedded SPA and
@@ -209,7 +210,7 @@ func Authenticate(keyring *auth.Keyring, sessions auth.SessionStore) Middleware 
 			if secret := r.Header.Get("X-Api-Key"); secret != "" {
 				if key, ok := keyring.Resolve(secret); ok {
 					ctx := identity.With(r.Context(), key.Identity)
-					ctx = withPrincipal(ctx, Principal{Role: auth.ParseRole(string(key.Role)), Scope: key.Scope})
+					ctx = withPrincipal(ctx, Principal{Role: auth.ParseRole(string(key.Role)), Scope: key.Scope, Platform: key.Platform})
 					next.ServeHTTP(w, r.WithContext(ctx))
 					return
 				}
@@ -217,7 +218,7 @@ func Authenticate(keyring *auth.Keyring, sessions auth.SessionStore) Middleware 
 				return
 			}
 			if c, err := r.Cookie("session"); err == nil {
-				if id, role, scope, ok := sessions.Resolve(c.Value); ok {
+				if id, role, scope, platform, ok := sessions.Resolve(c.Value); ok {
 					// CSRF defense for cookie auth: the session cookie is SameSite=Lax, so a
 					// browser auto-sends it on top-level GET navigations but a custom request
 					// header cannot be set cross-origin without a CORS preflight the server
@@ -230,7 +231,7 @@ func Authenticate(keyring *auth.Keyring, sessions auth.SessionStore) Middleware 
 						return
 					}
 					ctx := identity.With(r.Context(), id)
-					ctx = withPrincipal(ctx, Principal{Role: auth.ParseRole(string(role)), Scope: scope})
+					ctx = withPrincipal(ctx, Principal{Role: auth.ParseRole(string(role)), Scope: scope, Platform: platform})
 					next.ServeHTTP(w, r.WithContext(ctx))
 					return
 				}
@@ -333,6 +334,7 @@ func requiredRole(method, path string) auth.Role {
 		strings.HasPrefix(path, "/v1/api-keys") || strings.HasPrefix(path, "/v1/erasure") ||
 		strings.HasPrefix(path, "/v1/mrm") || strings.HasPrefix(path, "/v1/fairlending") ||
 		strings.HasPrefix(path, "/v1/case-reviewers") ||
+		strings.HasPrefix(path, "/v1/platform/") || strings.HasPrefix(path, "/v1/orgs/") ||
 		strings.Contains(path, "/grants") ||
 		strings.HasPrefix(path, "/v1/modeling/snapshots/") &&
 			(strings.HasSuffix(path, "/rows") || strings.HasSuffix(path, "/export")) {

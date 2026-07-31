@@ -67,7 +67,7 @@ func TestLoginLogoutFlow(t *testing.T) {
 	if token == "" {
 		t.Fatal("login did not set an HttpOnly session cookie")
 	}
-	if gotID, _, _, ok := sessions.Resolve(token); !ok || gotID != id {
+	if gotID, _, _, _, ok := sessions.Resolve(token); !ok || gotID != id {
 		t.Fatalf("issued session did not resolve to the key's identity: %v %v", gotID, ok)
 	}
 
@@ -89,7 +89,7 @@ func TestLoginLogoutFlow(t *testing.T) {
 	if logout.URL != "" {
 		t.Fatalf("api-key logout URL = %q, want empty", logout.URL)
 	}
-	if _, _, _, ok := sessions.Resolve(token); ok {
+	if _, _, _, _, ok := sessions.Resolve(token); ok {
 		t.Fatal("session should be revoked after logout")
 	}
 }
@@ -122,7 +122,7 @@ func TestLogoutReturnsSessionBoundOIDCFrontChannelURL(t *testing.T) {
 	if logout.URL != wantURL {
 		t.Fatalf("logout URL = %q, want %q", logout.URL, wantURL)
 	}
-	if _, _, _, ok := sessions.Resolve(token); ok {
+	if _, _, _, _, ok := sessions.Resolve(token); ok {
 		t.Fatal("SSO session should be revoked after logout")
 	}
 }
@@ -146,7 +146,7 @@ func TestLogoutRejectsCrossOriginWithoutRevokingSession(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			sessions := auth.NewSessions()
-			token, err := sessions.Issue(identity.Identity{Org: "demo", Workspace: "main", Actor: "dev"}, auth.RoleViewer, auth.ScopeAll)
+			token, err := sessions.Issue(identity.Identity{Org: "demo", Workspace: "main", Actor: "dev"}, auth.RoleViewer, auth.ScopeAll, false)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -166,7 +166,7 @@ func TestLogoutRejectsCrossOriginWithoutRevokingSession(t *testing.T) {
 			if rec.Code != http.StatusForbidden {
 				t.Fatalf("cross-origin logout -> %d, want 403", rec.Code)
 			}
-			if _, _, _, ok := sessions.Resolve(token); !ok {
+			if _, _, _, _, ok := sessions.Resolve(token); !ok {
 				t.Fatal("rejected cross-origin logout revoked the session")
 			}
 		})
@@ -175,7 +175,7 @@ func TestLogoutRejectsCrossOriginWithoutRevokingSession(t *testing.T) {
 
 func TestLogoutAcceptsSameOriginBrowserMetadata(t *testing.T) {
 	sessions := auth.NewSessions()
-	token, err := sessions.Issue(identity.Identity{Org: "demo", Workspace: "main", Actor: "dev"}, auth.RoleViewer, auth.ScopeAll)
+	token, err := sessions.Issue(identity.Identity{Org: "demo", Workspace: "main", Actor: "dev"}, auth.RoleViewer, auth.ScopeAll, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +187,7 @@ func TestLogoutAcceptsSameOriginBrowserMetadata(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("same-origin logout -> %d body=%s", rec.Code, rec.Body.String())
 	}
-	if _, _, _, ok := sessions.Resolve(token); ok {
+	if _, _, _, _, ok := sessions.Resolve(token); ok {
 		t.Fatal("same-origin logout retained the session")
 	}
 }
@@ -215,7 +215,7 @@ func TestLogoutRevokesBeforeRejectingInvalidProviderMetadata(t *testing.T) {
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("logout with invalid SSO metadata -> %d, want 500", rec.Code)
 	}
-	if _, _, _, ok := sessions.Resolve(token); ok {
+	if _, _, _, _, ok := sessions.Resolve(token); ok {
 		t.Fatal("provider logout failure retained the local session")
 	}
 	cleared := false
@@ -258,7 +258,7 @@ func TestLogoutRejectsStoredForeignEndSessionOriginWithoutDisclosingToken(t *tes
 	if strings.Contains(rec.Body.String(), "sensitive.id.token") || strings.Contains(rec.Header().Get("Location"), "sensitive.id.token") {
 		t.Fatal("logout disclosed the stored ID token")
 	}
-	if _, _, _, ok := sessions.Resolve(token); ok {
+	if _, _, _, _, ok := sessions.Resolve(token); ok {
 		t.Fatal("provider metadata rejection retained the local session")
 	}
 }

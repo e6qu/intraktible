@@ -18,13 +18,13 @@ import (
 // in-memory Sessions and the store-backed StoreSessions satisfy it, so the auth
 // middleware and login handlers depend on the interface.
 type SessionStore interface {
-	Issue(id identity.Identity, role Role, scope Scope) (string, error)
+	Issue(id identity.Identity, role Role, scope Scope, platform bool) (string, error)
 	// IssueSSO is Issue for an SSO-authenticated session. Such a session is
 	// revalidated on every Resolve against the store's validator (e.g. the SCIM
 	// deprovisioning gate), so a deactivated or downgraded user loses access within
 	// the request cycle instead of surviving until the TTL.
 	IssueSSO(id identity.Identity, role Role, scope Scope, sso SSOSession) (string, error)
-	Resolve(tok string) (identity.Identity, Role, Scope, bool)
+	Resolve(tok string) (identity.Identity, Role, Scope, bool, bool)
 	SSOSession(tok string) (SSOSession, bool, error)
 	// RevokeWithSSO atomically revokes tok and returns the identity-provider
 	// coordinates that were bound to it. A successful return means the local
@@ -67,6 +67,7 @@ type storedSession struct {
 	Identity identity.Identity `json:"identity"`
 	Role     Role              `json:"role,omitempty"`
 	Scope    Scope             `json:"scope,omitempty"`
+	Platform bool              `json:"platform,omitempty"`
 	Expires  time.Time         `json:"expires"`
 	SSO      bool              `json:"sso,omitempty"`
 	SSOData  SSOSession        `json:"sso_data,omitempty"`
@@ -115,19 +116,26 @@ func (s *StoreSessions) SetValidator(v SessionValidator) { s.validate = v }
 // Issue creates a session token for id, valid for the TTL. A persist failure is
 // returned so the caller can fail the login loudly rather than hand back a token
 // that will never resolve.
-func (s *StoreSessions) Issue(id identity.Identity, role Role, scope Scope) (string, error) {
-	return s.issue(id, role, scope, false, SSOSession{})
+// Issue creates a session for an API-key-authenticated caller, carrying the key's
+// platform authority (org-creation privilege) into the session. SSO logins use
+// IssueSSO and never carry platform authority.
+func (s *StoreSessions) Issue(id identity.Identity, role Role, scope Scope, platform bool) (string, error) {
+	return s.issue(id, role, scope, platform, false, SSOSession{})
 }
 
-// IssueSSO creates a session marked SSO, so Resolve revalidates it.
+// IssueSSO creates a session marked SSO, so Resolve revalidates it. SSO sessions
+// are never platform principals (platform authority is an API-key concern).
 func (s *StoreSessions) IssueSSO(id identity.Identity, role Role, scope Scope, sso SSOSession) (string, error) {
-	return s.issue(id, role, scope, true, sso)
+	return s.issue(id, role, scope, false, true, sso)
 }
 
-func (s *StoreSessions) issue(id identity.Identity, role Role, scope Scope, sso bool, ssoData SSOSession) (string, error) {
+func (s *StoreSessions) issue(id identity.Identity, role Role, scope Scope, platform, sso bool, ssoData SSOSession) (string, error) {
 	s.sweepExpired()
 	tok := newToken()
-	rec := storedSession{Identity: id, Role: role, Scope: scope, Expires: s.now().Add(s.ttl), SSO: sso, SSOData: ssoData}
+	rec := storedSession{
+		Identity: id, Role: role, Scope: scope, Platform: platform,
+		Expires: s.now().Add(s.ttl), SSO: sso, SSOData: ssoData,
+	}
 	if err := store.PutDoc(context.Background(), s.store, sessionCollection, hash(tok), rec); err != nil {
 		return "", fmt.Errorf("auth: persist session: %w", err)
 	}
@@ -140,14 +148,14 @@ func (s *StoreSessions) issue(id identity.Identity, role Role, scope Scope, sso 
 // environment gate treats as fail-closed (the holder re-authenticates). An SSO
 // session whose user the validator now rejects (e.g. SCIM-deactivated) is treated
 // as absent, so deprovisioning takes effect without waiting out the TTL.
-func (s *StoreSessions) Resolve(tok string) (identity.Identity, Role, Scope, bool) {
+func (s *StoreSessions) Resolve(tok string) (identity.Identity, Role, Scope, bool, bool) {
 	rec, ok, err := store.GetDoc[storedSession](context.Background(), s.store, sessionCollection, hash(tok))
 	if err != nil {
 		slog.Error("auth: resolve session failed", "err", err)
-		return identity.Identity{}, "", "", false
+		return identity.Identity{}, "", "", false, false
 	}
 	if !ok {
-		return identity.Identity{}, "", "", false
+		return identity.Identity{}, "", "", false, false
 	}
 	if s.now().After(rec.Expires) {
 		// Best-effort cleanup: an expired row can never resolve again, and only
@@ -156,12 +164,12 @@ func (s *StoreSessions) Resolve(tok string) (identity.Identity, Role, Scope, boo
 		if err := s.store.Delete(context.Background(), sessionCollection, hash(tok)); err != nil {
 			slog.Error("auth: delete expired session failed", "err", err)
 		}
-		return identity.Identity{}, "", "", false
+		return identity.Identity{}, "", "", false, false
 	}
 	if rec.SSO && s.validate != nil && !s.validate(rec.Identity) {
-		return identity.Identity{}, "", "", false
+		return identity.Identity{}, "", "", false, false
 	}
-	return rec.Identity, rec.Role, rec.Scope, true
+	return rec.Identity, rec.Role, rec.Scope, rec.Platform, true
 }
 
 // SSOSession returns the identity-provider state saved with a current session.

@@ -291,7 +291,7 @@ func TestAuthenticateSession(t *testing.T) {
 	kr := auth.NewKeyring()
 	sessions := auth.NewSessions()
 	id := identity.Identity{Org: "o", Workspace: "w", Actor: "u"}
-	tok, _ := sessions.Issue(id, auth.RoleEditor, auth.ScopeAll)
+	tok, _ := sessions.Issue(id, auth.RoleEditor, auth.ScopeAll, false)
 
 	h := httpx.Authenticate(kr, sessions)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got, ok := identity.From(r.Context()); !ok || got != id {
@@ -317,7 +317,7 @@ func TestCSRFHeaderGate(t *testing.T) {
 	id := identity.Identity{Org: "o", Workspace: "w", Actor: "u"}
 	kr.Add("good-key", auth.APIKey{ID: "k", Identity: id, Scope: auth.ScopeAll})
 	sessions := auth.NewSessions()
-	tok, _ := sessions.Issue(id, auth.RoleEditor, auth.ScopeAll)
+	tok, _ := sessions.Issue(id, auth.RoleEditor, auth.ScopeAll, false)
 
 	h := httpx.Authenticate(kr, sessions)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
@@ -368,7 +368,7 @@ func TestSessionCarriesScope(t *testing.T) {
 	kr := auth.NewKeyring()
 	sessions := auth.NewSessions()
 	id := identity.Identity{Org: "o", Workspace: "w", Actor: "u"}
-	tok, _ := sessions.Issue(id, auth.RoleOperator, auth.Sandbox)
+	tok, _ := sessions.Issue(id, auth.RoleOperator, auth.Sandbox, false)
 
 	var gotScope auth.Scope
 	var gotOK bool

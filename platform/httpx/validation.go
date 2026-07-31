@@ -86,7 +86,7 @@ func ValidationHandler(sessions auth.SessionStore) http.HandlerFunc {
 			http.Redirect(w, r, validationSignedOutPath, http.StatusSeeOther)
 			return
 		}
-		id, role, _, ok := sessions.Resolve(cookie.Value)
+		id, role, _, _, ok := sessions.Resolve(cookie.Value)
 		if !ok {
 			http.Redirect(w, r, validationSignedOutPath, http.StatusSeeOther)
 			return

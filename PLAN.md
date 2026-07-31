@@ -1113,6 +1113,16 @@ complete lineage/retirement journey.
 
 ### 8b.8 PR E7 — production scale, tenancy, and disaster recovery
 
+**Status: IN PROGRESS** — the **tenant administration control plane** is delivered as the first
+serialized vertical: organizations and workspaces as governed event-sourced entities with full
+lifecycle (create/configure/suspend/resume/delete), quota enforcement, dependent-aware deletion, a
+membership directory with last-active-admin safety, and a distinct platform-admin authority for
+cross-tenant organization creation. Go/TypeScript SDKs, CLI, OpenAPI, RBAC pins, and an admin UI
+complete the surface. Remaining E7 slices (serialized PRs): distributed append-order partitioning,
+HA scheduler leader/work claims, projection/worker scale-out + backpressure, network policy/mTLS,
+backup/restore + RPO/RTO evidence, workload SLO/SLA, cross-tenant isolation audit, and the deferred
+high-volume streaming/bulk ingestion + cursor pagination.
+
 **Outcome:** the recommended production topology has measured capacity and availability, explicit
 tenant isolation/placement, durable distributed ownership, and routinely tested recovery instead of a
 single-node or runbook-only promise.

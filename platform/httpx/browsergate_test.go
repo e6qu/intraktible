@@ -91,7 +91,7 @@ func TestBrowserGateAllowsSignInEntryAndPublicPaths(t *testing.T) {
 // untouched.
 func TestBrowserGateServesShellWithSession(t *testing.T) {
 	sessions := newSessions(t)
-	tok, err := sessions.Issue(identity.Identity{Org: "demo", Workspace: "main", Actor: "operator"}, auth.RoleAdmin, auth.ScopeAll)
+	tok, err := sessions.Issue(identity.Identity{Org: "demo", Workspace: "main", Actor: "operator"}, auth.RoleAdmin, auth.ScopeAll, false)
 	if err != nil {
 		t.Fatalf("issue session: %v", err)
 	}
@@ -112,7 +112,7 @@ func TestBrowserGateServesShellWithSession(t *testing.T) {
 // and it would reopen the hole the gate closes.
 func TestBrowserGateRejectsRevokedSession(t *testing.T) {
 	sessions := newSessions(t)
-	tok, err := sessions.Issue(identity.Identity{Org: "demo", Workspace: "main", Actor: "operator"}, auth.RoleAdmin, auth.ScopeAll)
+	tok, err := sessions.Issue(identity.Identity{Org: "demo", Workspace: "main", Actor: "operator"}, auth.RoleAdmin, auth.ScopeAll, false)
 	if err != nil {
 		t.Fatalf("issue session: %v", err)
 	}

@@ -1809,6 +1809,25 @@
         }
       }
     },
+    "/v1/platform/orgs": {
+      "get": { "tags": ["Tenancy"], "summary": "List all organizations (platform principal only)", "responses": { "200": { "description": "Organizations.", "content": { "application/json": { "schema": { "type": "object", "properties": { "orgs": { "type": "array", "items": { "$ref": "#/components/schemas/TenancyOrganization" } } } } } } }, "403": { "$ref": "#/components/responses/Error" } } },
+      "post": { "tags": ["Tenancy"], "summary": "Create an organization and mint its first admin key (platform principal only)", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TenancyOrgCreate" } } } }, "responses": { "201": { "description": "Organization created with its one-time org-admin credential.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TenancyOrgCreated" } } } }, "400": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/platform/orgs/{org}": {
+      "get": { "tags": ["Tenancy"], "summary": "Read one organization (platform principal only)", "parameters": [{ "$ref": "#/components/parameters/OrgKey" }], "responses": { "200": { "description": "Organization.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TenancyOrganization" } } } }, "404": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/platform/orgs/{org}/configure": {
+      "post": { "tags": ["Tenancy"], "summary": "Update an organization's configuration (platform principal only)", "parameters": [{ "$ref": "#/components/parameters/OrgKey" }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["config"], "properties": { "config": { "type": "object" } } } } } }, "responses": { "202": { "description": "Organization configured.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventAck" } } } }, "400": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/platform/orgs/{org}/suspend": {
+      "post": { "tags": ["Tenancy"], "summary": "Suspend an organization (platform principal only)", "parameters": [{ "$ref": "#/components/parameters/OrgKey" }], "requestBody": { "$ref": "#/components/requestBodies/Reason" }, "responses": { "202": { "description": "Organization suspended.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventAck" } } } }, "400": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/platform/orgs/{org}/resume": {
+      "post": { "tags": ["Tenancy"], "summary": "Resume a suspended organization (platform principal only)", "parameters": [{ "$ref": "#/components/parameters/OrgKey" }], "responses": { "200": { "description": "Organization resumed.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventAck" } } } }, "400": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/platform/orgs/{org}/delete": {
+      "post": { "tags": ["Tenancy"], "summary": "Delete an organization (platform principal only; blocked while active workspaces exist)", "parameters": [{ "$ref": "#/components/parameters/OrgKey" }], "requestBody": { "$ref": "#/components/requestBodies/Reason" }, "responses": { "202": { "description": "Organization deleted.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventAck" } } } }, "400": { "$ref": "#/components/responses/Error" } } }
+    },
     "/v1/policies": {
       "get": {
         "summary": "List policies.",
@@ -4552,6 +4571,32 @@
     "/v1/experiments/{experiment_id}/promote": {
       "post": { "tags": ["experiments"], "summary": "Open a governed deployment for a valid winner", "parameters": [{ "$ref": "#/components/parameters/ExperimentID" }], "responses": { "202": { "description": "Deployment request opened." }, "409": { "$ref": "#/components/responses/Error" } } }
     },
+    "/v1/orgs/{org}/workspaces": {
+      "get": { "tags": ["Tenancy"], "summary": "List the caller's organization workspaces", "parameters": [{ "$ref": "#/components/parameters/OrgKey" }], "responses": { "200": { "description": "Workspaces.", "content": { "application/json": { "schema": { "type": "object", "properties": { "workspaces": { "type": "array", "items": { "$ref": "#/components/schemas/TenancyWorkspace" } } } } } } }, "401": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" } } },
+      "post": { "tags": ["Tenancy"], "summary": "Create a workspace within the caller's organization", "parameters": [{ "$ref": "#/components/parameters/OrgKey" }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TenancyWorkspaceCreate" } } } }, "responses": { "202": { "description": "Workspace created.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventAck" } } } }, "400": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/orgs/{org}/workspaces/{workspace}": {
+      "get": { "tags": ["Tenancy"], "summary": "Read one workspace", "parameters": [{ "$ref": "#/components/parameters/OrgKey" }, { "$ref": "#/components/parameters/WorkspaceKey" }], "responses": { "200": { "description": "Workspace.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TenancyWorkspace" } } } }, "404": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/orgs/{org}/workspaces/{workspace}/configure": {
+      "post": { "tags": ["Tenancy"], "summary": "Update a workspace's configuration", "parameters": [{ "$ref": "#/components/parameters/OrgKey" }, { "$ref": "#/components/parameters/WorkspaceKey" }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["config"], "properties": { "config": { "type": "object" } } } } } }, "responses": { "202": { "description": "Workspace configured.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventAck" } } } }, "400": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/orgs/{org}/workspaces/{workspace}/suspend": {
+      "post": { "tags": ["Tenancy"], "summary": "Suspend a workspace", "parameters": [{ "$ref": "#/components/parameters/OrgKey" }, { "$ref": "#/components/parameters/WorkspaceKey" }], "requestBody": { "$ref": "#/components/requestBodies/Reason" }, "responses": { "202": { "description": "Workspace suspended.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventAck" } } } }, "400": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/orgs/{org}/workspaces/{workspace}/resume": {
+      "post": { "tags": ["Tenancy"], "summary": "Resume a suspended workspace", "parameters": [{ "$ref": "#/components/parameters/OrgKey" }, { "$ref": "#/components/parameters/WorkspaceKey" }], "responses": { "200": { "description": "Workspace resumed.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventAck" } } } }, "400": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/orgs/{org}/workspaces/{workspace}/delete": {
+      "post": { "tags": ["Tenancy"], "summary": "Delete a workspace", "parameters": [{ "$ref": "#/components/parameters/OrgKey" }, { "$ref": "#/components/parameters/WorkspaceKey" }], "requestBody": { "$ref": "#/components/requestBodies/Reason" }, "responses": { "202": { "description": "Workspace deleted.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventAck" } } } }, "400": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/orgs/{org}/workspaces/{workspace}/memberships": {
+      "get": { "tags": ["Tenancy"], "summary": "List a workspace's memberships", "parameters": [{ "$ref": "#/components/parameters/OrgKey" }, { "$ref": "#/components/parameters/WorkspaceKey" }], "responses": { "200": { "description": "Memberships.", "content": { "application/json": { "schema": { "type": "object", "properties": { "memberships": { "type": "array", "items": { "$ref": "#/components/schemas/TenancyMembership" } } } } } } } }, "403": { "$ref": "#/components/responses/Error" } },
+      "post": { "tags": ["Tenancy"], "summary": "Grant a membership to an actor", "parameters": [{ "$ref": "#/components/parameters/OrgKey" }, { "$ref": "#/components/parameters/WorkspaceKey" }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TenancyMembershipGrant" } } } }, "responses": { "202": { "description": "Membership granted.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventAck" } } } }, "400": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/orgs/{org}/workspaces/{workspace}/memberships/{actor}/revoke": {
+      "post": { "tags": ["Tenancy"], "summary": "Revoke an actor's membership (the last active admin is protected)", "parameters": [{ "$ref": "#/components/parameters/OrgKey" }, { "$ref": "#/components/parameters/WorkspaceKey" }, { "$ref": "#/components/parameters/MemberActor" }], "requestBody": { "$ref": "#/components/requestBodies/Reason" }, "responses": { "202": { "description": "Membership revoked.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventAck" } } } }, "400": { "$ref": "#/components/responses/Error" } } }
+    },
     "/v1/outcomes": {
       "get": { "tags": ["outcomes"], "summary": "List business outcomes", "parameters": [{ "name": "decision_id", "in": "query", "schema": { "type": "string" } }, { "name": "key", "in": "query", "schema": { "type": "string" } }], "responses": { "200": { "description": "Current outcomes and correction history." } } },
       "post": {
@@ -4979,6 +5024,27 @@
         "name": "outcome_id",
         "in": "path",
         "required": true,
+        "schema": { "type": "string" }
+      },
+      "OrgKey": {
+        "name": "org",
+        "in": "path",
+        "required": true,
+        "description": "Organization key (URL-safe slug).",
+        "schema": { "type": "string" }
+      },
+      "WorkspaceKey": {
+        "name": "workspace",
+        "in": "path",
+        "required": true,
+        "description": "Workspace key within the organization.",
+        "schema": { "type": "string" }
+      },
+      "MemberActor": {
+        "name": "actor",
+        "in": "path",
+        "required": true,
+        "description": "Member actor identity.",
         "schema": { "type": "string" }
       },
       "PopulationJobID": {
@@ -6652,6 +6718,86 @@
           "seq": {
             "type": "integer"
           }
+        }
+      },
+      "TenancyOrganization": {
+        "type": "object",
+        "description": "One organization's read model.",
+        "properties": {
+          "key": { "type": "string" },
+          "display": { "type": "string" },
+          "status": { "type": "string", "enum": ["active", "suspended", "deleted"] },
+          "config": { "type": "object" },
+          "created_at": { "type": "string", "format": "date-time" },
+          "updated_at": { "type": "string", "format": "date-time" },
+          "deleted_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "TenancyOrgCreate": {
+        "type": "object",
+        "required": ["key", "display", "admin_actor"],
+        "properties": {
+          "key": { "type": "string" },
+          "display": { "type": "string" },
+          "config": { "type": "object" },
+          "admin_actor": { "type": "string" },
+          "admin_name": { "type": "string" }
+        }
+      },
+      "TenancyOrgCreated": {
+        "type": "object",
+        "description": "Organization creation result with the one-time org-admin credential.",
+        "properties": {
+          "event_id": { "type": "string" },
+          "seq": { "type": "integer" },
+          "org_key": { "type": "string" },
+          "admin_key_id": { "type": "string" },
+          "admin_key_secret": { "type": "string" }
+        }
+      },
+      "TenancyWorkspace": {
+        "type": "object",
+        "description": "One workspace's read model.",
+        "properties": {
+          "org_key": { "type": "string" },
+          "key": { "type": "string" },
+          "display": { "type": "string" },
+          "status": { "type": "string", "enum": ["active", "suspended", "deleted"] },
+          "config": { "type": "object" },
+          "created_at": { "type": "string", "format": "date-time" },
+          "updated_at": { "type": "string", "format": "date-time" },
+          "deleted_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "TenancyWorkspaceCreate": {
+        "type": "object",
+        "required": ["key", "display"],
+        "properties": {
+          "key": { "type": "string" },
+          "display": { "type": "string" },
+          "config": { "type": "object" }
+        }
+      },
+      "TenancyMembership": {
+        "type": "object",
+        "description": "One workspace membership.",
+        "properties": {
+          "org_key": { "type": "string" },
+          "workspace": { "type": "string" },
+          "actor": { "type": "string" },
+          "role": { "type": "string", "enum": ["viewer", "operator", "editor", "approver", "admin"] },
+          "status": { "type": "string", "enum": ["active", "suspended", "removed"] },
+          "granted_by": { "type": "string" },
+          "granted_at": { "type": "string", "format": "date-time" },
+          "revoked_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "TenancyMembershipGrant": {
+        "type": "object",
+        "required": ["actor", "role"],
+        "properties": {
+          "actor": { "type": "string" },
+          "role": { "type": "string", "enum": ["viewer", "operator", "editor", "approver", "admin"] }
         }
       },
       "ShadowSetRequest": {

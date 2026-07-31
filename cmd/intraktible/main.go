@@ -62,6 +62,8 @@ func main() {
 		err = agentsCmd(os.Args[2:])
 	case "modeling":
 		err = modelingCmd(os.Args[2:])
+	case "tenancy":
+		err = tenancyCmd(os.Args[2:])
 	default:
 		usage()
 	}
@@ -74,7 +76,7 @@ func main() {
 func usage() {
 	fmt.Fprintln(
 		os.Stderr,
-		"usage: intraktible <serve|log|replay|export|authoring|agents|modeling> [flags]",
+		"usage: intraktible <serve|log|replay|export|authoring|agents|modeling|tenancy> [flags]",
 	)
 	os.Exit(2)
 }

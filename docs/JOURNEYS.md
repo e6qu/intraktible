@@ -683,6 +683,24 @@ on the server as well.
   a key scoped to an environment and role, rotate it with a grace window, or revoke
   it. _Admin only._
 
+### Administer tenants (organizations, workspaces, memberships)
+
+Spans: **Tenancy** (`/tenancy`), CLI (`intraktible tenancy`). Admin only.
+
+1. A platform principal (the bootstrap/platform API key) creates an **organization**:
+   key, display name, plan, workspace quota, and an initial admin actor. The response
+   returns the organization's **first admin key**, shown exactly once. Outcome: a
+   governed tenant with a default `main` workspace and an admin member.
+2. An org admin (or the platform principal) creates **workspaces** within the org and
+   lifecycle-manages them (suspend/resume/delete). Workspace creation enforces the
+   org's workspace quota. Outcome: sub-tenants the platform isolates by key prefix.
+3. Grant **memberships** to actors with a role (viewer/operator/editor/approver/
+   admin). Revoke or suspend them; the **last active admin** of a workspace cannot be
+   revoked. Outcome: the provisioning record of who belongs to which workspace.
+4. The platform principal can suspend/resume/delete an organization; deletion is
+   blocked while any workspace is still active. Outcome: governed tenant lifecycle
+   with audit.
+
 ---
 
 ## By persona

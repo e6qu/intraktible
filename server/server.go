@@ -91,6 +91,10 @@ import (
 	"github.com/e6qu/intraktible/reconsideration"
 	"github.com/e6qu/intraktible/registers"
 	"github.com/e6qu/intraktible/retention"
+	tenancycmd "github.com/e6qu/intraktible/tenancy/command"
+	tenancydomain "github.com/e6qu/intraktible/tenancy/domain"
+	tenancyprojection "github.com/e6qu/intraktible/tenancy/projection"
+	tenancyservice "github.com/e6qu/intraktible/tenancy/service"
 )
 
 // asyncRunWorkers is the size of the Agent Manager's async-run worker pool.
@@ -278,6 +282,7 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 			Identity: identity.Identity{Org: "default", Workspace: "main", Actor: "bootstrap"},
 			Scope:    auth.ScopeAll,
 			Role:     auth.RoleAdmin,
+			Platform: true,
 		})
 		slog.Warn("seeded bootstrap admin API key from INTRAKTIBLE_BOOTSTRAP_API_KEY; rotate to a managed key and unset the variable")
 	}
@@ -632,6 +637,17 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 
 	// Notifications: a per-user inbox derived from @-mentions in comments.
 	notifications.New(notifications.NewHandler(log).WithNow(now), st).Routes(api)
+
+	// Tenancy administration: platform-level organization lifecycle (platform
+	// principals only) and org-level workspace/membership administration (org admins).
+	tenancyHandler := tenancycmd.NewHandler(log).WithNow(now)
+	tenancyservice.New(tenancyHandler, st, apiKeys).Routes(api)
+	// Bootstrap the default organization as a governed tenancy entity on first boot
+	// (idempotent), so the platform org exists in the tenancy read model before any
+	// organization is created through the API.
+	if err := bootstrapDefaultOrg(ctx, tenancyHandler); err != nil {
+		return nil, fmt.Errorf("tenancy bootstrap: %w", err)
+	}
 
 	// Authenticated caller introspection (inside the /v1 auth chain).
 	httpx.NewAPIKeysHandler(apiKeys, log).Routes(api)
@@ -1106,8 +1122,28 @@ func seedDevKey(keyring *auth.Keyring, devKey, storeKind string) bool {
 		Identity: identity.Identity{Org: "demo", Workspace: "main", Actor: "dev"},
 		Scope:    auth.ScopeAll, // local dev key decides against any environment
 		Role:     auth.RoleAdmin,
+		Platform: true,
 	})
 	return true
+}
+
+// bootstrapDefaultOrg creates the platform's default organization as a governed
+// tenancy entity when it does not already exist. It is idempotent across restarts:
+// the creation claim is unique per org key, so a concurrent or repeated boot
+// produces exactly one organization.
+func bootstrapDefaultOrg(ctx context.Context, handler *tenancycmd.Handler) error {
+	bootstrap := identity.Identity{Org: "default", Workspace: "main", Actor: "bootstrap"}
+	_, err := handler.CreateOrganization(
+		ctx, bootstrap, "default", "Default organization",
+		tenancydomain.OrganizationConfig{Plan: "platform", MaxWorkspaces: 100}, "bootstrap",
+	)
+	if err != nil {
+		if strings.Contains(err.Error(), "already exists") {
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 // Projectors returns the read-model projectors for the enabled modules — the
@@ -1117,7 +1153,7 @@ func Projectors(modules string) []projection.Projector {
 	// Privacy masking config and the audit index are platform capabilities, projected
 	// regardless of which modules are enabled (so masking and the audit trail work in
 	// every profile). The audit projector re-indexes every event for tenant-scoped reads.
-	ps := []projection.Projector{privacy.Projector{}, comments.Projector{}, consent.Projector{}, sharing.Projector{}, jurisdiction.Projector{}, notifications.Projector{}, audit.Projector{},
+	ps := []projection.Projector{privacy.Projector{}, comments.Projector{}, consent.Projector{}, sharing.Projector{}, jurisdiction.Projector{}, notifications.Projector{}, audit.Projector{}, tenancyprojection.Projector{},
 		fairlending.ConfigProjector{}, fairlending.SettingsProjector{}, fairlending.IssuanceProjector{}, reconsideration.Projector{}, reconsideration.ContestProjector{}, modelingprojection.Projector{}}
 	if enabled(modules, "hello") {
 		ps = append(ps, stats.Projector{})
