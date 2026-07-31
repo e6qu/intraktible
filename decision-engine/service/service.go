@@ -143,8 +143,73 @@ type retireModelRequest struct {
 func (s *Service) retireModel(w http.ResponseWriter, r *http.Request) {
 	var request retireModelRequest
 	httpx.Emit(w, r, &request, func(id identity.Identity) (eventlog.Envelope, error) {
-		return s.cmd.RetireModel(r.Context(), id, r.PathValue("name"), request.Reason)
+		name := r.PathValue("name")
+		dependants, err := s.modelDependents(r.Context(), id, name)
+		if err != nil {
+			return eventlog.Envelope{}, err
+		}
+		if len(dependants) > 0 {
+			return eventlog.Envelope{}, fmt.Errorf(
+				"decision-engine: %d deployed flow(s) still reference model %q (%v); migrate them first",
+				len(dependants), name, dependants,
+			)
+		}
+		return s.cmd.RetireModel(r.Context(), id, name, request.Reason)
 	})
+}
+
+// modelDependents returns the flows with a live deployment whose graph runs a
+// Predict node on the named model, so retirement can refuse to strand serving.
+type deployedModelReference struct {
+	FlowID string `json:"flow_id"`
+	Env    string `json:"environment"`
+}
+
+func (s *Service) modelDependents(
+	ctx context.Context,
+	id identity.Identity,
+	name string,
+) ([]deployedModelReference, error) {
+	all, err := flows.List(ctx, s.store, id)
+	if err != nil {
+		return nil, err
+	}
+	var dependants []deployedModelReference
+	for _, fv := range all {
+		for env, deployment := range fv.Deployments {
+			graph, err := flows.GraphForVersion(fv, deployment.Version)
+			if err != nil {
+				continue
+			}
+			if graphReferencesModel(graph, name) {
+				dependants = append(dependants, deployedModelReference{
+					FlowID: fv.FlowID, Env: env,
+				})
+			}
+		}
+	}
+	return dependants, nil
+}
+
+// graphReferencesModel reports whether a deployed graph runs a Predict node on
+// the named model. The config shape mirrors domain.predictConfig but stays
+// unexported here so the service does not reach into the domain's internals.
+func graphReferencesModel(graph events.Graph, name string) bool {
+	for _, node := range graph.Nodes {
+		if node.Type != events.NodePredict {
+			continue
+		}
+		var cfg struct {
+			Model string `json:"model"`
+		}
+		if err := json.Unmarshal(node.Config, &cfg); err != nil {
+			continue
+		}
+		if cfg.Model == name {
+			return true
+		}
+	}
+	return false
 }
 
 // graphSchema is the JSON Schema the copilot asks the model to fill when generating

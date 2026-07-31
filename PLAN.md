@@ -993,6 +993,15 @@ operational data exists.
 
 ### 8b.7 PR E6 — model and context data-science platform
 
+**Status: DELIVERED** (PRs #165 + #166). Governed versioned source schemas with quality contracts;
+event-time materialization, correction, and durable backfills; immutable point-in-time dataset
+snapshots; reproducible training jobs and signed artifact registration; richer statistically sound
+evaluation, explanation, fairness, monitoring, and outcome semantics; dependent-aware retirement;
+complete source-to-serving lineage; and Modeler/Validator/Operator UI plus API, SDK, CLI, scheduler,
+replay, privacy, and multi-replica evidence. Whole-scope audit narrowed one overstated claim
+(high-volume streaming/bulk ingestion and cursor pagination are deferred to E7). 138 native and 89
+real-Wasm browser journeys, 254 frontend units, and the full race-enabled Go CI matrix are green.
+
 **Outcome:** data and model teams can produce a point-in-time-correct, reproducible dataset and governed
 model release whose online behavior, explanations, monitoring, and retirement remain traceable to the
 same source facts.
@@ -1074,9 +1083,13 @@ complete lineage/retirement journey.
 - Add schema/source quality, feature/materialization, dataset builder/snapshot, training job/artifact,
   evaluation comparison, lineage/impact, incident, and retirement surfaces with persona-appropriate
   modeler, validator, operator, and executive views.
-- Expose all resources through OpenAPI and both SDKs, including streaming/bulk ingestion and job result
-  pagination/download. CLI supports contract validation, snapshot creation/verification, job submission,
-  artifact registration, lineage impact, and evidence export.
+- Expose all resources through OpenAPI and both SDKs, including governed single-record
+  ingestion with corrections/retractions/watermarks and hash-verified job-result
+  download/export. (High-volume streaming/bulk ingestion and cursor pagination are
+  scale concerns deferred to E7; the E6 contract is governed single-record admission
+  with event-time semantics.) CLI supports contract validation, snapshot
+  creation/verification, job submission, artifact registration, lineage impact, and
+  evidence export.
 - Scheduler/workers own incremental materialization, backfills, training/evaluation, label joins,
   quality/freshness checks, monitoring, retention, and retirement with durable claims and visible
   health.

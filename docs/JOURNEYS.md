@@ -519,7 +519,41 @@ Spans: **Entity** (`/data/[type]/[id]`) → **Compliance** (`/compliance`).
 4. Open Compliance to see active, expired, withdrawn, and soon-to-expire lawful bases,
    the distribution by basis, and the tenant's sharing opt-out count. Outcome:
    operational obligations are visible without treating historical grants as current
-   permission.
+    permission.
+
+### Govern the model data-science lifecycle
+
+Spans: **Modeling cockpit** (`/modeling`) → **Models** (`/models`) → **MRM** (`/mrm`).
+
+1. A data owner defines an immutable **entity/event schema version** (fields,
+   nullability, identifiers, relationships, classifications, lawful purposes,
+   compatibility) with a quality contract — `block`, `refer`, or `warn` — plus
+   completeness/validity/uniqueness rules. Request review; an independent checker
+   approves it (four-eyes — the owner cannot). Outcome: an active governed contract;
+   ingestion that violates a `block` rule is refused at the append boundary.
+2. A `refer` violation opens an operator **quality incident** with severity, owner,
+   affected subjects/assets, and correction lineage. An operator must
+   **acknowledge ownership** before resolving it with evidence; the scheduler
+   auto-resolves freshness incidents after a fresh record. Source watermarks, late
+   arrivals, corrections, and retractions are visible in the cockpit.
+3. A modeler defines a **dataset** (features, label horizon, deterministic
+   partitions, population exclusion, historical consent, retention) and queues a
+   **point-in-time snapshot**. A leased worker builds the rows, keeps missing labels
+   censored, verifies the content hash after writing the encrypted blob, and
+   publishes the immutable manifest. Admin-only **JSON/CSV export** is hash-verified.
+4. The modeler queues a **deterministic training** job pinned to snapshot/code/
+   runtime/parameters/seed. The worker writes and re-reads a content-addressed
+   artifact, signs it Ed25519, and registers full production lineage. An
+   **independent evaluation** records AUC/log-loss/Brier, calibration, threshold
+   cost, Wilson intervals, segment/intersection fairness, temporal slices, and
+   leakage findings.
+5. A validator clears the artifact supply-chain gate (`validated` → `production`),
+   records independent validation attesting leakage/calibration/fairness/threshold
+   review against the signed hashes, and approves the model. Retirement is blocked
+   while a dataset references the schema or a deployed flow runs the model.
+6. **Lineage & challenger evidence** traces one production model from source schema
+   → feature → dataset → snapshot → artifact → evaluation → serving, and champion/
+   challenger comparison reads the same signed evidence.
 
 ### Stream a batch of decisions
 

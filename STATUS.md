@@ -142,28 +142,30 @@ quality label: only independently approved event freshness policies can use
 it, structurally invalid data is rejected, and accepted stale evidence pins
 the approval identity, time, request, and rationale.
 
-The public-contract slice is complete and every local release gate is green:
-source-health, materialization, artifact, and comparison reads agree across
-OpenAPI, RBAC, Go/TypeScript SDKs, CLI, and the Svelte cockpit. Strict lint,
-ten dupl clone groups (deduplicated into `platform/stats.Wilson`,
-`platform/scheduler.RunWorker`, shared modeling publish/settle helpers, and
-generic CLI command shapes), dead-code, race, vulnerability, license,
-Terraform (18/18), and the web format/lint/typecheck/unit/build gates all
-pass, and `make demo-seed` round-trips with a signed modeling artifact. The
-branch is pushed as the sole open E6 PR; E6 remains open for live native/Wasm
-browser journeys, whole-diff audits, phase-closing documentation, and the
-hosted release matrix.
+The public-contract slice landed in E6 PR #165 (merged as authoritative
+`origin/main` `c560b1d`): source-health, materialization, artifact, and
+comparison reads agree across OpenAPI, RBAC, Go/TypeScript SDKs, CLI, and the
+Svelte cockpit. Strict lint, ten dupl clone groups (deduplicated into
+`platform/stats.Wilson`, `platform/scheduler.RunWorker`, shared modeling
+publish/settle helpers, and generic CLI command shapes), dead-code, race,
+vulnerability, license, Terraform (18/18), and the web gates all passed, and
+`make demo-seed` round-trips with a signed modeling artifact. Exact-head hosted
+run `30630868192` (`720e857`) was green across all nine jobs; the hosted matrix
+found and closed three defects en route (a nine-persona account menu stranding
+Sign out, a demo journey navigating on response headers before the embedded
+backend persisted the shred delta, and a shared-store projection race closed by
+`Runtime.Wait` plus cancel-before-rebuild).
 
-PR #165 is that sole review item, and its exact-head hosted run `30630868192`
-(`720e857`) is green across all nine jobs: Go race/security/license, real
-PostgreSQL, 135 native browser journeys, 86 real-Wasm journeys, four
-embedded-artifact journeys, real Shauth SSO, web, Terraform, and container
-contracts. The hosted matrix found and closed three defects en route: a
-nine-persona account menu stranding Sign out outside the viewport, a demo
-journey navigating on response headers before the embedded backend persisted
-the shred delta, and a shared-store projection race between a live consumer
-and a concurrent rebuild (closed by `Runtime.Wait` plus cancel-before-rebuild
-in the SLA scheduler test).
+The E6 continuation branch `enterprise/e6-modeling-journeys-and-audit` (cut from
+`c560b1d`) closes the remaining §8b.7 scope: 3 native + 3 real-Wasm modeling
+cockpit journeys (schema governance/four-eyes/block ingestion, refer-policy
+incident acknowledgement→resolution, and modeler snapshot→training→evaluation→
+validator approval→lineage, over the seeded production story); a whole-scope
+audit that implemented dependent-aware schema/model retirement (previously
+unguarded) and narrowed the overstated streaming/bulk-ingestion claim to E7;
+and phase-closing docs. All local gates are green: `make ci` exit 0, 138 native
+journeys, 89 real-Wasm journeys, 254 frontend units, race Go CI, Terraform
+18/18. It is the sole open review item; E7 must not start before it merges.
 
 **Enterprise PR E4 — collaborative authoring and governed delivery is merged.**
 Authoritative `origin/main` is merge commit `0eea197`, containing final E4 head

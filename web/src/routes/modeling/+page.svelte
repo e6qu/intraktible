@@ -323,7 +323,7 @@
   {#if loading}
     <Skeleton rows={8} />
   {:else}
-    <section class="panel" id="source-contracts">
+    <section class="panel" id="source-contracts" aria-label="Sources & quality">
       <div class="section-head">
         <div>
           <p class="eyebrow">Contract → admission → incident</p>
@@ -508,7 +508,7 @@
       </div>
     </section>
 
-    <section class="panel" id="datasets">
+    <section class="panel" id="datasets" aria-label="Datasets & materialization">
       <div class="section-head">
         <div>
           <p class="eyebrow">Observation time × knowledge time</p>
@@ -720,7 +720,7 @@
       </details>
     </section>
 
-    <section class="panel" id="training">
+    <section class="panel" id="training" aria-label="Training & independent evaluation">
       <div class="section-head">
         <div>
           <p class="eyebrow">Snapshot → fit → sign → validate</p>
@@ -1023,7 +1023,7 @@
       </div>
     </section>
 
-    <section class="panel" id="lineage">
+    <section class="panel" id="lineage" aria-label="Lineage & challenger evidence">
       <div class="section-head">
         <div>
           <p class="eyebrow">Source → schema → feature → dataset → artifact → serving</p>
