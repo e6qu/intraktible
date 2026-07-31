@@ -16,13 +16,12 @@ DOC (a claim not backed by code).
 
 ## Queue
 
-1. **OPEN — Follow E5 PR #164 to green.** The completed release candidate is
-   committed and pushed from `enterprise/e5-governed-agent-operations` against
-   authoritative E4 merge `0eea197`; it is the sole open PR. The exact local
-   source passes 135 native, 86 real-Wasm, four embedded, 247 frontend unit,
-   production frontend, full race-enabled Go CI, static integrity, security,
-   clone, vulnerability, and license gates. Inspect every hosted failure,
-   follow fix cascades to the bottom, and do not start E6 before E5 merges.
+1. **OPEN — Await the user merge of E5 PR #164.** Hosted run `30596019405`
+   passed all nine jobs over the completed release candidate: Go
+   race/security/license, PostgreSQL, 135 native, 86 real-Wasm, four embedded,
+   Shauth SSO, web, Terraform, and container contracts. The PR is the sole open
+   review item. Do not merge it on the user's behalf and do not start E6 before
+   the user reports E5 merged.
 2. **OPEN — E6 through E8 remain serialized behind E5.** Do not implement or
    open them concurrently. After E5 merges, fetch and deliberately reconcile
    authoritative `origin/main`, confirm the PR queue empty, and only then cut
