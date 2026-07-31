@@ -24,8 +24,9 @@ DOC (a claim not backed by code).
    unguarded) and narrowed the overstated streaming/bulk-ingestion claim to E7,
    and phase-closing docs (PLAN §8b.7 delivered, BUGS E6, JOURNEYS modeling).
    All local gates are green (`make ci` exit 0; 138 native, 89 real-Wasm, 254
-   frontend units, race Go CI, Terraform 18/18). It is the sole open review item;
-   do not start E7 before the user reports it merged.
+   frontend units, race Go CI, Terraform 18/18). Exact-head hosted run
+   `30639229920` (`0d52266`) is green across all nine jobs. It is the sole open
+   review item; do not start E7 before the user reports it merged.
 2. **OPEN — E7 and E8 remain serialized behind E6.** Do not implement or open
    them concurrently. After the E6 continuation merges, fetch and deliberately
    reconcile authoritative `origin/main`, confirm the PR queue empty, and only

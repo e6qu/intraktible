@@ -1020,3 +1020,8 @@ Linux, entirely that VM's fsync path.
   overstated streaming/bulk-ingestion + cursor-pagination PLAN §8b.7 claim to
   E7 (governed single-record admission with corrections/retractions/watermarks
   is the E6 contract).
+- 2026-07-31: E6 journeys+audit PR #166 exact-head hosted run `30639229920`
+  (`0d52266`) is green across all nine jobs: Go race/security/license, real
+  PostgreSQL, 138 native journeys, 89 real-Wasm journeys, four embedded-artifact
+  journeys, real Shauth SSO, web, Terraform, and container contracts. CI found
+  and removed one unused `schemaSpec` helper in the native modeling spec.
