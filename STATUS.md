@@ -51,8 +51,9 @@ human action/QA/outcome learning, operator quality/safety/cost controls, and a
 versioned bring-your-own-agent protocol. The existing Agent Manager runtime,
 durable leases, eval cases, tool allowlists, costs, and Case Manager governance
 are the starting substrate, not completion evidence. No E5 dependency has been
-added and no E5 PR is open yet. Fresh remote reconciliation confirms
-`origin/main` remains `0eea197` and the open-PR queue is empty.
+added. Fresh pre-push reconciliation confirmed `origin/main` remains `0eea197`
+and the open-PR queue was empty; the completed vertical is now the sole open
+review item, PR #164.
 
 The first E5 platform loop is implemented and focused-tested: immutable agent
 templates/releases/evaluation suites and campaigns, independent release review,
@@ -174,8 +175,9 @@ frontend units, zero-warning typecheck/lint/format and production build, plus
 the full race-enabled Go CI matrix with vet/build, strict lint, SAST,
 dead-code, zero production clones, licenses, and zero reachable
 vulnerabilities. Final diff hygiene, OpenAPI parsing, Go formatting, SPDX, and
-source-marker checks are also clean. The only remaining work is commit/push,
-the single E5 PR, and hosted CI.
+source-marker checks are also clean. Commit `2d800ad` is pushed and PR #164 is
+open; the only remaining E5 work is hosted CI and any fixes it proves
+necessary.
 
 **Enterprise PR E3 — enterprise case operations is merged.** Authoritative
 `origin/main` is merge commit `89bca6a`, containing E3 head `7e55c3d`; its final

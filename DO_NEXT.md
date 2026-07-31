@@ -16,12 +16,13 @@ DOC (a claim not backed by code).
 
 ## Queue
 
-1. **OPEN — Land the completed E5 release candidate.** Commit and push
-   `enterprise/e5-governed-agent-operations`, open the sole PR against the
-   authoritative `0eea197` E4 merge, and follow hosted CI to green. The exact
-   local source passes 135 native, 86 real-Wasm, four embedded, 247 frontend
-   unit, production frontend, full race-enabled Go CI, static integrity,
-   security, clone, vulnerability, and license gates.
+1. **OPEN — Follow E5 PR #164 to green.** The completed release candidate is
+   committed and pushed from `enterprise/e5-governed-agent-operations` against
+   authoritative E4 merge `0eea197`; it is the sole open PR. The exact local
+   source passes 135 native, 86 real-Wasm, four embedded, 247 frontend unit,
+   production frontend, full race-enabled Go CI, static integrity, security,
+   clone, vulnerability, and license gates. Inspect every hosted failure,
+   follow fix cascades to the bottom, and do not start E6 before E5 merges.
 2. **OPEN — E6 through E8 remain serialized behind E5.** Do not implement or
    open them concurrently. After E5 merges, fetch and deliberately reconcile
    authoritative `origin/main`, confirm the PR queue empty, and only then cut
