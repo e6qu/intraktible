@@ -16,6 +16,8 @@ export type Persona =
   | 'operator'
   | 'manager'
   | 'product'
+  | 'modeler'
+  | 'validator'
   | 'showcase'
   | 'evaluator';
 
@@ -32,6 +34,7 @@ export type NavId =
   | 'cases'
   | 'agents'
   | 'models'
+  | 'modeling'
   | 'observability'
   | 'mrm'
   | 'fairlending'
@@ -65,6 +68,7 @@ export const NAV = new Map<NavId, NavItem>([
   ['cases', { id: 'cases', href: '/cases', label: 'Cases', icon: 'cases' }],
   ['agents', { id: 'agents', href: '/agents', label: 'Agents', icon: 'agents' }],
   ['models', { id: 'models', href: '/models', label: 'Models', icon: 'scorecard' }],
+  ['modeling', { id: 'modeling', href: '/modeling', label: 'Modeling', icon: 'database' }],
   [
     'observability',
     { id: 'observability', href: '/observability', label: 'Observability', icon: 'gauge' }
@@ -185,6 +189,7 @@ export const PERSONAS: PersonaConfig[] = [
       'experiments',
       'population',
       'data',
+      'modeling',
       'models',
       'decisions',
       'agents'
@@ -284,6 +289,7 @@ export const PERSONAS: PersonaConfig[] = [
       'population',
       'engine',
       'models',
+      'modeling',
       'cases',
       'decisions',
       'observability',
@@ -314,6 +320,7 @@ export const PERSONAS: PersonaConfig[] = [
       'engine',
       'policies',
       'models',
+      'modeling',
       'decisions',
       'data',
       'observability'
@@ -323,6 +330,7 @@ export const PERSONAS: PersonaConfig[] = [
       { label: 'Run a population backtest', href: '/population', icon: 'gauge' },
       { label: 'Tune policy impact', href: '/policies', icon: 'rule' },
       { label: 'Manage models', href: '/models', icon: 'scorecard' },
+      { label: 'Build governed model data', href: '/modeling', icon: 'database' },
       { label: 'Analyse decisions', href: '/decisions', icon: 'diagram' }
     ],
     // Land on the experiment arm, leading with the variant column.
@@ -334,6 +342,47 @@ export const PERSONAS: PersonaConfig[] = [
     },
     homeStats: ['challenger', 'decisions', 'completion_rate'],
     homePanel: 'experiment'
+  },
+  {
+    id: 'modeler',
+    label: 'Data Scientist / Modeler',
+    blurb: 'Build governed datasets, models, and evidence',
+    icon: 'database',
+    home: 'persona',
+    nav: [
+      'modeling',
+      'models',
+      'data',
+      'population',
+      'decisions',
+      'mrm',
+      'fairlending',
+      'observability'
+    ],
+    actions: [
+      { label: 'Open the modeling cockpit', href: '/modeling', icon: 'database' },
+      { label: 'Inspect model inventory', href: '/models', icon: 'scorecard' },
+      { label: 'Inspect source context', href: '/data', icon: 'database' },
+      { label: 'Review model-risk evidence', href: '/mrm', icon: 'shield' }
+    ],
+    homeStats: ['decisions', 'challenger', 'completion_rate'],
+    homePanel: 'experiment'
+  },
+  {
+    id: 'validator',
+    label: 'Independent Model Validator',
+    blurb: 'Reproduce evaluation and challenge model evidence',
+    icon: 'shield',
+    home: 'persona',
+    nav: ['modeling', 'models', 'mrm', 'fairlending', 'decisions', 'observability', 'audit'],
+    actions: [
+      { label: 'Run independent evaluation', href: '/modeling', icon: 'gauge' },
+      { label: 'Trace model lineage', href: '/modeling', icon: 'diagram' },
+      { label: 'Review model-risk inventory', href: '/mrm', icon: 'shield' },
+      { label: 'Review fair-lending evidence', href: '/fairlending', icon: 'gauge' }
+    ],
+    homeStats: ['pending_approvals', 'challenger', 'decisions'],
+    homePanel: 'approvals'
   },
   {
     id: 'showcase',

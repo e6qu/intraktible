@@ -748,6 +748,12 @@
   .opt-avatar[data-p='product'] {
     background: linear-gradient(135deg, #8b5cf6, #6d28d9);
   }
+  .opt-avatar[data-p='modeler'] {
+    background: linear-gradient(135deg, #8b5cf6, #6d28d9);
+  }
+  .opt-avatar[data-p='validator'] {
+    background: linear-gradient(135deg, #3b82f6, #1e40af);
+  }
   .opt-avatar[data-p='evaluator'] {
     background: linear-gradient(135deg, #64748b, #334155);
   }

@@ -24,6 +24,7 @@ import (
 	"strings"
 	"syscall/js"
 
+	modelingservice "github.com/e6qu/intraktible/modeling/service"
 	"github.com/e6qu/intraktible/platform/ai"
 	"github.com/e6qu/intraktible/platform/erasure"
 	"github.com/e6qu/intraktible/platform/eventlog"
@@ -38,16 +39,21 @@ type host struct {
 	srv      *server.Server
 }
 
-const sessionSnapshotVersion = 1
+const sessionSnapshotVersion = 2
+
+type demoOperationalState struct {
+	Erasure  erasure.OperationalState         `json:"erasure"`
+	Modeling modelingservice.OperationalState `json:"modeling"`
+}
 
 // sessionSnapshot keeps the visitor's appended events together with the latest
 // operational subject keys. Keys are deliberately outside the append-only log:
 // erasure remains an irreversible deletion of the key record. The demo uses
 // fictional subjects, but retains the same separation as a native deployment.
 type sessionSnapshot struct {
-	Version          int                      `json:"version"`
-	Events           []eventlog.Envelope      `json:"events"`
-	OperationalState erasure.OperationalState `json:"operational_state"`
+	Version          int                  `json:"version"`
+	Events           []eventlog.Envelope  `json:"events"`
+	OperationalState demoOperationalState `json:"operational_state"`
 }
 
 // workspaceProvider serves the seeded workspace's provider name with the
@@ -95,9 +101,14 @@ func (h *host) boot(_ js.Value, args []js.Value) (result any) {
 	}
 	st := store.NewMemory()
 	if err := erasure.RestoreOperationalState(
-		context.Background(), st, operationalState,
+		context.Background(), st, operationalState.Erasure,
 	); err != nil {
-		return fmt.Errorf("wasm boot: restore operational state: %w", err).Error()
+		return fmt.Errorf("wasm boot: restore erasure state: %w", err).Error()
+	}
+	if err := modelingservice.RestoreOperationalState(
+		context.Background(), st, operationalState.Modeling,
+	); err != nil {
+		return fmt.Errorf("wasm boot: restore modeling state: %w", err).Error()
 	}
 	srv, err := server.New(context.Background(), server.Config{
 		Modules:   "all",
@@ -120,27 +131,27 @@ func (h *host) boot(_ js.Value, args []js.Value) (result any) {
 // the seed snapshot; merging could resurrect a key deleted by crypto-shredding.
 func parseBootState(
 	seedJSON, stateJSON, deltaJSON string,
-) ([]eventlog.Envelope, uint64, erasure.OperationalState, error) {
+) ([]eventlog.Envelope, uint64, demoOperationalState, error) {
 	var events []eventlog.Envelope
 	if err := json.Unmarshal([]byte(seedJSON), &events); err != nil {
-		return nil, 0, erasure.OperationalState{}, fmt.Errorf("wasm boot: seed history: %w", err)
+		return nil, 0, demoOperationalState{}, fmt.Errorf("wasm boot: seed history: %w", err)
 	}
 	seedHead := uint64(len(events))
-	var operationalState erasure.OperationalState
+	var operationalState demoOperationalState
 	if err := json.Unmarshal([]byte(stateJSON), &operationalState); err != nil {
-		return nil, 0, erasure.OperationalState{}, fmt.Errorf(
+		return nil, 0, demoOperationalState{}, fmt.Errorf(
 			"wasm boot: seed operational state: %w", err,
 		)
 	}
 	if deltaJSON != "" {
 		var saved sessionSnapshot
 		if err := json.Unmarshal([]byte(deltaJSON), &saved); err != nil {
-			return nil, 0, erasure.OperationalState{}, fmt.Errorf(
+			return nil, 0, demoOperationalState{}, fmt.Errorf(
 				"wasm boot: saved session: %w", err,
 			)
 		}
 		if saved.Version != sessionSnapshotVersion {
-			return nil, 0, erasure.OperationalState{}, fmt.Errorf(
+			return nil, 0, demoOperationalState{}, fmt.Errorf(
 				"wasm boot: saved session version %d is incompatible with %d",
 				saved.Version, sessionSnapshotVersion,
 			)
@@ -193,10 +204,15 @@ func (h *host) handle(_ js.Value, args []js.Value) any {
 func (h *host) exportDelta(js.Value, []js.Value) any {
 	all := h.log.Export()
 	delta := all[min(int(h.seedHead), len(all)):]
-	operationalState, err := erasure.ExportOperationalState(context.Background(), h.store)
+	erasureState, err := erasure.ExportOperationalState(context.Background(), h.store)
 	if err != nil {
 		panic(err)
 	}
+	modelingState, err := modelingservice.ExportOperationalState(context.Background(), h.store)
+	if err != nil {
+		panic(err)
+	}
+	operationalState := demoOperationalState{Erasure: erasureState, Modeling: modelingState}
 	b, err := json.Marshal(sessionSnapshot{
 		Version: sessionSnapshotVersion, Events: delta, OperationalState: operationalState,
 	})

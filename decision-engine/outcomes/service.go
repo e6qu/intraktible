@@ -65,6 +65,8 @@ func (s *Service) correct(w http.ResponseWriter, r *http.Request) {
 	}
 	var request struct {
 		Value                 float64   `json:"value"`
+		Category              string    `json:"category,omitempty"`
+		Censored              bool      `json:"censored,omitempty"`
 		EventTime             time.Time `json:"event_time"`
 		ObservationWindowDays int       `json:"observation_window_days,omitempty"`
 		Source                Source    `json:"source"`
@@ -78,7 +80,8 @@ func (s *Service) correct(w http.ResponseWriter, r *http.Request) {
 	payload, event, err := s.handler.Correct(
 		r.Context(), id, r.PathValue("outcome_id"),
 		RecordCommand{
-			Value: request.Value, EventTime: request.EventTime,
+			Value: request.Value, Category: request.Category, Censored: request.Censored,
+			EventTime:             request.EventTime,
 			ObservationWindowDays: request.ObservationWindowDays,
 			Source:                request.Source, LabelVersion: request.LabelVersion,
 		},

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/e6qu/intraktible/decision-engine/history"
@@ -65,6 +66,14 @@ func (s *Service) report(w http.ResponseWriter, r *http.Request) {
 	p := Params{
 		FlowID: q.Get("flow"), Attribute: q.Get("attribute"), Environment: q.Get("env"),
 		ExperimentID: q.Get("experiment"), Arm: q.Get("arm"),
+		MissingTreatment: q.Get("missing"),
+	}
+	if raw := strings.TrimSpace(q.Get("intersections")); raw != "" {
+		for _, attribute := range strings.Split(raw, ",") {
+			if attribute = strings.TrimSpace(attribute); attribute != "" {
+				p.IntersectionAttributes = append(p.IntersectionAttributes, attribute)
+			}
+		}
 	}
 	if raw := q.Get("cohort"); raw != "" {
 		cohort, err := strconv.Atoi(raw)

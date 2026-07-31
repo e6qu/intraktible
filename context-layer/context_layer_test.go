@@ -5,6 +5,7 @@ package contextlayer_test
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"testing"
 	"time"
 
@@ -12,12 +13,156 @@ import (
 	"github.com/e6qu/intraktible/context-layer/connectors"
 	"github.com/e6qu/intraktible/context-layer/domain"
 	"github.com/e6qu/intraktible/context-layer/entities"
+	contextevents "github.com/e6qu/intraktible/context-layer/events"
 	"github.com/e6qu/intraktible/context-layer/features"
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/projection"
 	"github.com/e6qu/intraktible/platform/store"
 )
+
+func TestGovernedEntityUniquenessIsReplicaSafeAndPolicyAware(t *testing.T) {
+	ctx := context.Background()
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "data-owner"}
+	for iteration := 0; iteration < 20; iteration++ {
+		log := eventlog.NewMemory()
+		first := command.NewHandler(log)
+		second := command.NewHandler(log)
+		start := make(chan struct{})
+		type result struct {
+			entityID string
+			err      error
+		}
+		results := make(chan result, 2)
+		var wait sync.WaitGroup
+		for entityID, handler := range map[string]*command.Handler{
+			"applicant-a": first, "applicant-b": second,
+		} {
+			wait.Add(1)
+			go func(entityID string, handler *command.Handler) {
+				defer wait.Done()
+				<-start
+				_, err := handler.RecordEntity(ctx, id, domain.RecordEntity{
+					EntityType: "applicant", EntityID: entityID,
+					Attributes: json.RawMessage(`{"government_id":"same"}`),
+					SchemaEvidence: domain.SchemaEvidence{
+						Action: "block", UniqueClaim: "source.unique\x00entity/applicant\x00tuple",
+					},
+				})
+				results <- result{entityID: entityID, err: err}
+			}(entityID, handler)
+		}
+		close(start)
+		wait.Wait()
+		close(results)
+		var winner string
+		failures := 0
+		for result := range results {
+			if result.err == nil {
+				winner = result.entityID
+			} else {
+				failures++
+			}
+		}
+		if winner == "" || failures != 1 {
+			t.Fatalf("iteration %d: winner %q, failures %d", iteration, winner, failures)
+		}
+		// The durable claim belongs to the logical entity, not one request: an
+		// upsert by the winner can retain the same tuple.
+		if _, err := first.RecordEntity(ctx, id, domain.RecordEntity{
+			EntityType: "applicant", EntityID: winner,
+			Attributes: json.RawMessage(`{"government_id":"same","status":"reviewed"}`),
+			SchemaEvidence: domain.SchemaEvidence{
+				Action: "block", UniqueClaim: "source.unique\x00entity/applicant\x00tuple",
+			},
+		}); err != nil {
+			t.Fatalf("iteration %d: same-owner update: %v", iteration, err)
+		}
+		_ = log.Close()
+	}
+
+	log := eventlog.NewMemory()
+	defer func() { _ = log.Close() }()
+	handler := command.NewHandler(log)
+	claim := "source.unique\x00entity/applicant\x00referred-tuple"
+	if _, err := handler.RecordEntity(ctx, id, domain.RecordEntity{
+		EntityType: "applicant", EntityID: "owner",
+		SchemaEvidence: domain.SchemaEvidence{Action: "block", UniqueClaim: claim},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := handler.RecordEntity(ctx, id, domain.RecordEntity{
+		EntityType: "applicant", EntityID: "duplicate",
+		SchemaEvidence: domain.SchemaEvidence{Action: "refer", UniqueClaim: claim},
+	}); err != nil {
+		t.Fatalf("refer policy should admit with evidence: %v", err)
+	}
+	envelopes, err := log.ReadTenantStream(ctx, id.Org, id.Workspace, contextevents.StreamContext, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var duplicate contextevents.EntityRecorded
+	if err := json.Unmarshal(envelopes[len(envelopes)-1].Payload, &duplicate); err != nil {
+		t.Fatal(err)
+	}
+	if len(duplicate.SchemaEvidence.Violations) != 1 ||
+		duplicate.SchemaEvidence.Violations[0].Code != "unique" {
+		t.Fatalf("duplicate evidence = %+v", duplicate.SchemaEvidence)
+	}
+}
+
+func TestGovernedRelationshipsFollowBlockAndReferPolicy(t *testing.T) {
+	ctx := context.Background()
+	log := eventlog.NewMemory()
+	defer func() { _ = log.Close() }()
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "data-owner"}
+	handler := command.NewHandler(log)
+	if _, err := handler.RecordEntity(ctx, id, domain.RecordEntity{
+		EntityType: "merchant", EntityID: "merchant-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	relationship := domain.RelationshipCheck{
+		Field: "merchant_id", TargetEntityType: "merchant", TargetEntityID: "merchant-1",
+	}
+	if _, err := handler.RecordEvent(ctx, id, domain.RecordEvent{
+		EntityType: "payment", EntityID: "payment-1", EventName: "authorized",
+		SchemaEvidence: domain.SchemaEvidence{
+			Action: "block", RelationshipChecks: []domain.RelationshipCheck{relationship},
+		},
+	}); err != nil {
+		t.Fatalf("known relationship rejected: %v", err)
+	}
+	relationship.TargetEntityID = "missing"
+	if _, err := handler.RecordEvent(ctx, id, domain.RecordEvent{
+		EntityType: "payment", EntityID: "payment-2", EventName: "authorized",
+		SchemaEvidence: domain.SchemaEvidence{
+			Action: "block", RelationshipChecks: []domain.RelationshipCheck{relationship},
+		},
+	}); err == nil {
+		t.Fatal("block policy should reject an unknown relationship target")
+	}
+	if _, err := handler.RecordEvent(ctx, id, domain.RecordEvent{
+		EntityType: "payment", EntityID: "payment-3", EventName: "authorized",
+		SchemaEvidence: domain.SchemaEvidence{
+			Action: "refer", RelationshipChecks: []domain.RelationshipCheck{relationship},
+		},
+	}); err != nil {
+		t.Fatalf("refer policy should admit an unknown relationship with evidence: %v", err)
+	}
+	envelopes, err := log.ReadTenantStream(ctx, id.Org, id.Workspace, contextevents.StreamContext, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var referred contextevents.EventRecorded
+	if err := json.Unmarshal(envelopes[len(envelopes)-1].Payload, &referred); err != nil {
+		t.Fatal(err)
+	}
+	if len(referred.SchemaEvidence.Violations) != 1 ||
+		referred.SchemaEvidence.Violations[0].Code != "relationship" {
+		t.Fatalf("relationship evidence = %+v", referred.SchemaEvidence)
+	}
+}
 
 // TestEntityAndEventReplay records an entity, patches it, and records events, then
 // rebuilds the read model from the log (offset 0) to prove the projection is a
@@ -104,6 +249,54 @@ func TestEntityAndEventReplay(t *testing.T) {
 	}
 	if len(customers) != 1 {
 		t.Fatalf("customers = %d, want 1", len(customers))
+	}
+}
+
+func TestEntityHistoryHonorsKnowledgeCutoff(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	log := eventlog.NewMemory()
+	defer func() { _ = log.Close() }()
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "data-owner"}
+	current := time.Date(2026, 1, 1, 9, 0, 0, 0, time.UTC)
+	handler := command.NewHandler(log).WithNow(func() time.Time { return current })
+	if _, err := handler.RecordEntity(ctx, id, domain.RecordEntity{
+		EntityType: "applicant", EntityID: "a1",
+		Attributes: json.RawMessage(`{"segment":"thin-file"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	cutoff := current.Add(time.Minute)
+	current = current.Add(time.Hour)
+	if _, err := handler.RecordEntity(ctx, id, domain.RecordEntity{
+		EntityType: "applicant", EntityID: "a1",
+		Attributes: json.RawMessage(`{"segment":"established"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := handler.RecordEntity(ctx, id, domain.RecordEntity{
+		EntityType: "applicant", EntityID: "a2",
+		Attributes: json.RawMessage(`{"segment":"new"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	st := store.NewMemory()
+	if err := projection.New(log, st, entities.Projector{}).Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	asKnown, err := entities.ListEntitiesAt(ctx, st, id, "applicant", cutoff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(asKnown) != 1 || asKnown[0].EntityID != "a1" ||
+		string(asKnown[0].Attributes) != `{"segment":"thin-file"}` {
+		t.Fatalf("entities at cutoff = %+v", asKnown)
+	}
+	currentRows, err := entities.ListEntitiesAt(
+		ctx, st, id, "applicant", current.Add(time.Minute),
+	)
+	if err != nil || len(currentRows) != 2 {
+		t.Fatalf("current entity history = %+v, err %v", currentRows, err)
 	}
 }
 
@@ -231,6 +424,78 @@ func TestFeatureVersioningAndCache(t *testing.T) {
 	v4, err := features.ComputeCached(ctx, st, id, "customer", "c1", time.Now().UTC())
 	if err != nil || v4[0].Cached || v4[0].Version <= v2[0].Version {
 		t.Fatalf("after a redefinition = %+v, want a higher version recomputed (uncached)", v4)
+	}
+}
+
+func TestCorrectionsAndRetractionsRespectKnowledgeCutoff(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	log := eventlog.NewMemory()
+	defer func() { _ = log.Close() }()
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "data-owner"}
+	recordedAt := time.Date(2026, 1, 2, 12, 0, 0, 0, time.UTC)
+	handler := command.NewHandler(log).WithNow(func() time.Time { return recordedAt })
+
+	if _, err := handler.DefineFeature(ctx, id, domain.DefineFeature{
+		Name: "txn_sum", EntityType: "customer", EventName: "transaction",
+		Aggregation: domain.AggSum, Field: "amount", WindowHours: 72,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	occurredAt := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)
+	if _, err := handler.RecordEvent(ctx, id, domain.RecordEvent{
+		EntityType: "customer", EntityID: "c1", EventName: "transaction",
+		EventID: "txn-1", Data: json.RawMessage(`{"amount":10}`), OccurredAt: occurredAt,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := handler.RecordEvent(ctx, id, domain.RecordEvent{
+		EntityType: "customer", EntityID: "c1", EventName: "transaction",
+		EventID: "txn-1", Data: json.RawMessage(`{"amount":10}`), OccurredAt: occurredAt,
+	}); err == nil {
+		t.Fatal("duplicate source event id should fail")
+	}
+
+	recordedAt = time.Date(2026, 1, 3, 12, 0, 0, 0, time.UTC)
+	if _, err := handler.RecordEvent(ctx, id, domain.RecordEvent{
+		EntityType: "customer", EntityID: "c1", EventName: "transaction",
+		EventID: "txn-1-correction", SupersedesEventID: "txn-1",
+		Data: json.RawMessage(`{"amount":20}`), OccurredAt: occurredAt,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	recordedAt = time.Date(2026, 1, 4, 12, 0, 0, 0, time.UTC)
+	if _, err := handler.RetractEvent(ctx, id, domain.RetractEvent{
+		EventID: "txn-1-correction", Reason: "source reversed transaction",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	st := store.NewMemory()
+	if err := projection.New(log, st, entities.Projector{}, features.Projector{}).Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	asOf := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	assertValue := func(knowledgeAt time.Time, want float64) {
+		t.Helper()
+		values, err := features.ComputeAt(ctx, st, id, "customer", "c1", asOf, knowledgeAt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(values) != 1 || values[0].Value != want {
+			t.Fatalf("knowledge_at %s values = %+v, want %v", knowledgeAt, values, want)
+		}
+	}
+	assertValue(time.Date(2026, 1, 2, 13, 0, 0, 0, time.UTC), 10)
+	assertValue(time.Date(2026, 1, 3, 13, 0, 0, 0, time.UTC), 20)
+	assertValue(time.Date(2026, 1, 4, 13, 0, 0, 0, time.UTC), 0)
+
+	history, err := entities.ListEvents(ctx, st, id, "customer", "c1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(history) != 2 || history[0].Status != "retracted" || history[1].Status != "superseded" {
+		t.Fatalf("correction history = %+v", history)
 	}
 }
 

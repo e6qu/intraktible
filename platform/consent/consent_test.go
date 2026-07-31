@@ -154,6 +154,40 @@ func TestListSubjectPurposes(t *testing.T) {
 	}
 }
 
+func TestConsentHistoryHonorsKnowledgeCutoff(t *testing.T) {
+	ctx := context.Background()
+	t0 := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	log := eventlog.NewMemory()
+	defer func() { _ = log.Close() }()
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "operator"}
+	h := consent.NewHandler(log).WithNow(func() time.Time { return t0 })
+	if _, err := h.Grant(ctx, id, consent.GrantCmd{
+		Subject: "applicant/1", Purpose: "model-development",
+		Basis: consent.BasisContract,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	h.WithNow(func() time.Time { return t0.Add(24 * time.Hour) })
+	if _, err := h.Withdraw(
+		ctx, id, "applicant/1", "model-development", "request withdrawn",
+	); err != nil {
+		t.Fatal(err)
+	}
+	st := build(t, log)
+	before, err := consent.HasAt(
+		ctx, st, id, "applicant/1", "model-development", t0.Add(time.Hour),
+	)
+	if err != nil || !before {
+		t.Fatalf("consent before withdrawal = %v err=%v", before, err)
+	}
+	after, err := consent.HasAt(
+		ctx, st, id, "applicant/1", "model-development", t0.Add(25*time.Hour),
+	)
+	if err != nil || after {
+		t.Fatalf("consent after withdrawal = %v err=%v", after, err)
+	}
+}
+
 func TestWithdrawWithoutGrantIsIdempotent(t *testing.T) {
 	h, log := handler(t0)
 	if _, err := h.Withdraw(ctx, id, "cust-1", "never_granted", ""); err != nil {

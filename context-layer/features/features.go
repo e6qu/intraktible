@@ -133,14 +133,32 @@ func specOf(def FeatureView) domain.FeatureSpec {
 	}
 }
 
-func entityInputs(ctx context.Context, s store.Store, id identity.Identity, entityType, entityID string) ([]domain.FeatureInput, error) {
+func entityInputs(
+	ctx context.Context,
+	s store.Store,
+	id identity.Identity,
+	entityType string,
+	entityID string,
+	knowledgeAt time.Time,
+) ([]domain.FeatureInput, error) {
 	evs, err := entities.ListEvents(ctx, s, id, entityType, entityID)
 	if err != nil {
 		return nil, err
 	}
-	inputs := make([]domain.FeatureInput, len(evs))
-	for i, ev := range evs {
-		inputs[i] = domain.FeatureInput{EventName: ev.EventName, Data: ev.Data, OccurredAt: ev.OccurredAt}
+	inputs := make([]domain.FeatureInput, 0, len(evs))
+	for _, ev := range evs {
+		if ev.ReceivedAt.After(knowledgeAt) {
+			continue
+		}
+		if ev.SupersededAt != nil && !ev.SupersededAt.After(knowledgeAt) {
+			continue
+		}
+		if ev.RetractedAt != nil && !ev.RetractedAt.After(knowledgeAt) {
+			continue
+		}
+		inputs = append(inputs, domain.FeatureInput{
+			EventName: ev.EventName, Data: ev.Data, OccurredAt: ev.OccurredAt,
+		})
 	}
 	return inputs, nil
 }
@@ -151,11 +169,29 @@ func entityInputs(ctx context.Context, s store.Store, id identity.Identity, enti
 // reproducing what a decision saw. This is always a fresh fold (no cache); use
 // ComputeCached for live reads.
 func Compute(ctx context.Context, s store.Store, id identity.Identity, entityType, entityID string, asOf time.Time) ([]Value, error) {
+	return ComputeAt(ctx, s, id, entityType, entityID, asOf, asOf)
+}
+
+// ComputeAt evaluates event time as of asOf using only source facts known by
+// knowledgeAt. The two clocks make late arrivals and corrections reproducible:
+// a correction recorded tomorrow cannot leak into yesterday's training row.
+func ComputeAt(
+	ctx context.Context,
+	s store.Store,
+	id identity.Identity,
+	entityType string,
+	entityID string,
+	asOf time.Time,
+	knowledgeAt time.Time,
+) ([]Value, error) {
+	if knowledgeAt.Before(asOf) {
+		return nil, fmt.Errorf("context-layer: knowledge_at must not be before as_of")
+	}
 	defs, err := List(ctx, s, id, entityType)
 	if err != nil {
 		return nil, err
 	}
-	inputs, err := entityInputs(ctx, s, id, entityType, entityID)
+	inputs, err := entityInputs(ctx, s, id, entityType, entityID, knowledgeAt)
 	if err != nil {
 		return nil, err
 	}
@@ -207,7 +243,7 @@ func ComputeCached(ctx context.Context, s store.Store, id identity.Identity, ent
 		miss = append(miss, def)
 	}
 	if len(miss) > 0 {
-		inputs, err := entityInputs(ctx, s, id, entityType, entityID)
+		inputs, err := entityInputs(ctx, s, id, entityType, entityID, now)
 		if err != nil {
 			return nil, err
 		}

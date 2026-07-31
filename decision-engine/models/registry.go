@@ -42,14 +42,21 @@ type PendingApproval struct {
 
 // ValidationRecord is one piece of validation evidence for a model version.
 type ValidationRecord struct {
-	Version    int                `json:"version"`
-	Dataset    string             `json:"dataset,omitempty"`
-	Metrics    map[string]float64 `json:"metrics,omitempty"`
-	Validator  string             `json:"validator,omitempty"`
-	Notes      string             `json:"notes,omitempty"`
-	Passed     bool               `json:"passed"`
-	RecordedBy string             `json:"recorded_by,omitempty"`
-	RecordedAt string             `json:"recorded_at,omitempty"`
+	Version             int                `json:"version"`
+	Dataset             string             `json:"dataset,omitempty"`
+	Metrics             map[string]float64 `json:"metrics,omitempty"`
+	Validator           string             `json:"validator,omitempty"`
+	Notes               string             `json:"notes,omitempty"`
+	Passed              bool               `json:"passed"`
+	RecordedBy          string             `json:"recorded_by,omitempty"`
+	RecordedAt          string             `json:"recorded_at,omitempty"`
+	ArtifactID          string             `json:"artifact_id,omitempty"`
+	SnapshotID          string             `json:"snapshot_id,omitempty"`
+	EvaluationHash      string             `json:"evaluation_hash,omitempty"`
+	LeakagePassed       bool               `json:"leakage_passed,omitempty"`
+	CalibrationReviewed bool               `json:"calibration_reviewed,omitempty"`
+	FairnessReviewed    bool               `json:"fairness_reviewed,omitempty"`
+	ThresholdReviewed   bool               `json:"threshold_reviewed,omitempty"`
 }
 
 // ModelView is the materialized read model for one model definition, including its
@@ -73,15 +80,20 @@ type ModelView struct {
 	ApprovedBy      string `json:"approved_by,omitempty"`
 	ApprovedAt      string `json:"approved_at,omitempty"`
 	// Pending is set while a version awaits a checker's decision.
-	Pending     *PendingApproval   `json:"pending,omitempty"`
-	Validations []ValidationRecord `json:"validations,omitempty"`
-	UpdatedAt   string             `json:"updated_at"`
+	Pending        *PendingApproval     `json:"pending,omitempty"`
+	Validations    []ValidationRecord   `json:"validations,omitempty"`
+	Lineage        *events.ModelLineage `json:"lineage,omitempty"`
+	RetiredVersion int                  `json:"retired_version,omitempty"`
+	RetiredBy      string               `json:"retired_by,omitempty"`
+	RetiredAt      string               `json:"retired_at,omitempty"`
+	RetireReason   string               `json:"retire_reason,omitempty"`
+	UpdatedAt      string               `json:"updated_at"`
 }
 
 // Approved reports whether the model's current version has four-eyes approval — the
 // gate a non-sandbox decision requires before serving a prediction from it.
 func (v ModelView) Approved() bool {
-	return v.Version > 0 && v.ApprovedVersion == v.Version
+	return v.Version > 0 && v.ApprovedVersion == v.Version && v.RetiredVersion != v.Version
 }
 
 // LatestIndependentValidation returns the newest validation for the current model
@@ -124,6 +136,8 @@ func (Projector) Apply(ctx context.Context, e eventlog.Envelope, s store.Store) 
 		return applyApprovalRejected(ctx, e, s)
 	case events.TypeModelValidationRecorded:
 		return applyValidationRecorded(ctx, e, s)
+	case events.TypeModelRetired:
+		return applyRetired(ctx, e, s)
 	default:
 		return nil
 	}
@@ -158,10 +172,31 @@ func applyDefined(ctx context.Context, e eventlog.Envelope, s store.Store) error
 	// false until the new version is re-approved — the "changed logic, re-review" rule.
 	v.Org, v.Workspace, v.Name = e.Org, e.Workspace, p.Name
 	v.Kind, v.Spec, v.Owner = spec.Kind, p.Spec, e.Actor
+	v.Lineage = p.Lineage
 	v.Version++
 	v.Pending = nil
+	v.RetiredVersion, v.RetiredBy, v.RetiredAt, v.RetireReason = 0, "", "", ""
 	v.UpdatedAt = ts(e)
 	return store.PutDoc(ctx, s, Collection, store.Key(e.Org, e.Workspace, p.Name), v)
+}
+
+func applyRetired(ctx context.Context, e eventlog.Envelope, s store.Store) error {
+	var payload events.ModelRetired
+	if err := json.Unmarshal(e.Payload, &payload); err != nil {
+		return fmt.Errorf("models: decode retirement seq %d: %w", e.Seq, err)
+	}
+	view, err := loadModel(ctx, s, e, payload.Name)
+	if err != nil {
+		return err
+	}
+	if payload.Version != view.Version {
+		return fmt.Errorf("models: retirement version %d does not match current version %d",
+			payload.Version, view.Version)
+	}
+	view.RetiredVersion, view.RetiredBy = payload.Version, e.Actor
+	view.RetiredAt, view.RetireReason, view.Pending = ts(e), payload.Reason, nil
+	view.UpdatedAt = ts(e)
+	return store.PutDoc(ctx, s, Collection, store.Key(e.Org, e.Workspace, payload.Name), view)
 }
 
 func applyApprovalRequested(ctx context.Context, e eventlog.Envelope, s store.Store) error {
@@ -230,6 +265,10 @@ func applyValidationRecorded(ctx context.Context, e eventlog.Envelope, s store.S
 		Version: p.Version, Dataset: p.Dataset, Metrics: p.Metrics,
 		Validator: p.Validator, Notes: p.Notes, Passed: p.Passed,
 		RecordedBy: e.Actor, RecordedAt: ts(e),
+		ArtifactID: p.ArtifactID, SnapshotID: p.SnapshotID,
+		EvaluationHash: p.EvaluationHash, LeakagePassed: p.LeakagePassed,
+		CalibrationReviewed: p.CalibrationReviewed, FairnessReviewed: p.FairnessReviewed,
+		ThresholdReviewed: p.ThresholdReviewed,
 	})
 	v.UpdatedAt = ts(e)
 	return store.PutDoc(ctx, s, Collection, store.Key(e.Org, e.Workspace, p.Name), v)

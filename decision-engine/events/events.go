@@ -34,11 +34,20 @@ const (
 	TypeModelApprovalApproved   = "decision.model.approval_approved"
 	TypeModelApprovalRejected   = "decision.model.approval_rejected"
 	TypeModelValidationRecorded = "decision.model.validation_recorded"
+	TypeModelRetired            = "decision.model.retired"
 	// TypeModelOutcomeRecorded records a realized ground-truth label for a prediction a
 	// model made, so live performance (calibration, accuracy, Brier, realized AUC) is
 	// measured against actuals — not inferred from the prediction distribution alone.
 	TypeModelOutcomeRecorded = "decision.model.outcome_recorded"
 )
+
+// ModelRetired removes the current version from serving eligibility while
+// retaining its complete lineage and evidence.
+type ModelRetired struct {
+	Name    string `json:"name"`
+	Version int    `json:"version"`
+	Reason  string `json:"reason"`
+}
 
 // ModelOutcomeRecorded reconciles one recorded Predict-node observation with the
 // outcome that later materialized. Probability and ModelVersion are recovered from
@@ -77,8 +86,39 @@ type ModelDriftResolved struct {
 // ModelDefined registers a named predictive model. Spec is the opaque, kind-specific
 // model definition (logistic | gbm | expression | external), validated by the models package.
 type ModelDefined struct {
-	Name string          `json:"name"`
-	Spec json.RawMessage `json:"spec"`
+	Name     string               `json:"name"`
+	Spec     json.RawMessage      `json:"spec"`
+	Lineage  *ModelLineage        `json:"lineage,omitempty"`
+	Training *TrainingPublication `json:"training,omitempty"`
+}
+
+// ModelLineage pins a trained model to its exact source-to-artifact chain.
+type ModelLineage struct {
+	TrainingJobID  string `json:"training_job_id"`
+	ArtifactID     string `json:"artifact_id"`
+	ArtifactHash   string `json:"artifact_hash"`
+	SnapshotID     string `json:"snapshot_id"`
+	SnapshotHash   string `json:"snapshot_hash"`
+	DatasetName    string `json:"dataset_name"`
+	DatasetVersion int    `json:"dataset_version"`
+	Runtime        string `json:"runtime"`
+	CodeRevision   string `json:"code_revision"`
+	ParametersHash string `json:"parameters_hash"`
+	Seed           int64  `json:"seed"`
+}
+
+// TrainingPublication is the signed artifact evidence carried on the same
+// immutable fact that registers the model and completes its training job.
+type TrainingPublication struct {
+	Attempt          int             `json:"attempt"`
+	Signature        string          `json:"signature"`
+	PublicKey        string          `json:"public_key"`
+	StorageRef       string          `json:"storage_ref"`
+	ModelSpecHash    string          `json:"model_spec_hash"`
+	TrainingReport   json.RawMessage `json:"training_report"`
+	EvaluationReport json.RawMessage `json:"evaluation_report"`
+	EvaluationHash   string          `json:"evaluation_hash"`
+	PublishedAt      time.Time       `json:"published_at"`
 }
 
 // ModelApprovalRequested proposes a model version for review (the maker side of
@@ -113,13 +153,20 @@ type ModelApprovalRejected struct {
 // at the command boundary rather than trusted from request data. A current-version
 // passing record is required before four-eyes approval.
 type ModelValidationRecorded struct {
-	Name      string             `json:"name"`
-	Version   int                `json:"version"`
-	Dataset   string             `json:"dataset,omitempty"`
-	Metrics   map[string]float64 `json:"metrics,omitempty"`
-	Validator string             `json:"validator,omitempty"`
-	Notes     string             `json:"notes,omitempty"`
-	Passed    bool               `json:"passed"`
+	Name                string             `json:"name"`
+	Version             int                `json:"version"`
+	Dataset             string             `json:"dataset,omitempty"`
+	Metrics             map[string]float64 `json:"metrics,omitempty"`
+	Validator           string             `json:"validator,omitempty"`
+	Notes               string             `json:"notes,omitempty"`
+	Passed              bool               `json:"passed"`
+	ArtifactID          string             `json:"artifact_id,omitempty"`
+	SnapshotID          string             `json:"snapshot_id,omitempty"`
+	EvaluationHash      string             `json:"evaluation_hash,omitempty"`
+	LeakagePassed       bool               `json:"leakage_passed,omitempty"`
+	CalibrationReviewed bool               `json:"calibration_reviewed,omitempty"`
+	FairnessReviewed    bool               `json:"fairness_reviewed,omitempty"`
+	ThresholdReviewed   bool               `json:"threshold_reviewed,omitempty"`
 }
 
 // ModelBaselineCaptured snapshots a model's current prediction-probability

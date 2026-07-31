@@ -333,7 +333,9 @@ func requiredRole(method, path string) auth.Role {
 		strings.HasPrefix(path, "/v1/api-keys") || strings.HasPrefix(path, "/v1/erasure") ||
 		strings.HasPrefix(path, "/v1/mrm") || strings.HasPrefix(path, "/v1/fairlending") ||
 		strings.HasPrefix(path, "/v1/case-reviewers") ||
-		strings.Contains(path, "/grants") {
+		strings.Contains(path, "/grants") ||
+		strings.HasPrefix(path, "/v1/modeling/snapshots/") &&
+			(strings.HasSuffix(path, "/rows") || strings.HasSuffix(path, "/export")) {
 		// Managing per-flow access grants (and listing who holds them) is an admin
 		// action regardless of method — checked before the general read rule.
 		return auth.RoleAdmin
@@ -401,6 +403,13 @@ func requiredRole(method, path string) auth.Role {
 		strings.HasSuffix(path, "/promote"),          // promote a live version up the chain
 		strings.HasSuffix(path, "/promotion-policy"), // configure promotion gates
 		strings.HasSuffix(path, "/validation"),       // independent model validation
+		strings.HasPrefix(path, "/v1/modeling/schema-approval/") &&
+			strings.HasSuffix(path, "/decision"),
+		strings.HasPrefix(path, "/v1/modeling/schemas/") &&
+			strings.HasSuffix(path, "/retire"),
+		strings.HasPrefix(path, "/v1/modeling/artifacts/") &&
+			strings.HasSuffix(path, "/stage"),
+		strings.HasPrefix(path, "/v1/models/") && strings.HasSuffix(path, "/retire"),
 		strings.HasPrefix(path, "/v1/authoring/changesets/") &&
 			(strings.HasSuffix(path, "/review") || strings.HasSuffix(path, "/publish")),
 		strings.HasSuffix(path, "/approve"), // the checker approving a deployment
@@ -411,6 +420,12 @@ func requiredRole(method, path string) auth.Role {
 		path == "/v1/agent-templates",
 		strings.HasSuffix(path, "/agent-templates/{template_id}/releases"),
 		path == "/v1/agent-eval-suites",
+		path == "/v1/modeling/artifacts",
+		path == "/v1/modeling/training-jobs",
+		path == "/v1/modeling/evaluation-jobs",
+		path == "/v1/modeling/backfills",
+		strings.HasPrefix(path, "/v1/modeling/schemas"),
+		strings.HasPrefix(path, "/v1/modeling/datasets"),
 		isAuthoringPath(path),
 		// PATCHing a flow edits its details (name/description) — authoring, like create.
 		method == http.MethodPatch && strings.HasPrefix(path, "/v1/flows/"):

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -175,6 +176,7 @@ func TestSeedDevKeyOnlyOnMemoryStore(t *testing.T) {
 func TestPreflightRefusesInsecureProduction(t *testing.T) {
 	t.Setenv("INTRAKTIBLE_ENCRYPTION_KEY", "")
 	t.Setenv("INTRAKTIBLE_ALLOW_PLAINTEXT_AT_REST", "")
+	t.Setenv("INTRAKTIBLE_ARTIFACT_SIGNING_KEY", strings.Repeat("01", 32))
 	cases := []struct {
 		name       string
 		cfg        Config
@@ -202,10 +204,20 @@ func TestPreflightRefusesInsecureProduction(t *testing.T) {
 	}
 }
 
+func TestPreflightRequiresArtifactSigningIdentity(t *testing.T) {
+	t.Setenv("INTRAKTIBLE_ARTIFACT_SIGNING_KEY", "")
+	if err := preflight(
+		Config{Env: "production", StoreKind: "postgres", LogKind: "postgres"}, true,
+	); err == nil || !strings.Contains(err.Error(), "INTRAKTIBLE_ARTIFACT_SIGNING_KEY") {
+		t.Fatalf("missing artifact signing identity = %v", err)
+	}
+}
+
 // The single-process WAL is only safe when exactly one replica ever runs, which
 // the server cannot observe for itself. It refuses by default and boots only on an
 // explicit declaration — so the dangerous combination is unreachable by omission.
 func TestPreflightFileLogNeedsSingleReplicaDeclaration(t *testing.T) {
+	t.Setenv("INTRAKTIBLE_ARTIFACT_SIGNING_KEY", strings.Repeat("01", 32))
 	cfg := Config{Env: "production", StoreKind: "sqlite", LogKind: "file"}
 
 	if err := preflight(cfg, true); err == nil {
@@ -219,6 +231,7 @@ func TestPreflightFileLogNeedsSingleReplicaDeclaration(t *testing.T) {
 }
 
 func TestPreflightPlaintextEscapeHatch(t *testing.T) {
+	t.Setenv("INTRAKTIBLE_ARTIFACT_SIGNING_KEY", strings.Repeat("01", 32))
 	t.Setenv("INTRAKTIBLE_ALLOW_PLAINTEXT_AT_REST", "1")
 	if err := preflight(Config{Env: "production", StoreKind: "postgres", LogKind: "postgres"}, false); err != nil {
 		t.Fatalf("the explicit plaintext escape hatch should allow boot: %v", err)
@@ -226,6 +239,7 @@ func TestPreflightPlaintextEscapeHatch(t *testing.T) {
 }
 
 func TestPreflightPlaintextFalseDoesNotOptOut(t *testing.T) {
+	t.Setenv("INTRAKTIBLE_ARTIFACT_SIGNING_KEY", strings.Repeat("01", 32))
 	t.Setenv("INTRAKTIBLE_ALLOW_PLAINTEXT_AT_REST", "false")
 	if err := preflight(
 		Config{Env: "production", StoreKind: "postgres", LogKind: "postgres"},

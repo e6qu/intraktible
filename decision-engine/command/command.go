@@ -24,6 +24,7 @@ import (
 	"github.com/e6qu/intraktible/decision-engine/flows"
 	"github.com/e6qu/intraktible/decision-engine/layout"
 	"github.com/e6qu/intraktible/decision-engine/models"
+	modelingdomain "github.com/e6qu/intraktible/modeling/domain"
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/identity"
 )
@@ -1126,6 +1127,54 @@ func (h *Handler) foldRequest(ctx context.Context, id identity.Identity, flowID,
 // its spec (kind + kind-specific shape). The spec is stored opaquely on the models
 // stream; the registry projector materializes it for the Predict node to resolve.
 func (h *Handler) DefineModel(ctx context.Context, id identity.Identity, name string, spec json.RawMessage) (eventlog.Envelope, error) {
+	return h.defineModel(ctx, id, name, spec, nil, nil, "")
+}
+
+// DefineModelWithLineage registers a trained model and its signed artifact
+// evidence in the same immutable event.
+func (h *Handler) DefineModelWithLineage(
+	ctx context.Context,
+	id identity.Identity,
+	name string,
+	spec json.RawMessage,
+	lineage events.ModelLineage,
+	training events.TrainingPublication,
+) (eventlog.Envelope, error) {
+	if strings.TrimSpace(lineage.TrainingJobID) == "" ||
+		strings.TrimSpace(lineage.ArtifactID) == "" ||
+		len(lineage.ArtifactHash) != 64 ||
+		strings.TrimSpace(lineage.SnapshotID) == "" ||
+		len(lineage.SnapshotHash) != 64 ||
+		strings.TrimSpace(lineage.Runtime) == "" ||
+		strings.TrimSpace(lineage.CodeRevision) == "" ||
+		len(lineage.ParametersHash) != 64 {
+		return eventlog.Envelope{}, errors.New("decision-engine: trained model lineage is incomplete")
+	}
+	if training.Attempt <= 0 || strings.TrimSpace(training.Signature) == "" ||
+		strings.TrimSpace(training.PublicKey) == "" ||
+		strings.TrimSpace(training.StorageRef) == "" ||
+		len(training.ModelSpecHash) != 64 ||
+		len(training.TrainingReport) == 0 ||
+		len(training.EvaluationReport) == 0 ||
+		len(training.EvaluationHash) != 64 ||
+		training.PublishedAt.IsZero() {
+		return eventlog.Envelope{}, errors.New("decision-engine: training publication is incomplete")
+	}
+	return h.defineModel(
+		ctx, id, name, spec, &lineage, &training,
+		"modeling.job.final\x00"+id.Org+"\x00"+id.Workspace+"\x00"+lineage.TrainingJobID,
+	)
+}
+
+func (h *Handler) defineModel(
+	ctx context.Context,
+	id identity.Identity,
+	name string,
+	spec json.RawMessage,
+	lineage *events.ModelLineage,
+	training *events.TrainingPublication,
+	unique string,
+) (eventlog.Envelope, error) {
 	if err := id.Valid(); err != nil {
 		return eventlog.Envelope{}, err
 	}
@@ -1139,7 +1188,9 @@ func (h *Handler) DefineModel(ctx context.Context, id identity.Identity, name st
 	if err := s.Validate(); err != nil {
 		return eventlog.Envelope{}, err
 	}
-	payload, err := json.Marshal(events.ModelDefined{Name: name, Spec: spec})
+	payload, err := json.Marshal(events.ModelDefined{
+		Name: name, Spec: spec, Lineage: lineage, Training: training,
+	})
 	if err != nil {
 		return eventlog.Envelope{}, fmt.Errorf("decision-engine: marshal model: %w", err)
 	}
@@ -1151,6 +1202,7 @@ func (h *Handler) DefineModel(ctx context.Context, id identity.Identity, name st
 		Type:      events.TypeModelDefined,
 		Time:      h.now(),
 		Payload:   payload,
+		Unique:    unique,
 	})
 }
 
@@ -1188,6 +1240,11 @@ type modelGov struct {
 	latestValidationBy     string
 	latestValidationPassed bool
 	exists                 bool
+	trained                bool
+	artifactID             string
+	snapshotID             string
+	evaluationHash         string
+	retiredVersion         int
 }
 
 // foldModelGov folds the models stream for one model into its governance state. Like
@@ -1217,6 +1274,13 @@ func (h *Handler) foldModelGov(ctx context.Context, id identity.Identity, name s
 			g.owner = e.Actor
 			g.pendingID, g.pendingVersion, g.pendingBy = "", 0, ""
 			g.validationRecorded, g.latestValidationBy, g.latestValidationPassed = false, "", false
+			g.trained, g.artifactID, g.snapshotID, g.evaluationHash = false, "", "", ""
+			g.retiredVersion = 0
+			if p.Lineage != nil && p.Training != nil {
+				g.trained = true
+				g.artifactID, g.snapshotID = p.Lineage.ArtifactID, p.Lineage.SnapshotID
+				g.evaluationHash = p.Training.EvaluationHash
+			}
 		case events.TypeModelApprovalRequested:
 			var p events.ModelApprovalRequested
 			if err := json.Unmarshal(e.Payload, &p); err != nil {
@@ -1251,6 +1315,15 @@ func (h *Handler) foldModelGov(ctx context.Context, id identity.Identity, name s
 				g.validationRecorded = true
 				g.latestValidationBy = e.Actor
 				g.latestValidationPassed = p.Passed
+			}
+		case events.TypeModelRetired:
+			var p events.ModelRetired
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				return modelGov{}, fmt.Errorf("decision-engine: decode model-retired seq %d: %w", e.Seq, err)
+			}
+			if p.Name == name && p.Version == g.version {
+				g.retiredVersion = p.Version
+				g.pendingID, g.pendingVersion, g.pendingBy = "", 0, ""
 			}
 		}
 	}
@@ -1299,6 +1372,12 @@ func (h *Handler) RequestModelApproval(ctx context.Context, id identity.Identity
 	if g.approvedVersion == g.version {
 		return "", eventlog.Envelope{}, fmt.Errorf("decision-engine: model %q version %d is already approved", name, g.version)
 	}
+	if g.retiredVersion == g.version {
+		return "", eventlog.Envelope{}, fmt.Errorf(
+			"decision-engine: model %q version %d is retired; define a new version",
+			name, g.version,
+		)
+	}
 	if g.pendingID != "" {
 		return "", eventlog.Envelope{}, fmt.Errorf("decision-engine: model %q already has a pending approval request", name)
 	}
@@ -1309,6 +1388,45 @@ func (h *Handler) RequestModelApproval(ctx context.Context, id identity.Identity
 	}
 	e, err := h.appendModelEventUnique(ctx, id, events.TypeModelApprovalRequested, payload, "")
 	return reqID, e, err
+}
+
+// RetireModel removes the current version from serving eligibility.
+func (h *Handler) RetireModel(
+	ctx context.Context,
+	id identity.Identity,
+	name string,
+	reason string,
+) (eventlog.Envelope, error) {
+	if err := id.Valid(); err != nil {
+		return eventlog.Envelope{}, err
+	}
+	if strings.TrimSpace(reason) == "" {
+		return eventlog.Envelope{}, errors.New("decision-engine: model retirement reason is required")
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	g, err := h.foldModelGov(ctx, id, name)
+	if err != nil {
+		return eventlog.Envelope{}, err
+	}
+	if !g.exists {
+		return eventlog.Envelope{}, fmt.Errorf("decision-engine: unknown model %q", name)
+	}
+	if g.retiredVersion == g.version {
+		return eventlog.Envelope{}, fmt.Errorf(
+			"decision-engine: model %q version %d is already retired", name, g.version,
+		)
+	}
+	payload, err := json.Marshal(events.ModelRetired{
+		Name: name, Version: g.version, Reason: strings.TrimSpace(reason),
+	})
+	if err != nil {
+		return eventlog.Envelope{}, err
+	}
+	return h.appendModelEventUnique(
+		ctx, id, events.TypeModelRetired, payload,
+		"model.retire\x00"+name+"\x00"+fmt.Sprint(g.version),
+	)
 }
 
 // ApproveModelApproval is the checker side: a different actor — neither the requester
@@ -1354,6 +1472,13 @@ func (h *Handler) decideModelApproval(ctx context.Context, id identity.Identity,
 			}
 			if !g.latestValidationPassed {
 				return eventlog.Envelope{}, fmt.Errorf("decision-engine: latest independent validation by %q failed for model %q version %d", g.latestValidationBy, name, g.version)
+			}
+			if g.trained {
+				if err := h.requireTrainedArtifactStage(
+					ctx, id, g.artifactID, modelingdomain.ArtifactProduction,
+				); err != nil {
+					return eventlog.Envelope{}, err
+				}
 			}
 		}
 		typ := events.TypeModelApprovalApproved
@@ -1422,6 +1547,36 @@ func (h *Handler) RecordModelValidation(ctx context.Context, id identity.Identit
 	rec.Notes = strings.TrimSpace(rec.Notes)
 	if rec.Notes == "" {
 		return eventlog.Envelope{}, fmt.Errorf("decision-engine: model validation notes are required")
+	}
+	if g.trained {
+		if err := h.requireTrainedArtifactStage(
+			ctx, id, g.artifactID, modelingdomain.ArtifactValidated,
+		); err != nil {
+			return eventlog.Envelope{}, err
+		}
+		if rec.ArtifactID != g.artifactID {
+			return eventlog.Envelope{}, fmt.Errorf(
+				"decision-engine: validation artifact_id %q does not match current artifact %q",
+				rec.ArtifactID, g.artifactID,
+			)
+		}
+		if rec.SnapshotID != g.snapshotID {
+			return eventlog.Envelope{}, fmt.Errorf(
+				"decision-engine: validation snapshot_id %q does not match current snapshot %q",
+				rec.SnapshotID, g.snapshotID,
+			)
+		}
+		if rec.EvaluationHash != g.evaluationHash || len(rec.EvaluationHash) != 64 {
+			return eventlog.Envelope{}, fmt.Errorf(
+				"decision-engine: validation evaluation_hash does not match the signed artifact",
+			)
+		}
+		if rec.Passed && (!rec.LeakagePassed || !rec.CalibrationReviewed ||
+			!rec.FairnessReviewed || !rec.ThresholdReviewed) {
+			return eventlog.Envelope{}, fmt.Errorf(
+				"decision-engine: passing trained-model validation requires leakage, calibration, fairness, and threshold review",
+			)
+		}
 	}
 	rec.Name, rec.Version, rec.Validator, rec.Metrics = name, g.version, id.Actor, metrics
 	payload, err := json.Marshal(rec)

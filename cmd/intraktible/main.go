@@ -60,6 +60,8 @@ func main() {
 		err = authoringCmd(os.Args[2:])
 	case "agents":
 		err = agentsCmd(os.Args[2:])
+	case "modeling":
+		err = modelingCmd(os.Args[2:])
 	default:
 		usage()
 	}
@@ -72,7 +74,7 @@ func main() {
 func usage() {
 	fmt.Fprintln(
 		os.Stderr,
-		"usage: intraktible <serve|log|replay|export|authoring|agents> [flags]",
+		"usage: intraktible <serve|log|replay|export|authoring|agents|modeling> [flags]",
 	)
 	os.Exit(2)
 }

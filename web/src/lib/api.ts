@@ -3172,6 +3172,8 @@ export interface Entity {
   entity_type: string;
   entity_id: string;
   attributes: Record<string, unknown>;
+  schema_version?: number;
+  schema_hash?: string;
   event_count: number;
   first_seen: string;
   updated_at: string;
@@ -3179,7 +3181,12 @@ export interface Entity {
 
 export async function recordEntity(
   key: string,
-  body: { entity_type: string; entity_id: string; attributes?: Record<string, unknown> },
+  body: {
+    entity_type: string;
+    entity_id: string;
+    schema_version?: number;
+    attributes?: Record<string, unknown>;
+  },
   fetcher: typeof fetch = recordingFetch
 ): Promise<EventAck> {
   const res = await fetcher('/v1/context/entities', {
@@ -3197,10 +3204,18 @@ export interface EntityEvent {
   entity_type: string;
   entity_id: string;
   event_name: string;
+  event_id: string;
+  supersedes_event_id?: string;
+  status: 'active' | 'superseded' | 'retracted';
   data?: Record<string, unknown>;
   seq: number;
   occurred_at: string;
+  received_at: string;
   recorded_at: string;
+  superseded_at?: string;
+  retracted_at?: string;
+  schema_version?: number;
+  schema_hash?: string;
 }
 
 export async function recordEntityEvent(
@@ -3209,11 +3224,14 @@ export async function recordEntityEvent(
     entity_type: string;
     entity_id: string;
     event_name: string;
+    event_id?: string;
+    supersedes_event_id?: string;
+    schema_version?: number;
     data?: Record<string, unknown>;
     occurred_at?: string;
   },
   fetcher: typeof fetch = recordingFetch
-): Promise<EventAck> {
+): Promise<EventAck & { source_event_id: string }> {
   const res = await fetcher('/v1/context/events', {
     method: 'POST',
     headers: jsonHeaders(key),
@@ -3222,7 +3240,7 @@ export async function recordEntityEvent(
   if (!res.ok) {
     return errorOrStatus(res, 'POST /v1/context/events');
   }
-  return (await res.json()) as EventAck;
+  return (await res.json()) as EventAck & { source_event_id: string };
 }
 
 export interface FeatureValue {
@@ -3315,6 +3333,13 @@ export interface ModelValidation {
   passed: boolean;
   recorded_by?: string;
   recorded_at?: string;
+  artifact_id?: string;
+  snapshot_id?: string;
+  evaluation_hash?: string;
+  leakage_passed?: boolean;
+  calibration_reviewed?: boolean;
+  fairness_reviewed?: boolean;
+  threshold_reviewed?: boolean;
 }
 export interface ModelPendingApproval {
   request_id: string;
@@ -3334,11 +3359,30 @@ export interface Model {
   approved_at?: string;
   pending?: ModelPendingApproval | null;
   validations?: ModelValidation[];
+  lineage?: {
+    training_job_id: string;
+    artifact_id: string;
+    artifact_hash: string;
+    snapshot_id: string;
+    snapshot_hash: string;
+    dataset_name: string;
+    dataset_version: number;
+    runtime: string;
+    code_revision: string;
+    parameters_hash: string;
+    seed: number;
+  };
+  retired_version?: number;
+  retired_by?: string;
+  retired_at?: string;
+  retire_reason?: string;
 }
 // modelApproved mirrors the backend's Approved(): the current version is the one a
 // checker signed off on.
 export function modelApproved(m: Model): boolean {
-  return (m.version ?? 0) > 0 && m.approved_version === m.version;
+  return (
+    (m.version ?? 0) > 0 && m.approved_version === m.version && m.retired_version !== m.version
+  );
 }
 
 // requestModelApproval proposes a model's current version for four-eyes review (maker).
@@ -3398,6 +3442,13 @@ export async function recordModelValidation(
     metrics: Record<string, number>;
     notes: string;
     passed: boolean;
+    artifact_id?: string;
+    snapshot_id?: string;
+    evaluation_hash?: string;
+    leakage_passed?: boolean;
+    calibration_reviewed?: boolean;
+    fairness_reviewed?: boolean;
+    threshold_reviewed?: boolean;
   },
   fetcher: typeof fetch = recordingFetch
 ): Promise<void> {
@@ -3409,6 +3460,21 @@ export async function recordModelValidation(
   if (!res.ok) {
     return errorOrStatus(res, 'record model validation');
   }
+}
+
+export async function retireModel(
+  key: string,
+  name: string,
+  reason: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<EventAck> {
+  const res = await fetcher(`/v1/models/${encodeURIComponent(name)}/retire`, {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify({ reason })
+  });
+  if (!res.ok) return errorOrStatus(res, 'retire model');
+  return (await res.json()) as EventAck;
 }
 
 export async function listModels(
@@ -3857,16 +3923,49 @@ export async function getEntityFeatures(
   key: string,
   type: string,
   id: string,
-  fetcher: typeof fetch = recordingFetch
+  fetcher: typeof fetch = recordingFetch,
+  asOf = '',
+  knowledgeAt = ''
 ): Promise<FeatureValue[]> {
+  const query = new URLSearchParams();
+  if (asOf) query.set('as_of', asOf);
+  if (knowledgeAt) query.set('knowledge_at', knowledgeAt);
+  const suffix = query.size > 0 ? `?${query.toString()}` : '';
   const res = await fetcher(
-    `/v1/context/entities/${encodeURIComponent(type)}/${encodeURIComponent(id)}/features`,
+    `/v1/context/entities/${encodeURIComponent(type)}/${encodeURIComponent(id)}/features${suffix}`,
     { headers: authHeaders(key) }
   );
   if (!res.ok) {
     return errorOrStatus(res, 'GET entity features');
   }
   return ((await res.json()) as { features: FeatureValue[] }).features ?? [];
+}
+
+export async function getContextEvent(
+  key: string,
+  eventId: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<EntityEvent> {
+  const res = await fetcher(`/v1/context/events/${encodeURIComponent(eventId)}`, {
+    headers: authHeaders(key)
+  });
+  if (!res.ok) return errorOrStatus(res, 'GET context event');
+  return (await res.json()) as EntityEvent;
+}
+
+export async function retractContextEvent(
+  key: string,
+  eventId: string,
+  reason: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<EventAck> {
+  const res = await fetcher(`/v1/context/events/${encodeURIComponent(eventId)}/retract`, {
+    method: 'POST',
+    headers: jsonHeaders(key),
+    body: JSON.stringify({ reason })
+  });
+  if (!res.ok) return errorOrStatus(res, 'POST retract context event');
+  return (await res.json()) as EventAck;
 }
 
 export async function listCases(
@@ -7076,4 +7175,1066 @@ export async function downloadPopulationResults(
   });
   if (!res.ok) return errorOrStatus(res, 'GET population job results');
   return res.blob();
+}
+
+// --- Governed modeling and point-in-time data ---------------------------------
+
+export type SchemaKind = 'entity' | 'event';
+export type SchemaFieldType = 'string' | 'number' | 'integer' | 'boolean' | 'object' | 'array';
+export type DataClassification = 'public' | 'internal' | 'confidential' | 'restricted';
+export type CompatibilityMode = 'backward' | 'forward' | 'full' | 'none';
+export type QualityAction = 'block' | 'refer' | 'warn' | 'approved_stale';
+
+export interface SchemaRef {
+  kind: SchemaKind;
+  entity_type: string;
+  event_name?: string;
+}
+
+export interface SchemaField {
+  name: string;
+  type: SchemaFieldType;
+  required?: boolean;
+  nullable?: boolean;
+  identifier?: boolean;
+  classification: DataClassification;
+  description?: string;
+  enum?: unknown[];
+  pattern?: string;
+  minimum?: number;
+  maximum?: number;
+  min_length?: number;
+  max_length?: number;
+}
+
+export interface SourceSchemaSpec {
+  ref: SchemaRef;
+  description?: string;
+  owner_team: string;
+  purposes: string[];
+  compatibility: CompatibilityMode;
+  additional_properties: boolean;
+  fields: SchemaField[];
+  relationships?: Array<{ field: string; target_entity_type: string; required?: boolean }>;
+  quality: {
+    action: QualityAction;
+    completeness_min?: number;
+    unique_fields?: string[];
+    freshness_seconds?: number;
+  };
+}
+
+export interface SourceSchemaVersion {
+  version: number;
+  spec: SourceSchemaSpec;
+  hash: string;
+  authored_by: string;
+  authored_at: string;
+  approved_by?: string;
+  approved_at?: string;
+  retired_by?: string;
+  retired_at?: string;
+  retire_reason?: string;
+}
+
+export interface SourceSchema {
+  org: string;
+  workspace: string;
+  ref: SchemaRef;
+  active_version: number;
+  pending?: { request_id: string; version: number; requested_by: string; requested_at: string };
+  versions: SourceSchemaVersion[];
+  updated_at: string;
+}
+
+export interface QualityViolation {
+  code: string;
+  field?: string;
+  message: string;
+}
+
+export interface QualityObservation {
+  org: string;
+  workspace: string;
+  observation_id: string;
+  ref: SchemaRef;
+  entity_id?: string;
+  schema_version: number;
+  schema_hash: string;
+  action: QualityAction;
+  violations: QualityViolation[];
+  source_event_id?: string;
+  source_seq: number;
+  observed_at: string;
+}
+
+export interface QualityIncident extends QualityObservation {
+  incident_type: 'record' | 'freshness';
+  severity: 'high' | 'critical';
+  status: 'open' | 'acknowledged' | 'resolved';
+  owner_team: string;
+  affected_from: string;
+  affected_to: string;
+  affected_subjects: string[];
+  affected_assets: string[];
+  supersedes_event_id?: string;
+  deadline?: string;
+  acknowledged_by?: string;
+  acknowledged_at?: string;
+  acknowledgement_note?: string;
+  resolved_by?: string;
+  resolved_at?: string;
+  resolution?: string;
+}
+
+export interface SourceHealth {
+  org: string;
+  workspace: string;
+  ref: SchemaRef;
+  record_count: number;
+  late_count: number;
+  correction_count: number;
+  retraction_count: number;
+  violation_count: number;
+  watermark?: string;
+  last_received_at?: string;
+  watermark_lag_seconds?: number;
+  last_schema_version?: number;
+  updated_at: string;
+}
+
+export interface GovernedFeature {
+  definition: {
+    org: string;
+    workspace: string;
+    name: string;
+    entity_type: string;
+    event_name: string;
+    aggregation: string;
+    field?: string;
+    window_hours: number;
+    version: number;
+    updated_at: string;
+  };
+  source_ref: SchemaRef;
+  source_schema_version?: number;
+  source_schema_hash?: string;
+  freshness_seconds?: number;
+  source_health?: SourceHealth;
+  materialization_status: string;
+  last_success?: Materialization['manifest'];
+  last_error?: string;
+  last_job_id?: string;
+  last_job_updated_at?: string;
+  cardinality: number;
+  storage_bytes: number;
+  compute_units: number;
+  estimated_cost_usd: number;
+  downstream_consumers: string[];
+}
+
+export type LabelKind = 'binary' | 'continuous' | 'multiclass';
+
+export interface DatasetSpec {
+  name: string;
+  description?: string;
+  owner_team: string;
+  entity_type: string;
+  features: string[];
+  label: {
+    event_name: string;
+    field: string;
+    kind: LabelKind;
+    positive_value?: string;
+    horizon_hours: number;
+  };
+  segment_fields?: string[];
+  inclusion_rules?: PopulationRule[];
+  exclusion_rules?: PopulationRule[];
+  purpose: string;
+  consent_requirement:
+    | { mode: 'not_required'; purpose?: never }
+    | { mode: 'active'; purpose: string };
+  retention_days: number;
+  partitions: { train_bps: number; validation_bps: number; test_bps: number };
+}
+
+export interface PopulationRule {
+  name: string;
+  field: string;
+  operator:
+    | 'equals'
+    | 'not_equals'
+    | 'in'
+    | 'not_in'
+    | 'exists'
+    | 'not_exists'
+    | 'gt'
+    | 'gte'
+    | 'lt'
+    | 'lte';
+  value?: unknown;
+  reason: string;
+}
+
+export interface Dataset {
+  org: string;
+  workspace: string;
+  name: string;
+  versions: Array<{
+    version: number;
+    spec: DatasetSpec;
+    hash: string;
+    defined_by: string;
+    defined_at: string;
+  }>;
+  updated_at: string;
+}
+
+export interface SnapshotManifest {
+  snapshot_id: string;
+  dataset_name: string;
+  dataset_version: number;
+  dataset_hash: string;
+  rows_hash: string;
+  row_count: number;
+  labelled_count: number;
+  censored_count: number;
+  candidate_count: number;
+  population_excluded_count: number;
+  consent_excluded_count: number;
+  quality_finding_count: number;
+  feature_completeness: number;
+  partition_counts: Record<string, number>;
+  feature_versions: Record<string, number>;
+  schema_versions: Record<string, number[]>;
+  observation_at: string;
+  knowledge_at: string;
+  storage_ref: string;
+  purpose: string;
+  expires_at: string;
+  published_at: string;
+}
+
+export interface DatasetSnapshot {
+  org: string;
+  workspace: string;
+  job_id: string;
+  manifest: SnapshotManifest;
+  published_by: string;
+  state: 'available' | 'expired';
+  expired_at?: string;
+  expire_reason?: string;
+}
+
+export interface DatasetRow {
+  entity_id: string;
+  features: Record<string, number>;
+  label?: unknown;
+  label_present: boolean;
+  censored: boolean;
+  segments?: Record<string, string>;
+  partition: 'train' | 'validation' | 'test';
+  observation_at: string;
+  knowledge_at: string;
+}
+
+export interface TrainingRequest {
+  model_name: string;
+  snapshot_id: string;
+  runtime: 'intraktible-logistic/v1';
+  code_revision: string;
+  parameters: {
+    iterations?: number;
+    learning_rate?: number;
+    l2?: number;
+    folds?: number;
+  };
+  seed: number;
+  idempotency_key: string;
+}
+
+export interface EvaluationOptions {
+  threshold?: number;
+  false_positive_cost?: number;
+  false_negative_cost?: number;
+  calibration_bins?: number;
+  minimum_segment_n?: number;
+}
+
+export interface EvaluationRequest {
+  artifact_id: string;
+  snapshot_id: string;
+  options?: EvaluationOptions;
+  purpose: string;
+  idempotency_key: string;
+}
+
+export interface BinaryEvaluation {
+  rows: number;
+  positives: number;
+  threshold: number;
+  optimal_threshold: number;
+  optimal_expected_cost: number;
+  auc: number;
+  log_loss: number;
+  brier: number;
+  accuracy: number;
+  accuracy_ci: { lower: number; upper: number };
+  confusion: {
+    true_positive: number;
+    true_negative: number;
+    false_positive: number;
+    false_negative: number;
+  };
+  calibration: Array<{
+    lower_bound: number;
+    upper_bound: number;
+    count: number;
+    mean_score: number;
+    observed_rate: number;
+  }>;
+  segments: Array<Record<string, unknown>>;
+  intersections: Array<Record<string, unknown>>;
+  temporal: Array<Record<string, unknown>>;
+  leakage_findings: string[];
+  passed_leakage_checks: boolean;
+}
+
+export interface ModelingJob {
+  org: string;
+  workspace: string;
+  job_id: string;
+  kind: 'snapshot' | 'training' | 'evaluation' | 'backfill';
+  state:
+    | 'queued'
+    | 'running'
+    | 'failed'
+    | 'pausing'
+    | 'paused'
+    | 'cancelling'
+    | 'cancelled'
+    | 'completed';
+  attempt: number;
+  worker?: string;
+  lease_until?: string;
+  snapshot_id?: string;
+  artifact_id?: string;
+  artifact_hash?: string;
+  evaluation_id?: string;
+  backfill_id?: string;
+  dataset_name?: string;
+  error?: string;
+  retryable?: boolean;
+  completed_units: number;
+  total_units: number;
+  progress_percent: number;
+  phase?: string;
+  compute_units: number;
+  estimated_cost_usd: number;
+  logs: Array<{
+    time: string;
+    attempt: number;
+    worker?: string;
+    level: 'info' | 'error';
+    phase: string;
+    message: string;
+    completed_units?: number;
+    total_units?: number;
+    compute_units?: number;
+  }>;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+  expires_at?: string;
+}
+
+export interface ModelArtifact {
+  org: string;
+  workspace: string;
+  artifact_id: string;
+  artifact_hash: string;
+  job_id?: string;
+  model_name: string;
+  origin: 'platform_trained' | 'external';
+  stage: 'registered' | 'validated' | 'production' | 'archived';
+  owner_team: string;
+  format: string;
+  runtime: string;
+  size_bytes: number;
+  dependencies: ArtifactDependency[];
+  vulnerability?: VulnerabilityEvidence;
+  explanation: ExplanationContract;
+  purpose: string;
+  retention_until: string;
+  external_registration?: ExternalArtifactRegistration;
+  stage_history: Array<{
+    from?: 'registered' | 'validated' | 'production';
+    to: 'registered' | 'validated' | 'production' | 'archived';
+    changed_by: string;
+    changed_at: string;
+    reason: string;
+  }>;
+  lineage: Record<string, unknown> & {
+    training_job_id: string;
+    artifact_id: string;
+    artifact_hash: string;
+    snapshot_id: string;
+    snapshot_hash: string;
+  };
+  publication: Record<string, unknown> & {
+    evaluation_hash: string;
+    signature: string;
+    public_key: string;
+  };
+  registered_by: string;
+  registered_at: string;
+}
+
+export interface ArtifactDependency {
+  name: string;
+  version: string;
+  hash?: string;
+  license?: string;
+}
+
+export interface VulnerabilityEvidence {
+  scanner: string;
+  scanner_version: string;
+  scanned_at: string;
+  report_hash: string;
+  critical: number;
+  high: number;
+}
+
+export interface ExplanationContract {
+  local_supported: boolean;
+  global_supported: boolean;
+  method?: string;
+  limitations: string;
+}
+
+export interface ExternalArtifactRegistration {
+  artifact_id: string;
+  model_name: string;
+  owner_team: string;
+  format: string;
+  runtime: string;
+  size_bytes: number;
+  artifact_hash: string;
+  signature: string;
+  public_key: string;
+  storage_ref: string;
+  source_revision: string;
+  build_id: string;
+  sbom_hash: string;
+  dependencies: ArtifactDependency[];
+  vulnerability: VulnerabilityEvidence;
+  explanation: ExplanationContract;
+  purpose: string;
+  retention_until: string;
+}
+
+export interface ModelEvaluation {
+  org: string;
+  workspace: string;
+  job_id: string;
+  manifest: {
+    evaluation_id: string;
+    artifact_id: string;
+    artifact_hash: string;
+    model_name: string;
+    snapshot_id: string;
+    snapshot_hash: string;
+    purpose: string;
+    report: BinaryEvaluation;
+    report_hash: string;
+    evaluated_at: string;
+  };
+  evaluated_by: string;
+}
+
+export interface Materialization {
+  org: string;
+  workspace: string;
+  job_id: string;
+  manifest: {
+    backfill_id: string;
+    entity_type: string;
+    features: string[];
+    feature_versions: Record<string, number>;
+    as_of: string;
+    knowledge_at: string;
+    row_count: number;
+    size_bytes: number;
+    rows_hash: string;
+    storage_ref: string;
+    published_at: string;
+  };
+  published_by: string;
+}
+
+export interface ModelingJobAccepted extends EventAck {
+  job_id: string;
+  snapshot_id?: string;
+  artifact_id?: string;
+  evaluation_id?: string;
+  backfill_id?: string;
+}
+
+async function modelingJSON<T>(
+  key: string,
+  path: string,
+  method: 'GET' | 'POST',
+  body: unknown,
+  fetcher: typeof fetch
+): Promise<T> {
+  const res = await fetcher(path, {
+    method,
+    headers: body === undefined ? authHeaders(key) : jsonHeaders(key),
+    ...(body === undefined ? {} : { body: JSON.stringify(body) })
+  });
+  if (!res.ok) return errorOrStatus(res, `${method} ${path}`);
+  return (await res.json()) as T;
+}
+
+function schemaRefPath(ref: SchemaRef, suffix = ''): string {
+  const base = `/v1/modeling/schemas/${encodeURIComponent(ref.kind)}/${encodeURIComponent(ref.entity_type)}${suffix}`;
+  return ref.event_name ? `${base}?event_name=${encodeURIComponent(ref.event_name)}` : base;
+}
+
+export function listSourceSchemas(
+  key: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<SourceSchema[]> {
+  return modelingJSON<{ schemas: SourceSchema[] }>(
+    key,
+    '/v1/modeling/schemas',
+    'GET',
+    undefined,
+    fetcher
+  ).then((result) => result.schemas ?? []);
+}
+
+export function getSourceSchema(
+  key: string,
+  ref: SchemaRef,
+  fetcher: typeof fetch = recordingFetch
+): Promise<SourceSchema> {
+  return modelingJSON(key, schemaRefPath(ref), 'GET', undefined, fetcher);
+}
+
+export function defineSourceSchema(
+  key: string,
+  spec: SourceSchemaSpec,
+  fetcher: typeof fetch = recordingFetch
+): Promise<EventAck> {
+  return modelingJSON(key, '/v1/modeling/schemas', 'POST', spec, fetcher);
+}
+
+export async function requestSourceSchemaApproval(
+  key: string,
+  ref: SchemaRef,
+  version: number,
+  fetcher: typeof fetch = recordingFetch
+): Promise<{ request_id: string }> {
+  return modelingJSON(
+    key,
+    schemaRefPath(ref, `/versions/${version}/approval-request`),
+    'POST',
+    {},
+    fetcher
+  );
+}
+
+export function decideSourceSchemaApproval(
+  key: string,
+  requestId: string,
+  ref: SchemaRef,
+  approve: boolean,
+  reason: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<EventAck> {
+  return modelingJSON(
+    key,
+    `/v1/modeling/schema-approval/${encodeURIComponent(requestId)}/decision`,
+    'POST',
+    { ref, approve, reason },
+    fetcher
+  );
+}
+
+export function retireSourceSchema(
+  key: string,
+  ref: SchemaRef,
+  version: number,
+  reason: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<EventAck> {
+  return modelingJSON(
+    key,
+    schemaRefPath(ref, `/versions/${version}/retire`),
+    'POST',
+    { reason },
+    fetcher
+  );
+}
+
+export function listQualityObservations(
+  key: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<QualityObservation[]> {
+  return modelingJSON<{ observations: QualityObservation[] }>(
+    key,
+    '/v1/modeling/quality/observations',
+    'GET',
+    undefined,
+    fetcher
+  ).then((result) => result.observations ?? []);
+}
+
+export function listQualityIncidents(
+  key: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<QualityIncident[]> {
+  return modelingJSON<{ incidents: QualityIncident[] }>(
+    key,
+    '/v1/modeling/quality/incidents',
+    'GET',
+    undefined,
+    fetcher
+  ).then((result) => result.incidents ?? []);
+}
+
+export function resolveQualityIncident(
+  key: string,
+  incidentId: string,
+  reason: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<EventAck> {
+  return modelingJSON(
+    key,
+    `/v1/modeling/quality/incidents/${encodeURIComponent(incidentId)}/resolve`,
+    'POST',
+    { reason },
+    fetcher
+  );
+}
+
+export function acknowledgeQualityIncident(
+  key: string,
+  incidentId: string,
+  note: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<EventAck> {
+  return modelingJSON(
+    key,
+    `/v1/modeling/quality/incidents/${encodeURIComponent(incidentId)}/acknowledge`,
+    'POST',
+    { note },
+    fetcher
+  );
+}
+
+export function listSourceHealth(
+  key: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<SourceHealth[]> {
+  return modelingJSON<{ sources: SourceHealth[] }>(
+    key,
+    '/v1/modeling/source-health',
+    'GET',
+    undefined,
+    fetcher
+  ).then((result) => result.sources ?? []);
+}
+
+export function listGovernedFeatures(
+  key: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<GovernedFeature[]> {
+  return modelingJSON<{ features: GovernedFeature[] }>(
+    key,
+    '/v1/modeling/features',
+    'GET',
+    undefined,
+    fetcher
+  ).then((result) => result.features ?? []);
+}
+
+export function listDatasets(
+  key: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<Dataset[]> {
+  return modelingJSON<{ datasets: Dataset[] }>(
+    key,
+    '/v1/modeling/datasets',
+    'GET',
+    undefined,
+    fetcher
+  ).then((result) => result.datasets ?? []);
+}
+
+export function getDataset(
+  key: string,
+  name: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<Dataset> {
+  return modelingJSON(
+    key,
+    `/v1/modeling/datasets/${encodeURIComponent(name)}`,
+    'GET',
+    undefined,
+    fetcher
+  );
+}
+
+export function defineDataset(
+  key: string,
+  spec: DatasetSpec,
+  fetcher: typeof fetch = recordingFetch
+): Promise<EventAck> {
+  return modelingJSON(key, '/v1/modeling/datasets', 'POST', spec, fetcher);
+}
+
+export function requestDatasetSnapshot(
+  key: string,
+  dataset: string,
+  version: number,
+  request: { observation_at: string; knowledge_at: string; idempotency_key: string },
+  fetcher: typeof fetch = recordingFetch
+): Promise<ModelingJobAccepted> {
+  return modelingJSON(
+    key,
+    `/v1/modeling/datasets/${encodeURIComponent(dataset)}/versions/${version}/snapshots`,
+    'POST',
+    request,
+    fetcher
+  );
+}
+
+export function listDatasetSnapshots(
+  key: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<DatasetSnapshot[]> {
+  return modelingJSON<{ snapshots: DatasetSnapshot[] }>(
+    key,
+    '/v1/modeling/snapshots',
+    'GET',
+    undefined,
+    fetcher
+  ).then((result) => result.snapshots ?? []);
+}
+
+export function getDatasetSnapshot(
+  key: string,
+  snapshotId: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<DatasetSnapshot> {
+  return modelingJSON(
+    key,
+    `/v1/modeling/snapshots/${encodeURIComponent(snapshotId)}`,
+    'GET',
+    undefined,
+    fetcher
+  );
+}
+
+export function getDatasetSnapshotRows(
+  key: string,
+  snapshotId: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<{ manifest: SnapshotManifest; rows: DatasetRow[] }> {
+  return modelingJSON(
+    key,
+    `/v1/modeling/snapshots/${encodeURIComponent(snapshotId)}/rows`,
+    'GET',
+    undefined,
+    fetcher
+  );
+}
+
+export async function downloadDatasetSnapshot(
+  key: string,
+  snapshotId: string,
+  format: 'json' | 'csv',
+  fetcher: typeof fetch = recordingFetch
+): Promise<Blob> {
+  const path = `/v1/modeling/snapshots/${encodeURIComponent(snapshotId)}/export?format=${format}`;
+  const response = await fetcher(path, { headers: authHeaders(key) });
+  if (!response.ok) return errorOrStatus(response, `GET ${path}`);
+  return response.blob();
+}
+
+export function listModelingJobs(
+  key: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<ModelingJob[]> {
+  return modelingJSON<{ jobs: ModelingJob[] }>(
+    key,
+    '/v1/modeling/jobs',
+    'GET',
+    undefined,
+    fetcher
+  ).then((result) => result.jobs ?? []);
+}
+
+export function getModelingJob(
+  key: string,
+  jobId: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<ModelingJob> {
+  return modelingJSON(
+    key,
+    `/v1/modeling/jobs/${encodeURIComponent(jobId)}`,
+    'GET',
+    undefined,
+    fetcher
+  );
+}
+
+export function cancelModelingJob(
+  key: string,
+  jobId: string,
+  reason: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<EventAck> {
+  return modelingJSON(
+    key,
+    `/v1/modeling/jobs/${encodeURIComponent(jobId)}/cancel`,
+    'POST',
+    { reason },
+    fetcher
+  );
+}
+
+function transitionModelingJob(
+  key: string,
+  jobId: string,
+  transition: 'pause' | 'resume' | 'retry',
+  reason: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<EventAck> {
+  return modelingJSON(
+    key,
+    `/v1/modeling/jobs/${encodeURIComponent(jobId)}/${transition}`,
+    'POST',
+    { reason },
+    fetcher
+  );
+}
+
+export function pauseModelingJob(
+  key: string,
+  jobId: string,
+  reason: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<EventAck> {
+  return transitionModelingJob(key, jobId, 'pause', reason, fetcher);
+}
+
+export function resumeModelingJob(
+  key: string,
+  jobId: string,
+  reason: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<EventAck> {
+  return transitionModelingJob(key, jobId, 'resume', reason, fetcher);
+}
+
+export function retryModelingJob(
+  key: string,
+  jobId: string,
+  reason: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<EventAck> {
+  return transitionModelingJob(key, jobId, 'retry', reason, fetcher);
+}
+
+export function requestModelTraining(
+  key: string,
+  request: TrainingRequest,
+  fetcher: typeof fetch = recordingFetch
+): Promise<ModelingJobAccepted> {
+  return modelingJSON(key, '/v1/modeling/training-jobs', 'POST', request, fetcher);
+}
+
+export function requestModelEvaluation(
+  key: string,
+  request: EvaluationRequest,
+  fetcher: typeof fetch = recordingFetch
+): Promise<ModelingJobAccepted> {
+  return modelingJSON(key, '/v1/modeling/evaluation-jobs', 'POST', request, fetcher);
+}
+
+export function listModelArtifacts(
+  key: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<ModelArtifact[]> {
+  return modelingJSON<{ artifacts: ModelArtifact[] }>(
+    key,
+    '/v1/modeling/artifacts',
+    'GET',
+    undefined,
+    fetcher
+  ).then((result) => result.artifacts ?? []);
+}
+
+export function registerExternalArtifact(
+  key: string,
+  registration: ExternalArtifactRegistration,
+  fetcher: typeof fetch = recordingFetch
+): Promise<EventAck> {
+  return modelingJSON(key, '/v1/modeling/artifacts', 'POST', registration, fetcher);
+}
+
+export function changeModelArtifactStage(
+  key: string,
+  artifactId: string,
+  stage: 'validated' | 'production' | 'archived',
+  reason: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<EventAck> {
+  return modelingJSON(
+    key,
+    `/v1/modeling/artifacts/${encodeURIComponent(artifactId)}/stage`,
+    'POST',
+    { stage, reason },
+    fetcher
+  );
+}
+
+export function verifyModelArtifact(
+  key: string,
+  artifactId: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<{ valid: boolean }> {
+  return modelingJSON(
+    key,
+    `/v1/modeling/artifacts/${encodeURIComponent(artifactId)}/verify`,
+    'GET',
+    undefined,
+    fetcher
+  );
+}
+
+export function getModelArtifact(
+  key: string,
+  artifactId: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<ModelArtifact> {
+  return modelingJSON(
+    key,
+    `/v1/modeling/artifacts/${encodeURIComponent(artifactId)}`,
+    'GET',
+    undefined,
+    fetcher
+  );
+}
+
+export function listModelEvaluations(
+  key: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<ModelEvaluation[]> {
+  return modelingJSON<{ evaluations: ModelEvaluation[] }>(
+    key,
+    '/v1/modeling/evaluations',
+    'GET',
+    undefined,
+    fetcher
+  ).then((result) => result.evaluations ?? []);
+}
+
+export function getModelEvaluation(
+  key: string,
+  evaluationId: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<ModelEvaluation> {
+  return modelingJSON(
+    key,
+    `/v1/modeling/evaluations/${encodeURIComponent(evaluationId)}`,
+    'GET',
+    undefined,
+    fetcher
+  );
+}
+
+export function requestFeatureBackfill(
+  key: string,
+  request: {
+    entity_type: string;
+    features: string[];
+    as_of: string;
+    knowledge_at: string;
+    idempotency_key: string;
+  },
+  fetcher: typeof fetch = recordingFetch
+): Promise<ModelingJobAccepted> {
+  return modelingJSON(key, '/v1/modeling/backfills', 'POST', request, fetcher);
+}
+
+export function listMaterializations(
+  key: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<Materialization[]> {
+  return modelingJSON<{ materializations: Materialization[] }>(
+    key,
+    '/v1/modeling/materializations',
+    'GET',
+    undefined,
+    fetcher
+  ).then((result) => result.materializations ?? []);
+}
+
+export function getMaterialization(
+  key: string,
+  backfillId: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<Materialization> {
+  return modelingJSON(
+    key,
+    `/v1/modeling/materializations/${encodeURIComponent(backfillId)}`,
+    'GET',
+    undefined,
+    fetcher
+  );
+}
+
+export function getModelLineage(
+  key: string,
+  modelName: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<Record<string, unknown>> {
+  return modelingJSON(
+    key,
+    `/v1/modeling/lineage/models/${encodeURIComponent(modelName)}`,
+    'GET',
+    undefined,
+    fetcher
+  );
+}
+
+export function compareGovernedModels(
+  key: string,
+  champion: string,
+  challenger: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<{
+  champion: string;
+  challenger: string;
+  same_snapshot: boolean;
+  champion_evaluation: BinaryEvaluation;
+  challenger_evaluation: BinaryEvaluation;
+  auc_delta: number;
+  brier_delta: number;
+  accuracy_delta: number;
+}> {
+  const query = new URLSearchParams({ champion, challenger });
+  return modelingJSON(
+    key,
+    `/v1/modeling/comparisons?${query.toString()}`,
+    'GET',
+    undefined,
+    fetcher
+  );
 }

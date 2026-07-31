@@ -64,6 +64,9 @@ import (
 	hellocmd "github.com/e6qu/intraktible/hello/command"
 	helloservice "github.com/e6qu/intraktible/hello/service"
 	"github.com/e6qu/intraktible/hello/stats"
+	modelingcmd "github.com/e6qu/intraktible/modeling/command"
+	modelingprojection "github.com/e6qu/intraktible/modeling/projection"
+	modelingservice "github.com/e6qu/intraktible/modeling/service"
 	"github.com/e6qu/intraktible/mrm"
 	"github.com/e6qu/intraktible/platform/ai"
 	"github.com/e6qu/intraktible/platform/audit"
@@ -154,6 +157,7 @@ type Server struct {
 	agents          *agentcmd.Handler
 	agentGovernance *agentgovernance.Service
 	population      *population.Handler
+	modeling        *modelingservice.Service
 	caseScheduler   *caseschedule.Scheduler
 	// draining latches on BeginDrain and makes /readyz report 503 while the
 	// process still serves traffic, so a load balancer depools this replica
@@ -183,6 +187,9 @@ func (s *Server) Close() {
 	}
 	if s.population != nil {
 		s.population.DrainWorkers()
+	}
+	if s.modeling != nil {
+		s.modeling.DrainWorkers()
 	}
 }
 
@@ -234,6 +241,10 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 	}
 	if atRest != nil {
 		slog.Info("encryption at rest enabled (event payloads + projection store)")
+	}
+	artifactSigningKey, err := artifactSigningKeyFromEnv()
+	if err != nil {
+		return nil, err
 	}
 	if err := preflight(cfg, atRest != nil); err != nil {
 		return nil, err
@@ -342,6 +353,7 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 	var deployScheduler *schedule.Scheduler
 	var caseScheduler *caseschedule.Scheduler
 	var decideHandler *enginecmd.DecideHandler
+	var engineHandler *enginecmd.Handler
 	var populationHandler *population.Handler
 	var populationScheduler *population.Scheduler
 	var experimentScheduler *experiments.Scheduler
@@ -349,6 +361,26 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 	var agentGovernanceScheduler *agentgovernance.Scheduler
 	var agentGovernanceService *agentgovernance.Service
 	var governanceHandler *agentgovernance.Handler
+	var modelingService *modelingservice.Service
+	var modelingScheduler *modelingservice.Scheduler
+	if enabled(cfg.Modules, "context-layer") || enabled(cfg.Modules, "decision-engine") {
+		modelingHandler := modelingcmd.NewHandler(log).WithNow(now)
+		modelingOptions := []modelingservice.Option{
+			modelingservice.WithNow(now),
+			modelingservice.WithContentSealer(erasureVault),
+		}
+		if artifactSigningKey != nil {
+			modelingOptions = append(
+				modelingOptions,
+				modelingservice.WithArtifactSigningKey(artifactSigningKey),
+			)
+		}
+		modelingService = modelingservice.New(
+			modelingHandler, st, modelingOptions...,
+		)
+		modelingScheduler = modelingservice.NewScheduler(modelingHandler, st).WithNow(now)
+		modelingService.Routes(api)
+	}
 	if enabled(cfg.Modules, "case-manager") || enabled(cfg.Modules, "agent-manager") {
 		governanceHandler = agentgovernance.NewHandler(log).
 			WithNow(now).
@@ -395,6 +427,7 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 		// the standalone grant/list/revoke surface.
 		paCmd := preapproval.NewHandler(log).WithNow(now)
 		engineCmd := enginecmd.NewHandler(log).WithNow(now)
+		engineHandler = engineCmd
 		engineSvc := engineservice.New(engineCmd, decide, paCmd, st)
 		if len(erasurePIIFields) > 0 {
 			engineSvc.UseEraser(erasureVault)
@@ -441,6 +474,9 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 		// Per-flow access grants: fine-grained, opt-in restriction of change-control
 		// on a specific flow/environment, layered over the global RBAC roles.
 		grants.New(grants.NewHandler(log).WithNow(now), st).Routes(api)
+	}
+	if modelingService != nil && engineHandler != nil {
+		modelingService.UseModelRegistrar(engineHandler)
 	}
 	if enabled(cfg.Modules, "case-manager") {
 		caseCmd := casecmd.NewHandler(log).WithNow(now)
@@ -499,12 +535,16 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 		)
 	}
 	if enabled(cfg.Modules, "context-layer") {
-		contextservice.New(contextcmd.NewHandler(log).WithNow(now), st,
+		contextOptions := []contextservice.Option{
 			contextservice.WithNow(now),
 			contextservice.WithEgress(egress),
 			contextservice.WithSecrets(connectorSecrets),
 			contextservice.WithErasure(erasureVault, erasurePIIFields),
-		).Routes(api)
+		}
+		if modelingService != nil {
+			contextOptions = append(contextOptions, contextservice.WithContracts(modelingService))
+		}
+		contextservice.New(contextcmd.NewHandler(log).WithNow(now), st, contextOptions...).Routes(api)
 	}
 	srv := &Server{}
 	srv.caseScheduler = caseScheduler
@@ -612,6 +652,10 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 		populationHandler.StartWorkers(ctx, populationWorkers)
 		srv.population = populationHandler
 	}
+	if runWorkers && modelingService != nil {
+		modelingService.StartWorkers(ctx, populationWorkers)
+		srv.modeling = modelingService
+	}
 	if runWorkers && agentGovernanceService != nil {
 		if err := agentGovernanceService.StartWorkers(ctx, asyncRunWorkers); err != nil {
 			return nil, fmt.Errorf("agent governance: start assist workers: %w", err)
@@ -676,6 +720,11 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 	if runSchedulers && agentGovernanceScheduler != nil {
 		sweeps = append(sweeps, namedTimedSweeper{
 			name: "agent_governance", runner: agentGovernanceScheduler,
+		})
+	}
+	if runSchedulers && modelingScheduler != nil {
+		sweeps = append(sweeps, namedTimedSweeper{
+			name: "modeling_lifecycle", runner: modelingScheduler,
 		})
 	}
 	// Retention runs regardless of module (erasure is a platform capability); it is a
@@ -998,6 +1047,12 @@ func preflight(cfg Config, encryptionEnabled bool) error {
 	if !encryptionEnabled && !truthy(os.Getenv("INTRAKTIBLE_ALLOW_PLAINTEXT_AT_REST")) {
 		problems = append(problems, "INTRAKTIBLE_ENCRYPTION_KEY is unset, so PII/event payloads would be written in plaintext at rest; set it, or set INTRAKTIBLE_ALLOW_PLAINTEXT_AT_REST=1 to accept that risk")
 	}
+	if strings.TrimSpace(os.Getenv("INTRAKTIBLE_ARTIFACT_SIGNING_KEY")) == "" {
+		problems = append(
+			problems,
+			"INTRAKTIBLE_ARTIFACT_SIGNING_KEY is unset, so training-worker replicas would not share a stable artifact-signing identity",
+		)
+	}
 	// A single-process WAL behind a load balancer is silent data divergence: each
 	// replica appends to its own file and none of them sees the others' events, so
 	// the "system of record" quietly forks. This used to be a warning, which is the
@@ -1063,7 +1118,7 @@ func Projectors(modules string) []projection.Projector {
 	// regardless of which modules are enabled (so masking and the audit trail work in
 	// every profile). The audit projector re-indexes every event for tenant-scoped reads.
 	ps := []projection.Projector{privacy.Projector{}, comments.Projector{}, consent.Projector{}, sharing.Projector{}, jurisdiction.Projector{}, notifications.Projector{}, audit.Projector{},
-		fairlending.ConfigProjector{}, fairlending.SettingsProjector{}, fairlending.IssuanceProjector{}, reconsideration.Projector{}, reconsideration.ContestProjector{}}
+		fairlending.ConfigProjector{}, fairlending.SettingsProjector{}, fairlending.IssuanceProjector{}, reconsideration.Projector{}, reconsideration.ContestProjector{}, modelingprojection.Projector{}}
 	if enabled(modules, "hello") {
 		ps = append(ps, stats.Projector{})
 	}
