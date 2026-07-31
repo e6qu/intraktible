@@ -390,6 +390,10 @@ test('journey: crypto-shred assist content but retain reviewer accountability', 
         `erase case subject failed: ${eraseResponse.status} ${await eraseResponse.text()}`
       );
     }
+    // The embedded backend persists the event delta (including the shred) just
+    // before the response completes, so the reload below must wait for the full
+    // body — headers alone resolve before the delta reaches localStorage.
+    await eraseResponse.text();
     return found.case_id;
   });
 

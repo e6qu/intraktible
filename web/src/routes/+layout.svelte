@@ -681,6 +681,8 @@
     right: 0;
     z-index: 50;
     min-width: 16rem;
+    max-height: calc(100vh - 4.5rem);
+    overflow-y: auto;
     padding: 0.4rem;
     background: var(--surface);
     border: 1px solid var(--border);
