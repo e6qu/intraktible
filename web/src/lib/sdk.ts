@@ -281,6 +281,162 @@ export interface PopulationJob {
   items: Array<Record<string, unknown>>;
 }
 
+export interface AgentTemplate {
+  template_id: string;
+  slug: string;
+  name: string;
+  task: string;
+  description?: string;
+  high_impact: boolean;
+  tags?: string[];
+  latest_release?: number;
+}
+
+export interface AgentReleaseSpec {
+  instructions: string;
+  provider: string;
+  model: string;
+  input_schema: Record<string, unknown>;
+  output_schema: Record<string, unknown>;
+  tools: Array<{
+    name: string;
+    mode: 'automatic' | 'human_before_call' | 'forbidden';
+    purpose: string;
+    parameter_schema: Record<string, unknown>;
+  }>;
+  data_purposes: string[];
+  dependencies: Array<{ kind: string; name: string; version: string; hash: string }>;
+  budget: {
+    max_prompt_tokens: number;
+    max_completion_tokens: number;
+    max_tool_calls: number;
+    max_cost_usd: number;
+    input_cost_per_mtok: number;
+    output_cost_per_mtok: number;
+    pricing_source: string;
+    pricing_version: string;
+    period?: 'day' | 'month';
+    period_cost_usd?: number;
+  };
+  timeout_ms: number;
+  max_attempts: number;
+  circuit_breaker?: {
+    window_minutes: number;
+    min_samples: number;
+    failure_rate: number;
+  };
+  require_citations: boolean;
+  require_human_gate: boolean;
+  allow_remote_agent: boolean;
+  remote_protocol_url?: string;
+  remote_protocol_version?: string;
+  remote_credential_env?: string;
+}
+
+export interface AgentRelease {
+  template_id: string;
+  release: number;
+  status: 'draft' | 'evaluated' | 'review_requested' | 'approved' | 'rejected' | 'retired';
+  spec: AgentReleaseSpec;
+  spec_hash: string;
+  campaign_ids: string[];
+  review?: Record<string, unknown>;
+  created_by: string;
+  created_at: string;
+}
+
+export interface AgentDeployment {
+  deployment_id: string;
+  template_id: string;
+  release: number;
+  environment: 'sandbox' | 'staging' | 'production';
+  status: 'scheduled' | 'active' | 'paused' | 'retired';
+  reason: string;
+  requested_by: string;
+  requested_at: string;
+  activate_at?: string;
+  expires_at?: string;
+  activated_by?: string;
+  activated_at?: string;
+  paused_by?: string;
+  paused_at?: string;
+  resumed_by?: string;
+  resumed_at?: string;
+  previous_release?: number;
+  seq: number;
+}
+
+export interface AgentAssist {
+  assist_id: string;
+  case_id: string;
+  template_id: string;
+  release: number;
+  environment: 'sandbox' | 'staging' | 'production';
+  evidence_ids: string[];
+  evidence_seq: number;
+  current_evidence_seq: number;
+  evidence_stale?: boolean;
+  policy_source?: {
+    kind: 'case_type' | 'queue';
+    key: string;
+    configuration_seq: number;
+    policy_key: string;
+    evidence_fingerprint: string;
+  };
+  status:
+    | 'requested'
+    | 'running'
+    | 'awaiting_tool_approval'
+    | 'completed'
+    | 'failed'
+    | 'dead_letter'
+    | 'cancelled';
+  result?: Record<string, unknown>;
+  action?: {
+    assist_id: string;
+    action: 'accepted' | 'edited' | 'rejected' | 'escalated';
+    final?: Record<string, unknown>;
+    reason?: string;
+    time_saved_ms?: number;
+    evidence_head_seq: number;
+    evidence_stale?: boolean;
+  };
+  suggestion_hash?: string;
+  final_hash?: string;
+  differences?: Array<{ path: string; kind: 'added' | 'removed' | 'changed' }>;
+  action_final_erased?: boolean;
+  failure?: string;
+}
+
+export interface AgentToolApproval {
+  approval_id: string;
+  assist_id: string;
+  invocation_id: string;
+  call_id: string;
+  name: string;
+  purpose: string;
+  arguments_hash: string;
+  status: 'pending' | 'approved' | 'rejected' | 'expired';
+  requested_by: string;
+  requested_at: string;
+  expires_at: string;
+  decided_by?: string;
+  decided_at?: string;
+  reason?: string;
+}
+
+export interface AgentSafetyIncident {
+  incident_id: string;
+  template_id: string;
+  release: number;
+  deployment_id?: string;
+  kind: string;
+  severity: 'info' | 'warning' | 'required' | 'critical';
+  summary: string;
+  status: 'open' | 'resolved';
+  resolution?: string;
+}
+
 // Client calls an intraktible instance.
 export class Client {
   private readonly apiKey: string;
@@ -744,12 +900,365 @@ export class Client {
     return this.requestText(`/v1/population-jobs/${encodeURIComponent(jobId)}/results`);
   }
 
+  async listAgentTemplates(): Promise<AgentTemplate[]> {
+    const out = await this.request<{ templates?: AgentTemplate[] }>('GET', '/v1/agent-templates');
+    return out.templates ?? [];
+  }
+
+  async createAgentTemplate(template: AgentTemplate): Promise<AgentTemplate> {
+    const out = await this.request<{ template: AgentTemplate }>(
+      'POST',
+      '/v1/agent-templates',
+      template
+    );
+    return out.template;
+  }
+
+  getAgentTemplate(templateId: string): Promise<AgentTemplate> {
+    return this.request('GET', `/v1/agent-templates/${encodeURIComponent(templateId)}`);
+  }
+
+  async listAgentReleases(templateId: string): Promise<AgentRelease[]> {
+    const out = await this.request<{ releases?: AgentRelease[] }>(
+      'GET',
+      `${this.agentTemplatePath(templateId)}/releases`
+    );
+    return out.releases ?? [];
+  }
+
+  createAgentRelease(
+    templateId: string,
+    spec: AgentReleaseSpec
+  ): Promise<{ release: number; spec_hash: string; seq: number }> {
+    return this.request('POST', `${this.agentTemplatePath(templateId)}/releases`, { spec });
+  }
+
+  getAgentRelease(templateId: string, release: number): Promise<AgentRelease> {
+    return this.request('GET', this.agentReleasePath(templateId, release));
+  }
+
+  retireAgentRelease(
+    templateId: string,
+    release: number,
+    reason: string
+  ): Promise<Record<string, unknown>> {
+    return this.request('POST', `${this.agentReleasePath(templateId, release)}/retire`, { reason });
+  }
+
+  async listAgentEvalSuites(): Promise<Array<Record<string, unknown>>> {
+    const out = await this.request<{ suites?: Array<Record<string, unknown>> }>(
+      'GET',
+      '/v1/agent-eval-suites'
+    );
+    return out.suites ?? [];
+  }
+
+  async publishAgentEvalSuite(suite: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const out = await this.request<{ suite: Record<string, unknown> }>(
+      'POST',
+      '/v1/agent-eval-suites',
+      suite
+    );
+    return out.suite;
+  }
+
+  getAgentEvalSuite(suiteId: string, version: number): Promise<Record<string, unknown>> {
+    return this.request(
+      'GET',
+      `/v1/agent-eval-suites/${encodeURIComponent(suiteId)}/versions/${version}`
+    );
+  }
+
+  async runAgentCampaign(
+    templateId: string,
+    release: number,
+    suiteId: string,
+    suiteVersion: number
+  ): Promise<Record<string, unknown>> {
+    const out = await this.request<{ campaign: Record<string, unknown> }>(
+      'POST',
+      `${this.agentReleasePath(templateId, release)}/campaigns`,
+      { suite_id: suiteId, suite_version: suiteVersion }
+    );
+    return out.campaign;
+  }
+
+  async listAgentCampaigns(
+    templateId: string,
+    release: number
+  ): Promise<Array<Record<string, unknown>>> {
+    const out = await this.request<{ campaigns?: Array<Record<string, unknown>> }>(
+      'GET',
+      `${this.agentReleasePath(templateId, release)}/campaigns`
+    );
+    return out.campaigns ?? [];
+  }
+
+  adjudicateAgentCampaignTrial(
+    campaignId: string,
+    caseId: string,
+    trial: number,
+    passed: boolean,
+    reason: string
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      'POST',
+      `/v1/agent-eval-campaigns/${encodeURIComponent(campaignId)}/trials/${encodeURIComponent(caseId)}/${trial}/adjudication`,
+      { passed, reason }
+    );
+  }
+
+  compareAgentCampaigns(
+    baselineCampaignId: string,
+    challengerCampaignId: string
+  ): Promise<Record<string, unknown>> {
+    const query = new URLSearchParams({
+      baseline_campaign_id: baselineCampaignId,
+      challenger_campaign_id: challengerCampaignId
+    });
+    return this.request('GET', `/v1/agent-eval-comparisons?${query}`);
+  }
+
+  exportAgentCampaign(campaignId: string, format: 'json' | 'csv'): Promise<string> {
+    return this.requestText(
+      `/v1/agent-eval-campaigns/${encodeURIComponent(campaignId)}/export?format=${format}`
+    );
+  }
+
+  async requestAgentReleaseReview(
+    templateId: string,
+    release: number,
+    input: {
+      campaign_ids: string[];
+      evidence_ids: string[];
+      reviewers: string[];
+      expires_at: string;
+    }
+  ): Promise<string> {
+    const out = await this.request<{ request_id: string }>(
+      'POST',
+      `${this.agentReleasePath(templateId, release)}/review-request`,
+      input
+    );
+    return out.request_id;
+  }
+
+  reviewAgentRelease(
+    templateId: string,
+    release: number,
+    requestId: string,
+    decision: 'approve' | 'reject',
+    reason: string
+  ): Promise<Record<string, unknown>> {
+    return this.request('POST', `${this.agentReleasePath(templateId, release)}/review`, {
+      request_id: requestId,
+      decision,
+      reason
+    });
+  }
+
+  async listAgentDeployments(): Promise<AgentDeployment[]> {
+    const out = await this.request<{ deployments?: AgentDeployment[] }>(
+      'GET',
+      '/v1/agent-deployments'
+    );
+    return out.deployments ?? [];
+  }
+
+  async requestAgentDeployment(input: {
+    template_id: string;
+    release: number;
+    environment: 'sandbox' | 'staging' | 'production';
+    at?: string;
+    expires_at?: string;
+    reason: string;
+  }): Promise<string> {
+    const out = await this.request<{ deployment_id: string }>(
+      'POST',
+      '/v1/agent-deployments',
+      input
+    );
+    return out.deployment_id;
+  }
+
+  getAgentDeployment(deploymentId: string): Promise<AgentDeployment> {
+    return this.request('GET', `/v1/agent-deployments/${encodeURIComponent(deploymentId)}`);
+  }
+
+  activateAgentDeployment(deploymentId: string): Promise<Record<string, unknown>> {
+    return this.request(
+      'POST',
+      `/v1/agent-deployments/${encodeURIComponent(deploymentId)}/activate`,
+      {}
+    );
+  }
+
+  pauseAgentDeployment(deploymentId: string, reason: string): Promise<Record<string, unknown>> {
+    return this.request('POST', `/v1/agent-deployments/${encodeURIComponent(deploymentId)}/pause`, {
+      reason
+    });
+  }
+
+  resumeAgentDeployment(deploymentId: string, reason: string): Promise<Record<string, unknown>> {
+    return this.request(
+      'POST',
+      `/v1/agent-deployments/${encodeURIComponent(deploymentId)}/resume`,
+      {
+        reason
+      }
+    );
+  }
+
+  rollbackAgentDeployment(
+    deploymentId: string,
+    toRelease: number,
+    reason: string
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      'POST',
+      `/v1/agent-deployments/${encodeURIComponent(deploymentId)}/rollback`,
+      { to_release: toRelease, reason }
+    );
+  }
+
+  async requestCaseAgentAssist(
+    caseId: string,
+    input: {
+      kind:
+        | 'summary'
+        | 'evidence_extraction'
+        | 'prioritization'
+        | 'next_best_action'
+        | 'draft_disposition';
+      template_id: string;
+      release: number;
+      environment: 'sandbox' | 'staging' | 'production';
+      evidence_ids: string[];
+    },
+    idempotencyKey: string
+  ): Promise<{ assist_id: string; status: AgentAssist['status']; approval_id?: string }> {
+    return this.request('POST', `/v1/cases/${encodeURIComponent(caseId)}/agent-assists`, input, {
+      'Idempotency-Key': idempotencyKey
+    });
+  }
+
+  async listCaseAgentAssists(caseId: string): Promise<AgentAssist[]> {
+    const out = await this.request<{ assists?: AgentAssist[] }>(
+      'GET',
+      `/v1/cases/${encodeURIComponent(caseId)}/agent-assists`
+    );
+    return out.assists ?? [];
+  }
+
+  getAgentAssist(assistId: string): Promise<AgentAssist> {
+    return this.request('GET', `/v1/agent-assists/${encodeURIComponent(assistId)}`);
+  }
+
+  recordAgentAssistAction(
+    assistId: string,
+    input: {
+      action: 'accepted' | 'edited' | 'rejected' | 'escalated';
+      final?: Record<string, unknown>;
+      reason?: string;
+      time_saved_ms?: number;
+    }
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      'POST',
+      `/v1/agent-assists/${encodeURIComponent(assistId)}/reviewer-action`,
+      { assist_id: assistId, ...input }
+    );
+  }
+
+  retryAgentAssist(
+    assistId: string,
+    reason: string,
+    acknowledgeAtLeastOnce = false
+  ): Promise<Record<string, unknown>> {
+    return this.request('POST', `/v1/agent-assists/${encodeURIComponent(assistId)}/retry`, {
+      reason,
+      acknowledge_at_least_once: acknowledgeAtLeastOnce
+    });
+  }
+
+  cancelAgentAssist(assistId: string, reason: string): Promise<Record<string, unknown>> {
+    return this.request('POST', `/v1/agent-assists/${encodeURIComponent(assistId)}/cancel`, {
+      reason
+    });
+  }
+
+  async listAgentToolApprovals(): Promise<AgentToolApproval[]> {
+    const out = await this.request<{ approvals?: AgentToolApproval[] }>(
+      'GET',
+      '/v1/agent-tool-approvals'
+    );
+    return out.approvals ?? [];
+  }
+
+  getAgentToolApproval(approvalId: string): Promise<AgentToolApproval> {
+    return this.request('GET', `/v1/agent-tool-approvals/${encodeURIComponent(approvalId)}`);
+  }
+
+  decideAgentToolApproval(
+    approvalId: string,
+    decision: 'approved' | 'rejected',
+    reason: string
+  ): Promise<{ assist_id?: string; status: 'requested' | 'rejected' }> {
+    return this.request(
+      'POST',
+      `/v1/agent-tool-approvals/${encodeURIComponent(approvalId)}/decision`,
+      { decision, reason }
+    );
+  }
+
+  async listAgentSafetyIncidents(): Promise<AgentSafetyIncident[]> {
+    const out = await this.request<{ incidents?: AgentSafetyIncident[] }>(
+      'GET',
+      '/v1/agent-safety-incidents'
+    );
+    return out.incidents ?? [];
+  }
+
+  async openAgentSafetyIncident(
+    incident: Omit<AgentSafetyIncident, 'incident_id' | 'status' | 'resolution'>
+  ): Promise<string> {
+    const out = await this.request<{ incident_id: string }>(
+      'POST',
+      '/v1/agent-safety-incidents',
+      incident
+    );
+    return out.incident_id;
+  }
+
+  resolveAgentSafetyIncident(
+    incidentId: string,
+    resolution: string
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      'POST',
+      `/v1/agent-safety-incidents/${encodeURIComponent(incidentId)}/resolve`,
+      { resolution }
+    );
+  }
+
+  agentGovernanceAnalytics(): Promise<Record<string, unknown>> {
+    return this.request('GET', '/v1/agent-governance/analytics');
+  }
+
   me(): Promise<Identity> {
     return this.request<Identity>('GET', '/v1/me');
   }
 
   private flowPath(slug: string, env: string): string {
     return `/v1/flows/${encodeURIComponent(slug)}/${encodeURIComponent(env)}`;
+  }
+
+  private agentTemplatePath(templateId: string): string {
+    return `/v1/agent-templates/${encodeURIComponent(templateId)}`;
+  }
+
+  private agentReleasePath(templateId: string, release: number): string {
+    return `${this.agentTemplatePath(templateId)}/releases/${release}`;
   }
 
   private async request<T>(

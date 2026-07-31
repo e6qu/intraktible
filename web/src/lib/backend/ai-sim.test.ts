@@ -161,4 +161,52 @@ describe('the registered __intraktible_ai hook', () => {
     expect(structured.actions).toEqual([expect.any(String)]);
     expect(structured.details).toEqual({ review_days: expect.any(Number) });
   });
+
+  it('returns a release-valid cited envelope for governed case assistance', async () => {
+    registerSimulatedAI();
+    const hook = (globalThis as Record<string, unknown>).__intraktible_ai as (
+      s: string
+    ) => Promise<string>;
+    const raw = await hook(
+      JSON.stringify({
+        prompt: JSON.stringify({
+          case_id: 'case-1',
+          case_type: 'underwriting',
+          evidence: [{ evidence_id: 'evidence-1', label: 'Application' }]
+        }),
+        schema: {
+          type: 'object',
+          required: ['suggestion', 'citations', 'confidence'],
+          properties: {
+            suggestion: { type: 'object' },
+            citations: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  evidence_id: { type: 'string' },
+                  claim: { type: 'string' }
+                }
+              }
+            },
+            confidence: { type: 'number', minimum: 0, maximum: 1 },
+            limitations: { type: 'array', items: { type: 'string' } }
+          }
+        }
+      })
+    );
+    const { structured } = JSON.parse(raw) as {
+      structured: {
+        suggestion: { summary: string };
+        citations: Array<{ evidence_id: string; claim: string }>;
+      };
+    };
+    expect(structured.suggestion.summary).toBeTypeOf('string');
+    expect(structured.citations).toEqual([
+      {
+        evidence_id: 'evidence-1',
+        claim: expect.any(String)
+      }
+    ]);
+  });
 });

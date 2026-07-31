@@ -67,7 +67,14 @@ test('admin publishes a case type, opens governed work, and sees analytics', asy
   await expect(summary).toContainText('Overdue');
 
   // The SLA sweep runs without error (a fresh 5-day case is not overdue).
-  await page.getByRole('button', { name: 'Run SLA sweep' }).click();
+  const sweep = page.getByRole('button', { name: 'Run SLA sweep' });
+  const sweepResponse = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === '/v1/cases/sla-sweep' &&
+      response.request().method() === 'POST'
+  );
+  await sweep.click();
+  expect((await sweepResponse).ok()).toBeTruthy();
   await expect(page.locator('p.err')).toHaveCount(0);
   await expect(page.getByTestId('case-analytics')).toContainText('Open');
 });
@@ -147,7 +154,9 @@ test('routes, evidences, dispositions, and independently disputes a governed cas
   await page.getByLabel('evidence subject').fill(`decision-${suffix}`);
   await page.getByLabel('evidence label').fill('Recorded screening decision');
   await page.getByRole('button', { name: 'Link', exact: true }).click();
-  await expect(page.getByText('Recorded screening decision')).toBeVisible();
+  await expect(
+    page.getByTestId('case-evidence').getByText('Recorded screening decision')
+  ).toBeVisible();
 
   await page.getByLabel('attachment name').fill('registry.pdf');
   await page

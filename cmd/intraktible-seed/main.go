@@ -25,6 +25,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/e6qu/intraktible/platform/erasure"
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/store"
 	"github.com/e6qu/intraktible/server"
@@ -32,9 +33,14 @@ import (
 
 func main() {
 	out := flag.String("out", "web/static/demo-seed.json", "path for the exported event-log JSON")
+	stateOut := flag.String(
+		"state-out",
+		"web/static/demo-state.json",
+		"path for the exported fictional demo operational-state JSON",
+	)
 	flag.Parse()
 
-	events := buildSeed()
+	events, operationalState := buildSeed()
 	b, err := json.Marshal(events)
 	if err != nil {
 		fatalf("marshal seed: %v", err)
@@ -46,11 +52,25 @@ func main() {
 		fatalf("write seed: %v", err)
 	}
 	fmt.Printf("seed: %d events, %.2f MB -> %s\n", len(events), float64(len(b))/(1<<20), *out)
+	stateJSON, err := json.Marshal(operationalState)
+	if err != nil {
+		fatalf("marshal demo operational state: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(*stateOut), 0o755); err != nil { // #nosec G301 -- public build-artifact directory
+		fatalf("mkdir demo operational state: %v", err)
+	}
+	if err := os.WriteFile(*stateOut, stateJSON, 0o600); err != nil {
+		fatalf("write demo operational state: %v", err)
+	}
+	fmt.Printf(
+		"seed: fictional operational state, %.2f KB -> %s\n",
+		float64(len(stateJSON))/(1<<10), *stateOut,
+	)
 
 	if err := writeRoster(filepath.Join(filepath.Dir(*out), "demo-users.json")); err != nil {
 		fatalf("write roster: %v", err)
 	}
-	verifySeed(events)
+	verifySeed(events, operationalState)
 }
 
 // writeRoster emits the demo cast next to the seed. Managed API keys are
@@ -80,7 +100,7 @@ func writeRoster(path string) error {
 }
 
 // buildSeed runs the full scripted history and returns the exported event log.
-func buildSeed() []eventlog.Envelope {
+func buildSeed() ([]eventlog.Envelope, erasure.OperationalState) {
 	anchor := time.Now().UTC().Truncate(time.Hour)
 
 	// Lay the decision plan out first: the traffic window plus the entity-event
@@ -130,6 +150,7 @@ func buildSeed() []eventlog.Envelope {
 	acts = append(acts, s.keyActions(cfg)...)
 	acts = append(acts, s.contextConfigActions(cfg)...)
 	acts = append(acts, s.agentConfigActions(cfg)...)
+	acts = append(acts, s.governedAgentActions(cfg)...)
 	acts = append(acts, s.caseConfigActions(cfg)...)
 	acts = append(acts, s.flowActions(cfg)...)
 	acts = append(acts, s.policyActions(cfg)...)
@@ -185,6 +206,10 @@ func buildSeed() []eventlog.Envelope {
 	s.startRunningRun()
 
 	events := log.Export()
+	operationalState, err := erasure.ExportOperationalState(context.Background(), st)
+	if err != nil {
+		fatalf("export demo operational state: %v", err)
+	}
 
 	// Unpark the blocked worker and shut down cleanly (its terminal event lands
 	// after the export, so the seed keeps the run running).
@@ -194,19 +219,24 @@ func buildSeed() []eventlog.Envelope {
 	if err := log.Close(); err != nil {
 		fatalf("close log: %v", err)
 	}
-	return events
+	return events, operationalState
 }
 
 // verifySeed replays the exported history through a fresh server — the exact
 // wasm boot path — and spot-checks the projections, failing loudly on drift.
-func verifySeed(events []eventlog.Envelope) {
+func verifySeed(events []eventlog.Envelope, operationalState erasure.OperationalState) {
 	log, err := eventlog.NewMemoryFrom(events)
 	if err != nil {
 		fatalf("round trip: %v", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
+	st := store.NewMemory()
+	if err := erasure.RestoreOperationalState(ctx, st, operationalState); err != nil {
+		cancel()
+		fatalf("round trip: restore operational state: %v", err)
+	}
 	srv, err := server.New(ctx, server.Config{Modules: "all", DevAPIKey: devAPIKey, StoreKind: "memory"},
-		log, store.NewMemory())
+		log, st)
 	if err != nil {
 		cancel()
 		fatalf("round trip: assemble: %v", err)
@@ -454,12 +484,50 @@ func spotCheck(srv *server.Server) string {
 
 	var cases struct {
 		Cases []struct {
-			Status string `json:"status"`
+			CaseID      string `json:"case_id"`
+			CompanyName string `json:"company_name"`
+			Status      string `json:"status"`
 		} `json:"cases"`
 	}
 	get("/v1/cases", &cases)
 	if len(cases.Cases) < 30 {
 		fatalf("round trip: %d cases, want >= 30", len(cases.Cases))
+	}
+	governedCaseID := ""
+	for _, candidate := range cases.Cases {
+		if candidate.CompanyName == "Contoso Payments · QA sample" {
+			governedCaseID = candidate.CaseID
+			break
+		}
+	}
+	if governedCaseID == "" {
+		fatalf("round trip: governed policy-assist case is missing")
+	}
+	var assists struct {
+		Assists []struct {
+			ContentErased bool `json:"content_erased"`
+			Result        *struct {
+				Suggestion map[string]any `json:"suggestion"`
+			} `json:"result"`
+			Action *struct {
+				Action string         `json:"action"`
+				Final  map[string]any `json:"final"`
+			} `json:"action"`
+		} `json:"assists"`
+	}
+	get("/v1/cases/"+governedCaseID+"/agent-assists", &assists)
+	requireEq("policy-requested case assists", len(assists.Assists), 2)
+	edited := false
+	for _, assist := range assists.Assists {
+		if assist.ContentErased || assist.Result == nil || len(assist.Result.Suggestion) == 0 {
+			fatalf("round trip: governed assist content did not survive operational-state restore")
+		}
+		if assist.Action != nil && assist.Action.Action == "edited" {
+			edited = len(assist.Action.Final) > 0
+		}
+	}
+	if !edited {
+		fatalf("round trip: reviewer-edited final did not survive operational-state restore")
 	}
 
 	var agents struct {
@@ -467,6 +535,35 @@ func spotCheck(srv *server.Server) string {
 	}
 	get("/v1/agents", &agents)
 	requireEq("agents", len(agents.Agents), 7)
+
+	var governed struct {
+		Templates []json.RawMessage `json:"templates"`
+	}
+	get("/v1/agent-templates", &governed)
+	requireEq("governed agent templates", len(governed.Templates), 1)
+	var releases struct {
+		Releases []struct {
+			Status string `json:"status"`
+		} `json:"releases"`
+	}
+	get("/v1/agent-templates/governed-case-copilot/releases", &releases)
+	requireEq("governed agent releases", len(releases.Releases), 2)
+	if releases.Releases[0].Status != "review_requested" || releases.Releases[1].Status != "approved" {
+		fatalf("round trip: governed release statuses = %+v, want review_requested then approved", releases.Releases)
+	}
+	var agentDeployments struct {
+		Deployments []struct {
+			Status string `json:"status"`
+		} `json:"deployments"`
+	}
+	get("/v1/agent-deployments", &agentDeployments)
+	requireEq("governed agent deployments", len(agentDeployments.Deployments), 1)
+	if agentDeployments.Deployments[0].Status != "active" {
+		fatalf(
+			"round trip: governed deployment status = %q, want active",
+			agentDeployments.Deployments[0].Status,
+		)
+	}
 
 	var runs struct {
 		Runs []struct {

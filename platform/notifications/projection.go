@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	agentgovernance "github.com/e6qu/intraktible/agent-manager/governance"
 	cmevents "github.com/e6qu/intraktible/case-manager/events"
 	"github.com/e6qu/intraktible/decision-engine/authoring"
 	deevents "github.com/e6qu/intraktible/decision-engine/events"
@@ -68,7 +69,9 @@ type Projector struct{}
 
 func (Projector) Name() string { return Collection }
 func (Projector) Collections() []string {
-	return []string{Collection, caseIndexCollection, readReceiptCollection}
+	return []string{
+		Collection, caseIndexCollection, readReceiptCollection, agentAssistIndexCollection,
+	}
 }
 
 func (Projector) Apply(ctx context.Context, e eventlog.Envelope, s store.Store) error {
@@ -139,6 +142,44 @@ func (Projector) Apply(ctx context.Context, e eventlog.Envelope, s store.Store) 
 		return applyChangeSetReviewed(ctx, e, s)
 	case authoring.TypeChangeSetReviewReminded:
 		return applyChangeSetReviewReminded(ctx, e, s)
+	case agentgovernance.TypeCampaignRecorded:
+		return applyAgentCampaignRecorded(ctx, e, s)
+	case agentgovernance.TypeCampaignTrialAdjudicated:
+		return applyAgentCampaignTrialAdjudicated(ctx, e, s)
+	case agentgovernance.TypeReleaseReviewRequested:
+		return applyAgentReleaseReviewRequested(ctx, e, s)
+	case agentgovernance.TypeReleaseReviewed:
+		return applyAgentReleaseReviewed(ctx, e, s)
+	case agentgovernance.TypeReleaseReviewExpired:
+		return applyAgentReleaseReviewExpired(ctx, e, s)
+	case agentgovernance.TypeDeploymentRequested:
+		return applyAgentDeploymentRequested(ctx, e, s)
+	case agentgovernance.TypeDeploymentActivated:
+		return applyAgentDeploymentActivated(ctx, e, s)
+	case agentgovernance.TypeDeploymentPaused:
+		return applyAgentDeploymentPaused(ctx, e, s)
+	case agentgovernance.TypeDeploymentResumed:
+		return applyAgentDeploymentResumed(ctx, e, s)
+	case agentgovernance.TypeDeploymentRolledBack:
+		return applyAgentDeploymentRolledBack(ctx, e, s)
+	case agentgovernance.TypeAssistRequested:
+		return applyAgentAssistRequested(ctx, e, s)
+	case agentgovernance.TypeAssistFailed:
+		return applyAgentAssistFailed(ctx, e, s)
+	case agentgovernance.TypeAssistDeadLettered:
+		return applyAgentAssistDeadLettered(ctx, e, s)
+	case agentgovernance.TypeAssistRetryRequested:
+		return applyAgentAssistRetryRequested(ctx, e, s)
+	case agentgovernance.TypeToolApprovalRequested:
+		return applyAgentToolApprovalRequested(ctx, e, s)
+	case agentgovernance.TypeToolApprovalDecided:
+		return applyAgentToolApprovalDecided(ctx, e, s)
+	case agentgovernance.TypeToolApprovalExpired:
+		return applyAgentToolApprovalExpired(ctx, e, s)
+	case agentgovernance.TypeSafetyIncidentOpened:
+		return applyAgentSafetyIncidentOpened(ctx, e, s)
+	case agentgovernance.TypeSafetyIncidentResolved:
+		return applyAgentSafetyIncidentResolved(ctx, e, s)
 	case deevents.TypeFlowVersionRolledBack:
 		return applyFlowRolledBack(ctx, e, s)
 	case deevents.TypeDeployScheduleActivated:

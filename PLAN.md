@@ -342,6 +342,12 @@ delivered, by theme:
   rebalance, and restart-safe SLA queue escalation; search, saved views, duplicate review, durable bulk
   manifests, independent QA/validated outcomes, workload/SLA/quality analytics, governed attachment
   metadata and audited capability access, notification/webhook operations, and PII/lifecycle-aware UI.
+- **Governed agentic operations:** reusable specialist templates and immutable releases; repeated,
+  adversarial, deterministic, and governed semantic evaluation with human adjudication and exact-suite
+  comparison; independent release review and environment deployment; trust/tool/budget containment,
+  failure-rate circuits, safety incidents, and explicit recovery; durable evidence-cited case assists
+  with accountable reviewer actions, validated-outcome analytics, and a versioned remote-agent
+  protocol.
 - **Model-risk & governance packaging:** **SR 11-7 / SS1/23 model inventory** (`mrm/`) across flows,
   models, and agents; AI/ML governance — agent registry/versioning, offline eval, guardrails, cost
   attribution; structured **reason codes** end-to-end.
@@ -830,6 +836,43 @@ evidence, queues, dispositions, independent QA, validated outcomes, and reviewer
 a reusable agent product/library, production-grade adversarial and repeated evaluation, explicit
 untrusted-content controls, a governed agent release/deploy lifecycle, evidence-cited reviewer
 assistance, and a closed quality-learning loop between agent runs and case outcomes.
+
+**Implemented in the E5 branch:** reusable templates now produce immutable, dependency-pinned releases
+with typed input/output contracts, evidence rules, trust policy, tool approval modes, budgets, and
+timeouts. Immutable evaluation suites support representative and adversarial cases, repeated trials,
+deterministic and governed semantic graders, exact definition/rubric hashes, segment evidence, human
+adjudication, effective gates, paired baseline/challenger comparison, and reproducible JSON/CSV
+exports. Independent assigned review gates environment-exclusive deployment; scheduled activation,
+pause, rollback, approval expiry, retirement, and explicit guarded resume are event-sourced and
+replayable.
+
+Durable case assists pin the exact release, policy, case evidence snapshot, and invocation identity.
+Replica-safe workers claim and heartbeat attempts, propagate cancellation, bound retries and dead
+letters, and resume human-before-call tool approvals through the same worker path. Tool effects are
+authorized immediately before execution and only platform-recorded results may become evidence.
+Malformed/provider failures remain visible and cannot block queueing, SLA work, or case resolution.
+Reviewers inspect citations and staleness, then accept, edit, reject, retry, or escalate; accepted and
+edited finals record suggestion/final hashes, value-free differences, observed evidence head, time
+saved, QA, and validated-outcome lineage without silently performing the governed case action.
+
+Quality, adoption, edit/reject, QA, outcome, latency, token, cost, and missing-outcome analytics join
+back to exact template/release/provider/model/tool/segment/environment versions. Event-derived
+failure-rate circuits latch once across replicas, block admission, open a critical safety incident,
+and require separate incident resolution plus an authorized explicit deployment resume; no provider
+or model fallback exists. Generated assist content and reviewer edits are subject-key sealed and
+crypto-shreddable while hashes, reviewer accountability, staleness, and value-free differences remain.
+The API, OpenAPI, Go and TypeScript SDKs, CLI, scheduler, notifications, MRM report, Builder/Operator/
+Reviewer UI, real-Wasm demo, seeded replay, and versioned remote-agent protocol expose the same
+governed lifecycle.
+
+**Local closure evidence (2026-07-30):** the exact E5 release candidate passes 135 native browser
+journeys with retries disabled, 86 real-Wasm journeys over the 8,747-event production replay, four
+embedded single-binary journeys, all 247 frontend units, zero-warning frontend check/lint/format and
+production build, and the full race-enabled Go CI matrix (vet/build, strict lint, SAST, dead-code,
+zero production clones, licenses, and zero reachable vulnerabilities). The complete native matrix
+also caught and closed a fresh-tenant integration defect: empty Case Analytics workload and queue
+collections now remain JSON arrays rather than `null`, so the shared UI contract holds before any
+operational data exists.
 
 **Primary journeys:**
 

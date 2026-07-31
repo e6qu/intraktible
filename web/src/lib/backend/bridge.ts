@@ -15,6 +15,7 @@ export interface BackendAssets {
   wasmURL: string;
   wasmExecURL: string;
   seedURL: string;
+  stateURL: string;
 }
 
 type Pending = {
@@ -116,6 +117,7 @@ export function bootEmbeddedBackend(
     wasmURL: assets.wasmURL,
     wasmExecURL: assets.wasmExecURL,
     seedURL: assets.seedURL,
+    stateURL: assets.stateURL,
     delta: localStorage.getItem(DELTA_KEY) ?? ''
   });
   return ready;

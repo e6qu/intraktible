@@ -65,6 +65,30 @@ import {
   retryAgentRun,
   escalateRun,
   getRunSummary,
+  listAgentTemplates,
+  createAgentRelease,
+  runAgentCampaign,
+  listAgentCampaigns,
+  adjudicateAgentCampaignTrial,
+  compareAgentCampaigns,
+  downloadAgentCampaign,
+  requestAgentReleaseReview,
+  deployAgentRelease,
+  activateAgentDeployment,
+  pauseAgentDeployment,
+  resumeAgentDeployment,
+  rollbackAgentDeployment,
+  retireAgentRelease,
+  listAgentSafetyIncidents,
+  openAgentSafetyIncident,
+  resolveAgentSafetyIncident,
+  listAgentToolApprovals,
+  decideAgentToolApproval,
+  getAgentGovernanceAnalytics,
+  requestCaseAgentAssist,
+  retryAgentAssist,
+  cancelAgentAssist,
+  recordAgentAssistAction,
   login,
   logout,
   currentUser,
@@ -1149,6 +1173,276 @@ describe('cases', () => {
 });
 
 describe('agents', () => {
+  it('lists governed templates and creates an immutable release spec', async () => {
+    const listFetch = fetcherReturning(200, {
+      templates: [{ template_id: 't 1', slug: 'case-assist', name: 'Case assist' }]
+    });
+    const templates = await listAgentTemplates('k', listFetch);
+    expect(templates[0].template_id).toBe('t 1');
+
+    const releaseFetch = fetcherReturning(201, { release: 2, spec_hash: 'abc', seq: 9 });
+    await createAgentRelease(
+      'k',
+      't 1',
+      {
+        instructions: 'cite',
+        provider: 'openai',
+        model: 'gpt',
+        input_schema: { type: 'object' },
+        output_schema: { type: 'object' },
+        tools: [],
+        data_purposes: ['case_review'],
+        dependencies: [],
+        budget: {
+          max_prompt_tokens: 100,
+          max_completion_tokens: 100,
+          max_tool_calls: 0,
+          max_cost_usd: 0.1,
+          input_cost_per_mtok: 0,
+          output_cost_per_mtok: 0,
+          pricing_source: 'contract',
+          pricing_version: '1'
+        },
+        timeout_ms: 1000,
+        max_attempts: 1,
+        require_citations: true,
+        require_human_gate: true,
+        allow_remote_agent: false
+      },
+      releaseFetch
+    );
+    expect(releaseFetch.mock.calls[0][0]).toBe('/v1/agent-templates/t%201/releases');
+    expect(JSON.parse(releaseFetch.mock.calls[0][1]?.body as string).spec.model).toBe('gpt');
+  });
+
+  it('runs evaluation, requests review, and deploys exact release lineage', async () => {
+    const campaignFetch = fetcherReturning(201, {
+      campaign: { campaign_id: 'campaign-1', blocking: false }
+    });
+    await runAgentCampaign('k', 'template', 3, 'safety', 2, campaignFetch);
+    expect(campaignFetch.mock.calls[0][0]).toBe(
+      '/v1/agent-templates/template/releases/3/campaigns'
+    );
+    expect(JSON.parse(campaignFetch.mock.calls[0][1]?.body as string)).toEqual({
+      suite_id: 'safety',
+      suite_version: 2
+    });
+
+    const listFetch = fetcherReturning(200, { campaigns: [{ campaign_id: 'campaign-1' }] });
+    expect(await listAgentCampaigns('k', 'template', 3, listFetch)).toHaveLength(1);
+
+    const adjudicationFetch = fetcherReturning(200, { event_id: 'event-1', seq: 4 });
+    await adjudicateAgentCampaignTrial(
+      'k',
+      'campaign/1',
+      'attack/1',
+      2,
+      true,
+      'Semantically equivalent refusal',
+      adjudicationFetch
+    );
+    expect(adjudicationFetch.mock.calls[0][0]).toBe(
+      '/v1/agent-eval-campaigns/campaign%2F1/trials/attack%2F1/2/adjudication'
+    );
+
+    const comparisonFetch = fetcherReturning(200, {
+      baseline_campaign_id: 'baseline',
+      challenger_campaign_id: 'challenger',
+      rows: []
+    });
+    await compareAgentCampaigns('k', 'baseline', 'challenger', comparisonFetch);
+    expect(comparisonFetch.mock.calls[0][0]).toBe(
+      '/v1/agent-eval-comparisons?baseline_campaign_id=baseline&challenger_campaign_id=challenger'
+    );
+
+    const exportFetch = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        new Response('campaign,trial\\n', { status: 200 })
+    );
+    const exportBlob = await downloadAgentCampaign('k', 'campaign/1', 'csv', exportFetch);
+    expect(await exportBlob.text()).toBe('campaign,trial\\n');
+    expect(exportFetch.mock.calls[0][0]).toBe(
+      '/v1/agent-eval-campaigns/campaign%2F1/export?format=csv'
+    );
+
+    const reviewFetch = fetcherReturning(202, { request_id: 'review-1', seq: 10 });
+    await requestAgentReleaseReview(
+      'k',
+      'template',
+      3,
+      ['campaign-1'],
+      ['evaluation:campaign-1'],
+      ['checker'],
+      '2026-08-01T00:00:00Z',
+      reviewFetch
+    );
+    expect(JSON.parse(reviewFetch.mock.calls[0][1]?.body as string).reviewers).toEqual(['checker']);
+
+    const deployFetch = fetcherReturning(202, { deployment_id: 'd1', seq: 11 });
+    await deployAgentRelease(
+      'k',
+      {
+        template_id: 'template',
+        release: 3,
+        environment: 'production',
+        reason: 'approved evidence'
+      },
+      deployFetch
+    );
+    expect(deployFetch.mock.calls[0][0]).toBe('/v1/agent-deployments');
+  });
+
+  it('pins case evidence and preserves the assist idempotency header and feedback', async () => {
+    const assistFetch = fetcherReturning(202, {
+      assist_id: 'assist-1',
+      status: 'completed',
+      seq: 12
+    });
+    await requestCaseAgentAssist(
+      'k',
+      'case/1',
+      {
+        kind: 'summary',
+        template_id: 'template',
+        release: 3,
+        environment: 'production',
+        evidence_ids: ['e1']
+      },
+      'logical-request-1',
+      assistFetch
+    );
+    expect(assistFetch.mock.calls[0][0]).toBe('/v1/cases/case%2F1/agent-assists');
+    expect(new Headers(assistFetch.mock.calls[0][1]?.headers).get('Idempotency-Key')).toBe(
+      'logical-request-1'
+    );
+
+    const retryFetch = fetcherReturning(200, { event_id: 'retry', seq: 13 });
+    await retryAgentAssist(
+      'k',
+      'assist/1',
+      'operator accepts possible duplicate cost',
+      true,
+      retryFetch
+    );
+    expect(retryFetch.mock.calls[0][0]).toBe('/v1/agent-assists/assist%2F1/retry');
+    expect(JSON.parse(retryFetch.mock.calls[0][1]?.body as string)).toEqual({
+      reason: 'operator accepts possible duplicate cost',
+      acknowledge_at_least_once: true
+    });
+
+    const cancelFetch = fetcherReturning(200, { event_id: 'cancel', seq: 14 });
+    await cancelAgentAssist('k', 'assist/1', 'no longer needed', cancelFetch);
+    expect(cancelFetch.mock.calls[0][0]).toBe('/v1/agent-assists/assist%2F1/cancel');
+
+    const actionFetch = fetcherReturning(200, { seq: 13 });
+    await recordAgentAssistAction(
+      'k',
+      'assist-1',
+      {
+        action: 'edited',
+        final: { summary: 'reviewed' },
+        reason: 'corrected emphasis',
+        time_saved_ms: 90_000
+      },
+      actionFetch
+    );
+    expect(JSON.parse(actionFetch.mock.calls[0][1]?.body as string)).toEqual({
+      assist_id: 'assist-1',
+      action: 'edited',
+      final: { summary: 'reviewed' },
+      reason: 'corrected emphasis',
+      time_saved_ms: 90_000
+    });
+  });
+
+  it('drives deployment, safety, and human-before-call controls through exact routes', async () => {
+    const activateFetch = fetcherReturning(200, { seq: 14 });
+    await activateAgentDeployment('k', 'deployment/1', activateFetch);
+    expect(activateFetch.mock.calls[0][0]).toBe('/v1/agent-deployments/deployment%2F1/activate');
+
+    const pauseFetch = fetcherReturning(200, { seq: 15 });
+    await pauseAgentDeployment('k', 'deployment/1', 'contain incident', pauseFetch);
+    expect(JSON.parse(pauseFetch.mock.calls[0][1]?.body as string)).toEqual({
+      reason: 'contain incident'
+    });
+
+    const resumeFetch = fetcherReturning(200, { seq: 16 });
+    await resumeAgentDeployment('k', 'deployment/1', 'incident resolved', resumeFetch);
+    expect(resumeFetch.mock.calls[0][0]).toBe('/v1/agent-deployments/deployment%2F1/resume');
+    expect(JSON.parse(resumeFetch.mock.calls[0][1]?.body as string)).toEqual({
+      reason: 'incident resolved'
+    });
+
+    const rollbackFetch = fetcherReturning(200, { seq: 17 });
+    await rollbackAgentDeployment('k', 'deployment/1', 2, 'quality regression', rollbackFetch);
+    expect(JSON.parse(rollbackFetch.mock.calls[0][1]?.body as string)).toEqual({
+      to_release: 2,
+      reason: 'quality regression'
+    });
+
+    const retireFetch = fetcherReturning(200, { seq: 17 });
+    await retireAgentRelease('k', 'template/1', 3, 'superseded', retireFetch);
+    expect(retireFetch.mock.calls[0][0]).toBe('/v1/agent-templates/template%2F1/releases/3/retire');
+
+    const incidentListFetch = fetcherReturning(200, {
+      incidents: [{ incident_id: 'incident-1', status: 'open' }]
+    });
+    expect(await listAgentSafetyIncidents('k', incidentListFetch)).toHaveLength(1);
+
+    const incidentOpenFetch = fetcherReturning(201, { incident_id: 'incident-1', seq: 18 });
+    await openAgentSafetyIncident(
+      'k',
+      {
+        template_id: 'template',
+        release: 3,
+        kind: 'prompt_injection',
+        severity: 'critical',
+        summary: 'Injection crossed a safety boundary'
+      },
+      incidentOpenFetch
+    );
+    expect(incidentOpenFetch.mock.calls[0][0]).toBe('/v1/agent-safety-incidents');
+
+    const incidentResolveFetch = fetcherReturning(200, { seq: 19 });
+    await resolveAgentSafetyIncident('k', 'incident/1', 'contained', incidentResolveFetch);
+    expect(incidentResolveFetch.mock.calls[0][0]).toBe(
+      '/v1/agent-safety-incidents/incident%2F1/resolve'
+    );
+
+    const approvalsFetch = fetcherReturning(200, {
+      approvals: [{ approval_id: 'approval-1', status: 'pending' }]
+    });
+    expect(await listAgentToolApprovals('k', approvalsFetch)).toHaveLength(1);
+
+    const decisionFetch = fetcherReturning(200, {
+      approval_id: 'approval-1',
+      assist_id: 'assist-1',
+      status: 'requested',
+      seq: 20
+    });
+    await decideAgentToolApproval(
+      'k',
+      'approval/1',
+      'approved',
+      'necessary and proportionate',
+      decisionFetch
+    );
+    expect(decisionFetch.mock.calls[0][0]).toBe('/v1/agent-tool-approvals/approval%2F1/decision');
+    expect(JSON.parse(decisionFetch.mock.calls[0][1]?.body as string)).toEqual({
+      decision: 'approved',
+      reason: 'necessary and proportionate'
+    });
+
+    const analyticsFetch = fetcherReturning(200, {
+      totals: { assists: 2, adoption_rate: 0.5 },
+      groups: [],
+      segments: []
+    });
+    const analytics = await getAgentGovernanceAnalytics('k', analyticsFetch);
+    expect(analytics.totals.assists).toBe(2);
+    expect(analyticsFetch.mock.calls[0][0]).toBe('/v1/agent-governance/analytics');
+  });
+
   it('listAgents unwraps the agents array', async () => {
     const fetcher = fetcherReturning(200, { agents: [{ name: 'triage', runs: 0 }] });
     const a = await listAgents('k', fetcher);

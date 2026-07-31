@@ -15,6 +15,8 @@ import (
 	"github.com/e6qu/intraktible/agent-manager/agents"
 	"github.com/e6qu/intraktible/agent-manager/domain"
 	"github.com/e6qu/intraktible/agent-manager/eval"
+	agentgovernance "github.com/e6qu/intraktible/agent-manager/governance"
+	engine "github.com/e6qu/intraktible/decision-engine/domain"
 	"github.com/e6qu/intraktible/decision-engine/flows"
 	"github.com/e6qu/intraktible/decision-engine/history"
 	"github.com/e6qu/intraktible/decision-engine/models"
@@ -117,6 +119,90 @@ func TestValidatedAgentHasNoIssue(t *testing.T) {
 	m := rep.Models[0]
 	if m.Validation.Coverage != mrm.CoverageTested || m.Validation.EvalCases != 1 || len(m.Issues) != 0 {
 		t.Fatalf("a validated agent should be tested with no issues: %+v", m)
+	}
+}
+
+func TestGovernedAgentCarriesReleaseEvaluationAssistCostAndSafety(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemory()
+	id := identity.Identity{Org: "demo", Workspace: "main"}
+	now := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
+	put(
+		t, st, agentgovernance.CollectionTemplates, store.Key("demo", "main", "copilot"),
+		agentgovernance.TemplateView{
+			Org: "demo", Workspace: "main",
+			Template: agentgovernance.Template{
+				TemplateID: "copilot", Slug: "copilot", Name: "Case copilot", Task: "Assist",
+			},
+			LatestRelease: 2, RegisteredAt: now.Add(-time.Hour),
+		},
+	)
+	put(
+		t, st, agentgovernance.CollectionReleases,
+		store.Key("demo", "main", "copilot:2"),
+		agentgovernance.ReleaseView{
+			Org: "demo", Workspace: "main", TemplateID: "copilot", Release: 2,
+			Status: agentgovernance.ReleaseApproved, CampaignIDs: []string{"campaign-1"},
+			CreatedBy: "maker", CreatedAt: now,
+		},
+	)
+	put(
+		t, st, agentgovernance.CollectionCampaigns,
+		store.Key("demo", "main", "campaign-1"),
+		agentgovernance.CampaignView{
+			Org: "demo", Workspace: "main",
+			CampaignResult: agentgovernance.CampaignResult{
+				CampaignID: "campaign-1", TemplateID: "copilot", Release: 2,
+				Total: 6, Passed: 6,
+			},
+		},
+	)
+	put(
+		t, st, agentgovernance.CollectionDeployments,
+		store.Key("demo", "main", "production"),
+		agentgovernance.DeploymentView{
+			Org: "demo", Workspace: "main", DeploymentID: "production",
+			TemplateID: "copilot", Release: 2, Environment: engine.EnvProduction,
+			Status: agentgovernance.DeploymentActive,
+		},
+	)
+	put(
+		t, st, agentgovernance.CollectionAssists,
+		store.Key("demo", "main", "assist-1"),
+		agentgovernance.AssistView{
+			Org: "demo", Workspace: "main", AssistID: "assist-1",
+			TemplateID: "copilot", Status: "completed",
+			Result: &agentgovernance.AssistResult{
+				PromptTokens: 100, OutputTokens: 20, CostUSD: 0.01,
+			},
+			Action: &agentgovernance.ReviewerAction{
+				AssistID: "assist-1", Action: agentgovernance.AssistEdited,
+			},
+		},
+	)
+	put(
+		t, st, agentgovernance.CollectionIncidents,
+		store.Key("demo", "main", "incident-1"),
+		agentgovernance.IncidentView{
+			Org: "demo", Workspace: "main", IncidentID: "incident-1",
+			TemplateID: "copilot", Release: 2, Status: "open",
+		},
+	)
+	report, err := mrm.Build(ctx, st, id, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Models) != 1 {
+		t.Fatalf("models = %+v", report.Models)
+	}
+	model := report.Models[0]
+	if model.Validation.Coverage != mrm.CoverageTested ||
+		model.Deployments["production"] != 2 ||
+		model.Monitoring.CostUSD != 0.01 ||
+		model.Monitoring.AssistEdited != 1 ||
+		model.Monitoring.OpenIncidents != 1 ||
+		!hasIssue(model.Issues, "open agent safety incident") {
+		t.Fatalf("governed agent model = %+v", model)
 	}
 }
 

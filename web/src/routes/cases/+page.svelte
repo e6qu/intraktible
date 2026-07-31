@@ -35,6 +35,7 @@
     type CaseTypeView,
     type CaseTypeDefinition,
     type CaseQueueDefinition,
+    type CaseAssistAutomation,
     type CaseReviewerProfile,
     type CaseSavedView,
     type CaseDuplicateGroup
@@ -404,7 +405,23 @@
           end_hour: 17,
           sla_hours: 24
         },
-        evidence_requirements: [],
+        evidence_requirements: [
+          {
+            key: 'decision_record',
+            label: 'Decision record',
+            kinds: ['decision'],
+            required: true
+          }
+        ],
+        assist_automations: [
+          {
+            key: 'opening_summary',
+            kind: 'summary',
+            template_id: 'governed-case-copilot',
+            environment: 'production',
+            evidence_requirements: ['decision_record']
+          }
+        ],
         layouts: [{ role: 'operator', sections: ['risk_score', 'customer_name'] }]
       },
       null,
@@ -418,6 +435,7 @@
   let queueEscalation = $state('');
   let queueMinAge = $state(0);
   let queueMaxAge = $state(0);
+  let queueAssistsJSON = $state('[]');
   let reviewerActor = $state('');
   let reviewerSkills = $state('');
   let reviewerCapacity = $state(10);
@@ -450,7 +468,8 @@
         capacity: 100,
         escalation_queue: queueEscalation.trim() || undefined,
         min_age_hours: queueMinAge || undefined,
-        max_age_hours: queueMaxAge || undefined
+        max_age_hours: queueMaxAge || undefined,
+        assist_automations: JSON.parse(queueAssistsJSON) as CaseAssistAutomation[]
       });
       toast.success(`Configured queue ${queueKey}`);
       await load();
@@ -878,6 +897,10 @@
       <button onclick={publishDefinition} disabled={configBusy}>Publish next version</button>
 
       <h2>Configure queue</h2>
+      <p class="muted">
+        Optional assist policies enqueue governed suggestions after routing. They never block queue
+        entry, assignment, SLA, or resolution.
+      </p>
       <div class="row">
         <input bind:value={queueKey} placeholder="queue key" aria-label="queue key" />
         <input bind:value={queueName} placeholder="Queue name" aria-label="queue name" />
@@ -912,6 +935,12 @@
           placeholder="max age h"
           aria-label="queue maximum age hours"
         />
+        <textarea
+          class="wide"
+          bind:value={queueAssistsJSON}
+          rows="5"
+          aria-label="queue assist automations JSON"
+        ></textarea>
         <button onclick={saveQueue} disabled={configBusy || !queueKey || !queueName}
           >Save queue</button
         >

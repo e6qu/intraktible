@@ -14,7 +14,7 @@ interface GoBackend {
    * on success, or an error message string on failure (e.g. an incompatible delta) —
    * it does NOT throw/panic the runtime, so the caller must check the return.
    */
-  boot(seedEvents: string, deltaEvents: string): string | null;
+  boot(seedEvents: string, operationalState: string, savedSession: string): string | null;
   /**
    * Serves one request through the http.Handler. onHeader fires at
    * WriteHeader time (so a streaming response is usable immediately), chunks
@@ -68,6 +68,7 @@ async function boot(
   wasmURL: string,
   wasmExecURL: string,
   seedURL: string,
+  stateURL: string,
   delta: string
 ): Promise<void> {
   // The backend's "js" AI provider resolves globalThis.__intraktible_ai through
@@ -89,9 +90,10 @@ async function boot(
   await Promise.resolve();
   const backend = globalThis.__intraktible;
   if (!backend) throw new Error('the wasm backend did not register __intraktible');
-  const seedRes = await fetch(seedURL);
+  const [seedRes, stateRes] = await Promise.all([fetch(seedURL), fetch(stateURL)]);
   if (!seedRes.ok) throw new Error(`seed event log: HTTP ${seedRes.status}`);
-  const bootErr = backend.boot(await seedRes.text(), delta);
+  if (!stateRes.ok) throw new Error(`seed operational state: HTTP ${stateRes.status}`);
+  const bootErr = backend.boot(await seedRes.text(), await stateRes.text(), delta);
   if (bootErr) throw new Error(String(bootErr));
 }
 
@@ -99,7 +101,7 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
   const msg = e.data;
   if (msg.kind === 'boot') {
     try {
-      await boot(msg.wasmURL, msg.wasmExecURL, msg.seedURL, msg.delta);
+      await boot(msg.wasmURL, msg.wasmExecURL, msg.seedURL, msg.stateURL, msg.delta);
       post({ kind: 'ready' });
     } catch (err) {
       post({ kind: 'boot-error', message: err instanceof Error ? err.message : String(err) });

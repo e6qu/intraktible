@@ -9,9 +9,12 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"time"
+
+	"github.com/e6qu/intraktible/case-manager/cases"
 )
 
 type caseNote struct {
@@ -42,6 +45,14 @@ func (s *seeder) caseConfigActions(cfg *timeCursor) []action {
 	for _, item := range caseTypes {
 		at := cfg.step(2 * time.Minute)
 		actions = append(actions, action{at: at, name: "case type " + item.key, run: func() {
+			assistAutomations := []map[string]any{}
+			if item.key == "aml_alert" {
+				assistAutomations = append(assistAutomations, map[string]any{
+					"key": "opening_summary", "kind": "summary",
+					"template_id": "governed-case-copilot", "environment": "production",
+					"evidence_requirements": []string{"supporting_record"},
+				})
+			}
 			s.call(actorPriya, http.MethodPost, "/v1/case-types", map[string]any{
 				"key": item.key, "name": item.name, "initial_state": "needs_review",
 				"fields": []map[string]any{
@@ -72,6 +83,7 @@ func (s *seeder) caseConfigActions(cfg *timeCursor) []action {
 					{"key": "supporting_record", "label": "Supporting record",
 						"kinds": []string{"decision", "attachment"}},
 				},
+				"assist_automations": assistAutomations,
 				"layouts": []map[string]any{
 					{"role": "operator", "sections": []string{"risk_score", "applicant"},
 						"editable": []string{"risk_score"}},
@@ -84,7 +96,12 @@ func (s *seeder) caseConfigActions(cfg *timeCursor) []action {
 	}
 	queues := []map[string]any{
 		{"key": "aml", "name": "AML investigations", "case_types": []string{"aml_alert"},
-			"required_skills": []string{"aml"}, "capacity": 200},
+			"required_skills": []string{"aml"}, "capacity": 200,
+			"assist_automations": []map[string]any{{
+				"key": "queue_priority", "kind": "prioritization",
+				"template_id": "governed-case-copilot", "environment": "production",
+				"evidence_requirements": []string{"supporting_record"},
+			}}},
 		{"key": "general_review", "name": "General review", "case_types": []string{
 			"claim_review", "credit_review", "dispute", "fraud_review", "hardship_review",
 			"kyc_review", "limit_review", "merchant_review", "payout_review",
@@ -378,6 +395,86 @@ func (s *seeder) enterpriseCaseActions(anchor time.Time) []action {
 				"label": "Original AML screening decision",
 			}, nil)
 		}},
+		{at: anchor.Add(-3*time.Hour - 55*time.Minute), name: "reconcile governed case assists", run: func() {
+			var view cases.CaseView
+			s.call(actorDiego, http.MethodGet, "/v1/cases/"+caseID, nil, &view)
+			prompt, err := json.Marshal(struct {
+				Trust        string               `json:"trust"`
+				CaseID       string               `json:"case_id"`
+				CaseType     string               `json:"case_type"`
+				Jurisdiction string               `json:"jurisdiction,omitempty"`
+				Context      json.RawMessage      `json:"case_context,omitempty"`
+				Evidence     []cases.EvidenceLink `json:"evidence"`
+			}{
+				Trust: "governed", CaseID: view.CaseID, CaseType: view.CaseType,
+				Jurisdiction: view.Jurisdiction, Context: view.Context,
+				Evidence: view.Evidence,
+			})
+			if err != nil {
+				fatalf("encode governed case-assist prompt: %v", err)
+			}
+			s.prov.object(string(prompt), map[string]any{
+				"suggestion": map[string]any{
+					"summary":  "The screening alert remains open for analyst review; the original decision is the governed supporting record.",
+					"priority": "high",
+				},
+				"citations": []map[string]any{{
+					"evidence_id": "contoso-decision",
+					"claim":       "The original AML screening decision is linked as supporting evidence.",
+				}},
+				"confidence": 0.91,
+				"limitations": []string{
+					"The suggestion does not replace the accountable reviewer's disposition.",
+				},
+			})
+			summary, err := s.srv.ReconcileCaseAssists(context.Background())
+			if err != nil {
+				fatalf("reconcile governed case assists: %v", err)
+			}
+			if summary.AssistEligible != 2 {
+				fatalf("reconcile governed case assists: eligible=%d, want 2", summary.AssistEligible)
+			}
+			var lastStatuses []string
+			for attempt := 0; attempt < 1000; attempt++ {
+				var response struct {
+					Assists []struct {
+						AssistID     string `json:"assist_id"`
+						Status       string `json:"status"`
+						PolicySource *struct {
+							PolicyKey string `json:"policy_key"`
+						} `json:"policy_source,omitempty"`
+					} `json:"assists"`
+				}
+				s.call(
+					actorDiego, http.MethodGet,
+					"/v1/cases/"+caseID+"/agent-assists", nil, &response,
+				)
+				completed := 0
+				lastStatuses = lastStatuses[:0]
+				for _, assist := range response.Assists {
+					lastStatuses = append(lastStatuses, assist.Status)
+					if assist.PolicySource != nil && assist.Status == "completed" {
+						completed++
+						s.setID(
+							"assist:"+assist.PolicySource.PolicyKey,
+							assist.AssistID,
+						)
+					}
+				}
+				if completed == 2 {
+					return
+				}
+				// The durable workers run independently of the scripted clock.
+				// Yield enough real execution time under a CPU-constrained build
+				// without hammering the in-process API thousands of times per
+				// second; the bounded ten-second wait still fails loudly.
+				time.Sleep(10 * time.Millisecond)
+			}
+			fatalf(
+				"policy-requested case assists did not complete; last statuses=%v",
+				lastStatuses,
+			)
+		}},
 		{at: anchor.Add(-3*time.Hour - 45*time.Minute), name: "register governed attachment", run: func() {
 			s.call(actorDiego, http.MethodPost, "/v1/cases/"+caseID+"/attachments", map[string]any{
 				"attachment_id": "contoso-registry", "name": "registry-extract.pdf",
@@ -387,6 +484,33 @@ func (s *seeder) enterpriseCaseActions(anchor time.Time) []action {
 				"requirement": "supporting_record", "subject": "customer/contoso-qa",
 				"lawful_basis": "legal_obligation",
 			}, nil)
+		}},
+		{at: anchor.Add(-3*time.Hour - 40*time.Minute), name: "edit governed case summary", run: func() {
+			s.call(
+				actorDiego, http.MethodPost,
+				"/v1/agent-assists/"+s.id("assist:opening_summary")+"/reviewer-action",
+				map[string]any{
+					"action": "edited",
+					"final": map[string]any{
+						"summary":  "The alert remains open while the reviewer corroborates beneficial ownership against the newly registered registry extract.",
+						"priority": "high",
+					},
+					"reason":        "The registry extract arrived after generation and materially narrows the review task.",
+					"time_saved_ms": 240000,
+				},
+				nil,
+			)
+		}},
+		{at: anchor.Add(-3*time.Hour - 35*time.Minute), name: "reject governed queue priority", run: func() {
+			s.call(
+				actorDiego, http.MethodPost,
+				"/v1/agent-assists/"+s.id("assist:queue_priority")+"/reviewer-action",
+				map[string]any{
+					"action": "rejected",
+					"reason": "The queue priority duplicated the governed case priority and added no operational value.",
+				},
+				nil,
+			)
 		}},
 		{at: anchor.Add(-3 * time.Hour), name: "disposition governed QA case", run: func() {
 			s.call(actorDiego, http.MethodPost, "/v1/cases/"+caseID+"/disposition", map[string]any{

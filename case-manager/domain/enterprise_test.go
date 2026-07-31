@@ -4,6 +4,7 @@ package domain
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -56,6 +57,27 @@ func TestCaseTypeDefinitionAndContext(t *testing.T) {
 	}
 	if definition.CanTransition("intake", "resolved", "operator") {
 		t.Fatal("unconfigured transition should be refused")
+	}
+}
+
+func TestCaseAssistAutomationRequiresGovernedLinkableEvidence(t *testing.T) {
+	definition := enterpriseType()
+	definition.Evidence = append(definition.Evidence, EvidenceRequirement{
+		Key: "decision_record", Label: "Decision record",
+		Kinds: []string{"decision"}, Required: true,
+	})
+	definition.Assists = []AssistAutomation{{
+		Key: "opening_summary", Kind: CaseAssistSummary,
+		TemplateID: "case-copilot", Environment: CaseAssistProduction,
+		EvidenceRequirements: []string{"decision_record"},
+	}}
+	if err := definition.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	definition.Assists[0].EvidenceRequirements = []string{"registry_extract"}
+	if err := definition.Validate(); err == nil ||
+		!strings.Contains(err.Error(), "has no linkable kind") {
+		t.Fatalf("attachment-only automation error = %v", err)
 	}
 }
 

@@ -53,6 +53,12 @@ type RetentionGate interface {
 // been destroyed — the subject's data is irrecoverable, by design.
 var ErrErased = errors.New("erasure: subject has been erased")
 
+// ErrKeyUnavailable means ciphertext exists but this store has no operational
+// subject-key record for it. This is a restore/configuration failure, not an
+// erasure: callers must fail loudly instead of claiming that a user exercised
+// their right to erasure.
+var ErrKeyUnavailable = errors.New("erasure: subject key is unavailable")
+
 // ErrHeld is returned when erasing a subject under a legal hold. A hold survives
 // retention and blocks erasure entirely (destroying data under litigation hold is
 // spoliation) — the hold must be released first, deliberately.
@@ -156,15 +162,22 @@ func (v *Vault) createKey(ctx context.Context, id identity.Identity, subj string
 	return rec, nil
 }
 
-// Open decrypts a value sealed by Seal. A missing key or an erased subject is
-// ErrErased — the data can no longer be recovered.
+// Open decrypts a value sealed by Seal. An explicitly erased subject returns
+// ErrErased. A missing operational key returns ErrKeyUnavailable so a broken
+// backup/restore cannot be misreported as a deliberate crypto-shred.
 func (v *Vault) Open(ctx context.Context, id identity.Identity, subj string, sealed []byte) ([]byte, error) {
 	rec, ok, err := v.load(ctx, id, subj)
 	if err != nil {
 		return nil, err
 	}
-	if !ok || rec.Erased != nil || len(rec.Key) == 0 {
+	if !ok {
+		return nil, ErrKeyUnavailable
+	}
+	if rec.Erased != nil {
 		return nil, ErrErased
+	}
+	if len(rec.Key) == 0 {
+		return nil, fmt.Errorf("%w: subject %q has neither a key nor an erasure tombstone", ErrKeyUnavailable, subj)
 	}
 	return open(rec.Key, sealed)
 }

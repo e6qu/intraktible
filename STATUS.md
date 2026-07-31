@@ -10,8 +10,8 @@ Turn the whole-product capability audit into the detailed plan-of-record: map
 every key Builder, Developer, Agent Designer, Reviewer, Operator, Modeler,
 Validator, Admin, SRE, Domain Owner, and Executive journey to what is real and
 what remains, then carve the remaining work into serialized large-to-huge
-full-stack pull requests. The next implementation tranche is E4, collaborative
-authoring and governed delivery.
+full-stack pull requests. The active implementation tranche is E5, governed
+agentic operations and human/AI learning.
 
 ## Standing rules (user-issued, non-negotiable)
 
@@ -34,6 +34,153 @@ authoring and governed delivery.
 6. No subagents, no workflows (system-prompt instruction).
 
 ## Phase
+
+**Enterprise PR E4 — collaborative authoring and governed delivery is merged.**
+Authoritative `origin/main` is merge commit `0eea197`, containing final E4 head
+`8810602`. Exact-head hosted run `30573475006` passed all nine jobs: Go
+race/security/license, real PostgreSQL, 134 native browser journeys, 84
+real-Wasm journeys, four embedded-artifact journeys, real Shauth SSO, web,
+Terraform, and container contracts. PR #163 is merged, its remote branch was
+deleted, and fresh reconciliation found the open-PR queue empty.
+
+E5 branch `enterprise/e5-governed-agent-operations` was cut exactly from that
+merge. Its acceptance boundary is `PLAN.md` §8b.6: governed reusable agent
+assets and deployments, repeated/adversarial evaluation, explicit
+untrusted-content and tool/budget containment, evidence-cited case assistance,
+human action/QA/outcome learning, operator quality/safety/cost controls, and a
+versioned bring-your-own-agent protocol. The existing Agent Manager runtime,
+durable leases, eval cases, tool allowlists, costs, and Case Manager governance
+are the starting substrate, not completion evidence. No E5 dependency has been
+added. Fresh pre-push reconciliation confirmed `origin/main` remains `0eea197`
+and the open-PR queue was empty; the completed vertical is now the sole open
+review item, PR #164.
+
+The first E5 platform loop is implemented and focused-tested: immutable agent
+templates/releases/evaluation suites and campaigns, independent release review,
+scheduled environment deployments and rollback, evidence-cited case assists,
+durable human-before-tool approval, exact platform-owned tool proofs, safety
+incidents, joined quality/adoption/QA/outcome/cost analytics, MRM lineage, remote
+agent protocol, APIs, Go/TypeScript SDKs, CLI, notifications, scheduler, and
+Builder/Operator/Reviewer UI. The public API cannot inject terminal assist
+evidence; the backend runs the governed provider/tool path itself. Generated
+assist content is crypto-shreddable under the case subject: cleartext is absent
+from the event log and projection, reads decrypt only for authorized tenant
+callers, erased subjects return an explicit content-erased state, and the
+browser never receives ciphertext. High-signal PII is rejected before append
+across governed assets, evals, feedback, incidents, and control reasons. Focused
+governance/server/MRM/client/CLI tests plus frontend typecheck/lint and
+API/SDK/simulator units are green. E5 remains open for policy-requested assists,
+staleness/suggestion-diff UX, full
+demo/browser/replay evidence, documentation, and release gates. Exact
+deterministic and governed semantic graders now produce immutable
+definition/rubric hashes, provider/model/invocation evidence, separate
+token/cost/latency records, and untrusted-output containment; their scores
+remain independently adjudicable. The 8,743-event real demo seed includes six
+semantic-grade trials and replays through the production projector. Independent
+trial adjudication overlays immutable provider evidence, re-derives the gate
+and resolves stale alerts; paired
+exact-suite baseline/challenger comparison and reproducible JSON/CSV exports
+are wired through API, SDKs, CLI, analytics/MRM, and the release UI. Durable
+assist execution now uses sealed request snapshots, stable invocation IDs,
+replica-safe claims/heartbeats, bounded incremental recovery, lease dead
+letters, explicit at-least-once retry, and cancellation propagation. Approved
+human-before-call continuations requeue to the same worker path instead of
+executing inside the approver's HTTP request. API/OpenAPI/RBAC, both SDKs, CLI,
+notifications, auto-refreshing reviewer controls, projectors, and race-tested
+worker/lease/cancellation/tool-continuation regressions cover that flow.
+Runtime containment now derives an immutable release's failure-rate circuit
+from terminal assist events rather than mutable counters. Threshold crossing
+latches one critical incident across replicas, blocks admission immediately,
+and lets the scheduler pause the exact binding in the same tick; there is no
+provider/model fallback. Incident resolution starts a fresh sequence-bounded
+window, but an independently authorized operator must explicitly resume the
+still-approved, unexpired, environment-exclusive deployment. The release
+builder, paused-binding UI, incident evidence/deep links, OpenAPI, both SDKs,
+CLI, RBAC, notifications, real seed replay, and exact threshold/reset/
+containment regressions cover the journey.
+Case-type and queue policies can now request eligible assists asynchronously
+through the real case scheduler. Reconciliation waits for every governed
+evidence requirement, pins the active exact release and configuration sequence,
+deduplicates by policy plus evidence fingerprint, and leaves routing, SLA, and
+resolution independent. Automated failure/tool outcomes go to the human
+operator queue rather than a synthetic actor. The 8,749-event demo drives two
+such policies through the actual scheduler, durable worker, provider,
+subject-keyed sealing, projection, and replay; completed events contain no
+cleartext suggestion.
+Reviewer adoption is now evidence-aware rather than a cosmetic feedback flag.
+Assist reads compare the pinned snapshot with the authoritative current linked
+evidence and immutable attachment sequence. Actions record the observed head
+and stale state; accepted/edited finals carry reproducible suggestion/final
+hashes, while edits add a deterministic value-free JSON-pointer diff. Edited
+content is sealed under the case subject and crypto-shreds with it. The
+workbench exposes stale/fresh state, editable structured final, time-saved
+input, hashes, differences, and erased-content evidence, while still requiring
+the separate governed case command. The real seed includes a stale edited
+summary and stale rejection with no final cleartext in the log.
+The first real-Wasm operator journey is green in Chromium over the production
+projector and Go HTTP handler. It exposed and closed a restart boundary defect:
+encrypted assist events were replayed without the non-event-sourced subject
+keys, and a missing key was incorrectly presented as an intentional erasure.
+Missing operational keys now fail loudly and distinctly; the fictional demo
+exports/restores and session-persists its key state separately from the
+append-only log, while an explicit tombstone remains the only crypto-shred
+signal. Seed round-trip verification now requires both generated suggestions
+and the sealed reviewer-edited final to decrypt. The UI retains stale/hash/diff
+accountability after real erasure and gives resolved governed cases a visible
+final disposition. The browser journey proves both policy scopes, two stale
+warnings, edited/rejected actions, decrypted edited content, value-free diff,
+and the independent `clear / verified` case outcome.
+The native governed-release journey is green in Chromium from maker registration
+through a repeated adversarial suite, immutable release, exact evaluation,
+independent checker approval, production deployment, critical-incident
+containment, resolution, and explicit guarded resume. The walkthrough also
+closed two wire/UI defects: empty governance analytics now serialize groups and
+segments as arrays instead of `null`, and optional projection timestamps are
+omitted when unset instead of rendering year-one dates. Focused regressions pin
+both contracts.
+The failure-rate latch is also proven across replicas rather than only inside
+one handler mutex: two independent evaluators are synchronized after folding
+the same pre-incident history, then race the durable terminal-sequence claim.
+Twenty race-enabled repetitions yield exactly one opener and one incident.
+The remaining browser boundary evidence is green. A native malformed-provider
+response becomes a visible durable failure, its retry requires explicit
+at-least-once acknowledgement, and the case still completes independently. A
+real-Wasm admin erasure removes both generated suggestion content and the sealed
+reviewer edit while retaining hashes, stale evidence, reviewer actions,
+value-free differences, and the final disposition. Adding the governance list
+and release detail to the measured contrast gate exposed three raw-accent text
+violations; both pages now use the text-safe accent token and pass light/dark
+WCAG-AA audits.
+Phase-closing product documentation now describes the delivered E5 boundary
+instead of the legacy direct-run substrate: `PLAN.md` records the implemented
+vertical, `docs/JOURNEYS.md` carries the complete designer→evaluator→reviewer→
+operator journey, and the enterprise/competitive/component references agree on
+governed releases, case assistance, safety containment, and human/QA/outcome
+learning. `BUGS.md` records the E5 delivery and audit slices.
+The whole-diff audit has additionally closed remote-protocol request/response
+bounds and verifier secret strength, public and internal idempotency proof
+validation, retry re-admission and budget checks, worker health propagation,
+tenant-scoped incident containment, impossible queue-policy evidence
+configuration, command-palette/help discovery, keyed MRM rows, base-safe links,
+and a CPU-insensitive bounded demo-worker wait. The full native browser matrix
+then exposed a fresh-tenant Case Analytics render failure: the backend encoded
+empty workload and queue collections as `null`, while the UI correctly treated
+them as arrays. The projection now preserves empty JSON arrays and a regression
+pins the wire contract.
+
+The E5 source is locally complete. The exact release candidate passes 135
+native browser journeys with retries disabled, 86 real-Wasm journeys over the
+8,747-event production replay, four embedded single-binary journeys, all 247
+frontend units, zero-warning typecheck/lint/format and production build, plus
+the full race-enabled Go CI matrix with vet/build, strict lint, SAST,
+dead-code, zero production clones, licenses, and zero reachable
+vulnerabilities. Final diff hygiene, OpenAPI parsing, Go formatting, SPDX, and
+source-marker checks are also clean. Commit `2d800ad` is pushed and PR #164 is
+open. Hosted run `30596019405` passed all nine jobs: Go race/security/license,
+real PostgreSQL, 135 native browser journeys, 86 real-Wasm journeys, four
+embedded-artifact journeys, real Shauth SSO, web, Terraform, and container
+contracts. This continuity-only update records that evidence; no product source
+changed after the green run.
 
 **Enterprise PR E3 — enterprise case operations is merged.** Authoritative
 `origin/main` is merge commit `89bca6a`, containing E3 head `7e55c3d`; its final

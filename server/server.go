@@ -16,6 +16,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -28,10 +29,12 @@ import (
 	"github.com/e6qu/intraktible/agent-manager/agents"
 	agentcmd "github.com/e6qu/intraktible/agent-manager/command"
 	"github.com/e6qu/intraktible/agent-manager/eval"
+	agentgovernance "github.com/e6qu/intraktible/agent-manager/governance"
 	agentservice "github.com/e6qu/intraktible/agent-manager/service"
 	"github.com/e6qu/intraktible/agent-manager/tools"
 	"github.com/e6qu/intraktible/case-manager/cases"
 	casecmd "github.com/e6qu/intraktible/case-manager/command"
+	casedomain "github.com/e6qu/intraktible/case-manager/domain"
 	caseschedule "github.com/e6qu/intraktible/case-manager/schedule"
 	caseservice "github.com/e6qu/intraktible/case-manager/service"
 	contextcmd "github.com/e6qu/intraktible/context-layer/command"
@@ -148,8 +151,10 @@ type Server struct {
 	// or a wasm shell reporting rebuild progress).
 	Projections *projection.Runtime
 
-	agents     *agentcmd.Handler
-	population *population.Handler
+	agents          *agentcmd.Handler
+	agentGovernance *agentgovernance.Service
+	population      *population.Handler
+	caseScheduler   *caseschedule.Scheduler
 	// draining latches on BeginDrain and makes /readyz report 503 while the
 	// process still serves traffic, so a load balancer depools this replica
 	// before the listener closes.
@@ -173,9 +178,26 @@ func (s *Server) Close() {
 	if s.agents != nil {
 		s.agents.DrainWorkers()
 	}
+	if s.agentGovernance != nil {
+		s.agentGovernance.DrainWorkers()
+	}
 	if s.population != nil {
 		s.population.DrainWorkers()
 	}
+}
+
+// ReconcileCaseAssists advances only the policy-requested case-assist loop. It
+// is useful to deterministic hosts such as the demo seeder; production normally
+// drives the same reconciler through the configured case scheduler cadence.
+func (s *Server) ReconcileCaseAssists(
+	ctx context.Context,
+) (caseschedule.TickSummary, error) {
+	if s.caseScheduler == nil {
+		return caseschedule.TickSummary{}, errors.New(
+			"server: case assist scheduler is unavailable",
+		)
+	}
+	return s.caseScheduler.ReconcileAssists(ctx)
 }
 
 // New assembles the backend on the injected event log and projection store.
@@ -324,6 +346,14 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 	var populationScheduler *population.Scheduler
 	var experimentScheduler *experiments.Scheduler
 	var authoringScheduler *authoring.Scheduler
+	var agentGovernanceScheduler *agentgovernance.Scheduler
+	var agentGovernanceService *agentgovernance.Service
+	var governanceHandler *agentgovernance.Handler
+	if enabled(cfg.Modules, "case-manager") || enabled(cfg.Modules, "agent-manager") {
+		governanceHandler = agentgovernance.NewHandler(log).
+			WithNow(now).
+			WithContentSealer(erasureVault)
+	}
 	// Outbound webhook delivery (egress-guarded, retried, recorded) — shared by the
 	// monitor/drift pushes and the case SLA escalation, so both reach the same
 	// operator-configured webhooks.
@@ -440,7 +470,33 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 				default:
 					return caseschedule.DeliveryPermanentFailure, nil
 				}
-			})
+			}).WithAssistRequester(
+			func(
+				ctx context.Context,
+				id identity.Identity,
+				view cases.CaseView,
+				policy casedomain.AssistAutomation,
+				source caseschedule.AssistPolicySource,
+			) (caseschedule.AssistReconcileOutcome, error) {
+				_, err := governanceHandler.RequestPolicyAssist(
+					ctx, id, view, policy, agentgovernance.AssistPolicySource{
+						Kind: source.Kind, Key: source.Key,
+						ConfigurationSeq: source.ConfigurationSeq,
+						PolicyKey:        policy.Key,
+					},
+				)
+				switch {
+				case errors.Is(err, agentgovernance.ErrAssistPolicyWaiting):
+					return caseschedule.AssistWaiting, nil
+				case errors.Is(err, agentgovernance.ErrAssistPolicyIneligible):
+					return caseschedule.AssistIneligible, nil
+				case err != nil:
+					return "", err
+				default:
+					return caseschedule.AssistEligible, nil
+				}
+			},
+		)
 	}
 	if enabled(cfg.Modules, "context-layer") {
 		contextservice.New(contextcmd.NewHandler(log).WithNow(now), st,
@@ -451,8 +507,23 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 		).Routes(api)
 	}
 	srv := &Server{}
+	srv.caseScheduler = caseScheduler
 	var agentHandler *agentcmd.Handler
 	if enabled(cfg.Modules, "agent-manager") {
+		agentGovernanceService = agentgovernance.NewService(
+			governanceHandler, st,
+			agentgovernance.WithAssistRegistry(aiRegistry),
+			agentgovernance.WithToolbox(toolbox),
+			agentgovernance.WithContentSealer(erasureVault),
+			agentgovernance.WithNow(now),
+			agentgovernance.WithRemoteClient(
+				agentgovernance.NewRemoteClient(
+					egress.Client(10*time.Minute), os.LookupEnv,
+				).WithNow(now),
+			),
+		)
+		agentGovernanceService.Routes(api)
+		agentGovernanceScheduler = agentgovernance.NewScheduler(st, governanceHandler).WithNow(now)
 		agentHandler = agentcmd.NewHandler(
 			log, st, aiRegistry,
 			agentcmd.WithToolbox(toolbox),
@@ -541,6 +612,12 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 		populationHandler.StartWorkers(ctx, populationWorkers)
 		srv.population = populationHandler
 	}
+	if runWorkers && agentGovernanceService != nil {
+		if err := agentGovernanceService.StartWorkers(ctx, asyncRunWorkers); err != nil {
+			return nil, fmt.Errorf("agent governance: start assist workers: %w", err)
+		}
+		srv.agentGovernance = agentGovernanceService
+	}
 	// Validate the durable queues after projections are rebuilt. Pollers continue
 	// from here, but startup fails rather than silently serving a worker that cannot
 	// read its source of truth.
@@ -596,6 +673,11 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 	if runSchedulers && caseScheduler != nil {
 		sweeps = append(sweeps, namedTimedSweeper{name: "case_sla", runner: caseScheduler})
 	}
+	if runSchedulers && agentGovernanceScheduler != nil {
+		sweeps = append(sweeps, namedTimedSweeper{
+			name: "agent_governance", runner: agentGovernanceScheduler,
+		})
+	}
 	// Retention runs regardless of module (erasure is a platform capability); it is a
 	// no-op for every tenant without a retention policy.
 	if runSchedulers {
@@ -637,7 +719,13 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 	// health where the backend reports it — a log whose live feed has died leaves
 	// this replica just as stale as a stopped projector, and the NATS backend has no
 	// poller behind its subscription to notice on its own.
-	health := combinedHealth(readModelHealth(rt.Err, log), schedulerState.Err)
+	var agentWorkerHealth func() error
+	if agentGovernanceService != nil {
+		agentWorkerHealth = agentGovernanceService.Err
+	}
+	health := combinedHealth(
+		readModelHealth(rt.Err, log), schedulerState.Err, agentWorkerHealth,
+	)
 	root.HandleFunc("GET /healthz", httpx.Health(health))
 	// /readyz gates traffic during a rolling deploy: 503 until this replica's
 	// projections have caught up to the log head, so a freshly-started pod does not
@@ -989,7 +1077,7 @@ func Projectors(modules string) []projection.Projector {
 		ps = append(ps, entities.Projector{}, features.Projector{}, connectors.Projector{})
 	}
 	if enabled(modules, "agent-manager") {
-		ps = append(ps, agents.Projector{}, eval.Projector{})
+		ps = append(ps, agents.Projector{}, eval.Projector{}, agentgovernance.Projector{})
 	}
 	return ps
 }

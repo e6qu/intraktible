@@ -57,3 +57,10 @@ func TestOperationalAnalyticsUsesRecordedTimingAndCurrentBacklogClock(t *testing
 		t.Fatalf("queue analytics = %+v", got.Queues)
 	}
 }
+
+func TestOperationalAnalyticsEmptyCollectionsRemainJSONArrays(t *testing.T) {
+	got := cases.BuildAnalytics(nil, nil, nil, time.Time{})
+	if got.Workloads == nil || got.Queues == nil {
+		t.Fatalf("empty analytics collections must be arrays: %+v", got)
+	}
+}

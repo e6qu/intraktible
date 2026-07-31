@@ -150,12 +150,13 @@ e2e-embedded:
 		$(GO) build -o $(BIN) ./cmd/intraktible; \
 		(cd web && npm run test:e2e:embedded)
 
-## demo-seed: regenerate the demo workspace event log (web/static/demo-seed.json)
+## demo-seed: regenerate the demo event log + separate fictional operational keys
 # by driving the REAL assembled backend in-process (see cmd/intraktible-seed).
 # Explicit, not part of any build: event ids are random, so regeneration rewrites
-# the (committed) asset even when the story is unchanged.
+# the generated assets even when the story is unchanged.
 demo-seed:
-	$(GO) run ./cmd/intraktible-seed -out web/static/demo-seed.json
+	$(GO) run ./cmd/intraktible-seed -out web/static/demo-seed.json \
+		-state-out web/static/demo-state.json
 
 ## wasm: the browser deployment target — the SAME backend, compiled to wasm.
 # Outputs the binary + Go's JS shim where the web build picks them up as assets.

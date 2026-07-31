@@ -65,6 +65,7 @@ func BuildAnalytics(
 			"under_24h": 0, "one_to_three_days": 0, "three_to_seven_days": 0, "over_seven_days": 0,
 		},
 		ByStatus: map[string]int{}, ByPriority: map[domain.Priority]int{},
+		Workloads: []Workload{}, Queues: []QueueBacklog{},
 	}
 	firstActionTotal, firstActionCount := 0.0, 0
 	resolutionTotal, resolutionCount := 0.0, 0

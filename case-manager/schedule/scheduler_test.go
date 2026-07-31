@@ -4,6 +4,7 @@ package schedule
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,6 +17,23 @@ import (
 	"github.com/e6qu/intraktible/platform/projection"
 	"github.com/e6qu/intraktible/platform/store"
 )
+
+func TestQueueAssistRequiresEvidenceSupportedByPinnedCaseType(t *testing.T) {
+	policy := domain.AssistAutomation{
+		Key: "priority", Kind: domain.CaseAssistPrioritization,
+		TemplateID: "case-copilot", Environment: domain.CaseAssistProduction,
+		EvidenceRequirements: []string{"source_decision"},
+	}
+	caseType := domain.CaseTypeDefinition{
+		Evidence: []domain.EvidenceRequirement{{
+			Key: "supporting_record", Kinds: []string{"decision"},
+		}},
+	}
+	err := validateQueueAssistEvidence(policy, caseType)
+	if err == nil || !strings.Contains(err.Error(), "not configured") {
+		t.Fatalf("incompatible queue assist evidence error = %v", err)
+	}
+}
 
 // TestTickBreachesOverdueCasesPerTenant proves the scheduler records SLA breaches
 // for every tenant's open-and-overdue cases (and only those) without the on-demand
@@ -89,6 +107,94 @@ func TestTickBreachesOverdueCasesPerTenant(t *testing.T) {
 	}
 	if sum.Breached != 0 {
 		t.Fatalf("second tick breached = %d, want 0 (idempotent)", sum.Breached)
+	}
+}
+
+func TestReconcileAssistsUsesPinnedPolicyWithoutChangingCaseWork(t *testing.T) {
+	ctx := context.Background()
+	log := eventlog.NewMemory()
+	handler := command.NewHandler(log)
+	id := identity.Identity{Org: "demo", Workspace: "main", Actor: "maker"}
+	definition := domain.CaseTypeDefinition{
+		Key: "edd", Name: "EDD", InitialState: "intake",
+		Transitions: []domain.Transition{{From: "intake", To: "resolved"}},
+		Dispositions: []domain.DispositionDefinition{{
+			Key: "clear", Label: "Clear", ReasonCodes: []string{"verified"},
+			TerminalState: "resolved",
+		}},
+		Priorities: []domain.Priority{domain.PriorityNormal},
+		Calendar: domain.ServiceCalendar{
+			Timezone: "UTC", Weekdays: []int{1, 2, 3, 4, 5},
+			StartHour: 9, EndHour: 17, SLAHours: 8,
+		},
+		Evidence: []domain.EvidenceRequirement{{
+			Key: "decision_record", Label: "Decision",
+			Kinds: []string{"decision"}, Required: true,
+		}},
+		Assists: []domain.AssistAutomation{{
+			Key: "opening_summary", Kind: domain.CaseAssistSummary,
+			TemplateID: "case-copilot", Environment: domain.CaseAssistProduction,
+			EvidenceRequirements: []string{"decision_record"},
+		}},
+	}
+	if _, _, err := handler.PublishCaseType(ctx, id, definition); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := handler.ConfigureQueue(ctx, id, domain.QueueDefinition{
+		Key: "edd", Name: "EDD", CaseTypes: []string{"edd"}, Capacity: 100,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	caseID, _, err := handler.RequestReview(ctx, id, domain.RequestReview{
+		CompanyName: "Acme", CaseType: "edd", Priority: domain.PriorityNormal,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := handler.LinkEvidence(ctx, id, events.CaseEvidenceLinked{
+		CaseID: caseID, EvidenceID: "decision-1", Requirement: "decision_record",
+		Kind: "decision", SubjectType: "decision", SubjectID: "decision-1",
+		Label: "Decision record",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	st := store.NewMemory()
+	if _, err := projection.New(log, st, cases.Projector{}).RebuildTo(ctx, 0); err != nil {
+		t.Fatal(err)
+	}
+	var gotView cases.CaseView
+	var gotPolicy domain.AssistAutomation
+	var gotSource AssistPolicySource
+	scheduler := NewScheduler(st, handler).WithAssistRequester(
+		func(
+			_ context.Context,
+			_ identity.Identity,
+			view cases.CaseView,
+			policy domain.AssistAutomation,
+			source AssistPolicySource,
+		) (AssistReconcileOutcome, error) {
+			gotView, gotPolicy, gotSource = view, policy, source
+			return AssistEligible, nil
+		},
+	)
+	summary, err := scheduler.ReconcileAssists(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.AssistEligible != 1 || gotView.CaseID != caseID ||
+		gotPolicy.Key != "opening_summary" || gotSource.Kind != "case_type" ||
+		gotSource.Key != "edd" || gotSource.ConfigurationSeq < 1 {
+		t.Fatalf(
+			"assist reconciliation summary=%+v view=%+v policy=%+v source=%+v",
+			summary, gotView, gotPolicy, gotSource,
+		)
+	}
+	projected, found, err := cases.Read(ctx, st, id, caseID)
+	if err != nil || !found {
+		t.Fatalf("read case after assist reconciliation: found=%v err=%v", found, err)
+	}
+	if projected.Queue != "" || projected.Status != domain.CaseStatus("intake") {
+		t.Fatalf("assist reconciliation changed case workflow: %+v", projected)
 	}
 }
 

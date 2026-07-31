@@ -17,6 +17,7 @@ const LIST_ROUTES = [
   'observability',
   'preapprovals', // the .link.danger Revoke button regressed here, unmeasured
   'agents',
+  'agents/governance',
   'policies'
 ];
 
@@ -35,10 +36,15 @@ async function detailRoutes(page: Page): Promise<string[]> {
       decision_id: string;
     }[];
     const cases = (await fetch('/v1/cases').then(j)).cases as { case_id: string }[];
+    const templates = (await fetch('/v1/agent-templates').then(j)).templates as {
+      template_id: string;
+    }[];
+    if (!templates[0]) throw new Error('governed agent template missing from the seed');
     return [
       `engine/${credit.flow_id}`,
       `decisions/${decisions[0].decision_id}`,
-      `cases/${cases[0].case_id}`
+      `cases/${cases[0].case_id}`,
+      `agents/governance/${templates[0].template_id}`
     ];
   });
 }

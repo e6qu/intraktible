@@ -14,7 +14,11 @@ import (
 func CSV(rep Report) (string, error) {
 	var b strings.Builder
 	w := csv.NewWriter(&b)
-	header := []string{"kind", "id", "name", "version", "owner", "coverage", "decisions", "success_rate", "issues"}
+	header := []string{
+		"kind", "id", "name", "version", "owner", "coverage", "decisions", "success_rate",
+		"prompt_tokens", "output_tokens", "cost_usd", "assist_accepted", "assist_edited",
+		"assist_rejected", "assist_escalated", "open_incidents", "issues",
+	}
 	if err := w.Write(header); err != nil {
 		return "", err
 	}
@@ -28,6 +32,14 @@ func CSV(rep Report) (string, error) {
 			string(m.Validation.Coverage),
 			strconv.Itoa(m.Monitoring.Decisions),
 			strconv.FormatFloat(m.Monitoring.SuccessRate, 'f', 3, 64),
+			strconv.Itoa(m.Monitoring.PromptTokens),
+			strconv.Itoa(m.Monitoring.OutputTokens),
+			strconv.FormatFloat(m.Monitoring.CostUSD, 'f', 8, 64),
+			strconv.Itoa(m.Monitoring.AssistAccepted),
+			strconv.Itoa(m.Monitoring.AssistEdited),
+			strconv.Itoa(m.Monitoring.AssistRejected),
+			strconv.Itoa(m.Monitoring.AssistEscalated),
+			strconv.Itoa(m.Monitoring.OpenIncidents),
 			csvSafe(strings.Join(m.Issues, "; ")),
 		}
 		if err := w.Write(row); err != nil {
@@ -66,12 +78,20 @@ func Markdown(rep Report) string {
 		rep.Summary.Deployed, rep.Summary.Unvalidated, rep.Summary.WithIssues)
 
 	fmt.Fprintf(&b, "## Inventory\n\n")
-	fmt.Fprintf(&b, "| Kind | Model | Version | Owner | Validation | Decisions | Success |\n")
-	fmt.Fprintf(&b, "|---|---|---|---|---|---|---|\n")
+	fmt.Fprintf(
+		&b,
+		"| Kind | Model | Version | Owner | Validation | Decisions | Success | Cost | Human actions |\n",
+	)
+	fmt.Fprintf(&b, "|---|---|---|---|---|---|---|---|---|\n")
 	for _, m := range rep.Models {
-		fmt.Fprintf(&b, "| %s | %s | v%d | %s | %s | %d | %s |\n",
+		fmt.Fprintf(
+			&b,
+			"| %s | %s | v%d | %s | %s | %d | %s | $%.4f | %d accept / %d edit / %d reject / %d escalate |\n",
 			m.Kind, mdCell(m.Name), m.Version, mdCell(m.Owner), m.Validation.Coverage,
-			m.Monitoring.Decisions, pct(m.Monitoring.SuccessRate))
+			m.Monitoring.Decisions, pct(m.Monitoring.SuccessRate), m.Monitoring.CostUSD,
+			m.Monitoring.AssistAccepted, m.Monitoring.AssistEdited,
+			m.Monitoring.AssistRejected, m.Monitoring.AssistEscalated,
+		)
 	}
 
 	fmt.Fprintf(&b, "\n## Open governance gaps\n\n")
