@@ -989,3 +989,17 @@ Linux, entirely that VM's fsync path.
   `make terraform-check` passes 18/18; the web format/lint/typecheck/254-unit/
   production-build gates are green; `make demo-seed` round-trips with one
   signed modeling artifact.
+- 2026-07-31: Opened E6 as sole PR #165 and drove the hosted matrix green.
+  Run `30626558423` exposed two browser-surface defects (the nine-persona
+  account menu stranded Sign out outside the viewport; the crypto-shred demo
+  journey navigated on response headers before the embedded backend persisted
+  the shred delta) — both fixed and proven locally (135/135 native, 86/86
+  real-Wasm journeys). Run `30629109407` then exposed a latent shared-store
+  projection race in `TestTickBreachesOverdueCasesPerTenant`: a second Runtime
+  rebuilt into the memory store while the first Runtime's live consumer was
+  still applying. `Runtime.Wait` now reports consumer exit, the test cancels
+  and waits before rebuilding, and a platform regression pins cancel+Wait.
+  Exact-head run `30630868192` (`720e857`) is green across all nine jobs: Go
+  race/security/license, real PostgreSQL, 135 native journeys, 86 real-Wasm
+  journeys, four embedded-artifact journeys, real Shauth SSO, web, Terraform,
+  and container contracts.

@@ -38,9 +38,10 @@ DOC (a claim not backed by code).
    public-contract slice (source-health/materialization/artifact/comparison
    reads across OpenAPI, RBAC, SDKs, CLI, UI) is complete with all local
    release gates green (`make ci` exit 0, Terraform 18/18, web gates, seed
-   round trip), and the branch is pushed as the sole open E6 PR. Continue with
-   live native/Wasm browser journeys, whole-diff audits, phase-closing
-   documentation, and the hosted release matrix.
+   round trip). PR #165 is the sole open review item; its exact-head hosted
+   run `30630868192` (`720e857`) is green across all nine jobs. Await the user
+   merge; then continue E6 with live native/Wasm browser journeys for the
+   modeling cockpit, whole-diff audits, and phase-closing documentation.
 2. **OPEN — Re-audit every remaining §8b.7 scope claim against executable
    evidence.** In particular inspect quality incident lifecycle/impact,
    backfill controls, dataset exclusion/consent/export, artifact provenance and

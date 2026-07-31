@@ -154,6 +154,17 @@ branch is pushed as the sole open E6 PR; E6 remains open for live native/Wasm
 browser journeys, whole-diff audits, phase-closing documentation, and the
 hosted release matrix.
 
+PR #165 is that sole review item, and its exact-head hosted run `30630868192`
+(`720e857`) is green across all nine jobs: Go race/security/license, real
+PostgreSQL, 135 native browser journeys, 86 real-Wasm journeys, four
+embedded-artifact journeys, real Shauth SSO, web, Terraform, and container
+contracts. The hosted matrix found and closed three defects en route: a
+nine-persona account menu stranding Sign out outside the viewport, a demo
+journey navigating on response headers before the embedded backend persisted
+the shred delta, and a shared-store projection race between a live consumer
+and a concurrent rebuild (closed by `Runtime.Wait` plus cancel-before-rebuild
+in the SLA scheduler test).
+
 **Enterprise PR E4 — collaborative authoring and governed delivery is merged.**
 Authoritative `origin/main` is merge commit `0eea197`, containing final E4 head
 `8810602`. Exact-head hosted run `30573475006` passed all nine jobs: Go
