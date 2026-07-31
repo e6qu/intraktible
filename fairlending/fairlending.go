@@ -18,13 +18,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/e6qu/intraktible/decision-engine/history"
 	"github.com/e6qu/intraktible/decision-engine/policy"
 	"github.com/e6qu/intraktible/platform/identity"
+	"github.com/e6qu/intraktible/platform/stats"
 	"github.com/e6qu/intraktible/platform/store"
 )
 
@@ -39,49 +42,64 @@ const SmallSampleN = 30
 
 // Params configures a disparate-impact analysis. FlowID and Attribute are required.
 type Params struct {
-	FlowID       string             // the flow whose decisions are analyzed
-	Attribute    string             // dot-path into the decision input naming the protected class (e.g. "applicant.gender")
-	Favorable    policy.Disposition // the disposition counted as favorable; defaults to approve
-	Environment  string             // optional: restrict to one environment
-	ExperimentID string             // optional: restrict to one governed experiment
-	Cohort       int                // optional: restrict to one immutable experiment cohort
-	Arm          string             // optional: restrict to one experiment arm
-	Threshold    float64            // AIR threshold below which a group is flagged; <=0 uses FourFifths
+	FlowID                 string             // the flow whose decisions are analyzed
+	Attribute              string             // dot-path into the decision input naming the protected class (e.g. "applicant.gender")
+	Favorable              policy.Disposition // the disposition counted as favorable; defaults to approve
+	Environment            string             // optional: restrict to one environment
+	ExperimentID           string             // optional: restrict to one governed experiment
+	Cohort                 int                // optional: restrict to one immutable experiment cohort
+	Arm                    string             // optional: restrict to one experiment arm
+	Threshold              float64            // AIR threshold below which a group is flagged; <=0 uses FourFifths
+	IntersectionAttributes []string           // optional protected-class fields evaluated jointly
+	MissingTreatment       string             // exclude (default) | group | error
 }
 
 // Group is one protected-class value's outcome tally and its AIR.
 type Group struct {
-	Value       string  `json:"value"`
-	Total       int     `json:"total"` // scored decisions (favorable + adverse)
-	Favorable   int     `json:"favorable"`
-	Adverse     int     `json:"adverse"`
-	Rate        float64 `json:"rate"` // favorable / total
-	AIR         float64 `json:"air"`  // rate / reference rate
-	Reference   bool    `json:"reference,omitempty"`
-	Flagged     bool    `json:"flagged,omitempty"`      // AIR < FourFifths and not the reference
-	SmallSample bool    `json:"small_sample,omitempty"` // Total < SmallSampleN
+	Value           string             `json:"value"`
+	Total           int                `json:"total"` // scored decisions (favorable + adverse)
+	Favorable       int                `json:"favorable"`
+	Adverse         int                `json:"adverse"`
+	Rate            float64            `json:"rate"` // favorable / total
+	AIR             float64            `json:"air"`  // rate / reference rate
+	Reference       bool               `json:"reference,omitempty"`
+	Flagged         bool               `json:"flagged,omitempty"`      // AIR < FourFifths and not the reference
+	SmallSample     bool               `json:"small_sample,omitempty"` // Total < SmallSampleN
+	RateCI          ConfidenceInterval `json:"rate_ci"`
+	AIRCI           ConfidenceInterval `json:"air_ci"`
+	PValue          float64            `json:"p_value,omitempty"`
+	Significant     bool               `json:"significant"`
+	StatisticalFlag bool               `json:"statistical_flag,omitempty"`
+}
+
+// ConfidenceInterval is a 95% interval.
+type ConfidenceInterval struct {
+	Lower float64 `json:"lower"`
+	Upper float64 `json:"upper"`
 }
 
 // Report is the disparate-impact analysis over one flow.
 type Report struct {
-	GeneratedAt  time.Time          `json:"generated_at"`
-	Org          string             `json:"org"`
-	Workspace    string             `json:"workspace"`
-	FlowID       string             `json:"flow_id"`
-	Attribute    string             `json:"attribute"`
-	Favorable    policy.Disposition `json:"favorable"`
-	Environment  string             `json:"environment,omitempty"`
-	ExperimentID string             `json:"experiment_id,omitempty"`
-	Cohort       int                `json:"cohort,omitempty"`
-	Arm          string             `json:"arm,omitempty"`
-	Threshold    float64            `json:"threshold"` // the AIR threshold applied (the four-fifths default unless configured)
-	Groups       []Group            `json:"groups"`
-	Reference    string             `json:"reference"`  // value of the highest-rate group (the AIR denominator)
-	MinAIR       float64            `json:"min_air"`    // lowest AIR across the groups
-	Passes       bool               `json:"passes"`     // threshold holds across all groups
-	Decisions    int                `json:"decisions"`  // scored decisions folded into the groups
-	Excluded     int                `json:"excluded"`   // completed decisions dropped (referred, no disposition, or attribute absent)
-	Groups2Plus  bool               `json:"two_groups"` // at least two protected-class values were present
+	GeneratedAt   time.Time          `json:"generated_at"`
+	Org           string             `json:"org"`
+	Workspace     string             `json:"workspace"`
+	FlowID        string             `json:"flow_id"`
+	Attribute     string             `json:"attribute"`
+	Favorable     policy.Disposition `json:"favorable"`
+	Environment   string             `json:"environment,omitempty"`
+	ExperimentID  string             `json:"experiment_id,omitempty"`
+	Cohort        int                `json:"cohort,omitempty"`
+	Arm           string             `json:"arm,omitempty"`
+	Threshold     float64            `json:"threshold"` // the AIR threshold applied (the four-fifths default unless configured)
+	Groups        []Group            `json:"groups"`
+	Reference     string             `json:"reference"`  // value of the highest-rate group (the AIR denominator)
+	MinAIR        float64            `json:"min_air"`    // lowest AIR across the groups
+	Passes        bool               `json:"passes"`     // threshold holds across all groups
+	Decisions     int                `json:"decisions"`  // scored decisions folded into the groups
+	Excluded      int                `json:"excluded"`   // completed decisions dropped (referred, no disposition, or attribute absent)
+	Groups2Plus   bool               `json:"two_groups"` // at least two protected-class values were present
+	Intersections []Group            `json:"intersections"`
+	Missing       int                `json:"missing"`
 }
 
 // Build aggregates the flow's recorded decisions into a disparate-impact report.
@@ -99,6 +117,13 @@ func Build(ctx context.Context, s store.Store, id identity.Identity, p Params, n
 	if (p.Cohort > 0 || p.Arm != "") && p.ExperimentID == "" {
 		return Report{}, fmt.Errorf("fairlending: experiment is required when cohort or arm is set")
 	}
+	if p.MissingTreatment == "" {
+		p.MissingTreatment = "exclude"
+	}
+	if p.MissingTreatment != "exclude" && p.MissingTreatment != "group" &&
+		p.MissingTreatment != "error" {
+		return Report{}, fmt.Errorf("fairlending: missing treatment must be exclude, group, or error")
+	}
 	fav := p.Favorable
 	if fav == "" {
 		fav = policy.Approve
@@ -114,7 +139,9 @@ func Build(ctx context.Context, s store.Store, id identity.Identity, p Params, n
 	}
 
 	tally := map[string]*Group{}
+	intersectionTally := map[string]*Group{}
 	excluded := 0
+	missing := 0
 	for _, r := range recs {
 		if r.FlowID != p.FlowID || r.Status != "completed" {
 			continue
@@ -141,8 +168,17 @@ func Build(ctx context.Context, s store.Store, id identity.Identity, p Params, n
 		}
 		val, ok := valueAt(r.Data, p.Attribute)
 		if !ok {
-			excluded++
-			continue
+			missing++
+			switch p.MissingTreatment {
+			case "exclude":
+				excluded++
+				continue
+			case "error":
+				return Report{}, fmt.Errorf("fairlending: decision %q is missing protected attribute %q",
+					r.DecisionID, p.Attribute)
+			case "group":
+				val = "[missing]"
+			}
 		}
 		g := tally[val]
 		if g == nil {
@@ -154,19 +190,54 @@ func Build(ctx context.Context, s store.Store, id identity.Identity, p Params, n
 		} else {
 			g.Adverse++
 		}
+		if len(p.IntersectionAttributes) > 0 {
+			values := make([]string, 0, len(p.IntersectionAttributes))
+			complete := true
+			for _, attribute := range p.IntersectionAttributes {
+				value, found := valueAt(r.Data, attribute)
+				if !found {
+					value = "[missing]"
+					if p.MissingTreatment == "exclude" {
+						complete = false
+						break
+					}
+					if p.MissingTreatment == "error" {
+						return Report{}, fmt.Errorf(
+							"fairlending: decision %q is missing intersection attribute %q",
+							r.DecisionID, attribute,
+						)
+					}
+				}
+				values = append(values, attribute+"="+value)
+			}
+			if complete {
+				key := strings.Join(values, " ∩ ")
+				group := intersectionTally[key]
+				if group == nil {
+					group = &Group{Value: key}
+					intersectionTally[key] = group
+				}
+				if disp == fav {
+					group.Favorable++
+				} else {
+					group.Adverse++
+				}
+			}
+		}
 	}
 
 	rep := Report{
 		GeneratedAt: now, Org: id.Org, Workspace: id.Workspace,
 		FlowID: p.FlowID, Attribute: p.Attribute, Favorable: fav, Environment: p.Environment,
 		ExperimentID: p.ExperimentID, Cohort: p.Cohort, Arm: p.Arm,
-		Threshold: threshold, Excluded: excluded,
+		Threshold: threshold, Excluded: excluded, Missing: missing,
 	}
 	rep.Groups, rep.Reference, rep.MinAIR, rep.Passes = compute(tally, threshold)
 	for _, g := range rep.Groups {
 		rep.Decisions += g.Total
 	}
 	rep.Groups2Plus = len(rep.Groups) >= 2
+	rep.Intersections, _, _, _ = compute(intersectionTally, threshold)
 	return rep, nil
 }
 
@@ -181,6 +252,7 @@ func compute(tally map[string]*Group, threshold float64) (groups []Group, refere
 			g.Rate = float64(g.Favorable) / float64(g.Total)
 		}
 		g.SmallSample = g.Total < SmallSampleN
+		g.RateCI = wilson(g.Favorable, g.Total)
 	}
 
 	// Reference = the highest selection rate (ties broken by the larger sample, then
@@ -212,6 +284,15 @@ func compute(tally map[string]*Group, threshold float64) (groups []Group, refere
 			g.Flagged = true
 			passes = false
 		}
+		if ref != nil && !g.Reference {
+			g.AIRCI = riskRatioCI(g.Favorable, g.Total, ref.Favorable, ref.Total)
+			g.PValue = twoProportionPValue(g.Favorable, g.Total, ref.Favorable, ref.Total)
+			g.Significant = g.PValue < 0.05
+			g.StatisticalFlag = g.Flagged && g.Significant && !g.SmallSample
+		} else {
+			g.AIRCI = ConfidenceInterval{Lower: 1, Upper: 1}
+			g.PValue = 1
+		}
 		if g.AIR < minAIR {
 			minAIR = g.AIR
 		}
@@ -233,6 +314,39 @@ func compute(tally map[string]*Group, threshold float64) (groups []Group, refere
 		return groups[i].Value < groups[j].Value
 	})
 	return groups, reference, minAIR, passes
+}
+
+func wilson(successes, total int) ConfidenceInterval {
+	lower, upper := stats.Wilson(successes, total)
+	return ConfidenceInterval{Lower: lower, Upper: upper}
+}
+
+func riskRatioCI(successA, totalA, successB, totalB int) ConfidenceInterval {
+	if totalA == 0 || totalB == 0 || successA == 0 || successB == 0 {
+		return ConfidenceInterval{}
+	}
+	ratio := (float64(successA) / float64(totalA)) / (float64(successB) / float64(totalB))
+	standardError := math.Sqrt(
+		1/float64(successA) - 1/float64(totalA) +
+			1/float64(successB) - 1/float64(totalB),
+	)
+	return ConfidenceInterval{
+		Lower: math.Exp(math.Log(ratio) - 1.959963984540054*standardError),
+		Upper: math.Exp(math.Log(ratio) + 1.959963984540054*standardError),
+	}
+}
+
+func twoProportionPValue(successA, totalA, successB, totalB int) float64 {
+	if totalA == 0 || totalB == 0 {
+		return 1
+	}
+	pA, pB := float64(successA)/float64(totalA), float64(successB)/float64(totalB)
+	pooled := float64(successA+successB) / float64(totalA+totalB)
+	standardError := math.Sqrt(pooled * (1 - pooled) * (1/float64(totalA) + 1/float64(totalB)))
+	if standardError == 0 {
+		return 1
+	}
+	return math.Erfc(math.Abs(pA-pB) / standardError / math.Sqrt2)
 }
 
 // valueAt reads the scalar at a dot-path in a decision's recorded input and returns

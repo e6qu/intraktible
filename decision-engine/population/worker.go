@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strconv"
 	"time"
 
@@ -16,6 +15,7 @@ import (
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/metrics"
+	"github.com/e6qu/intraktible/platform/scheduler"
 	"github.com/e6qu/intraktible/platform/store"
 )
 
@@ -39,24 +39,7 @@ func (h *Handler) StartWorkers(ctx context.Context, count int) {
 func (h *Handler) DrainWorkers() { h.workers.Wait() }
 
 func (h *Handler) runWorker(ctx context.Context, owner string) {
-	ticker := time.NewTicker(workerPoll)
-	defer ticker.Stop()
-	for {
-		worked, err := h.Tick(ctx, owner)
-		if err != nil && !errors.Is(err, context.Canceled) {
-			metrics.RecordSchedulerTick("population_worker", "error")
-			slog.Error("population worker tick failed", "worker", owner, "error", err)
-		}
-		if worked {
-			metrics.RecordSchedulerTick("population_worker", "ok")
-			continue
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-		}
-	}
+	scheduler.RunWorker(ctx, workerPoll, "population_worker", "population", owner, h.Tick)
 }
 
 // Tick claims and processes at most one logical item, or closes one job. It is

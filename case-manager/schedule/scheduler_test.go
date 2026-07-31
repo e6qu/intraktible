@@ -64,7 +64,9 @@ func TestTickBreachesOverdueCasesPerTenant(t *testing.T) {
 	}
 
 	st := store.NewMemory()
-	if err := projection.New(log, st, cases.Projector{}).Start(ctx); err != nil {
+	liveCtx, stopLive := context.WithCancel(ctx)
+	live := projection.New(log, st, cases.Projector{})
+	if err := live.Start(liveCtx); err != nil {
 		t.Fatal(err)
 	}
 
@@ -79,6 +81,8 @@ func TestTickBreachesOverdueCasesPerTenant(t *testing.T) {
 		t.Fatalf("breached = %d, want 2 (one overdue per tenant)", sum.Breached)
 	}
 
+	stopLive()
+	live.Wait()
 	if err := projection.New(log, st, cases.Projector{}).Start(ctx); err != nil {
 		t.Fatal(err)
 	}

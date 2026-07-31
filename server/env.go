@@ -4,6 +4,7 @@ package server
 
 import (
 	"context"
+	"crypto/ed25519"
 	"fmt"
 	"log/slog"
 	"math"
@@ -20,6 +21,21 @@ import (
 	"github.com/e6qu/intraktible/platform/scim"
 	"github.com/e6qu/intraktible/platform/secretbox"
 )
+
+// artifactSigningKeyFromEnv decodes the shared Ed25519 seed used by every
+// training worker replica. Empty is allowed outside production, where the
+// modeling service generates an ephemeral development key.
+func artifactSigningKeyFromEnv() (ed25519.PrivateKey, error) {
+	value := strings.TrimSpace(os.Getenv("INTRAKTIBLE_ARTIFACT_SIGNING_KEY"))
+	if value == "" {
+		return nil, nil
+	}
+	seed, err := secretbox.DecodeKey(value)
+	if err != nil {
+		return nil, fmt.Errorf("INTRAKTIBLE_ARTIFACT_SIGNING_KEY: %w", err)
+	}
+	return ed25519.NewKeyFromSeed(seed), nil
+}
 
 // aiGuardrailsFromEnv reads the AI guardrail config: per-provider rate limit
 // (INTRAKTIBLE_AI_RATE_LIMIT_RPS / _BURST), free-text PII redaction

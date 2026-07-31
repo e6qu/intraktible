@@ -22,6 +22,7 @@ export const GO_NAV: { key: string; href: string; label: string }[] = [
   { key: 'v', href: '/preapprovals', label: 'Pre-approvals' },
   { key: 'd', href: '/decisions', label: 'Decisions' },
   { key: 'x', href: '/data', label: 'Context data' },
+  { key: 'm', href: '/modeling', label: 'Modeling cockpit' },
   { key: 'c', href: '/cases', label: 'Cases' },
   { key: 'a', href: '/agents', label: 'Agents' },
   { key: 'u', href: '/audit', label: 'Audit log' }

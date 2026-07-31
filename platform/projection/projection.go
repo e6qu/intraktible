@@ -50,6 +50,7 @@ type Runtime struct {
 	mu      sync.Mutex
 	err     error
 	applied uint64 // highest seq applied this run (guards against re-apply)
+	done    chan struct{}
 }
 
 // New builds a Runtime. The store must be crash-safe by construction: either a
@@ -59,7 +60,7 @@ type Runtime struct {
 // non-idempotent projector counters on crash recovery — so it is rejected here,
 // loudly, rather than deferring the corruption to a production crash.
 func New(log eventlog.Log, st store.Store, projectors ...Projector) *Runtime {
-	r := &Runtime{log: log, store: st, projectors: projectors}
+	r := &Runtime{log: log, store: st, projectors: projectors, done: make(chan struct{})}
 	switch s := st.(type) {
 	case store.TxStore:
 		r.tx = s
@@ -80,10 +81,12 @@ func (r *Runtime) Start(ctx context.Context) error {
 	sub, cancel := r.log.Subscribe()
 	if err := r.bootstrap(ctx); err != nil {
 		cancel()
+		close(r.done)
 		return err
 	}
 	go func() {
 		defer cancel()
+		defer close(r.done)
 		for {
 			select {
 			case <-ctx.Done():
@@ -102,6 +105,13 @@ func (r *Runtime) Start(ctx context.Context) error {
 		}
 	}()
 	return nil
+}
+
+// Wait blocks until the live consumer started by Start exits. Callers cancel
+// the Start context first, then Wait, so no in-flight apply can race a
+// subsequent rebuild into the same store.
+func (r *Runtime) Wait() {
+	<-r.done
 }
 
 // bootstrap brings the store current before the live consumer starts. The ephemeral

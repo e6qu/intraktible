@@ -18,6 +18,10 @@ import (
 // purposes list by prefix.
 const Collection = "consent"
 
+// CollectionHistory stores replay-owned consent states for point-in-time
+// purpose checks used by immutable dataset construction.
+const CollectionHistory = "consent_history"
+
 // Record is the current consent state for one (subject, purpose).
 type Record struct {
 	Org         string      `json:"org"`
@@ -31,6 +35,13 @@ type Record struct {
 	ExpiresAt   *time.Time  `json:"expires_at,omitempty"`
 	Evidence    *Evidence   `json:"evidence,omitempty"`
 	UpdatedBy   string      `json:"updated_by"`
+}
+
+// Version is one complete consent state as known at a log sequence.
+type Version struct {
+	Record
+	Seq     uint64    `json:"seq"`
+	KnownAt time.Time `json:"known_at"`
 }
 
 // Active reports whether consent is currently in force as of now: granted and not
@@ -54,7 +65,7 @@ type Projector struct{}
 func (Projector) Name() string { return Collection }
 
 // Collections lists the store collection this projector owns.
-func (Projector) Collections() []string { return []string{Collection} }
+func (Projector) Collections() []string { return []string{Collection, CollectionHistory} }
 
 // Apply maintains a (subject, purpose) record across grants and withdrawals.
 func (Projector) Apply(ctx context.Context, e eventlog.Envelope, s store.Store) error {
@@ -69,7 +80,10 @@ func (Projector) Apply(ctx context.Context, e eventlog.Envelope, s store.Store) 
 			Org: e.Org, Workspace: e.Workspace, Subject: p.Subject, Purpose: p.Purpose,
 			Granted: true, Basis: p.Basis, GrantedAt: &at, ExpiresAt: p.ExpiresAt, Evidence: p.Evidence, UpdatedBy: e.Actor,
 		}
-		return store.PutDoc(ctx, s, Collection, key(e.Org, e.Workspace, p.Subject, p.Purpose), r)
+		if err := store.PutDoc(ctx, s, Collection, key(e.Org, e.Workspace, p.Subject, p.Purpose), r); err != nil {
+			return err
+		}
+		return putVersion(ctx, s, e, r)
 	case TypeConsentWithdrawn:
 		var p Withdrawn
 		if err := json.Unmarshal(e.Payload, &p); err != nil {
@@ -83,10 +97,26 @@ func (Projector) Apply(ctx context.Context, e eventlog.Envelope, s store.Store) 
 		at := e.Time
 		r.Org, r.Workspace, r.Subject, r.Purpose = e.Org, e.Workspace, p.Subject, p.Purpose
 		r.Granted, r.WithdrawnAt, r.UpdatedBy = false, &at, e.Actor
-		return store.PutDoc(ctx, s, Collection, k, r)
+		if err := store.PutDoc(ctx, s, Collection, k, r); err != nil {
+			return err
+		}
+		return putVersion(ctx, s, e, r)
 	default:
 		return nil
 	}
+}
+
+func putVersion(
+	ctx context.Context,
+	s store.Store,
+	envelope eventlog.Envelope,
+	record Record,
+) error {
+	id := fmt.Sprintf("%s\x00%020d", docID(record.Subject, record.Purpose), envelope.Seq)
+	return store.PutDoc(
+		ctx, s, CollectionHistory, store.Key(envelope.Org, envelope.Workspace, id),
+		Version{Record: record, Seq: envelope.Seq, KnownAt: envelope.Time},
+	)
 }
 
 func key(org, workspace, subject, purpose string) string {
@@ -105,6 +135,39 @@ func Has(ctx context.Context, s store.Store, id identity.Identity, subject, purp
 		return false, err
 	}
 	return r.Active(now), nil
+}
+
+// HasAt reports whether the subject had active purpose authorization at the
+// supplied knowledge cutoff, ignoring later grants or withdrawals.
+func HasAt(
+	ctx context.Context,
+	s store.Store,
+	id identity.Identity,
+	subject string,
+	purpose string,
+	knowledgeAt time.Time,
+) (bool, error) {
+	versions, err := store.ListDocs[Version](
+		ctx, s, CollectionHistory,
+		store.Key(id.Org, id.Workspace, docID(subject, purpose)+"\x00"),
+	)
+	if err != nil {
+		return false, err
+	}
+	var selected *Version
+	for index := range versions {
+		version := &versions[index]
+		if version.KnownAt.After(knowledgeAt) {
+			continue
+		}
+		if selected == nil || version.Seq > selected.Seq {
+			selected = version
+		}
+	}
+	if selected == nil {
+		return false, nil
+	}
+	return selected.Active(knowledgeAt), nil
 }
 
 // List returns a subject's consent records across all purposes, purpose-sorted.

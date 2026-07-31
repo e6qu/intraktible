@@ -21,6 +21,8 @@
     listEntities,
     listExperiments,
     listPopulationJobs,
+    listDatasets,
+    listModelArtifacts,
     listDrafts,
     listChangeSets,
     listReusableComponents
@@ -296,6 +298,32 @@
           icon: 'gauge',
           keywords: `model ${m.name} ${m.kind}`,
           run: () => goto(appHref('/models'))
+        })
+      )
+    );
+    appendDynamic(seq, 'modeling datasets', listDatasets(''), (datasets) =>
+      datasets.map(
+        (dataset): Cmd => ({
+          id: `dataset:${dataset.name}`,
+          section: 'Modeling datasets',
+          label: dataset.name,
+          hint: `${dataset.versions.length} immutable version${dataset.versions.length === 1 ? '' : 's'}`,
+          icon: 'database',
+          keywords: `modeling dataset snapshot training ${dataset.name}`,
+          run: () => goto(appHref('/modeling'))
+        })
+      )
+    );
+    appendDynamic(seq, 'model artifacts', listModelArtifacts(''), (artifacts) =>
+      artifacts.map(
+        (artifact): Cmd => ({
+          id: `model-artifact:${artifact.lineage.artifact_id}`,
+          section: 'Model artifacts',
+          label: artifact.model_name,
+          hint: artifact.lineage.artifact_id,
+          icon: 'scorecard',
+          keywords: `model artifact signed lineage evaluation ${artifact.model_name} ${artifact.lineage.artifact_id}`,
+          run: () => goto(appHref('/modeling'))
         })
       )
     );

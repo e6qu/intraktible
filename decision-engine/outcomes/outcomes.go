@@ -41,9 +41,12 @@ type Kind string
 const (
 	KindBinary     Kind = "binary"
 	KindContinuous Kind = "continuous"
+	KindMulticlass Kind = "multiclass"
 )
 
-func (k Kind) Valid() bool { return k == KindBinary || k == KindContinuous }
+func (k Kind) Valid() bool {
+	return k == KindBinary || k == KindContinuous || k == KindMulticlass
+}
 
 // Source identifies the upstream observation and its provenance.
 type Source struct {
@@ -85,6 +88,8 @@ type RecordCommand struct {
 	Key                   string    `json:"key"`
 	Kind                  Kind      `json:"kind"`
 	Value                 float64   `json:"value"`
+	Category              string    `json:"category,omitempty"`
+	Censored              bool      `json:"censored,omitempty"`
 	EventTime             time.Time `json:"event_time"`
 	ObservationWindowDays int       `json:"observation_window_days,omitempty"`
 	Source                Source    `json:"source"`
@@ -101,10 +106,16 @@ func (c RecordCommand) validate(now time.Time) error {
 		return fmt.Errorf("outcomes: key exceeds 200 bytes")
 	case !c.Kind.Valid():
 		return fmt.Errorf("outcomes: invalid kind %q", c.Kind)
-	case math.IsNaN(c.Value) || math.IsInf(c.Value, 0):
+	case !c.Censored && c.Kind != KindMulticlass && (math.IsNaN(c.Value) || math.IsInf(c.Value, 0)):
 		return fmt.Errorf("outcomes: value must be finite")
-	case c.Kind == KindBinary && c.Value != 0 && c.Value != 1:
+	case !c.Censored && c.Kind == KindBinary && c.Value != 0 && c.Value != 1:
 		return fmt.Errorf("outcomes: binary value must be 0 or 1")
+	case !c.Censored && c.Kind == KindMulticlass && strings.TrimSpace(c.Category) == "":
+		return fmt.Errorf("outcomes: multiclass category is required")
+	case c.Kind != KindMulticlass && strings.TrimSpace(c.Category) != "":
+		return fmt.Errorf("outcomes: category is only valid for multiclass outcomes")
+	case c.Censored && c.ObservationWindowDays <= 0:
+		return fmt.Errorf("outcomes: censored outcomes require observation_window_days")
 	case c.EventTime.IsZero():
 		return fmt.Errorf("outcomes: event_time is required")
 	case c.EventTime.After(now.Add(5 * time.Minute)):
@@ -130,6 +141,8 @@ type Recorded struct {
 	Key                   string           `json:"key"`
 	Kind                  Kind             `json:"kind"`
 	Value                 float64          `json:"value"`
+	Category              string           `json:"category,omitempty"`
+	Censored              bool             `json:"censored,omitempty"`
 	EventTime             time.Time        `json:"event_time"`
 	ObservationWindowDays int              `json:"observation_window_days,omitempty"`
 	Source                Source           `json:"source"`
@@ -148,6 +161,8 @@ type Corrected struct {
 	OutcomeID             string    `json:"outcome_id"`
 	Revision              int       `json:"revision"`
 	Value                 float64   `json:"value"`
+	Category              string    `json:"category,omitempty"`
+	Censored              bool      `json:"censored,omitempty"`
 	EventTime             time.Time `json:"event_time"`
 	ObservationWindowDays int       `json:"observation_window_days,omitempty"`
 	Source                Source    `json:"source"`
@@ -161,6 +176,8 @@ type Corrected struct {
 type Revision struct {
 	Revision              int       `json:"revision"`
 	Value                 float64   `json:"value"`
+	Category              string    `json:"category,omitempty"`
+	Censored              bool      `json:"censored,omitempty"`
 	EventTime             time.Time `json:"event_time"`
 	ObservationWindowDays int       `json:"observation_window_days,omitempty"`
 	Source                Source    `json:"source"`
@@ -282,7 +299,8 @@ func (h *Handler) Record(ctx context.Context, id identity.Identity, command Reco
 	payload := Recorded{
 		OutcomeID: h.newID(), Revision: 1,
 		DecisionID: command.DecisionID, Key: command.Key, Kind: command.Kind,
-		Value: command.Value, EventTime: command.EventTime.UTC(),
+		Value: command.Value, Category: strings.TrimSpace(command.Category),
+		Censored: command.Censored, EventTime: command.EventTime.UTC(),
 		ObservationWindowDays: command.ObservationWindowDays,
 		Source:                command.Source, LabelVersion: command.LabelVersion,
 		FlowID: decision.FlowID, FlowVersion: decision.Version, Environment: decision.Environment,
@@ -352,7 +370,8 @@ func (h *Handler) Correct(ctx context.Context, id identity.Identity, outcomeID s
 		}
 		payload := Corrected{
 			OutcomeID: outcomeID, Revision: revision + 1,
-			Value: command.Value, EventTime: command.EventTime.UTC(),
+			Value: command.Value, Category: strings.TrimSpace(command.Category),
+			Censored: command.Censored, EventTime: command.EventTime.UTC(),
 			ObservationWindowDays: command.ObservationWindowDays,
 			Source:                command.Source, LabelVersion: command.LabelVersion,
 			Reason: strings.TrimSpace(reason), IdempotencyKeyHash: keyHash, RequestHash: requestHash,
@@ -556,7 +575,8 @@ func (Projector) Apply(ctx context.Context, event eventlog.Envelope, st store.St
 			return fmt.Errorf("outcomes: decode record seq %d: %w", event.Seq, err)
 		}
 		revision := Revision{
-			Revision: payload.Revision, Value: payload.Value, EventTime: payload.EventTime,
+			Revision: payload.Revision, Value: payload.Value, Category: payload.Category,
+			Censored: payload.Censored, EventTime: payload.EventTime,
 			ObservationWindowDays: payload.ObservationWindowDays,
 			Source:                payload.Source, LabelVersion: payload.LabelVersion,
 			RecordedBy: event.Actor, RecordedAt: event.Time,
@@ -585,7 +605,8 @@ func (Projector) Apply(ctx context.Context, event eventlog.Envelope, st store.St
 			return fmt.Errorf("outcomes: correction revision %d follows %d", payload.Revision, view.Current.Revision)
 		}
 		revision := Revision{
-			Revision: payload.Revision, Value: payload.Value, EventTime: payload.EventTime,
+			Revision: payload.Revision, Value: payload.Value, Category: payload.Category,
+			Censored: payload.Censored, EventTime: payload.EventTime,
 			ObservationWindowDays: payload.ObservationWindowDays,
 			Source:                payload.Source, LabelVersion: payload.LabelVersion, Reason: payload.Reason,
 			RecordedBy: event.Actor, RecordedAt: event.Time,

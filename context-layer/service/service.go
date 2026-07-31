@@ -5,6 +5,7 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 	"github.com/e6qu/intraktible/context-layer/connectors"
 	"github.com/e6qu/intraktible/context-layer/domain"
 	"github.com/e6qu/intraktible/context-layer/entities"
+	"github.com/e6qu/intraktible/context-layer/events"
 	"github.com/e6qu/intraktible/context-layer/features"
 	"github.com/e6qu/intraktible/platform/erasure"
 	"github.com/e6qu/intraktible/platform/eventlog"
@@ -34,6 +36,29 @@ type Service struct {
 	eraser    *erasure.Vault
 	piiFields map[string]bool
 	now       func() time.Time
+	contracts ContractValidator
+}
+
+// ContractValidator is the Context Layer's schema-governance port. The
+// modeling adapter implements it without making Context's functional core
+// import the modeling bounded context.
+type ContractValidator interface {
+	ValidateEntity(
+		context.Context,
+		identity.Identity,
+		string,
+		int,
+		json.RawMessage,
+	) (domain.SchemaEvidence, error)
+	ValidateEvent(
+		context.Context,
+		identity.Identity,
+		string,
+		string,
+		time.Time,
+		int,
+		json.RawMessage,
+	) (domain.SchemaEvidence, error)
 }
 
 // Option configures a Service.
@@ -43,6 +68,11 @@ type Option func(*Service)
 // the demo seeder).
 func WithNow(now func() time.Time) Option {
 	return func(s *Service) { s.now = now }
+}
+
+// WithContracts enables governed source validation.
+func WithContracts(validator ContractValidator) Option {
+	return func(s *Service) { s.contracts = validator }
 }
 
 // WithEgress sets the HTTP connector's egress policy (SSRF guard). The default
@@ -92,6 +122,8 @@ func (s *Service) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/context/entities/{type}/{id}/events", s.listEvents)
 	mux.HandleFunc("GET /v1/context/entities/{type}/{id}/features", s.computeFeatures)
 	mux.HandleFunc("POST /v1/context/events", s.recordEvent)
+	mux.HandleFunc("GET /v1/context/events/{event_id}", s.getEvent)
+	mux.HandleFunc("POST /v1/context/events/{event_id}/retract", s.retractEvent)
 	mux.HandleFunc("POST /v1/context/features", s.defineFeature)
 	mux.HandleFunc("GET /v1/context/features", s.listFeatures)
 	mux.HandleFunc("POST /v1/context/connectors", s.defineConnector)
@@ -102,44 +134,120 @@ func (s *Service) Routes(mux *http.ServeMux) {
 }
 
 type entityRequest struct {
-	EntityType string          `json:"entity_type"`
-	EntityID   string          `json:"entity_id"`
-	Attributes json.RawMessage `json:"attributes,omitempty"`
+	EntityType    string          `json:"entity_type"`
+	EntityID      string          `json:"entity_id"`
+	SchemaVersion int             `json:"schema_version,omitempty"`
+	Attributes    json.RawMessage `json:"attributes,omitempty"`
 }
 
 func (s *Service) recordEntity(w http.ResponseWriter, r *http.Request) {
 	var req entityRequest
 	httpx.Emit(w, r, &req, func(id identity.Identity) (eventlog.Envelope, error) {
+		var evidence domain.SchemaEvidence
+		if s.contracts != nil {
+			var err error
+			evidence, err = s.contracts.ValidateEntity(
+				r.Context(), id, req.EntityType, req.SchemaVersion, req.Attributes,
+			)
+			if err != nil {
+				return eventlog.Envelope{}, err
+			}
+		}
 		return s.cmd.RecordEntity(r.Context(), id, domain.RecordEntity{
 			EntityType: req.EntityType, EntityID: req.EntityID, Attributes: req.Attributes,
+			SchemaEvidence: evidence,
 		})
 	})
 }
 
 type eventRequest struct {
-	EntityType string          `json:"entity_type"`
-	EntityID   string          `json:"entity_id"`
-	EventName  string          `json:"event_name"`
-	Data       json.RawMessage `json:"data,omitempty"`
-	OccurredAt time.Time       `json:"occurred_at,omitempty"`
+	EntityType        string          `json:"entity_type"`
+	EntityID          string          `json:"entity_id"`
+	EventName         string          `json:"event_name"`
+	EventID           string          `json:"event_id,omitempty"`
+	SupersedesEventID string          `json:"supersedes_event_id,omitempty"`
+	SchemaVersion     int             `json:"schema_version,omitempty"`
+	Data              json.RawMessage `json:"data,omitempty"`
+	OccurredAt        time.Time       `json:"occurred_at,omitempty"`
 }
 
 func (s *Service) recordEvent(w http.ResponseWriter, r *http.Request) {
 	var req eventRequest
-	httpx.Emit(w, r, &req, func(id identity.Identity) (eventlog.Envelope, error) {
-		data := req.Data
-		if s.eraser != nil {
-			sealed, err := s.eraser.SealFields(r.Context(), id, eventSubject(req.EntityType, req.EntityID), data, s.piiFields)
-			if err != nil {
-				return eventlog.Envelope{}, err
-			}
-			data = sealed
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	occurredAt := req.OccurredAt
+	if occurredAt.IsZero() {
+		occurredAt = s.now()
+	}
+	data := req.Data
+	var evidence domain.SchemaEvidence
+	if s.contracts != nil {
+		var err error
+		evidence, err = s.contracts.ValidateEvent(
+			r.Context(), id, req.EntityType, req.EventName, occurredAt, req.SchemaVersion, data,
+		)
+		if err != nil {
+			httpx.Error(w, http.StatusBadRequest, err)
+			return
 		}
-		return s.cmd.RecordEvent(r.Context(), id, domain.RecordEvent{
-			EntityType: req.EntityType, EntityID: req.EntityID, EventName: req.EventName,
-			Data: data, OccurredAt: req.OccurredAt,
+	}
+	if s.eraser != nil {
+		sealed, err := s.eraser.SealFields(
+			r.Context(), id, eventSubject(req.EntityType, req.EntityID), data, s.piiFields,
+		)
+		if err != nil {
+			httpx.Error(w, http.StatusBadRequest, err)
+			return
+		}
+		data = sealed
+	}
+	envelope, err := s.cmd.RecordEvent(r.Context(), id, domain.RecordEvent{
+		EntityType: req.EntityType, EntityID: req.EntityID, EventName: req.EventName,
+		EventID: req.EventID, SupersedesEventID: req.SupersedesEventID,
+		Data: data, OccurredAt: occurredAt, SchemaEvidence: evidence,
+	})
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	var recorded events.EventRecorded
+	if err := json.Unmarshal(envelope.Payload, &recorded); err != nil {
+		httpx.Error(w, http.StatusInternalServerError, fmt.Errorf(
+			"context-layer: decode just-recorded event: %w", err,
+		))
+		return
+	}
+	httpx.JSON(w, http.StatusAccepted, map[string]any{
+		"event_id": envelope.ID, "seq": envelope.Seq, "source_event_id": recorded.EventID,
+	})
+}
+
+type retractEventRequest struct {
+	Reason string `json:"reason"`
+}
+
+func (s *Service) retractEvent(w http.ResponseWriter, r *http.Request) {
+	var request retractEventRequest
+	httpx.Emit(w, r, &request, func(id identity.Identity) (eventlog.Envelope, error) {
+		return s.cmd.RetractEvent(r.Context(), id, domain.RetractEvent{
+			EventID: r.PathValue("event_id"), Reason: request.Reason,
 		})
 	})
+}
+
+func (s *Service) getEvent(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	event, found, err := entities.ReadEvent(r.Context(), s.store, id, r.PathValue("event_id"))
+	httpx.WriteOne(w, event, found, err, "event not found")
 }
 
 // eventSubject is the erasure subject for an entity's events.
@@ -227,7 +335,18 @@ func (s *Service) computeFeatures(w http.ResponseWriter, r *http.Request) {
 			httpx.Error(w, http.StatusBadRequest, fmt.Errorf("as_of must be RFC3339: %w", err))
 			return
 		}
-		vals, err := features.Compute(r.Context(), s.store, id, entityType, entityID, asOf.UTC())
+		knowledgeAt := asOf.UTC()
+		if knowledgeRaw := strings.TrimSpace(r.URL.Query().Get("knowledge_at")); knowledgeRaw != "" {
+			knowledgeAt, err = time.Parse(time.RFC3339, knowledgeRaw)
+			if err != nil {
+				httpx.Error(w, http.StatusBadRequest, fmt.Errorf("knowledge_at must be RFC3339: %w", err))
+				return
+			}
+			knowledgeAt = knowledgeAt.UTC()
+		}
+		vals, err := features.ComputeAt(
+			r.Context(), s.store, id, entityType, entityID, asOf.UTC(), knowledgeAt,
+		)
 		httpx.WriteList(w, "features", vals, err)
 		return
 	}

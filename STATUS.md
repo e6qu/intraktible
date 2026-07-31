@@ -10,8 +10,8 @@ Turn the whole-product capability audit into the detailed plan-of-record: map
 every key Builder, Developer, Agent Designer, Reviewer, Operator, Modeler,
 Validator, Admin, SRE, Domain Owner, and Executive journey to what is real and
 what remains, then carve the remaining work into serialized large-to-huge
-full-stack pull requests. The active implementation tranche is E5, governed
-agentic operations and human/AI learning.
+full-stack pull requests. The active implementation tranche is E6, the model
+and context data-science platform.
 
 ## Standing rules (user-issued, non-negotiable)
 
@@ -35,6 +35,136 @@ agentic operations and human/AI learning.
 
 ## Phase
 
+**Enterprise PR E5 — governed agentic operations and human/AI learning is
+merged.** Authoritative `origin/main` is merge commit `593eda9`, containing
+final E5 head `db0b8ca`. Exact-head hosted run `30596525530` passed all nine
+jobs: Go race/security/license, real PostgreSQL, 135 native browser journeys,
+86 real-Wasm journeys, four embedded-artifact journeys, real Shauth SSO, web,
+Terraform, and container contracts. PR #164 is merged, its remote branch was
+deleted, and fresh reconciliation found the open-PR queue empty.
+
+E6 branch `enterprise/e6-model-context-data-science` was cut exactly from that
+merge. Its acceptance boundary is `PLAN.md` §8b.7: governed versioned source
+schemas and quality contracts; event-time materialization, correction, and
+durable backfills; immutable point-in-time dataset snapshots; reproducible
+training jobs and signed artifact registration; richer statistically sound
+evaluation, explanation, fairness, monitoring, and outcome semantics; complete
+source-to-retirement lineage; and Modeler/Validator/Operator UI plus API, SDK,
+CLI, scheduler, replay, privacy, and multi-replica evidence. No E6 dependency
+has been added and no E6 PR is open.
+
+The first E6 vertical is implemented locally: the new `modeling/` bounded
+context owns immutable entity/event schema versions, deterministic hashes,
+compatibility policy, independent maker-checker activation, and retirement.
+Context ingestion consumes approved contracts through a narrow service port;
+an active schema makes the exact version mandatory, records its hash and
+quality decision in the immutable source event, rejects `block` violations,
+and replays `refer` / `approved_stale` findings into operator incidents while
+retaining warn-only observations. Modeling routes, server composition,
+projection reset/replay ownership, and explicit RBAC pins compile. Focused
+pure-domain, route-authorization, Context, and server tests are green; suites
+requiring loopback listeners are sandbox-blocked rather than product failures.
+
+Source signals now have durable caller-visible ids, separate occurrence and
+receipt times, replica-fenced idempotency, correction edges, and terminal
+retractions. The Context read model keeps the complete status history and a
+bitemporal feature fold excludes facts not yet known at `knowledge_at`, while
+source-health projections track watermarks, late arrivals, corrections,
+retractions, lag, and quality counts. Immutable dataset definitions pin
+features, purposes, label horizons, deterministic partitions, and retention.
+Durable cross-tenant leased workers build point-in-time rows, keep missing
+labels explicitly censored, verify the content hash after writing the
+encrypted-at-rest operational blob, and only then publish the immutable
+manifest. Snapshot rows are admin-gated and expire loudly. The focused
+`TestSnapshotWorkerPublishesVerifiedPointInTimeRows` journey proves the real
+feature→label join, content-addressed publication, and terminal job state.
+
+The same leased job system now runs allowlisted deterministic logistic training
+outside the API path. It pins snapshot/code/runtime/parameters/seed, writes and
+re-reads a content-addressed artifact, signs it with Ed25519, and uses one
+replica-fenced model-definition fact to both complete the job and register full
+production lineage. Holdout evaluation records AUC/log-loss/Brier, threshold
+cost optimization, confusion matrix, calibration, Wilson intervals,
+segment/intersection fairness with significance/power, temporal slices, and
+leakage findings. Passing independent validation of a trained model must match
+the signed artifact/snapshot/evaluation hashes and explicitly attest leakage,
+calibration, fairness, and threshold review. Repeated fits over the same inputs
+reproduce the artifact hash in
+`TestTrainingWorkerReproducesSignedArtifactAndRegistersLineage`. Governed model
+retirement now blocks serving without deleting lineage. Outcomes additionally
+support multiclass and explicitly censored/delayed observations, and the fair
+lending report now exposes uncertainty, significance, statistical flags,
+intersectional slices, and configured missing-class treatment. Durable feature
+backfill/materialization jobs reuse the verified publish-after-write path.
+
+The singleton scheduler tier now owns modeling lifecycle sweeps: it opens one
+replica-deduplicated incident per stale source episode, auto-resolves it after a
+fresh record, and event-sources snapshot retention expiry before replayably
+deleting operational row content. Entity and event sources both maintain a
+freshness baseline. Snapshot and backfill rows are sealed independently under
+the existing per-subject crypto-shred vault; erasing one subject makes the
+affected snapshot fail explicitly instead of returning or training on partial
+data. Production now requires a shared 32-byte Ed25519 seed so every worker
+replica signs with the same deployment identity; Helm, Compose, and ECS carry
+that secret. Censored binary outcomes are excluded from performance metrics.
+
+The governed-source audit has since closed the semantic contract below that
+vertical: nullable/enum/range/pattern/length constraints, durable composite
+uniqueness, and relationship-target checks now obey block/refer/warn policy at
+the append boundary and survive replica races. Entity state is also replayed as
+a knowledge-time history, so snapshot population and segment values cannot see
+an entity created or changed after the requested cutoff. Actionable source
+quality now has a real operator lifecycle: severity, owning team, affected time
+window/subjects/downstream assets, source/correction lineage, acknowledgement,
+resolution evidence, freshness auto-recovery, and a shared operator inbox are
+all event-sourced and replay-tested. Manual resolution is impossible before an
+operator acknowledges ownership. Go/TypeScript clients, CLI, UI, RBAC, and
+OpenAPI expose the same workflow.
+
+Durable modeling jobs now expose monotonic phase progress, compute/cost
+evidence, cooperative pause/resume/cancel, and explicitly reviewed bounded
+retry; the worker watches control transitions during active work rather than
+waiting for a long phase to finish. Dataset snapshots now apply immutable
+population inclusion/exclusion rules and historical consent at the exact
+knowledge cutoff, publish candidate/exclusion/quality/completeness counts, and
+export hash-verified deterministic JSON or stable CSV through admin-only API,
+SDK, CLI, and UI paths.
+
+The artifact supply chain now distinguishes platform-trained from externally
+built artifacts. External registration verifies Ed25519 signature, SHA-256,
+SBOM/dependency metadata, vulnerability evidence, storage capability,
+retention, and explanation limitations without fetching or deserializing model
+bytes. Ordered independent validation/production/archive stages are replayed
+through API, SDKs, CLI, and UI. A trained model cannot receive a passing
+validation until its artifact is validated, or production approval until that
+artifact is production-cleared. `approved_stale` is no longer a cosmetic
+quality label: only independently approved event freshness policies can use
+it, structurally invalid data is rejected, and accepted stale evidence pins
+the approval identity, time, request, and rationale.
+
+The public-contract slice is complete and every local release gate is green:
+source-health, materialization, artifact, and comparison reads agree across
+OpenAPI, RBAC, Go/TypeScript SDKs, CLI, and the Svelte cockpit. Strict lint,
+ten dupl clone groups (deduplicated into `platform/stats.Wilson`,
+`platform/scheduler.RunWorker`, shared modeling publish/settle helpers, and
+generic CLI command shapes), dead-code, race, vulnerability, license,
+Terraform (18/18), and the web format/lint/typecheck/unit/build gates all
+pass, and `make demo-seed` round-trips with a signed modeling artifact. The
+branch is pushed as the sole open E6 PR; E6 remains open for live native/Wasm
+browser journeys, whole-diff audits, phase-closing documentation, and the
+hosted release matrix.
+
+PR #165 is that sole review item, and its exact-head hosted run `30630868192`
+(`720e857`) is green across all nine jobs: Go race/security/license, real
+PostgreSQL, 135 native browser journeys, 86 real-Wasm journeys, four
+embedded-artifact journeys, real Shauth SSO, web, Terraform, and container
+contracts. The hosted matrix found and closed three defects en route: a
+nine-persona account menu stranding Sign out outside the viewport, a demo
+journey navigating on response headers before the embedded backend persisted
+the shred delta, and a shared-store projection race between a live consumer
+and a concurrent rebuild (closed by `Runtime.Wait` plus cancel-before-rebuild
+in the SLA scheduler test).
+
 **Enterprise PR E4 — collaborative authoring and governed delivery is merged.**
 Authoritative `origin/main` is merge commit `0eea197`, containing final E4 head
 `8810602`. Exact-head hosted run `30573475006` passed all nine jobs: Go
@@ -51,9 +181,8 @@ human action/QA/outcome learning, operator quality/safety/cost controls, and a
 versioned bring-your-own-agent protocol. The existing Agent Manager runtime,
 durable leases, eval cases, tool allowlists, costs, and Case Manager governance
 are the starting substrate, not completion evidence. No E5 dependency has been
-added. Fresh pre-push reconciliation confirmed `origin/main` remains `0eea197`
-and the open-PR queue was empty; the completed vertical is now the sole open
-review item, PR #164.
+added. Fresh pre-push reconciliation confirmed its base at `0eea197` and an
+empty review queue; PR #164 subsequently merged as `593eda9`.
 
 The first E5 platform loop is implemented and focused-tested: immutable agent
 templates/releases/evaluation suites and campaigns, independent release review,
@@ -175,12 +304,10 @@ frontend units, zero-warning typecheck/lint/format and production build, plus
 the full race-enabled Go CI matrix with vet/build, strict lint, SAST,
 dead-code, zero production clones, licenses, and zero reachable
 vulnerabilities. Final diff hygiene, OpenAPI parsing, Go formatting, SPDX, and
-source-marker checks are also clean. Commit `2d800ad` is pushed and PR #164 is
-open. Hosted run `30596019405` passed all nine jobs: Go race/security/license,
-real PostgreSQL, 135 native browser journeys, 86 real-Wasm journeys, four
-embedded-artifact journeys, real Shauth SSO, web, Terraform, and container
-contracts. This continuity-only update records that evidence; no product source
-changed after the green run.
+source-marker checks are also clean. Commit `2d800ad` formed the product
+vertical. Hosted run `30596019405` passed all nine jobs before the final
+continuity-only commit; exact-head run `30596525530` then passed the same
+complete matrix before PR #164 merged.
 
 **Enterprise PR E3 — enterprise case operations is merged.** Authoritative
 `origin/main` is merge commit `89bca6a`, containing E3 head `7e55c3d`; its final

@@ -12,11 +12,13 @@ import (
 
 	agentgovernance "github.com/e6qu/intraktible/agent-manager/governance"
 	cmevents "github.com/e6qu/intraktible/case-manager/events"
+	contextevents "github.com/e6qu/intraktible/context-layer/events"
 	"github.com/e6qu/intraktible/decision-engine/authoring"
 	deevents "github.com/e6qu/intraktible/decision-engine/events"
 	"github.com/e6qu/intraktible/decision-engine/experiments"
 	"github.com/e6qu/intraktible/decision-engine/monitor"
 	"github.com/e6qu/intraktible/decision-engine/policy"
+	modelingevents "github.com/e6qu/intraktible/modeling/events"
 	"github.com/e6qu/intraktible/platform/comments"
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/identity"
@@ -80,6 +82,18 @@ func (Projector) Apply(ctx context.Context, e eventlog.Envelope, s store.Store) 
 		return applyComment(ctx, e, s)
 	case TypeMarkedRead:
 		return applyRead(ctx, e, s)
+	case contextevents.TypeEntityRecorded:
+		return applyEntityQualityIncident(ctx, e, s)
+	case contextevents.TypeEventRecorded:
+		return applyEventQualityIncident(ctx, e, s)
+	case modelingevents.TypeSourceFreshnessViolated:
+		return applyFreshnessQualityIncident(ctx, e, s)
+	case modelingevents.TypeQualityIncidentAcknowledged:
+		return applyQualityIncidentAcknowledged(ctx, e, s)
+	case modelingevents.TypeQualityIncidentResolved:
+		return applyQualityIncidentResolved(ctx, e, s)
+	case modelingevents.TypeSourceFreshnessRecovered:
+		return applyFreshnessQualityRecovered(ctx, e, s)
 	case cmevents.TypeReviewRequested:
 		return applyReviewRequested(ctx, e, s)
 	case deevents.TypeManualReviewRequested:

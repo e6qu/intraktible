@@ -913,3 +913,93 @@ Linux, entirely that VM's fsync path.
   race/security/license, real PostgreSQL, 135 native browser journeys, 86
   real-Wasm journeys, four embedded-artifact journeys, real Shauth SSO, web,
   Terraform, and container contracts.
+- 2026-07-31: E5 PR #164 merged as authoritative `origin/main` `593eda9` after
+  exact-head run `30596525530` passed all nine jobs; the remote branch was
+  deleted, the PR queue was empty, and
+  `enterprise/e6-model-context-data-science` was cut exactly from that merge.
+- 2026-07-31: Implemented E6's first governed-source vertical: immutable hashed
+  entity/event schemas, compatibility checks, maker-checker activation,
+  retirement, exact-version Context admission, and replay-stable quality
+  observations/incidents; focused modeling, Context, server, and RBAC tests
+  compile and pass.
+- 2026-07-31: Added bitemporal source identity/correction/retraction semantics,
+  event-time watermarks, leakage-safe feature folds, immutable dataset
+  definitions, and replica-fenced snapshot workers that verify content before
+  atomic publication; the focused point-in-time feature→label journey passes.
+- 2026-07-31: Added verified feature backfills, reproducible leased training,
+  Ed25519-signed artifacts, one-fact production model registration, structured
+  holdout evaluation, stricter independent validation, model retirement,
+  multiclass/censored outcomes, and statistically explicit intersectional fair
+  lending; repeated fits reproduce the artifact hash.
+- 2026-07-31: Added singleton freshness/retention sweeps, replayable snapshot
+  expiry, subject-keyed row sealing, a stable production Ed25519 identity, and
+  censored-actual exclusion; focused scheduler, erasure, training, and
+  production-preflight regressions pass.
+- 2026-07-31: Regenerated and replay-verified the real E6 demo as 8,819
+  immutable events plus separately restored encrypted operational state: 10
+  point-in-time rows, one signed artifact, one independent evaluation, one
+  backfill materialization, and one referred quality incident survive restart;
+  `make demo-seed` reports the eight-model round trip green.
+- 2026-07-31: Closed the governed-source fake exposed by the whole-scope audit:
+  null/enum/range/pattern/length validity, required relationship presence,
+  durable relationship-target checks, and entity composite uniqueness now
+  follow block/refer/warn policy at the append boundary. Twenty synchronized
+  two-handler races admit exactly one unique owner; the real seeded cohort uses
+  ten valid unique identifiers and completes the 8,814-event restart round trip.
+- 2026-07-31: Removed entity-state point-in-time leakage from snapshots and
+  backfills: the Context projector now keeps replay-owned entity versions by
+  knowledge cutoff, excludes later-created subjects, and resolves segment
+  scalars without JSON quoting. The extended snapshot worker regression passes.
+- 2026-07-31: Completed the source-quality operator lifecycle: incidents carry
+  severity, owner, affected interval/subjects/assets and correction lineage;
+  manual remediation requires acknowledgement before resolution; freshness can
+  auto-recover; and shared operator notifications track the lifecycle. Focused
+  modeling, replay, notifications, RBAC/OpenAPI, Go SDK, TypeScript SDK, Svelte
+  check/lint, and UI contract tests pass.
+- 2026-07-31: Made the modeling job control plane durable and cooperative:
+  progress/cost phases, pause/resume/cancel, reviewed bounded retry, and active
+  worker control polling are event-sourced; lifecycle and in-flight worker
+  regressions pass.
+- 2026-07-31: Completed dataset population governance and reproducible export:
+  immutable inclusion/exclusion predicates, point-in-time consent history,
+  exclusion/quality/completeness counts, and hash-verified JSON/CSV download
+  pass focused domain, worker, consent, OpenAPI, SDK, CLI, and UI gates.
+- 2026-07-31: Added the signed external artifact registry and joined it to model
+  governance: provenance/SBOM/vulnerability/explanation evidence is verified
+  without loading bytes, independent ordered stages replay, and trained-model
+  validation/production approval fail until artifact trust reaches the
+  required stage. Focused registry, command, projection, RBAC/OpenAPI, SDK/CLI,
+  and Svelte gates pass.
+- 2026-07-31: Replaced cosmetic `approved_stale` behavior with an explicit
+  independently approved freshness policy whose request/checker/time/rationale
+  are pinned into each admitted stale record; non-freshness schema violations
+  still fail. Pure-domain and service-contract regressions pass.
+- 2026-07-31: Finished the in-flight public-contract slice and closed every
+  local release gate: source-health, feature materialization, artifact, and
+  comparison reads now agree across OpenAPI, RBAC pins, the Go SDK, the CLI,
+  and the Svelte cockpit; `Client.GetSnapshot` is wired into `modeling
+  snapshots --snapshot`. Strict-lint findings (copyloopvar, builtinShadow,
+  appendAssign/appendCombine, stringXbytes, paramTypeCombine) are fixed, and
+  all ten dupl clone groups are deduplicated into `platform/stats.Wilson`,
+  `platform/scheduler.RunWorker`, shared publish/settle helpers in modeling
+  command/projection, and generic CLI list-or-get/two-flag actions. The wrong
+  `web/static/demo-state.json` prettier-ignore path is corrected.
+  `make ci` exits 0 (vet, typecheck, strict lint, gosec, race suite, deadcode
+  silent, zero clone groups, zero reachable vulnerabilities, licenses);
+  `make terraform-check` passes 18/18; the web format/lint/typecheck/254-unit/
+  production-build gates are green; `make demo-seed` round-trips with one
+  signed modeling artifact.
+- 2026-07-31: Opened E6 as sole PR #165 and drove the hosted matrix green.
+  Run `30626558423` exposed two browser-surface defects (the nine-persona
+  account menu stranded Sign out outside the viewport; the crypto-shred demo
+  journey navigated on response headers before the embedded backend persisted
+  the shred delta) — both fixed and proven locally (135/135 native, 86/86
+  real-Wasm journeys). Run `30629109407` then exposed a latent shared-store
+  projection race in `TestTickBreachesOverdueCasesPerTenant`: a second Runtime
+  rebuilt into the memory store while the first Runtime's live consumer was
+  still applying. `Runtime.Wait` now reports consumer exit, the test cancels
+  and waits before rebuilding, and a platform regression pins cancel+Wait.
+  Exact-head run `30630868192` (`720e857`) is green across all nine jobs: Go
+  race/security/license, real PostgreSQL, 135 native journeys, 86 real-Wasm
+  journeys, four embedded-artifact journeys, real Shauth SSO, web, Terraform,
+  and container contracts.

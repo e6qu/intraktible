@@ -19,6 +19,52 @@ const DOCS = 'https://github.com/e6qu/intraktible/tree/main/docs';
 
 export const HELP = new Map<string, PageHelp>([
   [
+    '/modeling',
+    {
+      title: 'Modeling cockpit',
+      summary:
+        'Govern the complete source-to-serving model lifecycle: source contracts, point-in-time data, reproducible jobs, signed artifacts, independent evaluation, and lineage.',
+      capabilities: [
+        'Define immutable source schemas and route them through independent approval.',
+        'Resolve record-quality and source-freshness incidents from one queue.',
+        'Create bitemporal dataset snapshots and durable feature backfills.',
+        'Run deterministic training and verify content-addressed artifact signatures.',
+        'Execute independent evaluations and compare champion/challenger evidence.',
+        'Trace a production model back through artifact, snapshot, dataset, feature, and schema versions.'
+      ],
+      journeys: [
+        {
+          name: 'Govern a source contract',
+          steps: [
+            'Define a schema version with ownership, purpose, classification, compatibility, and quality policy.',
+            'Click Request review for the immutable version.',
+            'As a different approver, approve or reject the pending contract.',
+            'Watch admitted source records update the watermark and quality queue.'
+          ]
+        },
+        {
+          name: 'Build reproducible model data',
+          steps: [
+            'Define a dataset with pinned features, label horizon, segments, partitions, purpose, and retention.',
+            'Choose observation and knowledge cutoffs, then queue a point-in-time snapshot.',
+            'Watch the leased job publish a verified content hash.',
+            'Use Feature backfill when an event-time materialization must be rebuilt.'
+          ]
+        },
+        {
+          name: 'Train and validate a governed model',
+          steps: [
+            'Choose a published snapshot, model name, and exact code revision.',
+            'Queue deterministic training and wait for the signed artifact.',
+            'Verify the stored artifact bytes and signature.',
+            'Queue an independent evaluation over an exact artifact and snapshot.',
+            'Use Lineage or Champion / challenger to review evidence before model approval.'
+          ]
+        }
+      ]
+    }
+  ],
+  [
     '/',
     {
       title: 'Home',

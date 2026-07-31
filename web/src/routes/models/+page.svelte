@@ -23,6 +23,7 @@
     approveModel,
     rejectModel,
     recordModelValidation,
+    retireModel,
     modelApproved,
     type Model,
     type ModelValidation,
@@ -85,15 +86,28 @@
   let valMetrics = $state('');
   let valNotes = $state('');
   let valPassed = $state(true);
+  let valArtifact = $state('');
+  let valSnapshot = $state('');
+  let valEvaluationHash = $state('');
+  let valLeakage = $state(false);
+  let valCalibration = $state(false);
+  let valFairness = $state(false);
+  let valThreshold = $state(false);
+  let retireTarget = $state('');
+  let retireReason = $state('');
 
   function toggleGov(name: string) {
     govOpen = govOpen === name ? '' : name;
     govDecision = null;
     govReason = '';
+    const model = models.find((item) => item.name === name);
+    valArtifact = model?.lineage?.artifact_id ?? '';
+    valSnapshot = model?.lineage?.snapshot_id ?? '';
   }
 
   // approvalStatus renders the model's four-eyes state as a badge tone + label.
   function approvalStatus(m: Model): { tone: Tone; label: string } {
+    if (m.retired_version === m.version) return { tone: 'neutral', label: 'retired' };
     if (modelApproved(m)) return { tone: 'ok', label: 'approved' };
     if (m.pending) return { tone: 'warn', label: 'pending review' };
     return { tone: 'danger', label: 'not approved' };
@@ -182,15 +196,58 @@
       if (!valDataset.trim()) throw new Error('A validation dataset is required.');
       if (!Object.keys(metrics).length) throw new Error('At least one named metric is required.');
       if (!valNotes.trim()) throw new Error('Validation notes are required.');
+      const model = models.find((item) => item.name === name);
+      if (model?.lineage) {
+        if (!valArtifact.trim() || !valSnapshot.trim() || valEvaluationHash.trim().length !== 64) {
+          throw new Error(
+            'A trained model requires its exact artifact, snapshot, and 64-character signed evaluation hash.'
+          );
+        }
+        if (valPassed && !(valLeakage && valCalibration && valFairness && valThreshold)) {
+          throw new Error(
+            'A passing trained-model validation must attest leakage, calibration, fairness, and threshold review.'
+          );
+        }
+      }
       await recordModelValidation(key, name, {
         dataset: valDataset.trim(),
         metrics,
         notes: valNotes.trim(),
-        passed: valPassed
+        passed: valPassed,
+        ...(model?.lineage
+          ? {
+              artifact_id: valArtifact.trim(),
+              snapshot_id: valSnapshot.trim(),
+              evaluation_hash: valEvaluationHash.trim(),
+              leakage_passed: valLeakage,
+              calibration_reviewed: valCalibration,
+              fairness_reviewed: valFairness,
+              threshold_reviewed: valThreshold
+            }
+          : {})
       });
       toast.success('Validation evidence recorded.');
-      valDataset = valMetrics = valNotes = '';
+      valDataset = valMetrics = valNotes = valArtifact = valSnapshot = valEvaluationHash = '';
       valPassed = true;
+      valLeakage = valCalibration = valFairness = valThreshold = false;
+      await refreshModels();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      govBusy = false;
+    }
+  }
+
+  async function doRetireModel(name: string) {
+    if (!retireReason.trim()) {
+      toast.error('A model-retirement reason is required.');
+      return;
+    }
+    govBusy = true;
+    try {
+      await retireModel(key, name, retireReason.trim());
+      toast.success('Model retired; serving is blocked and lineage is retained.');
+      retireTarget = retireReason = '';
       await refreshModels();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
@@ -661,7 +718,12 @@
                   <div class="gov">
                     <div class="gov-status">
                       <b>Version {m.version ?? 1}</b>
-                      {#if modelApproved(m)}
+                      {#if m.retired_version === m.version}
+                        <Badge tone="neutral">retired v{m.retired_version}</Badge>
+                        <span class="muted"
+                          >by {m.retired_by} · {m.retire_reason} · serving blocked, lineage retained</span
+                        >
+                      {:else if modelApproved(m)}
                         <Badge tone="ok">approved v{m.approved_version}</Badge>
                         {#if m.approved_by}<span class="muted">by {m.approved_by}</span>{/if}
                       {:else if m.pending}
@@ -670,6 +732,38 @@
                       {:else}
                         <Badge tone="danger">not approved</Badge>
                         <span class="muted">unapproved models are refused outside the sandbox</span>
+                      {/if}
+                      {#if m.retired_version !== m.version && roleAtLeast($user?.role, 'approver')}
+                        {#if retireTarget === m.name}
+                          <input
+                            class="decision-reason"
+                            bind:value={retireReason}
+                            aria-label="model retirement reason"
+                            placeholder="Why this model must leave service"
+                          />
+                          <button
+                            class="btn"
+                            disabled={govBusy}
+                            onclick={() => doRetireModel(m.name)}>Confirm retirement</button
+                          >
+                          <button
+                            class="btn"
+                            disabled={govBusy}
+                            onclick={() => {
+                              retireTarget = '';
+                              retireReason = '';
+                            }}>Cancel</button
+                          >
+                        {:else}
+                          <button
+                            class="btn"
+                            disabled={govBusy}
+                            onclick={() => {
+                              retireTarget = m.name;
+                              retireReason = '';
+                            }}>Retire model</button
+                          >
+                        {/if}
                       {/if}
                     </div>
 
@@ -764,6 +858,18 @@
                                   .map(([k, val]) => `${k}=${val}`)
                                   .join(' ')}{/if}
                               {#if v.validator}<span class="muted">— {v.validator}</span>{/if}
+                              {#if v.artifact_id}
+                                <div class="muted small">
+                                  artifact {v.artifact_id} · snapshot {v.snapshot_id} · evaluation
+                                  {v.evaluation_hash?.slice(0, 16)}…
+                                </div>
+                                <div class="muted small">
+                                  leakage {v.leakage_passed ? '✓' : '✗'} · calibration
+                                  {v.calibration_reviewed ? '✓' : '✗'} · fairness
+                                  {v.fairness_reviewed ? '✓' : '✗'} · threshold
+                                  {v.threshold_reviewed ? '✓' : '✗'}
+                                </div>
+                              {/if}
                             </li>
                           {/each}
                         </ul>
@@ -777,6 +883,34 @@
                             placeholder="metrics (auc=0.81, ks=0.42)"
                           />
                           <input bind:value={valNotes} placeholder="independent review notes" />
+                          {#if m.lineage}
+                            <input
+                              bind:value={valArtifact}
+                              placeholder={`artifact id (expected ${m.lineage.artifact_id})`}
+                            />
+                            <input
+                              bind:value={valSnapshot}
+                              placeholder={`snapshot id (expected ${m.lineage.snapshot_id})`}
+                            />
+                            <input
+                              bind:value={valEvaluationHash}
+                              placeholder="signed evaluation hash (64 hex characters)"
+                            />
+                            <div class="attestations">
+                              <label class="pass"
+                                ><input type="checkbox" bind:checked={valLeakage} /> leakage checks passed</label
+                              >
+                              <label class="pass"
+                                ><input type="checkbox" bind:checked={valCalibration} /> calibration reviewed</label
+                              >
+                              <label class="pass"
+                                ><input type="checkbox" bind:checked={valFairness} /> fairness reviewed</label
+                              >
+                              <label class="pass"
+                                ><input type="checkbox" bind:checked={valThreshold} /> threshold reviewed</label
+                              >
+                            </div>
+                          {/if}
                           <label class="pass"
                             ><input type="checkbox" bind:checked={valPassed} /> passed</label
                           >

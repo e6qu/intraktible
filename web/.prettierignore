@@ -16,3 +16,4 @@ static/*.wasm
 static/wasm_exec.js
 static/demo-seed.json
 static/demo-users.json
+static/demo-state.json

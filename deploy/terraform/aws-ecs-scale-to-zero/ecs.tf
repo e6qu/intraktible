@@ -93,6 +93,7 @@ locals {
   app_secrets = [
     { name = "INTRAKTIBLE_POSTGRES_DSN", valueFrom = var.database_url_secret_arn },
     { name = "INTRAKTIBLE_ENCRYPTION_KEY", valueFrom = aws_secretsmanager_secret.encryption_key.arn },
+    { name = "INTRAKTIBLE_ARTIFACT_SIGNING_KEY", valueFrom = aws_secretsmanager_secret.artifact_signing_key.arn },
     { name = "INTRAKTIBLE_BOOTSTRAP_API_KEY", valueFrom = aws_secretsmanager_secret.bootstrap_api_key.arn },
   ]
 

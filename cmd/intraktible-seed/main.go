@@ -25,11 +25,17 @@ import (
 	"strings"
 	"time"
 
+	modelingservice "github.com/e6qu/intraktible/modeling/service"
 	"github.com/e6qu/intraktible/platform/erasure"
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/store"
 	"github.com/e6qu/intraktible/server"
 )
+
+type demoOperationalState struct {
+	Erasure  erasure.OperationalState         `json:"erasure"`
+	Modeling modelingservice.OperationalState `json:"modeling"`
+}
 
 func main() {
 	out := flag.String("out", "web/static/demo-seed.json", "path for the exported event-log JSON")
@@ -100,7 +106,7 @@ func writeRoster(path string) error {
 }
 
 // buildSeed runs the full scripted history and returns the exported event log.
-func buildSeed() ([]eventlog.Envelope, erasure.OperationalState) {
+func buildSeed() ([]eventlog.Envelope, demoOperationalState) {
 	anchor := time.Now().UTC().Truncate(time.Hour)
 
 	// Lay the decision plan out first: the traffic window plus the entity-event
@@ -148,6 +154,7 @@ func buildSeed() ([]eventlog.Envelope, erasure.OperationalState) {
 	cfg := &timeCursor{t: cfgStart}
 	var acts []action
 	acts = append(acts, s.keyActions(cfg)...)
+	acts = append(acts, s.modelingConfigActions(cfg)...)
 	acts = append(acts, s.contextConfigActions(cfg)...)
 	acts = append(acts, s.agentConfigActions(cfg)...)
 	acts = append(acts, s.governedAgentActions(cfg)...)
@@ -166,6 +173,7 @@ func buildSeed() ([]eventlog.Envelope, erasure.OperationalState) {
 	// discussions, pending requests, monitor checks, inbox reads.
 	bySeed := s.designateCaseSources(slots, anchor)
 	acts = append(acts, s.entityEventActions(anchor)...)
+	acts = append(acts, s.modelingDataActions(anchor)...)
 	acts = append(acts, s.decisionActions(slots)...)
 	acts = append(acts, s.experimentActions(anchor)...)
 	acts = append(acts, s.populationActions(anchor)...)
@@ -200,16 +208,22 @@ func buildSeed() ([]eventlog.Envelope, erasure.OperationalState) {
 	acts = append(acts, s.dataGovernanceActions(anchor)...)
 
 	s.runTimeline(acts)
+	s.runModelingJobs(anchor)
 
 	// The last beat: an async agent run left mid-flight, exported as "running".
 	s.clk.Set(anchor.Add(-2 * time.Minute))
 	s.startRunningRun()
 
 	events := log.Export()
-	operationalState, err := erasure.ExportOperationalState(context.Background(), st)
+	erasureState, err := erasure.ExportOperationalState(context.Background(), st)
 	if err != nil {
-		fatalf("export demo operational state: %v", err)
+		fatalf("export demo erasure state: %v", err)
 	}
+	modelingState, err := modelingservice.ExportOperationalState(context.Background(), st)
+	if err != nil {
+		fatalf("export demo modeling state: %v", err)
+	}
+	operationalState := demoOperationalState{Erasure: erasureState, Modeling: modelingState}
 
 	// Unpark the blocked worker and shut down cleanly (its terminal event lands
 	// after the export, so the seed keeps the run running).
@@ -224,16 +238,20 @@ func buildSeed() ([]eventlog.Envelope, erasure.OperationalState) {
 
 // verifySeed replays the exported history through a fresh server — the exact
 // wasm boot path — and spot-checks the projections, failing loudly on drift.
-func verifySeed(events []eventlog.Envelope, operationalState erasure.OperationalState) {
+func verifySeed(events []eventlog.Envelope, operationalState demoOperationalState) {
 	log, err := eventlog.NewMemoryFrom(events)
 	if err != nil {
 		fatalf("round trip: %v", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	st := store.NewMemory()
-	if err := erasure.RestoreOperationalState(ctx, st, operationalState); err != nil {
+	if err := erasure.RestoreOperationalState(ctx, st, operationalState.Erasure); err != nil {
 		cancel()
-		fatalf("round trip: restore operational state: %v", err)
+		fatalf("round trip: restore erasure state: %v", err)
+	}
+	if err := modelingservice.RestoreOperationalState(ctx, st, operationalState.Modeling); err != nil {
+		cancel()
+		fatalf("round trip: restore modeling state: %v", err)
 	}
 	srv, err := server.New(ctx, server.Config{Modules: "all", DevAPIKey: devAPIKey, StoreKind: "memory"},
 		log, st)
@@ -577,10 +595,70 @@ func spotCheck(srv *server.Server) string {
 	requireEq("agent runs", len(runs.Runs), len(runSeeds())+1)
 
 	var models struct {
-		Models []json.RawMessage `json:"models"`
+		Models []struct {
+			Name            string `json:"name"`
+			Version         int    `json:"version"`
+			ApprovedVersion int    `json:"approved_version"`
+			Lineage         *struct {
+				ArtifactID string `json:"artifact_id"`
+			} `json:"lineage"`
+		} `json:"models"`
 	}
 	get("/v1/models", &models)
-	requireEq("models", len(models.Models), 7)
+	requireEq("models", len(models.Models), 8)
+	var trainedFound bool
+	for _, model := range models.Models {
+		if model.Name == modelName {
+			trainedFound = model.Lineage != nil &&
+				model.Lineage.ArtifactID != "" &&
+				model.Version == model.ApprovedVersion
+		}
+	}
+	if !trainedFound {
+		fatalf("round trip: trained model lineage and approval did not survive replay")
+	}
+
+	var schemas struct {
+		Schemas []json.RawMessage `json:"schemas"`
+	}
+	get("/v1/modeling/schemas", &schemas)
+	requireEq("modeling schemas", len(schemas.Schemas), 3)
+	var snapshots struct {
+		Snapshots []struct {
+			Manifest struct {
+				SnapshotID string `json:"snapshot_id"`
+				RowCount   int    `json:"row_count"`
+			} `json:"manifest"`
+		} `json:"snapshots"`
+	}
+	get("/v1/modeling/snapshots", &snapshots)
+	requireEq("modeling snapshots", len(snapshots.Snapshots), 1)
+	requireEq("modeling snapshot rows", snapshots.Snapshots[0].Manifest.RowCount, len(modelSeedRows()))
+	var snapshotRows struct {
+		Rows []json.RawMessage `json:"rows"`
+	}
+	get("/v1/modeling/snapshots/"+snapshots.Snapshots[0].Manifest.SnapshotID+"/rows", &snapshotRows)
+	requireEq("restored modeling snapshot content", len(snapshotRows.Rows), len(modelSeedRows()))
+	var artifacts struct {
+		Artifacts []json.RawMessage `json:"artifacts"`
+	}
+	get("/v1/modeling/artifacts", &artifacts)
+	requireEq("modeling artifacts", len(artifacts.Artifacts), 1)
+	var evaluations struct {
+		Evaluations []json.RawMessage `json:"evaluations"`
+	}
+	get("/v1/modeling/evaluations", &evaluations)
+	requireEq("modeling evaluations", len(evaluations.Evaluations), 1)
+	var materializations struct {
+		Materializations []json.RawMessage `json:"materializations"`
+	}
+	get("/v1/modeling/materializations", &materializations)
+	requireEq("modeling materializations", len(materializations.Materializations), 1)
+	var incidents struct {
+		Incidents []json.RawMessage `json:"incidents"`
+	}
+	get("/v1/modeling/quality/incidents", &incidents)
+	requireEq("modeling quality incidents", len(incidents.Incidents), 1)
 
 	var pas struct {
 		PreApprovals []json.RawMessage `json:"preapprovals"`
@@ -609,7 +687,7 @@ func spotCheck(srv *server.Server) string {
 		fatalf("round trip: %d notifications, want >= 12 (dev sees the shared reviewer queue)", len(inbox.Notifications))
 	}
 
-	return fmtName("10 flows, %d decisions (%d failed, %d suspended), %d cases, 7 agents, %d runs, 7 models, 8 preapprovals, %d monitors, %d notifications",
+	return fmtName("10 flows, %d decisions (%d failed, %d suspended), %d cases, 7 agents, %d runs, 8 models, 1 signed modeling artifact, 8 preapprovals, %d monitors, %d notifications",
 		decisions.Total, failed.Total, suspended.Total, len(cases.Cases), len(runs.Runs), monitors, len(inbox.Notifications))
 }
 

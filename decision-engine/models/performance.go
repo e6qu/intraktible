@@ -201,6 +201,7 @@ func ReadOutcomePerformance(
 	var buckets [driftBuckets]ActualBucket
 	for _, outcome := range recorded {
 		if outcome.Kind != outcomes.KindBinary ||
+			outcome.Current.Censored ||
 			(filter.Environment != "" && outcome.Environment != filter.Environment) {
 			continue
 		}

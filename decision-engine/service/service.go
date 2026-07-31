@@ -127,12 +127,24 @@ func (s *Service) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/models/{name}/baseline", s.captureModelBaseline)
 	mux.HandleFunc("POST /v1/models/{name}/monitor", s.setModelMonitor)
 	mux.HandleFunc("POST /v1/models/{name}/validation", s.recordModelValidation)
+	mux.HandleFunc("POST /v1/models/{name}/retire", s.retireModel)
 	mux.HandleFunc("POST /v1/models/{name}/approval-request", s.requestModelApproval)
 	mux.HandleFunc("POST /v1/models/{name}/approve", s.approveModel)
 	mux.HandleFunc("POST /v1/models/{name}/reject", s.rejectModel)
 	mux.HandleFunc("POST /v1/copilot/explain", s.copilotExplain)
 	mux.HandleFunc("POST /v1/copilot/suggest", s.copilotSuggest)
 	mux.HandleFunc("POST /v1/copilot/generate", s.copilotGenerate)
+}
+
+type retireModelRequest struct {
+	Reason string `json:"reason"`
+}
+
+func (s *Service) retireModel(w http.ResponseWriter, r *http.Request) {
+	var request retireModelRequest
+	httpx.Emit(w, r, &request, func(id identity.Identity) (eventlog.Envelope, error) {
+		return s.cmd.RetireModel(r.Context(), id, r.PathValue("name"), request.Reason)
+	})
 }
 
 // graphSchema is the JSON Schema the copilot asks the model to fill when generating
@@ -449,10 +461,17 @@ func (s *Service) modelApprovalDecision(w http.ResponseWriter, r *http.Request, 
 }
 
 type modelValidationRequest struct {
-	Dataset string             `json:"dataset"`
-	Metrics map[string]float64 `json:"metrics"`
-	Notes   string             `json:"notes"`
-	Passed  bool               `json:"passed"`
+	Dataset             string             `json:"dataset"`
+	Metrics             map[string]float64 `json:"metrics"`
+	Notes               string             `json:"notes"`
+	Passed              bool               `json:"passed"`
+	ArtifactID          string             `json:"artifact_id,omitempty"`
+	SnapshotID          string             `json:"snapshot_id,omitempty"`
+	EvaluationHash      string             `json:"evaluation_hash,omitempty"`
+	LeakagePassed       bool               `json:"leakage_passed,omitempty"`
+	CalibrationReviewed bool               `json:"calibration_reviewed,omitempty"`
+	FairnessReviewed    bool               `json:"fairness_reviewed,omitempty"`
+	ThresholdReviewed   bool               `json:"threshold_reviewed,omitempty"`
 }
 
 // recordModelValidation attaches validation evidence to the model's current version.
@@ -468,6 +487,10 @@ func (s *Service) recordModelValidation(w http.ResponseWriter, r *http.Request) 
 	}
 	e, err := s.cmd.RecordModelValidation(r.Context(), id, r.PathValue("name"), events.ModelValidationRecorded{
 		Dataset: req.Dataset, Metrics: req.Metrics, Notes: req.Notes, Passed: req.Passed,
+		ArtifactID: req.ArtifactID, SnapshotID: req.SnapshotID,
+		EvaluationHash: req.EvaluationHash, LeakagePassed: req.LeakagePassed,
+		CalibrationReviewed: req.CalibrationReviewed, FairnessReviewed: req.FairnessReviewed,
+		ThresholdReviewed: req.ThresholdReviewed,
 	})
 	if err != nil {
 		httpx.Error(w, http.StatusBadRequest, err)

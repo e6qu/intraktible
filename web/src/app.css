@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 /* Global tokens + base element styling. Two orthogonal axes drive the look:
      - data-theme  (light|dark) → the *neutral* palette (bg/surface/fg/border) + semantics
-     - data-persona (builder|developer|operator|manager|product|showcase|evaluator) → accent, type, density
+     - data-persona (builder|developer|operator|manager|product|modeler|validator|showcase|evaluator) → accent, type, density
    Keeping accent in the persona axis (not the theme axis) lets every persona
    render correctly in both themes without a specificity war. Set by lib/theme.ts
    and lib/persona.ts respectively. Fonts are self-hosted + bundled (see lib/fonts;
@@ -259,7 +259,8 @@
 }
 
 /* Product/Experimentation — violet, medium density. */
-:root[data-persona='product'] {
+:root[data-persona='product'],
+:root[data-persona='modeler'] {
   --accent: #7c3aed;
   --accent-2: #6d28d9;
   --accent-ink: #6d28d9;
@@ -274,8 +275,29 @@
   --h1-weight: 620;
   --h1-spacing: -0.015em;
 }
-:root[data-persona='product'][data-theme='dark'] {
+:root[data-persona='product'][data-theme='dark'],
+:root[data-persona='modeler'][data-theme='dark'] {
   --accent-ink: #c4b5fd;
+}
+
+/* Independent validator — reserved blue-gray, matching evidence review. */
+:root[data-persona='validator'] {
+  --accent: #1d4ed8;
+  --accent-2: #1e40af;
+  --accent-ink: #1e40af;
+  --on-accent: #ffffff;
+  --link: var(--accent-ink);
+  --app-font-size: 0.92rem;
+  --radius: 8px;
+  --radius-sm: 6px;
+  --pad-card: 1rem 1.15rem;
+  --gap: 0.75rem;
+  --h1-size: 1.45rem;
+  --h1-weight: 620;
+  --h1-spacing: -0.015em;
+}
+:root[data-persona='validator'][data-theme='dark'] {
+  --accent-ink: #93c5fd;
 }
 
 /* Evaluator/Guest — slate, welcoming and a touch roomier for a first look. */

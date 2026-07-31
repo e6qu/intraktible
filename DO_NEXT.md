@@ -16,16 +16,43 @@ DOC (a claim not backed by code).
 
 ## Queue
 
-1. **OPEN — Await the user merge of E5 PR #164.** Hosted run `30596019405`
-   passed all nine jobs over the completed release candidate: Go
-   race/security/license, PostgreSQL, 135 native, 86 real-Wasm, four embedded,
-   Shauth SSO, web, Terraform, and container contracts. The PR is the sole open
-   review item. Do not merge it on the user's behalf and do not start E6 before
-   the user reports E5 merged.
-2. **OPEN — E6 through E8 remain serialized behind E5.** Do not implement or
-   open them concurrently. After E5 merges, fetch and deliberately reconcile
+1. **OPEN — Implement E6 as one model/context data-science vertical.** Start
+   from authoritative E5 merge `593eda9` and close every `PLAN.md` §8b.7 exit
+   journey: versioned source schemas and data-quality policy/incidents,
+   event-time corrections/materialization/backfills, immutable point-in-time
+   datasets, reproducible training and signed artifacts, richer evaluation and
+   outcome/fairness semantics, complete lineage/retirement, APIs/SDKs/CLI/UI,
+   durable scheduler/workers, replay, privacy, and multi-replica evidence.
+   First map the existing context/features/models/outcomes/fair-lending/job
+   substrate and choose extension seams that preserve historical wire/replay
+   behavior. The governed source-schema/ingestion seam is now implemented;
+   event identity/correction/watermarks and the first durable point-in-time
+   snapshot worker are now implemented. Continue with materialization/backfill
+   controls, reproducible training/signed artifacts, structured evaluation,
+   model lineage/retirement, and richer outcomes/fairness are implemented.
+   Scheduler retention/quality sweeps, subject-level snapshot/backfill
+   crypto-shred, stable multi-replica artifact signing, and unified
+   source-to-serving lineage/comparison reads, explicit independent evaluation,
+   OpenAPI, the initial Go/TypeScript SDK and CLI/UI surfaces, and the real
+   seeded replay plus operational-state restore are implemented. The
+   public-contract slice (source-health/materialization/artifact/comparison
+   reads across OpenAPI, RBAC, SDKs, CLI, UI) is complete with all local
+   release gates green (`make ci` exit 0, Terraform 18/18, web gates, seed
+   round trip). PR #165 is the sole open review item; its exact-head hosted
+   run `30630868192` (`720e857`) is green across all nine jobs. Await the user
+   merge; then continue E6 with live native/Wasm browser journeys for the
+   modeling cockpit, whole-diff audits, and phase-closing documentation.
+2. **OPEN — Re-audit every remaining §8b.7 scope claim against executable
+   evidence.** In particular inspect quality incident lifecycle/impact,
+   backfill controls, dataset exclusion/consent/export, artifact provenance and
+   external registration, explanation limitations, dependent-aware retirement,
+   bulk/streaming/job result contracts, CLI evidence export, and
+   modeler/validator/operator/executive UI. Implement or narrow false claims;
+   do not phase-close from the seeded happy path alone.
+3. **OPEN — E7 and E8 remain serialized behind E6.** Do not implement or open
+   them concurrently. After E6 merges, fetch and deliberately reconcile
    authoritative `origin/main`, confirm the PR queue empty, and only then cut
-   E6. Detailed boundaries and exit evidence are in `PLAN.md` §§8b.7–8b.9.
+   E7. Detailed boundaries and exit evidence are in `PLAN.md` §§8b.8–8b.9.
 
 ---
 

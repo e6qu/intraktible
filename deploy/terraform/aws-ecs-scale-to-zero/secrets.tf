@@ -25,6 +25,23 @@ resource "aws_secretsmanager_secret_version" "encryption_key" {
   secret_string = base64encode(random_password.encryption_key.result)
 }
 
+# Shared Ed25519 seed for reproducible artifact signatures across worker replicas.
+resource "random_password" "artifact_signing_key" {
+  length  = 32
+  special = false
+}
+
+resource "aws_secretsmanager_secret" "artifact_signing_key" {
+  name_prefix             = "${local.name}/artifact-signing-key-"
+  description             = "intraktible Ed25519 artifact signing seed"
+  recovery_window_in_days = 7
+}
+
+resource "aws_secretsmanager_secret_version" "artifact_signing_key" {
+  secret_id     = aws_secretsmanager_secret.artifact_signing_key.id
+  secret_string = base64encode(random_password.artifact_signing_key.result)
+}
+
 # The first admin credential (INTRAKTIBLE_BOOTSTRAP_API_KEY). Use it to mint managed
 # keys / SSO users, then rotate to a managed key and remove this from the task env.
 resource "random_password" "bootstrap_api_key" {

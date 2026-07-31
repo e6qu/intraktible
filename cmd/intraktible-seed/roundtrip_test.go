@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	modelingservice "github.com/e6qu/intraktible/modeling/service"
 	"github.com/e6qu/intraktible/platform/erasure"
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/store"
@@ -35,7 +36,7 @@ func TestSeedAssetReplays(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read %s: %v — regenerate with `make demo-seed`", statePath, err)
 	}
-	var operationalState erasure.OperationalState
+	var operationalState demoOperationalState
 	if err := json.Unmarshal(stateJSON, &operationalState); err != nil {
 		t.Fatalf("decode %s: %v", statePath, err)
 	}
@@ -45,9 +46,13 @@ func TestSeedAssetReplays(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	st := store.NewMemory()
-	if err := erasure.RestoreOperationalState(ctx, st, operationalState); err != nil {
+	if err := erasure.RestoreOperationalState(ctx, st, operationalState.Erasure); err != nil {
 		cancel()
-		t.Fatalf("restore demo operational state: %v", err)
+		t.Fatalf("restore demo erasure state: %v", err)
+	}
+	if err := modelingservice.RestoreOperationalState(ctx, st, operationalState.Modeling); err != nil {
+		cancel()
+		t.Fatalf("restore demo modeling state: %v", err)
 	}
 	srv, err := server.New(ctx, server.Config{Modules: "all", DevAPIKey: devAPIKey, StoreKind: "memory"},
 		log, st)

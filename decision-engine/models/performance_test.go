@@ -110,6 +110,16 @@ func TestOutcomePerformanceUsesCorrectedExactCohortLineage(t *testing.T) {
 		},
 		Current: revision(1),
 	})
+	censored := revision(0)
+	censored.Censored = true
+	put(outcomes.View{
+		OutcomeID: "pending", Key: "defaulted", Kind: outcomes.KindBinary, Environment: "production",
+		Treatment: &outcomes.TreatmentFact{ExperimentID: "exp-1", Cohort: 3, ArmKey: "challenger"},
+		Predictions: []outcomes.PredictionFact{
+			{Model: "risk", ModelVersion: 2, NodeID: "score", Probability: 0.95},
+		},
+		Current: censored,
+	})
 
 	perf, err := ReadOutcomePerformance(ctx, st, id, "risk", OutcomePerformanceFilter{
 		OutcomeKey: "defaulted", NodeID: "score", Environment: "production",
