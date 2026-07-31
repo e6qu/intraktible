@@ -1067,3 +1067,21 @@ Linux, entirely that VM's fsync path.
   green across all nine jobs on the first run: Go race/security/license, real
   PostgreSQL, 140 native journeys, 89 real-Wasm journeys, four embedded-artifact
   journeys, real Shauth SSO, web, Terraform, and container contracts.
+- 2026-08-01: E7 completion vertical on `enterprise/e7-scale-dr-isolation` —
+  cross-tenant isolation evidence, bulk ingestion, disaster recovery, network
+  policy, projection backpressure, cursor pagination, and published consistency
+  model. `TestCrossTenantIsolation` proves one org cannot read/list another's
+  flows/decisions/audit over the real HTTP API. `POST /v1/context/entities/bulk`
+  and `/v1/context/events/bulk` ingest bounded batches (1000) with per-record
+  results, RBAC pins, and OpenAPI. `intraktible backup`/`restore` stream the log
+  as NDJSON and restore it byte-identically (proved by
+  `TestBackupRestoreReplayRoundTrip` + `TestBackupRestoreCLIRoundTrip`).
+  `platform/httpx.IPAllowlist` gates /v1 to configured CIDRs
+  (INTRAKTIBLE_IP_ALLOWLIST) and `Backpressure` sheds reads when projection lag
+  exceeds INTRAKTIBLE_MAX_PROJECTION_LAG (writes always admitted). `GET
+  /capacity` publishes SLO/SLA evidence (projection lag, backpressure bound,
+  process role, scheduler health). `httpx.Paginate`/`WritePage` add
+  limit/cursor pagination to the context entity/event lists. docs/DR.md now
+  records the portable backup/restore CLI, RPO-zero/RTO-replay-time targets,
+  and the published consistency model. `make ci` exits 0; 140 native + 89
+  real-Wasm journeys, 254 frontend units, zero clone groups.

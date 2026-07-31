@@ -674,6 +674,12 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 	if err := rt.Start(ctx); err != nil {
 		return nil, fmt.Errorf("projection start: %w", err)
 	}
+	// Optional backpressure: shed read load when the projection lags more than
+	// INTRAKTIBLE_MAX_PROJECTION_LAG events behind the log head (0 = off).
+	maxLag, err := envUint64("INTRAKTIBLE_MAX_PROJECTION_LAG", 0)
+	if err != nil {
+		return nil, err
+	}
 	srv.Projections = rt
 	if runWorkers && populationHandler != nil {
 		populationHandler.StartWorkers(ctx, populationWorkers)
@@ -807,6 +813,28 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 	// projections have caught up to the log head, so a freshly-started pod does not
 	// serve empty read models while it rebuilds. Liveness (/healthz) vs readiness.
 	root.HandleFunc("GET /readyz", httpx.Ready(rt.Applied, log.Head, health, srv.Draining))
+	// /capacity is the SLO/SLA evidence surface (unauthenticated like /healthz — it
+	// carries operational counters, not tenant data): projection lag vs the log
+	// head, the configured backpressure bound, process role, and scheduler health,
+	// so an operator can verify published service levels instead of inferring them.
+	root.HandleFunc("GET /capacity", func(w http.ResponseWriter, _ *http.Request) {
+		a, h := rt.Applied(), log.Head()
+		status := "ok"
+		schedErr := ""
+		if err := schedulerState.Err(); err != nil {
+			status = "degraded"
+			schedErr = err.Error()
+		}
+		httpx.JSON(w, http.StatusOK, map[string]any{
+			"status": status,
+			"projection": map[string]any{
+				"applied": a, "head": h, "lag": h - a,
+				"backpressure_max_lag": maxLag,
+			},
+			"process_role":     processRole,
+			"scheduler_health": schedErr,
+		})
+	})
 	// /version reports the build (VCS revision + Go) so ops can confirm what's live.
 	root.HandleFunc("GET /version", httpx.Version())
 	// /auth/validation is the app-owned, deployment-neutral SSO validation
@@ -916,7 +944,17 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 	slog.Info("browser sign-in entry point", "path", signIn.Path)
 	root.Handle("/", httpx.BrowserGate(web.Handler(), sessions, signIn))
 
-	root.Handle("/v1/", httpx.Chain(api, httpx.Authenticate(keyring, sessions), httpx.AuthorizeRoutes(api)))
+	// Optional deployment-level network control: restrict /v1 to allowlisted CIDRs
+	// (a VPC, trusted proxy, or API gateway). Empty = open (the default).
+	allowlist, err := httpx.ParseIPAllowlist(os.Getenv("INTRAKTIBLE_IP_ALLOWLIST"))
+	if err != nil {
+		return nil, fmt.Errorf("INTRAKTIBLE_IP_ALLOWLIST: %w", err)
+	}
+
+	root.Handle("/v1/", httpx.Chain(
+		api, allowlist.Middleware, httpx.Backpressure(rt.Applied, log.Head, maxLag),
+		httpx.Authenticate(keyring, sessions), httpx.AuthorizeRoutes(api),
+	))
 	srv.Handler = httpx.Chain(root, httpx.SecurityHeaders, httpx.Recover, httpx.RequestID, httpx.Tracing, httpx.Logger, httpx.Metrics)
 	return srv, nil
 }

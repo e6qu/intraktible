@@ -66,6 +66,10 @@ env:
   INTRAKTIBLE_ENV: production
   INTRAKTIBLE_SECURE_COOKIES: "1"
   INTRAKTIBLE_TRUST_PROXY: "1" # honor X-Forwarded-Proto from the ingress/LB
+  # Network policy: comma-separated CIDRs allowed to reach /v1 (empty = open).
+  INTRAKTIBLE_IP_ALLOWLIST: ""
+  # Backpressure: shed read load when projection lag exceeds this many events (0 = off).
+  INTRAKTIBLE_MAX_PROJECTION_LAG: "0"
 
 service:
   type: ClusterIP

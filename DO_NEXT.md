@@ -16,25 +16,30 @@ DOC (a claim not backed by code).
 
 ## Queue
 
-1. **OPEN — Land the E7 HA-scheduler vertical as one PR, then continue E7's
-   scale/DR slices.** Redundant live scheduler replicas with epoch-based leader/
-   work claims are implemented on `enterprise/e7-ha-scheduler`: new `platform/
-   leader` (event-log epoch claims), `platform/scheduler.RunLeader`/`RunGated`/
-   `Gate`, all 9 timed sweeps leader-elected via a shared `Leader`, Helm scheduler
-   tier now `replicas: 2` + RollingUpdate (no Recreate singleton), and
-   multi-replica race tests proving exactly-one tick per epoch. `make ci` exits 0.
-   It is the sole open review item (stacked behind the merged tenant-admin PR
-   #167). Remaining E7 scope (separate serialized PRs): distributed append-order
-   partitioning, projection/worker scale-out + backpressure, network policy/mTLS,
-   backup/restore + RPO/RTO evidence, workload SLO/SLA, cross-tenant isolation
-   audit, and the deferred high-volume streaming/bulk ingestion + cursor
-   pagination. distributed append-order partitioning,
-   HA scheduler leader/work claims, projection/worker scale-out + backpressure,
-   network policy/mTLS, backup/restore + RPO/RTO evidence, workload SLO/SLA,
-   cross-tenant isolation audit across every shared surface, and the deferred
-   high-volume streaming/bulk ingestion + cursor pagination.
-2. **OPEN — E8 remains serialized behind E7.** Do not implement or open it
-   concurrently. Detailed boundaries are in `PLAN.md` §8b.9.
+1. **OPEN — Land the E7 completion vertical as one PR; then E8.** The remaining
+   E7 scope is implemented on `enterprise/e7-scale-dr-isolation`: cross-tenant
+   isolation evidence (`TestCrossTenantIsolation` over the real HTTP API), bulk
+   ingestion (`POST /v1/context/entities/bulk` + `/v1/context/events/bulk`,
+   bounded 1000-record batches with per-record results), portable disaster
+   recovery (`intraktible backup`/`restore`, NDJSON, byte-identical restore,
+   replay-tested), network policy (`platform/httpx.IPAllowlist`,
+   INTRAKTIBLE_IP_ALLOWLIST), projection backpressure (sheds reads past
+   INTRAKTIBLE_MAX_PROJECTION_LAG; writes always admitted), `GET /capacity`
+   (SLO/SLA evidence), `httpx.Paginate`/`WritePage` cursor pagination on the
+   context entity/event lists, and the published consistency model in
+   `docs/DR.md`. `make ci` exits 0; 140 native + 89 real-Wasm journeys, 254
+   frontend units, zero clone groups. It is the sole open review item; await
+   the user merge. **Deliberate narrowing (record in the PR body):** the
+   append-order partitioning item was resolved by *publishing* the consistency
+   model rather than re-architecting the event spine — the current design
+   (total order per log, per-tenant reads/replay/claims, single-writer
+   projection checkpoint, leader-elected sweeps) already satisfies PLAN §8b.8's
+   "retain canonical order where required"; sharding the seq would break replay
+   safety and is not required at this scale.
+2. **OPEN — E8 (ecosystem and regulated solution packs) is the next tranche.**
+   After this E7 completion merges, fetch and reconcile authoritative
+   `origin/main`, confirm the PR queue empty, and cut E8. Detailed boundaries
+   are in `PLAN.md` §8b.9.
 
 ---
 

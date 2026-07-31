@@ -701,6 +701,29 @@ Spans: **Tenancy** (`/tenancy`), CLI (`intraktible tenancy`). Admin only.
    blocked while any workspace is still active. Outcome: governed tenant lifecycle
    with audit.
 
+### Operate a resilient production deployment
+
+Spans: **Operations** (`/healthz`, `/readyz`, `/capacity`, `/metrics`), CLI
+(`intraktible backup` / `restore` / `replay`).
+
+1. Verify health: `/healthz` reflects projection and scheduler health (503 when
+   degraded); `/readyz` stays 503 until a replica's projections catch up to the log
+   head. Outcome: a load balancer routes only to current, healthy replicas.
+2. Read service-level evidence on `/capacity`: projection applied/head/lag, the
+   configured backpressure bound, process role, and scheduler health. Outcome:
+   published SLO/SLA posture without inferring it.
+3. Back up the system of record: `intraktible backup --data-dir=/data --out=<file>`
+   streams the event log as NDJSON. Outcome: a portable recovery artifact (RPO is
+   zero — every append is durable).
+4. Restore and verify: `intraktible restore --data-dir=<fresh> --in=<file>` rebuilds
+   the log byte-identically, then `intraktible replay --data-dir=<fresh>` confirms
+   the projections replay cleanly. Outcome: tested recovery (RTO is replay time),
+   not a runbook hope.
+5. Restrict and shed load deliberately: set `INTRAKTIBLE_IP_ALLOWLIST` to gate /v1
+   to known CIDRs, and `INTRAKTIBLE_MAX_PROJECTION_LAG` to shed reads past a lag
+   bound (writes always admitted). Outcome: explicit network policy and overload
+   backpressure.
+
 ---
 
 ## By persona
