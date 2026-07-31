@@ -106,6 +106,34 @@ func readCount(t *testing.T, s store.Store) int {
 	return n
 }
 
+// TestCancelWaitStopsConsumerBeforeRebuild pins the shutdown contract the
+// rebuild-into-shared-store tests rely on: after cancel+Wait the live consumer
+// has exited, so no in-flight apply can interleave with a fresh rebuild.
+func TestCancelWaitStopsConsumerBeforeRebuild(t *testing.T) {
+	log, _ := testutil.NewLogStore(t)
+	st := store.NewMemory()
+	ctx, cancel := context.WithCancel(context.Background())
+	rt := projection.New(log, st, counter{})
+	appendEvent(t, log, "one")
+	if err := rt.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	appendEvent(t, log, "two")
+	if !testutil.EventuallyWithin(t, 5*time.Second, func() bool {
+		return rt.Applied() >= 2
+	}) {
+		t.Fatal("live consumer did not reach the head")
+	}
+	cancel()
+	rt.Wait()
+	if _, err := projection.New(log, st, counter{}).RebuildTo(context.Background(), 0); err != nil {
+		t.Fatal(err)
+	}
+	if got := readCount(t, st); got != 2 {
+		t.Fatalf("count = %d, want 2 (no live apply raced the rebuild)", got)
+	}
+}
+
 // TestMultiReplicaNoDoubleApply is the Phase 8 correctness point: two projection
 // runtimes sharing ONE durable store and ONE log (the horizontal-scale / HA case)
 // must apply each event to a non-idempotent counter EXACTLY once between them, not
