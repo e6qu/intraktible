@@ -1063,3 +1063,7 @@ Linux, entirely that VM's fsync path.
   sweep. Helm scheduler tier is now `replicas: 2` + RollingUpdate (no more
   Recreate singleton). Multi-replica race tests prove exactly-one tick per epoch
   across 6 replicas (10 race runs). `make ci` exit 0.
+- 2026-07-31: E7 HA-scheduler PR #168 exact-head hosted run `30661832789` is
+  green across all nine jobs on the first run: Go race/security/license, real
+  PostgreSQL, 140 native journeys, 89 real-Wasm journeys, four embedded-artifact
+  journeys, real Shauth SSO, web, Terraform, and container contracts.
