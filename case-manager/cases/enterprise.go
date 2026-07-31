@@ -449,7 +449,7 @@ func applyEvidence(ctx context.Context, event eventlog.Envelope, st store.Store)
 		view.Evidence = append(view.Evidence, EvidenceLink{
 			EvidenceID: payload.EvidenceID, Requirement: payload.Requirement, Kind: payload.Kind,
 			SubjectType: payload.SubjectType, SubjectID: payload.SubjectID,
-			Label: payload.Label, ContentHash: payload.ContentHash,
+			Label: payload.Label, ContentHash: payload.ContentHash, LinkedSeq: event.Seq,
 		})
 		markAction(view, event.Time)
 		view.Audit = append(view.Audit, audit(event, "evidence_linked", payload.Kind+" → "+payload.SubjectType+"/"+payload.SubjectID))
@@ -474,6 +474,7 @@ func applyAttachment(ctx context.Context, event eventlog.Envelope, st store.Stor
 			Requirement: payload.Requirement, Subject: payload.Subject, LawfulBasis: payload.LawfulBasis,
 			RetainUntil: payload.RetainUntil, LegalHold: payload.LegalHold,
 			RegisteredBy: event.Actor, RegisteredAt: event.Time,
+			RegisteredSeq: event.Seq,
 		})
 		markAction(view, event.Time)
 		view.Audit = append(view.Audit, audit(event, "attachment_registered", payload.Name+" sha256:"+payload.SHA256))

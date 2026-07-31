@@ -78,7 +78,8 @@ export async function startEmbeddedDemo(): Promise<void> {
     const assets = {
       wasmURL: `${base}/intraktible.wasm`,
       wasmExecURL: `${base}/wasm_exec.js`,
-      seedURL: `${base}/demo-seed.json`
+      seedURL: `${base}/demo-seed.json`,
+      stateURL: `${base}/demo-state.json`
     };
     try {
       await bootEmbeddedBackend(assets, ui.progress);

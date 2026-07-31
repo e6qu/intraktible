@@ -16,27 +16,16 @@ DOC (a claim not backed by code).
 
 ## Queue
 
-1. **OPEN — Close and merge E4 pull request #163 before starting E5.**
-   The complete local final-source matrix is green: 134 retry-free native, 84
-   real-Wasm over the regenerated 8,729-event history, 4 embedded-binary
-   journeys, 240 frontend units/build/check/lint, race-enabled Go CI, Terraform,
-   container, workflow, accessibility, security, license, dead-code and clone
-   gates. Hosted PostgreSQL exposed the assembled E2 journey validating a just
-   published version before its public flow projection caught up; the new
-   `flow.latest == 2` observation passes 100 race-enabled repetitions and the
-   complete local `make ci` is green. Hosted run `30570908349` passes all nine
-   jobs, including the repaired real-PostgreSQL whole-suite gate. Evidence-only
-   head run `30572498699` then exposed an agent-run test bypassing the shared
-   projection watermark; the duplicate helper is removed and the exact contract
-   passes 100 race-enabled repetitions. The complete local `make ci` gate is
-   green. Push the repair and require the new exact-head hosted matrix to pass
-   before merge. After merge, fetch and reconcile authoritative `origin/main`
-   and confirm the PR queue is empty before cutting E5.
-2. **OPEN — E5 through E8 remain serialized behind E4.** Do not implement or
-   open them concurrently. After each merge, fetch and deliberately reconcile
+1. **OPEN — Land the completed E5 release candidate.** Commit and push
+   `enterprise/e5-governed-agent-operations`, open the sole PR against the
+   authoritative `0eea197` E4 merge, and follow hosted CI to green. The exact
+   local source passes 135 native, 86 real-Wasm, four embedded, 247 frontend
+   unit, production frontend, full race-enabled Go CI, static integrity,
+   security, clone, vulnerability, and license gates.
+2. **OPEN — E6 through E8 remain serialized behind E5.** Do not implement or
+   open them concurrently. After E5 merges, fetch and deliberately reconcile
    authoritative `origin/main`, confirm the PR queue empty, and only then cut
-   the next branch. Detailed boundaries and exit evidence are in `PLAN.md`
-   §§8b.6–8b.9.
+   E6. Detailed boundaries and exit evidence are in `PLAN.md` §§8b.7–8b.9.
 
 ---
 

@@ -14,6 +14,7 @@
   import {
     listFlows,
     listAgents,
+    listAgentTemplates,
     listCases,
     listPolicies,
     listModels,
@@ -243,6 +244,19 @@
           icon: 'agents',
           keywords: `agent ${a.name}`,
           run: () => goto(appHref(`/agents/${encodeURIComponent(a.name)}`))
+        })
+      )
+    );
+    appendDynamic(seq, 'governed agents', listAgentTemplates(''), (templates) =>
+      templates.map(
+        (template): Cmd => ({
+          id: `governed-agent:${template.template_id}`,
+          section: 'Governed agents',
+          label: template.name,
+          hint: template.task,
+          icon: 'agents',
+          keywords: `governed specialist agent template release ${template.name} ${template.slug} ${template.task}`,
+          run: () => goto(appHref(`/agents/governance/${encodeURIComponent(template.template_id)}`))
         })
       )
     );

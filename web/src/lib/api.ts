@@ -24,6 +24,12 @@ import type {
   Environment,
   SLAState,
   AgentRunStatus,
+  AgentAssistKind,
+  AgentReleaseStatus,
+  AgentDeploymentStatus,
+  AgentToolApprovalMode,
+  AgentToolApprovalStatus,
+  AgentGraderKind,
   ModelKind,
   PreApprovalStatus,
   DeploymentRequestStatus,
@@ -50,6 +56,12 @@ export type {
   CaseStatus,
   SLAState,
   AgentRunStatus,
+  AgentAssistKind,
+  AgentReleaseStatus,
+  AgentDeploymentStatus,
+  AgentToolApprovalMode,
+  AgentToolApprovalStatus,
+  AgentGraderKind,
   ModelKind,
   PreApprovalStatus,
   DeploymentRequestStatus,
@@ -2546,6 +2558,7 @@ export interface CaseEvidence {
   subject_id: string;
   label: string;
   content_hash?: string;
+  linked_seq: number;
 }
 
 export interface CaseAttachment {
@@ -2561,6 +2574,7 @@ export interface CaseAttachment {
   retain_until?: string;
   legal_hold?: boolean;
   erased?: boolean;
+  registered_seq: number;
   access_count: number;
 }
 
@@ -2621,6 +2635,15 @@ export interface CaseTypeDefinition {
     required?: boolean;
   }>;
   layouts: Array<{ role: string; sections: string[]; editable?: string[] }>;
+  assist_automations?: CaseAssistAutomation[];
+}
+
+export interface CaseAssistAutomation {
+  key: string;
+  kind: AgentAssistKind;
+  template_id: string;
+  environment: Environment;
+  evidence_requirements: string[];
 }
 
 export interface CaseTypeView {
@@ -2645,6 +2668,7 @@ export interface CaseQueueDefinition {
   max_age_hours?: number;
   conflict_context_keys?: string[];
   context_equals?: Record<string, string>;
+  assist_automations?: CaseAssistAutomation[];
 }
 
 export interface CaseReviewerProfile {
@@ -4195,7 +4219,7 @@ export function dispositionCase(
 export function linkCaseEvidence(
   key: string,
   caseID: string,
-  evidence: Omit<CaseEvidence, 'evidence_id'> & { evidence_id?: string },
+  evidence: Omit<CaseEvidence, 'evidence_id' | 'linked_seq'> & { evidence_id?: string },
   fetcher: typeof fetch = recordingFetch
 ): Promise<void> {
   return caseAction(key, caseID, 'evidence', evidence, fetcher);
@@ -4204,7 +4228,9 @@ export function linkCaseEvidence(
 export function registerCaseAttachment(
   key: string,
   caseID: string,
-  attachment: Omit<CaseAttachment, 'access_count' | 'storage_ref'> & { storage_ref: string },
+  attachment: Omit<CaseAttachment, 'access_count' | 'registered_seq' | 'storage_ref'> & {
+    storage_ref: string;
+  },
   fetcher: typeof fetch = recordingFetch
 ): Promise<void> {
   return caseAction(key, caseID, 'attachments', attachment, fetcher);
@@ -4409,6 +4435,943 @@ export async function defineAgent(
   if (!res.ok) {
     return errorOrStatus(res, 'POST /v1/agents');
   }
+}
+
+// Governed agent operations -----------------------------------------------------
+
+export interface AgentTemplate {
+  org?: string;
+  workspace?: string;
+  template_id: string;
+  slug: string;
+  name: string;
+  description?: string;
+  task: string;
+  tags?: string[];
+  high_impact: boolean;
+  latest_release?: number;
+  registered_by?: string;
+  registered_at?: string;
+  seq?: number;
+}
+
+export interface AgentBudget {
+  max_prompt_tokens: number;
+  max_completion_tokens: number;
+  max_tool_calls: number;
+  max_cost_usd: number;
+  input_cost_per_mtok: number;
+  output_cost_per_mtok: number;
+  pricing_source: string;
+  pricing_version: string;
+  period?: 'day' | 'month';
+  period_cost_usd?: number;
+}
+
+export interface AgentToolPolicy {
+  name: string;
+  mode: AgentToolApprovalMode;
+  purpose: string;
+  parameter_schema?: unknown;
+}
+
+export interface AgentReleaseSpec {
+  instructions: string;
+  provider: string;
+  model: string;
+  input_schema: unknown;
+  output_schema: unknown;
+  tools: AgentToolPolicy[];
+  data_purposes: string[];
+  dependencies: Array<{ kind: string; name: string; version: string; hash?: string }>;
+  budget: AgentBudget;
+  timeout_ms: number;
+  max_attempts: number;
+  circuit_breaker?: {
+    window_minutes: number;
+    min_samples: number;
+    failure_rate: number;
+  };
+  require_citations: boolean;
+  require_human_gate: boolean;
+  allow_remote_agent: boolean;
+  remote_protocol_url?: string;
+  remote_protocol_version?: string;
+  remote_credential_env?: string;
+}
+
+export interface AgentReview {
+  request_id: string;
+  campaign_ids: string[];
+  evidence_ids: string[];
+  reviewers?: string[];
+  requested_by: string;
+  requested_at: string;
+  expires_at: string;
+  decision?: 'approve' | 'reject';
+  reason?: string;
+  reviewed_by?: string;
+  reviewed_at?: string;
+  expired_at?: string;
+}
+
+export interface AgentRelease {
+  template_id: string;
+  release: number;
+  status: AgentReleaseStatus;
+  spec: AgentReleaseSpec;
+  spec_hash: string;
+  campaign_ids: string[];
+  review?: AgentReview;
+  created_by: string;
+  created_at: string;
+  retired_at?: string;
+  seq: number;
+}
+
+export interface AgentEvalSuite {
+  suite_id: string;
+  version: number;
+  name: string;
+  description?: string;
+  adversarial: boolean;
+  required: boolean;
+  trials: number;
+  min_pass_rate: number;
+  max_variance: number;
+  cases: Array<Record<string, unknown>>;
+  semantic_grader?: {
+    provider: string;
+    model: string;
+    instructions: string;
+    version: string;
+    budget: AgentBudget;
+    timeout_ms: number;
+    max_attempts: number;
+  };
+  dataset_hash: string;
+  published_by?: string;
+  published_at?: string;
+  seq?: number;
+}
+
+export interface AgentCampaign {
+  campaign_id: string;
+  template_id: string;
+  release: number;
+  suite_id: string;
+  suite_version: number;
+  total: number;
+  passed: number;
+  pass_rate: number;
+  variance: number;
+  confidence_low: number;
+  confidence_high: number;
+  blocking: boolean;
+  trials: AgentTrialResult[];
+  assessment?: AgentCampaignAssessment;
+  adjudications?: AgentTrialAdjudication[];
+  recorded_by?: string;
+  recorded_at?: string;
+  seq?: number;
+}
+
+export interface AgentTrialResult {
+  case_id: string;
+  trial: number;
+  passed: boolean;
+  status: string;
+  detail?: string;
+  output_hash?: string;
+  citations?: string[];
+  tool_calls?: string[];
+  invocation_id?: string;
+  provider?: string;
+  model?: string;
+  attempts?: number;
+  latency_ms: number;
+  prompt_tokens?: number;
+  output_tokens?: number;
+  cost_usd?: number;
+  grade?: AgentGradeEvidence;
+}
+
+export interface AgentGradeEvidence {
+  kind: AgentGraderKind;
+  score?: number;
+  passed: boolean;
+  detail?: string;
+  grader_hash: string;
+  rubric_hash?: string;
+  invocation_id?: string;
+  provider?: string;
+  model?: string;
+  attempts?: number;
+  latency_ms?: number;
+  prompt_tokens?: number;
+  output_tokens?: number;
+  cost_usd?: number;
+  output_hash?: string;
+}
+
+export interface AgentTrialAdjudication {
+  campaign_id: string;
+  case_id: string;
+  trial: number;
+  passed: boolean;
+  reason: string;
+  adjudicated_by: string;
+  adjudicated_at: string;
+}
+
+export interface AgentCampaignAssessment {
+  total: number;
+  passed: number;
+  pass_rate: number;
+  variance: number;
+  confidence_low: number;
+  confidence_high: number;
+  blocking: boolean;
+}
+
+export interface AgentCampaignComparison {
+  suite_id: string;
+  suite_version: number;
+  baseline_campaign_id: string;
+  baseline_template_id: string;
+  baseline_release: number;
+  challenger_campaign_id: string;
+  challenger_template_id: string;
+  challenger_release: number;
+  baseline: AgentCampaignAssessment;
+  challenger: AgentCampaignAssessment;
+  delta_pass_rate: number;
+  delta_confidence_low: number;
+  delta_confidence_high: number;
+  baseline_cost_usd: number;
+  challenger_cost_usd: number;
+  baseline_latency_ms: number;
+  challenger_latency_ms: number;
+  regressions: number;
+  improvements: number;
+  rows: Array<{
+    case_id: string;
+    segment?: string;
+    trials: number;
+    baseline_pass_rate: number;
+    challenger_pass_rate: number;
+    delta_pass_rate: number;
+    regression: boolean;
+  }>;
+}
+
+export interface AgentDeployment {
+  deployment_id: string;
+  template_id: string;
+  release: number;
+  environment: Environment;
+  status: AgentDeploymentStatus;
+  reason: string;
+  requested_by: string;
+  requested_at: string;
+  activate_at?: string;
+  expires_at?: string;
+  activated_by?: string;
+  activated_at?: string;
+  paused_by?: string;
+  paused_at?: string;
+  resumed_by?: string;
+  resumed_at?: string;
+  previous_release?: number;
+  seq: number;
+}
+
+export interface AgentSafetyIncident {
+  incident_id: string;
+  template_id: string;
+  release: number;
+  deployment_id?: string;
+  run_id?: string;
+  kind: string;
+  severity: 'info' | 'warning' | 'required' | 'critical';
+  summary: string;
+  evidence?: Record<string, unknown>;
+  status: 'open' | 'resolved';
+  resolution?: string;
+  opened_at: string;
+  resolved_at?: string;
+  seq: number;
+}
+
+export interface AgentCitation {
+  evidence_id: string;
+  claim: string;
+  quote_hash?: string;
+}
+
+export interface AgentToolExecution {
+  call_id: string;
+  name: string;
+  mode: 'automatic' | 'human_before_call' | 'forbidden';
+  purpose: string;
+  arguments_hash: string;
+  result_hash: string;
+  approved_by?: string;
+}
+
+export interface AgentToolApproval {
+  approval_id: string;
+  assist_id: string;
+  invocation_id: string;
+  call_id: string;
+  name: string;
+  purpose: string;
+  arguments_hash: string;
+  status: AgentToolApprovalStatus;
+  requested_by: string;
+  requested_at: string;
+  expires_at: string;
+  decided_by?: string;
+  decided_at?: string;
+  reason?: string;
+  seq: number;
+}
+
+export interface AgentQualityMetrics {
+  assists: number;
+  completed: number;
+  failed: number;
+  awaiting_tool_approval: number;
+  awaiting_result: number;
+  actioned: number;
+  accepted: number;
+  edited: number;
+  rejected: number;
+  escalated: number;
+  adopted: number;
+  adoption_rate: number;
+  adoption_ci_low: number;
+  adoption_ci_high: number;
+  qa_assessed: number;
+  qa_agreed: number;
+  qa_agreement_rate: number;
+  qa_agreement_ci_low: number;
+  qa_agreement_ci_high: number;
+  validated_outcomes: number;
+  missing_outcomes: number;
+  prompt_tokens: number;
+  output_tokens: number;
+  cost_usd: number;
+  average_latency_ms: number;
+  p95_latency_ms: number;
+  tool_executions: number;
+  human_tool_executions: number;
+  time_saved_ms: number;
+  average_time_saved_ms: number;
+}
+
+export interface AgentAnalyticsReport {
+  totals: AgentQualityMetrics;
+  groups: Array<{
+    template_id: string;
+    template_name: string;
+    task: string;
+    release: number;
+    provider: string;
+    model: string;
+    environment: Environment;
+    deployment_id?: string;
+    deployment_status?: AgentDeploymentStatus;
+    campaigns: number;
+    blocking_campaigns: number;
+    open_incidents: number;
+    metrics: AgentQualityMetrics;
+  }>;
+  segments: Array<{
+    case_type: string;
+    jurisdiction?: string;
+    metrics: AgentQualityMetrics;
+  }>;
+}
+
+export interface AgentAssist {
+  assist_id: string;
+  case_id: string;
+  kind: string;
+  template_id: string;
+  release: number;
+  environment: Environment;
+  evidence_ids: string[];
+  evidence_seq: number;
+  current_evidence_seq: number;
+  evidence_stale?: boolean;
+  invocation_id: string;
+  policy_source?: {
+    kind: 'case_type' | 'queue';
+    key: string;
+    configuration_seq: number;
+    policy_key: string;
+    evidence_fingerprint: string;
+  };
+  status:
+    | 'requested'
+    | 'running'
+    | 'awaiting_tool_approval'
+    | 'completed'
+    | 'failed'
+    | 'dead_letter'
+    | 'cancelled';
+  content_erased?: boolean;
+  result?: {
+    suggestion?: Record<string, unknown>;
+    citations?: AgentCitation[];
+    unsupported?: string[];
+    confidence: number;
+    limitations?: string[];
+    invocation_id: string;
+    provider: string;
+    model: string;
+    attempts: number;
+    latency_ms: number;
+    prompt_tokens: number;
+    output_tokens: number;
+    cost_usd: number;
+    tool_calls?: AgentToolExecution[];
+  };
+  failure?: string;
+  action?: {
+    assist_id: string;
+    action: 'accepted' | 'edited' | 'rejected' | 'escalated';
+    final?: Record<string, unknown>;
+    reason?: string;
+    time_saved_ms?: number;
+    evidence_head_seq: number;
+    evidence_stale?: boolean;
+  };
+  suggestion_hash?: string;
+  final_hash?: string;
+  differences?: Array<{ path: string; kind: 'added' | 'removed' | 'changed' }>;
+  action_final_erased?: boolean;
+  requested_by: string;
+  requested_at: string;
+  completed_at?: string;
+  attempt?: number;
+  lease_until?: string;
+  seq: number;
+}
+
+async function governedJSON<T>(
+  path: string,
+  key: string,
+  init: RequestInit = {},
+  fetcher: typeof fetch = recordingFetch
+): Promise<T> {
+  const headers = new Headers(init.body ? jsonHeaders(key) : authHeaders(key));
+  new Headers(init.headers).forEach((value, name) => headers.set(name, value));
+  const res = await fetcher(path, {
+    ...init,
+    headers
+  });
+  if (!res.ok) return errorOrStatus(res, `${init.method ?? 'GET'} ${path}`);
+  return (await res.json()) as T;
+}
+
+export async function listAgentTemplates(
+  key: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<AgentTemplate[]> {
+  const body = await governedJSON<{ templates: AgentTemplate[] }>(
+    '/v1/agent-templates',
+    key,
+    {},
+    fetcher
+  );
+  return body.templates ?? [];
+}
+
+export async function createAgentTemplate(
+  key: string,
+  template: Omit<AgentTemplate, 'org' | 'workspace' | 'latest_release' | 'seq'>,
+  fetcher: typeof fetch = recordingFetch
+): Promise<AgentTemplate> {
+  const body = await governedJSON<{ template: AgentTemplate }>(
+    '/v1/agent-templates',
+    key,
+    { method: 'POST', body: JSON.stringify(template) },
+    fetcher
+  );
+  return body.template;
+}
+
+export function getAgentTemplate(
+  key: string,
+  templateID: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<AgentTemplate> {
+  return governedJSON(`/v1/agent-templates/${encodeURIComponent(templateID)}`, key, {}, fetcher);
+}
+
+export async function listAgentReleases(
+  key: string,
+  templateID: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<AgentRelease[]> {
+  const body = await governedJSON<{ releases: AgentRelease[] }>(
+    `/v1/agent-templates/${encodeURIComponent(templateID)}/releases`,
+    key,
+    {},
+    fetcher
+  );
+  return body.releases ?? [];
+}
+
+export async function createAgentRelease(
+  key: string,
+  templateID: string,
+  spec: AgentReleaseSpec,
+  fetcher: typeof fetch = recordingFetch
+): Promise<{ release: number; spec_hash: string; seq: number }> {
+  return governedJSON(
+    `/v1/agent-templates/${encodeURIComponent(templateID)}/releases`,
+    key,
+    { method: 'POST', body: JSON.stringify({ spec }) },
+    fetcher
+  );
+}
+
+export async function listAgentEvalSuites(
+  key: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<AgentEvalSuite[]> {
+  const body = await governedJSON<{ suites: AgentEvalSuite[] }>(
+    '/v1/agent-eval-suites',
+    key,
+    {},
+    fetcher
+  );
+  return body.suites ?? [];
+}
+
+export async function publishAgentEvalSuite(
+  key: string,
+  suite: Omit<AgentEvalSuite, 'version' | 'dataset_hash'> & {
+    version?: number;
+    dataset_hash?: string;
+  },
+  fetcher: typeof fetch = recordingFetch
+): Promise<AgentEvalSuite> {
+  const body = await governedJSON<{ suite: AgentEvalSuite }>(
+    '/v1/agent-eval-suites',
+    key,
+    { method: 'POST', body: JSON.stringify(suite) },
+    fetcher
+  );
+  return body.suite;
+}
+
+export async function runAgentCampaign(
+  key: string,
+  templateID: string,
+  release: number,
+  suiteID: string,
+  suiteVersion: number,
+  fetcher: typeof fetch = recordingFetch
+): Promise<AgentCampaign> {
+  const body = await governedJSON<{ campaign: AgentCampaign }>(
+    `/v1/agent-templates/${encodeURIComponent(templateID)}/releases/${release}/campaigns`,
+    key,
+    {
+      method: 'POST',
+      body: JSON.stringify({ suite_id: suiteID, suite_version: suiteVersion })
+    },
+    fetcher
+  );
+  return body.campaign;
+}
+
+export async function listAgentCampaigns(
+  key: string,
+  templateID: string,
+  release: number,
+  fetcher: typeof fetch = recordingFetch
+): Promise<AgentCampaign[]> {
+  const body = await governedJSON<{ campaigns: AgentCampaign[] }>(
+    `/v1/agent-templates/${encodeURIComponent(templateID)}/releases/${release}/campaigns`,
+    key,
+    {},
+    fetcher
+  );
+  return body.campaigns ?? [];
+}
+
+export async function adjudicateAgentCampaignTrial(
+  key: string,
+  campaignID: string,
+  caseID: string,
+  trial: number,
+  passed: boolean,
+  reason: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<{ event_id: string; seq: number }> {
+  return governedJSON(
+    `/v1/agent-eval-campaigns/${encodeURIComponent(campaignID)}/trials/${encodeURIComponent(caseID)}/${trial}/adjudication`,
+    key,
+    { method: 'POST', body: JSON.stringify({ passed, reason }) },
+    fetcher
+  );
+}
+
+export async function compareAgentCampaigns(
+  key: string,
+  baselineCampaignID: string,
+  challengerCampaignID: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<AgentCampaignComparison> {
+  const query = new URLSearchParams({
+    baseline_campaign_id: baselineCampaignID,
+    challenger_campaign_id: challengerCampaignID
+  });
+  return governedJSON(`/v1/agent-eval-comparisons?${query}`, key, {}, fetcher);
+}
+
+export async function downloadAgentCampaign(
+  key: string,
+  campaignID: string,
+  format: 'json' | 'csv',
+  fetcher: typeof fetch = recordingFetch
+): Promise<Blob> {
+  const path = `/v1/agent-eval-campaigns/${encodeURIComponent(campaignID)}/export?format=${format}`;
+  const response = await fetcher(path, { headers: authHeaders(key) });
+  if (!response.ok) return errorOrStatus(response, `GET ${path}`);
+  return response.blob();
+}
+
+export async function requestAgentReleaseReview(
+  key: string,
+  templateID: string,
+  release: number,
+  campaignIDs: string[],
+  evidenceIDs: string[],
+  reviewers: string[],
+  expiresAt: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<{ request_id: string; seq: number }> {
+  return governedJSON(
+    `/v1/agent-templates/${encodeURIComponent(templateID)}/releases/${release}/review-request`,
+    key,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        campaign_ids: campaignIDs,
+        evidence_ids: evidenceIDs,
+        reviewers,
+        expires_at: expiresAt
+      })
+    },
+    fetcher
+  );
+}
+
+export function reviewAgentRelease(
+  key: string,
+  templateID: string,
+  release: number,
+  requestID: string,
+  decision: 'approve' | 'reject',
+  reason: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<{ seq: number }> {
+  return governedJSON(
+    `/v1/agent-templates/${encodeURIComponent(templateID)}/releases/${release}/review`,
+    key,
+    { method: 'POST', body: JSON.stringify({ request_id: requestID, decision, reason }) },
+    fetcher
+  );
+}
+
+export async function listAgentDeployments(
+  key: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<AgentDeployment[]> {
+  const body = await governedJSON<{ deployments: AgentDeployment[] }>(
+    '/v1/agent-deployments',
+    key,
+    {},
+    fetcher
+  );
+  return body.deployments ?? [];
+}
+
+export function deployAgentRelease(
+  key: string,
+  request: {
+    template_id: string;
+    release: number;
+    environment: Environment;
+    at?: string;
+    expires_at?: string;
+    reason: string;
+  },
+  fetcher: typeof fetch = recordingFetch
+): Promise<{ deployment_id: string; seq: number }> {
+  return governedJSON(
+    '/v1/agent-deployments',
+    key,
+    { method: 'POST', body: JSON.stringify(request) },
+    fetcher
+  );
+}
+
+export function pauseAgentDeployment(
+  key: string,
+  deploymentID: string,
+  reason: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<{ seq: number }> {
+  return governedJSON(
+    `/v1/agent-deployments/${encodeURIComponent(deploymentID)}/pause`,
+    key,
+    { method: 'POST', body: JSON.stringify({ reason }) },
+    fetcher
+  );
+}
+
+export function resumeAgentDeployment(
+  key: string,
+  deploymentID: string,
+  reason: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<{ seq: number }> {
+  return governedJSON(
+    `/v1/agent-deployments/${encodeURIComponent(deploymentID)}/resume`,
+    key,
+    { method: 'POST', body: JSON.stringify({ reason }) },
+    fetcher
+  );
+}
+
+export function activateAgentDeployment(
+  key: string,
+  deploymentID: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<{ seq: number }> {
+  return governedJSON(
+    `/v1/agent-deployments/${encodeURIComponent(deploymentID)}/activate`,
+    key,
+    { method: 'POST', body: '{}' },
+    fetcher
+  );
+}
+
+export function rollbackAgentDeployment(
+  key: string,
+  deploymentID: string,
+  toRelease: number,
+  reason: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<{ seq: number }> {
+  return governedJSON(
+    `/v1/agent-deployments/${encodeURIComponent(deploymentID)}/rollback`,
+    key,
+    { method: 'POST', body: JSON.stringify({ to_release: toRelease, reason }) },
+    fetcher
+  );
+}
+
+export function retireAgentRelease(
+  key: string,
+  templateID: string,
+  release: number,
+  reason: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<{ seq: number }> {
+  return governedJSON(
+    `/v1/agent-templates/${encodeURIComponent(templateID)}/releases/${release}/retire`,
+    key,
+    { method: 'POST', body: JSON.stringify({ reason }) },
+    fetcher
+  );
+}
+
+export async function listAgentSafetyIncidents(
+  key: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<AgentSafetyIncident[]> {
+  const body = await governedJSON<{ incidents: AgentSafetyIncident[] }>(
+    '/v1/agent-safety-incidents',
+    key,
+    {},
+    fetcher
+  );
+  return body.incidents ?? [];
+}
+
+export function openAgentSafetyIncident(
+  key: string,
+  incident: Omit<AgentSafetyIncident, 'incident_id' | 'status' | 'opened_at' | 'seq'> & {
+    incident_id?: string;
+  },
+  fetcher: typeof fetch = recordingFetch
+): Promise<{ incident_id: string; seq: number }> {
+  return governedJSON(
+    '/v1/agent-safety-incidents',
+    key,
+    { method: 'POST', body: JSON.stringify(incident) },
+    fetcher
+  );
+}
+
+export function resolveAgentSafetyIncident(
+  key: string,
+  incidentID: string,
+  resolution: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<{ seq: number }> {
+  return governedJSON(
+    `/v1/agent-safety-incidents/${encodeURIComponent(incidentID)}/resolve`,
+    key,
+    { method: 'POST', body: JSON.stringify({ resolution }) },
+    fetcher
+  );
+}
+
+export async function listAgentToolApprovals(
+  key: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<AgentToolApproval[]> {
+  const body = await governedJSON<{ approvals: AgentToolApproval[] }>(
+    '/v1/agent-tool-approvals',
+    key,
+    {},
+    fetcher
+  );
+  return body.approvals ?? [];
+}
+
+export function decideAgentToolApproval(
+  key: string,
+  approvalID: string,
+  decision: 'approved' | 'rejected',
+  reason: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<{
+  approval_id: string;
+  assist_id?: string;
+  status: 'requested' | 'rejected';
+  seq: number;
+}> {
+  return governedJSON(
+    `/v1/agent-tool-approvals/${encodeURIComponent(approvalID)}/decision`,
+    key,
+    { method: 'POST', body: JSON.stringify({ decision, reason }) },
+    fetcher
+  );
+}
+
+export function getAgentGovernanceAnalytics(
+  key: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<AgentAnalyticsReport> {
+  return governedJSON('/v1/agent-governance/analytics', key, {}, fetcher);
+}
+
+export async function listCaseAgentAssists(
+  key: string,
+  caseID: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<AgentAssist[]> {
+  const body = await governedJSON<{ assists: AgentAssist[] }>(
+    `/v1/cases/${encodeURIComponent(caseID)}/agent-assists`,
+    key,
+    {},
+    fetcher
+  );
+  return body.assists ?? [];
+}
+
+export function requestCaseAgentAssist(
+  key: string,
+  caseID: string,
+  request: {
+    kind: string;
+    template_id: string;
+    release: number;
+    environment: Environment;
+    evidence_ids: string[];
+  },
+  idempotencyKey: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<{
+  assist_id: string;
+  status: AgentAssist['status'];
+  approval_id?: string;
+  result?: AgentAssist['result'];
+  seq?: number;
+}> {
+  return governedJSON(
+    `/v1/cases/${encodeURIComponent(caseID)}/agent-assists`,
+    key,
+    {
+      method: 'POST',
+      headers: { ...jsonHeaders(key), 'Idempotency-Key': idempotencyKey },
+      body: JSON.stringify(request)
+    },
+    fetcher
+  );
+}
+
+export function recordAgentAssistAction(
+  key: string,
+  assistID: string,
+  action: {
+    action: 'accepted' | 'edited' | 'rejected' | 'escalated';
+    final?: Record<string, unknown>;
+    reason?: string;
+    time_saved_ms?: number;
+  },
+  fetcher: typeof fetch = recordingFetch
+): Promise<{ seq: number }> {
+  return governedJSON(
+    `/v1/agent-assists/${encodeURIComponent(assistID)}/reviewer-action`,
+    key,
+    { method: 'POST', body: JSON.stringify({ assist_id: assistID, ...action }) },
+    fetcher
+  );
+}
+
+export function retryAgentAssist(
+  key: string,
+  assistID: string,
+  reason: string,
+  acknowledgeAtLeastOnce: boolean,
+  fetcher: typeof fetch = recordingFetch
+): Promise<{ event_id: string; seq: number }> {
+  return governedJSON(
+    `/v1/agent-assists/${encodeURIComponent(assistID)}/retry`,
+    key,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        reason,
+        acknowledge_at_least_once: acknowledgeAtLeastOnce
+      })
+    },
+    fetcher
+  );
+}
+
+export function cancelAgentAssist(
+  key: string,
+  assistID: string,
+  reason: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<{ event_id: string; seq: number }> {
+  return governedJSON(
+    `/v1/agent-assists/${encodeURIComponent(assistID)}/cancel`,
+    key,
+    { method: 'POST', body: JSON.stringify({ reason }) },
+    fetcher
+  );
 }
 
 export async function runAgent(
@@ -4619,12 +5582,21 @@ export interface MrmMonitoring {
   drift_psi?: number;
   drift_firing?: boolean;
   slo_met?: boolean;
+  prompt_tokens?: number;
+  output_tokens?: number;
+  cost_usd?: number;
+  assist_accepted?: number;
+  assist_edited?: number;
+  assist_rejected?: number;
+  assist_escalated?: number;
+  open_incidents?: number;
 }
 
 export interface MrmModel {
   kind: MrmModelKind;
   id: string;
   name: string;
+  governed_agent?: boolean;
   version: number;
   owner?: string;
   deployments?: Record<string, number>;

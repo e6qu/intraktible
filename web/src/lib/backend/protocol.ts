@@ -17,7 +17,12 @@ export type WorkerRequest =
       wasmExecURL: string;
       /** The seed event-log URL. */
       seedURL: string;
-      /** User-delta events persisted from earlier sessions (JSON envelope array), '' for none. */
+      /**
+       * Fictional demo-only operational state. It contains the subject keys that
+       * remain deliberately separate from the immutable event log.
+       */
+      stateURL: string;
+      /** Versioned user events + operational state persisted from earlier sessions. */
       delta: string;
     }
   | {

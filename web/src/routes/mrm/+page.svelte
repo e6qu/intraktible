@@ -57,10 +57,14 @@
   }
 
   // Each inventory row drills through to its underlying entity so a gap is actionable.
-  function entityHref(kind: string, id: string): string | null {
-    if (kind === 'flow') return appHref(`/engine/${id}`);
-    if (kind === 'agent') return appHref(`/agents/${encodeURIComponent(id)}`);
-    if (kind === 'predictive_model') return appHref('/models');
+  function entityHref(model: MrmReport['models'][number]): string | null {
+    if (model.kind === 'flow') return appHref(`/engine/${model.id}`);
+    if (model.kind === 'agent') {
+      return model.governed_agent
+        ? appHref(`/agents/governance/${encodeURIComponent(model.id)}`)
+        : appHref(`/agents/${encodeURIComponent(model.id)}`);
+    }
+    if (model.kind === 'predictive_model') return appHref('/models');
     return null;
   }
 
@@ -150,12 +154,12 @@
             </tr>
           </thead>
           <tbody>
-            {#each report.models as m (m.kind + '/' + m.id)}
+            {#each report.models as m (`${m.kind}/${m.governed_agent ? 'governed/' : ''}${m.id}`)}
               <tr class:flagged={m.issues && m.issues.length > 0}>
                 <td>{kindLabel[m.kind] ?? m.kind}</td>
                 <td>
-                  {#if entityHref(m.kind, m.id)}
-                    <a href={entityHref(m.kind, m.id)}>{m.name || m.id}</a>
+                  {#if entityHref(m)}
+                    <a href={entityHref(m)}>{m.name || m.id}</a>
                   {:else}{m.name || m.id}{/if}
                 </td>
                 <td>{m.version || '—'}</td>
@@ -193,6 +197,20 @@
                       <Badge tone={m.monitoring.slo_met ? 'ok' : 'danger'}
                         >SLO {m.monitoring.slo_met ? 'met' : 'breach'}</Badge
                       >
+                    {/if}
+                    {#if m.governed_agent}
+                      <span class="metric"
+                        >${(m.monitoring.cost_usd ?? 0).toFixed(4)} · {(m.monitoring
+                          .prompt_tokens ?? 0) + (m.monitoring.output_tokens ?? 0)} tokens</span
+                      >
+                      <span class="metric"
+                        >{m.monitoring.assist_accepted ?? 0} accept · {m.monitoring.assist_edited ??
+                          0} edit · {m.monitoring.assist_rejected ?? 0} reject · {m.monitoring
+                          .assist_escalated ?? 0} escalate</span
+                      >
+                      {#if (m.monitoring.open_incidents ?? 0) > 0}
+                        <Badge tone="danger">{m.monitoring.open_incidents} incident(s)</Badge>
+                      {/if}
                     {/if}
                     {#if m.monitoring.drift_psi === undefined && !(m.monitoring.firing_monitors && m.monitoring.firing_monitors.length) && m.monitoring.slo_met === undefined}
                       <span class="muted">—</span>

@@ -8,6 +8,7 @@ domain/      # pure types + validation (no I/O)
 events/      # event payloads (AgentDefined, AgentRunRecorded)
 command/     # validate (pure) -> emit events; running an agent invokes the AI provider
 agents/      # events -> JSONB read models (agent registry + run log) + the run helper
+governance/  # governed templates/releases/evals/deployments/assists/incidents
 service/     # HTTP handlers + wiring (imperative shell)
 ```
 
@@ -66,6 +67,29 @@ Done — agent definitions + runs (command→event→projection→API, durable &
 - **UI** (`web/src/routes/agents`): the registry (list/define agents + a run-summary banner) and a
   per-agent view that runs the agent, shows the run log, and escalates a run to a case.
 - Run it: `intraktible serve --modules=agent-manager` (UI dev: `make dev`).
+
+Governed production operations live alongside, rather than replacing, that low-level
+registry. `agent-manager/governance` provides:
+
+- reusable templates and immutable releases with typed contracts, dependency pins,
+  citations/evidence rules, trust labels, tool modes, budgets, and timeouts;
+- immutable representative/adversarial suites, repeated deterministic and governed
+  semantic campaigns, human adjudication, release gates, paired comparison, and
+  reproducible exports;
+- assigned four-eyes release review plus scheduled environment deployment, pause,
+  rollback, approval expiry, retirement, safety incidents, circuit containment, and
+  explicit guarded recovery;
+- subject-sealed evidence-cited case assists with durable replica-safe workers,
+  cancellation, bounded retry/dead letter, human-before-call tool continuation,
+  stale-evidence UX, accountable reviewer actions, value-free differences, and
+  QA/outcome/cost analytics; and
+- a versioned remote-agent protocol that preserves scoped inputs, invocation
+  identity, cancellation, typed evidence, and platform-owned tool authorization.
+
+The governed UI starts at `/agents/governance`; the reviewer experience is embedded
+in `/cases/{case_id}` rather than creating a second work queue. All lifecycle
+contracts are also exposed through OpenAPI, the Go and TypeScript SDKs, and
+`intraktible agents`.
 
 Consumed by the decision engine: when traversal reaches a flow's **AI node**,
 the shell invokes the `agents.Provider` adapter with the exact current record

@@ -120,6 +120,17 @@
     >
   </div>
 
+  <a class="governance" href={appHref('/agents/governance')}>
+    <span>
+      <strong>Governed agent operations</strong>
+      <small
+        >Templates → immutable releases → repeated evaluations → independent review → exact
+        environment deployment</small
+      >
+    </span>
+    <span aria-hidden="true">Open control plane →</span>
+  </a>
+
   {#if summary}
     <div class="summary" aria-label="run summary">
       <span class="stat">Runs <b>{summary.total}</b></span>
@@ -241,6 +252,23 @@
   .head button {
     flex: none;
     margin-top: 0.4rem;
+  }
+  .governance {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    margin: 1rem 0 1.5rem;
+    padding: 1rem;
+    border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+    border-radius: 0.65rem;
+    background: color-mix(in srgb, var(--accent) 7%, var(--surface));
+    color: inherit;
+    text-decoration: none;
+  }
+  .governance small {
+    display: block;
+    margin-top: 0.25rem;
+    color: var(--muted);
   }
   main {
     max-width: 52rem;

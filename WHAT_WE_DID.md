@@ -800,3 +800,109 @@ Linux, entirely that VM's fsync path.
   Replaced it with `testutil.API.RequestWithHeaders`, removed 39 lines of
   duplicate transport code, passed 100 consecutive race-enabled runs, and
   completed the full local `make ci` gate with zero reachable vulnerabilities.
+- 2026-07-30: Closed E4 on exact head `8810602`: hosted run `30573475006`
+  passed all nine jobs, PR #163 merged as authoritative `origin/main`
+  `0eea197`, the remote branch was deleted, and the open-PR queue is empty.
+- 2026-07-30: Cut `enterprise/e5-governed-agent-operations` exactly from merged
+  E4 and re-established the full `PLAN.md` §8b.6 acceptance boundary before
+  implementation; no dependency or E5 pull request exists yet.
+- 2026-07-30: Completed E5's first governed-agent loop: immutable template,
+  release, suite/campaign, independent review, deployment/rollback, cited case
+  assist, exact tool approval/execution proof, incidents, joined learning/cost
+  analytics, MRM, remote protocol, scheduler, notifications, APIs, SDKs, CLI,
+  and role-aware UI; focused backend and frontend checks pass.
+- 2026-07-30: Closed E5's first privacy boundary: governed free text rejects
+  high-signal PII before append, provider failures are redacted, generated
+  assist content is sealed under the case subject in events/projections, and
+  erasure makes it irrecoverable while preserving non-content lineage; the
+  crypto-shred regression, governance/server tests, and frontend checks pass.
+- 2026-07-30: Closed E5's evaluation-review loop: independent one-time trial
+  adjudications preserve original provider hashes while re-deriving release
+  gates and notifications; exact-suite baseline/challenger comparison,
+  uncertainty/cost/latency regressions, and formula-safe reproducible JSON/CSV
+  exports are available in API, both SDKs, CLI, UI, analytics, and MRM. Focused
+  governance/notification/MRM/SDK/CLI and 115 frontend contract tests pass.
+- 2026-07-30: Closed E5's durable case-assist execution loop: sealed evidence
+  snapshots and stable invocation IDs cross replica-safe claims/heartbeats;
+  incremental recovery, lease dead letters, explicit at-least-once retry,
+  sub-second cancellation propagation, and asynchronously requeued approved
+  tool calls yield one terminal result. API/OpenAPI/RBAC, both SDKs, CLI,
+  notifications and reviewer polling/retry/cancel UX are wired; focused
+  race-enabled worker, governance, notification, server and 115 frontend
+  contract tests pass.
+- 2026-07-30: Closed E5's semantic-evaluation seam: immutable suites pin grader
+  provider/model/instructions/version/budget, candidate output is explicitly
+  untrusted, and each grade records definition/rubric/output hashes,
+  invocation, score/rationale, tokens, latency and cost while preserving human
+  adjudication. CSV/JSON export and evaluator UI expose the distinction; the
+  regenerated 8,743-event demo carries six real semantic grades and passes exact
+  production replay, focused Go suites, frontend check/lint and 128 contract
+  units.
+- 2026-07-30: Closed E5's runtime-containment seam: reviewed failure-rate
+  windows derive from terminal assist events, latch one critical incident,
+  block authoritative admission, and let the scheduler pause the exact
+  deployment without provider fallback. Resolution resets by event sequence
+  and explicit resume rechecks approval, expiry, incidents, circuit state and
+  environment exclusivity; API/OpenAPI/RBAC, SDKs, CLI, notifications, operator
+  UI, exact threshold/reset tests, frontend checks and the 8,743-event
+  production replay are green.
+- 2026-07-30: Closed E5's policy-assist seam: immutable case-type and queue
+  policies wait for governed evidence, bind the active exact release, dedupe
+  by configuration plus evidence fingerprint, and reconcile without changing
+  queue/SLA/case state; synthetic-actor failures route to operators. The real
+  8,749-event demo runs two policies through scheduler, worker, provider,
+  subject-keyed sealing and replay with no cleartext result in the log.
+- 2026-07-30: Closed E5's reviewer-learning seam: assist reads compare linked
+  evidence and immutable attachment heads, actions pin and acknowledge stale
+  state, edits record suggestion/final hashes plus deterministic value-free
+  JSON-pointer differences, and edited content crypto-shreds under the case
+  subject. The workbench and real seed prove stale edit/reject journeys without
+  performing a terminal case action or leaking the edited final to the log.
+- 2026-07-30: Proved the E5 policy-assist review loop in a real-Wasm Chromium
+  journey and fixed the restart defect it found: demo subject keys now restore
+  and persist separately from immutable events, missing keys fail loudly instead
+  of masquerading as erasure, seed replay decrypts reviewer edits, and the UI
+  shows stale evidence, hashes/diffs, reviewer action, and the independent final
+  disposition.
+- 2026-07-30: Proved the E5 native governed-release loop in Chromium from maker
+  registration through two-trial adversarial evaluation, independent checker
+  approval, production deployment, critical incident, containment, resolution,
+  and guarded resume. The walkthrough also pinned empty analytics as JSON arrays
+  and removed unset year-one projection timestamps.
+- 2026-07-30: Forced two independent circuit evaluators to fold the same
+  pre-incident snapshot and race the durable terminal-sequence claim; 20
+  race-enabled repetitions produce exactly one opener and one incident event.
+- 2026-07-30: Closed E5's browser failure/privacy/accessibility evidence: the
+  native workbench surfaces malformed-provider failure, explicit at-least-once
+  retry, and independent case completion; real Wasm crypto-shreds suggestion and
+  reviewer-edit content while retaining proofs/diffs/outcome; both governance
+  routes pass measured WCAG-AA contrast in light and dark modes.
+- 2026-07-30: Reconciled the E5 product contract across `PLAN.md` §8/§8b.6,
+  `docs/JOURNEYS.md`, `docs/ENTERPRISE.md`, `docs/COMPETITIVE.md`,
+  `agent-manager/README.md`, and the new E5 audit block in `BUGS.md`; governed
+  releases, repeated/adversarial evaluation, case-assist independence, safety
+  recovery, privacy, and reviewer/QA/outcome learning replace stale legacy-only
+  claims.
+- 2026-07-30: Closed the E5 whole-diff trust/automation audit: remote
+  capability and response sizes are bounded, verifier secret strength matches
+  signing, internal idempotency proofs are validated, retries re-check every
+  admission control, worker failure degrades health, incident containment is
+  tenant-scoped, and queue assists fail loudly when their evidence contract is
+  impossible for the pinned case type. Focused race suites pass.
+- 2026-07-30: Completed E5 discovery and targeted-browser evidence: governed
+  templates resolve from Cmd-K, both new routes carry in-app journeys, the MRM
+  table has collision-free keys, links respect the application base, the demo
+  worker wait is bounded but scheduler-tolerant, all 247 frontend units and five
+  native agent journeys pass, and two real-Wasm policy/privacy journeys pass
+  over the regenerated 8,747-event production replay.
+- 2026-07-30: The full native matrix exposed a fresh-tenant Case Analytics
+  crash: empty workload and queue projections serialized as `null`, violating
+  the UI's array contract. `TestOperationalAnalyticsEmptyCollectionsRemainJSONArrays`
+  now pins both as JSON arrays, and the complete native suite passes 135/135
+  with retries disabled.
+- 2026-07-30: Completed the E5 release candidate: 135 native browser journeys,
+  86 real-Wasm journeys over 8,747 replayed events, four embedded-artifact
+  journeys, 247 frontend units plus production check/lint/format/build, and the
+  complete `make ci` race/security/dead-code/zero-clone/vulnerability/license
+  matrix pass. Final diff, OpenAPI, formatting, SPDX, and source-marker checks
+  are clean against authoritative `origin/main` `0eea197`.

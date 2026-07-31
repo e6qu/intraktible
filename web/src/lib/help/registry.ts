@@ -729,6 +729,93 @@ export const HELP = new Map<string, PageHelp>([
     }
   ],
   [
+    '/agents/governance',
+    {
+      title: 'Governed agent operations',
+      summary:
+        'Register reusable agent tasks, publish immutable evaluation suites, and operate exact-release deployments, safety incidents, tool approvals, and measured reviewer outcomes.',
+      capabilities: [
+        'Register a governed task template and publish an immutable evaluation suite.',
+        'Inspect exact environment bindings and pause, activate, or roll back a deployment.',
+        'Open and resolve safety incidents without storing raw sensitive content.',
+        'Approve or reject human-gated tool calls.',
+        'Compare adoption, quality, latency, cost, and time-saved metrics.'
+      ],
+      journeys: [
+        {
+          name: 'Start a governed specialist',
+          steps: [
+            'Open + Register template and describe the reusable task, its risk level, and human accountability boundary.',
+            'Open + Publish suite and define immutable repeated and adversarial evaluation cases.',
+            'Click the template card to create, evaluate, independently review, and deploy an exact release.'
+          ]
+        },
+        {
+          name: 'Contain and recover an incident',
+          steps: [
+            'Find the exact environment binding and click Report critical incident.',
+            'Record a non-sensitive incident kind and summary; the scheduler contains the affected release.',
+            'Resolve the incident with containment evidence.',
+            'Open the template release and explicitly resume the paused deployment with a fresh circuit window.'
+          ]
+        },
+        {
+          name: 'Decide a gated tool call',
+          steps: [
+            'Find the pending call under Human tool approvals and inspect its task, purpose, and argument hash.',
+            'Click Approve or Reject and record an accountable reason.',
+            'If approved, the durable worker resumes the exact assist; if rejected, it stops the assist.'
+          ]
+        }
+      ]
+    }
+  ],
+  [
+    '/agents/governance/[templateId]',
+    {
+      title: 'Governed agent template',
+      summary:
+        'Operate one specialist agent through immutable releases, repeated evaluations, maker-checker review, exact deployment, comparison, and incident recovery.',
+      capabilities: [
+        'Create an immutable release with provider, schema, tools, budgets, dependencies, and safety controls.',
+        'Run repeated and adversarial evaluation campaigns and adjudicate individual trials.',
+        'Compare baseline and challenger evidence or export a campaign.',
+        'Request independent review and approve or reject as a different actor.',
+        'Deploy, pause, resume, or retire an exact release.'
+      ],
+      journeys: [
+        {
+          name: 'Approve and deploy an exact release',
+          steps: [
+            'Open + Create draft release and review its immutable JSON specification.',
+            'Choose an Evaluation suite and click Run evaluation; inspect repeated trial evidence and blocking status.',
+            'Click Request independent review and assign a different reviewer.',
+            'As the assigned approver, record an approval or rejection reason.',
+            'Choose the environment, record the deployment reason, and click Deploy exact release.'
+          ]
+        },
+        {
+          name: 'Compare or adjudicate evidence',
+          steps: [
+            'Inspect a campaign’s trials, grader evidence, citations, cost, and latency.',
+            'For an independently reviewed exception, click Adjudicate pass or fail and record the rationale; the original trial remains unchanged.',
+            'Choose baseline and challenger campaigns and click Compare.',
+            'Read confidence, regressions, improvements, cost, and latency before requesting review.'
+          ]
+        },
+        {
+          name: 'Resume after containment',
+          steps: [
+            'Confirm the affected environment binding reads paused.',
+            'Open Governed agent operations and resolve every critical incident for this exact release.',
+            'Return to the release and click Resume after incident resolution.',
+            'Record why restart is safe; the deployment returns active with a fresh circuit window.'
+          ]
+        }
+      ]
+    }
+  ],
+  [
     '/agents/[name]',
     {
       title: 'Agent',

@@ -4,11 +4,13 @@ package schedule
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
 
 	"github.com/e6qu/intraktible/case-manager/cases"
+	"github.com/e6qu/intraktible/case-manager/domain"
 	"github.com/e6qu/intraktible/case-manager/events"
 	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/metrics"
@@ -33,11 +35,34 @@ type Cmd interface {
 // Scheduler records SLA breaches for open cases whose deadline has passed, across
 // every tenant, on a timer.
 type Scheduler struct {
-	store  store.Store
-	cmd    Cmd
-	now    func() time.Time
-	notify func(ctx context.Context, id identity.Identity, caseID string) (DeliveryOutcome, error)
+	store         store.Store
+	cmd           Cmd
+	now           func() time.Time
+	notify        func(ctx context.Context, id identity.Identity, caseID string) (DeliveryOutcome, error)
+	requestAssist AssistRequester
 }
+
+type AssistPolicySource struct {
+	Kind             string
+	Key              string
+	ConfigurationSeq uint64
+}
+
+type AssistReconcileOutcome string
+
+const (
+	AssistEligible   AssistReconcileOutcome = "eligible"
+	AssistWaiting    AssistReconcileOutcome = "waiting"
+	AssistIneligible AssistReconcileOutcome = "ineligible"
+)
+
+type AssistRequester func(
+	ctx context.Context,
+	id identity.Identity,
+	view cases.CaseView,
+	policy domain.AssistAutomation,
+	source AssistPolicySource,
+) (AssistReconcileOutcome, error)
 
 // NewScheduler builds an SLA-sweep scheduler over the store and command surface.
 func NewScheduler(st store.Store, cmd Cmd) *Scheduler {
@@ -57,6 +82,14 @@ func (s *Scheduler) WithNow(now func() time.Time) *Scheduler {
 // off the same events by the notifications projector.
 func (s *Scheduler) WithNotify(fn func(ctx context.Context, id identity.Identity, caseID string) (DeliveryOutcome, error)) *Scheduler {
 	s.notify = fn
+	return s
+}
+
+// WithAssistRequester adds a cross-component admission shell. Case routing,
+// SLA, and resolution remain independent: expected waiting/ineligible outcomes
+// are counted, while malformed or failed admission returns an operational error.
+func (s *Scheduler) WithAssistRequester(request AssistRequester) *Scheduler {
+	s.requestAssist = request
 	return s
 }
 
@@ -81,6 +114,9 @@ type TickSummary struct {
 	NoChannel         int
 	PermanentFailures int
 	Retrying          int
+	AssistEligible    int
+	AssistWaiting     int
+	AssistIneligible  int
 }
 
 const maxDeliveryAttempts = 5
@@ -174,7 +210,184 @@ func (s *Scheduler) Tick(ctx context.Context) (TickSummary, error) {
 			}
 		}
 	}
+	if s.requestAssist != nil {
+		if err := s.reconcileAssists(ctx, views, &sum); err != nil {
+			return sum, err
+		}
+	}
 	return sum, nil
+}
+
+// ReconcileAssists runs only the case-assist admission policies. It is the
+// deterministic on-demand boundary used by hosts that need to advance this
+// asynchronous loop without also routing cases or changing SLA state.
+func (s *Scheduler) ReconcileAssists(ctx context.Context) (TickSummary, error) {
+	if s.requestAssist == nil {
+		return TickSummary{}, errors.New(
+			"case scheduler: no assist requester is configured",
+		)
+	}
+	views, err := cases.ListAll(ctx, s.store)
+	if err != nil {
+		return TickSummary{}, err
+	}
+	var sum TickSummary
+	if err := s.reconcileAssists(ctx, views, &sum); err != nil {
+		return sum, err
+	}
+	return sum, nil
+}
+
+func (s *Scheduler) reconcileAssists(
+	ctx context.Context,
+	views []cases.CaseView,
+	sum *TickSummary,
+) error {
+	caseTypeCache := make(map[string]cases.CaseTypeView)
+	queueCache := make(map[string]map[string]cases.QueueView)
+	for _, view := range views {
+		if view.CaseTypeVersion < 1 {
+			continue
+		}
+		id := identity.Identity{
+			Org: view.Org, Workspace: view.Workspace, Actor: sweepActor,
+		}
+		typeKey := view.Org + "\x00" + view.Workspace + "\x00" +
+			view.CaseType + "\x00" + fmt.Sprint(view.CaseTypeVersion)
+		caseType, cached := caseTypeCache[typeKey]
+		if !cached {
+			var found bool
+			var err error
+			caseType, found, err = cases.CaseTypeVersion(
+				ctx, s.store, id, view.CaseType, view.CaseTypeVersion,
+			)
+			if err != nil {
+				return err
+			}
+			if !found {
+				return fmt.Errorf(
+					"case scheduler: missing pinned case type %s@%d for %s",
+					view.CaseType, view.CaseTypeVersion, view.CaseID,
+				)
+			}
+			caseTypeCache[typeKey] = caseType
+		}
+		if caseType.Definition.IsTerminal(view.Status) {
+			continue
+		}
+		for _, policy := range caseType.Definition.Assists {
+			if err := s.requestOneAssist(
+				ctx, id, view, policy,
+				AssistPolicySource{
+					Kind: "case_type", Key: view.CaseType,
+					ConfigurationSeq: caseType.Seq,
+				},
+				sum,
+			); err != nil {
+				return err
+			}
+		}
+		if view.Queue == "" {
+			continue
+		}
+		tenantKey := view.Org + "\x00" + view.Workspace
+		queuesByKey, cached := queueCache[tenantKey]
+		if !cached {
+			queues, err := cases.ListQueues(ctx, s.store, id)
+			if err != nil {
+				return err
+			}
+			queuesByKey = make(map[string]cases.QueueView, len(queues))
+			for _, queue := range queues {
+				queuesByKey[queue.Definition.Key] = queue
+			}
+			queueCache[tenantKey] = queuesByKey
+		}
+		queue, found := queuesByKey[view.Queue]
+		if !found {
+			return fmt.Errorf(
+				"case scheduler: routed case %s references missing queue %q",
+				view.CaseID, view.Queue,
+			)
+		}
+		for _, policy := range queue.Definition.Assists {
+			if err := validateQueueAssistEvidence(policy, caseType.Definition); err != nil {
+				return fmt.Errorf(
+					"case scheduler: queue %s assist policy %s is incompatible with pinned case type %s@%d: %w",
+					view.Queue, policy.Key, view.CaseType, view.CaseTypeVersion, err,
+				)
+			}
+			if err := s.requestOneAssist(
+				ctx, id, view, policy,
+				AssistPolicySource{
+					Kind: "queue", Key: view.Queue,
+					ConfigurationSeq: queue.Seq,
+				},
+				sum,
+			); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func validateQueueAssistEvidence(
+	policy domain.AssistAutomation,
+	caseType domain.CaseTypeDefinition,
+) error {
+	requirements := make(map[string]domain.EvidenceRequirement, len(caseType.Evidence))
+	for _, requirement := range caseType.Evidence {
+		requirements[requirement.Key] = requirement
+	}
+	for _, required := range policy.EvidenceRequirements {
+		requirement, found := requirements[required]
+		if !found {
+			return fmt.Errorf("evidence requirement %q is not configured", required)
+		}
+		linkable := false
+		for _, kind := range requirement.Kinds {
+			if domain.EvidenceKind(kind).Linkable() {
+				linkable = true
+				break
+			}
+		}
+		if !linkable {
+			return fmt.Errorf("evidence requirement %q has no linkable kind", required)
+		}
+	}
+	return nil
+}
+
+func (s *Scheduler) requestOneAssist(
+	ctx context.Context,
+	id identity.Identity,
+	view cases.CaseView,
+	policy domain.AssistAutomation,
+	source AssistPolicySource,
+	sum *TickSummary,
+) error {
+	outcome, err := s.requestAssist(ctx, id, view, policy, source)
+	if err != nil {
+		return fmt.Errorf(
+			"case scheduler: reconcile assist policy %s/%s for case %s: %w",
+			source.Kind, policy.Key, view.CaseID, err,
+		)
+	}
+	switch outcome {
+	case AssistEligible:
+		sum.AssistEligible++
+	case AssistWaiting:
+		sum.AssistWaiting++
+	case AssistIneligible:
+		sum.AssistIneligible++
+	default:
+		return fmt.Errorf(
+			"case scheduler: assist policy %s/%s returned unknown outcome %q",
+			source.Kind, policy.Key, outcome,
+		)
+	}
+	return nil
 }
 
 // Run sweeps on a timer until ctx is cancelled. Failed ticks remain visible in
@@ -197,10 +410,17 @@ func (s *Scheduler) Run(ctx context.Context, interval time.Duration, report func
 			report(nil)
 			if summary.Routed > 0 || summary.Breached > 0 || summary.QueueEscalated > 0 ||
 				summary.Delivered > 0 || summary.Retrying > 0 ||
-				summary.PermanentFailures > 0 {
+				summary.PermanentFailures > 0 || summary.AssistEligible > 0 ||
+				summary.AssistWaiting > 0 || summary.AssistIneligible > 0 {
 				slog.Info("case scheduler", "routed", summary.Routed, "breached", summary.Breached,
 					"queue_escalated", summary.QueueEscalated, "delivered", summary.Delivered,
 					"retrying", summary.Retrying, "permanent_failures", summary.PermanentFailures)
+				slog.Info(
+					"case assist reconciliation",
+					"eligible", summary.AssistEligible,
+					"waiting", summary.AssistWaiting,
+					"ineligible", summary.AssistIneligible,
+				)
 			}
 			metrics.RecordSchedulerTick("case_sla", "ok")
 		}

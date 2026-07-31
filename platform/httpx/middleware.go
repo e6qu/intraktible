@@ -391,7 +391,13 @@ func requiredRole(method, path string) auth.Role {
 		return auth.RoleViewer
 	}
 	switch {
-	case strings.Contains(path, "/deployments"), // a direct deploy (non-prod)
+	case strings.HasPrefix(path, "/v1/agent-deployments"), // governed agent rollout/rollback
+		strings.HasSuffix(path, "/releases/{release}/review"), // independent agent-release checker
+		strings.HasSuffix(path, "/releases/{release}/retire"), // remove an approved release
+		strings.HasSuffix(path, "/agent-tool-approvals/{approval_id}/decision"),
+		strings.HasSuffix(path, "/adjudication"), // accountable evaluation judgment
+		strings.HasSuffix(path, "/agent-safety-incidents/{incident_id}/resolve"),
+		strings.Contains(path, "/deployments"),       // a direct deploy (non-prod)
 		strings.HasSuffix(path, "/promote"),          // promote a live version up the chain
 		strings.HasSuffix(path, "/promotion-policy"), // configure promotion gates
 		strings.HasSuffix(path, "/validation"),       // independent model validation
@@ -401,6 +407,10 @@ func requiredRole(method, path string) auth.Role {
 		strings.HasSuffix(path, "/reject"):  // the checker rejecting a deployment
 		return auth.RoleApprover
 	case strings.HasSuffix(path, "/deployment-requests"), // proposing a deployment (maker)
+		strings.HasSuffix(path, "/releases/{release}/review-request"),
+		path == "/v1/agent-templates",
+		strings.HasSuffix(path, "/agent-templates/{template_id}/releases"),
+		path == "/v1/agent-eval-suites",
 		isAuthoringPath(path),
 		// PATCHing a flow edits its details (name/description) — authoring, like create.
 		method == http.MethodPatch && strings.HasPrefix(path, "/v1/flows/"):

@@ -30,7 +30,7 @@ applicable (different category). Competitor marks reflect vendor claims (see cav
 | Visual flow builder | ✅ 14 node types | ✅ | ✅ Workflows + Journeys | ❌ (lives in the LOS) |
 | Code node | 🟡 Starlark (not Python) | ✅ Python (+ AI-generated) | 🟡 no-code focus | — |
 | DMN-style decision tables | ✅ 5 hit policies + aggregation | ✅ | 🟡 matrix / rules | ❌ |
-| AI / agentic | ✅ AI node + agent tool-calling | ✅ Copilot + Agent workbench | ✅ fraud-signal ML + AI agent | 🟡 genAI analytics (LuLu) |
+| AI / agentic | ✅ governed releases/evals/deployments + cited case assists | ✅ Copilot + Agent workbench | ✅ fraud-signal ML + AI agent | 🟡 genAI analytics (LuLu) |
 | Data-connector marketplace | 🟡 ~9 types (bureau/sanctions/plaid/sql) | ✅ ~200 claimed | ✅ ~270 claimed (KYC/KYB/AML) | — |
 | Model hosting (serve) | ✅ logistic/GBM/expr/external | ✅ Python endpoints | 🟡 import custom | ✅ (core product) |
 | Model training in-platform | 🟡 logistic only | ❌ | ❌ | ✅ GBM/NN/ensembles (core product) |
@@ -57,9 +57,11 @@ applicable (different category). Competitor marks reflect vendor claims (see cav
   attribute/skill/capacity/age routing, durable bulk manifests, independent QA/validated outcomes,
   governed evidence metadata, and replay-derived operations analytics. This describes tested
   intraktible code, not missing Taktile behavior: public vendor material does not specify enough of
-  those internals for an honest parity claim. intraktible also records capabilities Taktile's docs do
-  not claim: self-host, drift monitoring, and deterministic replay / decision lineage (one Taktile
-  reviewer reports lineage and search as weak).
+  those internals for an honest parity claim. Its governed Agent Manager likewise has reusable
+  immutable releases, repeated/adversarial evaluation, independent deployment review, durable cited
+  case assistance, safety circuits, human/QA/outcome learning, and exact replay lineage. intraktible
+  also records capabilities Taktile's docs do not claim: self-host, drift monitoring, and
+  deterministic replay / decision lineage (one Taktile reviewer reports lineage and search as weak).
   These are marks in different columns, not a verdict.
 - **Alloy.** Mostly a different category — identity/KYC/KYB/AML onboarding plus a ~270-source data
   ecosystem and SAR/CTR e-filing. intraktible does not have that depth or any data-source relationships.

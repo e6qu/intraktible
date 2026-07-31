@@ -319,6 +319,100 @@ test('journey: run an agent and escalate a run to a review case', async ({ page 
   await expect(page.getByText(/Opened review case/)).toBeVisible();
 });
 
+test('journey: inspect policy-requested assists, stale evidence, and reviewer edits', async ({
+  page
+}) => {
+  await forcePersona(page, 'operator');
+  await gotoReady(page, '');
+  await switchRole(page, 'operator');
+  const caseID = await api(page, async () => {
+    const response = await fetch('/v1/cases?limit=200');
+    if (!response.ok) throw new Error(`list cases failed: ${response.status}`);
+    const body = (await response.json()) as {
+      cases: { case_id: string; company_name: string }[];
+    };
+    return (
+      body.cases.find((candidate) => candidate.company_name === 'Contoso Payments · QA sample')
+        ?.case_id ?? ''
+    );
+  });
+  expect(caseID, 'the seed should include the governed policy-assist case').toBeTruthy();
+
+  await gotoReady(page, `cases/${caseID}`);
+  const workbench = page.getByTestId('case-agent-assist');
+  await expect(workbench).toContainText('Governed agent assistance');
+  await expect(workbench).toContainText('policy case type aml_alert/opening_summary');
+  await expect(workbench).toContainText('policy queue aml/queue_priority');
+  await expect(workbench.getByText('Evidence changed after generation.')).toHaveCount(2);
+  await expect(workbench.getByText('reviewer edited')).toBeVisible();
+  await expect(workbench.getByText('reviewer rejected')).toBeVisible();
+  await expect(workbench).toContainText('stale suggestion acknowledged');
+
+  await workbench.getByText('Reviewer-edited final').click();
+  await expect(workbench).toContainText(
+    'The alert remains open while the reviewer corroborates beneficial ownership'
+  );
+  await workbench.getByText('Reviewer changed 1 field').click();
+  await expect(workbench.getByText('/summary', { exact: true })).toBeVisible();
+
+  // Feedback remains a learning record: it did not perform the terminal command.
+  // The separate governed disposition in the seed is what resolved this case.
+  await expect(page.getByTestId('case-status')).toHaveText('resolved');
+  await expect(page.getByTestId('case-outcome')).toContainText('clear / verified');
+});
+
+test('journey: crypto-shred assist content but retain reviewer accountability', async ({
+  page
+}) => {
+  await forcePersona(page, 'operator');
+  await gotoReady(page, '');
+  await switchRole(page, 'admin');
+  const caseID = await api(page, async () => {
+    const casesResponse = await fetch('/v1/cases?limit=200');
+    if (!casesResponse.ok) throw new Error(`list cases failed: ${casesResponse.status}`);
+    const body = (await casesResponse.json()) as {
+      cases: { case_id: string; company_name: string }[];
+    };
+    const found = body.cases.find(
+      (candidate) => candidate.company_name === 'Contoso Payments · QA sample'
+    );
+    if (!found) throw new Error('governed policy-assist case is missing');
+    const caseResponse = await fetch(`/v1/cases/${encodeURIComponent(found.case_id)}`);
+    if (!caseResponse.ok) throw new Error(`read case failed: ${caseResponse.status}`);
+    const governedCase = (await caseResponse.json()) as { subject: string };
+    if (!governedCase.subject) throw new Error('governed policy-assist case has no subject');
+    const eraseResponse = await fetch(
+      `/v1/erasure/subjects/${encodeURIComponent(governedCase.subject)}`,
+      { method: 'POST', headers: { 'X-Requested-With': 'intraktible' } }
+    );
+    if (!eraseResponse.ok) {
+      throw new Error(
+        `erase case subject failed: ${eraseResponse.status} ${await eraseResponse.text()}`
+      );
+    }
+    return found.case_id;
+  });
+
+  await gotoReady(page, `cases/${caseID}`);
+  const workbench = page.getByTestId('case-agent-assist');
+  await expect(
+    workbench.getByText(/generated suggestion and its citations were crypto-shredded/)
+  ).toHaveCount(2);
+  await expect(workbench.getByText(/reviewer-edited final was crypto-shredded/)).toHaveCount(1);
+  await expect(workbench).toContainText('suggestion proof');
+  await expect(workbench).toContainText('final proof');
+  await expect(workbench.getByText('Evidence changed after generation.')).toHaveCount(2);
+  await expect(workbench.getByText('reviewer edited')).toBeVisible();
+  await expect(workbench.getByText('reviewer rejected')).toBeVisible();
+  await expect(workbench).not.toContainText(
+    'The alert remains open while the reviewer corroborates beneficial ownership'
+  );
+  await workbench.getByText('Reviewer changed 1 field').click();
+  await expect(workbench.getByText('/summary', { exact: true })).toBeVisible();
+  await expect(page.getByTestId('case-status')).toHaveText('resolved');
+  await expect(page.getByTestId('case-outcome')).toContainText('clear / verified');
+});
+
 // --- 11. Monitors: add one and check + notify ----------------------------------
 test('journey: add a monitor and evaluate it', async ({ page }) => {
   await forcePersona(page, 'developer');

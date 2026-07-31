@@ -260,9 +260,13 @@ Spans: a flow's manual-review node → **Case queue** (`/cases`) → **Case**
 
 Spans: **Agent Manager** (`/agents`) → **Agent** (`/agents/[name]`) → **Case queue**.
 
+This is the low-level registry and direct-run path used for development, interactive
+testing, and flow AI-node dependencies. Production specialist-agent and reviewer-assist
+operations use the governed release journey below.
+
 1. On Agent Manager, define an agent: a prompt/system, a model, optional tools, and an
-   optional structured-output schema. Outcome: a versioned agent with run/cost stats
-   across the workspace.
+   optional structured-output schema. Outcome: an immutable new version with run/cost
+   stats across the workspace; an identical definition is idempotent.
 2. Open the agent and **run** it with a prompt. Durable async is the normal
    operator path: choose the immutable version, timeout, maximum attempts, and
    optional business/correlation references. Outcome: admission returns
@@ -278,6 +282,51 @@ Spans: **Agent Manager** (`/agents`) → **Agent** (`/agents/[name]`) → **Case
    (`agent_review` type) referencing the originating run, and is worked exactly like a
    manual-review case. (Agents also run inside a flow via an **AI** node, where their
    output feeds downstream nodes.)
+
+### Govern, evaluate, and operate a specialist agent
+
+Spans: **Governed agents** (`/agents/governance`) → **Agent release**
+(`/agents/governance/[templateId]`) → **Case workbench** (`/cases/[caseId]`) →
+**Model risk** (`/mrm`).
+
+1. Register a reusable specialist template with its task, owner, and purpose. Create an
+   immutable release that pins instructions, provider/model, typed input/output,
+   evidence and citation rules, trust policy, allowed tools and approval modes,
+   token/cost/time budgets, and retry and human-review controls.
+2. Publish an immutable evaluation suite. Its representative and adversarial cases can
+   use deterministic or governed semantic graders, segment tags, severity, and repeated
+   trials. Run a campaign against the release, inspect exact provider/model/invocation
+   evidence and uncertainty, adjudicate individual trials where human judgment is
+   required, compare an exact-suite baseline and challenger, and export reproducible
+   JSON or CSV evidence. A required failing gate blocks release review.
+3. Assign and request review. A different approver follows the notification, inspects
+   the exact release and evaluation material, and approves or rejects it with a reason.
+   Deploy that approved release to one environment immediately or on a schedule; an
+   environment has one active binding for the template. Pause, roll back, retire, and
+   explicit resume preserve the exact lineage and approval constraints.
+4. In a governed case, request or receive a policy-triggered summary, evidence
+   extraction, prioritisation, next-best action, or draft disposition. The durable
+   worker pins the case evidence snapshot and exact release. Every supported claim
+   cites evidence visible to the reviewer; stale citations and unsupported claims are
+   called out. Human-before-call tools enter an approval queue and continue through the
+   same claimed worker path after an authorized decision.
+5. Accept, edit, reject, retry, or escalate the suggestion. The system records the
+   observed evidence head, suggestion/final proofs, value-free differences, time saved,
+   reviewer action, later independent QA, and validated outcome. Accepting an assist
+   never resolves the case: the accountable reviewer separately performs the governed
+   disposition or status command. Provider failure, malformed output, cancellation, or
+   dead letter is visible and retryable but never owns queue entry, SLA, or case
+   resolution.
+6. Operators follow quality, adoption, edit/reject, QA, outcome, latency, token, and
+   cost evidence back to the exact release, trial, assist, run, case, and segment.
+   A threshold breach latches one critical safety incident across replicas, blocks new
+   admission, and pauses the binding. Resolving the incident starts a fresh evidence
+   window; a separately authorized explicit resume is still required. There is no
+   silent provider/model fallback.
+7. Subject erasure crypto-shreds generated suggestions and reviewer-edited content.
+   Immutable hashes, citation identities, stale state, value-free differences,
+   reviewer actions, and the final case disposition remain as accountability evidence;
+   a missing operational decryption key is an error, not an invented erasure.
 
 ### Register a predictive model and monitor drift
 
@@ -581,10 +630,11 @@ on the server as well.
 
 - **Model risk (MRM).** The SR 11-7 / SS1/23 model inventory in one register: every
   flow, predictive model, and agent, each with its validation coverage (assertions for
-  flows, current independent evidence for models, eval cases for agents), live monitoring (success
-  rate, firing monitors, drift PSI), and any open governance gaps. Scan for entries
-  with open gaps or failing validation, open an entry to read its evidence, and export
-  the report (CSV or Markdown). _Admin only._
+  flows, current independent evidence for models, and governed release/campaign gates
+  for specialist agents), live monitoring (success rate, safety incidents, assist
+  adoption and QA/outcomes, cost, firing monitors, drift PSI), and any open governance
+  gaps. Scan for entries with open gaps or failing validation, open an entry to read
+  its evidence, and export the report (CSV or Markdown). _Admin only._
 - **Observability.** The operational view across flows: set a success and latency
   objective (SLO) per flow and read attainment and remaining error budget, see AI
   usage and cost by model, and read how distributed tracing is emitted.
@@ -609,25 +659,27 @@ lens on shared lists.
 
 | Persona   | Label                     | Lands on       | Lives in                                               |
 | --------- | ------------------------- | -------------- | ------------------------------------------------------ |
-| builder   | Workflow Designer         | Builder home   | Author & publish flows; policies; context data; models |
-| developer | Developer / Integrator    | Persona home   | Run decisions & read traces; API keys; agents          |
-| operator  | Risk Operator             | Operator home  | Manual review queue; pre-approvals; decisions          |
-| manager   | Team Manager              | Persona home   | Four-eyes approvals; case load; audit                  |
+| builder   | Workflow Designer         | Builder home   | Flows, policies, context, models, governed agents      |
+| developer | Developer / Integrator    | Persona home   | Traces, API keys, direct and remote agent protocols    |
+| operator  | Risk Operator             | Operator home  | Cases, cited assists, incidents, deployments           |
+| manager   | Team Manager              | Persona home   | Approvals, agent quality/cost, case load, audit        |
 | product   | Product / Experimentation | Persona home   | Governed experiments; population jobs; outcomes        |
 | showcase  | Executive                 | Showcase home  | KPIs, trends, governance posture                       |
-| evaluator | Evaluator / Guest         | Evaluator home | Guided look at builder, decisions, cases               |
+| evaluator | Evaluator / Guest         | Evaluator home | Guided flows, agent suites, decisions, and cases       |
 
 - **Workflow Designer (builder).** Spends the day on the canvas: authoring and
   versioning flows, wiring policy bands and context data, and referencing models from
-  Predict nodes. Default persona. Lives in _Author and publish a flow_, _Author a
-  policy_, and _Set up context data_.
+  Predict nodes, plus shaping governed specialist-agent releases. Default persona.
+  Lives in _Author and publish a flow_, _Author a policy_, _Set up context data_, and
+  _Govern, evaluate, and operate a specialist agent_.
 - **Developer / Integrator.** Integrates the decision API and debugs. The decisions
   list is relabelled **Traces** and lands on failing traces, leading with
   status/duration/environment. Manages API keys and agents. Lives in _Run a decision
   and read its trace_ and the agent journeys.
 - **Risk Operator.** Works the queues. Lands on the open case queue, most-urgent
-  first, and clears it; reviews pre-approvals and scans recent decisions. Lives in
-  _Manual review_ and _Grant a pre-approval_.
+  first, and clears it; reviews evidence-cited assists, agent incidents, pre-approvals,
+  and recent decisions. Lives in _Manual review_, _Govern, evaluate, and operate a
+  specialist agent_, and _Grant a pre-approval_.
 - **Team Manager.** Watches throughput and governance. Home stats lead with pending
   approvals, cases needing review, and overdue cases; reviews the audit trail. Lives
   in _Promote with four-eyes_ and _Author a policy_ (as the approver), and the
@@ -655,7 +707,7 @@ A higher role includes the rights below it.
 | viewer   | Read-only across surfaces                                                          |
 | operator | Run decisions; work cases; issue notices; record contests/reviews and lawful basis |
 | editor   | Author and publish flows, policies, models, agents, context data                   |
-| approver | Everything an editor can, plus approve/reject production deployment requests       |
+| approver | Everything an editor can, plus approve/reject production flow and agent releases    |
 | admin    | Everything, plus model risk, audit log, and API-key management                     |
 
 Two gates matter most. **Four-eyes promotion**: approving a production deployment

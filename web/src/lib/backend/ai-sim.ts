@@ -148,6 +148,29 @@ function plausibleField(
     ? schema.type.find((kind) => kind !== 'null')
     : schema.type;
 
+  // Governed case assistance uses an envelope whose suggestion schema is
+  // validated separately against the immutable release contract. Produce the
+  // seeded contract's real summary field instead of an empty generic object.
+  if (n === 'suggestion') {
+    return { summary: narrative(prompt, context) };
+  }
+  // A cited assist is unusable if the generic array synthesizer returns zero
+  // entries. Cite an exact evidence id from the governed prompt snapshot.
+  if (n === 'citations') {
+    const evidence = Array.isArray(context?.evidence)
+      ? (context.evidence as Array<Record<string, unknown>>)
+      : [];
+    const first = evidence.find((item) => typeof item.evidence_id === 'string');
+    return first
+      ? [
+          {
+            evidence_id: first.evidence_id,
+            claim: 'The cited governed evidence supports this reviewer suggestion.'
+          }
+        ]
+      : [];
+  }
+
   if (declared === 'number' || declared === 'integer') {
     let value = 1;
     if (/months?|term/.test(n)) value = 6;

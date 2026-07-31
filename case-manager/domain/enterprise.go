@@ -141,6 +141,79 @@ type RoleLayout struct {
 	Editable []string `json:"editable,omitempty"`
 }
 
+// CaseAssistKind is the bounded governed-assistance task requested by an
+// immutable case-type or routing-queue policy.
+type CaseAssistKind string
+
+const (
+	CaseAssistSummary          CaseAssistKind = "summary"
+	CaseAssistEvidenceExtract  CaseAssistKind = "evidence_extraction"
+	CaseAssistPrioritization   CaseAssistKind = "prioritization"
+	CaseAssistNextBestAction   CaseAssistKind = "next_best_action"
+	CaseAssistDraftDisposition CaseAssistKind = "draft_disposition"
+)
+
+func (k CaseAssistKind) Valid() bool {
+	switch k {
+	case CaseAssistSummary, CaseAssistEvidenceExtract, CaseAssistPrioritization,
+		CaseAssistNextBestAction, CaseAssistDraftDisposition:
+		return true
+	default:
+		return false
+	}
+}
+
+// CaseAssistEnvironment is the exact deployment environment a policy may use.
+type CaseAssistEnvironment string
+
+const (
+	CaseAssistSandbox    CaseAssistEnvironment = "sandbox"
+	CaseAssistStaging    CaseAssistEnvironment = "staging"
+	CaseAssistProduction CaseAssistEnvironment = "production"
+)
+
+func (e CaseAssistEnvironment) Valid() bool {
+	return e == CaseAssistSandbox || e == CaseAssistStaging ||
+		e == CaseAssistProduction
+}
+
+// AssistAutomation declares an eligible asynchronous assist. Template policy
+// is immutable with the case type or queue, while the active exact release is
+// resolved and recorded at admission. Case work never waits for this policy.
+type AssistAutomation struct {
+	Key                  string                `json:"key"`
+	Kind                 CaseAssistKind        `json:"kind"`
+	TemplateID           string                `json:"template_id"`
+	Environment          CaseAssistEnvironment `json:"environment"`
+	EvidenceRequirements []string              `json:"evidence_requirements"`
+}
+
+func (a AssistAutomation) Validate() error {
+	if !keyPattern.MatchString(a.Key) {
+		return errors.New(
+			"case-manager: assist policy key must match ^[a-z][a-z0-9_]{0,63}$",
+		)
+	}
+	if !a.Kind.Valid() || strings.TrimSpace(a.TemplateID) == "" ||
+		!a.Environment.Valid() {
+		return errors.New(
+			"case-manager: assist policy kind, template_id, and environment are required",
+		)
+	}
+	if len(a.EvidenceRequirements) == 0 {
+		return errors.New(
+			"case-manager: assist policy requires at least one governed evidence requirement",
+		)
+	}
+	if duplicate, found := duplicateString(a.EvidenceRequirements); found {
+		return fmt.Errorf(
+			"case-manager: assist policy %q has blank or duplicate evidence requirement %q",
+			a.Key, duplicate,
+		)
+	}
+	return nil
+}
+
 // CaseTypeDefinition is one immutable published case-type version.
 type CaseTypeDefinition struct {
 	Key          string                  `json:"key"`
@@ -154,6 +227,7 @@ type CaseTypeDefinition struct {
 	Calendar     ServiceCalendar         `json:"service_calendar"`
 	Evidence     []EvidenceRequirement   `json:"evidence_requirements"`
 	Layouts      []RoleLayout            `json:"layouts"`
+	Assists      []AssistAutomation      `json:"assist_automations,omitempty"`
 }
 
 // Validate checks a definition without I/O.
@@ -250,12 +324,12 @@ func (d CaseTypeDefinition) Validate() error {
 	if err := d.Calendar.Validate(); err != nil {
 		return err
 	}
-	requirements := map[string]bool{}
+	requirements := map[string]EvidenceRequirement{}
 	for _, requirement := range d.Evidence {
 		if !keyPattern.MatchString(requirement.Key) || strings.TrimSpace(requirement.Label) == "" || len(requirement.Kinds) == 0 {
 			return fmt.Errorf("case-manager: invalid evidence requirement %q", requirement.Key)
 		}
-		if requirements[requirement.Key] {
+		if _, exists := requirements[requirement.Key]; exists {
 			return fmt.Errorf("case-manager: duplicate evidence requirement %q", requirement.Key)
 		}
 		kinds := map[string]bool{}
@@ -268,7 +342,39 @@ func (d CaseTypeDefinition) Validate() error {
 			}
 			kinds[kind] = true
 		}
-		requirements[requirement.Key] = true
+		requirements[requirement.Key] = requirement
+	}
+	assistKeys := map[string]bool{}
+	for _, assist := range d.Assists {
+		if err := assist.Validate(); err != nil {
+			return err
+		}
+		if assistKeys[assist.Key] {
+			return fmt.Errorf("case-manager: duplicate assist policy %q", assist.Key)
+		}
+		assistKeys[assist.Key] = true
+		for _, requirement := range assist.EvidenceRequirements {
+			configured, exists := requirements[requirement]
+			if !exists {
+				return fmt.Errorf(
+					"case-manager: assist policy %q references unknown evidence requirement %q",
+					assist.Key, requirement,
+				)
+			}
+			linkable := false
+			for _, kind := range configured.Kinds {
+				if EvidenceKind(kind).Linkable() {
+					linkable = true
+					break
+				}
+			}
+			if !linkable {
+				return fmt.Errorf(
+					"case-manager: assist policy %q evidence requirement %q has no linkable kind",
+					assist.Key, requirement,
+				)
+			}
+		}
 	}
 	layouts := make(map[string]bool, len(d.Layouts))
 	for _, layout := range d.Layouts {
@@ -523,19 +629,20 @@ func (d CaseTypeDefinition) FindDisposition(key string) (DispositionDefinition, 
 
 // QueueDefinition is a durable work queue and its concurrency boundary.
 type QueueDefinition struct {
-	Key                 string            `json:"key"`
-	Name                string            `json:"name"`
-	Order               int               `json:"order,omitempty"`
-	CaseTypes           []string          `json:"case_types,omitempty"`
-	Priorities          []Priority        `json:"priorities,omitempty"`
-	Jurisdictions       []string          `json:"jurisdictions,omitempty"`
-	RequiredSkills      []string          `json:"required_skills,omitempty"`
-	Capacity            int               `json:"capacity"`
-	EscalationQueue     string            `json:"escalation_queue,omitempty"`
-	MinAgeHours         int               `json:"min_age_hours,omitempty"`
-	MaxAgeHours         int               `json:"max_age_hours,omitempty"`
-	ConflictContextKeys []string          `json:"conflict_context_keys,omitempty"`
-	ContextEquals       map[string]string `json:"context_equals,omitempty"`
+	Key                 string             `json:"key"`
+	Name                string             `json:"name"`
+	Order               int                `json:"order,omitempty"`
+	CaseTypes           []string           `json:"case_types,omitempty"`
+	Priorities          []Priority         `json:"priorities,omitempty"`
+	Jurisdictions       []string           `json:"jurisdictions,omitempty"`
+	RequiredSkills      []string           `json:"required_skills,omitempty"`
+	Capacity            int                `json:"capacity"`
+	EscalationQueue     string             `json:"escalation_queue,omitempty"`
+	MinAgeHours         int                `json:"min_age_hours,omitempty"`
+	MaxAgeHours         int                `json:"max_age_hours,omitempty"`
+	ConflictContextKeys []string           `json:"conflict_context_keys,omitempty"`
+	ContextEquals       map[string]string  `json:"context_equals,omitempty"`
+	Assists             []AssistAutomation `json:"assist_automations,omitempty"`
 }
 
 // Validate checks queue configuration.
@@ -575,6 +682,18 @@ func (q QueueDefinition) Validate() error {
 		if duplicate, found := duplicateString(group.values); found {
 			return fmt.Errorf("case-manager: queue %q has blank or duplicate %s %q", q.Key, group.label, duplicate)
 		}
+	}
+	assistKeys := map[string]bool{}
+	for _, assist := range q.Assists {
+		if err := assist.Validate(); err != nil {
+			return fmt.Errorf("case-manager: queue %q: %w", q.Key, err)
+		}
+		if assistKeys[assist.Key] {
+			return fmt.Errorf(
+				"case-manager: queue %q has duplicate assist policy %q", q.Key, assist.Key,
+			)
+		}
+		assistKeys[assist.Key] = true
 	}
 	if q.MinAgeHours < 0 || q.MaxAgeHours < 0 {
 		return fmt.Errorf("case-manager: queue %q age bounds cannot be negative", q.Key)

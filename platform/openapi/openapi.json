@@ -2045,6 +2045,7 @@
       "post": {
         "tags": ["Cases"],
         "summary": "Publish the next immutable case-type definition version.",
+        "description": "A definition may include assist_automations that name a governed agent template, environment, bounded assist kind, and required evidence keys. The case scheduler admits them asynchronously after evidence is available; case work never waits for AI.",
         "responses": {
           "202": { "description": "Definition version published." },
           "400": { "$ref": "#/components/responses/Error" }
@@ -2076,6 +2077,7 @@
       "put": {
         "tags": ["Cases"],
         "summary": "Configure a case-routing queue.",
+        "description": "Routing controls may include assist_automations. The scheduler resolves the active exact agent release only after a case enters the queue and records policy plus evidence lineage on the assist.",
         "parameters": [
           { "name": "key", "in": "path", "required": true, "schema": { "type": "string" } }
         ],
@@ -4646,6 +4648,103 @@
     },
     "/v1/authoring/changesets/{changeset_id}/publish": {
       "post": { "tags": ["authoring"], "summary": "Publish the exact approved artifact", "parameters": [{ "name": "changeset_id", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "201": { "description": "Reviewed version published with source and dependency lineage." }, "400": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/agent-templates": {
+      "get": { "tags": ["Agent Governance"], "summary": "List reusable governed agent templates", "responses": { "200": { "description": "Tenant-scoped template library." } } },
+      "post": { "tags": ["Agent Governance"], "summary": "Register a reusable governed agent template", "responses": { "201": { "description": "Template identity registered." }, "400": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/agent-templates/{template_id}": {
+      "get": { "tags": ["Agent Governance"], "summary": "Read one governed agent template", "parameters": [{ "name": "template_id", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "Template and latest release number." }, "404": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/agent-templates/{template_id}/releases": {
+      "get": { "tags": ["Agent Governance"], "summary": "List immutable releases for a template", "parameters": [{ "name": "template_id", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "Releases newest first." } } },
+      "post": { "tags": ["Agent Governance"], "summary": "Create the next immutable agent release", "description": "The release pins prompt, provider/model, schemas, tool approval modes, purposes, dependencies, budgets, retry policy, citation policy, and human gates.", "parameters": [{ "name": "template_id", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "201": { "description": "Draft release and canonical specification hash." }, "400": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/agent-templates/{template_id}/releases/{release}": {
+      "get": { "tags": ["Agent Governance"], "summary": "Read an exact immutable agent release", "parameters": [{ "name": "template_id", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "release", "in": "path", "required": true, "schema": { "type": "integer", "minimum": 1 } }], "responses": { "200": { "description": "Exact release, evidence, review, and status." }, "404": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/agent-templates/{template_id}/releases/{release}/campaigns": {
+      "get": { "tags": ["Agent Governance"], "summary": "List immutable evaluation campaigns for a release", "parameters": [{ "name": "template_id", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "release", "in": "path", "required": true, "schema": { "type": "integer", "minimum": 1 } }], "responses": { "200": { "description": "Repeated-trial evidence and confidence bounds." } } },
+      "post": { "tags": ["Agent Governance"], "summary": "Run a repeated-trial evaluation campaign", "description": "The configured evaluator executes every immutable suite case repeatedly; caller-supplied trial evidence is rejected.", "parameters": [{ "name": "template_id", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "release", "in": "path", "required": true, "schema": { "type": "integer", "minimum": 1 } }], "responses": { "201": { "description": "Deterministically aggregated server-derived campaign evidence." }, "400": { "$ref": "#/components/responses/Error" }, "502": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/agent-templates/{template_id}/releases/{release}/review-request": {
+      "post": { "tags": ["Agent Governance"], "summary": "Submit a passing exact release for independent review", "parameters": [{ "name": "template_id", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "release", "in": "path", "required": true, "schema": { "type": "integer", "minimum": 1 } }], "responses": { "202": { "description": "Expiring maker-checker request recorded." }, "400": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/agent-templates/{template_id}/releases/{release}/review": {
+      "post": { "tags": ["Agent Governance"], "summary": "Approve or reject an agent release as the independent checker", "parameters": [{ "name": "template_id", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "release", "in": "path", "required": true, "schema": { "type": "integer", "minimum": 1 } }], "responses": { "200": { "description": "Independent decision recorded." }, "400": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/agent-templates/{template_id}/releases/{release}/retire": {
+      "post": { "tags": ["Agent Governance"], "summary": "Retire an agent release after its live bindings are paused", "parameters": [{ "name": "template_id", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "release", "in": "path", "required": true, "schema": { "type": "integer", "minimum": 1 } }], "responses": { "200": { "description": "Release retired." }, "400": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/agent-eval-suites": {
+      "get": { "tags": ["Agent Governance"], "summary": "List immutable governed evaluation suites", "responses": { "200": { "description": "Suite versions newest first." } } },
+      "post": { "tags": ["Agent Governance"], "summary": "Publish the next immutable evaluation suite version", "description": "Cases may use exact deterministic graders or a pinned semantic grader specification with its own provider/model, instructions version, timeout, attempts, and budget. Semantic candidate output is treated as untrusted data; grader evidence and cost remain adjudicable rather than becoming ground truth.", "responses": { "201": { "description": "Suite published with a server-derived dataset and grader definition hash lineage." }, "400": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/agent-eval-suites/{suite_id}/versions/{version}": {
+      "get": { "tags": ["Agent Governance"], "summary": "Read an exact evaluation suite version", "parameters": [{ "name": "suite_id", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "version", "in": "path", "required": true, "schema": { "type": "integer", "minimum": 1 } }], "responses": { "200": { "description": "Immutable cases, deterministic/semantic grader definitions, repeated-trial count, and acceptance thresholds." }, "404": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/agent-eval-campaigns/{campaign_id}/trials/{case_id}/{trial}/adjudication": {
+      "post": { "tags": ["Agent Governance"], "summary": "Record an independent human adjudication without rewriting original trial evidence", "parameters": [{ "name": "campaign_id", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "case_id", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "trial", "in": "path", "required": true, "schema": { "type": "integer", "minimum": 1 } }], "responses": { "200": { "description": "Adjudication recorded and the effective campaign gate re-derived." }, "400": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/agent-eval-campaigns/{campaign_id}/export": {
+      "get": { "tags": ["Agent Governance"], "summary": "Export reproducible evaluation evidence", "parameters": [{ "name": "campaign_id", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "format", "in": "query", "schema": { "type": "string", "enum": ["json", "csv"] } }], "responses": { "200": { "description": "Original trials, exact grader/rubric hashes and provider evidence, adjudications, suite dataset hash, and release lineage as JSON or formula-safe CSV." }, "400": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/agent-eval-comparisons": {
+      "get": { "tags": ["Agent Governance"], "summary": "Compare baseline and challenger campaigns on the exact same suite", "parameters": [{ "name": "baseline_campaign_id", "in": "query", "required": true, "schema": { "type": "string" } }, { "name": "challenger_campaign_id", "in": "query", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "Paired case regressions, improvements, uncertainty, latency, and spend." }, "400": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/agent-governance/analytics": {
+      "get": { "tags": ["Agent Governance"], "summary": "Read quality, adoption, safety, latency, and cost joined to case outcomes", "description": "Rates include denominators and Wilson confidence intervals; missing validated outcomes remain explicit. Groups retain exact template/release/provider/model/environment lineage.", "responses": { "200": { "description": "Tenant agent operations and human-learning report." } } }
+    },
+    "/v1/agent-deployments": {
+      "get": { "tags": ["Agent Governance"], "summary": "List exact agent release environment bindings", "responses": { "200": { "description": "Scheduled, active, and paused deployments." } } },
+      "post": { "tags": ["Agent Governance"], "summary": "Schedule an approved exact agent release for one environment", "responses": { "202": { "description": "Deployment admitted; the scheduler activates it at the governed time." }, "400": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/agent-deployments/{deployment_id}": {
+      "get": { "tags": ["Agent Governance"], "summary": "Read one agent deployment", "parameters": [{ "name": "deployment_id", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "Exact release binding and lifecycle timestamps." }, "404": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/agent-deployments/{deployment_id}/activate": {
+      "post": { "tags": ["Agent Governance"], "summary": "Activate a due approved agent deployment", "parameters": [{ "name": "deployment_id", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "Deployment activated." }, "400": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/agent-deployments/{deployment_id}/pause": {
+      "post": { "tags": ["Agent Governance"], "summary": "Pause a scheduled or active agent deployment", "parameters": [{ "name": "deployment_id", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "Deployment paused with reason." }, "400": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/agent-deployments/{deployment_id}/resume": {
+      "post": { "tags": ["Agent Governance"], "summary": "Resume a paused deployment after critical incidents are resolved", "description": "Revalidates approval, expiry, environment exclusivity, and the event-derived circuit state. A resolved circuit incident starts a fresh failure window; no provider fallback occurs.", "parameters": [{ "name": "deployment_id", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "Deployment explicitly resumed with operator rationale." }, "400": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/agent-deployments/{deployment_id}/rollback": {
+      "post": { "tags": ["Agent Governance"], "summary": "Roll back an active binding to another approved exact release", "parameters": [{ "name": "deployment_id", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "Rollback lineage recorded." }, "400": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/cases/{case_id}/agent-assists": {
+      "get": { "tags": ["Agent Governance", "Cases"], "summary": "List cited agent suggestions and reviewer actions for a case", "parameters": [{ "name": "case_id", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "Case assistance history, including immutable case-type or queue policy lineage, current evidence head and stale-snapshot state, reviewer final hashes, and value-free field differences." } } },
+      "post": { "tags": ["Agent Governance", "Cases"], "summary": "Queue a durable cited suggestion from an active exact release", "description": "The request seals and pins the selected case-evidence snapshot, returns after durable admission, and never performs a terminal case action. Idempotency-Key is required and deduplicates an identical logical request. Workers expose requested, running, awaiting_tool_approval, completed, failed, dead_letter, and cancelled states.", "parameters": [{ "name": "case_id", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "Idempotency-Key", "in": "header", "required": true, "schema": { "type": "string", "maxLength": 256 } }], "responses": { "202": { "description": "Assist durably queued for asynchronous execution." }, "400": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/agent-assists/{assist_id}": {
+      "get": { "tags": ["Agent Governance"], "summary": "Read one governed case suggestion", "parameters": [{ "name": "assist_id", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "Pinned and current evidence sequence, stale indication, exact release, result, citations, and reviewer action/diff evidence." }, "404": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/agent-assists/{assist_id}/reviewer-action": {
+      "post": { "tags": ["Agent Governance"], "summary": "Record reviewer acceptance, edit, rejection, or escalation", "description": "The server pins the authoritative current case-evidence head, records whether the suggestion was stale, and derives suggestion/final hashes plus a value-free JSON-pointer diff. Edited final content is sealed under the case subject and never performs a case command.", "parameters": [{ "name": "assist_id", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "Human feedback and evidence/diff lineage recorded without mutating the case outcome." }, "400": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/agent-assists/{assist_id}/retry": {
+      "post": { "tags": ["Agent Governance"], "summary": "Retry a failed or dead-lettered case assist", "description": "Every retry requires explicit at-least-once acknowledgement because a provider charge or external tool effect may have happened before terminal failure or lease loss. Rejected or expired human tool requests require a new assist instead.", "parameters": [{ "name": "assist_id", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "Assist returned to the durable requested state." }, "400": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/agent-assists/{assist_id}/cancel": {
+      "post": { "tags": ["Agent Governance"], "summary": "Cancel a queued or running case assist", "description": "Cancellation is durable and prevents a late worker result from becoming authoritative.", "parameters": [{ "name": "assist_id", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "Cancellation recorded." }, "400": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/agent-tool-approvals": {
+      "get": { "tags": ["Agent Governance"], "summary": "List durable human-before-call tool approvals", "responses": { "200": { "description": "Pending and decided approval requests with hashed arguments." } } }
+    },
+    "/v1/agent-tool-approvals/{approval_id}": {
+      "get": { "tags": ["Agent Governance"], "summary": "Read one durable tool approval", "parameters": [{ "name": "approval_id", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "Approval lineage and expiry." }, "404": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/agent-tool-approvals/{approval_id}/decision": {
+      "post": { "tags": ["Agent Governance"], "summary": "Approve or reject an exact model-proposed tool call", "description": "Approval durably requeues the assist. A leased worker re-runs the provider, requires the exact same call name and canonical argument hash, executes through the platform toolbox, and records only argument/result hashes.", "parameters": [{ "name": "approval_id", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "Tool request rejected and assist terminally failed." }, "202": { "description": "Approved assist durably queued for worker continuation." }, "400": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/agent-safety-incidents": {
+      "get": { "tags": ["Agent Governance"], "summary": "List agent safety incidents", "responses": { "200": { "description": "Open and resolved safety incidents." } } },
+      "post": { "tags": ["Agent Governance"], "summary": "Open an agent safety incident against exact lineage", "responses": { "201": { "description": "Incident opened; critical incidents are scheduler containment inputs." }, "400": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/agent-safety-incidents/{incident_id}/resolve": {
+      "post": { "tags": ["Agent Governance"], "summary": "Resolve an open agent safety incident", "parameters": [{ "name": "incident_id", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "Incident resolution recorded." }, "400": { "$ref": "#/components/responses/Error" } } }
     }
   },
   "components": {

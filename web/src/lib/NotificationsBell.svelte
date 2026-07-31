@@ -72,6 +72,20 @@
       return appHref(`/policies?${panel}=${encodeURIComponent(n.subject_id)}#${anchor}`);
     }
     if (n.subject_type === 'agent') return appHref(`/agents/${encodeURIComponent(n.subject_id)}`);
+    if (n.subject_type === 'agent_release') {
+      const [templateID] = n.subject_id.split(':');
+      return appHref(`/agents/governance/${encodeURIComponent(templateID)}`);
+    }
+    if (n.subject_type === 'agent_deployment' || n.subject_type === 'agent_incident') {
+      return appHref('/agents/governance');
+    }
+    if (n.subject_type === 'agent_tool_approval') {
+      return appHref('/agents/governance#tool-approvals');
+    }
+    if (n.subject_type === 'agent_assist') {
+      const [caseID] = n.subject_id.split(':');
+      return appHref(`/cases/${encodeURIComponent(caseID)}`);
+    }
     if (n.subject_type === 'model') {
       const panel = n.kind === 'approval' ? 'governance' : 'discussion';
       return appHref(`/models?${panel}=${encodeURIComponent(n.subject_id)}#model-${panel}`);

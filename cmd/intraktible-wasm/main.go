@@ -7,9 +7,9 @@
 // which the page persists and replays on reload. No demo forks: the only
 // difference from production is the transport and the storage medium.
 //
-//	boot(seedJSON, deltaJSON)              -> replays and mounts the handler
+//	boot(seedJSON, stateJSON, deltaJSON)   -> restores keys, replays, mounts
 //	handle(method, url, hdrs, body, onHeader, onChunk) -> Promise (streams)
-//	exportDelta()                          -> JSON of events past the seed head
+//	exportDelta()                          -> versioned events + operational state
 
 //go:build js
 
@@ -25,6 +25,7 @@ import (
 	"syscall/js"
 
 	"github.com/e6qu/intraktible/platform/ai"
+	"github.com/e6qu/intraktible/platform/erasure"
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/store"
 	"github.com/e6qu/intraktible/server"
@@ -33,7 +34,20 @@ import (
 type host struct {
 	log      *eventlog.MemoryLog
 	seedHead uint64
+	store    store.Store
 	srv      *server.Server
+}
+
+const sessionSnapshotVersion = 1
+
+// sessionSnapshot keeps the visitor's appended events together with the latest
+// operational subject keys. Keys are deliberately outside the append-only log:
+// erasure remains an irreversible deletion of the key record. The demo uses
+// fictional subjects, but retains the same separation as a native deployment.
+type sessionSnapshot struct {
+	Version          int                      `json:"version"`
+	Events           []eventlog.Envelope      `json:"events"`
+	OperationalState erasure.OperationalState `json:"operational_state"`
 }
 
 // workspaceProvider serves the seeded workspace's provider name with the
@@ -70,8 +84,8 @@ func (h *host) boot(_ js.Value, args []js.Value) (result any) {
 			result = fmt.Sprintf("wasm boot: %v", r)
 		}
 	}()
-	seed, delta := args[0].String(), args[1].String()
-	events, err := parseHistory(seed, delta)
+	seedJSON, stateJSON, deltaJSON := args[0].String(), args[1].String(), args[2].String()
+	events, seedHead, operationalState, err := parseBootState(seedJSON, stateJSON, deltaJSON)
 	if err != nil {
 		return err.Error()
 	}
@@ -79,11 +93,12 @@ func (h *host) boot(_ js.Value, args []js.Value) (result any) {
 	if err != nil {
 		return err.Error()
 	}
-	var seedEvents []eventlog.Envelope
-	if err := json.Unmarshal([]byte(seed), &seedEvents); err != nil {
-		return fmt.Errorf("wasm boot: seed history: %w", err).Error()
-	}
 	st := store.NewMemory()
+	if err := erasure.RestoreOperationalState(
+		context.Background(), st, operationalState,
+	); err != nil {
+		return fmt.Errorf("wasm boot: restore operational state: %w", err).Error()
+	}
 	srv, err := server.New(context.Background(), server.Config{
 		Modules:   "all",
 		DevAPIKey: "dev-sandbox-key",
@@ -95,26 +110,45 @@ func (h *host) boot(_ js.Value, args []js.Value) (result any) {
 	if err != nil {
 		return err.Error()
 	}
-	h.log, h.seedHead, h.srv = log, uint64(len(seedEvents)), srv
+	h.log, h.seedHead, h.store, h.srv = log, seedHead, st, srv
 	return nil
 }
 
-// parseHistory concatenates the seed and the visitor's delta into one
-// contiguous history (the delta was recorded immediately after the seed, so
-// its seqs continue where the seed ends — NewMemoryFrom re-validates).
-func parseHistory(seed, delta string) ([]eventlog.Envelope, error) {
+// parseBootState concatenates the immutable seed and visitor events while
+// selecting one authoritative operational-state snapshot. A saved session
+// contains the complete current state, so it replaces (rather than merges with)
+// the seed snapshot; merging could resurrect a key deleted by crypto-shredding.
+func parseBootState(
+	seedJSON, stateJSON, deltaJSON string,
+) ([]eventlog.Envelope, uint64, erasure.OperationalState, error) {
 	var events []eventlog.Envelope
-	if err := json.Unmarshal([]byte(seed), &events); err != nil {
-		return nil, fmt.Errorf("wasm boot: seed history: %w", err)
+	if err := json.Unmarshal([]byte(seedJSON), &events); err != nil {
+		return nil, 0, erasure.OperationalState{}, fmt.Errorf("wasm boot: seed history: %w", err)
 	}
-	if delta != "" {
-		var d []eventlog.Envelope
-		if err := json.Unmarshal([]byte(delta), &d); err != nil {
-			return nil, fmt.Errorf("wasm boot: delta history: %w", err)
+	seedHead := uint64(len(events))
+	var operationalState erasure.OperationalState
+	if err := json.Unmarshal([]byte(stateJSON), &operationalState); err != nil {
+		return nil, 0, erasure.OperationalState{}, fmt.Errorf(
+			"wasm boot: seed operational state: %w", err,
+		)
+	}
+	if deltaJSON != "" {
+		var saved sessionSnapshot
+		if err := json.Unmarshal([]byte(deltaJSON), &saved); err != nil {
+			return nil, 0, erasure.OperationalState{}, fmt.Errorf(
+				"wasm boot: saved session: %w", err,
+			)
 		}
-		events = append(events, d...)
+		if saved.Version != sessionSnapshotVersion {
+			return nil, 0, erasure.OperationalState{}, fmt.Errorf(
+				"wasm boot: saved session version %d is incompatible with %d",
+				saved.Version, sessionSnapshotVersion,
+			)
+		}
+		events = append(events, saved.Events...)
+		operationalState = saved.OperationalState
 	}
-	return events, nil
+	return events, seedHead, operationalState, nil
 }
 
 // handle serves one request through the assembled handler, streaming the
@@ -159,7 +193,13 @@ func (h *host) handle(_ js.Value, args []js.Value) any {
 func (h *host) exportDelta(js.Value, []js.Value) any {
 	all := h.log.Export()
 	delta := all[min(int(h.seedHead), len(all)):]
-	b, err := json.Marshal(delta)
+	operationalState, err := erasure.ExportOperationalState(context.Background(), h.store)
+	if err != nil {
+		panic(err)
+	}
+	b, err := json.Marshal(sessionSnapshot{
+		Version: sessionSnapshotVersion, Events: delta, OperationalState: operationalState,
+	})
 	if err != nil {
 		panic(err)
 	}

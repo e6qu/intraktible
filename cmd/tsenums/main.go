@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	agentdomain "github.com/e6qu/intraktible/agent-manager/domain"
+	"github.com/e6qu/intraktible/agent-manager/governance"
 	casedomain "github.com/e6qu/intraktible/case-manager/domain"
 	ctxdomain "github.com/e6qu/intraktible/context-layer/domain"
 	dedomain "github.com/e6qu/intraktible/decision-engine/domain"
@@ -65,6 +66,50 @@ var enums = []tsEnum{
 		agentdomain.RunRunning, agentdomain.RunRetrying, agentdomain.RunCompleted,
 		agentdomain.RunFailed, agentdomain.RunCancelled, agentdomain.RunTimedOut,
 		agentdomain.RunDeadLetter,
+	)},
+	{"AgentReleaseStatus", "", strs(
+		governance.ReleaseDraft, governance.ReleaseEvaluated, governance.ReleaseReviewRequested,
+		governance.ReleaseApproved, governance.ReleaseRejected, governance.ReleaseRetired,
+	)},
+	{"AgentDeploymentStatus", "", strs(
+		governance.DeploymentScheduled, governance.DeploymentActive,
+		governance.DeploymentPaused, governance.DeploymentRetired,
+	)},
+	{"AgentToolApprovalMode", "", strs(
+		governance.ToolAutomatic, governance.ToolHumanBeforeCall, governance.ToolForbidden,
+	)},
+	{"AgentToolApprovalStatus", "", strs(
+		governance.ToolApprovalPending, governance.ToolApprovalApproved,
+		governance.ToolApprovalRejected, governance.ToolApprovalExpiredStatus,
+	)},
+	{"AgentContentTrust", "", strs(
+		governance.TrustPlatform, governance.TrustGoverned, governance.TrustUser,
+		governance.TrustExternal, governance.TrustTool, governance.TrustGenerated,
+	)},
+	{"AgentGraderKind", "", strs(
+		governance.GraderContains, governance.GraderEquals, governance.GraderJSONSubset,
+		governance.GraderRefusal, governance.GraderNoToolCalls, governance.GraderCitations,
+		governance.GraderSemantic,
+	)},
+	{"AgentSeverity", "", strs(
+		governance.SeverityInfo, governance.SeverityWarning,
+		governance.SeverityRequired, governance.SeverityCritical,
+	)},
+	{"AgentReviewDecision", "", strs(governance.ReviewApprove, governance.ReviewReject)},
+	{"AgentAssistKind", "", strs(
+		governance.AssistSummary, governance.AssistEvidenceExtract,
+		governance.AssistPrioritization, governance.AssistNextBestAction,
+		governance.AssistDraftDisposition,
+	)},
+	{"AgentAssistAction", "", strs(
+		governance.AssistAccepted, governance.AssistEdited,
+		governance.AssistRejected, governance.AssistEscalated,
+	)},
+	{"AgentAssistStatus", "", strs(
+		governance.AssistRequestedStatus, governance.AssistRunningStatus,
+		governance.AssistAwaitingApprovalStatus, governance.AssistCompletedStatus,
+		governance.AssistFailedStatus, governance.AssistDeadLetterStatus,
+		governance.AssistCancelledStatus,
 	)},
 	{"ModelKind", "", strs(models.KindLogistic, models.KindGBM, models.KindExpression, models.KindExternal)},
 	{"PreApprovalStatus", "", strs(preapproval.StatusActive, preapproval.StatusRevoked)},

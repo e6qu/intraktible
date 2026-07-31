@@ -17,6 +17,7 @@ import (
 
 	"github.com/e6qu/intraktible/agent-manager/agents"
 	"github.com/e6qu/intraktible/agent-manager/eval"
+	agentgovernance "github.com/e6qu/intraktible/agent-manager/governance"
 	"github.com/e6qu/intraktible/decision-engine/analytics"
 	"github.com/e6qu/intraktible/decision-engine/assertions"
 	"github.com/e6qu/intraktible/decision-engine/flows"
@@ -60,12 +61,20 @@ type Validation struct {
 
 // Monitoring is a model's live operational health.
 type Monitoring struct {
-	Decisions      int      `json:"decisions"`
-	SuccessRate    float64  `json:"success_rate"`
-	FiringMonitors []string `json:"firing_monitors,omitempty"`
-	DriftPSI       *float64 `json:"drift_psi,omitempty"`
-	DriftFiring    bool     `json:"drift_firing,omitempty"`
-	SLOMet         *bool    `json:"slo_met,omitempty"`
+	Decisions       int      `json:"decisions"`
+	SuccessRate     float64  `json:"success_rate"`
+	FiringMonitors  []string `json:"firing_monitors,omitempty"`
+	DriftPSI        *float64 `json:"drift_psi,omitempty"`
+	DriftFiring     bool     `json:"drift_firing,omitempty"`
+	SLOMet          *bool    `json:"slo_met,omitempty"`
+	PromptTokens    int      `json:"prompt_tokens,omitempty"`
+	OutputTokens    int      `json:"output_tokens,omitempty"`
+	CostUSD         float64  `json:"cost_usd,omitempty"`
+	AssistAccepted  int      `json:"assist_accepted,omitempty"`
+	AssistEdited    int      `json:"assist_edited,omitempty"`
+	AssistRejected  int      `json:"assist_rejected,omitempty"`
+	AssistEscalated int      `json:"assist_escalated,omitempty"`
+	OpenIncidents   int      `json:"open_incidents,omitempty"`
 }
 
 // Model is one inventory entry.
@@ -73,6 +82,7 @@ type Model struct {
 	Kind        Kind           `json:"kind"`
 	ID          string         `json:"id"`
 	Name        string         `json:"name"`
+	Governed    bool           `json:"governed_agent,omitempty"`
 	Version     int            `json:"version"`
 	Owner       string         `json:"owner,omitempty"` // last publisher/definer (model-owner proxy)
 	Deployments map[string]int `json:"deployments,omitempty"`
@@ -119,6 +129,9 @@ func Build(ctx context.Context, s store.Store, id identity.Identity, now time.Ti
 		return Report{}, err
 	}
 	if err := buildAgents(ctx, s, id, &rep); err != nil {
+		return Report{}, err
+	}
+	if err := buildGovernedAgents(ctx, s, id, &rep); err != nil {
 		return Report{}, err
 	}
 
@@ -377,6 +390,140 @@ func buildAgents(ctx context.Context, s store.Store, id identity.Identity, rep *
 			m.Issues = append(m.Issues, "no eval cases defined")
 		}
 		rep.Models = append(rep.Models, m)
+	}
+	return nil
+}
+
+func buildGovernedAgents(
+	ctx context.Context,
+	st store.Store,
+	id identity.Identity,
+	rep *Report,
+) error {
+	templates, err := agentgovernance.ListTemplates(ctx, st, id)
+	if err != nil {
+		return fmt.Errorf("mrm: list governed agent templates: %w", err)
+	}
+	deployments, err := agentgovernance.ListDeployments(ctx, st, id)
+	if err != nil {
+		return fmt.Errorf("mrm: list governed agent deployments: %w", err)
+	}
+	assists, err := agentgovernance.ListAssists(ctx, st, id)
+	if err != nil {
+		return fmt.Errorf("mrm: list governed agent assists: %w", err)
+	}
+	incidents, err := agentgovernance.ListIncidents(ctx, st, id)
+	if err != nil {
+		return fmt.Errorf("mrm: list governed agent incidents: %w", err)
+	}
+	for _, template := range templates {
+		model := Model{
+			Kind: KindAgent, ID: template.TemplateID, Name: template.Name,
+			Governed: true, Version: template.LatestRelease, UpdatedAt: template.RegisteredAt,
+		}
+		releases, err := agentgovernance.ListReleases(ctx, st, id, template.TemplateID)
+		if err != nil {
+			return fmt.Errorf(
+				"mrm: list releases for governed agent %s: %w", template.TemplateID, err,
+			)
+		}
+		var latest *agentgovernance.ReleaseView
+		for index := range releases {
+			if releases[index].Release == template.LatestRelease {
+				latest = &releases[index]
+				break
+			}
+		}
+		if latest == nil {
+			model.Validation.Coverage = CoverageNone
+			model.Issues = append(model.Issues, "no governed release")
+		} else {
+			model.Owner, model.UpdatedAt = latest.CreatedBy, latest.CreatedAt
+			campaigns, err := agentgovernance.ListCampaigns(
+				ctx, st, id, template.TemplateID, latest.Release,
+			)
+			if err != nil {
+				return fmt.Errorf(
+					"mrm: list campaigns for governed agent %s@%d: %w",
+					template.TemplateID, latest.Release, err,
+				)
+			}
+			switch {
+			case len(campaigns) == 0:
+				model.Validation.Coverage = CoverageNone
+				model.Issues = append(model.Issues, "no immutable evaluation campaign")
+			default:
+				model.Validation.HasEvalCases = true
+				for _, campaign := range campaigns {
+					model.Validation.EvalCases += campaign.Total
+					if campaign.Assessment.Blocking {
+						model.Validation.Coverage = CoverageFailing
+					}
+				}
+				if model.Validation.Coverage != CoverageFailing {
+					model.Validation.Coverage = CoverageTested
+				}
+			}
+			if latest.Status != agentgovernance.ReleaseApproved {
+				model.Issues = append(
+					model.Issues,
+					fmt.Sprintf("latest governed release is %s", latest.Status),
+				)
+			}
+		}
+		for _, deployment := range deployments {
+			if deployment.TemplateID != template.TemplateID ||
+				deployment.Status != agentgovernance.DeploymentActive {
+				continue
+			}
+			if model.Deployments == nil {
+				model.Deployments = map[string]int{}
+			}
+			model.Deployments[string(deployment.Environment)] = deployment.Release
+		}
+		for _, assist := range assists {
+			if assist.TemplateID != template.TemplateID {
+				continue
+			}
+			model.Monitoring.Decisions++
+			if assist.Status == "completed" && assist.Result != nil {
+				model.Monitoring.PromptTokens += assist.Result.PromptTokens
+				model.Monitoring.OutputTokens += assist.Result.OutputTokens
+				model.Monitoring.CostUSD += assist.Result.CostUSD
+			}
+			if assist.Action == nil {
+				continue
+			}
+			switch assist.Action.Action {
+			case agentgovernance.AssistAccepted:
+				model.Monitoring.AssistAccepted++
+			case agentgovernance.AssistEdited:
+				model.Monitoring.AssistEdited++
+			case agentgovernance.AssistRejected:
+				model.Monitoring.AssistRejected++
+			case agentgovernance.AssistEscalated:
+				model.Monitoring.AssistEscalated++
+			}
+		}
+		if model.Monitoring.Decisions > 0 {
+			completed := 0
+			for _, assist := range assists {
+				if assist.TemplateID == template.TemplateID && assist.Status == "completed" {
+					completed++
+				}
+			}
+			model.Monitoring.SuccessRate =
+				float64(completed) / float64(model.Monitoring.Decisions)
+		}
+		for _, incident := range incidents {
+			if incident.TemplateID == template.TemplateID && incident.Status == "open" {
+				model.Monitoring.OpenIncidents++
+			}
+		}
+		if model.Monitoring.OpenIncidents > 0 {
+			model.Issues = append(model.Issues, "open agent safety incident")
+		}
+		rep.Models = append(rep.Models, model)
 	}
 	return nil
 }

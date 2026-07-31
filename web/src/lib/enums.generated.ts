@@ -30,6 +30,28 @@ export type SLAState = 'on_track' | 'due_soon' | 'overdue';
 
 export type AgentRunStatus = 'running' | 'retrying' | 'completed' | 'failed' | 'cancelled' | 'timed_out' | 'dead_letter';
 
+export type AgentReleaseStatus = 'draft' | 'evaluated' | 'review_requested' | 'approved' | 'rejected' | 'retired';
+
+export type AgentDeploymentStatus = 'scheduled' | 'active' | 'paused' | 'retired';
+
+export type AgentToolApprovalMode = 'automatic' | 'human_before_call' | 'forbidden';
+
+export type AgentToolApprovalStatus = 'pending' | 'approved' | 'rejected' | 'expired';
+
+export type AgentContentTrust = 'platform' | 'governed' | 'user' | 'external' | 'tool' | 'generated';
+
+export type AgentGraderKind = 'contains' | 'equals' | 'json_subset' | 'refusal' | 'no_tool_calls' | 'citations' | 'semantic';
+
+export type AgentSeverity = 'info' | 'warning' | 'required' | 'critical';
+
+export type AgentReviewDecision = 'approve' | 'reject';
+
+export type AgentAssistKind = 'summary' | 'evidence_extraction' | 'prioritization' | 'next_best_action' | 'draft_disposition';
+
+export type AgentAssistAction = 'accepted' | 'edited' | 'rejected' | 'escalated';
+
+export type AgentAssistStatus = 'requested' | 'running' | 'awaiting_tool_approval' | 'completed' | 'failed' | 'dead_letter' | 'cancelled';
+
 export type ModelKind = 'logistic' | 'gbm' | 'expression' | 'external';
 
 export type PreApprovalStatus = 'active' | 'revoked';

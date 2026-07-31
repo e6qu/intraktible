@@ -64,6 +64,64 @@ func TestVaultSealOpenAndShred(t *testing.T) {
 	}
 }
 
+func TestVaultMissingKeyIsNotReportedAsErasure(t *testing.T) {
+	ctx := context.Background()
+	id := identity.Identity{Org: "o", Workspace: "w", Actor: "admin"}
+	source := NewVault(store.NewMemory())
+	sealed, err := source.Seal(ctx, id, "subject-1", []byte("pii"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = NewVault(store.NewMemory()).Open(ctx, id, "subject-1", sealed)
+	if !errors.Is(err, ErrKeyUnavailable) || errors.Is(err, ErrErased) {
+		t.Fatalf("open without restored key = %v, want only ErrKeyUnavailable", err)
+	}
+}
+
+func TestOperationalStateRestoresKeysTombstonesAndPolicy(t *testing.T) {
+	ctx := context.Background()
+	id := identity.Identity{Org: "o", Workspace: "w", Actor: "admin"}
+	sourceStore := store.NewMemory()
+	source := NewVault(sourceStore)
+	sealed, err := source.Seal(ctx, id, "live", []byte("pii"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := source.Seal(ctx, id, "erased", []byte("gone")); err != nil {
+		t.Fatal(err)
+	}
+	if err := source.Erase(ctx, id, "erased"); err != nil {
+		t.Fatal(err)
+	}
+	if err := source.SetRetentionPolicy(ctx, id, 90); err != nil {
+		t.Fatal(err)
+	}
+	state, err := ExportOperationalState(ctx, sourceStore)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	restoredStore := store.NewMemory()
+	if err := RestoreOperationalState(ctx, restoredStore, state); err != nil {
+		t.Fatal(err)
+	}
+	restored := NewVault(restoredStore)
+	plain, err := restored.Open(ctx, id, "live", sealed)
+	if err != nil || string(plain) != "pii" {
+		t.Fatalf("restored open = %q err=%v", plain, err)
+	}
+	if erased, err := restored.Erased(ctx, id, "erased"); err != nil || !erased {
+		t.Fatalf("restored erased tombstone = %v err=%v", erased, err)
+	}
+	policy, err := restored.RetentionPolicyFor(ctx, id)
+	if err != nil || policy.RetentionDays != 90 {
+		t.Fatalf("restored policy = %+v err=%v", policy, err)
+	}
+	if err := RestoreOperationalState(ctx, restoredStore, state); err == nil {
+		t.Fatal("restoring over existing operational keys must fail")
+	}
+}
+
 func TestSealAndOpenFields(t *testing.T) {
 	ctx := context.Background()
 	v := NewVault(store.NewMemory())

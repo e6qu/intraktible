@@ -50,27 +50,29 @@ type EvidenceLink struct {
 	SubjectID   string `json:"subject_id"`
 	Label       string `json:"label"`
 	ContentHash string `json:"content_hash,omitempty"`
+	LinkedSeq   uint64 `json:"linked_seq"`
 }
 
 // Attachment is immutable metadata for bytes held by the configured artifact
 // store; access is audited through a separate event.
 type Attachment struct {
-	AttachmentID string    `json:"attachment_id"`
-	Name         string    `json:"name"`
-	MediaType    string    `json:"media_type"`
-	Size         int64     `json:"size"`
-	SHA256       string    `json:"sha256"`
-	StorageRef   string    `json:"storage_ref"`
-	Requirement  string    `json:"requirement,omitempty"`
-	Subject      string    `json:"subject,omitempty"`
-	LawfulBasis  string    `json:"lawful_basis,omitempty"`
-	RetainUntil  string    `json:"retain_until,omitempty"`
-	LegalHold    bool      `json:"legal_hold,omitempty"`
-	Erased       bool      `json:"erased,omitempty"`
-	RegisteredBy string    `json:"registered_by"`
-	RegisteredAt time.Time `json:"registered_at"`
-	AccessCount  int       `json:"access_count"`
-	LastAccessed time.Time `json:"last_accessed,omitempty"`
+	AttachmentID  string    `json:"attachment_id"`
+	Name          string    `json:"name"`
+	MediaType     string    `json:"media_type"`
+	Size          int64     `json:"size"`
+	SHA256        string    `json:"sha256"`
+	StorageRef    string    `json:"storage_ref"`
+	Requirement   string    `json:"requirement,omitempty"`
+	Subject       string    `json:"subject,omitempty"`
+	LawfulBasis   string    `json:"lawful_basis,omitempty"`
+	RetainUntil   string    `json:"retain_until,omitempty"`
+	LegalHold     bool      `json:"legal_hold,omitempty"`
+	Erased        bool      `json:"erased,omitempty"`
+	RegisteredBy  string    `json:"registered_by"`
+	RegisteredAt  time.Time `json:"registered_at"`
+	RegisteredSeq uint64    `json:"registered_seq"`
+	AccessCount   int       `json:"access_count"`
+	LastAccessed  time.Time `json:"last_accessed,omitempty"`
 }
 
 // QAReview is the current independent-review state for a sampled case.

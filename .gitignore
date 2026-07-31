@@ -73,5 +73,6 @@ web/build-docs/
 web/static/*.wasm
 web/static/wasm_exec.js
 web/static/demo-seed.json
+web/static/demo-state.json
 web/static/demo-users.json
 deploy/.env

@@ -9,6 +9,7 @@
     setCaseStatus,
     addCaseNote,
     getCaseTypeVersion,
+    listCaseQueues,
     setCasePriority,
     updateCaseFields,
     dispositionCase,
@@ -21,11 +22,21 @@
     retryCaseWebhook,
     routeCase,
     getDecision,
+    listAgentDeployments,
+    listCaseAgentAssists,
+    requestCaseAgentAssist,
+    retryAgentAssist,
+    cancelAgentAssist,
+    recordAgentAssistAction,
     ApiError,
     type Case,
     type CaseFieldDefinition,
     type CaseTypeView,
-    type Decision
+    type CaseQueueDefinition,
+    type CaseAssistAutomation,
+    type Decision,
+    type AgentDeployment,
+    type AgentAssist
   } from '$lib/api';
   import { displayEntries } from '$lib/kv';
   import Breadcrumb from '$lib/Breadcrumb.svelte';
@@ -77,6 +88,15 @@
   let fieldDrafts = $state<Record<string, string>>({});
   let fieldOriginals = $state<Record<string, string>>({});
   let seededFieldCase = $state('');
+  let agentDeployments = $state<AgentDeployment[]>([]);
+  let agentAssists = $state<AgentAssist[]>([]);
+  let caseQueues = $state<Array<{ definition: CaseQueueDefinition }>>([]);
+  let selectedAgentDeployment = $state('');
+  let assistEvidence = $state<Record<string, boolean>>({});
+  let assistDrafts = $state<Record<string, string>>({});
+  let assistTimeSavedMinutes = $state<Record<string, string>>({});
+  let assistBusy = $state('');
+  let queuedAssistIDs = $state<string[]>([]);
   // Seed the status <select> from the case's real status once, on first load, so it
   // doesn't default to in_progress (which invites an accidental backward
   // transition). Only the first load seeds it — later reloads must not clobber a
@@ -107,6 +127,29 @@
           true)
   );
   const sourceSuspended = $derived(sourceDecision?.status === 'suspended');
+  const activeAgentDeployments = $derived(
+    agentDeployments.filter((deployment) => deployment.status === 'active')
+  );
+  const assistDeployment = $derived(
+    activeAgentDeployments.find(
+      (deployment) => deployment.deployment_id === selectedAgentDeployment
+    )
+  );
+  const configuredAssistPolicies = $derived.by(() => {
+    const policies: Array<{
+      sourceKind: 'case_type' | 'queue';
+      sourceKey: string;
+      policy: CaseAssistAutomation;
+    }> = [];
+    for (const policy of definition?.definition.assist_automations ?? []) {
+      policies.push({ sourceKind: 'case_type', sourceKey: definition?.key ?? '', policy });
+    }
+    const queue = caseQueues.find((candidate) => candidate.definition.key === c?.queue);
+    for (const policy of queue?.definition.assist_automations ?? []) {
+      policies.push({ sourceKind: 'queue', sourceKey: queue?.definition.key ?? '', policy });
+    }
+    return policies;
+  });
 
   // The SLA state is a wire enum (on_track/due_soon/overdue) — render it as a
   // human label, not the raw underscored value.
@@ -130,10 +173,47 @@
         got.case_type_version > 0
           ? await getCaseTypeVersion(key, got.case_type, got.case_type_version)
           : null;
+      const [availableDeployments, priorAssists, availableQueues] = await Promise.all([
+        listAgentDeployments(key).catch((agentError) => {
+          if (agentError instanceof ApiError && agentError.status === 404) return [];
+          throw agentError;
+        }),
+        listCaseAgentAssists(key, caseID).catch((agentError) => {
+          if (agentError instanceof ApiError && agentError.status === 404) return [];
+          throw agentError;
+        }),
+        listCaseQueues(key)
+      ]);
       if (caseID !== reqID) return;
       c = got;
       sourceDecision = decision;
       definition = pinned;
+      agentDeployments = availableDeployments;
+      agentAssists = priorAssists;
+      for (const assist of priorAssists) {
+        if (assist.result?.suggestion && assistDrafts[assist.assist_id] === undefined) {
+          assistDrafts[assist.assist_id] = JSON.stringify(assist.result.suggestion, null, 2);
+        }
+      }
+      caseQueues = availableQueues;
+      queuedAssistIDs = queuedAssistIDs.filter((assistID) => {
+        const assist = priorAssists.find((candidate) => candidate.assist_id === assistID);
+        return !assist || assist.status === 'requested' || assist.status === 'running';
+      });
+      if (
+        !availableDeployments.some(
+          (deployment) => deployment.deployment_id === selectedAgentDeployment
+        )
+      ) {
+        selectedAgentDeployment =
+          availableDeployments.find(
+            (deployment) =>
+              deployment.status === 'active' && deployment.environment === 'production'
+          )?.deployment_id ??
+          availableDeployments.find((deployment) => deployment.status === 'active')
+            ?.deployment_id ??
+          '';
+      }
       if (seededFieldCase !== got.case_id) {
         const context =
           got.context && typeof got.context === 'object' && !Array.isArray(got.context)
@@ -153,6 +233,9 @@
           })
         );
         fieldOriginals = { ...fieldDrafts };
+        assistEvidence = Object.fromEntries(
+          got.evidence.map((evidence) => [evidence.evidence_id, true])
+        );
         seededFieldCase = got.case_id;
       }
       priority = got.priority;
@@ -277,6 +360,147 @@
     await assignCase(key, caseID, target, takeover);
   }
 
+  async function askAgent() {
+    if (!assistDeployment || assistBusy) return;
+    const evidenceIDs = Object.entries(assistEvidence)
+      .filter(([, selected]) => selected)
+      .map(([evidenceID]) => evidenceID);
+    if (evidenceIDs.length === 0) {
+      toast.error('Select at least one governed evidence item');
+      return;
+    }
+    assistBusy = 'request';
+    try {
+      const response = await requestCaseAgentAssist(
+        key,
+        caseID,
+        {
+          kind: 'summary',
+          template_id: assistDeployment.template_id,
+          release: assistDeployment.release,
+          environment: assistDeployment.environment,
+          evidence_ids: evidenceIDs
+        },
+        crypto.randomUUID()
+      );
+      queuedAssistIDs = [...new Set([...queuedAssistIDs, response.assist_id])];
+      toast.success('Cited assistance was durably queued; case work can continue');
+      await refreshAgentAssists();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      assistBusy = '';
+    }
+  }
+
+  async function refreshAgentAssists() {
+    try {
+      const refreshed = await listCaseAgentAssists(key, caseID);
+      agentAssists = refreshed;
+      queuedAssistIDs = queuedAssistIDs.filter((assistID) => {
+        const assist = refreshed.find((candidate) => candidate.assist_id === assistID);
+        return !assist || assist.status === 'requested' || assist.status === 'running';
+      });
+    } catch (e) {
+      queuedAssistIDs = [];
+      error = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  async function manageAssist(assist: AgentAssist, action: 'retry' | 'cancel') {
+    if (assistBusy) return;
+    const reason = prompt(
+      action === 'retry'
+        ? 'Why should this assist be retried?'
+        : 'Why is this assist no longer needed?'
+    )?.trim();
+    if (!reason) return;
+    const acknowledgeAtLeastOnce =
+      action !== 'retry' ||
+      confirm(
+        assist.status === 'dead_letter'
+          ? 'The previous worker lost its lease after starting. Retry may repeat provider cost or an external effect. Continue with at-least-once execution?'
+          : 'The failed provider attempt or tool loop may already have incurred cost or a partial external effect. Continue with at-least-once execution?'
+      );
+    if (!acknowledgeAtLeastOnce) return;
+    assistBusy = assist.assist_id;
+    try {
+      if (action === 'retry') {
+        await retryAgentAssist(key, assist.assist_id, reason, acknowledgeAtLeastOnce);
+        queuedAssistIDs = [...new Set([...queuedAssistIDs, assist.assist_id])];
+        toast.success('Assist returned to the durable worker queue');
+      } else {
+        await cancelAgentAssist(key, assist.assist_id, reason);
+        queuedAssistIDs = queuedAssistIDs.filter((assistID) => assistID !== assist.assist_id);
+        toast.success('Assist cancellation recorded');
+      }
+      await refreshAgentAssists();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      assistBusy = '';
+    }
+  }
+
+  async function actOnAssist(
+    assist: AgentAssist,
+    action: 'accepted' | 'edited' | 'rejected' | 'escalated'
+  ) {
+    if (assistBusy) return;
+    if (
+      assist.evidence_stale &&
+      (action === 'accepted' || action === 'edited') &&
+      !confirm(
+        'New evidence was linked after this suggestion was produced. Record this reviewer action against the stale snapshot anyway?'
+      )
+    ) {
+      return;
+    }
+    let reason = '';
+    if (action !== 'accepted') {
+      reason =
+        prompt(
+          action === 'edited'
+            ? 'Optional: why did you edit this suggestion?'
+            : `Why was this suggestion ${action}?`
+        )?.trim() ?? '';
+      if (action !== 'edited' && !reason) return;
+    }
+    let final: Record<string, unknown> | undefined;
+    if (action === 'edited') {
+      try {
+        const parsed: unknown = JSON.parse(assistDrafts[assist.assist_id] ?? '');
+        if (parsed == null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+          throw new Error('The reviewed final must be a JSON object');
+        }
+        final = parsed as Record<string, unknown>;
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : String(e));
+        return;
+      }
+    }
+    const minutes = Number(assistTimeSavedMinutes[assist.assist_id] ?? 0);
+    if (!Number.isFinite(minutes) || minutes < 0) {
+      toast.error('Time saved must be a non-negative number of minutes');
+      return;
+    }
+    assistBusy = assist.assist_id;
+    try {
+      await recordAgentAssistAction(key, assist.assist_id, {
+        action,
+        final,
+        reason: reason || undefined,
+        time_saved_ms: Math.round(minutes * 60_000)
+      });
+      toast.success('Reviewer feedback recorded for governed learning');
+      await load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      assistBusy = '';
+    }
+  }
+
   $effect(() => {
     void caseID; // reload on initial mount and sibling navigation
     // Reset the rendered case and the status seed — otherwise a failed sibling
@@ -284,8 +508,19 @@
     c = null;
     sourceDecision = null;
     definition = null;
+    assistDrafts = {};
+    assistTimeSavedMinutes = {};
     statusSeeded = false;
     void load();
+  });
+
+  $effect(() => {
+    const shouldPoll =
+      queuedAssistIDs.length > 0 ||
+      agentAssists.some((assist) => assist.status === 'requested' || assist.status === 'running');
+    if (!shouldPoll) return;
+    const interval = setInterval(() => void refreshAgentAssists(), 1000);
+    return () => clearInterval(interval);
   });
 </script>
 
@@ -486,7 +721,10 @@
       <span class="muted">Mark this case completed.</span>
     </div>
   {:else if c && closed}
-    <p class="resolved muted">✓ This case is resolved.</p>
+    <p class="resolved muted" data-testid="case-outcome">
+      ✓ This case is resolved{#if c.disposition}
+        {' as '}<b>{c.disposition}</b>{#if c.reason_code}{' / '}{c.reason_code}{/if}{/if}.
+    </p>
   {:else if c}
     <p class="resolved muted">
       This governed case is active. Complete it with a reasoned disposition below.
@@ -663,6 +901,301 @@
         </li>
       {/each}
     </ul>
+    {#if activeAgentDeployments.length > 0 || agentAssists.length > 0 || configuredAssistPolicies.length > 0}
+      <section class="agent-assist" data-testid="case-agent-assist">
+        <div class="assist-head">
+          <div>
+            <strong>Governed agent assistance</strong>
+            <p class="muted">
+              Select the exact evidence snapshot. The deployed release can suggest and cite; you
+              remain accountable for the case outcome.
+            </p>
+          </div>
+          <Badge tone="warn">human review required</Badge>
+        </div>
+        {#if configuredAssistPolicies.length > 0}
+          <div class="policy-list">
+            {#each configuredAssistPolicies as configured (`${configured.sourceKind}-${configured.sourceKey}-${configured.policy.key}`)}
+              {@const policyAssist = agentAssists.find(
+                (assist) =>
+                  assist.policy_source?.kind === configured.sourceKind &&
+                  assist.policy_source.key === configured.sourceKey &&
+                  assist.policy_source.policy_key === configured.policy.key
+              )}
+              {@const policyDeployment = activeAgentDeployments.find(
+                (deployment) =>
+                  deployment.template_id === configured.policy.template_id &&
+                  deployment.environment === configured.policy.environment
+              )}
+              {@const missingEvidence = configured.policy.evidence_requirements.filter(
+                (requirement) =>
+                  !(c?.evidence ?? []).some((evidence) => evidence.requirement === requirement)
+              )}
+              <div class="policy">
+                <span>
+                  <strong>{configured.policy.key.replaceAll('_', ' ')}</strong>
+                  <small>
+                    {configured.sourceKind.replace('_', ' ')}
+                    {configured.sourceKey} ·
+                    {configured.policy.kind.replaceAll('_', ' ')}
+                  </small>
+                </span>
+                {#if policyAssist}
+                  <Badge tone="ok">durably requested</Badge>
+                {:else if missingEvidence.length > 0}
+                  <Badge tone="warn">waiting for {missingEvidence.join(', ')}</Badge>
+                {:else if !policyDeployment}
+                  <Badge tone="neutral">no eligible active deployment</Badge>
+                {:else}
+                  <Badge tone="warn">eligible · scheduler will queue</Badge>
+                {/if}
+              </div>
+            {/each}
+          </div>
+        {/if}
+        {#if activeAgentDeployments.length > 0}
+          <div class="row">
+            <label>
+              Active release
+              <select bind:value={selectedAgentDeployment} aria-label="governed agent deployment">
+                {#each activeAgentDeployments as deployment (deployment.deployment_id)}
+                  <option value={deployment.deployment_id}>
+                    {deployment.template_id} · r{deployment.release} · {deployment.environment}
+                  </option>
+                {/each}
+              </select>
+            </label>
+            <button
+              onclick={askAgent}
+              disabled={assistBusy !== '' ||
+                c.evidence.length === 0 ||
+                !roleAtLeast($user?.role, 'operator')}
+            >
+              {assistBusy === 'request' ? 'Queuing cited suggestion…' : 'Ask for cited summary'}
+            </button>
+          </div>
+          <fieldset>
+            <legend>Evidence visible to this request</legend>
+            {#each c.evidence as evidence (evidence.evidence_id)}
+              <label class="evidence-choice">
+                <input type="checkbox" bind:checked={assistEvidence[evidence.evidence_id]} />
+                <span>{evidence.label} <small>{evidence.evidence_id}</small></span>
+              </label>
+            {/each}
+          </fieldset>
+        {:else}
+          <p class="muted">
+            No governed agent release is currently active. Prior suggestions remain available for
+            accountability.
+          </p>
+        {/if}
+        {#each agentAssists as assist (assist.assist_id)}
+          <article class="suggestion">
+            <div class="assist-head">
+              <span>
+                <Badge
+                  tone={assist.status === 'completed'
+                    ? 'ok'
+                    : assist.status === 'failed' || assist.status === 'dead_letter'
+                      ? 'danger'
+                      : assist.status === 'cancelled'
+                        ? 'neutral'
+                        : 'warn'}
+                >
+                  {assist.status}
+                </Badge>
+                release {assist.template_id}@{assist.release}
+                {#if assist.policy_source}
+                  · policy {assist.policy_source.kind.replace('_', ' ')}
+                  {assist.policy_source.key}/{assist.policy_source.policy_key}
+                {/if}
+              </span>
+              <RelativeTime value={assist.requested_at} />
+            </div>
+            {#if assist.failure}<p class="err">{assist.failure}</p>{/if}
+            {#if assist.status === 'requested'}
+              <p class="muted">Durably queued. Reviewer work and SLA continue independently.</p>
+            {:else if assist.status === 'running'}
+              <p class="muted">
+                Worker attempt {assist.attempt ?? 1} is running. A lease prevents competing replicas from
+                recording two results.
+              </p>
+            {:else if assist.status === 'dead_letter'}
+              <p class="err">
+                The worker lease expired after execution began, so outcome and provider cost may be
+                indeterminate. Retry requires explicit at-least-once acknowledgement.
+              </p>
+            {/if}
+            {#if assist.status === 'awaiting_tool_approval'}
+              <p class="muted">
+                A human-before-call tool request is waiting in Agent governance. The tool has not
+                executed.
+              </p>
+            {/if}
+            {#if assist.status === 'requested' || assist.status === 'running'}
+              <button
+                onclick={() => manageAssist(assist, 'cancel')}
+                disabled={assistBusy !== '' || !roleAtLeast($user?.role, 'operator')}
+              >
+                {assistBusy === assist.assist_id ? 'Cancelling…' : 'Cancel request'}
+              </button>
+            {:else if assist.status === 'failed' || assist.status === 'dead_letter'}
+              <button
+                onclick={() => manageAssist(assist, 'retry')}
+                disabled={assistBusy !== '' || !roleAtLeast($user?.role, 'operator')}
+              >
+                {assistBusy === assist.assist_id ? 'Retrying…' : 'Retry assist'}
+              </button>
+            {/if}
+            {#if assist.content_erased}
+              <p class="muted">
+                This generated suggestion and its citations were crypto-shredded with the case
+                subject. Operational lineage and reviewer accountability remain available.
+              </p>
+            {:else if assist.result}
+              <pre>{JSON.stringify(assist.result.suggestion, null, 2)}</pre>
+              <p>
+                Confidence <b>{Math.round(assist.result.confidence * 100)}%</b>
+                · evidence snapshot seq {assist.evidence_seq} · {assist.result.provider}/{assist
+                  .result.model} · {assist.result.latency_ms} ms · ${assist.result.cost_usd.toFixed(
+                  4
+                )}
+              </p>
+              <p class="muted">
+                {assist.result.prompt_tokens} prompt + {assist.result.output_tokens} output tokens ·
+                {assist.result.attempts} provider attempt{assist.result.attempts === 1 ? '' : 's'}
+              </p>
+              {#if assist.result.tool_calls?.length}
+                <ul class="citations">
+                  {#each assist.result.tool_calls as tool}
+                    <li>
+                      <code>{tool.name}</code> · {tool.mode} · result proof
+                      <code title={tool.result_hash}>{tool.result_hash.slice(0, 12)}…</code>
+                      {#if tool.approved_by}
+                        · approved by {tool.approved_by}{/if}
+                    </li>
+                  {/each}
+                </ul>
+              {/if}
+              <ul class="citations">
+                {#each assist.result.citations ?? [] as citation}
+                  <li><code>{citation.evidence_id}</code> — {citation.claim}</li>
+                {/each}
+              </ul>
+              {#if assist.result.unsupported?.length}
+                <p class="err">Unsupported: {assist.result.unsupported.join('; ')}</p>
+              {/if}
+            {/if}
+            {#if assist.result}
+              {#if assist.evidence_stale}
+                <p class="stale-evidence" role="alert">
+                  <strong>Evidence changed after generation.</strong>
+                  This suggestion used snapshot seq {assist.evidence_seq}; the case is now at
+                  evidence seq {assist.current_evidence_seq}. Inspect the new source or request a
+                  fresh suggestion before adopting it.
+                </p>
+              {:else}
+                <p class="fresh-evidence">
+                  Evidence is current at seq {assist.current_evidence_seq}.
+                </p>
+              {/if}
+            {/if}
+            {#if assist.action}
+              <p>
+                <Badge tone="neutral">reviewer {assist.action.action}</Badge>
+                {assist.action.reason ?? ''}
+              </p>
+              <p class="muted">
+                Action recorded against evidence seq {assist.action.evidence_head_seq}
+                {assist.action.evidence_stale ? ' (stale suggestion acknowledged)' : ''}
+                {#if assist.suggestion_hash}
+                  · suggestion proof
+                  <code title={assist.suggestion_hash}>{assist.suggestion_hash.slice(0, 12)}…</code>
+                {/if}
+                {#if assist.final_hash}
+                  · final proof <code title={assist.final_hash}
+                    >{assist.final_hash.slice(0, 12)}…</code
+                  >
+                {/if}
+              </p>
+              {#if assist.action_final_erased}
+                <p class="muted">
+                  The reviewer-edited final was crypto-shredded with the case subject; its hash and
+                  value-free diff remain as accountability evidence.
+                </p>
+              {:else if assist.action.final}
+                <details>
+                  <summary>Reviewer-edited final</summary>
+                  <pre>{JSON.stringify(assist.action.final, null, 2)}</pre>
+                </details>
+              {/if}
+              {#if assist.differences?.length}
+                <details>
+                  <summary>
+                    Reviewer changed {assist.differences.length} field{assist.differences.length ===
+                    1
+                      ? ''
+                      : 's'}
+                  </summary>
+                  <ul class="diff-list">
+                    {#each assist.differences as difference}
+                      <li>
+                        <Badge tone="neutral">{difference.kind}</Badge>
+                        <code>{difference.path}</code>
+                      </li>
+                    {/each}
+                  </ul>
+                </details>
+              {/if}
+            {:else if !assist.content_erased && assist.result}
+              <label class="assist-edit">
+                Reviewed final (JSON)
+                <textarea
+                  rows="6"
+                  value={assistDrafts[assist.assist_id] ?? ''}
+                  oninput={(event) => {
+                    assistDrafts = {
+                      ...assistDrafts,
+                      [assist.assist_id]: event.currentTarget.value
+                    };
+                  }}
+                ></textarea>
+              </label>
+              <label class="time-saved">
+                Estimated time saved (minutes)
+                <input
+                  type="number"
+                  min="0"
+                  step="0.5"
+                  value={assistTimeSavedMinutes[assist.assist_id] ?? ''}
+                  oninput={(event) => {
+                    assistTimeSavedMinutes = {
+                      ...assistTimeSavedMinutes,
+                      [assist.assist_id]: event.currentTarget.value
+                    };
+                  }}
+                />
+              </label>
+              <div class="row">
+                <button onclick={() => actOnAssist(assist, 'accepted')} disabled={assistBusy !== ''}
+                  >Accept as working aid</button
+                >
+                <button onclick={() => actOnAssist(assist, 'edited')} disabled={assistBusy !== ''}
+                  >Record edited version</button
+                >
+                <button onclick={() => actOnAssist(assist, 'rejected')} disabled={assistBusy !== ''}
+                  >Reject</button
+                >
+                <button
+                  onclick={() => actOnAssist(assist, 'escalated')}
+                  disabled={assistBusy !== ''}>Escalate concern</button
+                >
+              </div>
+            {/if}
+          </article>
+        {/each}
+      </section>
+    {/if}
     <div class="actions">
       <strong>Link evidence</strong>
       <div class="row">
@@ -965,6 +1498,112 @@
     padding: 0.6rem;
     background: #8881;
     border-radius: 0.5rem;
+  }
+  .agent-assist {
+    margin: 1rem 0;
+    padding: 0.8rem;
+    border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border));
+    border-radius: 0.6rem;
+    background: color-mix(in srgb, var(--accent) 5%, var(--surface));
+  }
+  .assist-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    align-items: flex-start;
+  }
+  .assist-head p {
+    margin: 0.25rem 0;
+  }
+  .policy-list {
+    display: grid;
+    gap: 0.4rem;
+    margin: 0.7rem 0;
+  }
+  .policy {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.75rem;
+    align-items: center;
+    padding: 0.55rem;
+    border: 1px solid var(--border);
+    border-radius: 0.4rem;
+  }
+  .policy span {
+    display: grid;
+  }
+  .policy small {
+    color: var(--fg-subtle);
+  }
+  .agent-assist fieldset {
+    border: 1px solid var(--border);
+    margin: 0.7rem 0;
+  }
+  .evidence-choice {
+    display: flex;
+    gap: 0.4rem;
+    align-items: center;
+    margin: 0.3rem 0;
+  }
+  .evidence-choice small {
+    color: var(--fg-subtle);
+    font-family: var(--font-mono);
+  }
+  .suggestion {
+    margin-top: 0.8rem;
+    padding: 0.8rem;
+    border-top: 1px solid var(--border);
+  }
+  .suggestion pre {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    background: var(--surface-2);
+    padding: 0.7rem;
+    border-radius: 0.4rem;
+  }
+  .stale-evidence,
+  .fresh-evidence {
+    padding: 0.6rem 0.7rem;
+    border-radius: 0.4rem;
+  }
+  .stale-evidence {
+    border: 1px solid color-mix(in srgb, var(--warn) 55%, var(--border));
+    background: color-mix(in srgb, var(--warn) 12%, var(--surface));
+  }
+  .fresh-evidence {
+    border: 1px solid color-mix(in srgb, var(--ok) 40%, var(--border));
+    background: color-mix(in srgb, var(--ok) 8%, var(--surface));
+    color: var(--fg-subtle);
+  }
+  .assist-edit {
+    display: grid;
+    gap: 0.35rem;
+    margin: 0.8rem 0;
+    font-weight: 600;
+  }
+  .assist-edit textarea {
+    width: 100%;
+    box-sizing: border-box;
+    font-family: var(--font-mono);
+  }
+  .time-saved {
+    display: flex;
+    gap: 0.6rem;
+    align-items: center;
+    margin-bottom: 0.65rem;
+  }
+  .time-saved input {
+    width: 7rem;
+  }
+  .diff-list {
+    display: grid;
+    gap: 0.35rem;
+    list-style: none;
+    padding: 0.5rem 0;
+  }
+  .citations {
+    list-style: none;
+    padding: 0;
   }
   button.link {
     border: 0;
