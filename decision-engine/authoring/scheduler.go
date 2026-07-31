@@ -25,6 +25,7 @@ type Scheduler struct {
 	handler *Handler
 	store   store.Store
 	now     func() time.Time
+	leader  *platformscheduler.Leader
 }
 
 func NewScheduler(handler *Handler, st store.Store) *Scheduler {
@@ -36,6 +37,12 @@ func NewScheduler(handler *Handler, st store.Store) *Scheduler {
 
 func (s *Scheduler) WithNow(now func() time.Time) *Scheduler {
 	s.now = now
+	return s
+}
+
+// WithLeader elects one leader per sweep epoch across redundant replicas.
+func (s *Scheduler) WithLeader(ldr *platformscheduler.Leader) *Scheduler {
+	s.leader = ldr
 	return s
 }
 
@@ -128,8 +135,8 @@ func (s *Scheduler) Run(
 	interval time.Duration,
 	report func(error),
 ) {
-	platformscheduler.Run(
-		ctx, interval, "authoring", "authoring",
+	platformscheduler.RunLeader(
+		ctx, s.leader, interval, "authoring", "authoring",
 		report, s.Tick,
 		func(summary TickSummary) {
 			if summary.Publications > 0 || summary.Presence > 0 ||

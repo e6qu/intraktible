@@ -1050,3 +1050,20 @@ Linux, entirely that VM's fsync path.
   tenancy read-model keys embedded NUL bytes (SQLSTATE 22021, only surfaced on
   real Postgres — fixed to '/' separators) and the tenancy Postgres regression
   test inherited a stale shared projection checkpoint (fixed by resetting it).
+- 2026-07-31: E7 HA scheduler vertical — replaced the deployment-enforced
+  singleton scheduler with redundant live replicas using epoch-based leader/work
+  claims. New `platform/leader` package: epoch-based claims via event-log unique
+  facts (exactly one winner per role+epoch across all replicas, on every event-log
+  backend — memory/WAL/SQLite/Postgres/NATS — no separate lease store). `platform/
+  scheduler` gains `RunLeader`/`RunGated`/`Gate` so each of the 9 timed sweeps
+  (monitor, drift, deploy, population retention, experiments, authoring, case SLA,
+  agent governance, modeling lifecycle, data retention) elects one leader per
+  epoch; a dead leader never blocks the next epoch (deterministic takeover). The
+  server constructs one shared `Leader` (replica-unique holder) and wires every
+  sweep. Helm scheduler tier is now `replicas: 2` + RollingUpdate (no more
+  Recreate singleton). Multi-replica race tests prove exactly-one tick per epoch
+  across 6 replicas (10 race runs). `make ci` exit 0.
+- 2026-07-31: E7 HA-scheduler PR #168 exact-head hosted run `30661832789` is
+  green across all nine jobs on the first run: Go race/security/license, real
+  PostgreSQL, 140 native journeys, 89 real-Wasm journeys, four embedded-artifact
+  journeys, real Shauth SSO, web, Terraform, and container contracts.

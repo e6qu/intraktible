@@ -24,9 +24,10 @@ import (
 // Scheduler owns model-data lifecycle sweeps that must run on the singleton
 // scheduler tier rather than on API or worker replicas.
 type Scheduler struct {
-	cmd   *command.Handler
-	store store.Store
-	now   func() time.Time
+	cmd    *command.Handler
+	store  store.Store
+	now    func() time.Time
+	leader *platformscheduler.Leader
 }
 
 // SchedulerSummary reports durable transitions, not merely scanned records.
@@ -46,6 +47,12 @@ func NewScheduler(cmd *command.Handler, st store.Store) *Scheduler {
 // WithNow overrides lifecycle time for deterministic tests and demo seeds.
 func (s *Scheduler) WithNow(now func() time.Time) *Scheduler {
 	s.now = now
+	return s
+}
+
+// WithLeader elects one leader per sweep epoch across redundant replicas.
+func (s *Scheduler) WithLeader(ldr *platformscheduler.Leader) *Scheduler {
+	s.leader = ldr
 	return s
 }
 
@@ -219,8 +226,8 @@ func (s *Scheduler) Run(
 	interval time.Duration,
 	report func(error),
 ) {
-	platformscheduler.Run(
-		ctx, interval, "modeling_lifecycle", "modeling lifecycle", report,
+	platformscheduler.RunLeader(
+		ctx, s.leader, interval, "modeling_lifecycle", "modeling lifecycle", report,
 		s.Tick,
 		func(summary SchedulerSummary) {
 			if summary != (SchedulerSummary{}) {

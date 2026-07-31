@@ -21,12 +21,19 @@ type Scheduler struct {
 	cmd      *Handler
 	notifier notifier
 	now      func() time.Time
+	leader   *platformscheduler.Leader
 }
 
 // NewScheduler builds a Scheduler. notifier may be nil (it then only maintains the
 // alert/resolve state without delivering).
 func NewScheduler(st store.Store, cmd *Handler, n notifier) *Scheduler {
 	return &Scheduler{store: st, cmd: cmd, notifier: n, now: func() time.Time { return time.Now().UTC() }}
+}
+
+// WithLeader elects one leader per sweep epoch across redundant replicas.
+func (s *Scheduler) WithLeader(ldr *platformscheduler.Leader) *Scheduler {
+	s.leader = ldr
+	return s
 }
 
 // WithNow overrides the clock (deterministic tests, the demo seeder) and
@@ -149,7 +156,7 @@ func (s *Scheduler) Tick(ctx context.Context) (TickSummary, error) {
 // later successful tick clears the failure.
 func (s *Scheduler) Run(ctx context.Context, interval time.Duration, report func(error)) {
 	slog.Info("monitor scheduler started", "interval", interval)
-	platformscheduler.Run(ctx, interval, "flow_monitor", "monitor", report, s.Tick, func(sum TickSummary) {
+	platformscheduler.RunLeader(ctx, s.leader, interval, "flow_monitor", "monitor", report, s.Tick, func(sum TickSummary) {
 		if sum.Alerted > 0 || sum.Resolved > 0 {
 			slog.Info("monitor scheduler tick", "alerted", sum.Alerted, "resolved", sum.Resolved, "delivered", sum.Delivered)
 		}

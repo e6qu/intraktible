@@ -11,6 +11,7 @@ import (
 	"github.com/e6qu/intraktible/decision-engine/flows"
 	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/metrics"
+	platformscheduler "github.com/e6qu/intraktible/platform/scheduler"
 	"github.com/e6qu/intraktible/platform/store"
 )
 
@@ -28,14 +29,21 @@ type Cmd interface {
 
 // Scheduler activates due scheduled deploys and reverts expired time-boxed ones.
 type Scheduler struct {
-	store store.Store
-	cmd   Cmd
-	now   func() time.Time
+	store  store.Store
+	cmd    Cmd
+	now    func() time.Time
+	leader *platformscheduler.Leader
 }
 
 // NewScheduler builds a deploy scheduler over the store and command surface.
 func NewScheduler(st store.Store, cmd Cmd) *Scheduler {
 	return &Scheduler{store: st, cmd: cmd, now: func() time.Time { return time.Now().UTC() }}
+}
+
+// WithLeader elects one leader per sweep epoch across redundant replicas.
+func (s *Scheduler) WithLeader(ldr *platformscheduler.Leader) *Scheduler {
+	s.leader = ldr
+	return s
 }
 
 // WithNow overrides the clock (deterministic tests, the demo seeder) and
@@ -115,6 +123,14 @@ func (s *Scheduler) Run(ctx context.Context, interval time.Duration, report func
 		case <-ctx.Done():
 			return
 		case <-t.C:
+			won, err := s.leader.Gate(ctx, "deploy_schedule", interval, report)
+			if err != nil {
+				metrics.RecordSchedulerTick("deploy_schedule", "error")
+				continue
+			}
+			if !won {
+				continue
+			}
 			summary, err := s.Tick(ctx)
 			if err != nil {
 				report(err)

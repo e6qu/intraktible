@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/e6qu/intraktible/platform/identity"
+	platformscheduler "github.com/e6qu/intraktible/platform/scheduler"
 )
 
 // retentionSweeper is the synthetic actor attributed to scheduler-driven retention
@@ -19,9 +20,10 @@ const retentionSweeper = "retention-sweeper"
 // with no policy (or zero days) is never swept — retention is opt-in and off by
 // default, so the timer never erases data no one asked to expire.
 type Scheduler struct {
-	vault *Vault
-	gate  RetentionGate
-	now   func() time.Time
+	vault  *Vault
+	gate   RetentionGate
+	now    func() time.Time
+	leader *platformscheduler.Leader
 }
 
 // NewScheduler builds a retention scheduler over the vault.
@@ -32,6 +34,12 @@ func NewScheduler(v *Vault) *Scheduler {
 // WithNow overrides the clock (deterministic tests) and returns the scheduler.
 func (s *Scheduler) WithNow(now func() time.Time) *Scheduler {
 	s.now = now
+	return s
+}
+
+// WithLeader elects one leader per sweep epoch across redundant replicas.
+func (s *Scheduler) WithLeader(ldr *platformscheduler.Leader) *Scheduler {
+	s.leader = ldr
 	return s
 }
 
@@ -90,6 +98,14 @@ func (s *Scheduler) Run(ctx context.Context, interval time.Duration, report func
 		case <-ctx.Done():
 			return
 		case <-t.C:
+			won, gateErr := s.leader.Gate(ctx, "data_retention", interval, report)
+			if gateErr != nil {
+				report(gateErr)
+				continue
+			}
+			if !won {
+				continue
+			}
 			if _, err := s.Tick(ctx); err != nil {
 				report(err)
 				slog.Error("erasure: retention sweep failed", "err", err)

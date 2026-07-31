@@ -10,6 +10,7 @@ import (
 
 	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/metrics"
+	platformscheduler "github.com/e6qu/intraktible/platform/scheduler"
 	"github.com/e6qu/intraktible/platform/store"
 )
 
@@ -20,9 +21,10 @@ const schedulerActor = "agent-governance-scheduler"
 // acting, so a stale projection can at worst cause a refused retry, never bypass
 // a gate.
 type Scheduler struct {
-	store store.Store
-	cmd   *Handler
-	now   func() time.Time
+	store  store.Store
+	cmd    *Handler
+	now    func() time.Time
+	leader *platformscheduler.Leader
 }
 
 func NewScheduler(st store.Store, cmd *Handler) *Scheduler {
@@ -33,6 +35,12 @@ func NewScheduler(st store.Store, cmd *Handler) *Scheduler {
 
 func (s *Scheduler) WithNow(now func() time.Time) *Scheduler {
 	s.now = now
+	return s
+}
+
+// WithLeader elects one leader per sweep epoch across redundant replicas.
+func (s *Scheduler) WithLeader(ldr *platformscheduler.Leader) *Scheduler {
+	s.leader = ldr
 	return s
 }
 
@@ -177,6 +185,14 @@ func (s *Scheduler) Run(ctx context.Context, interval time.Duration, report func
 		case <-ctx.Done():
 			return
 		case <-timer.C:
+			won, gateErr := s.leader.Gate(ctx, "agent_governance", interval, report)
+			if gateErr != nil {
+				metrics.RecordSchedulerTick("agent_governance", "error")
+				continue
+			}
+			if !won {
+				continue
+			}
 			summary, err := s.Tick(ctx)
 			report(err)
 			if err != nil {

@@ -32,12 +32,13 @@ worker:
     requests: { cpu: 250m, memory: 512Mi }
     limits: { cpu: "1", memory: 1Gi }
 
-# The scheduler tier runs the timed sweeps (monitor/model-drift/deploy/SLA). It is
-# a SINGLETON (replicas: 1): those sweeps are not leader-elected, so running them on
-# more than one replica would double-deliver alerts. The deploy-activation sweep is
-# claim-guarded, but keep this at 1 unless you have added leader election.
+# The scheduler tier runs the timed sweeps (monitor/model-drift/deploy/SLA). Every
+# sweep is leader-elected (epoch-based event-log claims), so redundant replicas are
+# safe: exactly one replica ticks per sweep epoch across the fleet. Default 2 for
+# availability; scale freely. A single replica is fine too.
 scheduler:
   enabled: true
+  replicas: 2
   monitorInterval: "1m"
   resources:
     requests: { cpu: 100m, memory: 256Mi }

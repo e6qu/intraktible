@@ -14,6 +14,7 @@ import (
 	"github.com/e6qu/intraktible/case-manager/events"
 	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/metrics"
+	platformscheduler "github.com/e6qu/intraktible/platform/scheduler"
 	"github.com/e6qu/intraktible/platform/store"
 )
 
@@ -40,6 +41,7 @@ type Scheduler struct {
 	now           func() time.Time
 	notify        func(ctx context.Context, id identity.Identity, caseID string) (DeliveryOutcome, error)
 	requestAssist AssistRequester
+	leader        *platformscheduler.Leader
 }
 
 type AssistPolicySource struct {
@@ -67,6 +69,12 @@ type AssistRequester func(
 // NewScheduler builds an SLA-sweep scheduler over the store and command surface.
 func NewScheduler(st store.Store, cmd Cmd) *Scheduler {
 	return &Scheduler{store: st, cmd: cmd, now: func() time.Time { return time.Now().UTC() }}
+}
+
+// WithLeader elects one leader per sweep epoch across redundant replicas.
+func (s *Scheduler) WithLeader(ldr *platformscheduler.Leader) *Scheduler {
+	s.leader = ldr
+	return s
 }
 
 // WithNow overrides the clock (deterministic tests, the demo seeder) and
@@ -400,6 +408,14 @@ func (s *Scheduler) Run(ctx context.Context, interval time.Duration, report func
 		case <-ctx.Done():
 			return
 		case <-t.C:
+			won, gateErr := s.leader.Gate(ctx, "case_sla", interval, report)
+			if gateErr != nil {
+				metrics.RecordSchedulerTick("case_sla", "error")
+				continue
+			}
+			if !won {
+				continue
+			}
 			summary, err := s.Tick(ctx)
 			if err != nil {
 				report(err)

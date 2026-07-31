@@ -14,8 +14,7 @@ import (
 	"github.com/e6qu/intraktible/platform/entity"
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/identity"
-	"github.com/e6qu/intraktible/platform/metrics"
-	"github.com/e6qu/intraktible/platform/scheduler"
+	platformscheduler "github.com/e6qu/intraktible/platform/scheduler"
 	"github.com/e6qu/intraktible/platform/store"
 )
 
@@ -39,7 +38,7 @@ func (h *Handler) StartWorkers(ctx context.Context, count int) {
 func (h *Handler) DrainWorkers() { h.workers.Wait() }
 
 func (h *Handler) runWorker(ctx context.Context, owner string) {
-	scheduler.RunWorker(ctx, workerPoll, "population_worker", "population", owner, h.Tick)
+	platformscheduler.RunWorker(ctx, workerPoll, "population_worker", "population", owner, h.Tick)
 }
 
 // Tick claims and processes at most one logical item, or closes one job. It is
@@ -270,9 +269,10 @@ func itemOutcomeClaim(jobID string, index, attempt int) string {
 // Scheduler expires retained result manifests. The append-only input and audit
 // facts remain; projected output bodies become inaccessible.
 type Scheduler struct {
-	log   eventlog.Log
-	store store.Store
-	now   func() time.Time
+	log    eventlog.Log
+	store  store.Store
+	now    func() time.Time
+	leader *platformscheduler.Leader
 }
 
 func NewScheduler(log eventlog.Log, st store.Store) *Scheduler {
@@ -281,6 +281,12 @@ func NewScheduler(log eventlog.Log, st store.Store) *Scheduler {
 
 func (s *Scheduler) WithNow(now func() time.Time) *Scheduler {
 	s.now = now
+	return s
+}
+
+// WithLeader elects one leader per sweep epoch across redundant replicas.
+func (s *Scheduler) WithLeader(ldr *platformscheduler.Leader) *Scheduler {
+	s.leader = ldr
 	return s
 }
 
@@ -315,20 +321,5 @@ func (s *Scheduler) Tick(ctx context.Context) error {
 }
 
 func (s *Scheduler) Run(ctx context.Context, interval time.Duration, report func(error)) {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			err := s.Tick(ctx)
-			if err != nil {
-				metrics.RecordSchedulerTick("population_retention", "error")
-			} else {
-				metrics.RecordSchedulerTick("population_retention", "ok")
-			}
-			report(err)
-		}
-	}
+	platformscheduler.RunGated(ctx, s.leader, "population_retention", interval, "population_retention", report, s.Tick)
 }
