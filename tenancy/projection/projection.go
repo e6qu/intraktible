@@ -77,7 +77,7 @@ func (Projector) Apply(ctx context.Context, envelope eventlog.Envelope, st store
 		if err := decode(envelope, &p); err != nil {
 			return err
 		}
-		return store.PutDoc(ctx, st, CollectionOrgs, orgKey(p.OrgKey), OrganizationView{
+		return store.PutDoc(ctx, st, CollectionOrgs, OrgKey(p.OrgKey), OrganizationView{
 			Key: p.OrgKey, Display: p.Display, Status: domain.OrganizationActive,
 			Config: p.Config, CreatedAt: ts(envelope), UpdatedAt: ts(envelope),
 		})
@@ -119,7 +119,7 @@ func (Projector) Apply(ctx context.Context, envelope eventlog.Envelope, st store
 		if err := decode(envelope, &p); err != nil {
 			return err
 		}
-		return store.PutDoc(ctx, st, CollectionWorkspaces, wsKey(p.OrgKey, p.Key), WorkspaceView{
+		return store.PutDoc(ctx, st, CollectionWorkspaces, WorkspaceKey(p.OrgKey, p.Key), WorkspaceView{
 			OrgKey: p.OrgKey, Key: p.Key, Display: p.Display, Status: domain.WorkspaceActive,
 			Config: p.Config, CreatedAt: ts(envelope), UpdatedAt: ts(envelope),
 		})
@@ -161,7 +161,7 @@ func (Projector) Apply(ctx context.Context, envelope eventlog.Envelope, st store
 		if err := decode(envelope, &p); err != nil {
 			return err
 		}
-		return store.PutDoc(ctx, st, CollectionMemberships, memberKey(p.OrgKey, p.Workspace, p.Actor),
+		return store.PutDoc(ctx, st, CollectionMemberships, MembershipKey(p.OrgKey, p.Workspace, p.Actor),
 			MembershipView{
 				OrgKey: p.OrgKey, Workspace: p.Workspace, Actor: p.Actor, Role: p.Role,
 				Status: domain.MembershipActive, GrantedBy: p.GrantedBy, GrantedAt: ts(envelope),
@@ -203,7 +203,7 @@ func mutateOrg(
 	ctx context.Context, st store.Store, key string, envelope eventlog.Envelope,
 	mutate func(*OrganizationView),
 ) error {
-	view, found, err := store.GetDoc[OrganizationView](ctx, st, CollectionOrgs, orgKey(key))
+	view, found, err := store.GetDoc[OrganizationView](ctx, st, CollectionOrgs, OrgKey(key))
 	if err != nil {
 		return err
 	}
@@ -212,14 +212,14 @@ func mutateOrg(
 	}
 	mutate(&view)
 	view.UpdatedAt = ts(envelope)
-	return store.PutDoc(ctx, st, CollectionOrgs, orgKey(key), view)
+	return store.PutDoc(ctx, st, CollectionOrgs, OrgKey(key), view)
 }
 
 func mutateWorkspace(
 	ctx context.Context, st store.Store, orgKey2, key string, envelope eventlog.Envelope,
 	mutate func(*WorkspaceView),
 ) error {
-	k := wsKey(orgKey2, key)
+	k := WorkspaceKey(orgKey2, key)
 	view, found, err := store.GetDoc[WorkspaceView](ctx, st, CollectionWorkspaces, k)
 	if err != nil {
 		return err
@@ -238,7 +238,7 @@ func mutateMembership(
 	ctx context.Context, st store.Store, orgKey2, ws, actor string, envelope eventlog.Envelope,
 	mutate func(*MembershipView),
 ) error {
-	k := memberKey(orgKey2, ws, actor)
+	k := MembershipKey(orgKey2, ws, actor)
 	view, found, err := store.GetDoc[MembershipView](ctx, st, CollectionMemberships, k)
 	if err != nil {
 		return err
@@ -252,10 +252,21 @@ func mutateMembership(
 	return store.PutDoc(ctx, st, CollectionMemberships, k, view)
 }
 
-func orgKey(key string) string     { return store.Key("", "", "org\x00"+key) }
-func wsKey(org, key string) string { return store.Key("", "", "ws\x00"+org+"\x00"+key) }
-func memberKey(org, ws, actor string) string {
-	return store.Key("", "", "member\x00"+org+"\x00"+ws+"\x00"+actor)
+// OrgKey / WorkspaceKey / MembershipKey build the tenancy read-model store keys.
+// Tenancy metadata is cross-tenant, so keys use an empty org/workspace envelope
+// and '/' separators inside the id segment (never NUL bytes — Postgres text
+// columns cannot store 0x00, and org/workspace keys are validated to exclude '/').
+func OrgKey(key string) string { return store.Key("", "", "org/"+key) }
+func OrgPrefix() string        { return store.Key("", "", "org/") }
+func WorkspaceKey(org, key string) string {
+	return store.Key("", "", "ws/"+org+"/"+key)
+}
+func WorkspacePrefix(org string) string { return store.Key("", "", "ws/"+org+"/") }
+func MembershipKey(org, ws, actor string) string {
+	return store.Key("", "", "member/"+org+"/"+ws+"/"+actor)
+}
+func MembershipPrefix(org, ws string) string {
+	return store.Key("", "", "member/"+org+"/"+ws+"/")
 }
 
 func ts(envelope eventlog.Envelope) string {

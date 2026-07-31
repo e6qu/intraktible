@@ -368,12 +368,12 @@ func readOrg(
 	key string,
 ) (projection.OrganizationView, bool, error) {
 	return store.GetDoc[projection.OrganizationView](
-		ctx, st, projection.CollectionOrgs, store.Key("", "", "org\x00"+key),
+		ctx, st, projection.CollectionOrgs, projection.OrgKey(key),
 	)
 }
 
 func listOrgs(ctx context.Context, st store.Store) ([]projection.OrganizationView, error) {
-	return store.QueryDocs(ctx, st, projection.CollectionOrgs, store.Key("", "", "org\x00"),
+	return store.QueryDocs(ctx, st, projection.CollectionOrgs, projection.OrgPrefix(),
 		nil,
 		func(a, b projection.OrganizationView) bool { return a.Key < b.Key })
 }
@@ -384,7 +384,7 @@ func readWorkspace(
 	org, key string,
 ) (projection.WorkspaceView, bool, error) {
 	return store.GetDoc[projection.WorkspaceView](
-		ctx, st, projection.CollectionWorkspaces, store.Key("", "", "ws\x00"+org+"\x00"+key),
+		ctx, st, projection.CollectionWorkspaces, projection.WorkspaceKey(org, key),
 	)
 }
 
@@ -394,7 +394,7 @@ func listWorkspaces(
 	org string,
 ) ([]projection.WorkspaceView, error) {
 	return store.QueryDocs(ctx, st, projection.CollectionWorkspaces,
-		store.Key("", "", "ws\x00"+org+"\x00"),
+		projection.WorkspacePrefix(org),
 		nil,
 		func(a, b projection.WorkspaceView) bool { return a.Key < b.Key })
 }
@@ -405,7 +405,7 @@ func listMemberships(
 	org, workspace string,
 ) ([]projection.MembershipView, error) {
 	return store.QueryDocs(ctx, st, projection.CollectionMemberships,
-		store.Key("", "", "member\x00"+org+"\x00"+workspace+"\x00"),
+		projection.MembershipPrefix(org, workspace),
 		nil,
 		func(a, b projection.MembershipView) bool { return a.Actor < b.Actor })
 }
