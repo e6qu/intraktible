@@ -47,34 +47,6 @@ async function secondActor(
 
 const ENTITY_TYPE = 'modeling_applicant';
 
-function schemaSpec(eventName?: string, qualityAction = 'block') {
-  const ref = eventName
-    ? { kind: 'event', entity_type: ENTITY_TYPE, event_name: eventName }
-    : { kind: 'entity', entity_type: ENTITY_TYPE };
-  return {
-    ref,
-    description: 'E2E governed source contract.',
-    owner_team: 'risk-data-science',
-    purposes: ['model_development'],
-    compatibility: 'backward',
-    additional_properties: false,
-    fields: [
-      {
-        name: 'cohort_key',
-        type: 'string',
-        required: true,
-        identifier: true,
-        classification: 'confidential',
-        pattern: '^E2E-[0-9]{3}$',
-        min_length: 7,
-        max_length: 7
-      },
-      { name: 'amount', type: 'number', classification: 'confidential' }
-    ],
-    quality: { action: qualityAction, completeness_min: 1, unique_fields: ['cohort_key'] }
-  };
-}
-
 test('a data owner versions a schema through independent approval and governs ingestion', async ({
   page,
   request
