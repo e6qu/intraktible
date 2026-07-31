@@ -1003,3 +1003,20 @@ Linux, entirely that VM's fsync path.
   race/security/license, real PostgreSQL, 135 native journeys, 86 real-Wasm
   journeys, four embedded-artifact journeys, real Shauth SSO, web, Terraform,
   and container contracts.
+- 2026-07-31: Cut `enterprise/e6-modeling-journeys-and-audit` from merged E6
+  `c560b1d` and closed the remaining §8b.7 scope. Added 3 native modeling
+  journeys (`web/e2e/modeling.spec.ts`: schema governance + four-eyes + block
+  ingestion; refer-policy incident acknowledgement→resolution; modeler
+  snapshot→training→evaluation→validator approval→lineage) and 3 real-Wasm demo
+  journeys (`web/e2e-demo/modeling.spec.ts` over the seeded production story),
+  plus aria-labelled cockpit regions. 138 native + 89 real-Wasm journeys pass.
+- 2026-07-31: Whole-scope E6 audit found dependent-aware retirement was claimed
+  but unguarded: `retireSchema`/`RetireModel` appended unconditionally. Schema
+  retirement now refuses while any dataset references the entity/event contract
+  (entity type, label event, or feature event); model retirement refuses while
+  any deployed flow runs a Predict node on the model. Both name the dependants;
+  `modeling/service/retirement_test.go` and
+  `decision-engine/service/retirement_test.go` pin the gates. Narrowed the
+  overstated streaming/bulk-ingestion + cursor-pagination PLAN §8b.7 claim to
+  E7 (governed single-record admission with corrections/retractions/watermarks
+  is the E6 contract).

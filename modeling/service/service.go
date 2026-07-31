@@ -302,6 +302,13 @@ func (s *Service) retireSchema(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return eventlog.Envelope{}, err
 		}
+		dependants, err := s.schemaDependents(r.Context(), id, ref)
+		if err != nil {
+			return eventlog.Envelope{}, err
+		}
+		if len(dependants) > 0 {
+			return eventlog.Envelope{}, dependantsError(dependants)
+		}
 		return s.cmd.RetireSchema(r.Context(), id, ref, version, request.Reason)
 	})
 }
