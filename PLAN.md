@@ -1113,15 +1113,18 @@ complete lineage/retirement journey.
 
 ### 8b.8 PR E7 — production scale, tenancy, and disaster recovery
 
-**Status: IN PROGRESS** — the **tenant administration control plane** is delivered as the first
-serialized vertical: organizations and workspaces as governed event-sourced entities with full
-lifecycle (create/configure/suspend/resume/delete), quota enforcement, dependent-aware deletion, a
-membership directory with last-active-admin safety, and a distinct platform-admin authority for
-cross-tenant organization creation. Go/TypeScript SDKs, CLI, OpenAPI, RBAC pins, and an admin UI
-complete the surface. Remaining E7 slices (serialized PRs): distributed append-order partitioning,
-HA scheduler leader/work claims, projection/worker scale-out + backpressure, network policy/mTLS,
-backup/restore + RPO/RTO evidence, workload SLO/SLA, cross-tenant isolation audit, and the deferred
-high-volume streaming/bulk ingestion + cursor pagination.
+**Status: DELIVERED** — across three serialized verticals (PRs #167, #168, #169). (1) The **tenant
+administration control plane**: organizations and workspaces as governed event-sourced entities with
+full lifecycle, quota enforcement, dependent-aware deletion, a membership directory with
+last-active-admin safety, and a distinct platform-admin authority for cross-tenant org creation; Go/
+TypeScript SDKs, CLI, OpenAPI, RBAC pins, and an admin UI. (2) The **HA scheduler**: redundant live
+replicas elect one leader per epoch via event-log claims — no deployment singleton — covering all
+timed sweeps, with Helm `replicas: 2` + RollingUpdate. (3) The **completion vertical**: cross-tenant
+isolation evidence, bounded bulk ingestion, portable `backup`/`restore` (NDJSON, byte-identical,
+replay-tested; RPO zero, RTO replay time), IP-allowlist network policy, projection-lag backpressure,
+a `/capacity` SLO/SLA surface, cursor pagination, and the published consistency model (docs/DR.md).
+The append-order partitioning item was deliberately narrowed to *publishing* that model — canonical
+order is retained where replay safety requires it, which the current design already satisfies.
 
 **Outcome:** the recommended production topology has measured capacity and availability, explicit
 tenant isolation/placement, durable distributed ownership, and routinely tested recovery instead of a

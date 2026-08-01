@@ -346,6 +346,19 @@ func envInt(key string, fallback int) (int, error) {
 	return n, nil
 }
 
+// envUint64 is envInt for uint64-valued thresholds (projection lag bounds).
+func envUint64(key string, fallback uint64) (uint64, error) {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return fallback, nil
+	}
+	n, err := strconv.ParseUint(v, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("%s %q: want a non-negative integer", key, v)
+	}
+	return n, nil
+}
+
 // truthy reports whether an env value reads as enabled (1/true/yes/on).
 func truthy(v string) bool {
 	switch strings.ToLower(strings.TrimSpace(v)) {

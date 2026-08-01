@@ -55,6 +55,9 @@
     }
   ],
   "paths": {
+    "/capacity": {
+      "get": { "tags": ["Operations"], "summary": "SLO/SLA evidence: projection lag, backpressure bound, process role, scheduler health", "description": "Unauthenticated operational surface (aggregate counters only, no tenant data).", "responses": { "200": { "description": "Capacity and service-level evidence." } } }
+    },
     "/v1/flows/{slug}/{env}/decide": {
       "post": {
         "tags": [
@@ -2728,6 +2731,9 @@
         }
       }
     },
+    "/v1/context/entities/bulk": {
+      "post": { "tags": ["Context"], "summary": "Batch-record entities (bounded to 1000, per-record results)", "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["entities"], "properties": { "entities": { "type": "array", "maxItems": 1000, "items": { "type": "object" } } } } } } }, "responses": { "200": { "description": "Per-record results." }, "400": { "$ref": "#/components/responses/Error" } } }
+    },
     "/v1/context/entities": {
       "post": {
         "tags": ["Context"],
@@ -2762,7 +2768,9 @@
         "tags": ["Context"],
         "summary": "List custom entities",
         "parameters": [
-          { "name": "type", "in": "query", "schema": { "type": "string" }, "description": "Filter by entity type." }
+          { "name": "type", "in": "query", "schema": { "type": "string" }, "description": "Filter by entity type." },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 1000 }, "description": "Maximum items per page (default: whole list, bounded at 1000)." },
+          { "name": "cursor", "in": "query", "schema": { "type": "string" }, "description": "Continuation token from the previous page's next_cursor." }
         ],
         "responses": {
           "200": {
@@ -2797,7 +2805,9 @@
         "summary": "List an entity's event log",
         "parameters": [
           { "name": "type", "in": "path", "required": true, "schema": { "type": "string" } },
-          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 1000 }, "description": "Maximum items per page (default: whole list, bounded at 1000)." },
+          { "name": "cursor", "in": "query", "schema": { "type": "string" }, "description": "Continuation token from the previous page's next_cursor." }
         ],
         "responses": {
           "200": {
@@ -2826,6 +2836,9 @@
           "401": { "$ref": "#/components/responses/Error" }
         }
       }
+    },
+    "/v1/context/events/bulk": {
+      "post": { "tags": ["Context"], "summary": "Batch-record events (bounded to 1000, per-record results)", "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["events"], "properties": { "events": { "type": "array", "maxItems": 1000, "items": { "type": "object" } } } } } } }, "responses": { "200": { "description": "Per-record results." }, "400": { "$ref": "#/components/responses/Error" } } }
     },
     "/v1/context/events": {
       "post": {

@@ -17,6 +17,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -54,6 +55,10 @@ func main() {
 		err = logCmd(os.Args[2:])
 	case "replay":
 		err = replayCmd(os.Args[2:])
+	case "backup":
+		err = backupCmd(os.Args[2:])
+	case "restore":
+		err = restoreCmd(os.Args[2:])
 	case "export":
 		err = exportCmd(os.Args[2:])
 	case "authoring":
@@ -76,7 +81,7 @@ func main() {
 func usage() {
 	fmt.Fprintln(
 		os.Stderr,
-		"usage: intraktible <serve|log|replay|export|authoring|agents|modeling|tenancy> [flags]",
+		"usage: intraktible <serve|log|replay|backup|restore|export|authoring|agents|modeling|tenancy> [flags]",
 	)
 	os.Exit(2)
 }
@@ -589,6 +594,101 @@ func replayCmd(args []string) error {
 		}
 		fmt.Printf("  %-26s %d docs\n", c, len(recs))
 	}
+	return nil
+}
+
+// backupCmd exports the entire event log as a newline-delimited JSON stream to a
+// file (or stdout). The backup is the authoritative recovery source: replaying it
+// into a fresh store rebuilds every projection to the exact state at the log head.
+// RPO is zero (the WAL fsyncs on every append); RTO is the replay time of the
+// backup into a fresh store.
+func backupCmd(args []string) error {
+	fs := flag.NewFlagSet("backup", flag.ExitOnError)
+	dataDir := fs.String("data-dir", "./data", "event-log data directory")
+	out := fs.String("out", "", "output file (default: stdout)")
+	_ = fs.Parse(args)
+
+	log, err := eventlog.OpenWAL(*dataDir)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = log.Close() }()
+
+	events, err := log.Read(context.Background(), 0)
+	if err != nil {
+		return err
+	}
+
+	var w io.Writer = os.Stdout
+	if *out != "" {
+		f, err := os.Create(*out)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = f.Close() }()
+		w = f
+	}
+
+	enc := json.NewEncoder(w)
+	for _, e := range events {
+		if err := enc.Encode(e); err != nil {
+			return err
+		}
+	}
+	fmt.Fprintf(os.Stderr, "backed up %d events (head seq %d)\n", len(events), log.Head())
+	return nil
+}
+
+// restoreCmd imports a newline-delimited JSON event-log backup into a fresh WAL
+// data directory. The restored log is byte-identical to the source (same seq
+// numbers, payloads, and claims) and can be served immediately.
+func restoreCmd(args []string) error {
+	fs := flag.NewFlagSet("restore", flag.ExitOnError)
+	dataDir := fs.String("data-dir", "", "TARGET data directory (must not exist yet)")
+	in := fs.String("in", "", "backup file (required)")
+	_ = fs.Parse(args)
+
+	if *dataDir == "" || *in == "" {
+		return errors.New("restore: --data-dir and --in are required")
+	}
+
+	f, err := os.Open(*in)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+
+	// Read all events from the backup stream.
+	var events []eventlog.Envelope
+	dec := json.NewDecoder(f)
+	for {
+		var e eventlog.Envelope
+		if err := dec.Decode(&e); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return err
+		}
+		events = append(events, e)
+	}
+	if len(events) == 0 {
+		return errors.New("restore: backup file contains no events")
+	}
+
+	// Write them to a fresh WAL.
+	log, err := eventlog.OpenWAL(*dataDir)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = log.Close() }()
+
+	for _, e := range events {
+		if _, err := log.Append(context.Background(), e); err != nil {
+			return fmt.Errorf("restore: append seq %d: %w", e.Seq, err)
+		}
+	}
+	fmt.Fprintf(os.Stderr, "restored %d events (head seq %d) into %s\n", len(events), log.Head(), *dataDir)
+	fmt.Fprintln(os.Stderr, "verify with: intraktible replay --data-dir="+*dataDir)
 	return nil
 }
 

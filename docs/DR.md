@@ -61,12 +61,61 @@ intraktible replay --data-dir=/data --as-of=<seq>
 (a suspended decision, a case's status, a flow's live version) at that moment — useful
 for audit reconstruction and for verifying a backup.
 
+## Portable backup & restore (`intraktible backup` / `intraktible restore`)
+
+Beyond backend-native dumps, the CLI ships a portable, backend-agnostic pair:
+
+```sh
+# Stream the whole log to a newline-delimited JSON file (the recovery artifact).
+intraktible backup --data-dir=/data --out=backup-$(date +%F).jsonl
+
+# Restore it into a FRESH data directory (which must not already have a log).
+intraktible restore --data-dir=/restore --in=backup-2026-08-01.jsonl
+
+# Verify the restore replays cleanly.
+intraktible replay --data-dir=/restore
+```
+
+The restored log is byte-identical to the source (same seq numbers, payloads, and
+optimistic-concurrency claims), so it can be served immediately. The contract is
+proved by `TestBackupRestoreReplayRoundTrip` and `TestBackupRestoreCLIRoundTrip` in
+`cmd/intraktible/backup_test.go`.
+
+## Service-level targets
+
+- **RPO: zero.** The event log fsyncs every append (WAL/SQLite/Postgres) or awaits the
+  JetStream publish-ack before the write is acknowledged, so a committed event is
+  never lost on a process or node failure.
+- **RTO: replay time.** Recovery time is the time to replay the log into a fresh
+  projection store (plus process start). `GET /capacity` reports live
+  `applied`/`head`/lag so the operator can watch catch-up complete; `/readyz` stays
+  503 until the replica is current. Measure RTO with the DR drill below and record it.
+
+## Consistency model (published)
+
+- **Total order, per log.** Every event carries a single monotonically increasing
+  `seq`. The append path serializes order; the consistency ceiling today is one
+  global ordered log per deployment (the event-spine partition design in PLAN §8b.8
+  is deliberately conservative — canonical order is retained where replay safety
+  requires it).
+- **Per-tenant reads, replay, and claims.** Reads and `replay` are scoped by
+  `(org, workspace)` key prefix; cross-tenant isolation is enforced there and
+  covered by `TestCrossTenantIsolation`. Optimistic-concurrency claims
+  (`Envelope.Unique`) fence exactly-once outcomes per tenant across replicas.
+- **Eventual consistency for read models.** Projections are rebuilt views over the
+  log. A single-writer checkpoint (locked row on durable stores) makes multi-replica
+  apply exactly-once; `/readyz` gates a catching-up replica, and the optional
+  `INTRAKTIBLE_MAX_PROJECTION_LAG` backpressure sheds reads past a lag bound.
+- **Leader-elected background work.** Scheduler sweeps (monitor, drift, deploy,
+  retention, SLA, governance, modeling) elect one leader per epoch via event-log
+  claims, so redundant replicas tick exactly-once per epoch (`platform/leader`).
+
 ## DR drill (run this periodically)
 
-1. Take an event-log backup on the primary.
+1. Take an event-log backup on the primary (`intraktible backup` or a native dump).
 2. Restore it into an isolated environment with the same encryption keys.
 3. `intraktible serve` there; wait for `/readyz` to report `{"status":"ready"}` and
-   confirm `applied == head`.
+   confirm `applied == head` (also visible on `/capacity`).
 4. Spot-check: a known flow's live versions, a seeded decision's trace, the case
    queue counts — they must match the primary at the backup's `head`.
 5. Record the RTO (time to `ready`) so it's a known quantity, not a hope.

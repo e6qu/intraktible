@@ -117,11 +117,13 @@ func New(cmd *command.Handler, st store.Store, opts ...Option) *Service {
 // Routes registers the Context Layer endpoints.
 func (s *Service) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/context/entities", s.recordEntity)
+	mux.HandleFunc("POST /v1/context/entities/bulk", s.bulkEntities)
 	mux.HandleFunc("GET /v1/context/entities", s.listEntities)
 	mux.HandleFunc("GET /v1/context/entities/{type}/{id}", s.getEntity)
 	mux.HandleFunc("GET /v1/context/entities/{type}/{id}/events", s.listEvents)
 	mux.HandleFunc("GET /v1/context/entities/{type}/{id}/features", s.computeFeatures)
 	mux.HandleFunc("POST /v1/context/events", s.recordEvent)
+	mux.HandleFunc("POST /v1/context/events/bulk", s.bulkEvents)
 	mux.HandleFunc("GET /v1/context/events/{event_id}", s.getEvent)
 	mux.HandleFunc("POST /v1/context/events/{event_id}/retract", s.retractEvent)
 	mux.HandleFunc("POST /v1/context/features", s.defineFeature)
@@ -232,6 +234,142 @@ type retractEventRequest struct {
 	Reason string `json:"reason"`
 }
 
+const maxBulkBatch = 1000
+
+type bulkEntityRequest struct {
+	Entities []entityRequest `json:"entities"`
+}
+
+type bulkResult struct {
+	Index  int    `json:"index"`
+	Status string `json:"status"`
+	Error  string `json:"error,omitempty"`
+	Seq    uint64 `json:"seq,omitempty"`
+}
+
+// bulkEntities ingests a bounded batch of entities. Each record is processed
+// independently: a validation failure on one does not abort the rest. A 207
+// Multi-Status response reports per-record results.
+func (s *Service) bulkEntities(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	var req bulkEntityRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	if len(req.Entities) > maxBulkBatch {
+		httpx.Error(w, http.StatusBadRequest, fmt.Errorf(
+			"context: bulk entity batch %d exceeds the %d limit", len(req.Entities), maxBulkBatch,
+		))
+		return
+	}
+	results := make([]bulkResult, len(req.Entities))
+	succeeded := 0
+	for i, entity := range req.Entities {
+		var evidence domain.SchemaEvidence
+		if s.contracts != nil {
+			ev, err := s.contracts.ValidateEntity(
+				r.Context(), id, entity.EntityType, entity.SchemaVersion, entity.Attributes,
+			)
+			if err != nil {
+				results[i] = bulkResult{Index: i, Status: "error", Error: err.Error()}
+				continue
+			}
+			evidence = ev
+		}
+		envelope, err := s.cmd.RecordEntity(r.Context(), id, domain.RecordEntity{
+			EntityType: entity.EntityType, EntityID: entity.EntityID,
+			Attributes: entity.Attributes, SchemaEvidence: evidence,
+		})
+		if err != nil {
+			results[i] = bulkResult{Index: i, Status: "error", Error: err.Error()}
+			continue
+		}
+		results[i] = bulkResult{Index: i, Status: "ok", Seq: envelope.Seq}
+		succeeded++
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"total":     len(req.Entities),
+		"succeeded": succeeded,
+		"failed":    len(req.Entities) - succeeded,
+		"results":   results,
+	})
+}
+
+type bulkEventRequest struct {
+	Events []eventRequest `json:"events"`
+}
+
+// bulkEvents ingests a bounded batch of events with the same per-record
+// independent processing as bulkEntities.
+func (s *Service) bulkEvents(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	var req bulkEventRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	if len(req.Events) > maxBulkBatch {
+		httpx.Error(w, http.StatusBadRequest, fmt.Errorf(
+			"context: bulk event batch %d exceeds the %d limit", len(req.Events), maxBulkBatch,
+		))
+		return
+	}
+	results := make([]bulkResult, len(req.Events))
+	succeeded := 0
+	for i, evt := range req.Events {
+		occurredAt := evt.OccurredAt
+		if occurredAt.IsZero() {
+			occurredAt = s.now()
+		}
+		data := evt.Data
+		var evidence domain.SchemaEvidence
+		if s.contracts != nil {
+			ev, err := s.contracts.ValidateEvent(
+				r.Context(), id, evt.EntityType, evt.EventName, occurredAt, evt.SchemaVersion, data,
+			)
+			if err != nil {
+				results[i] = bulkResult{Index: i, Status: "error", Error: err.Error()}
+				continue
+			}
+			evidence = ev
+		}
+		if s.eraser != nil {
+			sealed, err := s.eraser.SealFields(
+				r.Context(), id, eventSubject(evt.EntityType, evt.EntityID), data, s.piiFields,
+			)
+			if err != nil {
+				results[i] = bulkResult{Index: i, Status: "error", Error: err.Error()}
+				continue
+			}
+			data = sealed
+		}
+		envelope, err := s.cmd.RecordEvent(r.Context(), id, domain.RecordEvent{
+			EntityType: evt.EntityType, EntityID: evt.EntityID, EventName: evt.EventName,
+			EventID: evt.EventID, SupersedesEventID: evt.SupersedesEventID,
+			Data: data, OccurredAt: occurredAt, SchemaEvidence: evidence,
+		})
+		if err != nil {
+			results[i] = bulkResult{Index: i, Status: "error", Error: err.Error()}
+			continue
+		}
+		results[i] = bulkResult{Index: i, Status: "ok", Seq: envelope.Seq}
+		succeeded++
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"total":     len(req.Events),
+		"succeeded": succeeded,
+		"failed":    len(req.Events) - succeeded,
+		"results":   results,
+	})
+}
+
 func (s *Service) retractEvent(w http.ResponseWriter, r *http.Request) {
 	var request retractEventRequest
 	httpx.Emit(w, r, &request, func(id identity.Identity) (eventlog.Envelope, error) {
@@ -259,7 +397,7 @@ func (s *Service) listEntities(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	recs, err := entities.ListEntities(r.Context(), s.store, id, r.URL.Query().Get("type"))
-	httpx.WriteList(w, "entities", recs, err)
+	httpx.WritePage(w, r, "entities", recs, err)
 }
 
 func (s *Service) getEntity(w http.ResponseWriter, r *http.Request) {
@@ -290,7 +428,7 @@ func (s *Service) listEvents(w http.ResponseWriter, r *http.Request) {
 			recs[i].Data = opened
 		}
 	}
-	httpx.WriteList(w, "events", recs, err)
+	httpx.WritePage(w, r, "events", recs, err)
 }
 
 type featureRequest struct {

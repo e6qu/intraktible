@@ -35,28 +35,31 @@ scale, tenancy, and disaster recovery.
 
 ## Phase
 
-**Enterprise E6 — model and context data-science platform is merged** (vertical
-#165 as `c560b1d`, journeys+audit #166 as `a40b184`; both green across the full
-nine-job hosted matrix). Fresh reconciliation found the open-PR queue empty and
-`enterprise/e7-production-scale-tenancy-dr` was cut exactly from `a40b184`.
+**Enterprise E7 — production scale, tenancy, and disaster recovery is COMPLETE
+across three serialized verticals** (tenant admin #167 as `c9957b2`, HA
+scheduler #168 as `909da79`; both green across the full nine-job hosted
+matrix). E6 is merged (vertical #165 as `c560b1d`, journeys+audit #166 as
+`a40b184`). Fresh reconciliation found the open-PR queue empty and
+`enterprise/e7-scale-dr-isolation` was cut exactly from `909da79`.
 
-The first E7 vertical is implemented on that branch: the **tenant
-administration control plane**. A new `tenancy/` bounded context makes
-organizations and workspaces governed event-sourced entities with
-create/configure/suspend/resume/delete lifecycle, quota enforcement on
-workspace creation, dependent-aware org deletion (blocked while active
-workspaces exist), and a membership directory with last-active-admin safety.
-Platform authority (organization creation) is a new `Platform` flag on
-`auth.APIKey` carried through the middleware `Principal` and browser sessions
-(API-key logins carry it; SSO never does) — distinct from any tenant's own
-admin role. Workspace/membership administration is org-scoped for tenant admins
-and cross-tenant for platform principals. The server bootstraps the default org
-as a governed entity. Go SDK, `intraktible tenancy` CLI, OpenAPI, RBAC pins,
-and an admin `/tenancy` UI complete the surface, and `eventlog.AppendClaim`
-deduplicates the modeling/tenancy write shape. Focused command/projection/
-HTTP-e2e/Go-SDK tests plus 2 native browser journeys pass; `make ci` exits 0
-and 140 native + 89 real-Wasm journeys are green. It is the sole open review
-item; remaining E7 scale/HA/DR slices and E8 follow in serialized PRs.
+The E7 completion vertical is implemented on that branch: **scale, DR, network,
+and isolation**. `TestCrossTenantIsolation` proves one org cannot read/list
+another's flows/decisions/audit over the real HTTP API. `POST
+/v1/context/entities/bulk` and `/v1/context/events/bulk` ingest bounded
+1000-record batches with per-record results (the deferred E6 item). `intraktible
+backup`/`restore` stream the log as NDJSON and restore it byte-identically,
+proved by replay round-trip tests; docs/DR.md publishes RPO-zero and
+RTO-replay-time targets plus the consistency model. `platform/httpx.IPAllowlist`
+(INTRAKTIBLE_IP_ALLOWLIST) gates /v1 to configured CIDRs; `Backpressure`
+(INTRAKTIBLE_MAX_PROJECTION_LAG) sheds reads past a projection-lag bound while
+always admitting writes. `GET /capacity` publishes SLO/SLA evidence, and
+`httpx.Paginate`/`WritePage` add cursor pagination to the context entity/event
+lists. `make ci` exits 0 (zero clone groups); 140 native + 89 real-Wasm
+journeys and 254 frontend units are green. It is the sole open review item; E8
+(ecosystem and regulated solution packs) is the next tranche. **Deliberate
+narrowing:** the append-order partitioning item was resolved by publishing the
+consistency model rather than re-architecting the event spine — the current
+design already retains canonical order where replay safety requires it.
 
 **Enterprise PR E5 — governed agentic operations and human/AI learning is
 merged.** Authoritative `origin/main` is merge commit `593eda9`, containing

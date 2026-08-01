@@ -457,3 +457,50 @@ func TestContextAPIValidationAndAuth(t *testing.T) {
 		t.Fatalf("unauthenticated -> %d, want 401", resp.StatusCode)
 	}
 }
+
+func TestBulkEntityIngestionSucceedsAndRejectsOverLimit(t *testing.T) {
+	api := start(t)
+
+	// A valid batch of 3 entities.
+	var result struct {
+		Total     int `json:"total"`
+		Succeeded int `json:"succeeded"`
+		Failed    int `json:"failed"`
+	}
+	api.Request(t, http.MethodPost, "/v1/context/entities/bulk", map[string]any{
+		"entities": []map[string]any{
+			{"entity_type": "applicant", "entity_id": "a1", "attributes": map[string]any{"score": 700}},
+			{"entity_type": "applicant", "entity_id": "a2", "attributes": map[string]any{"score": 650}},
+			{"entity_type": "applicant", "entity_id": "a3", "attributes": map[string]any{"score": 720}},
+		},
+	}, http.StatusOK, &result)
+	if result.Total != 3 || result.Succeeded != 3 || result.Failed != 0 {
+		t.Fatalf("bulk result = %+v, want 3/3/0", result)
+	}
+
+	// An over-limit batch is rejected.
+	big := make([]map[string]any, 1001)
+	for i := range big {
+		big[i] = map[string]any{"entity_type": "x", "entity_id": "id", "attributes": map[string]any{}}
+	}
+	api.Request(t, http.MethodPost, "/v1/context/entities/bulk", map[string]any{
+		"entities": big,
+	}, http.StatusBadRequest, nil)
+}
+
+func TestBulkEventIngestion(t *testing.T) {
+	api := start(t)
+
+	var result struct {
+		Succeeded int `json:"succeeded"`
+	}
+	api.Request(t, http.MethodPost, "/v1/context/events/bulk", map[string]any{
+		"events": []map[string]any{
+			{"entity_type": "applicant", "entity_id": "a1", "event_name": "click", "event_id": "e1"},
+			{"entity_type": "applicant", "entity_id": "a1", "event_name": "click", "event_id": "e2"},
+		},
+	}, http.StatusOK, &result)
+	if result.Succeeded != 2 {
+		t.Fatalf("bulk event result = %+v, want 2 succeeded", result)
+	}
+}
