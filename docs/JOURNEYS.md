@@ -724,6 +724,21 @@ Spans: **Operations** (`/healthz`, `/readyz`, `/capacity`, `/metrics`), CLI
    bound (writes always admitted). Outcome: explicit network policy and overload
    backpressure.
 
+### Integrate and govern a data provider
+
+Spans: **Providers** (`/providers`), CLI (`intraktible providers`).
+
+1. Install a provider version: name, backing connector type, description, and a
+   conformance contract (schema, timeout, retries, cost). Outcome: an immutable,
+   versioned provider manifest.
+2. Configure it for an environment and run the **conformance test**. A version
+   cannot be approved until the test passes. Outcome: validated provider evidence.
+3. An **independent checker approves** it (four-eyes — the installer/author
+   cannot). Outcome: governed readiness for deployment.
+4. Deploy to an environment, then **pause/resume** for maintenance, **upgrade** to a
+   newer approved version, and **retire** when out of service. Outcome: a governed
+   provider lifecycle per environment, with health (fetches, errors) visible.
+
 ---
 
 ## By persona

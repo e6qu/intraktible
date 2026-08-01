@@ -41,6 +41,7 @@ export type NavId =
   | 'compliance'
   | 'keys'
   | 'tenancy'
+  | 'providers'
   | 'audit';
 
 export type NavItem = { id: NavId; href: string; label: string; icon: string };
@@ -82,6 +83,7 @@ export const NAV = new Map<NavId, NavItem>([
   ['compliance', { id: 'compliance', href: '/compliance', label: 'Compliance', icon: 'shield' }],
   ['keys', { id: 'keys', href: '/keys', label: 'API keys', icon: 'connect' }],
   ['tenancy', { id: 'tenancy', href: '/tenancy', label: 'Tenancy', icon: 'database' }],
+  ['providers', { id: 'providers', href: '/providers', label: 'Providers', icon: 'connect' }],
   ['audit', { id: 'audit', href: '/audit', label: 'Audit', icon: 'shield' }]
 ]);
 
@@ -191,6 +193,7 @@ export const PERSONAS: PersonaConfig[] = [
       'experiments',
       'population',
       'data',
+      'providers',
       'modeling',
       'models',
       'decisions',
@@ -217,6 +220,7 @@ export const PERSONAS: PersonaConfig[] = [
       'tenancy',
       'agents',
       'data',
+      'providers',
       'observability',
       'audit'
     ],

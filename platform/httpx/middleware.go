@@ -395,6 +395,10 @@ func requiredRole(method, path string) auth.Role {
 		return auth.RoleViewer
 	}
 	switch {
+	case strings.HasPrefix(path, "/v1/providers/") &&
+		(strings.HasSuffix(path, "/pause") || strings.HasSuffix(path, "/resume") ||
+			strings.HasSuffix(path, "/retire")):
+		return auth.RoleOperator
 	case strings.HasPrefix(path, "/v1/agent-deployments"), // governed agent rollout/rollback
 		strings.HasSuffix(path, "/releases/{release}/review"), // independent agent-release checker
 		strings.HasSuffix(path, "/releases/{release}/retire"), // remove an approved release
@@ -411,6 +415,9 @@ func requiredRole(method, path string) auth.Role {
 			strings.HasSuffix(path, "/retire"),
 		strings.HasPrefix(path, "/v1/modeling/artifacts/") &&
 			strings.HasSuffix(path, "/stage"),
+		strings.HasPrefix(path, "/v1/providers/") &&
+			(strings.HasSuffix(path, "/approve") || strings.HasSuffix(path, "/deploy") ||
+				strings.HasSuffix(path, "/upgrade")),
 		strings.HasPrefix(path, "/v1/models/") && strings.HasSuffix(path, "/retire"),
 		strings.HasPrefix(path, "/v1/authoring/changesets/") &&
 			(strings.HasSuffix(path, "/review") || strings.HasSuffix(path, "/publish")),
@@ -428,6 +435,7 @@ func requiredRole(method, path string) auth.Role {
 		path == "/v1/modeling/backfills",
 		strings.HasPrefix(path, "/v1/modeling/schemas"),
 		strings.HasPrefix(path, "/v1/modeling/datasets"),
+		strings.HasPrefix(path, "/v1/providers"),
 		isAuthoringPath(path),
 		// PATCHing a flow edits its details (name/description) — authoring, like create.
 		method == http.MethodPatch && strings.HasPrefix(path, "/v1/flows/"):
