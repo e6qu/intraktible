@@ -1134,3 +1134,13 @@ Linux, entirely that VM's fsync path.
   green across all nine jobs on the first run: Go race/security/license, real
   PostgreSQL, 142 native journeys, 89 real-Wasm journeys, four embedded-artifact
   journeys, real Shauth SSO, web, Terraform, and container contracts.
+- 2026-08-01: E8 audit + conformance harness on
+  `enterprise/e8-completion-audit`. Two real fixes from the audit: (1) the
+  provider conformance test endpoint (`POST /v1/providers/{name}/{version}/test`)
+  now actually fetches the backing connector under the declared timeout and
+  validates the response as JSON (via a `ConformanceTester` wired in the server
+  from the existing `connectors.Provider`), rather than recording a declared
+  boolean. (2) Provider health (`/v1/providers/health`) is now populated from
+  `context.connector_fetched` events: each connector fetch increments the
+  fetch/error counter for every deployed provider backed by that connector.
+  `make ci` exits 0; 142 native + 89 real-Wasm journeys, 254 frontend units.

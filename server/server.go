@@ -662,7 +662,9 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 
 	// Providers: versioned provider lifecycle (install → test → approve → deploy →
 	// pause/resume → upgrade → retire) per environment, plus health reads.
-	providersservice.New(providerscmd.NewHandler(log).WithNow(now), st).Routes(api)
+	providersSvc := providersservice.New(providerscmd.NewHandler(log).WithNow(now), st)
+	providersSvc.WithConformanceTester(connectorProvider)
+	providersSvc.Routes(api)
 
 	// Solution packs: signed, versioned, dependency-pinned pack manifests with an
 	// install/upgrade/rollback/retire lifecycle into the workspace.
