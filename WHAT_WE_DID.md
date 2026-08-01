@@ -1090,3 +1090,28 @@ Linux, entirely that VM's fsync path.
   PostgreSQL, 140 native journeys, 89 real-Wasm journeys, four embedded-artifact
   journeys, real Shauth SSO, web, Terraform, and container contracts. E7 is
   complete (tenant admin #167, HA scheduler #168, completion #169).
+- 2026-08-01: E8 first vertical on `enterprise/e8-ecosystem-solution-packs` —
+  the versioned provider lifecycle. New `providers/` bounded context (domain/
+  events/command/projection/service): immutable provider manifest versions with
+  a conformance contract (schema, idempotency, pagination, retries, timeout,
+  circuit breaker, cost), and an ordered per-environment lifecycle (install →
+  configure → conformance-test → four-eyes approve → deploy → pause/resume →
+  upgrade → retire). Deploy requires a passing test + approval + configuration;
+  approve is four-eyes (not the installer/author); upgrade moves an environment
+  to a newer approved version. RBAC pins (approve/deploy/upgrade approver,
+  install/configure/test editor, pause/resume/retire operator), OpenAPI, Go SDK
+  (`client/providers.go`), `intraktible providers` CLI, and an editor
+  `/providers` UI with health reads. Focused command (ordered-stage, four-eyes,
+  validation) and HTTP-e2e lifecycle tests plus a native browser journey pass;
+  `make ci` exits 0 (zero clone groups) and 141 native + 89 real-Wasm journeys,
+  254 frontend units are green.
+- 2026-08-01: E8 provider-lifecycle PR #170 exact-head hosted run `30699055302`
+  is green across all nine jobs on the first run: Go race/security/license,
+  real PostgreSQL, 141 native journeys, 89 real-Wasm journeys, four
+  embedded-artifact journeys, real Shauth SSO, web, Terraform, and container
+  contracts.
+- 2026-08-01: E8 provider-lifecycle PR #170 final hosted run `30700015349`
+  (`270c879`) is green across all nine jobs. The `go` job's race suite found a
+  latent modeling worker race (control error reported before the work context
+  cancelled); `watchJob` now cancels before reporting, and the fix passes 50
+  consecutive race runs.

@@ -2031,6 +2031,40 @@
         }
       }
     },
+    "/v1/providers": {
+      "get": { "tags": ["Providers"], "summary": "List provider manifest versions and lifecycle state", "responses": { "200": { "description": "Providers.", "content": { "application/json": { "schema": { "type": "object", "properties": { "providers": { "type": "array", "items": { "$ref": "#/components/schemas/ProviderView" } } } } } } }, "401": { "$ref": "#/components/responses/Error" } } },
+      "post": { "tags": ["Providers"], "summary": "Install a new immutable provider manifest version", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProviderInstall" } } } }, "responses": { "202": { "description": "Version installed.", "content": { "application/json": { "schema": { "type": "object", "properties": { "event_id": { "type": "string" }, "seq": { "type": "integer" }, "version": { "type": "integer" } } } } } }, "400": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/providers/health": {
+      "get": { "tags": ["Providers"], "summary": "List provider-environment operational health (fetches, errors, last success/error)", "responses": { "200": { "description": "Provider health.", "content": { "application/json": { "schema": { "type": "object", "properties": { "health": { "type": "array", "items": { "$ref": "#/components/schemas/ProviderHealth" } } } } } } }, "401": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/providers/{name}/{version}": {
+      "get": { "tags": ["Providers"], "summary": "Read one provider manifest version", "parameters": [{ "$ref": "#/components/parameters/ProviderName" }, { "$ref": "#/components/parameters/ProviderVersion" }], "responses": { "200": { "description": "Provider version.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProviderView" } } } }, "404": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/providers/{name}/{version}/configure": {
+      "post": { "tags": ["Providers"], "summary": "Configure a provider version for an environment", "parameters": [{ "$ref": "#/components/parameters/ProviderName" }, { "$ref": "#/components/parameters/ProviderVersion" }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProviderConfigure" } } } }, "responses": { "202": { "description": "Configured.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventAck" } } } }, "400": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/providers/{name}/{version}/test": {
+      "post": { "tags": ["Providers"], "summary": "Record a conformance test against a provider version", "parameters": [{ "$ref": "#/components/parameters/ProviderName" }, { "$ref": "#/components/parameters/ProviderVersion" }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProviderTest" } } } }, "responses": { "202": { "description": "Test recorded.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventAck" } } } }, "400": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/providers/{name}/{version}/approve": {
+      "post": { "tags": ["Providers"], "summary": "Approve a tested provider version for deployment (four-eyes)", "parameters": [{ "$ref": "#/components/parameters/ProviderName" }, { "$ref": "#/components/parameters/ProviderVersion" }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["request_id", "reason"], "properties": { "request_id": { "type": "string" }, "reason": { "type": "string" } } } } } }, "responses": { "202": { "description": "Approved.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventAck" } } } }, "400": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/providers/{name}/{version}/deploy": {
+      "post": { "tags": ["Providers"], "summary": "Deploy an approved provider version to an environment", "parameters": [{ "$ref": "#/components/parameters/ProviderName" }, { "$ref": "#/components/parameters/ProviderVersion" }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProviderEnvironment" } } } }, "responses": { "202": { "description": "Deployed.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventAck" } } } }, "400": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/providers/{name}/{version}/pause": {
+      "post": { "tags": ["Providers"], "summary": "Pause a deployed provider version", "parameters": [{ "$ref": "#/components/parameters/ProviderName" }, { "$ref": "#/components/parameters/ProviderVersion" }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProviderPause" } } } }, "responses": { "202": { "description": "Paused.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventAck" } } } }, "400": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/providers/{name}/{version}/resume": {
+      "post": { "tags": ["Providers"], "summary": "Resume a paused provider version", "parameters": [{ "$ref": "#/components/parameters/ProviderName" }, { "$ref": "#/components/parameters/ProviderVersion" }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProviderEnvironment" } } } }, "responses": { "202": { "description": "Resumed.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventAck" } } } }, "400": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/providers/{name}/upgrade": {
+      "post": { "tags": ["Providers"], "summary": "Upgrade an environment to a newer approved provider version", "parameters": [{ "$ref": "#/components/parameters/ProviderName" }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProviderUpgrade" } } } }, "responses": { "202": { "description": "Upgraded.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventAck" } } } }, "400": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/providers/{name}/{version}/retire": {
+      "post": { "tags": ["Providers"], "summary": "Retire a provider version from an environment", "parameters": [{ "$ref": "#/components/parameters/ProviderName" }, { "$ref": "#/components/parameters/ProviderVersion" }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProviderPause" } } } }, "responses": { "202": { "description": "Retired.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventAck" } } } }, "400": { "$ref": "#/components/responses/Error" } } }
+    },
     "/v1/preapprovals": {
       "get": {
         "summary": "List pre-approvals.",
@@ -5039,6 +5073,20 @@
         "required": true,
         "schema": { "type": "string" }
       },
+      "ProviderName": {
+        "name": "name",
+        "in": "path",
+        "required": true,
+        "description": "Provider name (URL-safe slug).",
+        "schema": { "type": "string" }
+      },
+      "ProviderVersion": {
+        "name": "version",
+        "in": "path",
+        "required": true,
+        "description": "Provider version (positive integer).",
+        "schema": { "type": "integer", "minimum": 1 }
+      },
       "OrgKey": {
         "name": "org",
         "in": "path",
@@ -6811,6 +6859,81 @@
         "properties": {
           "actor": { "type": "string" },
           "role": { "type": "string", "enum": ["viewer", "operator", "editor", "approver", "admin"] }
+        }
+      },
+      "ProviderInstall": {
+        "type": "object",
+        "required": ["connector", "description", "conformance"],
+        "properties": {
+          "connector": { "type": "string" },
+          "description": { "type": "string" },
+          "conformance": { "type": "object" }
+        }
+      },
+      "ProviderConfigure": {
+        "type": "object",
+        "required": ["environment", "config"],
+        "properties": {
+          "environment": { "type": "string", "enum": ["sandbox", "staging", "production"] },
+          "config": { "type": "object" }
+        }
+      },
+      "ProviderTest": {
+        "type": "object",
+        "required": ["passed"],
+        "properties": {
+          "passed": { "type": "boolean" },
+          "fixture": { "type": "string" },
+          "latency_ms": { "type": "integer" },
+          "details": { "type": "string" }
+        }
+      },
+      "ProviderEnvironment": {
+        "type": "object",
+        "required": ["environment"],
+        "properties": {
+          "environment": { "type": "string", "enum": ["sandbox", "staging", "production"] }
+        }
+      },
+      "ProviderPause": {
+        "type": "object",
+        "required": ["environment", "reason"],
+        "properties": {
+          "environment": { "type": "string", "enum": ["sandbox", "staging", "production"] },
+          "reason": { "type": "string" }
+        }
+      },
+      "ProviderUpgrade": {
+        "type": "object",
+        "required": ["to_version", "environment"],
+        "properties": {
+          "to_version": { "type": "integer", "minimum": 1 },
+          "environment": { "type": "string", "enum": ["sandbox", "staging", "production"] }
+        }
+      },
+      "ProviderView": {
+        "type": "object",
+        "properties": {
+          "org": { "type": "string" },
+          "workspace": { "type": "string" },
+          "name": { "type": "string" },
+          "version": { "type": "integer" },
+          "manifest": { "type": "object" },
+          "tested": { "type": "boolean" },
+          "approved": { "type": "boolean" },
+          "deployments": { "type": "object", "additionalProperties": { "type": "string" } },
+          "updated_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "ProviderHealth": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "environment": { "type": "string" },
+          "fetches": { "type": "integer" },
+          "errors": { "type": "integer" },
+          "last_success": { "type": "string" },
+          "last_error": { "type": "string" }
         }
       },
       "ShadowSetRequest": {

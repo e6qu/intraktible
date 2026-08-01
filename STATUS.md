@@ -10,8 +10,8 @@ Turn the whole-product capability audit into the detailed plan-of-record: map
 every key Builder, Developer, Agent Designer, Reviewer, Operator, Modeler,
 Validator, Admin, SRE, Domain Owner, and Executive journey to what is real and
 what remains, then carve the remaining work into serialized large-to-huge
-full-stack pull requests. The active implementation tranche is E7, production
-scale, tenancy, and disaster recovery.
+full-stack pull requests. The active implementation tranche is E8, ecosystem
+and regulated solution packs.
 
 ## Standing rules (user-issued, non-negotiable)
 
@@ -35,31 +35,36 @@ scale, tenancy, and disaster recovery.
 
 ## Phase
 
-**Enterprise E7 — production scale, tenancy, and disaster recovery is COMPLETE
-across three serialized verticals** (tenant admin #167 as `c9957b2`, HA
-scheduler #168 as `909da79`; both green across the full nine-job hosted
-matrix). E6 is merged (vertical #165 as `c560b1d`, journeys+audit #166 as
-`a40b184`). Fresh reconciliation found the open-PR queue empty and
-`enterprise/e7-scale-dr-isolation` was cut exactly from `909da79`.
+**Enterprise E7 — production scale, tenancy, and disaster recovery is COMPLETE**
+(tenant admin #167 as `c9957b2`, HA scheduler #168 as `909da79`, completion #169
+as `09c8e14`; all green across the full nine-job hosted matrix). E6 is merged
+(vertical #165 as `c560b1d`, journeys+audit #166 as `a40b184`). Fresh
+reconciliation found the open-PR queue empty and
+`enterprise/e8-ecosystem-solution-packs` was cut exactly from `09c8e14`.
 
-The E7 completion vertical is implemented on that branch: **scale, DR, network,
-and isolation**. `TestCrossTenantIsolation` proves one org cannot read/list
-another's flows/decisions/audit over the real HTTP API. `POST
-/v1/context/entities/bulk` and `/v1/context/events/bulk` ingest bounded
-1000-record batches with per-record results (the deferred E6 item). `intraktible
-backup`/`restore` stream the log as NDJSON and restore it byte-identically,
-proved by replay round-trip tests; docs/DR.md publishes RPO-zero and
-RTO-replay-time targets plus the consistency model. `platform/httpx.IPAllowlist`
-(INTRAKTIBLE_IP_ALLOWLIST) gates /v1 to configured CIDRs; `Backpressure`
-(INTRAKTIBLE_MAX_PROJECTION_LAG) sheds reads past a projection-lag bound while
-always admitting writes. `GET /capacity` publishes SLO/SLA evidence, and
-`httpx.Paginate`/`WritePage` add cursor pagination to the context entity/event
-lists. `make ci` exits 0 (zero clone groups); 140 native + 89 real-Wasm
-journeys and 254 frontend units are green. It is the sole open review item; E8
-(ecosystem and regulated solution packs) is the next tranche. **Deliberate
-narrowing:** the append-order partitioning item was resolved by publishing the
-consistency model rather than re-architecting the event spine — the current
-design already retains canonical order where replay safety requires it.
+The first E8 vertical is implemented on that branch: the **versioned provider
+lifecycle**. A new `providers/` bounded context makes provider manifests
+immutable versions with a conformance contract (schema/idempotency/pagination/
+retries/timeout/circuit-breaker/cost) and an ordered per-environment lifecycle
+(install → configure → conformance-test → four-eyes approve → deploy →
+pause/resume → upgrade → retire). Deploy requires a passing test + approval +
+configuration; approve is four-eyes (not the installer/author). RBAC pins,
+OpenAPI, Go SDK, `intraktible providers` CLI, and an editor `/providers` UI
+with health reads complete the surface. Focused command/HTTP-e2e lifecycle
+tests plus a native browser journey pass; `make ci` exits 0 (zero clone
+groups) and 141 native + 89 real-Wasm journeys and 254 frontend units are
+green. It is the sole open review item; remaining E8 slices (connector/provider
+SDK + conformance harness, out-of-process extension protocol, installable
+solution packs, real communication delivery, regulatory preparation boundaries)
+follow in serialized PRs.
+
+**Enterprise PR E5 — governed agentic operations and human/AI learning is
+merged.** Authoritative `origin/main` is merge commit `593eda9`, containing
+final E5 head `db0b8ca`. Exact-head hosted run `30596525530` passed all nine
+jobs: Go race/security/license, real PostgreSQL, 135 native browser journeys,
+86 real-Wasm journeys, four embedded-artifact journeys, real Shauth SSO, web,
+Terraform, and container contracts. PR #164 is merged, its remote branch was
+deleted, and fresh reconciliation found the open-PR queue empty.
 
 **Enterprise PR E5 — governed agentic operations and human/AI learning is
 merged.** Authoritative `origin/main` is merge commit `593eda9`, containing

@@ -1111,6 +1111,39 @@ export const HELP = new Map<string, PageHelp>([
     }
   ],
   [
+    '/providers',
+    {
+      title: 'Providers',
+      summary:
+        'Versioned provider manifests with a governed lifecycle: install, test, independent approval, deploy, pause/resume, upgrade, and retire per environment. Approval is four-eyes.',
+      capabilities: [
+        'Install a provider version with a schema, timeout, retry, and cost contract.',
+        'Configure and conformance-test a version before it can be approved.',
+        'Approve a tested version with an independent checker (four-eyes).',
+        'Deploy, pause/resume, upgrade, and retire per environment; watch health.'
+      ],
+      journeys: [
+        {
+          name: 'Install and deploy a provider',
+          steps: [
+            'Fill Name, Connector type, Description, and Schema JSON under Install a provider version.',
+            'Click Install version.',
+            'Click Test to record the conformance run, then Approve (independent checker).',
+            'Click Deploy prod to activate it in production.'
+          ]
+        },
+        {
+          name: 'Upgrade and retire a provider',
+          steps: [
+            'Install a new version and approve it, then click Upgrade to move production to it.',
+            'Pause a deployed version for maintenance, then Resume it.',
+            'Retire a version when it is out of service; it cannot be re-deployed.'
+          ]
+        }
+      ]
+    }
+  ],
+  [
     '/tenancy',
     {
       title: 'Tenant administration',

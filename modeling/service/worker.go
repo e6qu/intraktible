@@ -710,23 +710,26 @@ func (s *Service) watchJob(
 		case <-controlTicker.C:
 			job, found, err := modelprojection.ReadJob(ctx, s.store, id, jobID)
 			if err != nil {
-				out <- err
 				cancel()
+				out <- err
 				return
 			}
 			if !found {
-				out <- fmt.Errorf("modeling: active job %q disappeared", jobID)
 				cancel()
+				out <- fmt.Errorf("modeling: active job %q disappeared", jobID)
 				return
 			}
 			switch job.State {
 			case "pausing":
-				out <- errJobPauseRequested
+				// Cancel the work BEFORE reporting the control error, so the worker
+				// loop and any observer never sees the error before the work context
+				// is cancelled.
 				cancel()
+				out <- errJobPauseRequested
 				return
 			case "cancelling":
-				out <- errJobCancelRequested
 				cancel()
+				out <- errJobCancelRequested
 				return
 			}
 		case <-heartbeatTicker.C:

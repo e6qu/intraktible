@@ -91,6 +91,9 @@ import (
 	"github.com/e6qu/intraktible/platform/sharing"
 	"github.com/e6qu/intraktible/platform/store"
 	"github.com/e6qu/intraktible/platform/web"
+	providerscmd "github.com/e6qu/intraktible/providers/command"
+	providersprojection "github.com/e6qu/intraktible/providers/projection"
+	providersservice "github.com/e6qu/intraktible/providers/service"
 	"github.com/e6qu/intraktible/reconsideration"
 	"github.com/e6qu/intraktible/registers"
 	"github.com/e6qu/intraktible/retention"
@@ -653,6 +656,10 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 	// principals only) and org-level workspace/membership administration (org admins).
 	tenancyHandler := tenancycmd.NewHandler(log).WithNow(now)
 	tenancyservice.New(tenancyHandler, st, apiKeys).Routes(api)
+
+	// Providers: versioned provider lifecycle (install → test → approve → deploy →
+	// pause/resume → upgrade → retire) per environment, plus health reads.
+	providersservice.New(providerscmd.NewHandler(log).WithNow(now), st).Routes(api)
 	// Bootstrap the default organization as a governed tenancy entity on first boot
 	// (idempotent), so the platform org exists in the tenancy read model before any
 	// organization is created through the API.
@@ -1202,7 +1209,7 @@ func Projectors(modules string) []projection.Projector {
 	// Privacy masking config and the audit index are platform capabilities, projected
 	// regardless of which modules are enabled (so masking and the audit trail work in
 	// every profile). The audit projector re-indexes every event for tenant-scoped reads.
-	ps := []projection.Projector{privacy.Projector{}, comments.Projector{}, consent.Projector{}, sharing.Projector{}, jurisdiction.Projector{}, notifications.Projector{}, audit.Projector{}, tenancyprojection.Projector{},
+	ps := []projection.Projector{privacy.Projector{}, comments.Projector{}, consent.Projector{}, sharing.Projector{}, jurisdiction.Projector{}, notifications.Projector{}, audit.Projector{}, tenancyprojection.Projector{}, providersprojection.Projector{},
 		fairlending.ConfigProjector{}, fairlending.SettingsProjector{}, fairlending.IssuanceProjector{}, reconsideration.Projector{}, reconsideration.ContestProjector{}, modelingprojection.Projector{}}
 	if enabled(modules, "hello") {
 		ps = append(ps, stats.Projector{})

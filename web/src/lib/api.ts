@@ -8449,3 +8449,135 @@ export function revokeMembership(
     fetcher
   );
 }
+
+// ---------------------------------------------------------------------------
+// Providers (versioned provider lifecycle: install → test → approve → deploy).
+
+export interface ProviderConformance {
+  schema: string;
+  idempotency_header?: string;
+  supports_pagination?: boolean;
+  max_retries?: number;
+  timeout_seconds: number;
+  circuit_breaker_failure_threshold?: number;
+  cost_per_fetch_usd?: number;
+}
+
+export interface ProviderView {
+  org: string;
+  workspace: string;
+  name: string;
+  version: number;
+  manifest: {
+    name: string;
+    version: number;
+    connector: string;
+    description: string;
+    conformance: ProviderConformance;
+    defined_by: string;
+    defined_at: string;
+  };
+  configured?: Record<string, unknown>;
+  tested: boolean;
+  approved: boolean;
+  deployments?: Record<string, string>;
+  updated_at: string;
+}
+
+export interface ProviderHealth {
+  org: string;
+  workspace: string;
+  name: string;
+  environment: string;
+  fetches: number;
+  errors: number;
+  last_success?: string;
+  last_error?: string;
+}
+
+export function installProvider(
+  key: string,
+  request: {
+    name: string;
+    connector: string;
+    description: string;
+    conformance: ProviderConformance;
+  },
+  fetcher: typeof fetch = recordingFetch
+): Promise<{ event_id: string; seq: number; version: number }> {
+  return modelingJSON(key, '/v1/providers', 'POST', request, fetcher);
+}
+
+export function listProviders(
+  key: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<ProviderView[]> {
+  return modelingJSON<{ providers: ProviderView[] }>(
+    key,
+    '/v1/providers',
+    'GET',
+    undefined,
+    fetcher
+  ).then((result) => result.providers ?? []);
+}
+
+export function getProvider(
+  key: string,
+  name: string,
+  version: number,
+  fetcher: typeof fetch = recordingFetch
+): Promise<ProviderView> {
+  return modelingJSON(
+    key,
+    `/v1/providers/${encodeURIComponent(name)}/${version}`,
+    'GET',
+    undefined,
+    fetcher
+  );
+}
+
+export function providerAction(
+  key: string,
+  name: string,
+  version: number,
+  action: 'approve' | 'deploy' | 'pause' | 'resume' | 'retire' | 'test' | 'configure',
+  body: unknown,
+  fetcher: typeof fetch = recordingFetch
+): Promise<EventAck> {
+  return modelingJSON(
+    key,
+    `/v1/providers/${encodeURIComponent(name)}/${version}/${action}`,
+    'POST',
+    body,
+    fetcher
+  );
+}
+
+export function upgradeProvider(
+  key: string,
+  name: string,
+  toVersion: number,
+  environment: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<EventAck> {
+  return modelingJSON(
+    key,
+    `/v1/providers/${encodeURIComponent(name)}/upgrade`,
+    'POST',
+    { to_version: toVersion, environment },
+    fetcher
+  );
+}
+
+export function listProviderHealth(
+  key: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<ProviderHealth[]> {
+  return modelingJSON<{ health: ProviderHealth[] }>(
+    key,
+    '/v1/providers/health',
+    'GET',
+    undefined,
+    fetcher
+  ).then((result) => result.health ?? []);
+}

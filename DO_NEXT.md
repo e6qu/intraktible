@@ -16,30 +16,24 @@ DOC (a claim not backed by code).
 
 ## Queue
 
-1. **OPEN — Land the E7 completion vertical as one PR; then E8.** The remaining
-   E7 scope is implemented on `enterprise/e7-scale-dr-isolation`: cross-tenant
-   isolation evidence (`TestCrossTenantIsolation` over the real HTTP API), bulk
-   ingestion (`POST /v1/context/entities/bulk` + `/v1/context/events/bulk`,
-   bounded 1000-record batches with per-record results), portable disaster
-   recovery (`intraktible backup`/`restore`, NDJSON, byte-identical restore,
-   replay-tested), network policy (`platform/httpx.IPAllowlist`,
-   INTRAKTIBLE_IP_ALLOWLIST), projection backpressure (sheds reads past
-   INTRAKTIBLE_MAX_PROJECTION_LAG; writes always admitted), `GET /capacity`
-   (SLO/SLA evidence), `httpx.Paginate`/`WritePage` cursor pagination on the
-   context entity/event lists, and the published consistency model in
-   `docs/DR.md`. `make ci` exits 0; 140 native + 89 real-Wasm journeys, 254
-   frontend units, zero clone groups. It is the sole open review item; await
-   the user merge. **Deliberate narrowing (record in the PR body):** the
-   append-order partitioning item was resolved by *publishing* the consistency
-   model rather than re-architecting the event spine — the current design
-   (total order per log, per-tenant reads/replay/claims, single-writer
-   projection checkpoint, leader-elected sweeps) already satisfies PLAN §8b.8's
-   "retain canonical order where required"; sharding the seq would break replay
-   safety and is not required at this scale.
-2. **OPEN — E8 (ecosystem and regulated solution packs) is the next tranche.**
-   After this E7 completion merges, fetch and reconcile authoritative
-   `origin/main`, confirm the PR queue empty, and cut E8. Detailed boundaries
-   are in `PLAN.md` §8b.9.
+1. **OPEN — Land the E8 provider-lifecycle vertical as one PR, then continue E8's
+   remaining slices.** E7 is complete (tenant admin #167, HA scheduler #168,
+   completion #169, all merged). The first E8 vertical is implemented on
+   `enterprise/e8-ecosystem-solution-packs`: the **versioned provider lifecycle**
+   (`providers/` bounded context) — immutable manifest versions with a conformance
+   contract (schema/idempotency/pagination/retries/timeout/circuit/cost) and an
+   ordered per-environment lifecycle (install → configure → conformance-test →
+   four-eyes approve → deploy → pause/resume → upgrade → retire), RBAC pins,
+   OpenAPI, Go SDK, `intraktible providers` CLI, and an editor `/providers` UI
+   with health reads. `make ci` exits 0 (zero clone groups); 141 native incl. 1
+   provider journey, 89 real-Wasm, 254 frontend units. It is the sole open review
+   item; await the user merge. Remaining E8 scope (separate serialized PRs):
+   connector/provider SDK + conformance harness, out-of-process extension
+   protocol, installable solution packs (credit/fraud/AML/servicing), real
+   communication delivery, and regulatory preparation boundaries.
+2. **OPEN — E8 continuation after the provider lifecycle merges.** Fetch and
+   reconcile authoritative `origin/main`, confirm the PR queue empty, and cut the
+   next E8 slice. Detailed boundaries are in `PLAN.md` §8b.9.
 
 ---
 

@@ -1231,6 +1231,15 @@ remain incomplete.
 
 ### 8b.9 PR E8 — ecosystem and regulated solution packs
 
+**Status: IN PROGRESS** — the **versioned provider lifecycle** is delivered as the first serialized
+vertical: immutable provider manifest versions with a conformance contract (schema/idempotency/
+pagination/retries/timeout/circuit-breaker/cost) and an ordered per-environment lifecycle (install →
+configure → conformance-test → four-eyes approve → deploy → pause/resume → upgrade → retire), with
+RBAC pins, OpenAPI, Go/TypeScript SDK, CLI, an editor UI, and health reads. Remaining E8 slices
+(serialized PRs): connector/provider SDK + conformance harness, out-of-process extension protocol,
+installable solution packs (credit/fraud/AML/servicing), real communication delivery, and regulatory
+preparation boundaries.
+
 **Outcome:** teams can install, configure, validate, and operate complete credit, fraud, AML/KYB, and
 servicing journeys with maintained connectors and explicit human/external boundaries—without
 pretending a handful of adapters or demos is a data marketplace.
