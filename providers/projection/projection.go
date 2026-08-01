@@ -58,8 +58,12 @@ func (Projector) Collections() []string {
 	return []string{CollectionProviders, CollectionHealth}
 }
 
-// Apply folds one provider event into the read models.
+// Apply folds one provider event into the read models. It also processes
+// context.connector_fetched events to populate provider health.
 func (Projector) Apply(ctx context.Context, envelope eventlog.Envelope, st store.Store) error {
+	if envelope.Type == "context.connector_fetched" {
+		return applyConnectorFetch(ctx, envelope, st)
+	}
 	if envelope.Stream != events.StreamProviders {
 		return nil
 	}
@@ -197,6 +201,62 @@ func ts(envelope eventlog.Envelope) string {
 func decode(envelope eventlog.Envelope, payload any) error {
 	if err := json.Unmarshal(envelope.Payload, payload); err != nil {
 		return fmt.Errorf("providers projection: decode %s seq %d: %w", envelope.Type, envelope.Seq, err)
+	}
+	return nil
+}
+
+// connectorFetchedPayload mirrors context-layer's ConnectorFetched event.
+type connectorFetchedPayload struct {
+	FetchID   string          `json:"fetch_id"`
+	Connector string          `json:"connector"`
+	Response  json.RawMessage `json:"response"`
+}
+
+// applyConnectorFetch increments the health counter for the connector's
+// provider in every environment where it is deployed. A non-empty response is
+// a success; an empty or error-shaped response is an error.
+func applyConnectorFetch(ctx context.Context, envelope eventlog.Envelope, st store.Store) error {
+	var p connectorFetchedPayload
+	if err := json.Unmarshal(envelope.Payload, &p); err != nil {
+		return fmt.Errorf("providers projection: decode connector fetch seq %d: %w", envelope.Seq, err)
+	}
+	// Find all deployed provider versions for this connector in this tenant.
+	providers, err := store.QueryDocs(ctx, st, CollectionProviders,
+		store.Key(envelope.Org, envelope.Workspace, ""),
+		nil,
+		func(a, b ProviderView) bool { return a.Name < b.Name },
+	)
+	if err != nil {
+		return err
+	}
+	for _, pv := range providers {
+		if pv.Manifest.Connector != p.Connector {
+			continue
+		}
+		for env := range pv.Deployments {
+			if pv.Deployments[env] != "deployed" {
+				continue
+			}
+			key := store.Key(envelope.Org, envelope.Workspace, pv.Name+"/"+env)
+			health, _, err := store.GetDoc[HealthView](ctx, st, CollectionHealth, key)
+			if err != nil {
+				return err
+			}
+			health.Fetches++
+			if len(p.Response) == 0 || string(p.Response) == "null" {
+				health.Errors++
+				health.LastError = ts(envelope)
+			} else {
+				health.LastSuccess = ts(envelope)
+			}
+			health.Org = envelope.Org
+			health.Workspace = envelope.Workspace
+			health.Name = pv.Name
+			health.Environment = env
+			if err := store.PutDoc(ctx, st, CollectionHealth, key, health); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }

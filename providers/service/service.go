@@ -7,10 +7,12 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/httpx"
@@ -21,15 +23,31 @@ import (
 	"github.com/e6qu/intraktible/providers/projection"
 )
 
+// ConformanceTester fetches a connector under a timeout so the provider
+// conformance test endpoint can actually validate the runtime, not just record
+// a declared boolean. The connectors.Provider satisfies this interface.
+type ConformanceTester interface {
+	Fetch(ctx context.Context, id identity.Identity, connector string, params json.RawMessage) (json.RawMessage, error)
+}
+
 // Service is the providers HTTP shell.
 type Service struct {
-	cmd   *command.Handler
-	store store.Store
+	cmd    *command.Handler
+	store  store.Store
+	tester ConformanceTester
 }
 
 // New constructs a providers Service.
 func New(cmd *command.Handler, st store.Store) *Service {
 	return &Service{cmd: cmd, store: st}
+}
+
+// WithConformanceTester enables real connector fetches during the conformance
+// test. Without it, the test endpoint records the caller's declared evidence
+// (the test/single-node configuration).
+func (s *Service) WithConformanceTester(t ConformanceTester) *Service {
+	s.tester = t
+	return s
 }
 
 // Routes registers the provider lifecycle endpoints.
@@ -110,8 +128,60 @@ func (s *Service) configure(w http.ResponseWriter, r *http.Request) {
 
 func (s *Service) test(w http.ResponseWriter, r *http.Request) {
 	var request domain.TestEvidence
-	s.versionedAction(w, r, &request, func(id identity.Identity, version int) (eventlog.Envelope, error) {
-		return s.cmd.Test(r.Context(), id, r.PathValue("name"), version, request)
+	id, ok := httpx.Caller(w, r)
+	if !ok {
+		return
+	}
+	if err := httpx.DecodeJSON(r, &request); err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	version, err := pathVersion(r)
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	// When a conformance tester is wired, actually fetch the connector under
+	// the declared timeout and validate the response. This makes the conformance
+	// contract real rather than a declared boolean.
+	if s.tester != nil {
+		view, found, perr := readProvider(r.Context(), s.store, id, r.PathValue("name"), version)
+		if perr != nil || !found {
+			httpx.Error(w, http.StatusBadRequest, fmt.Errorf(
+				"providers: cannot test unknown %q v%d", r.PathValue("name"), version,
+			))
+			return
+		}
+		connector := view.Manifest.Connector
+		timeout := view.Manifest.Conformance.TimeoutSeconds
+		if timeout <= 0 {
+			timeout = 10
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), time.Duration(timeout)*time.Second)
+		defer cancel()
+		start := time.Now()
+		resp, ferr := s.tester.Fetch(ctx, id, connector, json.RawMessage(`{}`))
+		latency := time.Since(start).Milliseconds()
+		request.LatencyMs = latency
+		switch {
+		case ferr != nil:
+			request.Passed = false
+			request.Details = "conformance fetch failed: " + ferr.Error()
+		case !json.Valid(resp):
+			request.Passed = false
+			request.Details = "conformance response is not valid JSON"
+		default:
+			request.Passed = true
+			request.Details = "conformance fetch succeeded; response validated as JSON"
+		}
+	}
+	envelope, err := s.cmd.Test(r.Context(), id, r.PathValue("name"), version, request)
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	httpx.JSON(w, http.StatusAccepted, map[string]any{
+		"event_id": envelope.ID, "seq": envelope.Seq,
 	})
 }
 

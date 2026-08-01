@@ -13,13 +13,25 @@ test('an integration owner installs, tests, approves, and deploys a provider', a
 }) => {
   const suffix = Math.random().toString(36).slice(2, 8);
   const name = `e2e-provider-${suffix}`;
+  const connectorName = `e2e-connector-${suffix}`;
 
-  // Install a provider version through the real API.
+  // Define a static connector (returns a fixed response) so the conformance
+  // test can actually fetch it.
+  await request.post('/v1/context/connectors', {
+    headers: { 'X-Api-Key': KEY },
+    data: {
+      name: connectorName,
+      type: 'static',
+      config: { data: '{"score":750}' }
+    }
+  });
+
+  // Install a provider version backed by that connector.
   const install = await request.post('/v1/providers', {
     headers: { 'X-Api-Key': KEY },
     data: {
       name,
-      connector: 'credit-bureau',
+      connector: connectorName,
       description: `E2E provider ${suffix}`,
       conformance: {
         schema: '{"type":"object","properties":{"score":{"type":"number"}}}',
