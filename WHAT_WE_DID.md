@@ -1130,3 +1130,7 @@ Linux, entirely that VM's fsync path.
   and HTTP-e2e lifecycle tests plus a native browser journey pass; `make ci`
   exits 0 (zero clone groups) and 142 native + 89 real-Wasm journeys, 254
   frontend units are green.
+- 2026-08-01: E8 solution-packs PR #171 exact-head hosted run `30702186149` is
+  green across all nine jobs on the first run: Go race/security/license, real
+  PostgreSQL, 142 native journeys, 89 real-Wasm journeys, four embedded-artifact
+  journeys, real Shauth SSO, web, Terraform, and container contracts.
