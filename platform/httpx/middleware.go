@@ -395,6 +395,8 @@ func requiredRole(method, path string) auth.Role {
 		return auth.RoleViewer
 	}
 	switch {
+	case strings.HasPrefix(path, "/v1/packs/") && strings.HasSuffix(path, "/retire"):
+		return auth.RoleOperator
 	case strings.HasPrefix(path, "/v1/providers/") &&
 		(strings.HasSuffix(path, "/pause") || strings.HasSuffix(path, "/resume") ||
 			strings.HasSuffix(path, "/retire")):
@@ -436,6 +438,7 @@ func requiredRole(method, path string) auth.Role {
 		strings.HasPrefix(path, "/v1/modeling/schemas"),
 		strings.HasPrefix(path, "/v1/modeling/datasets"),
 		strings.HasPrefix(path, "/v1/providers"),
+		strings.HasPrefix(path, "/v1/packs"),
 		isAuthoringPath(path),
 		// PATCHing a flow edits its details (name/description) — authoring, like create.
 		method == http.MethodPatch && strings.HasPrefix(path, "/v1/flows/"):

@@ -71,6 +71,8 @@ func main() {
 		err = tenancyCmd(os.Args[2:])
 	case "providers":
 		err = providersCmd(os.Args[2:])
+	case "packs":
+		err = packsCmd(os.Args[2:])
 	default:
 		usage()
 	}
@@ -83,7 +85,7 @@ func main() {
 func usage() {
 	fmt.Fprintln(
 		os.Stderr,
-		"usage: intraktible <serve|log|replay|backup|restore|export|authoring|agents|modeling|tenancy|providers> [flags]",
+		"usage: intraktible <serve|log|replay|backup|restore|export|authoring|agents|modeling|tenancy|providers|packs> [flags]",
 	)
 	os.Exit(2)
 }

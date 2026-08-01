@@ -35,28 +35,28 @@ and regulated solution packs.
 
 ## Phase
 
-**Enterprise E7 — production scale, tenancy, and disaster recovery is COMPLETE**
-(tenant admin #167 as `c9957b2`, HA scheduler #168 as `909da79`, completion #169
-as `09c8e14`; all green across the full nine-job hosted matrix). E6 is merged
-(vertical #165 as `c560b1d`, journeys+audit #166 as `a40b184`). Fresh
-reconciliation found the open-PR queue empty and
-`enterprise/e8-ecosystem-solution-packs` was cut exactly from `09c8e14`.
+**Enterprise E8 — ecosystem and regulated solution packs is IN PROGRESS.** The
+provider lifecycle (#170) is merged as `e36dfa6`; E7 is complete (tenant admin
+#167 as `c9957b2`, HA scheduler #168 as `909da79`, completion #169 as `09c8e14`)
+and E6 is merged (vertical #165 as `c560b1d`, journeys+audit #166 as `a40b184`),
+all green across the full nine-job hosted matrix. Fresh reconciliation found the
+open-PR queue empty and `enterprise/e8-solution-packs` was cut exactly from
+`e36dfa6`.
 
-The first E8 vertical is implemented on that branch: the **versioned provider
-lifecycle**. A new `providers/` bounded context makes provider manifests
-immutable versions with a conformance contract (schema/idempotency/pagination/
-retries/timeout/circuit-breaker/cost) and an ordered per-environment lifecycle
-(install → configure → conformance-test → four-eyes approve → deploy →
-pause/resume → upgrade → retire). Deploy requires a passing test + approval +
-configuration; approve is four-eyes (not the installer/author). RBAC pins,
-OpenAPI, Go SDK, `intraktible providers` CLI, and an editor `/providers` UI
-with health reads complete the surface. Focused command/HTTP-e2e lifecycle
-tests plus a native browser journey pass; `make ci` exits 0 (zero clone
-groups) and 141 native + 89 real-Wasm journeys and 254 frontend units are
-green. It is the sole open review item; remaining E8 slices (connector/provider
-SDK + conformance harness, out-of-process extension protocol, installable
-solution packs, real communication delivery, regulatory preparation boundaries)
-follow in serialized PRs.
+The solution-packs vertical is implemented on that branch: **installable
+solution packs**. A new `packs/` bounded context makes packs signed, versioned,
+dependency-pinned manifests bundling governed artifacts (flows/policies/models/
+case-types/experiments/reason codes/retention/provider mappings), with an
+install/upgrade/rollback/retire lifecycle. Install checks dependencies (a pack
+dependency requires the named pack installed at the pinned version; a provider
+dependency requires the provider deployed in production); upgrade requires a
+declared upgrade path. RBAC pins, OpenAPI, Go SDK, `intraktible packs` CLI, and
+an editor `/packs` UI complete the surface. Focused command/HTTP-e2e lifecycle
+tests plus a native browser journey pass; `make ci` exits 0 (zero clone groups)
+and 142 native + 89 real-Wasm journeys and 254 frontend units are green. It is
+the sole open review item; remaining E8 slices (connector/provider SDK +
+conformance harness, out-of-process extension protocol, real communication
+delivery, regulatory preparation boundaries) follow in serialized PRs.
 
 **Enterprise PR E5 — governed agentic operations and human/AI learning is
 merged.** Authoritative `origin/main` is merge commit `593eda9`, containing

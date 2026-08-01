@@ -1115,3 +1115,22 @@ Linux, entirely that VM's fsync path.
   latent modeling worker race (control error reported before the work context
   cancelled); `watchJob` now cancels before reporting, and the fix passes 50
   consecutive race runs.
+- 2026-08-01: E8 solution-packs vertical on `enterprise/e8-solution-packs` —
+  installable solution packs. New `packs/` bounded context (domain/events/
+  command/projection/service): signed, versioned, dependency-pinned pack
+  manifests bundling governed artifacts (flows/policies/models/case-types/
+  experiments/reason codes/retention/provider mappings), with an
+  install/upgrade/rollback/retire lifecycle. Install checks dependencies (a
+  pack dependency requires the named pack installed at the pinned version; a
+  provider dependency requires the provider deployed in production); upgrade
+  requires a declared upgrade path; rollback reverts to a prior version.
+  RBAC pins (define/install/upgrade/rollback editor, retire operator), OpenAPI,
+  Go SDK (`client/packs.go`), `intraktible packs` CLI, and an editor `/packs`
+  UI. Focused command (lifecycle, dependency enforcement, manifest validation)
+  and HTTP-e2e lifecycle tests plus a native browser journey pass; `make ci`
+  exits 0 (zero clone groups) and 142 native + 89 real-Wasm journeys, 254
+  frontend units are green.
+- 2026-08-01: E8 solution-packs PR #171 exact-head hosted run `30702186149` is
+  green across all nine jobs on the first run: Go race/security/license, real
+  PostgreSQL, 142 native journeys, 89 real-Wasm journeys, four embedded-artifact
+  journeys, real Shauth SSO, web, Terraform, and container contracts.

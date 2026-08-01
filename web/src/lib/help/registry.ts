@@ -1144,6 +1144,30 @@ export const HELP = new Map<string, PageHelp>([
     }
   ],
   [
+    '/packs',
+    {
+      title: 'Solution packs',
+      summary:
+        'Installable solution packs: signed, versioned, dependency-pinned pack manifests bundling governed artifacts, with install → upgrade → rollback → retire.',
+      capabilities: [
+        'Define a solution pack with a name, title, description, signature, and bundled artifacts.',
+        'Install a defined version into the workspace (dependencies are checked).',
+        'Upgrade along a declared path, roll back to a prior version, or retire.'
+      ],
+      journeys: [
+        {
+          name: 'Install and upgrade a pack',
+          steps: [
+            'Fill Name, Title, Description, Signature, and Bundled flow id under Define a solution pack.',
+            'Click Define version, then Install.',
+            'Define a newer version, then Upgrade to move the workspace to it.',
+            'Roll back to the prior version, or Retire when out of service.'
+          ]
+        }
+      ]
+    }
+  ],
+  [
     '/tenancy',
     {
       title: 'Tenant administration',

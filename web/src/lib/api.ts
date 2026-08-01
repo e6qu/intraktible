@@ -8581,3 +8581,95 @@ export function listProviderHealth(
     fetcher
   ).then((result) => result.health ?? []);
 }
+
+// ---------------------------------------------------------------------------
+// Solution packs (signed, versioned, dependency-pinned pack manifests).
+
+export interface PackArtifact {
+  kind: string;
+  id: string;
+  content: Record<string, unknown>;
+}
+
+export interface PackDependency {
+  kind: 'provider' | 'pack';
+  name: string;
+  version: number;
+}
+
+export interface PackManifest {
+  name: string;
+  title: string;
+  description: string;
+  signature: string;
+  artifacts: PackArtifact[];
+  dependencies?: PackDependency[];
+  sample_data?: boolean;
+  upgrade_from?: number[];
+}
+
+export interface PackView {
+  org: string;
+  workspace: string;
+  name: string;
+  manifests: Record<number, PackManifest>;
+  installed: number;
+  retired: boolean;
+  updated_at: string;
+}
+
+export function definePack(
+  key: string,
+  manifest: PackManifest,
+  fetcher: typeof fetch = recordingFetch
+): Promise<{ event_id: string; seq: number; version: number }> {
+  return modelingJSON(key, '/v1/packs', 'POST', manifest, fetcher);
+}
+
+export function listPacks(
+  key: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<PackView[]> {
+  return modelingJSON<{ packs: PackView[] }>(key, '/v1/packs', 'GET', undefined, fetcher).then(
+    (result) => result.packs ?? []
+  );
+}
+
+export function getPack(
+  key: string,
+  name: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<PackView> {
+  return modelingJSON(key, `/v1/packs/${encodeURIComponent(name)}`, 'GET', undefined, fetcher);
+}
+
+export function packAction(
+  key: string,
+  name: string,
+  action: 'install' | 'upgrade' | 'rollback',
+  version: number,
+  fetcher: typeof fetch = recordingFetch
+): Promise<EventAck> {
+  return modelingJSON(
+    key,
+    `/v1/packs/${encodeURIComponent(name)}/${action}`,
+    'POST',
+    { version },
+    fetcher
+  );
+}
+
+export function retirePack(
+  key: string,
+  name: string,
+  reason: string,
+  fetcher: typeof fetch = recordingFetch
+): Promise<EventAck> {
+  return modelingJSON(
+    key,
+    `/v1/packs/${encodeURIComponent(name)}/retire`,
+    'POST',
+    { reason },
+    fetcher
+  );
+}

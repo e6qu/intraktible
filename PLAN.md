@@ -1231,14 +1231,15 @@ remain incomplete.
 
 ### 8b.9 PR E8 — ecosystem and regulated solution packs
 
-**Status: IN PROGRESS** — the **versioned provider lifecycle** is delivered as the first serialized
-vertical: immutable provider manifest versions with a conformance contract (schema/idempotency/
-pagination/retries/timeout/circuit-breaker/cost) and an ordered per-environment lifecycle (install →
-configure → conformance-test → four-eyes approve → deploy → pause/resume → upgrade → retire), with
-RBAC pins, OpenAPI, Go/TypeScript SDK, CLI, an editor UI, and health reads. Remaining E8 slices
+**Status: IN PROGRESS** — two serialized verticals delivered. (1) The **versioned provider
+lifecycle**: immutable provider manifest versions with a conformance contract and an ordered
+per-environment lifecycle (install → test → four-eyes approve → deploy → pause/resume → upgrade →
+retire). (2) **Installable solution packs**: signed, versioned, dependency-pinned pack manifests
+bundling governed artifacts (flows/policies/models/case-types/experiments/reason codes/retention/
+provider mappings), with an install/upgrade/rollback/retire lifecycle and dependency enforcement at
+install. Both share RBAC pins, OpenAPI, Go/TypeScript SDK, CLI, and editor UIs. Remaining E8 slices
 (serialized PRs): connector/provider SDK + conformance harness, out-of-process extension protocol,
-installable solution packs (credit/fraud/AML/servicing), real communication delivery, and regulatory
-preparation boundaries.
+real communication delivery, and regulatory preparation boundaries.
 
 **Outcome:** teams can install, configure, validate, and operate complete credit, fraud, AML/KYB, and
 servicing journeys with maintained connectors and explicit human/external boundaries—without
