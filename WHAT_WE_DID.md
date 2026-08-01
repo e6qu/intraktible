@@ -1110,3 +1110,8 @@ Linux, entirely that VM's fsync path.
   real PostgreSQL, 141 native journeys, 89 real-Wasm journeys, four
   embedded-artifact journeys, real Shauth SSO, web, Terraform, and container
   contracts.
+- 2026-08-01: E8 provider-lifecycle PR #170 final hosted run `30700015349`
+  (`270c879`) is green across all nine jobs. The `go` job's race suite found a
+  latent modeling worker race (control error reported before the work context
+  cancelled); `watchJob` now cancels before reporting, and the fix passes 50
+  consecutive race runs.
