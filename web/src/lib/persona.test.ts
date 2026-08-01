@@ -52,6 +52,7 @@ describe('persona config', () => {
       'agents',
       'data',
       'providers',
+      'packs',
       'observability',
       'audit'
     ]);

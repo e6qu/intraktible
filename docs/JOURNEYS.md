@@ -739,6 +739,20 @@ Spans: **Providers** (`/providers`), CLI (`intraktible providers`).
    newer approved version, and **retire** when out of service. Outcome: a governed
    provider lifecycle per environment, with health (fetches, errors) visible.
 
+### Install and upgrade a solution pack
+
+Spans: **Solution packs** (`/packs`), CLI (`intraktible packs`).
+
+1. Define a pack: name, title, description, signature, and bundled artifacts
+   (flows, policies, models, case types, and more). Outcome: a signed, versioned,
+   dependency-pinned pack manifest.
+2. Install it into the workspace. Dependencies are checked at install — a required
+   pack must be installed at its pinned version, a required provider deployed in
+   production. Outcome: the pack's artifacts active in the workspace.
+3. Define a newer version and **upgrade** along the declared path, or **roll back**
+   to a prior version. Retire when out of service. Outcome: a governed pack
+   lifecycle with rollback.
+
 ---
 
 ## By persona
