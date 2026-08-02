@@ -1132,6 +1132,15 @@ func normalizeProcessRole(role string) (string, error) {
 // preflight refuses to boot on config that is unsafe for production. It is a no-op
 // outside production so local dev stays permissive; in production it fails loud
 // (the repo's no-fallbacks rule) rather than silently serving an insecure system.
+// CheckProductionConfig runs the boot-time preflight without starting anything,
+// so a build pipeline can refuse a release whose deployment contract changed
+// before someone else's deployment discovers it. It deliberately delegates to
+// the same preflight the server runs: a second copy of these rules would pass
+// while production refused to boot, which is the failure this exists to catch.
+func CheckProductionConfig(cfg Config, encryptionEnabled bool) error {
+	return preflight(cfg, encryptionEnabled)
+}
+
 func preflight(cfg Config, encryptionEnabled bool) error {
 	if !strings.EqualFold(cfg.Env, "production") {
 		return nil
