@@ -1231,15 +1231,17 @@ remain incomplete.
 
 ### 8b.9 PR E8 — ecosystem and regulated solution packs
 
-**Status: IN PROGRESS** — two serialized verticals delivered. (1) The **versioned provider
-lifecycle**: immutable provider manifest versions with a conformance contract and an ordered
-per-environment lifecycle (install → test → four-eyes approve → deploy → pause/resume → upgrade →
-retire). (2) **Installable solution packs**: signed, versioned, dependency-pinned pack manifests
-bundling governed artifacts (flows/policies/models/case-types/experiments/reason codes/retention/
-provider mappings), with an install/upgrade/rollback/retire lifecycle and dependency enforcement at
-install. Both share RBAC pins, OpenAPI, Go/TypeScript SDK, CLI, and editor UIs. Remaining E8 slices
-(serialized PRs): connector/provider SDK + conformance harness, out-of-process extension protocol,
-real communication delivery, and regulatory preparation boundaries.
+**Status: DELIVERED** — five serialized verticals (PRs #170–#174 + final). (1) **Versioned provider
+lifecycle**: immutable provider manifest versions with a conformance contract and an ordered per-
+environment lifecycle (install → test → four-eyes approve → deploy → pause/resume → upgrade → retire),
+plus real conformance testing (actual connector fetch + JSON validation) and provider health from
+connector fetch events. (2) **Installable solution packs**: signed, versioned, dependency-pinned pack
+manifests with install/upgrade/rollback/retire and dependency enforcement. (3) **Out-of-process
+extension protocol**: a new `extension` connector type that POSTs to a trusted VPC-internal HTTP
+endpoint — no third-party code runs inside the API/decision process. (4) **Governed communication
+channels**: webhook/email/SMS/in-app delivery channels with lifecycle and delivery evidence. (5)
+**Regulatory preparation boundaries**: `EvidenceSource` (platform/human/external) on case evidence
+requirements. All share RBAC pins, OpenAPI, Go/TypeScript SDK, CLI, and editor UIs.
 
 **Outcome:** teams can install, configure, validate, and operate complete credit, fraud, AML/KYB, and
 servicing journeys with maintained connectors and explicit human/external boundaries—without

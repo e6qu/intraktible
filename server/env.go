@@ -282,6 +282,13 @@ func oidcNames(as []*auth.OIDCAuthenticator) []string {
 	return out
 }
 
+// oidcProviderNames returns the configured OIDC provider names, mirroring
+// oidcNames but on the server package so the browser-gate entry point can
+// decide whether to auto-initiate SSO.
+func oidcProviderNames(as []*auth.OIDCAuthenticator) []string {
+	return oidcNames(as)
+}
+
 // scimRoleAugmenter raises a verified user's role to the highest role mapped
 // from their SCIM group memberships (never below the token-derived base).
 func scimRoleAugmenter(users *scim.Store, groupRoles map[string]auth.Role) httpx.RoleAugmenter {
