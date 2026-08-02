@@ -475,6 +475,8 @@ func build(def ConnectorView, egress EgressPolicy) (Connector, error) {
 		return newSanctions(def.Config)
 	case domain.ConnectorMockBureau:
 		return mockBureau{}, nil
+	case domain.ConnectorExtension:
+		return newExtension(def.Config, egress)
 	default:
 		return nil, fmt.Errorf("context-layer: connector %q has unsupported type %q", def.Name, def.Type)
 	}

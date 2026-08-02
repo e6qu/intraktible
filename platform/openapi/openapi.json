@@ -1831,6 +1831,28 @@
     "/v1/platform/orgs/{org}/delete": {
       "post": { "tags": ["Tenancy"], "summary": "Delete an organization (platform principal only; blocked while active workspaces exist)", "parameters": [{ "$ref": "#/components/parameters/OrgKey" }], "requestBody": { "$ref": "#/components/requestBodies/Reason" }, "responses": { "202": { "description": "Organization deleted.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventAck" } } } }, "400": { "$ref": "#/components/responses/Error" } } }
     },
+    "/v1/comms/channels": {
+      "get": { "tags": ["Comms"], "summary": "List communication channels", "responses": { "200": { "description": "Channels." }, "401": { "$ref": "#/components/responses/Error" } } },
+      "post": { "tags": ["Comms"], "summary": "Create a communication channel (webhook/email/SMS/in-app)", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CommsChannel" } } } }, "responses": { "202": { "description": "Channel created.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventAck" } } } }, "400": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/comms/channels/{name}": {
+      "get": { "tags": ["Comms"], "summary": "Read one communication channel", "parameters": [{ "$ref": "#/components/parameters/CommsChannelName" }], "responses": { "200": { "description": "Channel." }, "404": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/comms/channels/{name}/update": {
+      "post": { "tags": ["Comms"], "summary": "Update channel config", "parameters": [{ "$ref": "#/components/parameters/CommsChannelName" }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "config": { "type": "object" } } } } } }, "responses": { "202": { "description": "Updated.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventAck" } } } }, "400": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/comms/channels/{name}/pause": {
+      "post": { "tags": ["Comms"], "summary": "Pause a channel", "parameters": [{ "$ref": "#/components/parameters/CommsChannelName" }], "requestBody": { "$ref": "#/components/requestBodies/Reason" }, "responses": { "202": { "description": "Paused.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventAck" } } } }, "400": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/comms/channels/{name}/resume": {
+      "post": { "tags": ["Comms"], "summary": "Resume a paused channel", "parameters": [{ "$ref": "#/components/parameters/CommsChannelName" }], "responses": { "202": { "description": "Resumed.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventAck" } } } }, "400": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/comms/channels/{name}/retire": {
+      "post": { "tags": ["Comms"], "summary": "Retire a channel", "parameters": [{ "$ref": "#/components/parameters/CommsChannelName" }], "requestBody": { "$ref": "#/components/requestBodies/Reason" }, "responses": { "202": { "description": "Retired.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventAck" } } } }, "400": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/comms/channels/{name}/deliver": {
+      "post": { "tags": ["Comms"], "summary": "Record a delivery attempt on a channel", "parameters": [{ "$ref": "#/components/parameters/CommsChannelName" }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "evidence": { "type": "object", "properties": { "outcome": { "type": "string", "enum": ["delivered", "retryable", "failed"] }, "details": { "type": "string" }, "attempt": { "type": "integer" } } } } } } } }, "responses": { "202": { "description": "Delivery recorded.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventAck" } } } }, "400": { "$ref": "#/components/responses/Error" } } }
+    },
     "/v1/packs": {
       "get": { "tags": ["Packs"], "summary": "List solution packs and their install state", "responses": { "200": { "description": "Packs.", "content": { "application/json": { "schema": { "type": "object", "properties": { "packs": { "type": "array", "items": { "$ref": "#/components/schemas/PackView" } } } } } } }, "401": { "$ref": "#/components/responses/Error" } } },
       "post": { "tags": ["Packs"], "summary": "Define a new immutable solution-pack manifest version", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PackManifest" } } } }, "responses": { "202": { "description": "Version defined.", "content": { "application/json": { "schema": { "type": "object", "properties": { "event_id": { "type": "string" }, "seq": { "type": "integer" }, "version": { "type": "integer" } } } } } }, "400": { "$ref": "#/components/responses/Error" } } }
@@ -5092,6 +5114,13 @@
         "required": true,
         "schema": { "type": "string" }
       },
+      "CommsChannelName": {
+        "name": "name",
+        "in": "path",
+        "required": true,
+        "description": "Channel name.",
+        "schema": { "type": "string" }
+      },
       "PackName": {
         "name": "name",
         "in": "path",
@@ -6960,6 +6989,26 @@
           "errors": { "type": "integer" },
           "last_success": { "type": "string" },
           "last_error": { "type": "string" }
+        }
+      },
+      "CommsChannel": {
+        "type": "object",
+        "required": ["name", "kind"],
+        "properties": {
+          "name": { "type": "string" },
+          "kind": { "type": "string", "enum": ["webhook", "email", "sms", "in_app"] },
+          "config": { "type": "object" },
+          "owner": { "type": "string" }
+        }
+      },
+      "CommsChannelView": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "kind": { "type": "string" },
+          "config": { "type": "object" },
+          "status": { "type": "string" },
+          "updated_at": { "type": "string", "format": "date-time" }
         }
       },
       "PackManifest": {
