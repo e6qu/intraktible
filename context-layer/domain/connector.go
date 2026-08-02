@@ -29,6 +29,7 @@ const (
 	ConnectorStripe       ConnectorType = "stripe"
 	ConnectorCreditBureau ConnectorType = "credit_bureau"
 	ConnectorSanctions    ConnectorType = "sanctions"
+	ConnectorExtension    ConnectorType = "extension"
 )
 
 var connectorTypes = map[ConnectorType]bool{
@@ -41,6 +42,7 @@ var connectorTypes = map[ConnectorType]bool{
 	ConnectorStripe:       true,
 	ConnectorCreditBureau: true,
 	ConnectorSanctions:    true,
+	ConnectorExtension:    true,
 }
 
 // Valid reports whether t is a known connector type.
@@ -69,7 +71,7 @@ func (c DefineConnector) Validate() error {
 		return errors.New("context-layer: connector name is required")
 	}
 	if !c.Type.Valid() {
-		return fmt.Errorf("context-layer: unknown connector type %q (http|graphql|sql|static|plaid|stripe|credit_bureau|sanctions|mock_bureau)", c.Type)
+		return fmt.Errorf("context-layer: unknown connector type %q (http|graphql|sql|static|plaid|stripe|credit_bureau|sanctions|mock_bureau|extension)", c.Type)
 	}
 	return validJSONObject("config", c.Config)
 }

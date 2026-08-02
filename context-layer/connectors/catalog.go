@@ -25,6 +25,10 @@ type Template struct {
 // integrations. It is static data — instantiating one is an ordinary
 // DefineConnector with the (edited) scaffold config.
 func Catalog() []Template {
+	return append(builtinCatalog(), extensionTemplates()...)
+}
+
+func builtinCatalog() []Template {
 	return []Template{
 		{
 			ID: "rest", Name: "HTTP REST", Category: "Generic", Type: "http",
@@ -155,6 +159,22 @@ func Catalog() []Template {
 			ID: "stripe", Name: "Stripe (payments)", Category: "Payments", Type: "stripe",
 			Description: "First-class Stripe read adapter. The secret key is sealed and sent as a bearer token; set the resource path (params become the query).",
 			Config:      json.RawMessage(`{"secret_key":"","path":"/v1/charges"}`),
+		},
+	}
+}
+
+// Extension templates live in a separate append so they can be added without
+// disturbing the original catalog order. The extension type is the
+// out-of-process protocol: no third-party code runs inside the API process.
+func extensionTemplates() []Template {
+	return []Template{
+		{
+			ID:          "extension",
+			Name:        "Out-of-process extension",
+			Category:    "Extension",
+			Type:        "extension",
+			Description: "A trusted HTTP endpoint inside your VPC that receives the caller's tenant identity and the Connect-node params, and returns a JSON response. The extension owns its own auth; the platform never carries credentials in its config. This is the out-of-process extension protocol — no third-party code runs inside the API/decision process.",
+			Config:      json.RawMessage(`{"url":"https://extension.internal:8443/fetch","timeout_seconds":10}`),
 		},
 	}
 }
