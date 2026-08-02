@@ -51,6 +51,8 @@ func main() {
 	switch os.Args[1] {
 	case "serve":
 		err = serveCmd(os.Args[2:])
+	case "check-config":
+		err = checkConfigCmd(os.Args[2:])
 	case "log":
 		err = logCmd(os.Args[2:])
 	case "replay":
@@ -85,7 +87,7 @@ func main() {
 func usage() {
 	fmt.Fprintln(
 		os.Stderr,
-		"usage: intraktible <serve|log|replay|backup|restore|export|authoring|agents|modeling|tenancy|providers|packs> [flags]",
+		"usage: intraktible <serve|check-config|log|replay|backup|restore|export|authoring|agents|modeling|tenancy|providers|packs> [flags]",
 	)
 	os.Exit(2)
 }
