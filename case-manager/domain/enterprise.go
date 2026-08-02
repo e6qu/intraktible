@@ -113,13 +113,41 @@ func (k EvidenceKind) Linkable() bool {
 	return k.Valid() && k != EvidenceAttachment
 }
 
+// EvidenceSource classifies WHO produced a piece of linked evidence, so a
+// compliance owner can distinguish platform-computed evidence (a decision
+// trace, a model score), a human approval (a reviewer signature), and an
+// external acceptance (a bureau acknowledgment, a filed document). This is the
+// regulatory preparation boundary from PLAN §8b.9.
+type EvidenceSource string
+
+const (
+	// EvidencePlatform is auto-computed by the platform (a decision trace, a
+	// drift metric, a model lineage hash).
+	EvidencePlatform EvidenceSource = "platform"
+	// EvidenceHuman is a human review or approval (a case reviewer's sign-off,
+	// a reconsideration outcome, an independent validation).
+	EvidenceHuman EvidenceSource = "human"
+	// EvidenceExternal is a third-party submission or acknowledgment (a bureau
+	// response, a filed notice, a regulator submission receipt).
+	EvidenceExternal EvidenceSource = "external"
+)
+
+func (s EvidenceSource) Valid() bool {
+	switch s {
+	case EvidencePlatform, EvidenceHuman, EvidenceExternal:
+		return true
+	}
+	return false
+}
+
 // EvidenceRequirement declares evidence that must be linked before a terminal
 // disposition may be recorded.
 type EvidenceRequirement struct {
-	Key      string   `json:"key"`
-	Label    string   `json:"label"`
-	Kinds    []string `json:"kinds"`
-	Required bool     `json:"required,omitempty"`
+	Key      string         `json:"key"`
+	Label    string         `json:"label"`
+	Kinds    []string       `json:"kinds"`
+	Source   EvidenceSource `json:"source,omitempty"`
+	Required bool           `json:"required,omitempty"`
 }
 
 // ServiceCalendar is a deterministic business-time contract. Weekdays use

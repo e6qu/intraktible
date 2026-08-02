@@ -962,9 +962,20 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 	// install has an API key and no identity provider yet.
 	signIn := httpx.SignInEntry{Path: "/login", Exempt: []string{"/login"}}
 	if len(authers) > 0 || len(samlers) > 0 {
-		signIn.Path = "/v1/auth/signed-out"
+		// When SSO is the configured browser auth, an anonymous visit (e.g. the
+		// Shauth catalog launch) should auto-initiate the OIDC authorization
+		// request, not land on a static signed-out page. The signed-out page
+		// remains the explicit post-logout target (reached from /v1/logout).
+		if oidcProviders := oidcProviderNames(authers); len(oidcProviders) == 1 {
+			signIn.Path = "/v1/auth/oidc/" + oidcProviders[0] + "/login?return_to=%2F"
+			slog.Info("browser sign-in entry point (auto-initiate SSO)", "path", signIn.Path, "provider", oidcProviders[0])
+		} else {
+			signIn.Path = "/v1/auth/signed-out"
+			slog.Info("browser sign-in entry point (signed-out page)", "path", signIn.Path)
+		}
+	} else {
+		slog.Info("browser sign-in entry point (API-key login)", "path", signIn.Path)
 	}
-	slog.Info("browser sign-in entry point", "path", signIn.Path)
 	root.Handle("/", httpx.BrowserGate(web.Handler(), sessions, signIn))
 
 	// Optional deployment-level network control: restrict /v1 to allowlisted CIDRs

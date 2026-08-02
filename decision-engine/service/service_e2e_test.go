@@ -3133,6 +3133,25 @@ func TestEngineAPIRequiresAuth(t *testing.T) {
 	}
 }
 
+// TestAnonymousMeReturns401 is the regression for issue #173: the /v1/me
+// endpoint must return 401 JSON (not 200 HTML) for anonymous requests, because
+// it is mounted inside the authenticated /v1/ chain.
+func TestAnonymousMeReturns401(t *testing.T) {
+	api := startEngine(t)
+	resp, err := http.Get(api.Server.URL + "/v1/me")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("anonymous /v1/me -> %d, want 401 (issue #173)", resp.StatusCode)
+	}
+	ct := resp.Header.Get("Content-Type")
+	if !strings.HasPrefix(ct, "application/json") {
+		t.Fatalf("anonymous /v1/me Content-Type = %q, want application/json (not HTML)", ct)
+	}
+}
+
 func TestDecideRecordsReasonCodes(t *testing.T) {
 	api := startEngine(t)
 

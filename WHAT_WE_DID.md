@@ -1144,3 +1144,17 @@ Linux, entirely that VM's fsync path.
   `context.connector_fetched` events: each connector fetch increments the
   fetch/error counter for every deployed provider backed by that connector.
   `make ci` exits 0; 142 native + 89 real-Wasm journeys, 254 frontend units.
+- 2026-08-02: E8 final PR on `enterprise/e8-final-issues-completion`:
+  - Fixed issue #151: when SSO is configured with exactly one OIDC provider,
+    an anonymous browser visit (catalog launch) now auto-redirects to the
+    provider's authorization endpoint instead of dead-ending at the static
+    signed-out page.
+  - Added regression test for issue #173: anonymous `/v1/me` returns 401 JSON
+    (the endpoint is already behind the authenticated chain; the test proves it
+    and pins the contract).
+  - Regulatory preparation boundaries: EvidenceSource type (platform/human/
+    external) on case-manager EvidenceRequirement, so a compliance owner can
+    distinguish auto-computed evidence from human approval from external
+    acceptance.
+  - E8 phase-close: PLAN §8b.9 marked DELIVERED.
+  `make ci` exits 0; 142 native + 89 real-Wasm journeys, 254 frontend units.
