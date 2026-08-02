@@ -9,6 +9,36 @@ permissions:
   contents: read
 
 jobs:
+  production-config:
+    timeout-minutes: 5
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+      - name: Build the binary
+        run: go build -o bin/intraktible ./cmd/intraktible
+      - name: Production config check must fail without required vars
+        run: |
+          set +e
+          INTRAKTIBLE_ENV=production ./bin/intraktible check-config --env=production --store=sqlite --log=postgres
+          code=$?
+          if [ $code -eq 0 ]; then
+            echo "FAIL: production config check passed without required vars"
+            exit 1
+          fi
+          echo "OK: production config check correctly refused insecure config"
+      - name: Production config check passes with all required vars
+        run: |
+          INTRAKTIBLE_ENV=production \
+          INTRAKTIBLE_ENCRYPTION_KEY=dGVzdC1rZXktMzItYnl0ZXMtbG9uZy1lbg== \
+          INTRAKTIBLE_ARTIFACT_SIGNING_KEY=dGVzdC1rZXktMzItYnl0ZXMtbG9uZy1lbg== \
+          INTRAKTIBLE_POSTGRES_DSN=postgres://test:test@localhost:5432/test \
+          ./bin/intraktible check-config --env=production --store=postgres --log=postgres
+      - name: Print required vars
+        run: ./bin/intraktible check-config --print-required
+
   terraform:
     timeout-minutes: 15
     runs-on: ubuntu-24.04
