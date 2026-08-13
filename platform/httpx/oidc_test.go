@@ -534,7 +534,11 @@ func TestOIDCFrontChannelLogoutRequiresExactIssuerAndSID(t *testing.T) {
 
 	target := "/v1/auth/oidc/test/frontchannel-logout?iss=" + url.QueryEscape(provider.URL) + "&sid=session-1"
 	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, http.NoBody))
+	// Served through SecurityHeaders, the way production layers it. That
+	// middleware sets frame-ancestors 'none' and X-Frame-Options: DENY on every
+	// response, so serving the bare mux here would assert framing against a
+	// policy the browser never actually receives.
+	httpx.SecurityHeaders(mux).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, http.NoBody))
 	// A document, not 204: the provider loads this in an iframe, and a No
 	// Content reply makes the browser abandon the navigation (net::ERR_ABORTED)
 	// even though the session was revoked.
@@ -546,6 +550,19 @@ func TestOIDCFrontChannelLogoutRequiresExactIssuerAndSID(t *testing.T) {
 	}
 	if rec.Body.Len() == 0 {
 		t.Fatal("front-channel logout returned an empty body, which the browser cannot render as a document")
+	}
+	// The provider frames this document. A policy of frame-ancestors 'none',
+	// or a lingering X-Frame-Options: DENY, makes the browser refuse it
+	// (net::ERR_BLOCKED_BY_RESPONSE) however valid the body is.
+	policy := rec.Header().Get("Content-Security-Policy")
+	if !strings.Contains(policy, "frame-ancestors "+provider.URL) {
+		t.Fatalf("front-channel CSP = %q, want frame-ancestors scoped to the issuer %q", policy, provider.URL)
+	}
+	if strings.Contains(policy, "frame-ancestors 'none'") {
+		t.Fatalf("front-channel CSP still forbids framing: %q", policy)
+	}
+	if xfo := rec.Header().Get("X-Frame-Options"); xfo != "" {
+		t.Fatalf("X-Frame-Options = %q; it cannot name an allowed origin, so it vetoes the CSP", xfo)
 	}
 	if rec.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("front-channel Cache-Control = %q", rec.Header().Get("Cache-Control"))

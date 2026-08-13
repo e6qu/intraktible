@@ -287,6 +287,26 @@ func (h *OIDCHandler) frontChannelLogout(w http.ResponseWriter, r *http.Request)
 	//
 	// An empty HTML body is all Front-Channel Logout needs. Shauth's own
 	// gateway answers its equivalent endpoint with 200 for the same reason.
+	//
+	// The document also has to be frameable by the provider, and the global
+	// policy forbids that: SecurityHeaders sets frame-ancestors 'none' and
+	// X-Frame-Options: DENY on every response, which is right everywhere else
+	// and fatal here. Returning a document under that policy only moves the
+	// failure from net::ERR_ABORTED to net::ERR_BLOCKED_BY_RESPONSE -- the
+	// browser refuses to frame it and the provider still cannot observe the
+	// logout.
+	//
+	// So this one response narrows frame-ancestors to the issuer, and only the
+	// issuer: it is the validated a.Issuer(), not the caller's iss parameter,
+	// which the check above has already required to match. Everything else is
+	// tightened rather than relaxed -- default-src 'none' -- because the body
+	// is a bare document with no subresources. This mirrors what Shauth's
+	// gateway serves on its own front-channel endpoint.
+	w.Header().Set("Content-Security-Policy",
+		"default-src 'none'; frame-ancestors "+a.Issuer()+"; base-uri 'none'; form-action 'none'")
+	// X-Frame-Options cannot express an allowed origin, so a lingering DENY
+	// would veto the CSP above in any browser that still honours it.
+	w.Header().Del("X-Frame-Options")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte("<!doctype html><title>Signed out</title>"))
