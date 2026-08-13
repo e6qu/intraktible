@@ -535,8 +535,17 @@ func TestOIDCFrontChannelLogoutRequiresExactIssuerAndSID(t *testing.T) {
 	target := "/v1/auth/oidc/test/frontchannel-logout?iss=" + url.QueryEscape(provider.URL) + "&sid=session-1"
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, http.NoBody))
-	if rec.Code != http.StatusNoContent {
+	// A document, not 204: the provider loads this in an iframe, and a No
+	// Content reply makes the browser abandon the navigation (net::ERR_ABORTED)
+	// even though the session was revoked.
+	if rec.Code != http.StatusOK {
 		t.Fatalf("valid front-channel logout -> %d: %s", rec.Code, rec.Body.String())
+	}
+	if mediaType := rec.Header().Get("Content-Type"); !strings.HasPrefix(mediaType, "text/html") {
+		t.Fatalf("front-channel Content-Type = %q, want an HTML document the iframe can render", mediaType)
+	}
+	if rec.Body.Len() == 0 {
+		t.Fatal("front-channel logout returned an empty body, which the browser cannot render as a document")
 	}
 	if rec.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("front-channel Cache-Control = %q", rec.Header().Get("Cache-Control"))

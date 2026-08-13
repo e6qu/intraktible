@@ -277,7 +277,19 @@ func (h *OIDCHandler) frontChannelLogout(w http.ResponseWriter, r *http.Request)
 		Error(w, http.StatusServiceUnavailable, err)
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	// Answer with a document rather than 204. The identity provider loads this
+	// URL in an iframe, and a No Content reply leaves the browser nothing to
+	// render, so it abandons the navigation and reports net::ERR_ABORTED for
+	// the logout frame. The revocation above still happened, but the provider
+	// cannot observe that the frame loaded, and anything watching the browser
+	// for failed requests -- the SSO acceptance suite does -- reads it as a
+	// broken logout.
+	//
+	// An empty HTML body is all Front-Channel Logout needs. Shauth's own
+	// gateway answers its equivalent endpoint with 200 for the same reason.
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("<!doctype html><title>Signed out</title>"))
 }
 
 func (h *OIDCHandler) signedOut(w http.ResponseWriter, r *http.Request) {
