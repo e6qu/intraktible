@@ -54,7 +54,15 @@ func TestExperimentOutcomeAndPopulationHTTPJourney(t *testing.T) {
 		engine.Routes(mux)
 		experiments.New(experimentHandler, st, flowHandler).Routes(mux)
 		outcomes.New(outcomeHandler, st).Routes(mux)
-		population.New(populationHandler, st).Routes(mux)
+		// The service decides whether retained results have expired, so it must
+		// read the same clock the handler stamped ExpiresAt with. Without this it
+		// used the real one: the handler set ExpiresAt to clock+RetentionDays --
+		// 2026-08-06 for a fixed clock of 2026-07-30 and 7 days -- and the test
+		// began returning 410 for everyone once that date passed in the real
+		// world, having nothing to do with the code under test.
+		population.New(populationHandler, st).
+			WithNow(func() time.Time { return clock }).
+			Routes(mux)
 	}
 	api := testutil.StartAPI(
 		t, log, st, "test-key", id, routes,
