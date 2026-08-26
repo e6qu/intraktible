@@ -571,7 +571,11 @@ func (h *Handler) heartbeatRun(
 // runnable items to this process's bounded local queue. Claims in process(), not
 // queue membership, own work across replicas.
 func (h *Handler) RecoverRunning(ctx context.Context) (int, error) {
-	evs, err := h.log.Read(ctx, 0)
+	// The agents stream only. This was Read(ctx, 0) -- the whole log -- with the
+	// loop below skipping every other stream. pollRuns calls this every 250ms, so
+	// on a live deployment it read and decrypted all 345,970 events FOUR TIMES A
+	// SECOND to find events on one stream, and got slower with every append.
+	evs, err := h.log.ReadStream(ctx, events.StreamAgents, 0)
 	if err != nil {
 		return 0, fmt.Errorf("agent-manager: read log: %w", err)
 	}

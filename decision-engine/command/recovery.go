@@ -59,7 +59,13 @@ func (h *DecideHandler) RecoverInterrupted(ctx context.Context, owner string) (R
 	if owner == "" {
 		return RecoverySummary{}, fmt.Errorf("decision-engine: recovery owner is required")
 	}
-	all, err := h.log.Read(ctx, 0)
+	// The decisions stream only. This was Read(ctx, 0) -- the entire log -- with
+	// collectDecisionGenerations then discarding every envelope belonging to any
+	// other stream. On a live deployment that meant reading and DECRYPTING all
+	// 345,970 events once per second in order to look for events on a stream that
+	// held zero of them: two CPU cores burned permanently to do nothing, and the
+	// cost grew with every event ever appended.
+	all, err := h.log.ReadStream(ctx, events.StreamDecisions, 0)
 	if err != nil {
 		return RecoverySummary{}, fmt.Errorf("decision-engine: read recovery log: %w", err)
 	}

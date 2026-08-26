@@ -36,20 +36,12 @@ func (h *Handler) WithNow(now func() time.Time) *Handler {
 }
 
 // readTenancyStream reads all tenancy lifecycle events. Tenancy metadata is
-// cross-tenant (it describes organizations themselves), so the fold reads the
-// full log and filters by stream, not by a single org/workspace.
+// cross-tenant (it describes organizations themselves), so it selects by stream
+// rather than by a single org/workspace -- which is exactly ReadStream. It used
+// to read the full log and filter here, paying for every event in the
+// leader-claim stream that dominates it.
 func (h *Handler) readTenancyStream(ctx context.Context) ([]eventlog.Envelope, error) {
-	all, err := h.log.Read(ctx, 0)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]eventlog.Envelope, 0, len(all))
-	for _, e := range all {
-		if e.Stream == events.StreamTenancy {
-			out = append(out, e)
-		}
-	}
-	return out, nil
+	return h.log.ReadStream(ctx, events.StreamTenancy, 0)
 }
 
 // orgState folds one organization's lifecycle.

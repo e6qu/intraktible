@@ -50,7 +50,9 @@ type versionState struct {
 // foldVersions folds the providers stream into all versions of one provider
 // name, keyed by version number.
 func (h *Handler) foldVersions(ctx context.Context, name string) (map[int]*versionState, error) {
-	envelopes, err := h.log.Read(ctx, 0)
+	// The providers stream only; the loop below skipped every other stream after
+	// paying to read and decrypt it.
+	envelopes, err := h.log.ReadStream(ctx, events.StreamProviders, 0)
 	if err != nil {
 		return nil, err
 	}

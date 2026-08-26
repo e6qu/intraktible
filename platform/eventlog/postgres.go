@@ -74,6 +74,13 @@ func OpenPostgresLog(ctx context.Context, dsn string, poll time.Duration) (*Post
 		pool.Close()
 		return nil, fmt.Errorf("eventlog: postgres add unique_key: %w", err)
 	}
+	// Leads with stream, so a cross-tenant ReadStream is an index range scan.
+	// events_tenant_stream cannot serve it: that index leads with org and
+	// workspace, which a cross-tenant read does not constrain.
+	if _, err := pool.Exec(ctx, `CREATE INDEX IF NOT EXISTS events_stream ON events(stream, seq)`); err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("eventlog: postgres stream index: %w", err)
+	}
 	if _, err := pool.Exec(ctx, `CREATE INDEX IF NOT EXISTS events_tenant_stream ON events(org, workspace, stream, seq)`); err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("eventlog: postgres tenant-stream index: %w", err)
@@ -265,6 +272,28 @@ func (l *PostgresLog) ReadTenantStream(ctx context.Context, org, workspace, stre
 		org, workspace, stream, int64(fromSeq))
 	if err != nil {
 		return nil, fmt.Errorf("eventlog: postgres read tenant-stream: %w", err)
+	}
+	return scanEventRows(rows)
+}
+
+// ReadStream returns one stream's events across every tenant with Seq >= fromSeq,
+// in order — an index range scan on events_stream instead of the whole log.
+func (l *PostgresLog) ReadStream(ctx context.Context, stream string, fromSeq uint64) ([]Envelope, error) {
+	if l.d.isClosed() {
+		return nil, ErrClosed
+	}
+	if fromSeq == 0 {
+		fromSeq = 1
+	}
+	if fromSeq > math.MaxInt64 {
+		return nil, fmt.Errorf("eventlog: postgres fromSeq %d out of range", fromSeq)
+	}
+	rows, err := l.pool.Query(ctx,
+		`SELECT seq, id, org, workspace, stream, type, time, actor, payload
+		 FROM events WHERE stream = $1 AND seq >= $2 ORDER BY seq`,
+		stream, int64(fromSeq))
+	if err != nil {
+		return nil, fmt.Errorf("eventlog: postgres read stream: %w", err)
 	}
 	return scanEventRows(rows)
 }

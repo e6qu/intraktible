@@ -76,6 +76,13 @@ func OpenSQLiteLog(dir string, poll time.Duration) (*SQLiteLog, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("eventlog: sqlite add unique_key: %w", err)
 	}
+	// Leads with stream, for the cross-tenant ReadStream. events_tenant_stream
+	// cannot serve that read: it leads with org and workspace, which a
+	// cross-tenant read does not constrain.
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS events_stream ON events(stream, seq)`); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("eventlog: sqlite stream index: %w", err)
+	}
 	// Index the per-tenant, per-stream read (ReadTenantStream) the maker-checker folds
 	// use, so they don't table-scan the decision-dominated log.
 	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS events_tenant_stream ON events(org, workspace, stream, seq)`); err != nil {
@@ -169,6 +176,32 @@ func (l *SQLiteLog) ReadTenantStream(ctx context.Context, org, workspace, stream
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("eventlog: sqlite read tenant-stream rows: %w", err)
+	}
+	return out, nil
+}
+
+func (l *SQLiteLog) ReadStream(ctx context.Context, stream string, fromSeq uint64) ([]Envelope, error) {
+	if fromSeq > math.MaxInt64 {
+		return nil, nil
+	}
+	rows, err := l.db.QueryContext(ctx,
+		`SELECT seq, id, org, workspace, stream, type, time, actor, payload
+		 FROM events WHERE stream = ? AND seq >= ? ORDER BY seq`,
+		stream, fromSeq)
+	if err != nil {
+		return nil, fmt.Errorf("eventlog: sqlite read stream: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []Envelope
+	for rows.Next() {
+		e, err := scanEvent(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("eventlog: sqlite read stream rows: %w", err)
 	}
 	return out, nil
 }

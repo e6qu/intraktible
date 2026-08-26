@@ -547,6 +547,14 @@ func (w *WAL) ReadTenantStream(ctx context.Context, org, workspace, stream strin
 	return filterTenantStream(evs, org, workspace, stream), nil
 }
 
+func (w *WAL) ReadStream(ctx context.Context, stream string, fromSeq uint64) ([]Envelope, error) {
+	evs, err := w.Read(ctx, fromSeq)
+	if err != nil {
+		return nil, err
+	}
+	return filterStream(evs, stream), nil
+}
+
 // Subscribe returns events appended after the call (in-process bus).
 func (w *WAL) Subscribe() (<-chan Envelope, func()) { return w.bus.subscribe() }
 
