@@ -375,6 +375,14 @@ func (l *NATSLog) ReadTenantStream(ctx context.Context, org, workspace, stream s
 	return filterTenantStream(evs, org, workspace, stream), nil
 }
 
+func (l *NATSLog) ReadStream(ctx context.Context, stream string, fromSeq uint64) ([]Envelope, error) {
+	evs, err := l.Read(ctx, fromSeq)
+	if err != nil {
+		return nil, err
+	}
+	return filterStream(evs, stream), nil
+}
+
 func (l *NATSLog) Read(_ context.Context, fromSeq uint64) ([]Envelope, error) {
 	l.mu.Lock()
 	closed := l.closed

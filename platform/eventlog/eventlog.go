@@ -96,6 +96,21 @@ type Log interface {
 	// scan and filter (filterTenantStream). It is part of the contract — not an
 	// optional capability the caller feels for — so every backend supplies it.
 	ReadTenantStream(ctx context.Context, org, workspace, stream string, fromSeq uint64) ([]Envelope, error)
+	// ReadStream returns one stream's events across every tenant with Seq >= fromSeq,
+	// in order. It is ReadTenantStream's cross-tenant sibling, for a sweep that must
+	// consider all tenants at once — decision recovery cannot know in advance which
+	// tenant holds an interrupted decision, so it could not use ReadTenantStream.
+	//
+	// Lacking this, that sweep called Read(ctx, 0) and threw away the streams it did
+	// not want. The waste was not marginal. The log is dominated by one high-volume
+	// stream, so on a live deployment recovery read and DECRYPTED all 345,970 events
+	// once per second to look for events on a stream that held zero of them: two CPU
+	// cores burned permanently to do nothing, growing worse with every append.
+	//
+	// The durable SQL logs answer this with an indexed WHERE; the index-less logs
+	// (memory, WAL, NATS) scan and filter. Part of the contract, not an optional
+	// capability a caller has to feel for, so every backend supplies it.
+	ReadStream(ctx context.Context, stream string, fromSeq uint64) ([]Envelope, error)
 	// Head returns the highest assigned Seq (0 when empty).
 	Head() uint64
 	Close() error
@@ -108,6 +123,20 @@ func filterTenantStream(evs []Envelope, org, workspace, stream string) []Envelop
 	out := make([]Envelope, 0, len(evs))
 	for _, e := range evs {
 		if e.Org == org && e.Workspace == workspace && e.Stream == stream {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// filterStream returns one stream's events across every tenant, in order — the
+// scan implementation of ReadStream for the index-less backends. Sized empty
+// rather than len(evs): the callers select a small stream out of a large log, so
+// pre-allocating the whole input is the very waste this exists to avoid.
+func filterStream(evs []Envelope, stream string) []Envelope {
+	var out []Envelope
+	for _, e := range evs {
+		if e.Stream == stream {
 			out = append(out, e)
 		}
 	}

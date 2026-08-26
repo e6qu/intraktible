@@ -84,6 +84,12 @@ func (l *encLog) ReadTenantStream(ctx context.Context, org, workspace, stream st
 	return l.decryptAll(l.inner.ReadTenantStream(ctx, org, workspace, stream, fromSeq))
 }
 
+// The decryption happens AFTER the inner log has narrowed to one stream, which
+// is the whole point: the payloads of every other stream are never opened.
+func (l *encLog) ReadStream(ctx context.Context, stream string, fromSeq uint64) ([]Envelope, error) {
+	return l.decryptAll(l.inner.ReadStream(ctx, stream, fromSeq))
+}
+
 // decryptAll opens every event's sealed payload in place.
 func (l *encLog) decryptAll(evs []Envelope, err error) ([]Envelope, error) {
 	if err != nil {

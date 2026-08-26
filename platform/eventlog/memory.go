@@ -79,6 +79,14 @@ func (l *MemoryLog) ReadTenantStream(ctx context.Context, org, workspace, stream
 	return filterTenantStream(evs, org, workspace, stream), nil
 }
 
+func (l *MemoryLog) ReadStream(ctx context.Context, stream string, fromSeq uint64) ([]Envelope, error) {
+	evs, err := l.Read(ctx, fromSeq)
+	if err != nil {
+		return nil, err
+	}
+	return filterStream(evs, stream), nil
+}
+
 func (l *MemoryLog) Read(_ context.Context, fromSeq uint64) ([]Envelope, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
