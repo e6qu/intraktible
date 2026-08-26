@@ -532,10 +532,48 @@ func (h *Handler) RetrySLAEscalation(ctx context.Context, id identity.Identity, 
 // caseStates folds the tenant's case stream into current per-case SLA state,
 // covering both open paths (manual ReviewRequested and decision-escalated
 // ManualReviewRequested), status changes, and prior breaches.
-func (h *Handler) caseStates(ctx context.Context, id identity.Identity) (map[string]slaCaseState, error) {
-	evs, err := h.log.Read(ctx, 0)
+
+// readCaseFoldStreams returns this tenant's cases and decisions events in one
+// Seq-ordered sequence -- the two streams caseStates folds over.
+func (h *Handler) readCaseFoldStreams(ctx context.Context, id identity.Identity) ([]eventlog.Envelope, error) {
+	cases, err := h.log.ReadTenantStream(ctx, id.Org, id.Workspace, events.StreamCases, 0)
 	if err != nil {
-		return nil, fmt.Errorf("case-manager: read log: %w", err)
+		return nil, fmt.Errorf("case-manager: read cases stream: %w", err)
+	}
+	decisions, err := h.log.ReadTenantStream(ctx, id.Org, id.Workspace, decisionevents.StreamDecisions, 0)
+	if err != nil {
+		return nil, fmt.Errorf("case-manager: read decisions stream: %w", err)
+	}
+	merged := make([]eventlog.Envelope, 0, len(cases)+len(decisions))
+	left, right := 0, 0
+	for left < len(cases) && right < len(decisions) {
+		if cases[left].Seq <= decisions[right].Seq {
+			merged = append(merged, cases[left])
+			left++
+			continue
+		}
+		merged = append(merged, decisions[right])
+		right++
+	}
+	merged = append(merged, cases[left:]...)
+	return append(merged, decisions[right:]...), nil
+}
+
+func (h *Handler) caseStates(ctx context.Context, id identity.Identity) (map[string]slaCaseState, error) {
+	// This tenant's cases and decisions streams, not the whole log. The fold
+	// spans BOTH: a case can be opened by the manual cases.review_requested or
+	// by the decision engine's ManualReviewRequested, which lives on the
+	// decisions stream, and suspend/resume arrive there too. Reading only the
+	// cases stream makes an escalated case look like it never existed.
+	//
+	// Merged on Seq because the fold is order-sensitive -- it walks events in
+	// sequence and carries state forward, so interleaving the two streams by
+	// their global order is what keeps it equivalent to the full-log read it
+	// replaces. Both halves are served by the events_tenant_stream index
+	// instead of decrypting a log dominated by a stream this fold never reads.
+	evs, err := h.readCaseFoldStreams(ctx, id)
+	if err != nil {
+		return nil, err
 	}
 	states := make(map[string]slaCaseState)
 	suspendedDecisions := make(map[string]bool)
@@ -559,9 +597,7 @@ func (h *Handler) caseStates(ctx context.Context, id identity.Identity) (map[str
 		return definition.IsTerminal(status), nil
 	}
 	for _, e := range evs {
-		if e.Org != id.Org || e.Workspace != id.Workspace {
-			continue
-		}
+		// No tenant guard here: the read is already scoped to id.Org/id.Workspace.
 		switch e.Type {
 		case events.TypeCaseTypePublished:
 			var p events.CaseTypePublished
