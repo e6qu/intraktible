@@ -8,6 +8,7 @@ Format: `ID | severity | component | description | status`.
 ## Application monitoring
 
 - `OPS-MON-1 | HIGH | platform/monitoring+server | Shauth registered Intraktible without an application observation, so global monitoring remained degraded even while the process and projections were healthy. A dedicated constant-time bearer boundary now publishes fixed-cardinality projection, log, scheduler/worker, drain, and process evidence using e6qu.monitoring/v2; startup and check-config share the same token parser and retain only its digest. | fixed`
+- `OPS-MON-2 | HIGH | web/e2e-demo | The manager-home integrity journey treated pending flow deployment requests as the complete pending-approval total, while the shipped dashboard also includes pending model approvals and experiment launches. Seed growth made the partial oracle fail after the monitoring merge. The journey now derives its independent expectation from all three public API sources, so future approval sources cannot be omitted without an explicit contract update. | fixed`
 
 ## Enterprise PR E2 — experimentation, outcomes, and population automation
 

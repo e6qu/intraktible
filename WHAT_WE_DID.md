@@ -1167,3 +1167,10 @@ Linux, entirely that VM's fsync path.
   incorrect credentials fail closed. The complete CI-equivalent gate passed:
   vet/build, strict lint, security scan, the full race suite, dead-code, zero
   clone groups, vulnerability scan, and licenses.
+- 2026-08-28: Repaired the post-merge real-Wasm manager-dashboard integrity
+  journey. Its pending-approval oracle now queries flow deployment requests,
+  model approvals, and pending experiment launches, matching the shipped
+  `pendingApprovalCount` contract instead of comparing the complete UI total
+  with one partial source. The exact failing Playwright scenario and complete
+  CI-equivalent gate pass: vet/build, strict lint, security scan, the full race
+  suite, dead-code, zero clone groups, vulnerability scan, and licenses.

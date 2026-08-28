@@ -16,10 +16,17 @@ DOC (a claim not backed by code).
 
 ## Queue
 
-1. **OPEN — Land and deploy application monitoring.** Rebase
-   `fix/application-monitoring` on authoritative `origin/main`, open the sole
-   pull request, and after the user merges it verify the immutable image through
-   Shauth's authenticated observation collector and the full live browser gate.
+1. **OPEN — Land the post-merge browser-oracle repair.** The manager dashboard's
+   `pendingApprovalCount` correctly combines pending flow deployments, model
+   approvals, and experiment launches, but `web/e2e-demo/integrity.spec.ts`
+   independently counted only flow deployments. The journey now queries all
+   three sources; its exact real-Wasm Playwright scenario and complete
+   CI-equivalent gate pass. Land the sole PR from
+   `fix/demo-home-approval-count`.
+2. **OPEN — Publish and deploy the corrected immutable image.** After the repair
+   merges, pin its published image in infrastructure, then verify Intraktible
+   through Shauth's authenticated observation collector and the full live
+   browser gate.
 
 ---
 
