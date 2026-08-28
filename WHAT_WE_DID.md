@@ -1174,3 +1174,7 @@ Linux, entirely that VM's fsync path.
   with one partial source. The exact failing Playwright scenario and complete
   CI-equivalent gate pass: vet/build, strict lint, security scan, the full race
   suite, dead-code, zero clone groups, vulnerability scan, and licenses.
+- 2026-08-28: Repaired the PostgreSQL-backed SDK journey's asynchronous
+  projection race. `TestClientAgainstEngine` now polls `ListDecisions` for the
+  exact decision it created, rather than assuming the list index is immediately
+  visible when the detail projection first appears.

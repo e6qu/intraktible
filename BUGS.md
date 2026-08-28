@@ -1164,3 +1164,7 @@ A four-lens parallel review (backend correctness, security, fail-fast, frontend 
 - `E8-9 | TEST | decision-engine/service | Issue #173: added TestAnonymousMeReturns401 proving /v1/me returns 401 JSON (not 200 HTML) for anonymous requests — the endpoint was already behind the authenticated chain; the test pins the contract. | verified`
 - `E8-10 | REG/CORRECT | case-manager/domain | Regulatory preparation boundaries: EvidenceSource type (platform/human/external) on EvidenceRequirement, so a compliance owner can distinguish auto-computed evidence from human approval from external acceptance. | fixed`
 - `E8-11 | PHASE | PLAN/docs | E8 marked DELIVERED across five serialized verticals. | done`
+
+## Application monitoring delivery (2026-08-28)
+
+- `TEST | CI | client | The real PostgreSQL SDK journey read a completed decision by id and immediately required the independently written decision-list index to contain it. Projection apply writes the full record before the index, so a loaded runner could observe the valid intermediate state and fail. The journey now polls the documented eventually consistent list for the exact decision id. | fixed`
