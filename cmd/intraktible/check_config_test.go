@@ -35,6 +35,18 @@ func TestCheckConfigNonProductionIsNoop(t *testing.T) {
 	}
 }
 
+func TestCheckConfigRejectsMonitoringTokenTheServerWouldReject(t *testing.T) {
+	t.Setenv("INTRAKTIBLE_MONITORING_TOKEN", "contains whitespace even though this value is long enough")
+
+	err := checkConfigCmd([]string{"--env=development"})
+	if err == nil {
+		t.Fatal("check-config accepted a monitoring token that would prevent the server from starting")
+	}
+	if !strings.Contains(err.Error(), "INTRAKTIBLE_MONITORING_TOKEN") {
+		t.Fatalf("check-config did not name the invalid monitoring token: %q", err.Error())
+	}
+}
+
 func TestPrintRequiredListsAllRequiredVars(t *testing.T) {
 	if err := checkConfigCmd([]string{"--print-required"}); err != nil {
 		t.Fatalf("--print-required should succeed, got: %v", err)

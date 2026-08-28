@@ -1158,3 +1158,12 @@ Linux, entirely that VM's fsync path.
     acceptance.
   - E8 phase-close: PLAN §8b.9 marked DELIVERED.
   `make ci` exits 0; 142 native + 89 real-Wasm journeys, 254 frontend units.
+- 2026-08-28: Added an authenticated deployment-neutral application
+  observation at `GET /monitoring/observation`. The `e6qu.monitoring/v2`
+  payload reads the real projection and event-log positions, scheduler/worker
+  and drain health, and fixed-cardinality Go process metrics. One parser now
+  validates the optional deployment bearer for both server startup and
+  `check-config`; only its SHA-256 digest survives construction, and absent or
+  incorrect credentials fail closed. The complete CI-equivalent gate passed:
+  vet/build, strict lint, security scan, the full race suite, dead-code, zero
+  clone groups, vulnerability scan, and licenses.

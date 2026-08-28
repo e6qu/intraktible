@@ -1552,6 +1552,17 @@ competing queue.
 The former parallel non-code track is now specified with release evidence in §8b.10; it remains
 independent of, and just as necessary as, the implementation PR sequence.
 
+## 8c. Deployment-neutral application observation
+
+Intraktible publishes one authenticated `e6qu.monitoring/v2` application
+resource at `GET /monitoring/observation`. Its fixed-cardinality evidence comes
+from the projection runtime, event-log head, scheduler and worker health, drain
+state, and Go process. The deployment supplies an independent bearer credential;
+startup validates and digests it once, and an unconfigured endpoint refuses all
+requests. The application does not infer infrastructure cost from process
+metrics; deployment-owned infrastructure observers remain the source for priced
+resources.
+
 ## 9. Scope boundaries (current)
 
 The original MVP non-goals have mostly been overtaken — **SSO (OIDC + SAML) and SCIM shipped** in the
