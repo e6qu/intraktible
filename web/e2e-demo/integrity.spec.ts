@@ -112,7 +112,7 @@ test('the operator deck KPIs reconcile with the API', async ({ page }) => {
 });
 
 // The manager persona-home tiles [pending_approvals, needs_review, overdue] are
-// derived; check each against its source query.
+// derived; check each against every source query used by the dashboard.
 test('the manager home tiles reconcile with the API', async ({ page }) => {
   await forcePersona(page, 'manager');
   await gotoReady(page, '');
@@ -122,7 +122,9 @@ test('the manager home tiles reconcile with the API', async ({ page }) => {
       by_status: { needs_review: number };
       overdue: number;
     };
-    // pending_approvals = open deployment requests across every flow.
+    // pending_approvals = open deployment requests, model approvals, and
+    // experiment launches. Keep this independent API calculation aligned with
+    // pendingApprovalCount rather than checking only one of its inputs.
     const flows = (await fetch('/v1/flows').then(j)).flows as { flow_id: string }[];
     let pending = 0;
     for (const f of flows) {
@@ -131,6 +133,14 @@ test('the manager home tiles reconcile with the API', async ({ page }) => {
       };
       pending += (fv.deployment_requests ?? []).filter((d) => d.status === 'pending').length;
     }
+    const models = ((await fetch('/v1/models').then(j)).models ?? []) as {
+      pending?: unknown;
+    }[];
+    pending += models.filter((model) => Boolean(model.pending)).length;
+    const experiments = ((await fetch('/v1/experiments').then(j)).experiments ?? []) as {
+      state: string;
+    }[];
+    pending += experiments.filter((experiment) => experiment.state === 'pending_launch').length;
     return { pending, needsReview: summary.by_status.needs_review, overdue: summary.overdue };
   });
 

@@ -1561,7 +1561,10 @@ state, and Go process. The deployment supplies an independent bearer credential;
 startup validates and digests it once, and an unconfigured endpoint refuses all
 requests. The application does not infer infrastructure cost from process
 metrics; deployment-owned infrastructure observers remain the source for priced
-resources.
+resources. Release acceptance includes the real-Wasm manager-dashboard
+integrity journey, whose pending-approval oracle independently reconciles the
+same three public sources as the UI: flow deployment requests, model approvals,
+and experiment launches.
 
 ## 9. Scope boundaries (current)
 

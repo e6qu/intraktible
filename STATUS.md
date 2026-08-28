@@ -6,9 +6,10 @@
 
 ## Task
 
-Publish Intraktible's deployment-neutral application health and capacity
-evidence to Shauth through an independently authenticated observation endpoint,
-then deploy and verify it with the other first-party applications.
+Restore the post-merge browser gate by making its manager-dashboard approval
+calculation cover the same three API sources as the shipped UI, then publish
+the corrected immutable image and complete Shauth deployment acceptance with
+the other first-party applications.
 
 ## Standing rules (user-issued, non-negotiable)
 
@@ -32,7 +33,8 @@ then deploy and verify it with the other first-party applications.
 
 ## Phase
 
-**Application monitoring is implemented.** `GET /monitoring/observation`
+**Application monitoring is merged in PR #183 as `95c9c785`.**
+`GET /monitoring/observation`
 publishes an authenticated `e6qu.monitoring/v2` application resource backed by
 the real projection, event-log, scheduler, worker, drain, and process state.
 Startup and `check-config` share the same monitoring-token parser, the runtime
@@ -40,8 +42,14 @@ retains only a digest, malformed credentials fail before serving, and an absent
 credential leaves the endpoint fail-closed. Focused package and composition
 tests pass. The complete CI-equivalent gate also passed: vet/build, strict
 lint, security scan, full race suite, dead-code, zero clone groups,
-vulnerability scan, and licenses. Deployed Shauth acceptance remains the
-active delivery gate.
+vulnerability scan, and licenses. Post-merge CI exposed a stale browser-test
+oracle: the manager dashboard correctly counted pending flow deployments,
+model approvals, and experiment launches, while the integrity journey counted
+only flow deployments. The journey now independently queries all three API
+sources. Its exact real-Wasm Playwright scenario and the complete CI-equivalent
+gate pass: vet/build, strict lint, security scan, full race suite, dead-code,
+zero clone groups, vulnerability scan, and licenses. Review, immutable image
+publication, and deployed Shauth acceptance remain the active delivery gates.
 
 **Enterprise E8 — ecosystem and regulated solution packs is IN PROGRESS.** The
 provider lifecycle (#170) is merged as `e36dfa6`; E7 is complete (tenant admin
