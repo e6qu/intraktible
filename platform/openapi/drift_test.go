@@ -30,17 +30,18 @@ import (
 // contract. Each needs a reason, so "undocumented" is a decision and not an
 // oversight.
 var internalRoutes = map[string]string{
-	"GET /openapi.json":     "the contract itself",
-	"GET /docs":             "the reference page that renders the contract",
-	"GET /healthz":          "liveness probe, not a data-plane call",
-	"GET /readyz":           "readiness probe, not a data-plane call",
-	"GET /metrics":          "Prometheus scrape endpoint",
-	"GET /auth/validation":  "app-owned browser session validation surface",
-	"GET /v1/me":            "session introspection for the console",
-	"POST /v1/login":        "console session exchange, not an integrator call",
-	"POST /v1/logout":       "console session exchange, not an integrator call",
-	"GET /v1/auth/sso":      "browser SSO redirect",
-	"GET /v1/auth/callback": "browser SSO redirect",
+	"GET /openapi.json":           "the contract itself",
+	"GET /docs":                   "the reference page that renders the contract",
+	"GET /healthz":                "liveness probe, not a data-plane call",
+	"GET /readyz":                 "readiness probe, not a data-plane call",
+	"GET /metrics":                "Prometheus scrape endpoint",
+	"GET /monitoring/observation": "deployment-token-authenticated Shauth application observation",
+	"GET /auth/validation":        "app-owned browser session validation surface",
+	"GET /v1/me":                  "session introspection for the console",
+	"POST /v1/login":              "console session exchange, not an integrator call",
+	"POST /v1/logout":             "console session exchange, not an integrator call",
+	"GET /v1/auth/sso":            "browser SSO redirect",
+	"GET /v1/auth/callback":       "browser SSO redirect",
 
 	// SCIM 2.0 is its own IETF standard (RFC 7643/7644) with a fixed wire contract;
 	// an identity provider drives it for user/group provisioning, not an integrator

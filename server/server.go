@@ -87,6 +87,7 @@ import (
 	"github.com/e6qu/intraktible/platform/identity"
 	"github.com/e6qu/intraktible/platform/jurisdiction"
 	"github.com/e6qu/intraktible/platform/metrics"
+	platformmonitoring "github.com/e6qu/intraktible/platform/monitoring"
 	"github.com/e6qu/intraktible/platform/notifications"
 	"github.com/e6qu/intraktible/platform/openapi"
 	"github.com/e6qu/intraktible/platform/privacy"
@@ -241,6 +242,10 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 	}
 	runWorkers := processRole == processRoleAll || processRole == processRoleWorker
 	runSchedulers := processRole == processRoleAll || processRole == processRoleScheduler
+	monitoringToken, err := platformmonitoring.TokenDigestFromEnvironment()
+	if err != nil {
+		return nil, err
+	}
 	if err := validateBooleanEnv(); err != nil {
 		return nil, err
 	}
@@ -836,6 +841,15 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 	// projections have caught up to the log head, so a freshly-started pod does not
 	// serve empty read models while it rebuilds. Liveness (/healthz) vs readiness.
 	root.HandleFunc("GET /readyz", httpx.Ready(rt.Applied, log.Head, health, srv.Draining))
+	root.Handle("GET /monitoring/observation", platformmonitoring.Handler(monitoringToken, func() platformmonitoring.State {
+		status := "healthy"
+		if health() != nil || srv.Draining() {
+			status = "unhealthy"
+		}
+		return platformmonitoring.State{
+			Health: status, ProjectionApplied: rt.Applied(), EventHead: log.Head(),
+		}
+	}))
 	// /capacity is the SLO/SLA evidence surface (unauthenticated like /healthz — it
 	// carries operational counters, not tenant data): projection lag vs the log
 	// head, the configured backpressure bound, process role, and scheduler health,

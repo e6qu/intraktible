@@ -5,6 +5,10 @@
 Tracked alongside `PLAN.md`; updated in the same PR at the end of every phase.
 Format: `ID | severity | component | description | status`.
 
+## Application monitoring
+
+- `OPS-MON-1 | HIGH | platform/monitoring+server | Shauth registered Intraktible without an application observation, so global monitoring remained degraded even while the process and projections were healthy. A dedicated constant-time bearer boundary now publishes fixed-cardinality projection, log, scheduler/worker, drain, and process evidence using e6qu.monitoring/v2; startup and check-config share the same token parser and retain only its digest. | fixed`
+
 ## Enterprise PR E2 — experimentation, outcomes, and population automation
 
 - `E2-1 | CRITICAL | decision-engine/experiments | legacy request-time challenger percentages did not define a hypothesis, stable subject population, eligibility, KPI, or governed lifecycle. A first-class event-sourced experiment aggregate now binds those fields to exact flow-version arms, basis-point allocation, salt, guardrails, minimum evidence, windows, and draft/running/paused/completed/cancelled states. | fixed`

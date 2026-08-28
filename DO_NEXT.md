@@ -16,21 +16,10 @@ DOC (a claim not backed by code).
 
 ## Queue
 
-1. **OPEN — Land the E8 solution-packs vertical as one PR, then continue E8's
-   remaining slices.** The provider lifecycle (#170) is merged as `e36dfa6`. The
-   solution-packs vertical is implemented on `enterprise/e8-solution-packs`:
-   signed, versioned, dependency-pinned pack manifests (`packs/` bounded context)
-   bundling governed artifacts, with an install/upgrade/rollback/retire lifecycle,
-   dependency enforcement (pack + provider dependencies checked at install),
-   RBAC pins, OpenAPI, Go SDK, `intraktible packs` CLI, and an editor `/packs` UI.
-   `make ci` exits 0 (zero clone groups); 142 native incl. 1 pack journey, 89
-   real-Wasm, 254 frontend units. It is the sole open review item; await the user
-   merge. Remaining E8 scope (separate serialized PRs): connector/provider SDK +
-   conformance harness, out-of-process extension protocol, real communication
-   delivery, and regulatory preparation boundaries.
-2. **OPEN — E8 continuation after the solution-packs vertical merges.** Fetch and
-   reconcile authoritative `origin/main`, confirm the PR queue empty, and cut the
-   next E8 slice. Detailed boundaries are in `PLAN.md` §8b.9.
+1. **OPEN — Land and deploy application monitoring.** Rebase
+   `fix/application-monitoring` on authoritative `origin/main`, open the sole
+   pull request, and after the user merges it verify the immutable image through
+   Shauth's authenticated observation collector and the full live browser gate.
 
 ---
 

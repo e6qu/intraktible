@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/e6qu/intraktible/platform/monitoring"
 	"github.com/e6qu/intraktible/server"
 )
 
@@ -52,6 +53,9 @@ func checkConfigCmd(args []string) error {
 	// deployment — the exact failure this gate exists to prevent.
 	cfg := server.Config{Env: *env, StoreKind: *storeKind, LogKind: *logKind}
 	encryptionEnabled := strings.TrimSpace(os.Getenv("INTRAKTIBLE_ENCRYPTION_KEY")) != ""
+	if _, err := monitoring.TokenDigestFromEnvironment(); err != nil {
+		return err
+	}
 	if err := server.CheckProductionConfig(cfg, encryptionEnabled); err != nil {
 		return err
 	}

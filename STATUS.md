@@ -6,12 +6,9 @@
 
 ## Task
 
-Turn the whole-product capability audit into the detailed plan-of-record: map
-every key Builder, Developer, Agent Designer, Reviewer, Operator, Modeler,
-Validator, Admin, SRE, Domain Owner, and Executive journey to what is real and
-what remains, then carve the remaining work into serialized large-to-huge
-full-stack pull requests. The active implementation tranche is E8, ecosystem
-and regulated solution packs.
+Publish Intraktible's deployment-neutral application health and capacity
+evidence to Shauth through an independently authenticated observation endpoint,
+then deploy and verify it with the other first-party applications.
 
 ## Standing rules (user-issued, non-negotiable)
 
@@ -34,6 +31,17 @@ and regulated solution packs.
 6. No subagents, no workflows (system-prompt instruction).
 
 ## Phase
+
+**Application monitoring is implemented.** `GET /monitoring/observation`
+publishes an authenticated `e6qu.monitoring/v2` application resource backed by
+the real projection, event-log, scheduler, worker, drain, and process state.
+Startup and `check-config` share the same monitoring-token parser, the runtime
+retains only a digest, malformed credentials fail before serving, and an absent
+credential leaves the endpoint fail-closed. Focused package and composition
+tests pass. The complete CI-equivalent gate also passed: vet/build, strict
+lint, security scan, full race suite, dead-code, zero clone groups,
+vulnerability scan, and licenses. Deployed Shauth acceptance remains the
+active delivery gate.
 
 **Enterprise E8 — ecosystem and regulated solution packs is IN PROGRESS.** The
 provider lifecycle (#170) is merged as `e36dfa6`; E7 is complete (tenant admin
