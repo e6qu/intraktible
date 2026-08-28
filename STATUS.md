@@ -6,10 +6,10 @@
 
 ## Task
 
-Restore the post-merge browser gate by making its manager-dashboard approval
-calculation cover the same three API sources as the shipped UI, then publish
-the corrected immutable image and complete Shauth deployment acceptance with
-the other first-party applications.
+Restore a deterministic green post-merge gate after the PostgreSQL-backed SDK
+journey exposed a read-after-write assumption, then publish the corrected
+immutable image and complete Shauth deployment acceptance with the other
+first-party applications.
 
 ## Standing rules (user-issued, non-negotiable)
 
@@ -33,7 +33,8 @@ the other first-party applications.
 
 ## Phase
 
-**Application monitoring is merged in PR #183 as `95c9c785`.**
+**Application monitoring is merged in PR #183 as `95c9c785`; the browser-oracle
+repair is merged in PR #184 as `002415aa`.**
 `GET /monitoring/observation`
 publishes an authenticated `e6qu.monitoring/v2` application resource backed by
 the real projection, event-log, scheduler, worker, drain, and process state.
@@ -45,11 +46,14 @@ lint, security scan, full race suite, dead-code, zero clone groups,
 vulnerability scan, and licenses. Post-merge CI exposed a stale browser-test
 oracle: the manager dashboard correctly counted pending flow deployments,
 model approvals, and experiment launches, while the integrity journey counted
-only flow deployments. The journey now independently queries all three API
-sources. Its exact real-Wasm Playwright scenario and the complete CI-equivalent
-gate pass: vet/build, strict lint, security scan, full race suite, dead-code,
-zero clone groups, vulnerability scan, and licenses. Review, immutable image
-publication, and deployed Shauth acceptance remain the active delivery gates.
+only flow deployments. The merged repair independently queries all three API
+sources. Post-merge PostgreSQL CI then exposed a separate eventual-consistency
+race in `TestClientAgainstEngine`: detail lookup could observe a projected
+decision during the narrow interval before its list index was written. The SDK
+journey now polls `ListDecisions` for the exact decision id, matching the
+documented eventually consistent production contract. Corrective review,
+immutable image publication, and deployed Shauth acceptance remain the active
+delivery gates.
 
 **Enterprise E8 — ecosystem and regulated solution packs is IN PROGRESS.** The
 provider lifecycle (#170) is merged as `e36dfa6`; E7 is complete (tenant admin

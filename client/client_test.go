@@ -479,9 +479,20 @@ func TestClientAgainstEngine(t *testing.T) {
 		got.Metadata["channel"] != "sdk" {
 		t.Fatalf("GetDecision = %+v, err=%v", got, err)
 	}
-	decisions, err := c.ListDecisions(ctx)
-	if err != nil || len(decisions) == 0 {
-		t.Fatalf("ListDecisions len=%d err=%v", len(decisions), err)
+	var decisions []client.Decision
+	if !testutil.Eventually(t, func() bool {
+		decisions, err = c.ListDecisions(ctx)
+		if err != nil {
+			return false
+		}
+		for _, decision := range decisions {
+			if decision.DecisionID == dec.DecisionID {
+				return true
+			}
+		}
+		return false
+	}) {
+		t.Fatalf("ListDecisions never returned decision %q: %+v err=%v", dec.DecisionID, decisions, err)
 	}
 
 	// Batch decide scores multiple rows.

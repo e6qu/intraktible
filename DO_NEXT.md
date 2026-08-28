@@ -16,14 +16,12 @@ DOC (a claim not backed by code).
 
 ## Queue
 
-1. **OPEN — Land the post-merge browser-oracle repair.** The manager dashboard's
-   `pendingApprovalCount` correctly combines pending flow deployments, model
-   approvals, and experiment launches, but `web/e2e-demo/integrity.spec.ts`
-   independently counted only flow deployments. The journey now queries all
-   three sources; its exact real-Wasm Playwright scenario and complete
-   CI-equivalent gate pass. Land the sole PR from
-   `fix/demo-home-approval-count`.
-2. **OPEN — Publish and deploy the corrected immutable image.** After the repair
+1. **OPEN — Land the PostgreSQL SDK-journey repair.** Post-merge run
+   `33161244329` failed because `TestClientAgainstEngine` assumed the decision
+   list index was immediately consistent with a just-projected detail record.
+   The journey now polls for the exact decision id; land the sole PR from
+   `fix/postgres-client-projection-wait` after its gates pass.
+2. **OPEN — Publish and deploy the corrected immutable image.** After that repair
    merges, pin its published image in infrastructure, then verify Intraktible
    through Shauth's authenticated observation collector and the full live
    browser gate.
