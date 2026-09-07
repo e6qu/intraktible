@@ -5,6 +5,7 @@
 package httpx
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
@@ -20,6 +21,12 @@ import (
 	"github.com/e6qu/intraktible/platform/eventlog"
 	"github.com/e6qu/intraktible/platform/identity"
 )
+
+// StatusClientClosedRequest is the conventional (nginx) status for a request
+// whose client went away before the response: outside the 5xx class so it is
+// never counted as a server fault, and outside 4xx so it is never mistaken for
+// the caller's mistake. Nothing reads it; the connection is already gone.
+const StatusClientClosedRequest = 499
 
 var (
 	releaseRevision          string
@@ -49,7 +56,21 @@ func validImmutableReleaseRevision(revision string) bool {
 // error, a wrapped chain of context): it is logged loudly server-side but the
 // client receives only a generic message, so operational detail never crosses the
 // trust boundary. The per-request access log (method/path/status) correlates it.
+//
+// A 5xx whose cause is the request's own context being canceled is not a
+// server fault: the client closed the connection while a store call was in
+// flight, the driver reported "context canceled", and nobody is left to read
+// the response. Logging that as a server error made every browser navigation
+// away from a slow page an incident in the log ("store: postgres list
+// notifications: context canceled" at ERROR, with a 500 in the access log)
+// and made a 5xx-rate alert count clients leaving. It is reported as
+// StatusClientClosedRequest at info level instead.
 func Error(w http.ResponseWriter, status int, err error) {
+	if status >= 500 && errors.Is(err, context.Canceled) {
+		slog.Info("httpx: request canceled by client", "err", err)
+		JSON(w, StatusClientClosedRequest, map[string]string{"error": "client closed request"})
+		return
+	}
 	if status >= 500 {
 		slog.Error("httpx: server error", "status", status, "err", err)
 		JSON(w, status, map[string]string{"error": http.StatusText(status)})

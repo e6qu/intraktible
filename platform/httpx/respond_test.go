@@ -3,8 +3,10 @@
 package httpx_test
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -34,6 +36,34 @@ func TestError(t *testing.T) {
 		t.Fatalf("code = %d", w.Code)
 	}
 	if got := strings.TrimSpace(w.Body.String()); got != `{"error":"boom"}` {
+		t.Fatalf("body = %q", got)
+	}
+}
+
+func TestErrorHidesServerFaultDetail(t *testing.T) {
+	w := httptest.NewRecorder()
+	httpx.Error(w, http.StatusInternalServerError, errors.New("store: postgres list notifications: connection refused"))
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("code = %d", w.Code)
+	}
+	if got := strings.TrimSpace(w.Body.String()); got != `{"error":"Internal Server Error"}` {
+		t.Fatalf("body = %q", got)
+	}
+}
+
+func TestErrorTreatsClientCancelAsClientClosedRequest(t *testing.T) {
+	// The wrapped shape a store returns when the request context is canceled
+	// mid-query: the client left, and this must not read as a server fault.
+	err := fmt.Errorf("store: postgres list notifications: %w", context.Canceled)
+	w := httptest.NewRecorder()
+	httpx.Error(w, http.StatusInternalServerError, err)
+	if w.Code != httpx.StatusClientClosedRequest {
+		t.Fatalf("code = %d, want %d", w.Code, httpx.StatusClientClosedRequest)
+	}
+	if w.Code >= 500 {
+		t.Fatalf("a client cancel was reported in the 5xx class: %d", w.Code)
+	}
+	if got := strings.TrimSpace(w.Body.String()); got != `{"error":"client closed request"}` {
 		t.Fatalf("body = %q", got)
 	}
 }
