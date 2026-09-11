@@ -311,8 +311,30 @@ func (r *Runtime) applyContiguous(ctx context.Context, e eventlog.Envelope) erro
 		r.setApplied(durable)
 		return nil
 	case e.Seq != durable+1:
-		_ = tx.Rollback()
-		return fmt.Errorf("projection: refusing to apply seq %d over durable checkpoint %d — a lower seq is not yet visible in the log; advancing past it would skip an event", e.Seq, durable)
+		// A gap is not automatically a missing event. BIGSERIAL hands out a seq at
+		// INSERT and does not give it back when the transaction dies, so every
+		// crashed or rolled-back append burns its number permanently — and an
+		// unclean shutdown produces a run of them. Waiting for those forever wedges
+		// the read side of a live deployment: on 2026-09-11 a machine lost power and
+		// came back with seqs 569262..569284 burned, and this refused every event
+		// after them until the process was restarted into the bootstrap path, which
+		// has never required contiguity.
+		//
+		// Whether the gap can still fill is knowable rather than a guess. Append
+		// assigns its seq under a session-wide advisory lock and commits before
+		// releasing it, so seq order is commit order: by the time a higher seq is
+		// visible, every lower one has already committed or aborted. A gap below a
+		// visible seq is therefore closed for good, and the only question is whether
+		// the log really holds nothing in it.
+		settled, err := r.gapIsPermanent(ctx, durable, e.Seq)
+		if err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+		if !settled {
+			_ = tx.Rollback()
+			return fmt.Errorf("projection: refusing to apply seq %d over durable checkpoint %d — a lower seq is not yet visible in the log; advancing past it would skip an event", e.Seq, durable)
+		}
 	}
 	if err := r.applyAll(ctx, e, tx); err != nil {
 		_ = tx.Rollback()
@@ -330,6 +352,24 @@ func (r *Runtime) applyContiguous(ctx context.Context, e eventlog.Envelope) erro
 }
 
 // readCheckpointLocked reads the durable applied-head inside the current tx under an
+// gapIsPermanent reports whether the log truly holds nothing between the durable
+// checkpoint and next, so advancing over the gap skips no event. It asks the log
+// rather than reasoning from the seq alone: if anything between them exists, the
+// poller still owes us those events and this must not move.
+func (r *Runtime) gapIsPermanent(ctx context.Context, durable, next uint64) (bool, error) {
+	evs, err := r.log.Read(ctx, durable+1)
+	if err != nil {
+		return false, fmt.Errorf("projection: read log to size the gap below seq %d: %w", next, err)
+	}
+	for _, e := range evs {
+		if e.Seq < next {
+			return false, nil
+		}
+		break
+	}
+	return true, nil
+}
+
 // exclusive lock (GetForUpdate), so concurrent replicas serialize on the checkpoint
 // row — the store.Tx contract guarantees the lock on every backend.
 func readCheckpointLocked(ctx context.Context, tx store.Tx) (uint64, error) {
