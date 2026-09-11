@@ -361,11 +361,11 @@ func (r *Runtime) gapIsPermanent(ctx context.Context, durable, next uint64) (boo
 	if err != nil {
 		return false, fmt.Errorf("projection: read log to size the gap below seq %d: %w", next, err)
 	}
-	for _, e := range evs {
-		if e.Seq < next {
-			return false, nil
-		}
-		break
+	// Read returns the log in seq order, so the first event it hands back is the
+	// lowest one at or above the checkpoint. If that is still below next, the gap
+	// is not a gap: those events exist and are owed.
+	if len(evs) > 0 && evs[0].Seq < next {
+		return false, nil
 	}
 	return true, nil
 }
