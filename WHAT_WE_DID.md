@@ -1178,3 +1178,8 @@ Linux, entirely that VM's fsync path.
   projection race. `TestClientAgainstEngine` now polls `ListDecisions` for the
   exact decision it created, rather than assuming the list index is immediately
   visible when the detail projection first appears.
+- 2026-10-09: Cleared three vulnerabilities govulncheck reported against the
+  build: GO-2026-6617 (net/http HTTP/2 HPACK race; Go 1.26.9 and
+  golang.org/x/net v0.60.0, adopted inside the 24-hour quarantine as a
+  security exception), GO-2026-6505 (OpenTelemetry otlptrace, the otel family
+  to v1.47.0) and GO-2026-6348 (grpc v1.84.0). `make vuln`: 0 vulnerabilities.
