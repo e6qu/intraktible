@@ -32,6 +32,7 @@ expect_count 1 "            --tag \"${gha}{IMAGE}:${gha}{{ needs.metadata.output
 expect_count 1 "            \"${gha}{IMAGE}:${gha}{{ needs.metadata.outputs.tag }}-amd64\" ${continuation}"
 expect_count 1 "            \"${gha}{IMAGE}:${gha}{{ needs.metadata.outputs.tag }}-arm64\""
 expect_count 1 '    name: Retain 20 release groups'
+expect_count 2 '          driver-opts: image=mirror.gcr.io/moby/buildkit:buildx-stable-1@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea'
 expect_count 1 "        run: ./scripts/prune-ghcr-images.sh \"${gha}{{ github.repository_owner }}\" \"${gha}{{ github.event.repository.name }}\" \"${gha}{{ needs.metadata.outputs.tag }}\" 20"
 
 if grep -E '(tags:|--tag)[^#]*:(latest|main|sha-)([^[:alnum:]_-]|$)' "$workflow"; then
@@ -50,6 +51,16 @@ if grep -Fq 'mathieudutour/github-tag-action' "$workflow"; then
 	echo 'publication must not create an independent semantic release stream' >&2
 	exit 1
 fi
+
+# Docker Hub limits anonymous pulls per address and the shared CI runners
+# exhaust it, so every base image must name a registry other than Docker Hub.
+while read -r _ image _; do
+	registry="${image%%/*}"
+	if [[ "$image" != */* || "$registry" != *.* || "$registry" == docker.io || "$registry" == index.docker.io ]]; then
+		echo "Dockerfile base image must not come from Docker Hub: $image" >&2
+		exit 1
+	fi
+done < <(grep -E '^FROM ' "$dockerfile" | sed -E 's/^FROM (--[^ ]+ )*/FROM /')
 
 grep -Fq 'ARG GIT_SHA=dev' "$dockerfile"
 grep -Fq 'ARG BUILD_TIME=' "$dockerfile"
