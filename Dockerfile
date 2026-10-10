@@ -1,6 +1,9 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Stage 1: build the SvelteKit UI
-FROM node:22-bookworm-slim AS web
+# The build images come from the Amazon ECR Public copy of Docker's official
+# images, pinned to the same index digest Docker Hub serves: Docker Hub limits
+# anonymous pulls per address, and the shared CI runners exhaust it.
+FROM public.ecr.aws/docker/library/node:22-bookworm-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392 AS web
 # Build provenance shown in the UI footer. .git is not in this build context, so the
 # values come from build args (the release workflow passes the short SHA + UTC build
 # time); they default to 'dev'/now for a bare `docker build`.
@@ -15,7 +18,7 @@ ENV PUBLIC_BUILD_TIME=$BUILD_TIME
 RUN npm run build
 
 # Stage 2: build the static Go binary with the UI embedded
-FROM golang:1.26-bookworm AS build
+FROM public.ecr.aws/docker/library/golang:1.26-bookworm@sha256:d9c68c2c51161e12fd77e4c6320687c9cd86e1af1e3ad6e6cd63ff970641453c AS build
 ARG GIT_SHA=dev
 ARG BUILD_TIME=
 WORKDIR /src

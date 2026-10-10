@@ -85,10 +85,13 @@ wait_http() {
 }
 
 docker network create "$network" >/dev/null
+# PostgreSQL comes from the Amazon ECR Public copy of Docker's official images
+# at the digest Docker Hub serves: Docker Hub limits anonymous pulls, and the
+# shared CI runners exhaust it.
 docker run --detach --name "$postgres" --network "$network" --network-alias postgres \
 	--publish "127.0.0.1:${postgres_port}:5432" \
 	--env POSTGRES_DB=shauth --env POSTGRES_USER=shauth --env "POSTGRES_PASSWORD=${postgres_password}" \
-	postgres:17.5-alpine >/dev/null
+	public.ecr.aws/docker/library/postgres:17.5-alpine@sha256:6567bca8d7bc8c82c5922425a0baee57be8402df92bae5eacad5f01ae9544daa >/dev/null
 for _ in $(seq 1 60); do
 	if docker exec "$postgres" psql -U shauth -d shauth -Atc 'SELECT 1' 2>/dev/null | grep -qx 1; then
 		break
