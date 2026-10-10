@@ -40,6 +40,7 @@ if [ "$relying_party_rejection_sentinel" = "$validation_password" ]; then
 fi
 postgres_password=$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')
 hydra_secret=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
+token_hook_token=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
 shauth_pid=
 api_pid=
 web_pid=
@@ -119,7 +120,13 @@ docker run --detach --name "$hydra" --network "$network" \
 	--env "URLS_LOGIN=http://localhost:${shauth_port}/oauth/login" \
 	--env "URLS_CONSENT=http://localhost:${shauth_port}/oauth/consent" \
 	--env "URLS_LOGOUT=http://localhost:${shauth_port}/oauth/logout" \
+	--env "URLS_ERROR=http://localhost:${shauth_port}/oauth/error" \
 	--env "URLS_POST_LOGOUT_REDIRECT=http://localhost:${shauth_port}/signed-out" \
+	--env SERVE_COOKIES_SAME_SITE_MODE=Lax \
+	--env "OAUTH2_TOKEN_HOOK_URL=http://host.docker.internal:${shauth_port}/internal/hydra/token-hook" \
+	--env OAUTH2_TOKEN_HOOK_AUTH_TYPE=api_key --env OAUTH2_TOKEN_HOOK_AUTH_CONFIG_IN=header \
+	--env OAUTH2_TOKEN_HOOK_AUTH_CONFIG_NAME=Authorization \
+	--env "OAUTH2_TOKEN_HOOK_AUTH_CONFIG_VALUE=Bearer ${token_hook_token}" \
 	--env "SECRETS_SYSTEM_0=${hydra_secret}" \
 	"$provider_image" serve all --dev --config /etc/config/hydra.yaml >/dev/null
 wait_http "http://localhost:${hydra_public_port}/health/ready" "Ory Hydra"
@@ -128,7 +135,9 @@ wait_http "http://localhost:${hydra_public_port}/health/ready" "Ory Hydra"
 shauth_dsn="postgres://shauth:${postgres_password}@localhost:${postgres_port}/shauth?sslmode=disable"
 DATABASE_URL="$shauth_dsn" SHAUTH_MIGRATIONS_DIR="$shauth_root/migrations" "$work/shauth-migrate"
 bootstrap_apps=$(printf '[{"slug":"intraktible","name":"Intraktible","description":"Agentic decision platform.","launch_url":"http://localhost:%s/","oidc_client_id":"%s","oidc_client_secret":"%s","redirect_uris":["http://localhost:%s/v1/auth/oidc/shauth/callback"],"post_logout_redirect_uris":["http://localhost:%s/auth/shauth/logout/complete"],"frontchannel_logout_uri":"http://localhost:%s/v1/auth/oidc/shauth/frontchannel-logout","backchannel_logout_uri":"http://localhost:%s/v1/auth/oidc/shauth/backchannel-logout","health_url":"http://localhost:%s/healthz","monitoring_url":"","validation_url":"http://localhost:%s/auth/validation","signed_out_url":"http://localhost:%s/v1/auth/signed-out","release_revision":"%s"}]' "$app_port" "$client_id" "$client_secret" "$app_port" "$app_port" "$app_port" "$app_port" "$app_port" "$app_port" "$app_port" "$application_release_revision")
-SHAUTH_LISTEN_ADDRESS="127.0.0.1:${shauth_port}" \
+# Shauth listens beyond loopback because Ory Hydra, inside the Docker network,
+# confirms every token it issues through Shauth's token hook on the host.
+SHAUTH_LISTEN_ADDRESS=":${shauth_port}" SHAUTH_TOKEN_HOOK_TOKEN="$token_hook_token" \
 	SHAUTH_PUBLIC_URL="http://localhost:${shauth_port}" SHAUTH_ALLOW_INSECURE_COOKIES=true \
 	DATABASE_URL="$shauth_dsn" HYDRA_ADMIN_URL="http://localhost:${hydra_admin_port}" \
 	HYDRA_PUBLIC_INTERNAL_URL="http://localhost:${hydra_public_port}" \
