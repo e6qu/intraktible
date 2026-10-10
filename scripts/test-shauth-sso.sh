@@ -4,7 +4,7 @@ set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 shauth_root=${SHAUTH_SOURCE_DIR:?SHAUTH_SOURCE_DIR must point to a Shauth checkout}
-shauth_expected_commit=74735a1710fa69d472e7eb27ae95ce317c7c1a3d
+shauth_expected_commit=226ffffb9a046378334098c9bf34cc31776c34d4
 shauth_actual_commit=$(git -C "$shauth_root" rev-parse HEAD)
 if [ "$shauth_actual_commit" != "$shauth_expected_commit" ]; then
 	echo "Shauth checkout is $shauth_actual_commit; expected $shauth_expected_commit" >&2
