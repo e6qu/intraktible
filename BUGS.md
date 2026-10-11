@@ -1168,3 +1168,7 @@ A four-lens parallel review (backend correctness, security, fail-fast, frontend 
 ## Application monitoring delivery (2026-08-28)
 
 - `TEST | CI | client | The real PostgreSQL SDK journey read a completed decision by id and immediately required the independently written decision-list index to contain it. Projection apply writes the full record before the index, so a loaded runner could observe the valid intermediate state and fail. The journey now polls the documented eventually consistent list for the exact decision id. | fixed`
+
+## Container image sources (2026-10-11)
+
+- `BUILD | LOW | deploy | The two compose files still pulled postgres:17-alpine from Docker Hub, which rate-limits anonymous pulls, and the publication contract only checked the Dockerfile. Both now pull public.ecr.aws/docker/library/postgres:17-alpine pinned to the same index digest Docker Hub serves, and scripts/check-container-publication.sh rejects any compose image that comes from Docker Hub or has no digest. | fixed`

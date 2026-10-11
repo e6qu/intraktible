@@ -58,7 +58,7 @@ repos:
         name: 'container · immutable multi-architecture publication contract'
         entry: make container-release-check
         language: system
-        files: ^(\.github/workflows/release\.yml|scripts/(check-container-publication\.sh|prune-ghcr-images\.sh|select-obsolete-container-versions\.jq|test-container-retention\.sh)|Makefile)$
+        files: ^(\.github/workflows/release\.yml|scripts/(check-container-publication\.sh|prune-ghcr-images\.sh|select-obsolete-container-versions\.jq|test-container-retention\.sh)|Dockerfile|deploy/docker-compose[^/]*\.yml|Makefile)$
         pass_filenames: false
 
       - id: terraform
