@@ -64,7 +64,9 @@ services:
     volumes: ["itk-split:/data"]
 
   postgres:
-    image: postgres:17-alpine   # PostgreSQL License (AGPL-compatible)
+    # PostgreSQL License (AGPL-compatible). Pulled from the ECR Public mirror of the
+    # Docker Hub library image, because Docker Hub rate-limits anonymous pulls.
+    image: public.ecr.aws/docker/library/postgres:17-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
     profiles: ["pg"]
     environment:
       POSTGRES_PASSWORD: intraktible

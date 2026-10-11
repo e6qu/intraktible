@@ -26,17 +26,17 @@ services:
       postgres:
         condition: service_healthy
     healthcheck:
-      # BusyBox/distroless has no curl; the app image is distroless too, so probe
-      # from the postgres container's network instead in a real setup. Here we rely
-      # on depends_on + the app's own /readyz for k8s; compose healthcheck is a
-      # best-effort TCP check via the shell-less image is not possible, so omitted.
+      # The app image is distroless, with no shell or curl to run a probe, so compose
+      # has no healthcheck for it. Kubernetes probes /readyz instead (see the chart).
       disable: true
     deploy:
       resources:
         limits: { cpus: "2", memory: 2G }
 
   postgres:
-    image: postgres:17-alpine
+    # The ECR Public mirror of the Docker Hub library image, because Docker Hub
+    # rate-limits anonymous pulls. The digest pins the exact image.
+    image: public.ecr.aws/docker/library/postgres:17-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
     restart: unless-stopped
     environment:
       POSTGRES_USER: intraktible

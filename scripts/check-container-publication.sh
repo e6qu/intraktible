@@ -62,6 +62,32 @@ while read -r _ image _; do
 	fi
 done < <(grep -E '^FROM ' "$dockerfile" | sed -E 's/^FROM (--[^ ]+ )*/FROM /')
 
+# The same rule covers the images the compose files pull. The only image they may
+# name without a registry is intraktible itself, which they build from this tree.
+# Every pulled image also carries a digest, so a moved tag cannot change it.
+compose_images=0
+for compose in "$root"/deploy/docker-compose*.yml; do
+	while read -r image; do
+		compose_images=$((compose_images + 1))
+		if [[ "$image" == intraktible:* ]]; then
+			continue
+		fi
+		registry="${image%%/*}"
+		if [[ "$image" != */* || "$registry" != *.* || "$registry" == docker.io || "$registry" == index.docker.io ]]; then
+			echo "compose image must not come from Docker Hub: $image (${compose#"$root"/})" >&2
+			exit 1
+		fi
+		if [[ "$image" != *@sha256:* ]]; then
+			echo "compose image must be pinned by digest: $image (${compose#"$root"/})" >&2
+			exit 1
+		fi
+	done < <(sed -nE 's/^[[:space:]]*image:[[:space:]]*([^[:space:]#]+).*/\1/p' "$compose")
+done
+if (( compose_images == 0 )); then
+	echo "found no compose images under deploy/; the compose image check is not looking at anything" >&2
+	exit 1
+fi
+
 grep -Fq 'ARG GIT_SHA=dev' "$dockerfile"
 grep -Fq 'ARG BUILD_TIME=' "$dockerfile"
 grep -Fq "$git_sha_ldflag" "$dockerfile"
