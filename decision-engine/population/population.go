@@ -529,19 +529,19 @@ func (h *Handler) WithNow(now func() time.Time) *Handler {
 
 // Create resolves every item to an exact version/cohort and records the
 // immutable input manifest. Idempotent retries return the original job.
-func (h *Handler) Create(ctx context.Context, id identity.Identity, command CreateCommand, idempotencyKey string) (Created, eventlog.Envelope, error) {
+func (h *Handler) Create(ctx context.Context, id identity.Identity, create CreateCommand, idempotencyKey string) (Created, eventlog.Envelope, error) {
 	if err := id.Valid(); err != nil {
 		return Created{}, eventlog.Envelope{}, err
 	}
-	command = defaults(command)
-	if err := validateCreate(command); err != nil {
+	create = defaults(create)
+	if err := validateCreate(create); err != nil {
 		return Created{}, eventlog.Envelope{}, err
 	}
 	keyHash, err := idempotencyHash(idempotencyKey)
 	if err != nil {
 		return Created{}, eventlog.Envelope{}, err
 	}
-	requestHash, err := jsonHash(command)
+	requestHash, err := jsonHash(create)
 	if err != nil {
 		return Created{}, eventlog.Envelope{}, err
 	}
@@ -555,32 +555,32 @@ func (h *Handler) Create(ctx context.Context, id identity.Identity, command Crea
 		}
 		return prior, eventlog.Envelope{}, nil
 	}
-	flow, found, err := flows.BySlug(ctx, h.store, id, command.Slug)
+	flow, found, err := flows.BySlug(ctx, h.store, id, create.Slug)
 	if err != nil {
 		return Created{}, eventlog.Envelope{}, err
 	}
 	if !found || len(flow.Versions) == 0 {
-		return Created{}, eventlog.Envelope{}, fmt.Errorf("population: unknown or unpublished flow %q", command.Slug)
+		return Created{}, eventlog.Envelope{}, fmt.Errorf("population: unknown or unpublished flow %q", create.Slug)
 	}
 	baseVersion := flow.Latest
-	if deployment, deployed := flow.Deployments[command.Environment]; deployed && deployment.Version > 0 {
+	if deployment, deployed := flow.Deployments[create.Environment]; deployed && deployment.Version > 0 {
 		if deployment.ChallengerVersion > 0 {
 			return Created{}, eventlog.Envelope{}, fmt.Errorf("population: legacy challenger deployments cannot be snapshotted; use a governed experiment")
 		}
 		baseVersion = deployment.Version
-	} else if command.Environment != string(domain.EnvSandbox) {
-		return Created{}, eventlog.Envelope{}, fmt.Errorf("population: flow has no %s deployment", command.Environment)
+	} else if create.Environment != string(domain.EnvSandbox) {
+		return Created{}, eventlog.Envelope{}, fmt.Errorf("population: flow has no %s deployment", create.Environment)
 	}
 	manifest := Manifest{
-		Kind: command.Kind, FlowID: flow.FlowID, Slug: flow.Slug,
-		Environment: command.Environment, Items: make([]ItemManifest, len(command.Items)),
+		Kind: create.Kind, FlowID: flow.FlowID, Slug: flow.Slug,
+		Environment: create.Environment, Items: make([]ItemManifest, len(create.Items)),
 	}
-	for index, input := range command.Items {
+	for index, input := range create.Items {
 		item := ItemManifest{Index: index, Input: input, Version: baseVersion}
 		ref := entity.Ref{Type: entity.Type(input.EntityType), ID: entity.ID(input.EntityID)}
 		if h.experiments != nil {
 			assignment, assigned, err := h.experiments.Resolve(
-				ctx, id, flow.FlowID, command.Environment, input.Data, ref,
+				ctx, id, flow.FlowID, create.Environment, input.Data, ref,
 			)
 			if err != nil {
 				return Created{}, eventlog.Envelope{}, fmt.Errorf("population: item %d: %w", index, err)
@@ -602,8 +602,8 @@ func (h *Handler) Create(ctx context.Context, id identity.Identity, command Crea
 	manifestDigest := sha256.Sum256(manifestRaw)
 	payload := Created{
 		JobID: h.newID(), Manifest: manifest, ManifestHash: hex.EncodeToString(manifestDigest[:]),
-		MaxAttempts: command.MaxAttempts, Concurrency: command.Concurrency,
-		ExpiresAt:          h.now().AddDate(0, 0, command.RetentionDays),
+		MaxAttempts: create.MaxAttempts, Concurrency: create.Concurrency,
+		ExpiresAt:          h.now().AddDate(0, 0, create.RetentionDays),
 		IdempotencyKeyHash: keyHash, RequestHash: requestHash,
 	}
 	event, err := eventlog.AppendJSONUnique(
@@ -622,47 +622,47 @@ func (h *Handler) Create(ctx context.Context, id identity.Identity, command Crea
 	return payload, event, err
 }
 
-func defaults(command CreateCommand) CreateCommand {
-	if command.Kind == "" {
-		command.Kind = KindDecision
+func defaults(create CreateCommand) CreateCommand {
+	if create.Kind == "" {
+		create.Kind = KindDecision
 	}
-	if command.MaxAttempts == 0 {
-		command.MaxAttempts = defaultAttempts
+	if create.MaxAttempts == 0 {
+		create.MaxAttempts = defaultAttempts
 	}
-	if command.Concurrency == 0 {
-		command.Concurrency = 4
+	if create.Concurrency == 0 {
+		create.Concurrency = 4
 	}
-	if command.RetentionDays == 0 {
-		command.RetentionDays = defaultRetention
+	if create.RetentionDays == 0 {
+		create.RetentionDays = defaultRetention
 	}
-	return command
+	return create
 }
 
-func validateCreate(command CreateCommand) error {
+func validateCreate(create CreateCommand) error {
 	switch {
-	case !command.Kind.Valid():
-		return fmt.Errorf("population: invalid kind %q", command.Kind)
-	case strings.TrimSpace(command.Slug) == "":
+	case !create.Kind.Valid():
+		return fmt.Errorf("population: invalid kind %q", create.Kind)
+	case strings.TrimSpace(create.Slug) == "":
 		return fmt.Errorf("population: slug is required")
-	case !domain.ValidEnvironment(command.Environment):
-		return fmt.Errorf("population: invalid environment %q", command.Environment)
-	case len(command.Items) == 0:
+	case !domain.ValidEnvironment(create.Environment):
+		return fmt.Errorf("population: invalid environment %q", create.Environment)
+	case len(create.Items) == 0:
 		return fmt.Errorf("population: items are required")
-	case len(command.Items) > maxItems:
-		return fmt.Errorf("population: %d items exceeds maximum %d", len(command.Items), maxItems)
-	case command.MaxAttempts < 1 || command.MaxAttempts > maxAttempts:
+	case len(create.Items) > maxItems:
+		return fmt.Errorf("population: %d items exceeds maximum %d", len(create.Items), maxItems)
+	case create.MaxAttempts < 1 || create.MaxAttempts > maxAttempts:
 		return fmt.Errorf("population: max_attempts must be between 1 and %d", maxAttempts)
-	case command.Concurrency < 1 || command.Concurrency > maxJobConcurrency:
+	case create.Concurrency < 1 || create.Concurrency > maxJobConcurrency:
 		return fmt.Errorf("population: concurrency must be between 1 and %d", maxJobConcurrency)
-	case command.RetentionDays < 1 || command.RetentionDays > maxRetentionDays:
+	case create.RetentionDays < 1 || create.RetentionDays > maxRetentionDays:
 		return fmt.Errorf("population: retention_days must be between 1 and %d", maxRetentionDays)
 	}
-	for index, item := range command.Items {
+	for index, item := range create.Items {
 		if (item.EntityType == "") != (item.EntityID == "") {
 			return fmt.Errorf("population: item %d must supply entity_type and entity_id together", index)
 		}
 		if item.Data == nil {
-			command.Items[index].Data = map[string]any{}
+			create.Items[index].Data = map[string]any{}
 		}
 	}
 	return nil

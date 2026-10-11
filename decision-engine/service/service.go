@@ -950,22 +950,22 @@ func (s *Service) setPromotionPolicy(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, err)
 		return
 	}
-	policy := mergePromotionPolicy(req.Policy)
+	merged := mergePromotionPolicy(req.Policy)
 	e, err := s.cmd.SetPromotionPolicy(r.Context(), id, domain.SetPromotionPolicy{
 		FlowID: r.PathValue("flow_id"),
-		Policy: policy,
+		Policy: merged,
 	})
 	if err != nil {
 		httpx.Error(w, http.StatusBadRequest, err)
 		return
 	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"policy": policy, "event_id": e.ID, "seq": e.Seq})
+	httpx.JSON(w, http.StatusOK, map[string]any{"policy": merged, "event_id": e.ID, "seq": e.Seq})
 }
 
 func mergePromotionPolicy(req map[string]promotionStageRequest) map[string]events.PromotionStagePolicy {
-	policy := flows.DefaultPromotionPolicy()
+	merged := flows.DefaultPromotionPolicy()
 	for env, patch := range req {
-		stage := policy[env]
+		stage := merged[env]
 		if patch.RequireAssertions != nil {
 			stage.RequireAssertions = *patch.RequireAssertions
 		}
@@ -981,9 +981,9 @@ func mergePromotionPolicy(req map[string]promotionStageRequest) map[string]event
 		if domain.Environment(env) == domain.EnvProduction {
 			stage.RequireReview = true
 		}
-		policy[env] = stage
+		merged[env] = stage
 	}
-	return policy
+	return merged
 }
 
 type shadowRequest struct {
@@ -1094,12 +1094,12 @@ func (s *Service) promote(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, fmt.Errorf("promote: nothing deployed in %q to promote", req.From))
 		return
 	}
-	policy, err := s.cmd.PromotionPolicy(r.Context(), id, flowID)
+	promotion, err := s.cmd.PromotionPolicy(r.Context(), id, flowID)
 	if err != nil {
 		httpx.Error(w, http.StatusInternalServerError, fmt.Errorf("promote: read current promotion policy: %w", err))
 		return
 	}
-	stage := policy[req.To]
+	stage := promotion[req.To]
 	cmd := domain.DeployVersion{FlowID: flowID, Environment: req.To, Version: src.Version}
 	if stage.RequireReview {
 		// A review target only raises a request here — nothing goes live, so the

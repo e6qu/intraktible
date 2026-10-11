@@ -95,15 +95,15 @@ func Markdown(rep Report) string {
 	}
 
 	fmt.Fprintf(&b, "\n## Open governance gaps\n\n")
-	any := false
+	anyMatch := false
 	for _, m := range rep.Models {
 		if len(m.Issues) == 0 {
 			continue
 		}
-		any = true
+		anyMatch = true
 		fmt.Fprintf(&b, "- **%s** (%s): %s\n", mdCell(m.Name), m.Kind, strings.Join(m.Issues, "; "))
 	}
-	if !any {
+	if !anyMatch {
 		fmt.Fprintf(&b, "_No open gaps — every model has validation evidence and is within its monitors._\n")
 	}
 	return b.String()

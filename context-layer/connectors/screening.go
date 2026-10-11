@@ -122,7 +122,7 @@ func (c sanctionsConnector) Fetch(_ context.Context, params json.RawMessage) (js
 // punctuation, case, and word order don't defeat a match.
 func nameTokens(name string) map[string]struct{} {
 	toks := strings.FieldsFunc(strings.ToLower(name), func(r rune) bool {
-		return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9')
+		return (r < 'a' || r > 'z') && (r < '0' || r > '9')
 	})
 	set := make(map[string]struct{}, len(toks))
 	for _, t := range toks {

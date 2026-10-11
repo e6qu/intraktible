@@ -190,7 +190,7 @@ func TestWALMigratesLegacySingleFile(t *testing.T) {
 	// Write a legacy single-file log directly (as the old WAL would have left it).
 	var legacy strings.Builder
 	for i := 1; i <= 5; i++ {
-		legacy.WriteString(fmt.Sprintf(`{"org":"o","workspace":"w","type":"legacy%d"}`+"\n", i))
+		fmt.Fprintf(&legacy, `{"org":"o","workspace":"w","type":"legacy%d"}`+"\n", i)
 	}
 	if err := os.WriteFile(filepath.Join(dir, activeFileName), []byte(legacy.String()), 0o600); err != nil {
 		t.Fatal(err)

@@ -43,7 +43,7 @@ OpenAPI 3.1 at `/openapi.json`), and a summary of its current content.
 It's **one binary** — `intraktible` — that runs the whole platform or any subset, with pluggable
 storage. The different "ways to run it" are just flags on the same `serve` command; pick a path.
 
-**Prerequisites:** Go **1.26+** (backend) · Node **20+** (only to build or dev the UI) · Docker (optional).
+**Prerequisites:** Go **1.27+** (backend) · Node **20+** (only to build or dev the UI) · Docker (optional).
 
 ### Fastest path — full-stack dev with hot reload
 

@@ -12,7 +12,7 @@ PostgreSQL,LGPL-2.1,LGPL-3.0,GPL-2.0,GPL-3.0,AGPL-3.0
 GO_PKGS = $(shell $(GO) list ./... | grep -v /node_modules)
 GO_DIRS = $(shell $(GO) list -f '{{.Dir}}' ./... | grep -v /node_modules)
 
-.PHONY: all build run dev test test-short test-shauth-sso container-release-check terraform-check fmt fmtcheck vet typecheck tsenums lint sast deadcode dupl vuln licenses check ci precommit web dist e2e-embedded demo-seed clean
+.PHONY: all build run dev test test-short test-shauth-sso container-release-check image-pins terraform-check fmt fmtcheck vet typecheck tsenums lint sast deadcode dupl vuln licenses check ci precommit web dist e2e-embedded demo-seed clean
 
 all: build
 
@@ -56,6 +56,11 @@ container-release-check:
 	shellcheck scripts/check-container-publication.sh scripts/prune-ghcr-images.sh scripts/test-container-retention.sh
 	./scripts/check-container-publication.sh
 
+## image-pins: compare every pinned public.ecr.aws and mirror.gcr.io image with the
+# digest and releases Docker Hub serves, under a 24-hour quarantine (cmd/imagepins)
+image-pins:
+	$(GO) run ./cmd/imagepins
+
 ## terraform-check: validate the Amazon ECS deployment module and its plan contracts
 terraform-check:
 	terraform -chdir=deploy/terraform/aws-ecs-scale-to-zero fmt -check -recursive
@@ -92,7 +97,7 @@ tsenums:
 
 ## lint: golangci-lint (strict)
 lint:
-	$(GO) run github.com/golangci/golangci-lint/cmd/golangci-lint@latest run $(GO_DIRS)
+	$(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run $(GO_DIRS)
 
 ## sast: static application security testing (gosec)
 sast:
