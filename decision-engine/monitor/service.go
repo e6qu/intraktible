@@ -32,10 +32,10 @@ type Service struct {
 	now      func() time.Time
 }
 
-// New wires the monitor write side and read model to HTTP. notify may be nil, in
+// New wires the monitor write side and read model to HTTP. notifyChannel may be nil, in
 // which case a check evaluates but does not deliver.
-func New(cmd *Handler, st store.Store, notify notifier) *Service {
-	return &Service{cmd: cmd, store: st, notifier: notify, now: func() time.Time { return time.Now().UTC() }}
+func New(cmd *Handler, st store.Store, notifyChannel notifier) *Service {
+	return &Service{cmd: cmd, store: st, notifier: notifyChannel, now: func() time.Time { return time.Now().UTC() }}
 }
 
 // WithNow overrides the clock (deterministic tests, the demo seeder) and

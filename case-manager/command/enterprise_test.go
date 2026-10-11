@@ -676,9 +676,10 @@ func TestRebalanceMovesOnlyCapacityOverflow(t *testing.T) {
 				}
 			}
 		}
-		if assignee == "alice" {
+		switch assignee {
+		case "alice":
 			alice++
-		} else if assignee == "bob" {
+		case "bob":
 			bob++
 		}
 	}

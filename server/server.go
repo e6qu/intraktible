@@ -1011,13 +1011,13 @@ func New(ctx context.Context, cfg Config, log eventlog.Log, st store.Store) (*Se
 // live-delivery health, when the backend reports any. Both mean the same thing to a
 // caller — this replica's read models are no longer tracking the log — so they
 // belong behind one probe rather than one of them going unnoticed.
-func readModelHealth(projection func() error, log eventlog.Log) func() error {
+func readModelHealth(readProjection func() error, log eventlog.Log) func() error {
 	reporter, ok := log.(interface{ Err() error })
 	if !ok {
-		return projection
+		return readProjection
 	}
 	return func() error {
-		if err := projection(); err != nil {
+		if err := readProjection(); err != nil {
 			return err
 		}
 		return reporter.Err()

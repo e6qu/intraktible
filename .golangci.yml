@@ -1,15 +1,12 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
+version: "2"
 run:
   timeout: 5m
   tests: true
 
 linters:
+  # The standard set (errcheck, govet, ineffassign, staticcheck, unused) plus:
   enable:
-    - errcheck
-    - govet
-    - ineffassign
-    - staticcheck
-    - unused        # dead-code / unused identifiers
     - misspell
     - revive
     - gocritic
@@ -19,23 +16,43 @@ linters:
     - errorlint
     - unconvert
     - copyloopvar
-
-linters-settings:
-  revive:
+  settings:
+    revive:
+      rules:
+        - name: exported
+          disabled: false
+    gocritic:
+      enabled-tags: [diagnostic, style, performance]
+      # The event-sourcing core passes the immutable eventlog.Envelope (and read
+      # models) by value on purpose — events are values, not shared pointers. The
+      # by-value idiom is mandated by the Projector.Apply interface, so these
+      # size/style nits would fire pervasively and add only noise.
+      disabled-checks: [hugeParam, rangeValCopy, unnamedResult]
+  # The presets and paths keep version 1's default exclusions, which this
+  # configuration relied on before the move to version 2.
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
     rules:
-      - name: exported
-        disabled: false
-  gocritic:
-    enabled-tags: [diagnostic, style, performance]
-    # The event-sourcing core passes the immutable eventlog.Envelope (and read
-    # models) by value on purpose — events are values, not shared pointers. The
-    # by-value idiom is mandated by the Projector.Apply interface, so these
-    # size/style nits would fire pervasively and add only noise.
-    disabled-checks: [hugeParam, rangeValCopy, unnamedResult]
+      - path: _test\.go
+        linters: [gosec, errcheck]
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
 
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0
-  exclude-rules:
-    - path: _test\.go
-      linters: [gosec, errcheck]
+
+formatters:
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$

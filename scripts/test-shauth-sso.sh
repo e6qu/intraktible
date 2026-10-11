@@ -92,7 +92,7 @@ docker network create "$network" >/dev/null
 docker run --detach --name "$postgres" --network "$network" --network-alias postgres \
 	--publish "127.0.0.1:${postgres_port}:5432" \
 	--env POSTGRES_DB=shauth --env POSTGRES_USER=shauth --env "POSTGRES_PASSWORD=${postgres_password}" \
-	public.ecr.aws/docker/library/postgres:17.5-alpine@sha256:6567bca8d7bc8c82c5922425a0baee57be8402df92bae5eacad5f01ae9544daa >/dev/null
+	public.ecr.aws/docker/library/postgres:17.11-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24 >/dev/null
 for _ in $(seq 1 60); do
 	if docker exec "$postgres" psql -U shauth -d shauth -Atc 'SELECT 1' 2>/dev/null | grep -qx 1; then
 		break

@@ -465,6 +465,7 @@ func (c *Client) GetFlow(ctx context.Context, flowID string) (Flow, error) {
 
 // ImportBundle calls the retired direct-publication bundle route and returns
 // HTTP 410.
+//
 // Deprecated: use ImportCanonicalBundle with a stable idempotency key.
 func (c *Client) ImportBundle(ctx context.Context, docs []FlowDoc) (BundleResult, error) {
 	return do[BundleResult](ctx, c, http.MethodPost, "/v1/flows/import-bundle",

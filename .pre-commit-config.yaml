@@ -61,6 +61,13 @@ repos:
         files: ^(\.github/workflows/release\.yml|scripts/(check-container-publication\.sh|prune-ghcr-images\.sh|select-obsolete-container-versions\.jq|test-container-retention\.sh)|Dockerfile|deploy/docker-compose[^/]*\.yml|Makefile)$
         pass_filenames: false
 
+      - id: image-pins
+        name: 'container · image pins are current with Docker Hub (24-hour quarantine)'
+        entry: make image-pins
+        language: system
+        files: ^(Dockerfile|deploy/docker-compose[^/]*\.yml|\.github/workflows/[^/]*\.yml|scripts/[^/]*\.sh|cmd/imagepins/[^/]*\.go)$
+        pass_filenames: false
+
       - id: terraform
         name: 'terraform · format + validate + plan contracts'
         entry: make terraform-check

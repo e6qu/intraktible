@@ -629,7 +629,7 @@ func TestIndependentTrialAdjudicationChangesGateWithoutRewritingTrial(t *testing
 	view, found, err := ReadCampaign(ctx, projected, maker, campaign.CampaignID)
 	if err != nil || !found || len(view.Adjudications) != 1 ||
 		view.Assessment.Blocking || view.Assessment.Passed != campaign.Total ||
-		view.CampaignResult.Passed != campaign.Passed ||
+		view.Passed != campaign.Passed ||
 		view.Trials[0].Passed != campaign.Trials[0].Passed {
 		t.Fatalf("adjudicated projection = %+v, found=%t, err=%v", view, found, err)
 	}

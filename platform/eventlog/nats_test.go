@@ -100,16 +100,16 @@ func TestNATSLogRefusesUnenforceableClaimConfig(t *testing.T) {
 }
 
 func TestNATSLog(t *testing.T) {
-	url := runNATS(t)
+	natsURL := runNATS(t)
 	ctx := context.Background()
 
 	// Two logs over one server stand in for two HA nodes.
-	node1, err := eventlog.OpenNATSLog(url)
+	node1, err := eventlog.OpenNATSLog(natsURL)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = node1.Close() }()
-	node2, err := eventlog.OpenNATSLog(url)
+	node2, err := eventlog.OpenNATSLog(natsURL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,8 +188,8 @@ func TestNATSLog(t *testing.T) {
 // nothing ever reaches the bus, and the node serves indefinitely stale data while
 // reporting healthy. Err must surface it so /healthz can say so.
 func TestNATSLogReportsUndecodableDelivery(t *testing.T) {
-	url := runNATS(t)
-	log, err := eventlog.OpenNATSLog(url)
+	natsURL := runNATS(t)
+	log, err := eventlog.OpenNATSLog(natsURL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,7 +201,7 @@ func TestNATSLogReportsUndecodableDelivery(t *testing.T) {
 
 	// Publish straight onto the stream, bypassing Append's encoding, so the
 	// subscription receives something it cannot decode.
-	nc, err := nats.Connect(url)
+	nc, err := nats.Connect(natsURL)
 	if err != nil {
 		t.Fatal(err)
 	}

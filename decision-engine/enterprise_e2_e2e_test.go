@@ -196,14 +196,14 @@ func TestExperimentOutcomeAndPopulationHTTPJourney(t *testing.T) {
 		if reportErr != nil {
 			return false
 		}
-		exposures, outcomes := 0, 0
+		exposures, outcomeCount := 0, 0
 		for _, count := range report.ExposureCounts {
 			exposures += count
 		}
 		for _, arm := range report.Primary.Arms {
-			outcomes += arm.Count
+			outcomeCount += arm.Count
 		}
-		return exposures == 2 && outcomes == 1 && report.Primary.LabelVersion == "conversion-v2"
+		return exposures == 2 && outcomeCount == 1 && report.Primary.LabelVersion == "conversion-v2"
 	}) {
 		t.Fatalf("analysis did not observe the exact corrected cohort: report=%+v read_err=%v", report, reportErr)
 	}

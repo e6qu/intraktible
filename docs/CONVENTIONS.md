@@ -67,6 +67,34 @@ from the log on restart). A new **durable** backend must implement `TxStore` —
 `projection.New` panics on a durable, non-transactional store rather than letting
 non-idempotent projector counters double-count on crash recovery.
 
+## Container image pins
+
+Every image the repository pulls is a copy of a Docker Hub image, pinned by tag
+and digest: `public.ecr.aws/docker/library/<name>` for official images and
+`mirror.gcr.io/<repository>` for the rest, because Docker Hub limits anonymous
+pulls and the shared CI runners exhaust that limit.
+`scripts/check-container-publication.sh` rejects a Dockerfile or compose image
+from Docker Hub or without a digest.
+
+`make image-pins` (`cmd/imagepins`) keeps the pins current. The `image-pins`
+workflow runs it on every pull request, on every push to `main` and daily. For
+each pin in the tracked tree it reads Docker Hub's tag API and the mirror's
+manifest:
+
+- **ok**: the pin is the digest Docker Hub serves for the tag, and the mirror
+  serves the same digest.
+- **HELD**: Docker Hub moved the tag, or published a newer release with the same
+  variant and major version (for example `17.12-alpine` after `17.11-alpine`),
+  less than 24 hours ago.
+- **DRIFT** (fails): that newer digest or release is at least 24 hours old, or the
+  mirror serves a different digest than the pin.
+
+To bump a pin, take the digest Docker Hub serves for the tag and confirm the
+mirror serves the same one, for example with
+`docker buildx imagetools inspect public.ecr.aws/docker/library/postgres:<tag>`.
+ECR Public allows one anonymous request per second, so the check uses one token
+and spaces its requests to it.
+
 ## Deliberately NOT done (don't "finish" these)
 - **Codebase-wide field unexporting / `NewX` for every command** — the
   validate-then-trust pattern (handlers call `Validate()` consistently) is the

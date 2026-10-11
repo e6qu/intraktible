@@ -471,11 +471,11 @@ func findEventPayload[T any](
 	matches func(T) bool,
 ) (T, bool, error) {
 	var zero T
-	events, err := log.ReadTenantStream(ctx, id.Org, id.Workspace, Stream, 0)
+	stream, err := log.ReadTenantStream(ctx, id.Org, id.Workspace, Stream, 0)
 	if err != nil {
 		return zero, false, err
 	}
-	for _, event := range events {
+	for _, event := range stream {
 		if event.Type != eventType {
 			continue
 		}
@@ -491,13 +491,13 @@ func findEventPayload[T any](
 }
 
 func (h *Handler) foldOne(ctx context.Context, id identity.Identity, outcomeID string) (Recorded, int, bool, error) {
-	events, err := h.log.ReadTenantStream(ctx, id.Org, id.Workspace, Stream, 0)
+	stream, err := h.log.ReadTenantStream(ctx, id.Org, id.Workspace, Stream, 0)
 	if err != nil {
 		return Recorded{}, 0, false, err
 	}
 	var original Recorded
 	revision := 0
-	for _, event := range events {
+	for _, event := range stream {
 		switch event.Type {
 		case TypeRecorded:
 			var payload Recorded

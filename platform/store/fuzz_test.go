@@ -65,13 +65,13 @@ func FuzzPrefixUpperBound(f *testing.F) {
 		if key < prefix {
 			t.Fatalf("key %q < prefix %q", key, prefix)
 		}
-		if upper != "" && !(key < upper) {
+		if upper != "" && key >= upper {
 			t.Fatalf("key %q with prefix %q not below upper bound %q", key, prefix, upper)
 		}
 		// A string that does NOT start with prefix and sorts at/after upper must not
 		// be in range — spot-check that upper truly bounds the prefix family: prefix
 		// itself is in range, and upper is strictly greater than prefix.
-		if upper != "" && !(prefix < upper) {
+		if upper != "" && prefix >= upper {
 			t.Fatalf("upper %q is not strictly greater than prefix %q", upper, prefix)
 		}
 	})
